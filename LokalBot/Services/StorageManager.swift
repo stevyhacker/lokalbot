@@ -1,0 +1,82 @@
+import Foundation
+
+/// Owns the on-disk layout (design doc §6):
+/// ~/Library/Application Support/com.stevyhacker.LokalBot/
+///   meetings/YYYY/MM/dd-slug/{mic.m4a, system.m4a, meta.json}
+///
+/// Rooted at the bundle id, NOT "LokalBot": an unrelated app already owns
+/// ~/Library/Application Support/LokalBot/ on some machines, and its
+/// "Meetings" folder would collide with our "meetings" on the default
+/// case-insensitive filesystem.
+final class StorageManager {
+
+    let rootURL: URL
+
+    init() {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory,
+                                                  in: .userDomainMask).first!
+        let folder = Bundle.main.bundleIdentifier ?? "com.stevyhacker.LokalBot"
+        rootURL = appSupport.appendingPathComponent(folder, isDirectory: true)
+        try? FileManager.default.createDirectory(at: rootURL.appendingPathComponent("meetings"),
+                                                 withIntermediateDirectories: true)
+    }
+
+    func createMeetingFolder(title: String, appName: String) throws -> Meeting {
+        let now = Date()
+        let cal = Calendar.current
+        let y = cal.component(.year, from: now)
+        let m = String(format: "%02d", cal.component(.month, from: now))
+        let d = String(format: "%02d", cal.component(.day, from: now))
+
+        var slug = "\(d)-\(Self.slugify(title))"
+        var relative = "meetings/\(y)/\(m)/\(slug)"
+        // De-dupe: second Zoom meeting the same day gets "-2", etc.
+        var counter = 2
+        while FileManager.default.fileExists(atPath: rootURL.appendingPathComponent(relative).path) {
+            slug = "\(d)-\(Self.slugify(title))-\(counter)"
+            relative = "meetings/\(y)/\(m)/\(slug)"
+            counter += 1
+        }
+
+        let folder = rootURL.appendingPathComponent(relative, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+        let meeting = Meeting(id: UUID(), title: title, appName: appName,
+                              startedAt: now, endedAt: nil, relativePath: relative)
+        try saveMeta(meeting)
+        return meeting
+    }
+
+    func saveMeta(_ meeting: Meeting) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let url = meeting.folderURL(in: self).appendingPathComponent("meta.json")
+        try encoder.encode(meeting).write(to: url, options: .atomic)
+    }
+
+    /// Scan the library for meta.json files. Fine for M1; replaced by the
+    /// SQLite index in M3.
+    func loadMeetings() -> [Meeting] {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let meetingsRoot = rootURL.appendingPathComponent("meetings")
+        guard let enumerator = FileManager.default.enumerator(at: meetingsRoot,
+                                                              includingPropertiesForKeys: nil) else { return [] }
+        var result: [Meeting] = []
+        for case let url as URL in enumerator where url.lastPathComponent == "meta.json" {
+            if let data = try? Data(contentsOf: url),
+               let meeting = try? decoder.decode(Meeting.self, from: data) {
+                result.append(meeting)
+            }
+        }
+        return result.sorted { $0.startedAt > $1.startedAt }
+    }
+
+    static func slugify(_ s: String) -> String {
+        let lowered = s.lowercased()
+            .applyingTransform(.stripDiacritics, reverse: false) ?? s.lowercased()
+        let allowed = lowered.map { $0.isLetter || $0.isNumber ? $0 : "-" }
+        return String(allowed).split(separator: "-").joined(separator: "-")
+    }
+}

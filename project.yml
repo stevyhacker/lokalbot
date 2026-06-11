@@ -1,0 +1,63 @@
+name: LokalBot
+options:
+  bundleIdPrefix: com.stevyhacker
+  deploymentTarget:
+    macOS: "14.4"   # Core Audio process taps require 14.4+
+  createIntermediateGroups: true
+
+packages:
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio
+    exactVersion: 0.15.2   # pinned: 0.x releases break API between minors
+  WhisperKit:
+    url: https://github.com/argmaxinc/WhisperKit
+    exactVersion: 1.0.0
+
+targets:
+  LokalBot:
+    type: application
+    platform: macOS
+    sources:
+      - LokalBot
+      - path: Vendor/llama-cpp
+        type: folder
+        buildPhase: resources
+      - path: Vendor/llama-models
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - package: FluidAudio
+      - package: WhisperKit
+    preBuildScripts:
+      - name: Fetch llama.cpp vendor
+        script: "\"$PROJECT_DIR/Scripts/fetch-llama.sh\""
+        basedOnDependencyAnalysis: false
+    entitlements:
+      path: LokalBot/LokalBot.entitlements
+      properties:
+        com.apple.security.device.audio-input: true
+        # NOTE: App Sandbox intentionally OFF — Core Audio process taps
+        # (and later, Accessibility window titles) don't work sandboxed.
+        # Direct distribution + notarization, not App Store.
+    info:
+      path: LokalBot/Info.plist
+      properties:
+        CFBundleDisplayName: LokalBot
+        CFBundleIconFile: AppIcon
+        NSMicrophoneUsageDescription: >-
+          LokalBot records your side of meetings from the microphone.
+          Audio never leaves this Mac.
+        NSAudioCaptureUsageDescription: >-
+          LokalBot records the meeting app's audio output so the other
+          participants are captured. Audio never leaves this Mac.
+        LSApplicationCategoryType: public.app-category.productivity
+    settings:
+      base:
+        SWIFT_VERSION: "5.10"
+        MACOSX_DEPLOYMENT_TARGET: "14.4"
+        ENABLE_HARDENED_RUNTIME: NO   # turn ON (+ audio-input exception) for notarized release builds
+        CODE_SIGN_STYLE: Automatic
+        # Stable signature so TCC grants (Accessibility, Screen Recording)
+        # survive rebuilds — ad-hoc signing invalidates them every build.
+        DEVELOPMENT_TEAM: K96P3M3997
+        GENERATE_INFOPLIST_FILE: NO
