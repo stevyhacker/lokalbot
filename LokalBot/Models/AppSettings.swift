@@ -15,7 +15,7 @@ struct AppSettings: Codable {
         var id: String { rawValue }
     }
 
-    var autoRecordMode: AutoRecordMode = .ask
+    var autoRecordMode: AutoRecordMode = .automatic
     /// Seconds the mic must be released before a meeting counts as ended.
     var stopDebounceSeconds: TimeInterval = 60
 

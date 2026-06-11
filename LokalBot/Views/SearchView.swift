@@ -77,44 +77,35 @@ struct SearchView: View {
                         : "No results for “\(query)” in \(scope.rawValue.lowercased())."))
                     .frame(maxHeight: .infinity)
             } else {
-                List {
-                    ForEach(hits) { hit in
-                        SearchHitRow(hit: hit, meeting: app.meetings.first { $0.id == hit.meetingID })
-                            .contentShape(Rectangle())
-                            .onTapGesture { app.openSearchHit(hit) }
-                    }
-                    if scope == .all && !semanticHits.isEmpty {
-                        Section("Related (semantic)") {
-                            ForEach(semanticHits) { hit in
-                                let meeting = app.meetings.first { $0.id == hit.meetingID }
-                                VStack(alignment: .leading, spacing: 3) {
-                                    HStack(spacing: 6) {
-                                        Text(meeting?.title ?? "Unknown meeting")
-                                            .font(.system(size: 13, weight: .semibold))
-                                        Spacer()
-                                        Text(String(format: "≈ %.0f%%", hit.score * 100))
-                                            .font(.caption2.monospacedDigit())
-                                            .padding(.horizontal, 7).padding(.vertical, 2)
-                                            .background(.quaternary, in: Capsule())
-                                    }
-                                    Text(hit.text).font(.system(size: 12.5))
-                                        .foregroundStyle(.secondary).lineLimit(3)
-                                }
-                                .padding(.vertical, 3)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    app.selectedMeetingID = hit.meetingID
-                                    if hit.start > 0 { app.pendingSeek = hit.start }
-                                }
-                            }
-                        }
-                    }
-                }
-                .listStyle(.inset)
+                resultsList
             }
         }
         .onChange(of: query) { runSearch() }
         .onChange(of: scope) { runSearch() }
+    }
+
+    private var resultsList: some View {
+        List {
+            ForEach(hits) { hit in
+                SearchHitRow(hit: hit, meeting: app.meetings.first { $0.id == hit.meetingID })
+                    .contentShape(Rectangle())
+                    .onTapGesture { app.openSearchHit(hit) }
+            }
+            if scope == .all && !semanticHits.isEmpty {
+                Section("Related (semantic)") {
+                    ForEach(semanticHits) { hit in
+                        SemanticHitRow(hit: hit,
+                                       meeting: app.meetings.first { $0.id == hit.meetingID })
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                app.selectedMeetingIDs = [hit.meetingID]
+                                if hit.start > 0 { app.pendingSeek = hit.start }
+                            }
+                    }
+                }
+            }
+        }
+        .listStyle(.inset)
     }
 
     private func runSearch() {
@@ -137,6 +128,28 @@ struct SearchView: View {
                 }
             }
         }
+    }
+}
+
+private struct SemanticHitRow: View {
+    let hit: EmbeddingIndex.Hit
+    let meeting: Meeting?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(meeting?.title ?? "Unknown meeting")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Text(String(format: "≈ %.0f%%", hit.score * 100))
+                    .font(.caption2.monospacedDigit())
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(.quaternary, in: Capsule())
+            }
+            Text(hit.text).font(.system(size: 12.5))
+                .foregroundStyle(.secondary).lineLimit(3)
+        }
+        .padding(.vertical, 3)
     }
 }
 

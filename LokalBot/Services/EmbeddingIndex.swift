@@ -98,6 +98,11 @@ final class EmbeddingIndex {
             [meeting.id.uuidString, mtime])
     }
 
+    func remove(_ meetingID: UUID) {
+        run("DELETE FROM embeddings WHERE meeting_id = ?1", [meetingID.uuidString])
+        run("DELETE FROM embedded_meetings WHERE meeting_id = ?1", [meetingID.uuidString])
+    }
+
     // MARK: - Query
 
     func search(_ query: String, limit: Int = 10) async -> [Hit] {

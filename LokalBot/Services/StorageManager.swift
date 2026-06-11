@@ -66,11 +66,23 @@ final class StorageManager {
         var result: [Meeting] = []
         for case let url as URL in enumerator where url.lastPathComponent == "meta.json" {
             if let data = try? Data(contentsOf: url),
-               let meeting = try? decoder.decode(Meeting.self, from: data) {
+               var meeting = try? decoder.decode(Meeting.self, from: data) {
+                // Orphan repair: app killed mid-recording leaves endedAt nil
+                // forever ("in progress"). Close it at the audio's last write.
+                if meeting.endedAt == nil {
+                    let mic = url.deletingLastPathComponent().appendingPathComponent("mic.m4a")
+                    let mtime = (try? FileManager.default.attributesOfItem(atPath: mic.path))?[.modificationDate] as? Date
+                    meeting.endedAt = mtime ?? meeting.startedAt
+                    try? saveMeta(meeting)
+                }
                 result.append(meeting)
             }
         }
         return result.sorted { $0.startedAt > $1.startedAt }
+    }
+
+    func deleteMeeting(_ meeting: Meeting) {
+        try? FileManager.default.removeItem(at: meeting.folderURL(in: self))
     }
 
     static func slugify(_ s: String) -> String {

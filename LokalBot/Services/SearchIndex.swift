@@ -83,6 +83,11 @@ final class SearchIndex {
             bind: [meeting.id.uuidString, mtime])
     }
 
+    func remove(_ meetingID: UUID) {
+        run("DELETE FROM docs WHERE meeting_id = ?1", bind: [meetingID.uuidString])
+        run("DELETE FROM indexed_meetings WHERE meeting_id = ?1", bind: [meetingID.uuidString])
+    }
+
     // MARK: - Query
 
     /// FTS5 search; terms are AND-ed, the last gets prefix matching so

@@ -58,8 +58,14 @@ final class AppState: ObservableObject {
     // Navigation (main window): sidebar section, selected meeting, and a
     // pending "jump to timestamp" handed from search to the detail player.
     @Published var navSection: NavSection = .meetings
-    @Published var selectedMeetingID: Meeting.ID?
+    @Published var selectedMeetingIDs: Set<Meeting.ID> = []
     @Published var pendingSeek: TimeInterval?
+
+    /// The meeting shown in the detail pane (single selection only).
+    var selectedMeeting: Meeting? {
+        guard selectedMeetingIDs.count == 1, let id = selectedMeetingIDs.first else { return nil }
+        return meetings.first { $0.id == id }
+    }
 
     let storage = StorageManager()
     let detector = MeetingDetector()
@@ -81,7 +87,8 @@ final class AppState: ObservableObject {
 
     private let micRecorder = MicRecorder()
     private let systemRecorder = SystemAudioRecorder()
-    private var currentMeeting: Meeting?
+    /// The live recording (shown at the top of the library while running).
+    @Published private(set) var currentMeeting: Meeting?
     private var pipelineObserver: AnyCancellable?
 
     var isRecording: Bool { if case .recording = status { true } else { false } }
@@ -124,7 +131,7 @@ final class AppState: ObservableObject {
         detector.onMeetingStarted = { [weak self] app in
             guard let self else { return }
             switch self.settings.autoRecordMode {
-            case .automatic: self.startRecording(detectedApp: app)
+            case .automatic: self.startRecording(detectedApp: app, source: "detector")
             case .ask: self.notifyMeetingDetected(app)
             case .manual: break
             }
@@ -137,17 +144,27 @@ final class AppState: ObservableObject {
 
     // MARK: - Recording control
 
-    func startRecording(detectedApp: MeetingDetector.DetectedApp?) {
-        guard !isRecording else { return }
+    /// Synchronous re-entrancy latch: `status` only flips inside the async
+    /// start task, so without this, rapid triggers (detector ticks, double
+    /// clicks) all pass the `!isRecording` guard and create empty meetings.
+    private var isStartingRecording = false
+
+    func startRecording(detectedApp: MeetingDetector.DetectedApp?, source: String = "ui") {
+        guard !isRecording, !isStartingRecording else { return }
+        isStartingRecording = true
+        lokalbotLog("startRecording source=\(source) app=\(detectedApp?.name ?? "manual")")
         Task {
+            defer { isStartingRecording = false }
             guard await MicRecorder.requestPermission() else {
                 lastError = "Microphone permission denied."
                 return
             }
+            var created: Meeting?
             do {
                 let title = detectedApp.map { "\($0.name) meeting" } ?? "Manual recording"
                 var meeting = try storage.createMeetingFolder(title: title,
                                                               appName: detectedApp?.name ?? "Manual")
+                created = meeting
                 try micRecorder.start(writingTo: meeting.folderURL(in: storage).appendingPathComponent("mic.m4a"))
 
                 if let pid = detectedApp?.pid {
@@ -164,6 +181,9 @@ final class AppState: ObservableObject {
                 status = .recording(meetingID: meeting.id)
             } catch {
                 lastError = "Could not start recording: \(error.localizedDescription)"
+                lokalbotLog("startRecording FAILED: \(error.localizedDescription)")
+                // Don't leave a 0-minute husk in the library.
+                if let husk = created { storage.deleteMeeting(husk) }
             }
         }
     }
@@ -194,10 +214,21 @@ final class AppState: ObservableObject {
 
     /// Search hit → open the meeting; transcript hits seek the player.
     func openSearchHit(_ hit: SearchIndex.Hit) {
-        selectedMeetingID = hit.meetingID
+        selectedMeetingIDs = [hit.meetingID]
         if hit.kind == .segment {
             pendingSeek = hit.start
         }
+    }
+
+    /// Permanently removes meetings: audio folder, list entry, both indexes.
+    func deleteMeetings(_ ids: Set<Meeting.ID>) {
+        for meeting in meetings where ids.contains(meeting.id) {
+            storage.deleteMeeting(meeting)
+            searchIndex.remove(meeting.id)
+            embeddingIndex.remove(meeting.id)
+        }
+        meetings.removeAll { ids.contains($0.id) }
+        selectedMeetingIDs.subtract(ids)
     }
 
     /// `LokalBot --process <meeting folder>`: run the pipeline headless and
@@ -244,7 +275,7 @@ final class AppState: ObservableObject {
             print("LokalBot --record: SKIP (microphone not granted)")
             exit(3)
         }
-        startRecording(detectedApp: nil)
+        startRecording(detectedApp: nil, source: "headless")
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(seconds))
             guard isRecording else {

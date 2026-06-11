@@ -5,7 +5,9 @@ import AVFoundation
 /// so M2 gets speaker attribution for free (design doc §2.2).
 final class MicRecorder {
 
-    private let engine = AVAudioEngine()
+    // Recreated per session — a reused engine can hold a stale graph after
+    // device changes and then fails with kAudioDeviceUnsupportedFormat ('!dev').
+    private var engine = AVAudioEngine()
     private var file: AVAudioFile?
 
     static func requestPermission() async -> Bool {
@@ -17,8 +19,13 @@ final class MicRecorder {
     }
 
     func start(writingTo url: URL) throws {
+        engine = AVAudioEngine()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            throw NSError(domain: "LokalBot", code: 7, userInfo: [NSLocalizedDescriptionKey:
+                "Microphone is not available right now (no usable input device). Check the input selected in System Settings → Sound."])
+        }
 
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,

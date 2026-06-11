@@ -3,6 +3,7 @@ import SwiftUI
 struct MainWindowView: View {
     @EnvironmentObject var app: AppState
     @Environment(\.openWindow) private var openWindow
+    @State private var pendingDelete: Set<Meeting.ID>?
 
     var body: some View {
         NavigationSplitView {
@@ -27,15 +28,36 @@ struct MainWindowView: View {
                 // Settings selected → the detail pane shows live permission
                 // status (same panel as onboarding).
                 ScrollView { OnboardingView() }
-            } else if let meeting = app.meetings.first(where: { $0.id == app.selectedMeetingID }) {
+            } else if let meeting = app.selectedMeeting {
                 MeetingDetailView(meeting: meeting)
                     .id(meeting.id)
+            } else if app.selectedMeetingIDs.count > 1 {
+                ContentUnavailableView {
+                    Label("\(app.selectedMeetingIDs.count) meetings selected", systemImage: "checklist")
+                } description: {
+                    Text("Press ⌫ or right-click to delete them.")
+                } actions: {
+                    Button("Delete \(app.selectedMeetingIDs.count) meetings", role: .destructive) {
+                        pendingDelete = app.selectedMeetingIDs
+                    }
+                }
             } else {
                 ContentUnavailableView(
                     "No meeting selected",
                     systemImage: "waveform.circle",
                     description: Text("Recordings appear here automatically and are transcribed & summarized after the meeting ends."))
             }
+        }
+        .confirmationDialog(
+            "Delete \(pendingDelete?.count ?? 0) meeting\((pendingDelete?.count ?? 0) == 1 ? "" : "s")?",
+            isPresented: Binding(get: { pendingDelete != nil },
+                                 set: { if !$0 { pendingDelete = nil } })) {
+            Button("Delete (removes recordings & transcripts)", role: .destructive) {
+                if let ids = pendingDelete { app.deleteMeetings(ids) }
+                pendingDelete = nil
+            }
+        } message: {
+            Text("This permanently deletes the audio, transcript and summary files.")
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -48,6 +70,20 @@ struct MainWindowView: View {
                           systemImage: app.isRecording ? "stop.circle.fill" : "record.circle")
                 }
                 .tint(app.isRecording ? .red : nil)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let error = app.lastError {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text(error).font(.callout).lineLimit(2)
+                    Button { app.lastError = nil } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 9)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.orange.opacity(0.4)))
+                .padding(12)
             }
         }
         .task {
@@ -65,18 +101,73 @@ struct MainWindowView: View {
         Binding(get: { app.navSection }, set: { app.navSection = $0 ?? .meetings })
     }
 
+    /// Live recording first, then finished meetings, grouped by day.
+    private var groupedMeetings: [(label: String, items: [Meeting])] {
+        let calendar = Calendar.current
+        let all = (app.currentMeeting.map { [$0] } ?? []) + app.meetings
+        let groups = Dictionary(grouping: all) { calendar.startOfDay(for: $0.startedAt) }
+        return groups.keys.sorted(by: >).map { day in
+            (Self.dayLabel(day), groups[day]!.sorted { $0.startedAt > $1.startedAt })
+        }
+    }
+
+    private static func dayLabel(_ day: Date) -> String {
+        let datePart = day.formatted(.dateTime.month(.abbreviated).day()).uppercased()
+        if Calendar.current.isDateInToday(day) { return "TODAY — \(datePart)" }
+        if Calendar.current.isDateInYesterday(day) { return "YESTERDAY — \(datePart)" }
+        return "\(day.formatted(.dateTime.weekday(.wide)).uppercased()) — \(datePart)"
+    }
+
+    private func meetingRow(_ meeting: Meeting) -> some View {
+        let live = meeting.endedAt == nil
+        let time = live ? "in progress"
+                        : meeting.startedAt.formatted(date: .omitted, time: .shortened)
+        let duration = live ? "\(max(1, Int(Date().timeIntervalSince(meeting.startedAt) / 60))) min"
+                            : meeting.durationLabel
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                if live { Circle().fill(.red).frame(width: 9, height: 9) }
+                Text(meeting.title).font(.system(size: 13.5, weight: .semibold))
+            }
+            Text("\(meeting.appName) · \(time) · \(duration)")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 1)
+    }
+
     private var meetingList: some View {
-        List(selection: $app.selectedMeetingID) {
-            Section("Library") {
-                ForEach(app.meetings) { meeting in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(meeting.title).font(.system(size: 13.5, weight: .semibold))
-                        Text("\(meeting.appName) · \(meeting.startedAt.formatted(date: .abbreviated, time: .shortened)) · \(meeting.durationLabel)")
-                            .font(.caption).foregroundStyle(.secondary)
+        List(selection: $app.selectedMeetingIDs) {
+            ForEach(groupedMeetings, id: \.label) { group in
+                Section {
+                    ForEach(group.items) { meeting in
+                        meetingRow(meeting).tag(meeting.id)
                     }
-                    .tag(meeting.id)
+                } header: {
+                    Text(group.label).font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
                 }
             }
+        }
+        .overlay(alignment: .topTrailing) {
+            if app.isRecording {
+                HStack(spacing: 5) {
+                    Circle().fill(.red).frame(width: 7, height: 7)
+                    Text("recording…").font(.caption)
+                }
+                .padding(.horizontal, 9).padding(.vertical, 4)
+                .background(.background.opacity(0.9), in: Capsule())
+                .overlay(Capsule().strokeBorder(.quaternary))
+                .padding(10)
+            }
+        }
+        .contextMenu(forSelectionType: Meeting.ID.self) { ids in
+            Button("Delete \(ids.count > 1 ? "\(ids.count) meetings" : "meeting")…",
+                   role: .destructive) {
+                pendingDelete = ids
+            }
+        }
+        .onDeleteCommand {
+            if !app.selectedMeetingIDs.isEmpty { pendingDelete = app.selectedMeetingIDs }
         }
         .navigationSplitViewColumnWidth(min: 240, ideal: 280)
         .navigationTitle("Meetings")

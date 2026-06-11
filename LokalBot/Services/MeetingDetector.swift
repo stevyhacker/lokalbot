@@ -47,6 +47,9 @@ final class MeetingDetector {
 
     private var micListener: AudioObjectPropertyListenerBlock?
     private var listenedDevice = AudioObjectID(kAudioObjectUnknown)
+    /// Added once — re-adding on every re-arm multiplies Core Audio
+    /// callbacks (each mic open/close then fans out into a tick storm).
+    private var deviceChangeListener: AudioObjectPropertyListenerBlock?
 
     func start() {
         // Safety-net poll (browser titles have no change notification).
@@ -79,14 +82,17 @@ final class MeetingDetector {
             mSelector: kAudioHardwarePropertyDefaultInputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain)
-        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            DispatchQueue.main.async {
-                self?.armMicListener()   // device changed → re-arm on the new one
-                self?.tick()
+        if deviceChangeListener == nil {
+            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+                DispatchQueue.main.async {
+                    self?.armMicListener()   // device changed → re-arm on the new one
+                    self?.tick()
+                }
             }
+            AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject),
+                                                &addr, .main, block)
+            deviceChangeListener = block
         }
-        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject),
-                                            &addr, .main, block)
 
         var deviceID = AudioObjectID(kAudioObjectUnknown)
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
