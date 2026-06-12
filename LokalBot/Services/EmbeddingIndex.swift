@@ -88,7 +88,7 @@ final class EmbeddingIndex {
             sqlite3_bind_text(s, 1, meeting.id.uuidString, -1, Self.transient)
             sqlite3_bind_double(s, 2, chunk.start)
             sqlite3_bind_text(s, 3, String(chunk.text.prefix(300)), -1, Self.transient)
-            vector.withUnsafeBufferPointer {
+            _ = vector.withUnsafeBufferPointer {
                 sqlite3_bind_blob(s, 4, $0.baseAddress, Int32($0.count * 4), Self.transient)
             }
             sqlite3_step(s)
@@ -105,7 +105,16 @@ final class EmbeddingIndex {
 
     // MARK: - Query
 
+    var hasEmbeddings: Bool {
+        var s: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT 1 FROM embeddings LIMIT 1",
+                                 -1, &s, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(s) }
+        return sqlite3_step(s) == SQLITE_ROW
+    }
+
     func search(_ query: String, limit: Int = 10) async -> [Hit] {
+        guard hasEmbeddings else { return [] }
         guard let queryVector = try? await Self.embed([query], prefix: "search_query: ",
                                                       storage: storage).first else { return [] }
         var s: OpaquePointer?
@@ -170,6 +179,9 @@ final class EmbeddingIndex {
         let (temp, response) = try await URLSession.shared.download(from: URL(string: modelURL)!)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
             throw TextEngineError.badResponse("embedding model download failed")
+        }
+        guard ModelFileValidator.looksLikeGGUF(temp) else {
+            throw TextEngineError.badResponse("embedding model download was not a GGUF model")
         }
         try? FileManager.default.removeItem(at: path)
         try FileManager.default.moveItem(at: temp, to: path)

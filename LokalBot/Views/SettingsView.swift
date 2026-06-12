@@ -148,8 +148,15 @@ struct SettingsView: View {
             }
 
             Section("Search") {
-                Toggle("Semantic search (embeddings)", isOn: $app.settings.semanticSearchEnabled)
-                Text("Finds meetings by meaning, not just keywords. Uses nomic-embed-text (146 MB, auto-downloaded) on the built-in server.")
+                Toggle("Semantic search (embeddings)", isOn: Binding(
+                    get: { app.settings.semanticSearchEnabled },
+                    set: { enabled in
+                        app.settings.semanticSearchEnabled = enabled
+                        if enabled {
+                            Task { await app.embeddingIndex.reindexAll(app.meetings) }
+                        }
+                    }))
+                Text("Finds meetings by meaning, not just keywords. Uses nomic-embed-text (146 MB), downloaded when you enable semantic search.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

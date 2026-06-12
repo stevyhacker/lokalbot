@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// Built-in LLM backend: a bundled llama.cpp `llama-server` (Metal) speaking
 /// the OpenAI-compatible API on localhost. The small default model ships
@@ -65,11 +66,19 @@ struct ModelCatalog {
         if entry.isBundled,
            let bundled = Bundle.main.resourceURL?
                .appendingPathComponent("llama-models/\(entry.fileName)"),
-           FileManager.default.fileExists(atPath: bundled.path) {
+           ModelFileValidator.looksLikeGGUF(bundled) {
             return bundled
         }
         let downloaded = storage.rootURL.appendingPathComponent("models/\(entry.fileName)")
-        return FileManager.default.fileExists(atPath: downloaded.path) ? downloaded : nil
+        return ModelFileValidator.looksLikeGGUF(downloaded) ? downloaded : nil
+    }
+}
+
+enum ModelFileValidator {
+    static func looksLikeGGUF(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        return (try? handle.read(upToCount: 4)) == Data("GGUF".utf8)
     }
 }
 
@@ -128,6 +137,13 @@ final class ModelDownloadManager: NSObject, ObservableObject, URLSessionDownload
                                 didFinishDownloadingTo location: URL) {
         // Move synchronously — `location` is deleted when this returns.
         let taskID = downloadTask.taskIdentifier
+        guard let http = downloadTask.response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode) else {
+            Task { @MainActor in
+                fail(taskID: taskID, message: "Download failed (HTTP \((downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0)).")
+            }
+            return
+        }
         let moved = (try? FileManager.default.url(for: .itemReplacementDirectory,
                                                   in: .userDomainMask,
                                                   appropriateFor: location, create: true))
@@ -140,6 +156,11 @@ final class ModelDownloadManager: NSObject, ObservableObject, URLSessionDownload
             destinations[taskID] = nil
             progress[id] = nil
             guard let stash else { errors[id] = "Download failed (could not stage file)."; return }
+            guard ModelFileValidator.looksLikeGGUF(stash) else {
+                try? FileManager.default.removeItem(at: stash)
+                errors[id] = "Download failed (response was not a GGUF model)."
+                return
+            }
             try? FileManager.default.removeItem(at: destination)
             do {
                 try FileManager.default.moveItem(at: stash, to: destination)
@@ -154,12 +175,16 @@ final class ModelDownloadManager: NSObject, ObservableObject, URLSessionDownload
         guard let error, (error as NSError).code != NSURLErrorCancelled else { return }
         let taskID = task.taskIdentifier
         Task { @MainActor in
-            if let (id, _) = destinations[taskID] {
-                errors[id] = error.localizedDescription
-                progress[id] = nil
-                destinations[taskID] = nil
-                tasks[id] = nil
-            }
+            fail(taskID: taskID, message: error.localizedDescription)
+        }
+    }
+
+    private func fail(taskID: Int, message: String) {
+        if let (id, _) = destinations[taskID] {
+            errors[id] = message
+            progress[id] = nil
+            destinations[taskID] = nil
+            tasks[id] = nil
         }
     }
 }
@@ -208,7 +233,7 @@ actor LlamaServer {
     }
 
     private func start(modelAt url: URL) async throws {
-        stop()
+        await stop()
         let binary = try installedBinary()
         let process = Process()
         process.executableURL = binary
@@ -234,14 +259,23 @@ actor LlamaServer {
                 throw ServerError.failedToStart("llama-server exited during startup")
             }
         }
-        stop()
+        await stop()
         throw ServerError.failedToStart("server did not become healthy in time")
     }
 
-    func stop() {
-        process?.terminate()
+    func stop() async {
+        let old = process
         process = nil
         loadedModelPath = nil
+        guard let old, old.isRunning else { return }
+        old.terminate()
+        for _ in 0..<40 {
+            if !old.isRunning { return }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        if old.isRunning {
+            kill(old.processIdentifier, SIGKILL)
+        }
     }
 
     private func healthy() async -> Bool {
@@ -262,7 +296,7 @@ actor LlamaServer {
 
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory,
                                                   in: .userDomainMask).first!
-            .appendingPathComponent(Bundle.main.bundleIdentifier ?? "com.stevyhacker.LokalBot")
+            .appendingPathComponent(AppIdentifiers.bundleID)
         let installed = appSupport.appendingPathComponent("llama-cpp", isDirectory: true)
         let binary = installed.appendingPathComponent("llama-server")
 

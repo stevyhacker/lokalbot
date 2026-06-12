@@ -112,9 +112,6 @@ final class AppState: ObservableObject {
             }
         }
         searchIndex.reindexAll(meetings, storage: storage)
-        if settings.semanticSearchEnabled {
-            Task { [meetings] in await embeddingIndex.reindexAll(meetings) }
-        }
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
             Task {
@@ -122,11 +119,13 @@ final class AppState: ObservableObject {
                 await LlamaServer.embedder.stop()
             }
         }
-        handleHeadlessProcessing()
-        handleHeadlessSearch()
-        handleHeadlessRecord()
-        handleHeadlessShotTest()
-        handleHeadlessDigest()
+        if handleHeadlessProcessing()
+            || handleHeadlessSearch()
+            || handleHeadlessRecord()
+            || handleHeadlessShotTest()
+            || handleHeadlessDigest() {
+            return
+        }
         applyTrackingSetting()
         detector.onMeetingStarted = { [weak self] app in
             guard let self else { return }
@@ -233,9 +232,9 @@ final class AppState: ObservableObject {
 
     /// `LokalBot --process <meeting folder>`: run the pipeline headless and
     /// exit. Lets the pipeline be exercised (and CI-tested) without the UI.
-    private func handleHeadlessProcessing() {
+    private func handleHeadlessProcessing() -> Bool {
         let args = CommandLine.arguments
-        guard let flag = args.firstIndex(of: "--process"), args.count > flag + 1 else { return }
+        guard let flag = args.firstIndex(of: "--process"), args.count > flag + 1 else { return false }
         let folder = URL(fileURLWithPath: args[flag + 1], isDirectory: true)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -264,13 +263,14 @@ final class AppState: ObservableObject {
                 }
             }
         }
+        return true
     }
 
     /// `LokalBot --record <seconds>`: manual mic recording, no pipeline.
-    private func handleHeadlessRecord() {
+    private func handleHeadlessRecord() -> Bool {
         let args = CommandLine.arguments
         guard let flag = args.firstIndex(of: "--record"), args.count > flag + 1,
-              let seconds = Int(args[flag + 1]) else { return }
+              let seconds = Int(args[flag + 1]) else { return false }
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             print("LokalBot --record: SKIP (microphone not granted)")
             exit(3)
@@ -287,11 +287,12 @@ final class AppState: ObservableObject {
             print("LokalBot --record: done → \(meeting.folderURL(in: storage).path)")
             exit(0)
         }
+        return true
     }
 
     /// `LokalBot --shot-test`: one screenshot capture, exit 0 ok / 3 skip / 1 fail.
-    private func handleHeadlessShotTest() {
-        guard CommandLine.arguments.contains("--shot-test") else { return }
+    private func handleHeadlessShotTest() -> Bool {
+        guard CommandLine.arguments.contains("--shot-test") else { return false }
         Task { @MainActor in
             guard CGPreflightScreenCaptureAccess() else {
                 print("LokalBot --shot-test: SKIP (screen recording not granted)")
@@ -307,11 +308,12 @@ final class AppState: ObservableObject {
             print("LokalBot --shot-test: FAILED (no screenshot row — see debug.log)")
             exit(1)
         }
+        return true
     }
 
     /// `LokalBot --digest today`: generate today's journal digest and exit.
-    private func handleHeadlessDigest() {
-        guard CommandLine.arguments.contains("--digest") else { return }
+    private func handleHeadlessDigest() -> Bool {
+        guard CommandLine.arguments.contains("--digest") else { return false }
         Task { @MainActor in
             do {
                 let day = Date()
@@ -328,13 +330,14 @@ final class AppState: ObservableObject {
                 exit(1)
             }
         }
+        return true
     }
 
     /// `LokalBot --search <query>`: print index hits and exit. Test hook
     /// for the FTS5 index, same spirit as --process.
-    private func handleHeadlessSearch() {
+    private func handleHeadlessSearch() -> Bool {
         let args = CommandLine.arguments
-        guard let flag = args.firstIndex(of: "--search"), args.count > flag + 1 else { return }
+        guard let flag = args.firstIndex(of: "--search"), args.count > flag + 1 else { return false }
         let query = args[flag + 1]
         let hits = searchIndex.search(query)
         print("LokalBot --search: \(hits.count) keyword hit(s)")
@@ -358,6 +361,7 @@ final class AppState: ObservableObject {
             }
             exit(hits.isEmpty ? 1 : 0)
         }
+        return true
     }
 
     private func notifyMeetingDetected(_ app: MeetingDetector.DetectedApp) {

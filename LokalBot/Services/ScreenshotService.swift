@@ -8,7 +8,7 @@ import CryptoKit
 /// unreliable to read back for debug builds.
 func lokalbotLog(_ message: String) {
     let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        .appendingPathComponent(Bundle.main.bundleIdentifier ?? "com.stevyhacker.LokalBot")
+        .appendingPathComponent(AppIdentifiers.bundleID)
         .appendingPathComponent("debug.log")
     let line = "\(Date().formatted(.iso8601)) \(message)\n"
     if let handle = try? FileHandle(forWritingTo: url) {
@@ -201,31 +201,17 @@ final class ScreenshotService: ObservableObject {
     private static var cachedKey: SymmetricKey?
     static func encryptionKey() throws -> SymmetricKey {
         if let cachedKey { return cachedKey }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "com.stevyhacker.LokalBot",
-            kSecAttrAccount as String: "screenshot-key",
-            kSecReturnData as String: true,
-        ]
-        var existing: CFTypeRef?
-        if SecItemCopyMatching(query as CFDictionary, &existing) == errSecSuccess,
-           let data = existing as? Data {
+        if let data = KeychainSecrets.data(account: "screenshot-key") {
             let key = SymmetricKey(data: data)
             cachedKey = key
             return key
         }
         let key = SymmetricKey(size: .bits256)
         let data = key.withUnsafeBytes { Data($0) }
-        let add: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "com.stevyhacker.LokalBot",
-            kSecAttrAccount as String: "screenshot-key",
-            kSecValueData as String: data,
-        ]
-        let status = SecItemAdd(add as CFDictionary, nil)
-        guard status == errSecSuccess else {
+        KeychainSecrets.set(data, account: "screenshot-key")
+        guard KeychainSecrets.data(account: "screenshot-key") != nil else {
             throw NSError(domain: "LokalBot", code: 6,
-                          userInfo: [NSLocalizedDescriptionKey: "Keychain error \(status)"])
+                          userInfo: [NSLocalizedDescriptionKey: "Could not save screenshot encryption key"])
         }
         cachedKey = key
         return key

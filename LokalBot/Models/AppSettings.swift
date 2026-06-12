@@ -30,8 +30,8 @@ struct AppSettings: Codable {
     /// M4: app/window activity sampling.
     var trackingEnabled: Bool = true
 
-    /// M6: embedding-based semantic search (nomic-embed, auto-downloaded).
-    var semanticSearchEnabled: Bool = true
+    /// M6: embedding-based semantic search (nomic-embed, downloaded when enabled).
+    var semanticSearchEnabled: Bool = false
 
     // M5: screenshots + OCR
     var screenshotsEnabled: Bool = true
@@ -51,9 +51,37 @@ struct AppSettings: Codable {
     var ollamaModel: String = ""
     var openAIBaseURL: String = "http://localhost:1234/v1"
     var openAIModel: String = ""
-    var openAIAPIKey: String = ""
+    var openAIAPIKey: String {
+        get {
+            KeychainSecrets.string(account: "openai-compatible-api-key") ?? ""
+        }
+        set {
+            KeychainSecrets.setString(newValue, account: "openai-compatible-api-key")
+        }
+    }
 
     private static let key = "lokalbot.settings"
+
+    private enum CodingKeys: String, CodingKey {
+        case autoRecordMode
+        case stopDebounceSeconds
+        case transcriptionModel
+        case languageHint
+        case autoTranscribe
+        case autoSummarize
+        case trackingEnabled
+        case semanticSearchEnabled
+        case screenshotsEnabled
+        case screenshotIntervalMinutes
+        case retentionDays
+        case excludedApps
+        case summarizerBackend
+        case builtInModelID
+        case ollamaBaseURL
+        case ollamaModel
+        case openAIBaseURL
+        case openAIModel
+    }
 
     static func load() -> AppSettings {
         guard let data = UserDefaults.standard.data(forKey: key),
@@ -94,6 +122,5 @@ struct AppSettings: Codable {
         ollamaModel = (try? c.decode(String.self, forKey: .ollamaModel)) ?? defaults.ollamaModel
         openAIBaseURL = (try? c.decode(String.self, forKey: .openAIBaseURL)) ?? defaults.openAIBaseURL
         openAIModel = (try? c.decode(String.self, forKey: .openAIModel)) ?? defaults.openAIModel
-        openAIAPIKey = (try? c.decode(String.self, forKey: .openAIAPIKey)) ?? defaults.openAIAPIKey
     }
 }

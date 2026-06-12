@@ -1,6 +1,6 @@
 name: LokalBot
 options:
-  bundleIdPrefix: com.stevyhacker
+  bundleIdPrefix: com.dotenv
   deploymentTarget:
     macOS: "14.4"   # Core Audio process taps require 14.4+
   createIntermediateGroups: true

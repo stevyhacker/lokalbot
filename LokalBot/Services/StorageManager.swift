@@ -1,7 +1,7 @@
 import Foundation
 
 /// Owns the on-disk layout (design doc §6):
-/// ~/Library/Application Support/com.stevyhacker.LokalBot/
+/// ~/Library/Application Support/com.dotenv.LokalBot/
 ///   meetings/YYYY/MM/dd-slug/{mic.m4a, system.m4a, meta.json}
 ///
 /// Rooted at the bundle id, NOT "LokalBot": an unrelated app already owns
@@ -15,8 +15,7 @@ final class StorageManager {
     init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory,
                                                   in: .userDomainMask).first!
-        let folder = Bundle.main.bundleIdentifier ?? "com.stevyhacker.LokalBot"
-        rootURL = appSupport.appendingPathComponent(folder, isDirectory: true)
+        rootURL = appSupport.appendingPathComponent(AppIdentifiers.bundleID, isDirectory: true)
         try? FileManager.default.createDirectory(at: rootURL.appendingPathComponent("meetings"),
                                                  withIntermediateDirectories: true)
     }

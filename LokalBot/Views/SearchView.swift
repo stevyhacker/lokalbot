@@ -119,7 +119,8 @@ struct SearchView: View {
             } else {
                 hits = q.isEmpty ? [] : app.searchIndex.search(q, kind: s.kind)
                 semanticHits = []
-                if s == .all, !q.isEmpty, q.count > 3, app.settings.semanticSearchEnabled {
+                if s == .all, !q.isEmpty, q.count > 3,
+                   app.settings.semanticSearchEnabled, app.embeddingIndex.hasEmbeddings {
                     let semantic = await app.embeddingIndex.search(q)
                     guard !Task.isCancelled else { return }
                     // Drop chunks already surfaced by keyword search.

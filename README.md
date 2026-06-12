@@ -23,7 +23,7 @@ In Xcode: select your team under Signing & Capabilities, then Run. On first reco
 **M1 — recording**
 - **Detection:** polls for known meeting apps (Zoom, Teams, Slack, Webex, FaceTime) + mic-in-use; auto-start per settings (auto / ask / manual), auto-stop with 60 s debounce.
 - **Recording:** two synchronized tracks — `mic.m4a` (AVAudioEngine) and `system.m4a` (Core Audio process tap on the meeting app's PID → aggregate device → AAC). Mic = "Me", system = "Them" (free diarization).
-- **Storage:** `~/Library/Application Support/com.stevyhacker.LokalBot/meetings/YYYY/MM/dd-slug/` with `meta.json` per meeting. (Bundle-id folder, not "LokalBot" — avoids colliding with any other app's `Application Support/LokalBot`.)
+- **Storage:** `~/Library/Application Support/com.dotenv.LokalBot/meetings/YYYY/MM/dd-slug/` with `meta.json` per meeting. (Bundle-id folder, not "LokalBot" — avoids colliding with any other app's `Application Support/LokalBot`.)
 - **UI:** menu bar item (record state, start/stop, recent meetings) + main window (meeting list, Show in Finder, playback via QuickTime).
 
 **M2 — transcription & summarization**
