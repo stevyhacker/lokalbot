@@ -144,7 +144,7 @@ final class ProcessingPipeline: ObservableObject {
     // MARK: - Summarization
 
     private static let systemPrompt = """
-        You are Botina, a precise meeting note-taker. You will receive a meeting \
+        You are BotinaV2, a precise meeting note-taker. You will receive a meeting \
         transcript where "Me" is this Mac's user and "Them" is the other participants. \
         Write a Markdown summary with exactly these sections: ## TL;DR (2-3 sentences), \
         ## Key points (bullets), ## Decisions (bullets, or "None"), ## Action items \

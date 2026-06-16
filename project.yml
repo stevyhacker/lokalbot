@@ -45,13 +45,13 @@ targets:
     info:
       path: LokalBot/Info.plist
       properties:
-        CFBundleDisplayName: Botina
+        CFBundleDisplayName: BotinaV2
         CFBundleIconFile: AppIcon
         NSMicrophoneUsageDescription: >-
-          Botina records your side of meetings from the microphone.
+          BotinaV2 records your side of meetings from the microphone.
           Audio never leaves this Mac.
         NSAudioCaptureUsageDescription: >-
-          Botina records the meeting app's audio output so the other
+          BotinaV2 records the meeting app's audio output so the other
           participants are captured. Audio never leaves this Mac.
         LSApplicationCategoryType: public.app-category.productivity
     settings:
@@ -64,9 +64,9 @@ targets:
         # survive rebuilds — ad-hoc signing invalidates them every build.
         DEVELOPMENT_TEAM: K96P3M3997
         GENERATE_INFOPLIST_FILE: NO
-        PRODUCT_NAME: Botina
-        PRODUCT_MODULE_NAME: Botina
-        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.Botina
+        PRODUCT_NAME: BotinaV2
+        PRODUCT_MODULE_NAME: BotinaV2
+        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.BotinaV2
 
   LokalBotTests:
     type: bundle.unit-test
@@ -78,7 +78,7 @@ targets:
     settings:
       base:
         BUNDLE_LOADER: "$(TEST_HOST)"
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Botina.app/Contents/MacOS/Botina"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/BotinaV2.app/Contents/MacOS/BotinaV2"
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_MODULE_NAME: BotinaTests
-        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.BotinaTests
+        PRODUCT_MODULE_NAME: BotinaV2Tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.BotinaV2Tests

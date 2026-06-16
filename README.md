@@ -1,4 +1,4 @@
-# Botina — M1 recorder · M2 transcribe & summarize · M3 search · M4 day tracking
+# BotinaV2 — M1 recorder · M2 transcribe & summarize · M3 search · M4 day tracking
 
 Strictly-local meeting recorder and day tracker for macOS. **Zero external dependencies**: transcription (Parakeet/CoreML) and summarization (bundled llama.cpp server + built-in model) both run in/with the app. Ollama / OpenAI-compatible servers remain optional backends for power users.
 
@@ -23,7 +23,7 @@ In Xcode: select your team under Signing & Capabilities, then Run. On first reco
 **M1 — recording**
 - **Detection:** polls for known meeting apps (Zoom, Teams, Slack, Webex, FaceTime) + mic-in-use; auto-start per settings (auto / ask / manual), auto-stop with 60 s debounce.
 - **Recording:** two synchronized tracks — `mic.m4a` (AVAudioEngine) and `system.m4a` (Core Audio process tap on the meeting app's PID → aggregate device → AAC). Mic = "Me", system = "Them" (free diarization).
-- **Storage:** `~/Library/Application Support/com.dotenv.Botina/meetings/YYYY/MM/dd-slug/` with `meta.json` per meeting. (Bundle-id folder, not "Botina" — avoids colliding with any other app's `Application Support/Botina`.)
+- **Storage:** `~/Library/Application Support/com.dotenv.BotinaV2/meetings/YYYY/MM/dd-slug/` with `meta.json` per meeting. (Bundle-id folder, not "BotinaV2" — avoids colliding with any other app's `Application Support/BotinaV2`.)
 - **UI:** menu bar item (record state, start/stop, recent meetings) + main window (meeting list, Show in Finder, playback via QuickTime).
 
 **M2 — transcription & summarization**
@@ -32,13 +32,13 @@ In Xcode: select your team under Signing & Capabilities, then Run. On first reco
 - **Summarization:** Ollama (`/api/chat`) or any OpenAI-compatible localhost server (LM Studio, vllm-mlx…). Map-reduce for long meetings. Output is `summary.md` with TL;DR / Key points / Decisions / Action items / Open questions. Strips `<think>` blocks from reasoning models.
 - **Pipeline:** runs automatically when a recording stops (configurable); serial queue with per-meeting status in the UI; Process menu for manual / re-runs.
 - **UI:** Summary + Transcript tabs in the meeting detail; Settings → Transcription/Summarization with Ollama auto-detection, model picker, and a "Test generation" button.
-- **Headless mode:** `Botina --process <meeting-folder> [--no-summary]` runs the pipeline without the UI (used for end-to-end testing).
+- **Headless mode:** `BotinaV2 --process <meeting-folder> [--no-summary]` runs the pipeline without the UI (used for end-to-end testing).
 
 **M3 — search & player**
-- **Index:** SQLite + FTS5 (`botina.sqlite` in the storage root, system SQLite — no dependency) over titles, transcript segments, and summaries. Segment-level rows carry their audio timestamp. Incremental re-index by file mtime, triggered on launch and after each pipeline run.
+- **Index:** SQLite + FTS5 (`botinav2.sqlite` in the storage root, system SQLite — no dependency) over titles, transcript segments, and summaries. Segment-level rows carry their audio timestamp. Incremental re-index by file mtime, triggered on launch and after each pipeline run.
 - **Search UI:** sidebar Meetings | Search; debounced search-as-you-type (last term prefix-matched), All/Transcripts/Summaries scope, «highlighted» snippets; clicking a transcript hit opens the meeting and plays from that timestamp.
 - **Player:** mic + system tracks play in sync (shared device-time anchor); seek bar; click any transcript line to jump the audio there; the currently-playing segment is highlighted.
-- **Headless:** `Botina --search "<query>"` prints index hits (test hook).
+- **Headless:** `BotinaV2 --search "<query>"` prints index hits (test hook).
 
 **M3.5 — built-in LLM (no Ollama/LM Studio required)**
 - `Scripts/fetch-llama.sh` (Xcode pre-build phase) vendors the pinned llama.cpp release (`b9587`, llama-server + dylibs, ~10 MB) and the default model (Qwen3 0.6B Q8_0, 0.64 GB) into `Vendor/`, which is copied into the app bundle. First build downloads once; afterwards cached.

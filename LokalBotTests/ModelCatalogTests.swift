@@ -1,5 +1,5 @@
 import XCTest
-@testable import Botina
+@testable import BotinaV2
 
 final class ModelCatalogTests: XCTestCase {
     func testCatalogIDsAreUnique() {

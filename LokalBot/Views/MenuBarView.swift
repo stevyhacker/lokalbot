@@ -60,7 +60,7 @@ struct MenuBarView: View {
             Divider()
 
             HStack {
-                Button("Open Botina...") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
+                Button("Open BotinaV2...") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
                     .buttonStyle(.plain).foregroundStyle(.tint)
                 Button("Permissions...") { openWindow(id: "onboarding"); NSApp.activate(ignoringOtherApps: true) }
                     .buttonStyle(.plain).font(.caption).foregroundStyle(.secondary)

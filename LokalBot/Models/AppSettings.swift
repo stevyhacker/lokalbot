@@ -59,7 +59,7 @@ struct AppSettings: Codable {
         }
     }
 
-    private static let key = "botina.settings"
+    private static let key = "botinav2.settings"
 
     private enum CodingKeys: String, CodingKey {
         case autoRecordMode
