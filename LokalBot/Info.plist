@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>LokalBot</string>
+	<string>Botina</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIconFile</key>
@@ -25,8 +25,8 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>LokalBot records the meeting app's audio output so the other participants are captured. Audio never leaves this Mac.</string>
+	<string>Botina records the meeting app's audio output so the other participants are captured. Audio never leaves this Mac.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>LokalBot records your side of meetings from the microphone. Audio never leaves this Mac.</string>
+	<string>Botina records your side of meetings from the microphone. Audio never leaves this Mac.</string>
 </dict>
 </plist>

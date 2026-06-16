@@ -1,5 +1,5 @@
 #!/bin/bash
-# LokalBot end-to-end test suite. Drives the REAL app binary headlessly:
+# Botina end-to-end test suite. Drives the REAL app binary headlessly:
 # real audio (synthesized with `say`), real CoreML transcription, the real
 # bundled llama.cpp server, real SQLite. Run on a Mac with the app built:
 #   Scripts/install-app.sh && Scripts/e2e.sh
@@ -7,8 +7,8 @@
 # the permission is missing, so the suite is useful pre- and post-grant.
 set -uo pipefail
 
-BIN="${LOKALBOT_APP:-/Applications/LokalBot.app}/Contents/MacOS/LokalBot"
-ROOT="$HOME/Library/Application Support/com.dotenv.LokalBot"
+BIN="${BOTINA_APP:-/Applications/Botina.app}/Contents/MacOS/Botina"
+ROOT="$HOME/Library/Application Support/com.dotenv.Botina"
 [ -x "$BIN" ] || { echo "no binary at $BIN — run Scripts/install-app.sh first"; exit 2; }
 
 P=0; F=0; S=0
@@ -67,7 +67,7 @@ echo "== T5: semantic search (embeddings, zero keyword overlap) =="
 echo "== T6: screenshot + OCR + encryption =="
 "$BIN" --shot-test >/dev/null 2>&1
 case $? in
-  0) LAST=$(sqlite3 "$ROOT/lokalbot.sqlite" "SELECT path FROM screenshots WHERE path!='' ORDER BY ts DESC LIMIT 1")
+  0) LAST=$(sqlite3 "$ROOT/botina.sqlite" "SELECT path FROM screenshots WHERE path!='' ORDER BY ts DESC LIMIT 1")
      if [ -n "$LAST" ] && ! xxd -l 12 "$LAST" | grep -q ftyp; then
        pass "capture ok, file encrypted (no HEIC magic)"
      else fail "capture row exists but file looks wrong"; fi ;;

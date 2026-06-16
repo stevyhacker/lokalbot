@@ -2,6 +2,39 @@ import Foundation
 import FluidAudio
 import WhisperKit
 
+struct ModelPreparationUpdate: Sendable {
+    var fractionCompleted: Double?
+    var status: String
+}
+
+typealias ModelPreparationProgressHandler = @MainActor @Sendable (ModelPreparationUpdate) -> Void
+
+private func reportPreparationUpdate(_ update: ModelPreparationUpdate,
+                                     to handler: ModelPreparationProgressHandler?) {
+    guard let handler else { return }
+    Task { @MainActor in handler(update) }
+}
+
+private func downloadProgressHandler(
+    _ handler: ModelPreparationProgressHandler?
+) -> DownloadUtils.ProgressHandler? {
+    guard handler != nil else { return nil }
+    return { progress in
+        let status: String
+        switch progress.phase {
+        case .listing:
+            status = "Checking..."
+        case .downloading:
+            status = "Downloading..."
+        case .compiling:
+            status = "Compiling..."
+        }
+        reportPreparationUpdate(
+            .init(fractionCompleted: progress.fractionCompleted, status: status),
+            to: handler)
+    }
+}
+
 /// User-facing transcription model list (Settings). Same families Handy
 /// ships: Parakeet (CoreML), Whisper (WhisperKit/CoreML), Cohere (CoreML).
 enum TranscriptionModelChoice: String, Codable, CaseIterable, Identifiable {
@@ -93,13 +126,20 @@ actor ParakeetEngine: TranscriptionEngine {
     func setVariant(_ v: Variant) { variant = v }
 
     /// Downloads (first run) and loads the CoreML model. Idempotent.
-    func prepare() async throws {
+    func prepare(progress: ModelPreparationProgressHandler? = nil) async throws {
         guard manager == nil || loadedVariant != variant else { return }
-        let models = try await AsrModels.downloadAndLoad(version: variant.modelVersion)
+        reportPreparationUpdate(.init(fractionCompleted: nil, status: "Checking..."),
+                                to: progress)
+        let models = try await AsrModels.downloadAndLoad(
+            version: variant.modelVersion,
+            progressHandler: downloadProgressHandler(progress))
+        reportPreparationUpdate(.init(fractionCompleted: nil, status: "Loading..."),
+                                to: progress)
         let m = AsrManager(config: .default)
         try await m.loadModels(models)
         manager = m
         loadedVariant = variant
+        reportPreparationUpdate(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
@@ -184,10 +224,25 @@ actor WhisperEngine: TranscriptionEngine {
     nonisolated let supportsStreaming = false
 
     private var pipe: WhisperKit?
+    private let modelName = "large-v3-v20240930"
 
-    func prepare() async throws {
+    func prepare(progress: ModelPreparationProgressHandler? = nil) async throws {
         guard pipe == nil else { return }
-        pipe = try await WhisperKit(WhisperKitConfig(model: "large-v3-v20240930"))
+        reportPreparationUpdate(.init(fractionCompleted: nil, status: "Checking..."),
+                                to: progress)
+        let modelFolder = try await WhisperKit.download(variant: modelName) { download in
+            reportPreparationUpdate(
+                .init(fractionCompleted: download.fractionCompleted,
+                      status: "Downloading..."),
+                to: progress)
+        }
+        reportPreparationUpdate(.init(fractionCompleted: nil, status: "Loading..."),
+                                to: progress)
+        pipe = try await WhisperKit(WhisperKitConfig(
+            model: modelName,
+            modelFolder: modelFolder.path(percentEncoded: false),
+            download: false))
+        reportPreparationUpdate(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
@@ -216,18 +271,26 @@ actor CohereEngine: TranscriptionEngine {
     private var models: CoherePipeline.LoadedModels?
     private let pipeline = CoherePipeline()
 
-    func prepare() async throws {
+    func prepare(progress: ModelPreparationProgressHandler? = nil) async throws {
         guard models == nil else { return }
+        reportPreparationUpdate(.init(fractionCompleted: nil, status: "Checking..."),
+                                to: progress)
         let base = FileManager.default.urls(for: .applicationSupportDirectory,
                                             in: .userDomainMask).first!
             .appendingPathComponent("FluidAudio", isDirectory: true)
         let repoDir = base.appendingPathComponent(Repo.cohereTranscribeCoreml.folderName)
         if !FileManager.default.fileExists(
             atPath: repoDir.appendingPathComponent(ModelNames.CohereTranscribe.encoderCompiledFile).path) {
-            try await DownloadUtils.downloadRepo(.cohereTranscribeCoreml, to: base)
+            try await DownloadUtils.downloadRepo(
+                .cohereTranscribeCoreml,
+                to: base,
+                progressHandler: downloadProgressHandler(progress))
         }
+        reportPreparationUpdate(.init(fractionCompleted: nil, status: "Loading..."),
+                                to: progress)
         models = try await CoherePipeline.loadModels(
             encoderDir: repoDir, decoderDir: repoDir, vocabDir: repoDir)
+        reportPreparationUpdate(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {

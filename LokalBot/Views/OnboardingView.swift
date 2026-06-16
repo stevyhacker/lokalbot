@@ -56,7 +56,7 @@ struct OnboardingView: View {
                 Image(systemName: "lock.shield.fill")
                     .font(.system(size: 30)).foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Welcome to LokalBot").font(.title2.bold())
+                    Text("Welcome to Botina").font(.title2.bold())
                     Text("Three macOS permissions make everything work. All data stays on this Mac.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
@@ -83,9 +83,9 @@ struct OnboardingView: View {
                     .resizable().frame(width: 44, height: 44)
                     .onDrag { NSItemProvider(object: Bundle.main.bundleURL as NSURL) }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Adding LokalBot manually in System Settings?")
+                    Text("Adding Botina manually in System Settings?")
                         .font(.system(size: 12.5, weight: .semibold))
-                    Text("Drag this icon straight into the permission list — it's always the right copy. Remove any older “LokalBot” entries first.")
+                    Text("Drag this icon straight into the permission list — it's always the right copy. Remove any older “Botina” entries first.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -99,11 +99,11 @@ struct OnboardingView: View {
 
             Divider()
             HStack {
-                Label("If a permission was granted while LokalBot was running, relaunch to apply it.",
+                Label("If a permission was granted while Botina was running, relaunch to apply it.",
                       systemImage: "arrow.triangle.2.circlepath")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Relaunch LokalBot") { Self.relaunch() }
+                Button("Relaunch Botina") { Self.relaunch() }
                 if Self.allGranted {
                     Text("All set ✓").font(.callout.bold()).foregroundStyle(.green)
                 }

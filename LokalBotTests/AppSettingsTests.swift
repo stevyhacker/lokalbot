@@ -1,5 +1,5 @@
 import XCTest
-@testable import LokalBot
+@testable import Botina
 
 final class AppSettingsTests: XCTestCase {
     func testDecodesLegacyLanguageHintIntoTypedLanguage() throws {

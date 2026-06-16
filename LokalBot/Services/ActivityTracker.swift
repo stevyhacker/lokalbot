@@ -16,7 +16,7 @@ struct ActivityBlock: Identifiable {
     var duration: TimeInterval { end.timeIntervalSince(start) }
 }
 
-/// Storage for activity blocks (own connection to lokalbot.sqlite).
+/// Storage for activity blocks (own connection to botina.sqlite).
 @MainActor
 final class ActivityStore {
     private var db: OpaquePointer?
@@ -219,7 +219,7 @@ final class ActivitySampler: ObservableObject {
 
     func start() {
         guard timer == nil else { return }
-        lokalbotLog("sampler start — AX trusted: \(Self.hasAccessibility ? "yes" : "no")")
+        botinaLog("sampler start — AX trusted: \(Self.hasAccessibility ? "yes" : "no")")
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.sample() }
         }

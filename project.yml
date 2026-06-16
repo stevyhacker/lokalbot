@@ -45,13 +45,13 @@ targets:
     info:
       path: LokalBot/Info.plist
       properties:
-        CFBundleDisplayName: LokalBot
+        CFBundleDisplayName: Botina
         CFBundleIconFile: AppIcon
         NSMicrophoneUsageDescription: >-
-          LokalBot records your side of meetings from the microphone.
+          Botina records your side of meetings from the microphone.
           Audio never leaves this Mac.
         NSAudioCaptureUsageDescription: >-
-          LokalBot records the meeting app's audio output so the other
+          Botina records the meeting app's audio output so the other
           participants are captured. Audio never leaves this Mac.
         LSApplicationCategoryType: public.app-category.productivity
     settings:
@@ -64,6 +64,9 @@ targets:
         # survive rebuilds — ad-hoc signing invalidates them every build.
         DEVELOPMENT_TEAM: K96P3M3997
         GENERATE_INFOPLIST_FILE: NO
+        PRODUCT_NAME: Botina
+        PRODUCT_MODULE_NAME: Botina
+        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.Botina
 
   LokalBotTests:
     type: bundle.unit-test
@@ -75,5 +78,7 @@ targets:
     settings:
       base:
         BUNDLE_LOADER: "$(TEST_HOST)"
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LokalBot.app/Contents/MacOS/LokalBot"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Botina.app/Contents/MacOS/Botina"
         GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_MODULE_NAME: BotinaTests
+        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.BotinaTests

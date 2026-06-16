@@ -4,7 +4,7 @@ import Security
 enum AppIdentifiers {
     static var bundleID: String {
         guard let bundleID = Bundle.main.bundleIdentifier else {
-            preconditionFailure("LokalBot requires a bundle identifier.")
+            preconditionFailure("Botina requires a bundle identifier.")
         }
         return bundleID
     }

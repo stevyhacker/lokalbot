@@ -89,7 +89,7 @@ struct MainWindowView: View {
         .task {
             // Auto-open once, ever. After that it lives behind
             // menu bar → "Permissions…" and never nags.
-            let key = "lokalbot.onboarding.shown"
+            let key = "botina.onboarding.shown"
             if !OnboardingView.allGranted && !UserDefaults.standard.bool(forKey: key) {
                 UserDefaults.standard.set(true, forKey: key)
                 openWindow(id: "onboarding")

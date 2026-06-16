@@ -1,11 +1,11 @@
 import Foundation
 
 /// Owns the on-disk layout (design doc §6):
-/// ~/Library/Application Support/com.dotenv.LokalBot/
+/// ~/Library/Application Support/com.dotenv.Botina/
 ///   meetings/YYYY/MM/dd-slug/{mic.m4a, system.m4a, meta.json}
 ///
-/// Rooted at the bundle id, NOT "LokalBot": an unrelated app already owns
-/// ~/Library/Application Support/LokalBot/ on some machines, and its
+/// Rooted at the bundle id, NOT "Botina": an unrelated app may own
+/// ~/Library/Application Support/Botina/ on some machines, and its
 /// "Meetings" folder would collide with our "meetings" on the default
 /// case-insensitive filesystem.
 final class StorageManager {

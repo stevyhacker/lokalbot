@@ -6,7 +6,7 @@ import CryptoKit
 
 /// Plain-file diagnostics (<storage>/debug.log) — NSLog/os_log proved
 /// unreliable to read back for debug builds.
-func lokalbotLog(_ message: String) {
+func botinaLog(_ message: String) {
     let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         .appendingPathComponent(AppIdentifiers.bundleID)
         .appendingPathComponent("debug.log")
@@ -71,28 +71,28 @@ final class ScreenshotService: ObservableObject {
     private func captureIfAppropriate() async {
         let config = settings()
         guard config.screenshotsEnabled, config.trackingEnabled else {
-            lokalbotLog("shot skip: disabled"); return
+            botinaLog("shot skip: disabled"); return
         }
-        guard !sampler.isPaused else { lokalbotLog("shot skip: paused"); return }
+        guard !sampler.isPaused else { botinaLog("shot skip: paused"); return }
         // Never let the background timer trigger a TCC dialog: preflight is
         // prompt-free. Prompting belongs to onboarding / explicit clicks only.
         guard CGPreflightScreenCaptureAccess() else {
-            lokalbotLog("shot skip: screen recording not granted"); return
+            botinaLog("shot skip: screen recording not granted"); return
         }
         let idle = CGEventSource.secondsSinceLastEventType(
             .combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
-        guard idle < 180 else { lokalbotLog("shot skip: idle \(Int(idle))s"); return }
+        guard idle < 180 else { botinaLog("shot skip: idle \(Int(idle))s"); return }
         guard let frontmost = NSWorkspace.shared.frontmostApplication?.localizedName,
-              frontmost != "loginwindow" else { lokalbotLog("shot skip: lock screen"); return }
+              frontmost != "loginwindow" else { botinaLog("shot skip: lock screen"); return }
         guard !config.excludedAppList.contains(where: { frontmost.localizedCaseInsensitiveContains($0) })
-        else { lokalbotLog("shot skip: excluded (\(frontmost))"); return }
+        else { botinaLog("shot skip: excluded (\(frontmost))"); return }
 
         do {
             try await capture(frontApp: frontmost)
             lastError = nil
         } catch {
             lastError = error.localizedDescription
-            lokalbotLog("shot FAILED: \(error)")
+            botinaLog("shot FAILED: \(error)")
         }
     }
 
@@ -126,7 +126,7 @@ final class ScreenshotService: ObservableObject {
 
         store.insertScreenshot(ts: timestamp, path: file.path, app: frontApp, ocr: ocrText)
         lastCapture = timestamp
-        lokalbotLog("shot ok: \(file.lastPathComponent) (\(ocrText.count) OCR chars, app: \(frontApp))")
+        botinaLog("shot ok: \(file.lastPathComponent) (\(ocrText.count) OCR chars, app: \(frontApp))")
     }
 
     /// Manual trigger (menu bar) — the one non-onboarding place allowed to
@@ -134,7 +134,7 @@ final class ScreenshotService: ObservableObject {
     func captureNow() {
         Task { @MainActor in
             if !CGPreflightScreenCaptureAccess() {
-                lokalbotLog("capture now: requesting screen recording access")
+                botinaLog("capture now: requesting screen recording access")
                 guard CGRequestScreenCaptureAccess() else { return }
             }
             await captureIfAppropriate()
@@ -188,7 +188,7 @@ final class ScreenshotService: ObservableObject {
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
             data, "public.heic" as CFString, 1, nil) else {
-            throw NSError(domain: "LokalBot", code: 5,
+            throw NSError(domain: "Botina", code: 5,
                           userInfo: [NSLocalizedDescriptionKey: "HEIC encoder unavailable"])
         }
         CGImageDestinationAddImage(destination, image,
@@ -210,7 +210,7 @@ final class ScreenshotService: ObservableObject {
         let data = key.withUnsafeBytes { Data($0) }
         KeychainSecrets.set(data, account: "screenshot-key")
         guard KeychainSecrets.data(account: "screenshot-key") != nil else {
-            throw NSError(domain: "LokalBot", code: 6,
+            throw NSError(domain: "Botina", code: 6,
                           userInfo: [NSLocalizedDescriptionKey: "Could not save screenshot encryption key"])
         }
         cachedKey = key

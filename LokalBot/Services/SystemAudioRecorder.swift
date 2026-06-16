@@ -70,7 +70,7 @@ final class SystemAudioRecorder {
 
         // 4. Private aggregate device that contains (auto-starts) the tap.
         let aggDescription: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "LokalBot Tap",
+            kAudioAggregateDeviceNameKey: "Botina Tap",
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceTapAutoStartKey: true,

@@ -7,8 +7,11 @@ struct SettingsView: View {
     @State private var ollamaReachable = false
     @State private var testResult: String?
     @State private var testing = false
-    @State private var warmingUp = false
-    @State private var warmUpResult: String?
+    @State private var preparingTranscriptionModelID: String?
+    @State private var readyTranscriptionModelIDs: Set<String> = []
+    @State private var transcriptionModelErrors: [String: String] = [:]
+    @State private var transcriptionModelProgress: [String: Double] = [:]
+    @State private var transcriptionModelStatus: [String: String] = [:]
 
     var body: some View {
         Form {
@@ -31,27 +34,16 @@ struct SettingsView: View {
 
             Section("Transcription") {
                 ForEach(TranscriptionModelChoice.allCases) { choice in
-                    HStack(spacing: 8) {
-                        Image(systemName: app.settings.transcriptionModel == choice
-                              ? "largecircle.fill.circle" : "circle")
-                            .foregroundStyle(app.settings.transcriptionModel == choice
-                                             ? Color.accentColor : .secondary)
-                            .onTapGesture { app.settings.transcriptionModel = choice }
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(choice.rawValue).font(.system(size: 12.5, weight: .medium))
-                            Text(choice.blurb).font(.caption2).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                    }
-                }
-                HStack(spacing: 8) {
-                    Button(warmingUp ? "Downloading…" : "Download & warm up now") {
-                        Task { await warmUpTranscription() }
-                    }
-                    .disabled(warmingUp)
-                    if warmingUp { ProgressView().controlSize(.small) }
-                    if let warmUpResult {
-                        Text(warmUpResult).font(.caption).foregroundStyle(.secondary)
+                    TranscriptionModelRow(
+                        choice: choice,
+                        preparing: preparingTranscriptionModelID == choice.id,
+                        prepareDisabled: preparingTranscriptionModelID != nil,
+                        ready: readyTranscriptionModelIDs.contains(choice.id),
+                        error: transcriptionModelErrors[choice.id],
+                        progress: transcriptionModelProgress[choice.id],
+                        status: transcriptionModelStatus[choice.id]
+                    ) {
+                        Task { await prepareTranscriptionModel(choice) }
                     }
                 }
                 Picker("Language", selection: $app.settings.transcriptionLanguage) {
@@ -61,7 +53,7 @@ struct SettingsView: View {
                 }
                 .frame(maxWidth: 320)
                 Toggle("Transcribe automatically after each meeting", isOn: $app.settings.autoTranscribe)
-                Text("Runs fully on-device (CoreML / Neural Engine). Models fetch from Hugging Face on first use — or pre-download above.")
+                Text("Runs fully on-device (CoreML / Neural Engine). Models fetch from Hugging Face on first use — or use Download to cache and warm one up.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -240,26 +232,93 @@ struct SettingsView: View {
         }
     }
 
-    private func warmUpTranscription() async {
-        warmingUp = true
-        warmUpResult = nil
-        defer { warmingUp = false }
+    private struct TranscriptionModelRow: View {
+        @EnvironmentObject var app: AppState
+        let choice: TranscriptionModelChoice
+        let preparing: Bool
+        let prepareDisabled: Bool
+        let ready: Bool
+        let error: String?
+        let progress: Double?
+        let status: String?
+        let prepare: () -> Void
+
+        var body: some View {
+            let selected = app.settings.transcriptionModel == choice
+            HStack(spacing: 8) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(selected ? Color.accentColor : .secondary)
+                    .onTapGesture { app.settings.transcriptionModel = choice }
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(choice.rawValue).font(.system(size: 12.5, weight: .medium))
+                        if ready {
+                            Text("READY").font(.system(size: 8.5, weight: .bold))
+                                .padding(.horizontal, 4).padding(.vertical, 1)
+                                .background(.green.opacity(0.2), in: Capsule())
+                        }
+                    }
+                    Text(choice.blurb).font(.caption2).foregroundStyle(.secondary)
+                    if let error {
+                        Text(error).font(.caption2).foregroundStyle(.orange)
+                    }
+                }
+                Spacer()
+                if preparing {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        if let progress {
+                            ProgressView(value: progress).frame(width: 84)
+                        } else {
+                            ProgressView()
+                                .progressViewStyle(.linear)
+                                .frame(width: 84)
+                        }
+                        Text(status ?? "Preparing...")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                } else if !ready {
+                    Button("Download") { prepare() }
+                        .controlSize(.small)
+                        .disabled(prepareDisabled)
+                }
+            }
+            .opacity(selected || ready || preparing ? 1 : 0.75)
+        }
+    }
+
+    private func prepareTranscriptionModel(_ choice: TranscriptionModelChoice) async {
+        guard preparingTranscriptionModelID == nil else { return }
+        let id = choice.id
+        preparingTranscriptionModelID = choice.id
+        transcriptionModelErrors[choice.id] = nil
+        transcriptionModelProgress[choice.id] = nil
+        transcriptionModelStatus[choice.id] = "Preparing..."
+        defer {
+            preparingTranscriptionModelID = nil
+            transcriptionModelProgress[id] = nil
+            transcriptionModelStatus[id] = nil
+        }
+        let progressHandler: ModelPreparationProgressHandler = { update in
+            guard preparingTranscriptionModelID == id else { return }
+            transcriptionModelProgress[id] = update.fractionCompleted
+            transcriptionModelStatus[id] = update.status
+        }
         do {
-            switch app.settings.transcriptionModel {
+            switch choice {
             case .parakeetV3:
                 await ParakeetEngine.shared.setVariant(.v3)
-                try await ParakeetEngine.shared.prepare()
+                try await ParakeetEngine.shared.prepare(progress: progressHandler)
             case .parakeetV2:
                 await ParakeetEngine.shared.setVariant(.v2)
-                try await ParakeetEngine.shared.prepare()
+                try await ParakeetEngine.shared.prepare(progress: progressHandler)
             case .whisperLarge:
-                try await WhisperEngine.shared.prepare()
+                try await WhisperEngine.shared.prepare(progress: progressHandler)
             case .cohere:
-                try await CohereEngine.shared.prepare()
+                try await CohereEngine.shared.prepare(progress: progressHandler)
             }
-            warmUpResult = "✓ Ready"
+            readyTranscriptionModelIDs.insert(choice.id)
         } catch {
-            warmUpResult = "✗ \(error.localizedDescription)"
+            transcriptionModelErrors[choice.id] = error.localizedDescription
         }
     }
 
