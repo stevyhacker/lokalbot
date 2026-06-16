@@ -54,8 +54,12 @@ struct SettingsView: View {
                         Text(warmUpResult).font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                TextField("Language hint (ISO code, empty = auto)", text: $app.settings.languageHint)
-                    .frame(maxWidth: 320)
+                Picker("Language", selection: $app.settings.transcriptionLanguage) {
+                    ForEach(TranscriptionLanguage.allCases) { language in
+                        Text(language.displayName).tag(language)
+                    }
+                }
+                .frame(maxWidth: 320)
                 Toggle("Transcribe automatically after each meeting", isOn: $app.settings.autoTranscribe)
                 Text("Runs fully on-device (CoreML / Neural Engine). Models fetch from Hugging Face on first use — or pre-download above.")
                     .font(.caption).foregroundStyle(.secondary)

@@ -7,11 +7,21 @@ struct LokalBotApp: App {
     @StateObject private var app = AppState()
 
     var body: some Scene {
-        Window("LokalBot", id: "main") {
+        WindowGroup("LokalBot", id: "main") {
             MainWindowView()
                 .environmentObject(app)
         }
         .defaultSize(width: 1180, height: 740)
+        .commands {
+            CommandMenu("Recording") {
+                Button(app.isRecording ? "Stop Recording" : "Start Recording") {
+                    app.isRecording
+                        ? app.stopRecording()
+                        : app.startRecording(detectedApp: app.detector.activeApp, source: "command")
+                }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+            }
+        }
 
         Window("Welcome to LokalBot", id: "onboarding") {
             OnboardingView()

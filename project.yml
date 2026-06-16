@@ -3,7 +3,10 @@ options:
   bundleIdPrefix: com.dotenv
   deploymentTarget:
     macOS: "14.4"   # Core Audio process taps require 14.4+
+  minimumXcodeGenVersion: "2.40"
   createIntermediateGroups: true
+  generateEmptyDirectories: true
+  groupSortPosition: top
 
 packages:
   FluidAudio:
@@ -61,3 +64,16 @@ targets:
         # survive rebuilds — ad-hoc signing invalidates them every build.
         DEVELOPMENT_TEAM: K96P3M3997
         GENERATE_INFOPLIST_FILE: NO
+
+  LokalBotTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - LokalBotTests
+    dependencies:
+      - target: LokalBot
+    settings:
+      base:
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LokalBot.app/Contents/MacOS/LokalBot"
+        GENERATE_INFOPLIST_FILE: YES

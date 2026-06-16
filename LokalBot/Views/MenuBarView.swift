@@ -47,7 +47,9 @@ struct MenuBarView: View {
                     Image(systemName: "waveform")
                         .foregroundStyle(.secondary).font(.caption)
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(meeting.title).font(.system(size: 12.5))
+                        Text(shortMenuTitle(meeting.title))
+                            .font(.system(size: 12.5))
+                            .lineLimit(1)
                         Text("\(meeting.appName) · \(meeting.durationLabel)")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
@@ -58,9 +60,9 @@ struct MenuBarView: View {
             Divider()
 
             HStack {
-                Button("Open LokalBot…") { openWindow(id: "main"); NSApp.activate() }
+                Button("Open LokalBot...") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
                     .buttonStyle(.plain).foregroundStyle(.tint)
-                Button("Permissions…") { openWindow(id: "onboarding"); NSApp.activate() }
+                Button("Permissions...") { openWindow(id: "onboarding"); NSApp.activate(ignoringOtherApps: true) }
                     .buttonStyle(.plain).font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 if app.settings.trackingEnabled {
@@ -80,5 +82,12 @@ struct MenuBarView: View {
     private var timerLabel: String {
         let s = Int(app.elapsed)
         return String(format: "%02d:%02d elapsed", s / 60, s % 60)
+    }
+
+    private func shortMenuTitle(_ title: String) -> String {
+        let limit = 30
+        guard title.count > limit else { return title }
+        let end = title.index(title.startIndex, offsetBy: limit - 3)
+        return String(title[..<end]) + "..."
     }
 }

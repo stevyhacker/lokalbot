@@ -105,7 +105,7 @@ final class ProcessingPipeline: ObservableObject {
 
     private func transcribeTracks(meeting: Meeting, folder: URL,
                                   engine: TranscriptionEngine, config: AppSettings) async throws -> Transcript {
-        let language = config.languageHint.isEmpty ? nil : config.languageHint
+        let language = config.transcriptionLanguage.code
         var tracks: [Transcript] = []
 
         let micURL = folder.appendingPathComponent("mic.m4a")

@@ -22,8 +22,7 @@ struct AppSettings: Codable {
     // MARK: Models (M2)
 
     var transcriptionModel: TranscriptionModelChoice = .parakeetV3
-    /// ISO 639-1 hint for v3 token filtering ("en", "de", …); empty = auto.
-    var languageHint: String = ""
+    var transcriptionLanguage: TranscriptionLanguage = .auto
     var autoTranscribe: Bool = true
     var autoSummarize: Bool = true
 
@@ -66,7 +65,8 @@ struct AppSettings: Codable {
         case autoRecordMode
         case stopDebounceSeconds
         case transcriptionModel
-        case languageHint
+        case transcriptionLanguage
+        case languageHint // legacy key used by builds before typed language selection
         case autoTranscribe
         case autoSummarize
         case trackingEnabled
@@ -101,13 +101,41 @@ struct AppSettings: Codable {
     // working instead of silently resetting everything to defaults.
     init() {}
 
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(autoRecordMode, forKey: .autoRecordMode)
+        try c.encode(stopDebounceSeconds, forKey: .stopDebounceSeconds)
+        try c.encode(transcriptionModel, forKey: .transcriptionModel)
+        try c.encode(transcriptionLanguage, forKey: .transcriptionLanguage)
+        try c.encode(autoTranscribe, forKey: .autoTranscribe)
+        try c.encode(autoSummarize, forKey: .autoSummarize)
+        try c.encode(trackingEnabled, forKey: .trackingEnabled)
+        try c.encode(semanticSearchEnabled, forKey: .semanticSearchEnabled)
+        try c.encode(screenshotsEnabled, forKey: .screenshotsEnabled)
+        try c.encode(screenshotIntervalMinutes, forKey: .screenshotIntervalMinutes)
+        try c.encode(retentionDays, forKey: .retentionDays)
+        try c.encode(excludedApps, forKey: .excludedApps)
+        try c.encode(summarizerBackend, forKey: .summarizerBackend)
+        try c.encode(builtInModelID, forKey: .builtInModelID)
+        try c.encode(ollamaBaseURL, forKey: .ollamaBaseURL)
+        try c.encode(ollamaModel, forKey: .ollamaModel)
+        try c.encode(openAIBaseURL, forKey: .openAIBaseURL)
+        try c.encode(openAIModel, forKey: .openAIModel)
+    }
+
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = AppSettings()
         autoRecordMode = (try? c.decode(AutoRecordMode.self, forKey: .autoRecordMode)) ?? defaults.autoRecordMode
         stopDebounceSeconds = (try? c.decode(TimeInterval.self, forKey: .stopDebounceSeconds)) ?? defaults.stopDebounceSeconds
         transcriptionModel = (try? c.decode(TranscriptionModelChoice.self, forKey: .transcriptionModel)) ?? defaults.transcriptionModel
-        languageHint = (try? c.decode(String.self, forKey: .languageHint)) ?? defaults.languageHint
+        if let language = try? c.decode(TranscriptionLanguage.self, forKey: .transcriptionLanguage) {
+            transcriptionLanguage = language
+        } else if let legacyHint = try? c.decode(String.self, forKey: .languageHint) {
+            transcriptionLanguage = TranscriptionLanguage.fromLegacyHint(legacyHint)
+        } else {
+            transcriptionLanguage = defaults.transcriptionLanguage
+        }
         autoTranscribe = (try? c.decode(Bool.self, forKey: .autoTranscribe)) ?? defaults.autoTranscribe
         autoSummarize = (try? c.decode(Bool.self, forKey: .autoSummarize)) ?? defaults.autoSummarize
         trackingEnabled = (try? c.decode(Bool.self, forKey: .trackingEnabled)) ?? defaults.trackingEnabled
