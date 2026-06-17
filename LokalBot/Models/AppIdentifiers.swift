@@ -2,12 +2,14 @@ import Foundation
 import Security
 
 enum AppIdentifiers {
-    static var bundleID: String {
-        guard let bundleID = Bundle.main.bundleIdentifier else {
-            preconditionFailure("BotinaV2 requires a bundle identifier.")
-        }
-        return bundleID
-    }
+    /// The host BotinaV2 app's bundle id, used to resolve its Application
+    /// Support directory and Keychain consistently from any binary that
+    /// belongs to the app (the app itself, the embedded `lokalbot-cli`, …).
+    /// Hard-coded so the CLI process — whose own bundle id differs from
+    /// the app's — still reads/writes the same paths.
+    static let appBundleID = "com.dotenv.BotinaV2"
+
+    static var bundleID: String { appBundleID }
 }
 
 enum KeychainSecrets {

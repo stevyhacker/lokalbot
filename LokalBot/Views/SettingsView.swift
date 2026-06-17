@@ -12,6 +12,8 @@ struct SettingsView: View {
     @State private var transcriptionModelErrors: [String: String] = [:]
     @State private var transcriptionModelProgress: [String: Double] = [:]
     @State private var transcriptionModelStatus: [String: String] = [:]
+    @StateObject private var updateSettings = UpdateSettings.shared
+    @State private var cliMessage: String?
 
     var body: some View {
         Form {
@@ -59,6 +61,24 @@ struct SettingsView: View {
 
             Section("Summarization") {
                 Toggle("Summarize automatically after transcription", isOn: $app.settings.autoSummarize)
+                Picker("Notes template", selection: $app.settings.noteTemplate) {
+                    ForEach(NoteTemplate.allCases) { template in
+                        Text("\(template.displayName)").tag(template)
+                    }
+                }
+                Text(app.settings.noteTemplate.description)
+                    .font(.caption).foregroundStyle(.secondary)
+                Picker("Notes language", selection: $app.settings.summaryLanguage) {
+                    Text("Match transcript (auto)").tag(SummaryLanguage.matchTranscript)
+                    Divider()
+                    ForEach(SummaryLanguage.presets, id: \.rawValue) { lang in
+                        Text(lang.displayName).tag(lang)
+                    }
+                }
+                Toggle("Split \"Them\" by speaker (neural diarization)",
+                       isOn: $app.settings.multiSpeakerDiarization)
+                Text("Adds 30–60 s of post-processing per meeting. First run downloads ~100 MB of speaker models from Hugging Face.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Picker("Backend", selection: $app.settings.summarizerBackend) {
                     ForEach(AppSettings.SummarizerBackend.allCases) { backend in
                         Text(backend.rawValue).tag(backend)
@@ -162,6 +182,84 @@ struct SettingsView: View {
                         NSWorkspace.shared.activateFileViewerSelecting([app.storage.rootURL])
                     }
                     .buttonStyle(.link)
+                }
+            }
+            Section("Updates") {
+                Toggle("Check for updates automatically",
+                       isOn: $updateSettings.automaticallyCheckForUpdates)
+                LabeledContent("Current version") {
+                    Text(UpdateChecker.currentVersionString).foregroundStyle(.secondary)
+                }
+                if let last = updateSettings.lastCheckDate {
+                    LabeledContent("Last check") {
+                        Text(last.formatted(date: .abbreviated, time: .shortened))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Button("Check for Updates…") {
+                    UpdateChecker.shared.checkForUpdates(mode: .manual)
+                }
+                Text("Manual checks are independent of the toggle. LokalBot is local-first — opt-in only.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Agent CLI") {
+                let installer = LokalBotCLIInstaller.bundled
+                if installer.bundledBinary == nil {
+                    Text("This build doesn't ship lokalbot-cli. Build the lokalbot-cli scheme once before opening Settings.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    LabeledContent("Status") {
+                        if installer.isInstalled {
+                            Label("Installed", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        } else if !installer.isBundleLocationStable {
+                            Label("Move BotinaV2.app to /Applications first",
+                                  systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        } else {
+                            Label("Not installed", systemImage: "circle")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    HStack {
+                        Button(installer.isInstalled ? "Reinstall…" : "Install for your coding agent…") {
+                            cliMessage = nil
+                            do {
+                                try installer.install()
+                                cliMessage = "Installed at \(installer.binLink.path(percentEncoded: false))."
+                            } catch {
+                                cliMessage = "Install failed: \(error.localizedDescription)"
+                            }
+                        }
+                        .disabled(!installer.isBundleLocationStable)
+                        if installer.isInstalled {
+                            Button("Uninstall", role: .destructive) {
+                                cliMessage = nil
+                                do {
+                                    try installer.uninstall()
+                                    cliMessage = "Removed lokalbot-cli symlinks."
+                                } catch {
+                                    cliMessage = "Uninstall failed: \(error.localizedDescription)"
+                                }
+                            }
+                        }
+                        if !installer.localBinOnPath {
+                            Button("Add ~/.local/bin to PATH") {
+                                cliMessage = nil
+                                do {
+                                    try installer.addLocalBinToPath()
+                                    cliMessage = "Appended to ~/.zshrc — open a new terminal."
+                                } catch {
+                                    cliMessage = error.localizedDescription
+                                }
+                            }
+                        }
+                    }
+                    if let cliMessage {
+                        Text(cliMessage).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text("Symlinks the bundled CLI at ~/.local/bin/lokalbot-cli and the skill at ~/.agents/skills/lokalbot-cli. Read-only by design.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             Section("Privacy") {

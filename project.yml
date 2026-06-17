@@ -15,6 +15,9 @@ packages:
   WhisperKit:
     url: https://github.com/argmaxinc/WhisperKit
     exactVersion: 1.0.0
+  ArgumentParser:
+    url: https://github.com/apple/swift-argument-parser
+    from: "1.3.0"
 
 targets:
   LokalBot:
@@ -28,9 +31,28 @@ targets:
       - path: Vendor/llama-models
         type: folder
         buildPhase: resources
+      # Bundle SKILL.md inside the app at Contents/Resources/lokalbot-cli/
+      # so the installer can symlink it onto the user's PATH-adjacent skill
+      # dirs without needing the source repo.
+      - path: .agents/skills/lokalbot-cli/SKILL.md
+        buildPhase:
+          copyFiles:
+            destination: resources
+            subpath: lokalbot-cli
     dependencies:
       - package: FluidAudio
       - package: WhisperKit
+      # Embed the self-contained CLI into Contents/Helpers/ and code-sign it
+      # on copy (hardened runtime during a notarised archive). It's a target
+      # dependency so it's built first; `link: false` because a tool is
+      # copied, not linked into the app.
+      - target: lokalbot-cli
+        link: false
+        embed: true
+        codeSign: true
+        copy:
+          destination: wrapper
+          subpath: Contents/Helpers
     preBuildScripts:
       - name: Fetch llama.cpp vendor
         script: "\"$PROJECT_DIR/Scripts/fetch-llama.sh\""
@@ -82,3 +104,30 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_MODULE_NAME: BotinaV2Tests
         PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.BotinaV2Tests
+
+  lokalbot-cli:
+    type: tool
+    platform: macOS
+    sources:
+      - CLI
+      - LokalBot/CLISupport
+      - path: LokalBot/Models/Meeting.swift
+      - path: LokalBot/Models/Transcript.swift
+      - path: LokalBot/Models/AppIdentifiers.swift
+    dependencies:
+      - package: ArgumentParser
+        product: ArgumentParser
+    settings:
+      base:
+        SWIFT_VERSION: "5.10"
+        MACOSX_DEPLOYMENT_TARGET: "14.4"
+        PRODUCT_NAME: lokalbot-cli
+        PRODUCT_MODULE_NAME: lokalbot_cli
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: K96P3M3997
+        ENABLE_HARDENED_RUNTIME: NO  # flip ON in notarised release builds
+        GENERATE_INFOPLIST_FILE: YES
+        # Embedded into BotinaV2.app/Contents/Helpers rather than installed
+        # as a standalone product, so keep it out of the archive's
+        # install location.
+        SKIP_INSTALL: YES

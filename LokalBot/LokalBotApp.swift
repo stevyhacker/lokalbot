@@ -82,6 +82,7 @@ final class AppState: ObservableObject {
 
     let storage = StorageManager()
     let detector = MeetingDetector()
+    let audioMonitor = AudioSourceMonitor()
     private(set) lazy var searchIndex = SearchIndex(
         databaseURL: storage.rootURL.appendingPathComponent("botinav2.sqlite"))
     private(set) lazy var activityStore = ActivityStore(
@@ -103,6 +104,9 @@ final class AppState: ObservableObject {
     /// The live recording (shown at the top of the library while running).
     @Published private(set) var currentMeeting: Meeting?
     private var pipelineObserver: AnyCancellable?
+    private var audioMonitorObserver: AnyCancellable?
+    private var audioMonitorChangeForwarder: AnyCancellable?
+    private var updateCheckerObserver: AnyCancellable?
 
     var isRecording: Bool { if case .recording = status { true } else { false } }
     var elapsed: TimeInterval {
@@ -112,9 +116,16 @@ final class AppState: ObservableObject {
 
     init() {
         meetings = storage.loadMeetings()
-        // Views observe AppState only; forward pipeline stage changes so
-        // detail views refresh as transcripts/summaries land on disk.
+        // Views observe AppState only; forward pipeline / audio-monitor /
+        // update-checker change notifications so MainWindowView refreshes
+        // when those sub-ObservableObjects publish.
         pipelineObserver = pipeline.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
+        audioMonitorChangeForwarder = audioMonitor.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
+        updateCheckerObserver = UpdateChecker.shared.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
         pipeline.onArtifactsWritten = { [weak self] meeting in
@@ -157,7 +168,20 @@ final class AppState: ObservableObject {
             self.lastError = "Meeting app exited — recording stopped."
             self.stopRecording()
         }
+        // The mic-in-use signal misses meetings with a muted mic. The audio
+        // monitor is the complementary "a meeting app just started producing
+        // audio output" signal — in automatic mode it auto-records the
+        // recognised meeting bundles; otherwise it surfaces a banner.
+        audioMonitor.start()
+        audioMonitorObserver = audioMonitor.$detectedProcess
+            .compactMap { $0 }
+            .sink { [weak self] process in self?.audioMonitorDetected(process) }
         detector.start()
+        // Opt-in once-a-day update check (no-op until the user enables it in
+        // Settings AND UpdateChecker.releasesURL is configured for this repo).
+        if UpdateSettings.shared.isDueForAutomaticCheck() {
+            UpdateChecker.shared.checkForUpdates(mode: .automatic)
+        }
     }
 
     // MARK: - Recording control
@@ -170,6 +194,8 @@ final class AppState: ObservableObject {
     func startRecording(detectedApp: MeetingDetector.DetectedApp?, source: String = "ui") {
         guard !isRecording, !isStartingRecording else { return }
         isStartingRecording = true
+        audioMonitor.isRecordingActive = true
+        audioMonitor.accept()
         botinav2Log("startRecording source=\(source) app=\(detectedApp?.name ?? "manual")")
         Task {
             defer { isStartingRecording = false }
@@ -206,10 +232,25 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// `AudioSourceMonitor` saw an app newly start producing output. Auto-record
+    /// in automatic mode when the bundle is one we know how to record, fall
+    /// back to the lastError banner otherwise so the user can choose.
+    private func audioMonitorDetected(_ process: AudioProcess) {
+        guard !isRecording, !isStartingRecording else { return }
+        let isKnownMeetingApp = process.bundleID.map { MeetingDetector.knownApps[$0] != nil
+            || MeetingDetector.browsers.contains($0) } ?? false
+        guard isKnownMeetingApp, settings.autoRecordMode == .automatic else { return }
+        let detected = MeetingDetector.DetectedApp(
+            name: process.name, bundleID: process.bundleID ?? "", pid: process.id)
+        startRecording(detectedApp: detected, source: "audio-monitor")
+    }
+
     func stopRecording(process: Bool = true) {
         guard isRecording, var meeting = currentMeeting else { return }
         micRecorder.stop()
         systemRecorder.stop()
+        audioMonitor.isRecordingActive = false
+        audioMonitor.reseed()
         meeting.endedAt = Date()
         try? storage.saveMeta(meeting)
         meetings.insert(meeting, at: 0)

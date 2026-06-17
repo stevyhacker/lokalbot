@@ -86,6 +86,31 @@ struct MainWindowView: View {
                 .padding(12)
             }
         }
+        .overlay(alignment: .top) {
+            VStack(spacing: 8) {
+                if let release = UpdateChecker.shared.availableUpdate {
+                    UpdateBannerView(
+                        versionTitle: UpdateChecker.displayName(for: release),
+                        onDownload: { UpdateChecker.shared.openDownload() },
+                        onDismiss: { UpdateChecker.shared.dismissBanner() }
+                    )
+                }
+                if !app.isRecording, let process = app.audioMonitor.detectedProcess {
+                    AudioSourceBanner(process: process,
+                                      onRecord: {
+                                          let detected = MeetingDetector.DetectedApp(
+                                              name: process.name,
+                                              bundleID: process.bundleID ?? "",
+                                              pid: process.id)
+                                          app.audioMonitor.accept()
+                                          app.startRecording(detectedApp: detected, source: "banner")
+                                      },
+                                      onDismiss: { app.audioMonitor.dismiss() })
+                }
+            }
+            .padding(12)
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
         .task {
             // Auto-open once, ever. After that it lives behind
             // menu bar → "Permissions…" and never nags.

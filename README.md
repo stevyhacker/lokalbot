@@ -62,30 +62,45 @@ In Xcode: select your team under Signing & Capabilities, then Run. On first reco
 - **Detection upgrades:** mic-in-use is now event-driven (Core Audio property listeners on the default input device + device-change re-arm, plus NSWorkspace launch/quit notifications; 10 s safety poll remains for browser titles). **Browser meetings** (Google Meet, Jitsi, Whereby) detected via focused-window title when Accessibility is granted — the system-audio tap captures the browser's audio.
 - Day digests (M4) + the model catalog (M3.5) complete the delivered M6 surface. **Not yet built:** VLM screenshot captions (needs a multimodal model + mmproj slot in LlamaServer).
 
+**M7 — robustness, agent CLI, multi-speaker (this pass)**
+- **Recording fixes:** the engine now reacts to `AVAudioEngineConfigurationChange` and re-installs the tap on the new device — switching to AirPods or unplugging a USB mic no longer truncates `mic.m4a`. The `MicRecorder` converter is drained on `stop()` so the trailing seconds of every recording are kept. `SystemAudioRecorder` watches the captured app's PID via `NSWorkspace.didTerminateApplicationNotification` and stops cleanly if the meeting app exits, instead of writing a silent half-track. AAC encoding moved off the Core Audio real-time IOProc thread onto a serial queue with copied buffers; the IOProcID is now destroyed on every error path (no more zombie taps the next launch). `MeetingDetector` removes its default-input-device listener on `stop()` (was leaked) and the new `AppSettings.stopDebounceSeconds` setting is finally wired through.
+- **Audio source monitor:** a second detection signal (`AudioSourceMonitor`) polls Core Audio's process list and treats *silent → producing-output* transitions as meeting candidates. Catches the cases the mic-in-use signal missed (muted Zoom calls, meeting tabs opened before the mic). In automatic mode it auto-records recognised meeting bundles; otherwise a banner appears at the top of the main window.
+- **Agent CLI:** new `lokalbot-cli` target (ArgumentParser) embedded in `Contents/Helpers/`, with subcommands `list / get / search / path`. Read-only access to the meeting library for coding agents (Claude Code, Codex CLI, Cursor, Gemini). Settings → Agent CLI symlinks the binary at `~/.local/bin/lokalbot-cli` and the bundled SKILL.md at `~/.agents/skills/lokalbot-cli/`. JSON by default, `--table` for humans. See `.agents/skills/lokalbot-cli/SKILL.md`.
+- **Update awareness:** opt-in once-a-day GitHub-Releases check (`UpdateChecker`) with a quiet in-window banner for automatic finds and an `NSAlert` for manual `Check for Updates…`. Set `UpdateChecker.releasesURL` + `downloadURL` constants to the repo's release URLs before shipping. `SemanticVersion` parser is strict-SemVer for ordering, lenient about `v` prefix / missing components / `+build` metadata.
+- **Templated summaries:** Settings → Summarization now picks a notes template (Meeting / Lecture / Study guide / Podcast / Free-form) and a summary language (auto-detected from the transcript via `NLLanguageRecognizer`, with Simplified vs Traditional vs Cantonese script handling). Prompts come from `PromptTemplates`, the existing Markdown output format is unchanged.
+- **Neural diarization (opt-in):** Settings → "Split Them by speaker" runs FluidAudio's offline pyannote-community-1 pipeline on `system.m4a` after transcription and relabels segments as "Them 1" / "Them 2" / …. Tuned for meetings (threshold 0.70, step ratio 0.15, min segment 0.3 s). Off by default — first run downloads ~100 MB of CoreML models from Hugging Face.
+
 ## Known limitations / TODO
 
-- Mic-in-use detection is a 3 s poll — replace with `AudioObjectAddPropertyListenerBlock` on the default input device (and re-arm on default-device change).
-- Browser meetings (Google Meet) aren't detected yet — needs window-title check via Accessibility (M4 dependency).
+- `UpdateChecker.releasesURL` / `downloadURL` ship as `nil` — flip them to the project's GitHub release URLs to enable the update path.
 - System track falls back gracefully if tap creation fails (mic-only recording + warning).
 - `AVAudioFile` AAC encoding assumes Float32 tap/mic formats — verified on M-series; if `write(from:)` throws on exotic devices, fall back to `.caf` (PCM) and transcode post-meeting.
 - Design doc says "MLX" for Parakeet; the shipped engine is FluidAudio's **CoreML** port (same model, mature Swift API, ANE-accelerated). MLX remains an option for M6 model-manager work.
-- Summary prompt templates are hardcoded; user-editable template files land with M6.
 
 ## Layout
 
 ```
 LokalBot/
-├── project.yml                  # XcodeGen manifest
+├── project.yml                          # XcodeGen manifest
+├── CLI/                                 # `lokalbot-cli` ArgumentParser entry + commands
+├── .agents/skills/lokalbot-cli/         # SKILL.md (embedded into Contents/Resources)
 └── LokalBot/
-    ├── LokalBotApp.swift        # @main, Window + MenuBarExtra + Settings scenes
-    ├── Models/                  # Meeting, AppSettings
+    ├── LokalBotApp.swift                # @main, Window + MenuBarExtra + Settings scenes
+    ├── CLISupport/                      # SessionLookup + SessionFormatter (shared with CLI)
+    ├── Models/                          # Meeting, Transcript, AppSettings, NoteTemplate, SummaryLanguage
     ├── Services/
-    │   ├── MeetingDetector.swift      # app + mic-in-use detection, debounce
-    │   ├── MicRecorder.swift          # AVAudioEngine tap → mic.m4a
-    │   ├── SystemAudioRecorder.swift  # Core Audio process tap → system.m4a
-    │   └── StorageManager.swift       # folders, meta.json, library scan
-    ├── Engines/TranscriptionEngine.swift  # M2 protocol + stub
-    └── Views/                   # MenuBarView, MainWindowView, SettingsView
+    │   ├── CoreAudioUtils.swift              # process taps, default-device helpers
+    │   ├── MeetingDetector.swift             # mic-in-use + meeting-app detection
+    │   ├── AudioSourceMonitor.swift          # "app just started producing output" signal
+    │   ├── MicRecorder.swift                 # AVAudioEngine tap → mic.m4a
+    │   ├── SystemAudioRecorder.swift         # Core Audio process tap → system.m4a
+    │   ├── NeuralDiarizationEngine.swift     # FluidAudio offline diarizer wrapper
+    │   ├── PromptTemplates.swift             # template + language prompt synthesis
+    │   ├── UpdateChecker.swift               # GitHub Releases probe + banner
+    │   ├── LokalBotCLIInstaller.swift        # symlink installer for the CLI
+    │   └── StorageManager.swift              # folders, meta.json, library scan
+    ├── Engines/                              # TranscriptionEngine, LocalLLM, TextEngine
+    └── Views/                                # MenuBarView, MainWindowView, SettingsView, banners
 ```
 
 ## Roadmap

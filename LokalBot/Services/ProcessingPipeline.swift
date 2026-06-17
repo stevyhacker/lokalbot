@@ -39,7 +39,7 @@ final class ProcessingPipeline: ObservableObject {
     private let settings: () -> AppSettings
     private var queue: [Job] = []
     private var isDraining = false
-
+    private let diarizer = NeuralDiarizationEngine()
     /// Fired after transcript/summary files land on disk (search re-index).
     var onArtifactsWritten: ((Meeting) -> Void)?
 
@@ -83,8 +83,12 @@ final class ProcessingPipeline: ObservableObject {
                 let engine = choice.engine   // engines prepare lazily inside transcribe
 
                 stages[meeting.id] = .transcribing
-                let transcript = try await transcribeTracks(meeting: meeting, folder: folder,
+                var transcript = try await transcribeTracks(meeting: meeting, folder: folder,
                                                             engine: engine, config: config)
+                transcript = await refineSpeakers(transcript: transcript,
+                                                  meeting: meeting,
+                                                  folder: folder,
+                                                  config: config)
                 try write(transcript, to: folder)
             }
             if job.summarize {
@@ -126,6 +130,45 @@ final class ProcessingPipeline: ObservableObject {
         return Transcript.merged(tracks)
     }
 
+    /// Optionally split the catch-all "them" speaker into "Them 1" / "Them 2"
+    /// using FluidAudio's offline diarizer. No-op (returns the input
+    /// unchanged) unless the user opted in AND a system track exists. Never
+    /// crashes the pipeline — a diarization failure just leaves the
+    /// pre-existing labels alone.
+    private func refineSpeakers(transcript: Transcript,
+                                meeting: Meeting,
+                                folder: URL,
+                                config: AppSettings) async -> Transcript {
+        guard config.multiSpeakerDiarization, meeting.hasSystemTrack else { return transcript }
+        let systemURL = folder.appendingPathComponent("system.m4a")
+        guard FileManager.default.fileExists(atPath: systemURL.path) else { return transcript }
+        await diarizer.prepareModels()
+        let segments = await diarizer.diarize(url: systemURL)
+        guard !segments.isEmpty else { return transcript }
+
+        // Stable speaker-id → "Them N" mapping in first-appearance order.
+        var order: [String] = []
+        for segment in segments where !order.contains(segment.speakerId) {
+            order.append(segment.speakerId)
+        }
+        // Don't add the "1" suffix when only one remote speaker was detected
+        // — that's the existing single-Them case, no point churning the label.
+        let useNumbers = order.count > 1
+        let mapping = Dictionary(uniqueKeysWithValues: order.enumerated().map { idx, id in
+            (id, useNumbers ? "them \(idx + 1)" : "them")
+        })
+
+        var labelled = transcript
+        for index in labelled.segments.indices where labelled.segments[index].speaker == "them" {
+            let segment = labelled.segments[index]
+            if let speakerId = segments.dominantSpeaker(coveringStart: segment.start, end: segment.end),
+               let label = mapping[speakerId] {
+                labelled.segments[index].speaker = label
+            }
+        }
+        return labelled
+    }
+
     private func write(_ transcript: Transcript, to folder: URL) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -143,44 +186,52 @@ final class ProcessingPipeline: ObservableObject {
 
     // MARK: - Summarization
 
-    private static let systemPrompt = """
-        You are BotinaV2, a precise meeting note-taker. You will receive a meeting \
-        transcript where "Me" is this Mac's user and "Them" is the other participants. \
-        Write a Markdown summary with exactly these sections: ## TL;DR (2-3 sentences), \
-        ## Key points (bullets), ## Decisions (bullets, or "None"), ## Action items \
-        (markdown checkboxes "- [ ] owner: task", include the [hh:mm:ss] timestamp where \
-        each was mentioned, or "None"), ## Open questions (bullets, or "None"). \
-        Be specific; never invent content that is not in the transcript. \
-        Respond with Markdown only, no preamble.
-        """
-
     private func summarize(_ transcript: Transcript, meeting: Meeting,
                            config: AppSettings) async throws -> String {
         let engine = try await makeTextEngine(config)
         let text = transcript.markdown
+        // Resolve `.matchTranscript` against the transcript text now so both
+        // the chunk extractions and the final synthesis share the same
+        // language directive (otherwise the chunker can default to English
+        // and the reducer flips back).
+        let language = SummaryLanguage.resolvedForTranscript(config.summaryLanguage,
+                                                             transcript: text)
+        let systemPrompt = PromptTemplates.systemPrompt(for: config.noteTemplate,
+                                                        summaryLanguage: language)
         let body: String
 
         // Map-reduce long meetings: per-chunk notes, then one synthesis pass.
         if text.count > 24_000 {
             var notes: [String] = []
-            for (index, chunk) in chunked(transcript) .enumerated() {
+            let chunkSystem = PromptTemplates.chunkExtractionSystem(summaryLanguage: language)
+            for (index, chunk) in chunked(transcript).enumerated() {
                 let note = try await engine.generate(
-                    system: "Extract the key points, decisions, action items (with [hh:mm:ss] timestamps) and open questions from this part of a meeting transcript as terse Markdown bullets. \"Me\" is this Mac's user, \"Them\" is the other participants. No preamble.",
+                    system: chunkSystem,
                     prompt: chunk,
                     context: ["Part \(index + 1) of a longer meeting."])
                 notes.append(note)
             }
             body = try await engine.generate(
-                system: Self.systemPrompt,
-                prompt: "Synthesize the final summary from these per-part notes:\n\n" + notes.joined(separator: "\n\n---\n\n"),
+                system: systemPrompt,
+                prompt: "Synthesize the final \(config.noteTemplate.displayName.lowercased()) notes from these per-part notes:\n\n"
+                    + notes.joined(separator: "\n\n---\n\n"),
                 context: [])
         } else {
-            body = try await engine.generate(system: Self.systemPrompt, prompt: text, context: [])
+            body = try await engine.generate(
+                system: systemPrompt,
+                prompt: PromptTemplates.userPrompt(transcript: text,
+                                                   template: config.noteTemplate,
+                                                   summaryLanguage: language),
+                context: [])
         }
 
         let date = meeting.startedAt.formatted(date: .long, time: .shortened)
         var header = "# \(meeting.title) — \(date)\n"
         header += "**Duration:** \(meeting.durationLabel) · **App:** \(meeting.appName)"
+        header += " · **Template:** \(config.noteTemplate.displayName)"
+        if let promptLanguage = language.promptLanguageName {
+            header += " · **Language:** \(promptLanguage)"
+        }
         header += " · **Model:** \(engine.displayName)\n\n"
         return header + body + "\n"
     }

@@ -186,23 +186,6 @@ final class MeetingDetector {
     // MARK: - Core Audio: is any process using the default input device?
 
     static func isMicInUse() -> Bool {
-        var deviceID = AudioObjectID(kAudioObjectUnknown)
-        var size = UInt32(MemoryLayout<AudioObjectID>.size)
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),
-                                         &addr, 0, nil, &size, &deviceID) == noErr,
-              deviceID != kAudioObjectUnknown else { return false }
-
-        var running: UInt32 = 0
-        size = UInt32(MemoryLayout<UInt32>.size)
-        addr.mSelector = kAudioDevicePropertyDeviceIsRunningSomewhere
-        guard AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &running) == noErr else {
-            return false
-        }
-        return running != 0
+        CoreAudioUtils.isDefaultInputRunning()
     }
 }

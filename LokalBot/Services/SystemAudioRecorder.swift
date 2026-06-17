@@ -52,19 +52,7 @@ final class SystemAudioRecorder {
 
     func start(capturingPID pid: pid_t, writingTo url: URL) throws {
         // 1. Translate the PID to its Core Audio process object.
-        var processObject = AudioObjectID(kAudioObjectUnknown)
-        var pidCopy = pid
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyTranslatePIDToProcessObject,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var size = UInt32(MemoryLayout<AudioObjectID>.size)
-        let err = withUnsafeMutablePointer(to: &pidCopy) { pidPtr in
-            AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr,
-                                       UInt32(MemoryLayout<pid_t>.size), pidPtr,
-                                       &size, &processObject)
-        }
-        guard err == noErr, processObject != kAudioObjectUnknown else {
+        guard let processObject = CoreAudioUtils.translatePIDToProcessObject(pid: pid) else {
             throw RecorderError.processNotFound
         }
 

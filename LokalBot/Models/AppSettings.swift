@@ -59,6 +59,20 @@ struct AppSettings: Codable {
         }
     }
 
+    // MARK: - Summarisation shape
+
+    /// Which set of section headings the summariser uses (meeting, lecture,
+    /// study guide, podcast, freeform).
+    var noteTemplate: NoteTemplate = .meeting
+    /// Target language for the summary. `.matchTranscript` auto-detects from
+    /// the transcript text; otherwise the prompt forces the chosen language.
+    var summaryLanguage: SummaryLanguage = .matchTranscript
+    /// Run FluidAudio's neural diarizer on `system.m4a` and split the
+    /// catch-all "Them" speaker into "Them 1" / "Them 2" / … by acoustic
+    /// similarity. Off by default — the model is ~100 MB and adds 30-60 s
+    /// of post-processing per meeting; most users record 1:1 calls.
+    var multiSpeakerDiarization: Bool = false
+
     private static let key = "botinav2.settings"
 
     private enum CodingKeys: String, CodingKey {
@@ -81,6 +95,9 @@ struct AppSettings: Codable {
         case ollamaModel
         case openAIBaseURL
         case openAIModel
+        case noteTemplate
+        case summaryLanguage
+        case multiSpeakerDiarization
     }
 
     static func load() -> AppSettings {
@@ -121,6 +138,9 @@ struct AppSettings: Codable {
         try c.encode(ollamaModel, forKey: .ollamaModel)
         try c.encode(openAIBaseURL, forKey: .openAIBaseURL)
         try c.encode(openAIModel, forKey: .openAIModel)
+        try c.encode(noteTemplate, forKey: .noteTemplate)
+        try c.encode(summaryLanguage, forKey: .summaryLanguage)
+        try c.encode(multiSpeakerDiarization, forKey: .multiSpeakerDiarization)
     }
 
     init(from decoder: Decoder) throws {
@@ -150,5 +170,8 @@ struct AppSettings: Codable {
         ollamaModel = (try? c.decode(String.self, forKey: .ollamaModel)) ?? defaults.ollamaModel
         openAIBaseURL = (try? c.decode(String.self, forKey: .openAIBaseURL)) ?? defaults.openAIBaseURL
         openAIModel = (try? c.decode(String.self, forKey: .openAIModel)) ?? defaults.openAIModel
+        noteTemplate = (try? c.decode(NoteTemplate.self, forKey: .noteTemplate)) ?? defaults.noteTemplate
+        summaryLanguage = (try? c.decode(SummaryLanguage.self, forKey: .summaryLanguage)) ?? defaults.summaryLanguage
+        multiSpeakerDiarization = (try? c.decode(Bool.self, forKey: .multiSpeakerDiarization)) ?? defaults.multiSpeakerDiarization
     }
 }

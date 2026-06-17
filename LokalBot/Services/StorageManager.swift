@@ -91,3 +91,13 @@ final class StorageManager {
         return String(allowed).split(separator: "-").joined(separator: "-")
     }
 }
+
+extension Meeting {
+    /// Resolve this meeting's on-disk folder against a `StorageManager`'s
+    /// root. Lives on `StorageManager.swift` (not `Meeting.swift`) so the
+    /// embedded `lokalbot-cli` — which doesn't compile `StorageManager` —
+    /// keeps the `Meeting` value type dependency-free.
+    func folderURL(in storage: StorageManager) -> URL {
+        storage.rootURL.appendingPathComponent(relativePath, isDirectory: true)
+    }
+}

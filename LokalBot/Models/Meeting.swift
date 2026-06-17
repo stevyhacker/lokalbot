@@ -16,9 +16,6 @@ struct Meeting: Identifiable, Codable, Equatable {
         endedAt.map { $0.timeIntervalSince(startedAt) }
     }
 
-    func folderURL(in storage: StorageManager) -> URL {
-        storage.rootURL.appendingPathComponent(relativePath, isDirectory: true)
-    }
 
     var durationLabel: String {
         guard let d = duration else { return "in progress" }
