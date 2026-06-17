@@ -62,7 +62,10 @@ final class AppState: ObservableObject {
     @Published private(set) var meetings: [Meeting] = []
     @Published var lastError: String?
     @Published var settings = AppSettings.load() {
-        didSet { settings.save() }
+        didSet {
+            settings.save()
+            detector.stopDebounce = settings.stopDebounceSeconds
+        }
     }
 
     // Navigation (main window): sidebar section, selected meeting, and a
@@ -147,6 +150,12 @@ final class AppState: ObservableObject {
         }
         detector.onMeetingEnded = { [weak self] in
             self?.stopRecording()
+        }
+        detector.stopDebounce = settings.stopDebounceSeconds
+        systemRecorder.onCapturedProcessTerminated = { [weak self] in
+            guard let self, self.isRecording else { return }
+            self.lastError = "Meeting app exited — recording stopped."
+            self.stopRecording()
         }
         detector.start()
     }

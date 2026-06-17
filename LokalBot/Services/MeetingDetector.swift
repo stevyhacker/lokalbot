@@ -71,7 +71,7 @@ final class MeetingDetector {
     func stop() {
         timer?.invalidate()
         timer = nil
-        disarmMicListener()
+        disarmAll()
     }
 
     /// Listener on the default input device's "running somewhere" property,
@@ -120,6 +120,22 @@ final class MeetingDetector {
         AudioObjectRemovePropertyListenerBlock(listenedDevice, &addr, .main, micListener)
         self.micListener = nil
         listenedDevice = AudioObjectID(kAudioObjectUnknown)
+    }
+
+    /// Full teardown including the default-device listener; only called
+    /// from `stop()`. `armMicListener()` calls `disarmMicListener()` (not
+    /// this) to keep the device-change listener installed across re-arms.
+    private func disarmAll() {
+        disarmMicListener()
+        if let deviceChangeListener {
+            var addr = AudioObjectPropertyAddress(
+                mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain)
+            AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject),
+                                                   &addr, .main, deviceChangeListener)
+            self.deviceChangeListener = nil
+        }
     }
 
     private func tick() {

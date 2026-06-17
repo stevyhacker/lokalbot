@@ -11,6 +11,11 @@ final class MicRecorder {
     private var file: AVAudioFile?
     private var converter: AVAudioConverter?
     private var recordingFormat: AVAudioFormat?
+    /// Observes `AVAudioEngineConfigurationChange` so we can rebuild the
+    /// tap graph in place when the audio device changes mid-recording
+    /// (AirPods plug/unplug, default-input switch, sample-rate renegotiation).
+    /// Without this, the engine silently stops itself and `mic.m4a` truncates.
+    private var configChangeObserver: NSObjectProtocol?
 
     enum RecorderError: LocalizedError {
         case inputUnavailable
@@ -39,8 +44,7 @@ final class MicRecorder {
 
     func start(writingTo url: URL) throws {
         engine = AVAudioEngine()
-        let input = engine.inputNode
-        let inputFormat = input.outputFormat(forBus: 0)
+        let inputFormat = engine.inputNode.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             throw RecorderError.inputUnavailable
         }
@@ -64,14 +68,55 @@ final class MicRecorder {
                                commonFormat: recordingFormat.commonFormat,
                                interleaved: recordingFormat.isInterleaved)
         self.recordingFormat = recordingFormat
-        converter = inputFormat == recordingFormat ? nil : AVAudioConverter(from: inputFormat,
-                                                                            to: recordingFormat)
-        if inputFormat != recordingFormat, converter == nil {
+
+        do {
+            try installTapAndStart(inputFormat: inputFormat, recordingFormat: recordingFormat)
+        } catch {
             file = nil
             self.recordingFormat = nil
-            throw RecorderError.unsupportedInputFormat
+            converter = nil
+            throw error
         }
 
+        // The engine stops itself on device changes; restart it on the new
+        // graph so the same `mic.m4a` continues uninterrupted across swaps.
+        configChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine, queue: .main) { [weak self] _ in
+            self?.handleConfigurationChange()
+        }
+    }
+
+    func stop() {
+        if let configChangeObserver {
+            NotificationCenter.default.removeObserver(configChangeObserver)
+            self.configChangeObserver = nil
+        }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        // Drain the converter's internal buffer so the last fraction of a
+        // second isn't lost; without this, every recording is truncated.
+        drainConverter()
+        converter = nil
+        recordingFormat = nil
+        file = nil   // closes the file
+    }
+
+    // MARK: - Engine setup
+
+    /// Builds the converter (only when input ≠ recording format), installs
+    /// the tap, and starts the engine. Shared by `start()` and the
+    /// configuration-change reinstall.
+    private func installTapAndStart(inputFormat: AVAudioFormat,
+                                    recordingFormat: AVAudioFormat) throws {
+        if inputFormat == recordingFormat {
+            converter = nil
+        } else if let conv = AVAudioConverter(from: inputFormat, to: recordingFormat) {
+            converter = conv
+        } else {
+            throw RecorderError.unsupportedInputFormat
+        }
+        let input = engine.inputNode
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
             do {
                 try self?.write(buffer)
@@ -85,19 +130,57 @@ final class MicRecorder {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
-            file = nil
             converter = nil
-            self.recordingFormat = nil
             throw error
         }
     }
 
-    func stop() {
+    /// Posted asynchronously when the audio device changes. The engine has
+    /// already stopped itself; rebuild the tap + converter for the new input
+    /// format (keeping the original on-disk format) and restart, so the same
+    /// `mic.m4a` continues across the swap instead of truncating.
+    private func handleConfigurationChange() {
+        guard let recordingFormat else { return }
         engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        converter = nil
-        recordingFormat = nil
-        file = nil   // closes the file
+        let newInputFormat = engine.inputNode.outputFormat(forBus: 0)
+        guard newInputFormat.sampleRate > 0, newInputFormat.channelCount > 0 else {
+            NSLog("MicRecorder reconfig: no usable input device after change")
+            return
+        }
+        do {
+            try installTapAndStart(inputFormat: newInputFormat,
+                                   recordingFormat: recordingFormat)
+        } catch {
+            NSLog("MicRecorder reconfig failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Flush the converter's internal buffer on stop. Without this, the tail
+    /// (the last few hundred ms — more with resampling) is dropped because
+    /// the streaming write loop only ever signals `.noDataNow`, never EOS.
+    private func drainConverter() {
+        guard let converter, let recordingFormat, let file else { return }
+        // Loop because the converter may need multiple output buffers to
+        // emit everything it has buffered (especially with resampling).
+        for _ in 0..<8 {
+            guard let tail = AVAudioPCMBuffer(pcmFormat: recordingFormat,
+                                              frameCapacity: 4096) else { return }
+            var err: NSError?
+            let status = converter.convert(to: tail, error: &err) { _, outStatus in
+                outStatus.pointee = .endOfStream
+                return nil
+            }
+            if tail.frameLength > 0 {
+                do { try file.write(from: tail) }
+                catch {
+                    NSLog("MicRecorder drain write failed: \(error.localizedDescription)")
+                    return
+                }
+            }
+            if status == .endOfStream || status == .error || tail.frameLength == 0 {
+                return
+            }
+        }
     }
 
     private func write(_ buffer: AVAudioPCMBuffer) throws {
