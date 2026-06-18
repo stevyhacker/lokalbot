@@ -276,7 +276,8 @@ final class ProcessingPipeline: ObservableObject {
     func makeTextEngine(_ config: AppSettings) async throws -> TextEngine {
         switch config.summarizerBackend {
         case .builtIn:
-            guard let entry = ModelCatalog.entry(id: config.builtInModelID)
+            guard let entry = ModelCatalog.entry(id: config.builtInModelID,
+                                                 custom: config.customBuiltInModels)
                     ?? ModelCatalog.entry(id: ModelCatalog.bundledID) else {
                 throw PipelineError.badServerURL
             }
@@ -293,7 +294,7 @@ final class ProcessingPipeline: ObservableObject {
                 displayNameOverride: "Built-in — \(entry.displayName)")
         case .appleIntelligence:
             if case .unavailable(let reason) = FoundationModelAvailability.current() {
-                throw TextEngineError.serverUnreachable(reason)
+                throw TextEngineError.unavailable(reason)
             }
             return AppleIntelligenceEngine()
         case .ollama:

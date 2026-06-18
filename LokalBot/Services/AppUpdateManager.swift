@@ -60,10 +60,12 @@ final class AppUpdateManager: ObservableObject {
         updaterController.startUpdater()
         isStarted = true
         botinav2Log("Sparkle updater started.")
-        // Background check on every launch: silent when up to date, surfaces UI
-        // only when an update exists. Sparkle's scheduled interval covers
-        // long-running sessions; this covers users who reopen within a day.
-        updaterController.updater.checkForUpdatesInBackground()
+        // Background check on launch only when the user opted in. Sparkle's
+        // scheduled interval covers long-running sessions; this covers users who
+        // reopen within a day without creating opt-out network traffic.
+        if automaticallyChecksForUpdates {
+            updaterController.updater.checkForUpdatesInBackground()
+        }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains(Self.debugCheckOnLaunchArgument) {
             checkForUpdates()

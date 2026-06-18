@@ -25,7 +25,7 @@ struct AppleIntelligenceEngine: TextEngine {
     func generate(system: String, prompt: String, context: [String]) async throws -> String {
         let availability = await FoundationModelAvailability.current()
         guard case .available = availability else {
-            throw TextEngineError.serverUnreachable(
+            throw TextEngineError.unavailable(
                 availability.reason ?? FoundationModelAvailability.unsupportedMessage
             )
         }
@@ -39,7 +39,7 @@ struct AppleIntelligenceEngine: TextEngine {
         // Unreachable once `current()` reported `.available` (only macOS 26+ with
         // the framework can), but required so the 14.4 build throws on every path
         // instead of relying solely on the guard above.
-        throw TextEngineError.serverUnreachable(FoundationModelAvailability.unsupportedMessage)
+        throw TextEngineError.unavailable(FoundationModelAvailability.unsupportedMessage)
     }
 
     /// Joins the context blocks and task prompt into one user turn, dropping

@@ -9,6 +9,7 @@ cd "$(dirname "$0")/.."
 OUTPUT_PATH="${1:-/tmp/BotinaV2-test.dmg}"
 VENV_DIR="/tmp/BotinaV2-dmg-venv"
 VENV_PY="$VENV_DIR/bin/python3"
+DERIVED_DATA="/tmp/BotinaV2-test-DerivedData"
 
 # dmgbuild lives in an isolated venv: Homebrew Python is PEP 668-managed, so
 # `pip install` against it fails with "externally-managed-environment". A
@@ -23,14 +24,14 @@ if ! "$VENV_PY" -c "import dmgbuild" 2>/dev/null; then
   "$VENV_PY" -m pip install --quiet dmgbuild
 fi
 
-# Build the Debug app (same flow as Scripts/install-app.sh). The grep keeps the
-# log readable; the bundle-existence check below is the real gate.
+# Build the Debug app. Package only the bundle from this invocation, and let a
+# compile failure stop the script instead of falling through to a stale app.
 echo "Building BotinaV2 (Debug)…"
 xcodegen generate >/dev/null
 xcodebuild -project LokalBot.xcodeproj -scheme LokalBot -configuration Debug \
-  -allowProvisioningUpdates build 2>&1 | grep -E "^\*\*|error:" | head -5 || true
+  -derivedDataPath "$DERIVED_DATA" -allowProvisioningUpdates -quiet build
 
-APP_PATH=$(ls -dt ~/Library/Developer/Xcode/DerivedData/LokalBot-*/Build/Products/Debug/BotinaV2.app 2>/dev/null | head -1 || true)
+APP_PATH="$DERIVED_DATA/Build/Products/Debug/BotinaV2.app"
 [ -n "$APP_PATH" ] && [ -d "$APP_PATH" ] || { echo "BotinaV2.app not found after build"; exit 1; }
 
 # Debug builds aren't notarized, so Gatekeeper flags a DMG-mounted copy as

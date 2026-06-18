@@ -10,7 +10,7 @@ import Foundation
 /// subprocess in `LlamaServer.swift`.
 struct ModelCatalog {
 
-    struct Entry: Identifiable, Hashable {
+    struct Entry: Codable, Identifiable, Hashable {
         let id: String
         let displayName: String
         let fileName: String
@@ -60,6 +60,16 @@ struct ModelCatalog {
     ]
 
     static func entry(id: String) -> Entry? { entries.first { $0.id == id } }
+
+    static func selectableEntries(custom: [Entry]) -> [Entry] {
+        entries + custom.filter { customEntry in
+            !entries.contains { $0.id == customEntry.id || $0.fileName == customEntry.fileName }
+        }
+    }
+
+    static func entry(id: String, custom: [Entry]) -> Entry? {
+        selectableEntries(custom: custom).first { $0.id == id }
+    }
 
     /// Bundled model lives in Resources; downloads live in <storage>/models/.
     static func localURL(for entry: Entry, storage: StorageManager) -> URL? {

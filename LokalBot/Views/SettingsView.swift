@@ -125,7 +125,7 @@ struct SettingsView: View {
                     switch app.settings.summarizerBackend {
                     case .builtIn:
                         VStack(alignment: .leading, spacing: 6) {
-                            ForEach(ModelCatalog.entries) { entry in
+                            ForEach(ModelCatalog.selectableEntries(custom: app.settings.customBuiltInModels)) { entry in
                                 ModelCatalogRow(entry: entry)
                             }
                             Button("Browse Hugging Face…") { showingHFBrowse = true }
@@ -438,10 +438,22 @@ struct SettingsView: View {
                                     }
                                     Spacer()
                                     Button("Download") {
-                                        ModelDownloadManager.shared.download(
-                                            url: file.downloadURL.absoluteString,
+                                        let entry = ModelCatalog.Entry(
+                                            id: "hf:\(file.modelID)/\(file.id)",
+                                            displayName: file.fileName,
                                             fileName: file.fileName,
-                                            id: "\(file.modelID)/\(file.fileName)",
+                                            url: file.downloadURL.absoluteString,
+                                            sizeGB: file.sizeBytes.map { Double($0) / 1_000_000_000 } ?? 0,
+                                            blurb: "Downloaded from \(file.modelID).",
+                                            disablesThinking: false)
+                                        app.settings.customBuiltInModels.removeAll { $0.id == entry.id }
+                                        app.settings.customBuiltInModels.append(entry)
+                                        app.settings.builtInModelID = entry.id
+                                        app.settings.summarizerBackend = .builtIn
+                                        ModelDownloadManager.shared.download(
+                                            url: entry.url,
+                                            fileName: entry.fileName,
+                                            id: entry.id,
                                             storage: app.storage)
                                         showingHFBrowse = false
                                     }

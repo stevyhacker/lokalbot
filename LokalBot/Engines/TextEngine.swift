@@ -12,6 +12,7 @@ enum TextEngineError: LocalizedError {
     case serverUnreachable(String)
     case badResponse(String)
     case noModel
+    case unavailable(String)
 
     var errorDescription: String? {
         switch self {
@@ -21,6 +22,8 @@ enum TextEngineError: LocalizedError {
             "LLM server error: \(detail)"
         case .noModel:
             "No summarization model selected. Pick one in Settings → Models."
+        case .unavailable(let detail):
+            detail
         }
     }
 }

@@ -47,6 +47,7 @@ struct AppSettings: Codable {
 
     var summarizerBackend: SummarizerBackend = .builtIn
     var builtInModelID: String = ModelCatalog.bundledID
+    var customBuiltInModels: [ModelCatalog.Entry] = []
     var ollamaBaseURL: String = "http://localhost:11434"
     var ollamaModel: String = ""
     var openAIBaseURL: String = "http://localhost:1234/v1"
@@ -92,6 +93,7 @@ struct AppSettings: Codable {
         case excludedApps
         case summarizerBackend
         case builtInModelID
+        case customBuiltInModels
         case ollamaBaseURL
         case ollamaModel
         case openAIBaseURL
@@ -135,6 +137,7 @@ struct AppSettings: Codable {
         try c.encode(excludedApps, forKey: .excludedApps)
         try c.encode(summarizerBackend, forKey: .summarizerBackend)
         try c.encode(builtInModelID, forKey: .builtInModelID)
+        try c.encode(customBuiltInModels, forKey: .customBuiltInModels)
         try c.encode(ollamaBaseURL, forKey: .ollamaBaseURL)
         try c.encode(ollamaModel, forKey: .ollamaModel)
         try c.encode(openAIBaseURL, forKey: .openAIBaseURL)
@@ -167,6 +170,7 @@ struct AppSettings: Codable {
         excludedApps = (try? c.decode(String.self, forKey: .excludedApps)) ?? defaults.excludedApps
         summarizerBackend = (try? c.decode(SummarizerBackend.self, forKey: .summarizerBackend)) ?? defaults.summarizerBackend
         builtInModelID = (try? c.decode(String.self, forKey: .builtInModelID)) ?? defaults.builtInModelID
+        customBuiltInModels = (try? c.decode([ModelCatalog.Entry].self, forKey: .customBuiltInModels)) ?? defaults.customBuiltInModels
         ollamaBaseURL = (try? c.decode(String.self, forKey: .ollamaBaseURL)) ?? defaults.ollamaBaseURL
         ollamaModel = (try? c.decode(String.self, forKey: .ollamaModel)) ?? defaults.ollamaModel
         openAIBaseURL = (try? c.decode(String.self, forKey: .openAIBaseURL)) ?? defaults.openAIBaseURL
