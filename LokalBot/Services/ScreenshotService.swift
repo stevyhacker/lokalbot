@@ -4,20 +4,11 @@ import ScreenCaptureKit
 import Vision
 import CryptoKit
 
-/// Plain-file diagnostics (<storage>/debug.log) — NSLog/os_log proved
-/// unreliable to read back for debug builds.
+/// Plain-line diagnostics, now routed through swift-log (`AppLog`) which fans
+/// out to stdout + the rotating `<storage>/debug.log`. Kept as a free function
+/// so every existing call site stays unchanged.
 func botinav2Log(_ message: String) {
-    let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        .appendingPathComponent(AppIdentifiers.bundleID)
-        .appendingPathComponent("debug.log")
-    let line = "\(Date().formatted(.iso8601)) \(message)\n"
-    if let handle = try? FileHandle(forWritingTo: url) {
-        defer { try? handle.close() }
-        _ = try? handle.seekToEnd()
-        try? handle.write(contentsOf: Data(line.utf8))
-    } else {
-        try? Data(line.utf8).write(to: url)
-    }
+    AppLog.line(message)
 }
 
 /// M5 (design doc §3.2/§3.4): periodic screenshot of the active display →

@@ -28,5 +28,13 @@
 	<string>BotinaV2 records the meeting app's audio output so the other participants are captured. Audio never leaves this Mac.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>BotinaV2 records your side of meetings from the microphone. Audio never leaves this Mac.</string>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/OWNER/REPO/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>REPLACE_WITH_GENERATED_SPARKLE_PUBLIC_ED_KEY</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>

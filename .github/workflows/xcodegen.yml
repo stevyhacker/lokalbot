@@ -1,0 +1,65 @@
+# XcodeGen project gate.
+#
+# LokalBot.xcodeproj is generated from project.yml and is gitignored (recreated
+# with `xcodegen generate`, never committed). So unlike a commit-the-project
+# setup, there is no committed baseline to diff against — the meaningful gate
+# here is that project.yml stays VALID and generates cleanly on every change.
+#
+# The verify step is written to also enforce drift if the project ever starts
+# being tracked by git, so this gate keeps working if that policy changes.
+#
+# Sibling to Build/Lint/Tests: one gate, one file, one clear failure mode.
+
+name: XcodeGen
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: xcodegen-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    name: project.yml generates cleanly
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install / verify XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      # xcodegen exits non-zero on an invalid project.yml, so this alone catches
+      # most regressions (bad target/source/package references, etc.).
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Verify project
+        run: |
+          set -euo pipefail
+
+          if [[ ! -d LokalBot.xcodeproj ]]; then
+            echo "::error::xcodegen did not produce LokalBot.xcodeproj from project.yml." >&2
+            exit 1
+          fi
+
+          # If LokalBot.xcodeproj is tracked (project policy changed to commit
+          # it), enforce that the committed copy matches what xcodegen produces.
+          # While it stays gitignored, generation success above is the gate.
+          if git ls-files --error-unmatch LokalBot.xcodeproj >/dev/null 2>&1; then
+            if ! git diff --exit-code -- LokalBot.xcodeproj; then
+              echo "::error::LokalBot.xcodeproj is out of sync with project.yml." \
+                "Run 'xcodegen generate' and commit the result." >&2
+              exit 1
+            fi
+          else
+            echo "LokalBot.xcodeproj is gitignored; verified project.yml generates cleanly."
+          fi

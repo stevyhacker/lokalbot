@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # Keep the SHA-pinned actions in .github/workflows/ current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Swift Package Manager dependencies (FluidAudio, WhisperKit, ArgumentParser,
+  # Sparkle). NOTE: LokalBot pins these in project.yml (XcodeGen), and both
+  # LokalBot.xcodeproj and its Package.resolved are gitignored, so Dependabot
+  # needs a committed Package.swift / Package.resolved to open update PRs here.
+  # Configured per project policy; harmless if no manifest is discovered.
+  - package-ecosystem: swift
+    directory: /
+    schedule:
+      interval: weekly

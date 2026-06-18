@@ -1,54 +1,12 @@
 import SwiftUI
-import AVFoundation
-import CoreGraphics
+import AppKit
 
 /// Permission onboarding (design §6: "requested progressively, with
-/// explanations"). Live status per permission, one Grant button each,
-/// and a relaunch button because Accessibility only applies at launch.
+/// explanations"). All TCC state, prompting, deep-links, polling and relaunch
+/// now live in the shared `PermissionManager`; this view is presentation only.
 struct OnboardingView: View {
     @EnvironmentObject var app: AppState
-    @State private var mic = Permission.microphone.granted
-    @State private var screen = Permission.screenRecording.granted
-    @State private var accessibility = Permission.accessibility.granted
-
-    private let ticker = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
-
-    enum Permission {
-        case microphone, screenRecording, accessibility
-
-        var granted: Bool {
-            switch self {
-            case .microphone:
-                AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-            case .screenRecording:
-                CGPreflightScreenCaptureAccess()
-            case .accessibility:
-                ActivitySampler.hasAccessibility
-            }
-        }
-
-        func request() {
-            switch self {
-            case .microphone:
-                AVCaptureDevice.requestAccess(for: .audio) { _ in }
-            case .screenRecording:
-                if !CGRequestScreenCaptureAccess() { Self.openSettings("Privacy_ScreenCapture") }
-            case .accessibility:
-                ActivitySampler.requestAccessibility()
-                Self.openSettings("Privacy_Accessibility")
-            }
-        }
-
-        static func openSettings(_ pane: String) {
-            NSWorkspace.shared.open(URL(
-                string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")!)
-        }
-    }
-
-    static var allGranted: Bool {
-        Permission.microphone.granted && Permission.screenRecording.granted
-            && Permission.accessibility.granted
-    }
+    @StateObject private var permissions = PermissionManager.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -62,18 +20,15 @@ struct OnboardingView: View {
                 }
             }
 
-            row(granted: mic,
+            row(.microphone,
                 icon: "mic.fill", title: "Microphone",
-                why: "Records your side of meetings. Without it, nothing records.",
-                permission: .microphone)
-            row(granted: screen,
+                why: "Records your side of meetings. Without it, nothing records.")
+            row(.screenRecording,
                 icon: "rectangle.inset.filled.badge.record", title: "Screen & System Audio Recording",
-                why: "Captures the other participants' audio from the meeting app, and the periodic screenshots for day tracking.",
-                permission: .screenRecording)
-            row(granted: accessibility,
+                why: "Captures the other participants' audio from the meeting app, and the periodic screenshots for day tracking.")
+            row(.accessibility,
                 icon: "macwindow", title: "Accessibility",
-                why: "Reads window titles — distinguishes \"GitHub PR #412\" from \"YouTube\", and detects Google Meet in your browser.",
-                permission: .accessibility)
+                why: "Reads window titles — distinguishes \"GitHub PR #412\" from \"YouTube\", and detects Google Meet in your browser.")
 
             // System Settings sometimes wants the app added manually (+ or
             // drag-and-drop). Make "which app?" unambiguous: drag this icon
@@ -103,21 +58,23 @@ struct OnboardingView: View {
                       systemImage: "arrow.triangle.2.circlepath")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Relaunch BotinaV2") { Self.relaunch() }
-                if Self.allGranted {
+                Button("Relaunch BotinaV2") { PermissionManager.relaunch() }
+                if permissions.allGranted {
                     Text("All set ✓").font(.callout.bold()).foregroundStyle(.green)
                 }
             }
         }
         .padding(24)
         .frame(width: 560)
-        .onReceive(ticker) { _ in refresh() }
-        .onAppear { refresh() }
+        // TCC posts no change notification, so poll while this panel is visible
+        // to catch grants the user makes over in System Settings.
+        .onAppear { permissions.startPolling() }
+        .onDisappear { permissions.stopPolling() }
     }
 
-    private func row(granted: Bool, icon: String, title: String,
-                     why: String, permission: Permission) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+    private func row(_ permission: AppPermission, icon: String, title: String, why: String) -> some View {
+        let granted = permissions.granted[permission] ?? permission.isGranted
+        return HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 19)).frame(width: 30)
                 .foregroundStyle(granted ? .green : .secondary)
@@ -131,27 +88,15 @@ struct OnboardingView: View {
                 Label("Granted", systemImage: "checkmark.circle.fill")
                     .font(.caption).foregroundStyle(.green)
             } else {
-                Button("Grant…") { permission.request() }
+                // Prompt, then open the right pane so a previously-denied
+                // permission (where the prompt is a silent no-op) is still fixable.
+                Button("Grant…") {
+                    permissions.request(permission)
+                    permissions.openSettings(for: permission)
+                }
             }
         }
         .padding(10)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 9))
-    }
-
-    private func refresh() {
-        mic = Permission.microphone.granted
-        screen = Permission.screenRecording.granted
-        accessibility = Permission.accessibility.granted
-    }
-
-    static func relaunch() {
-        let path = Bundle.main.bundlePath
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        task.arguments = ["-n", path]
-        // Tiny delay so the new instance starts after this one exits.
-        task.environment = ProcessInfo.processInfo.environment
-        try? task.run()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { NSApp.terminate(nil) }
     }
 }

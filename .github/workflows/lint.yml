@@ -1,0 +1,44 @@
+# SwiftLint style gate for LokalBot.
+#
+# Runs in `--strict` mode: any violation (warning or error) fails the check.
+# That makes the ruleset in .swiftlint.yml load-bearing — it is deliberately
+# lenient so the current codebase is violation-free, and `--strict` keeps it
+# that way rather than letting style warnings quietly accumulate.
+#
+# Findings go through `--reporter github-actions-logging` so they land as inline
+# annotations on the PR diff instead of being buried in the run log.
+
+name: Lint
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swiftlint:
+    name: SwiftLint
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # macos-15 ships SwiftLint via Homebrew; install only if missing.
+      # Printing the version captures which one ran, which matters when a rule's
+      # behavior changes between releases.
+      - name: Install / verify SwiftLint
+        run: |
+          if ! command -v swiftlint >/dev/null; then
+            brew install swiftlint
+          fi
+          swiftlint version
+
+      - name: Run SwiftLint
+        # Strict: any violation fails the check. The ruleset (.swiftlint.yml,
+        # auto-discovered at the repo root) is tuned to be clean on this code.
+        run: swiftlint lint --strict --reporter github-actions-logging

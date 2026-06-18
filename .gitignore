@@ -5,3 +5,4 @@ LokalBot.xcodeproj/
 Vendor/
 
 .DS_Store
+.build/

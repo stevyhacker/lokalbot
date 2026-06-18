@@ -10,6 +10,7 @@ struct AppSettings: Codable {
 
     enum SummarizerBackend: String, Codable, CaseIterable, Identifiable {
         case builtIn = "Built-in (no setup)"
+        case appleIntelligence = "Apple Intelligence"
         case ollama = "Ollama"
         case openAICompatible = "OpenAI-compatible server"
         var id: String { rawValue }

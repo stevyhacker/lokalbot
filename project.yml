@@ -18,9 +18,25 @@ packages:
   ArgumentParser:
     url: https://github.com/apple/swift-argument-parser
     from: "1.3.0"
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.9.1    # pinned to a known-good Developer-ID-signed release
+  swift-log:
+    url: https://github.com/apple/swift-log.git
+    from: "1.5.0"
+  LaunchAtLogin:
+    url: https://github.com/sindresorhus/LaunchAtLogin-Modern
+    from: "1.1.0"
 
-targets:
-  LokalBot:
+# Shared application body. Both `LokalBot` (prod) and `LokalBot Dev` build the
+# SAME sources from this template and differ only in identity-bearing settings
+# (product name, bundle id, dev compilation flag). The dev build therefore
+# holds its OWN Accessibility/Screen-Recording/Mic TCC grant under a distinct
+# bundle id, so running from Xcode never disturbs the released app's grants —
+# and Sparkle is compiled out of dev (BOTINA_DEV) so the prod appcast can never
+# replace the dev bundle with the shipped app.
+targetTemplates:
+  BotinaApp:
     type: application
     platform: macOS
     sources:
@@ -42,6 +58,12 @@ targets:
     dependencies:
       - package: FluidAudio
       - package: WhisperKit
+      - package: Sparkle
+        product: Sparkle
+      - package: swift-log
+        product: Logging
+      - package: LaunchAtLogin
+        product: LaunchAtLogin
       # Embed the self-contained CLI into Contents/Helpers/ and code-sign it
       # on copy (hardened runtime during a notarised archive). It's a target
       # dependency so it's built first; `link: false` because a tool is
@@ -76,6 +98,15 @@ targets:
           BotinaV2 records the meeting app's audio output so the other
           participants are captured. Audio never leaves this Mac.
         LSApplicationCategoryType: public.app-category.productivity
+        # Sparkle auto-update. SUFeedURL points at the appcast published with
+        # each GitHub release; SUPublicEDKey is the ed25519 public key whose
+        # private half signs the DMG. Both ship as documented placeholders —
+        # AppUpdateManager refuses to start Sparkle until they are real
+        # (see RELEASING.md), so a fresh clone never self-updates by accident.
+        SUFeedURL: https://github.com/OWNER/REPO/releases/latest/download/appcast.xml
+        SUPublicEDKey: REPLACE_WITH_GENERATED_SPARKLE_PUBLIC_ED_KEY
+        SUScheduledCheckInterval: 86400
+        SUEnableAutomaticChecks: false
     settings:
       base:
         SWIFT_VERSION: "5.10"
@@ -86,9 +117,32 @@ targets:
         # survive rebuilds — ad-hoc signing invalidates them every build.
         DEVELOPMENT_TEAM: K96P3M3997
         GENERATE_INFOPLIST_FILE: NO
+
+targets:
+  LokalBot:
+    templates:
+      - BotinaApp
+    settings:
+      base:
         PRODUCT_NAME: BotinaV2
         PRODUCT_MODULE_NAME: BotinaV2
         PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.BotinaV2
+
+  # Local development build. Distinct bundle id + product name means a separate,
+  # stable TCC identity (Mic, Screen Recording, Accessibility survive rebuilds),
+  # and BOTINA_DEV compiles Sparkle's launch path out so the prod appcast never
+  # swaps this bundle for the released app. Keep BOTINA_DEV under `base:` so it
+  # is defined in EVERY configuration (Release included) — a Release-config dev
+  # build (Profile/Archive) must still keep Sparkle inert.
+  "LokalBot Dev":
+    templates:
+      - BotinaApp
+    settings:
+      base:
+        PRODUCT_NAME: "BotinaV2 Dev"
+        PRODUCT_MODULE_NAME: BotinaV2Dev
+        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.BotinaV2.dev
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: BOTINA_DEV $(inherited)
 
   LokalBotTests:
     type: bundle.unit-test

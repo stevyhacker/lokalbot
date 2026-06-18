@@ -88,13 +88,6 @@ struct MainWindowView: View {
         }
         .overlay(alignment: .top) {
             VStack(spacing: 8) {
-                if let release = UpdateChecker.shared.availableUpdate {
-                    UpdateBannerView(
-                        versionTitle: UpdateChecker.displayName(for: release),
-                        onDownload: { UpdateChecker.shared.openDownload() },
-                        onDismiss: { UpdateChecker.shared.dismissBanner() }
-                    )
-                }
                 if !app.isRecording, let process = app.audioMonitor.detectedProcess {
                     AudioSourceBanner(process: process,
                                       onRecord: {
@@ -115,7 +108,7 @@ struct MainWindowView: View {
             // Auto-open once, ever. After that it lives behind
             // menu bar → "Permissions…" and never nags.
             let key = "botinav2.onboarding.shown"
-            if !OnboardingView.allGranted && !UserDefaults.standard.bool(forKey: key) {
+            if !PermissionManager.shared.allGranted && !UserDefaults.standard.bool(forKey: key) {
                 UserDefaults.standard.set(true, forKey: key)
                 openWindow(id: "onboarding")
             }

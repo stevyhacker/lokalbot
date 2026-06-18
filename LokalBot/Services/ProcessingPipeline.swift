@@ -188,8 +188,10 @@ final class ProcessingPipeline: ObservableObject {
 
     private func summarize(_ transcript: Transcript, meeting: Meeting,
                            config: AppSettings) async throws -> String {
+        let started = Date()
         let engine = try await makeTextEngine(config)
         let text = transcript.markdown
+        let wordCount = text.split(whereSeparator: { $0.isWhitespace }).count
         // Resolve `.matchTranscript` against the transcript text now so both
         // the chunk extractions and the final synthesis share the same
         // language directive (otherwise the chunker can default to English
@@ -211,10 +213,18 @@ final class ProcessingPipeline: ObservableObject {
                     context: ["Part \(index + 1) of a longer meeting."])
                 notes.append(note)
             }
+            // Cap the combined per-part notes so the synthesis prompt fits the
+            // model context (lowest-priority/largest parts trimmed first).
+            let fitted = PromptSectionBudget().fit(
+                sections: notes.enumerated().map {
+                    PromptSectionBudget.Section(label: "Part \($0.offset + 1)", text: $0.element,
+                                                priority: 1, minCharacters: 200)
+                },
+                totalBudget: 48_000).map { $0.text }.joined(separator: "\n\n---\n\n")
             body = try await engine.generate(
                 system: systemPrompt,
                 prompt: "Synthesize the final \(config.noteTemplate.displayName.lowercased()) notes from these per-part notes:\n\n"
-                    + notes.joined(separator: "\n\n---\n\n"),
+                    + fitted,
                 context: [])
         } else {
             body = try await engine.generate(
@@ -228,11 +238,16 @@ final class ProcessingPipeline: ObservableObject {
         let date = meeting.startedAt.formatted(date: .long, time: .shortened)
         var header = "# \(meeting.title) — \(date)\n"
         header += "**Duration:** \(meeting.durationLabel) · **App:** \(meeting.appName)"
+        header += " · **Words:** \(WordCountFormatter.format(words: wordCount))"
         header += " · **Template:** \(config.noteTemplate.displayName)"
         if let promptLanguage = language.promptLanguageName {
             header += " · **Language:** \(promptLanguage)"
         }
         header += " · **Model:** \(engine.displayName)\n\n"
+        GenerationMetricsStore.shared.record(
+            label: "Summary · \(engine.displayName)",
+            durationSec: Date().timeIntervalSince(started),
+            approxTokens: TokenCountEstimator.estimate(body))
         return header + body + "\n"
     }
 
@@ -244,7 +259,8 @@ final class ProcessingPipeline: ObservableObject {
         }
         let meetingLines = meetings.map { "Meeting: \($0.title) (\($0.durationLabel))" }
         let engine = try await makeTextEngine(config)
-        let material = (meetingLines + lines).joined(separator: "\n")
+        let material = PromptContextSanitizer.sanitize(
+            (meetingLines + lines).joined(separator: "\n"), maxCharacters: 24_000)
         let text = try await engine.generate(
             system: "You summarize a person's workday from their app/window activity log and meeting list. Write Markdown: ## What I worked on (grouped bullets, by project/topic inferred from window titles), ## Meetings (or 'None'), ## Time allocation (one-line table of top apps). Be concrete, never invent.",
             prompt: material.isEmpty ? "No activity was recorded this day." : material,
@@ -275,6 +291,11 @@ final class ProcessingPipeline: ObservableObject {
                 extraBody: entry.disablesThinking
                     ? ["chat_template_kwargs": ["enable_thinking": false]] : [:],
                 displayNameOverride: "Built-in — \(entry.displayName)")
+        case .appleIntelligence:
+            if case .unavailable(let reason) = FoundationModelAvailability.current() {
+                throw TextEngineError.serverUnreachable(reason)
+            }
+            return AppleIntelligenceEngine()
         case .ollama:
             guard let url = URL(string: config.ollamaBaseURL) else { throw PipelineError.badServerURL }
             var model = config.ollamaModel

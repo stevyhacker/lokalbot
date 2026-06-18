@@ -1,0 +1,82 @@
+# PR-time build gate for LokalBot (product name: BotinaV2).
+#
+# On PRs into main and on pushes to main: regenerate the XcodeGen project and
+# compile in Debug. Debug type-checks every file (same compile surface as
+# Release) but is faster and more deterministic, so it's the right signal for a
+# "does it still build" gate.
+#
+# Signing is disabled (CODE_SIGNING_ALLOWED=NO): hosted runners hold no
+# Developer ID certificate, and the project uses Automatic signing, so this
+# keeps the gate focused on compile correctness without needing certs.
+
+name: Build
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel superseded runs for the same ref so rapid pushes/force-pushes don't
+# leave a backlog of stale builds burning runner minutes.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: xcodebuild (macOS)
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Pin Xcode explicitly: hosted images drift their default Xcode without
+      # notice, which surfaces as false red/green builds. Bump deliberately.
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: latest-stable
+
+      - name: Toolchain info
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # LokalBot.xcodeproj is gitignored (generated from project.yml), so it
+      # must be regenerated before xcodebuild can see it.
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate project
+        run: xcodegen generate
+
+      # The pre-build phase Scripts/fetch-llama.sh downloads ~0.7 GB (pinned
+      # llama.cpp server + default GGUF model) into Vendor/. Cache it keyed on
+      # that script (which holds the pinned llama.cpp tag + model name), so only
+      # a script change forces a re-download.
+      - name: Cache llama.cpp vendor
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: Vendor
+          key: vendor-${{ runner.os }}-${{ hashFiles('Scripts/fetch-llama.sh') }}
+
+      # Idempotent: a no-op on a cache hit, the real download on a miss. Running
+      # it explicitly (rather than only via the xcodebuild pre-build phase) lets
+      # the cache populate and surfaces download failures as their own step.
+      - name: Fetch llama.cpp vendor
+        run: bash Scripts/fetch-llama.sh
+
+      - name: Build
+        run: |
+          xcodebuild \
+            -project LokalBot.xcodeproj \
+            -scheme LokalBot \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            build

@@ -66,13 +66,23 @@ In Xcode: select your team under Signing & Capabilities, then Run. On first reco
 - **Recording fixes:** the engine now reacts to `AVAudioEngineConfigurationChange` and re-installs the tap on the new device — switching to AirPods or unplugging a USB mic no longer truncates `mic.m4a`. The `MicRecorder` converter is drained on `stop()` so the trailing seconds of every recording are kept. `SystemAudioRecorder` watches the captured app's PID via `NSWorkspace.didTerminateApplicationNotification` and stops cleanly if the meeting app exits, instead of writing a silent half-track. AAC encoding moved off the Core Audio real-time IOProc thread onto a serial queue with copied buffers; the IOProcID is now destroyed on every error path (no more zombie taps the next launch). `MeetingDetector` removes its default-input-device listener on `stop()` (was leaked) and the new `AppSettings.stopDebounceSeconds` setting is finally wired through.
 - **Audio source monitor:** a second detection signal (`AudioSourceMonitor`) polls Core Audio's process list and treats *silent → producing-output* transitions as meeting candidates. Catches the cases the mic-in-use signal missed (muted Zoom calls, meeting tabs opened before the mic). In automatic mode it auto-records recognised meeting bundles; otherwise a banner appears at the top of the main window.
 - **Agent CLI:** new `lokalbot-cli` target (ArgumentParser) embedded in `Contents/Helpers/`, with subcommands `list / get / search / path`. Read-only access to the meeting library for coding agents (Claude Code, Codex CLI, Cursor, Gemini). Settings → Agent CLI symlinks the binary at `~/.local/bin/lokalbot-cli` and the bundled SKILL.md at `~/.agents/skills/lokalbot-cli/`. JSON by default, `--table` for humans. See `.agents/skills/lokalbot-cli/SKILL.md`.
-- **Update awareness:** opt-in once-a-day GitHub-Releases check (`UpdateChecker`) with a quiet in-window banner for automatic finds and an `NSAlert` for manual `Check for Updates…`. Set `UpdateChecker.releasesURL` + `downloadURL` constants to the repo's release URLs before shipping. `SemanticVersion` parser is strict-SemVer for ordering, lenient about `v` prefix / missing components / `+build` metadata.
+- **Auto-update (Sparkle):** in-place signed updates via [Sparkle](https://github.com/sparkle-project/Sparkle) — a silent background check on launch plus a manual `Settings → Updates → Check for Updates…`, with the auto-check toggle bound to Sparkle's own preference. `AppUpdateManager` keeps the updater inert on dev builds (`BOTINA_DEV`) and until `SUFeedURL` + `SUPublicEDKey` are real (see `RELEASING.md`), so a fresh clone never self-updates. Replaces the old detection-only `UpdateChecker`.
 - **Templated summaries:** Settings → Summarization now picks a notes template (Meeting / Lecture / Study guide / Podcast / Free-form) and a summary language (auto-detected from the transcript via `NLLanguageRecognizer`, with Simplified vs Traditional vs Cantonese script handling). Prompts come from `PromptTemplates`, the existing Markdown output format is unchanged.
 - **Neural diarization (opt-in):** Settings → "Split Them by speaker" runs FluidAudio's offline pyannote-community-1 pipeline on `system.m4a` after transcription and relabels segments as "Them 1" / "Them 2" / …. Tuned for meetings (threshold 0.70, step ratio 0.15, min segment 0.3 s). Off by default — first run downloads ~100 MB of CoreML models from Hugging Face.
 
+**M8 — distribution, updater & engine upgrades (this pass, ported/adapted from Cotabby)**
+- **Dev/prod split:** `project.yml` builds `LokalBot` (prod, `com.dotenv.BotinaV2`) and `LokalBot Dev` (`com.dotenv.BotinaV2.dev`, `BOTINA_DEV`) from one target template, so running from Xcode holds its own Mic/Screen/Accessibility TCC grant and never disturbs the released app — and Sparkle is compiled out of dev.
+- **Apple Intelligence backend:** Settings → Summarization adds an on-device Apple Intelligence engine (FoundationModels, macOS 26+) alongside Built-in/Ollama/OpenAI, gated so the app still builds and launches on 14.4. `ProcessingPipeline.makeTextEngine` routes to it.
+- **Model manager:** in-app **Browse Hugging Face** (search GGUF repos, list `.gguf` files, download) plus resilient downloads (synchronous temp-file rescue, outcome classification, GGUF validation). `LocalLLM.swift` is split into `ModelCatalog` / `ModelDownloadManager` / `LlamaServer`.
+- **Permissions:** the three TCC checks are centralized in `PermissionManager` (status cache, prompt, deep-link to the right System Settings pane, catch-up polling); `OnboardingView` is presentation-only over it.
+- **Capability & power:** `DeviceInfo` / `HardwareCapabilityProbe` (`ModelFit` advisories per catalog row) / `PowerSourceMonitor` / `GenerationMetricsStore`, surfaced in Settings → System.
+- **Logging:** `botinav2Log` now routes through swift-log (`AppLog`) → stdout + a rotating `debug.log` (`FileLogHandler`).
+- **Searchable settings + launch-at-login:** a search field filters Settings sections (`SettingsSearchRanker`); a `LaunchAtLogin` toggle under General.
+- **Release & CI:** `Scripts/` gains DMG build (`build_release_dmg.py`), Sparkle appcast generation (`generate_appcast.py` + `appcast.template.xml`), test-DMG/clean helpers and `RELEASING.md`; `.github/workflows/` adds build/test/lint/xcodegen/release. Prompt helpers (`TokenCountEstimator`, `WordCountFormatter`, `PromptContextSanitizer`, `PromptSectionBudget`) keep summarization prompts within the model context.
+
 ## Known limitations / TODO
 
-- `UpdateChecker.releasesURL` / `downloadURL` ship as `nil` — flip them to the project's GitHub release URLs to enable the update path.
+- Sparkle ships with a placeholder `SUFeedURL` (`OWNER/REPO`) + `SUPublicEDKey` — generate a key and set the repo's appcast URL before the first release (see `RELEASING.md`); until then `AppUpdateManager` stays inert (no accidental self-update).
 - System track falls back gracefully if tap creation fails (mic-only recording + warning).
 - `AVAudioFile` AAC encoding assumes Float32 tap/mic formats — verified on M-series; if `write(from:)` throws on exotic devices, fall back to `.caf` (PCM) and transcode post-meeting.
 - Design doc says "MLX" for Parakeet; the shipped engine is FluidAudio's **CoreML** port (same model, mature Swift API, ANE-accelerated). MLX remains an option for M6 model-manager work.
@@ -96,10 +106,11 @@ LokalBot/
     │   ├── SystemAudioRecorder.swift         # Core Audio process tap → system.m4a
     │   ├── NeuralDiarizationEngine.swift     # FluidAudio offline diarizer wrapper
     │   ├── PromptTemplates.swift             # template + language prompt synthesis
-    │   ├── UpdateChecker.swift               # GitHub Releases probe + banner
+    │   ├── AppUpdateManager.swift            # Sparkle updater lifecycle
+    │   ├── PermissionManager.swift           # centralized Mic/Screen/Accessibility TCC
     │   ├── LokalBotCLIInstaller.swift        # symlink installer for the CLI
     │   └── StorageManager.swift              # folders, meta.json, library scan
-    ├── Engines/                              # TranscriptionEngine, LocalLLM, TextEngine
+    ├── Engines/                              # TranscriptionEngine, TextEngine, AppleIntelligenceEngine; ModelCatalog/ModelDownloadManager/LlamaServer
     └── Views/                                # MenuBarView, MainWindowView, SettingsView, banners
 ```
 

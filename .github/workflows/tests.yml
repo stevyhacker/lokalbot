@@ -1,0 +1,75 @@
+# PR-time test runner for LokalBot.
+#
+# Runs `xcodebuild test` against the LokalBot scheme on every PR into main and
+# on pushes to main. Sibling to Build/Lint/XcodeGen — kept separate so each
+# gate has one clear failure mode: a broken test can't mask a compile
+# regression, and a compile failure doesn't hide which tests would fail.
+#
+# Pinned to macos-15 (not macos-latest): tests execute the compiled app, so the
+# runner OS must stay at or above the app's deployment target (macOS 14.4). A
+# fixed runner keeps a future image change from silently moving this gate.
+
+name: Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: xcodebuild test (macOS)
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: latest-stable
+
+      - name: Toolchain info
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate project
+        run: xcodegen generate
+
+      # The test host is the full app, so Vendor/ must be populated just like in
+      # the Build workflow. Same cache key (the fetch script) shares the cache.
+      - name: Cache llama.cpp vendor
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: Vendor
+          key: vendor-${{ runner.os }}-${{ hashFiles('Scripts/fetch-llama.sh') }}
+
+      - name: Fetch llama.cpp vendor
+        run: bash Scripts/fetch-llama.sh
+
+      # CODE_SIGNING_ALLOWED=NO because hosted runners hold no dev cert; without
+      # it xcodebuild refuses to embed the xctest bundle into the host app.
+      #
+      # NOTE: any test that drives on-device Apple Intelligence / FoundationModels
+      # (absent and non-deterministic on hosted runners) must self-skip via a
+      # model-availability guard, or be excluded here with `-skip-testing:`.
+      - name: Run tests
+        run: |
+          xcodebuild test \
+            -project LokalBot.xcodeproj \
+            -scheme LokalBot \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO

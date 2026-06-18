@@ -106,7 +106,6 @@ final class AppState: ObservableObject {
     private var pipelineObserver: AnyCancellable?
     private var audioMonitorObserver: AnyCancellable?
     private var audioMonitorChangeForwarder: AnyCancellable?
-    private var updateCheckerObserver: AnyCancellable?
 
     var isRecording: Bool { if case .recording = status { true } else { false } }
     var elapsed: TimeInterval {
@@ -115,6 +114,7 @@ final class AppState: ObservableObject {
     }
 
     init() {
+        AppLog.bootstrap()
         meetings = storage.loadMeetings()
         // Views observe AppState only; forward pipeline / audio-monitor /
         // update-checker change notifications so MainWindowView refreshes
@@ -123,9 +123,6 @@ final class AppState: ObservableObject {
             self?.objectWillChange.send()
         }
         audioMonitorChangeForwarder = audioMonitor.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }
-        updateCheckerObserver = UpdateChecker.shared.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
         pipeline.onArtifactsWritten = { [weak self] meeting in
@@ -177,11 +174,9 @@ final class AppState: ObservableObject {
             .compactMap { $0 }
             .sink { [weak self] process in self?.audioMonitorDetected(process) }
         detector.start()
-        // Opt-in once-a-day update check (no-op until the user enables it in
-        // Settings AND UpdateChecker.releasesURL is configured for this repo).
-        if UpdateSettings.shared.isDueForAutomaticCheck() {
-            UpdateChecker.shared.checkForUpdates(mode: .automatic)
-        }
+        // Start Sparkle (silent background check). No-op on dev builds and
+        // until the appcast feed URL + public key are configured (RELEASING.md).
+        AppUpdateManager.shared.start()
     }
 
     // MARK: - Recording control
