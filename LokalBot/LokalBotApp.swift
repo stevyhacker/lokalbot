@@ -3,11 +3,11 @@ import Combine
 import AVFoundation
 
 @main
-struct BotinaV2App: App {
+struct LokalBotV1App: App {
     @StateObject private var app = AppState()
 
     var body: some Scene {
-        WindowGroup("BotinaV2", id: "main") {
+        WindowGroup("LokalBotV1", id: "main") {
             MainWindowView()
                 .environmentObject(app)
         }
@@ -23,7 +23,7 @@ struct BotinaV2App: App {
             }
         }
 
-        Window("Welcome to BotinaV2", id: "onboarding") {
+        Window("Welcome to LokalBotV1", id: "onboarding") {
             OnboardingView()
                 .environmentObject(app)
         }
@@ -84,12 +84,12 @@ final class AppState: ObservableObject {
     let detector = MeetingDetector()
     let audioMonitor = AudioSourceMonitor()
     private(set) lazy var searchIndex = SearchIndex(
-        databaseURL: storage.rootURL.appendingPathComponent("botinav2.sqlite"))
+        databaseURL: storage.rootURL.appendingPathComponent("lokalbotv1.sqlite"))
     private(set) lazy var activityStore = ActivityStore(
-        databaseURL: storage.rootURL.appendingPathComponent("botinav2.sqlite"))
+        databaseURL: storage.rootURL.appendingPathComponent("lokalbotv1.sqlite"))
     private(set) lazy var sampler = ActivitySampler(store: activityStore)
     private(set) lazy var embeddingIndex = EmbeddingIndex(
-        databaseURL: storage.rootURL.appendingPathComponent("botinav2.sqlite"),
+        databaseURL: storage.rootURL.appendingPathComponent("lokalbotv1.sqlite"),
         storage: storage)
     private(set) lazy var screenshots = ScreenshotService(
         store: activityStore, storage: storage, sampler: sampler) { [weak self] in
@@ -191,7 +191,7 @@ final class AppState: ObservableObject {
         isStartingRecording = true
         audioMonitor.isRecordingActive = true
         audioMonitor.accept()
-        botinav2Log("startRecording source=\(source) app=\(detectedApp?.name ?? "manual")")
+        lokalbotv1Log("startRecording source=\(source) app=\(detectedApp?.name ?? "manual")")
         Task {
             defer { isStartingRecording = false }
             guard await MicRecorder.requestPermission() else {
@@ -220,7 +220,7 @@ final class AppState: ObservableObject {
                 status = .recording(meetingID: meeting.id)
             } catch {
                 lastError = "Could not start recording: \(error.localizedDescription)"
-                botinav2Log("startRecording FAILED: \(error.localizedDescription)")
+                lokalbotv1Log("startRecording FAILED: \(error.localizedDescription)")
                 // Don't leave a 0-minute husk in the library.
                 if let husk = created { storage.deleteMeeting(husk) }
             }
@@ -285,7 +285,7 @@ final class AppState: ObservableObject {
         selectedMeetingIDs.subtract(ids)
     }
 
-    /// `BotinaV2 --process <meeting folder>`: run the pipeline headless and
+    /// `LokalBotV1 --process <meeting folder>`: run the pipeline headless and
     /// exit. Lets the pipeline be exercised (and CI-tested) without the UI.
     private func handleHeadlessProcessing() -> Bool {
         let args = CommandLine.arguments
@@ -295,7 +295,7 @@ final class AppState: ObservableObject {
         decoder.dateDecodingStrategy = .iso8601
         guard let data = try? Data(contentsOf: folder.appendingPathComponent("meta.json")),
               let decoded = try? decoder.decode(Meeting.self, from: data) else {
-            print("BotinaV2 --process: no readable meta.json in \(folder.path)")
+            print("LokalBotV1 --process: no readable meta.json in \(folder.path)")
             exit(2)
         }
         let summarize = !args.contains("--no-summary")
@@ -306,11 +306,11 @@ final class AppState: ObservableObject {
                 try? await Task.sleep(for: .milliseconds(500))
                 switch pipeline.stages[decoded.id] {
                 case .none:
-                    print("BotinaV2 --process: done → \(folder.path)")
+                    print("LokalBotV1 --process: done → \(folder.path)")
                     await LlamaServer.shared.stop()
                     exit(0)
                 case .failed(let message):
-                    print("BotinaV2 --process: FAILED — \(message)")
+                    print("LokalBotV1 --process: FAILED — \(message)")
                     await LlamaServer.shared.stop()
                     exit(1)
                 default:
@@ -321,52 +321,52 @@ final class AppState: ObservableObject {
         return true
     }
 
-    /// `BotinaV2 --record <seconds>`: manual mic recording, no pipeline.
+    /// `LokalBotV1 --record <seconds>`: manual mic recording, no pipeline.
     private func handleHeadlessRecord() -> Bool {
         let args = CommandLine.arguments
         guard let flag = args.firstIndex(of: "--record"), args.count > flag + 1,
               let seconds = Int(args[flag + 1]) else { return false }
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
-            print("BotinaV2 --record: SKIP (microphone not granted)")
+            print("LokalBotV1 --record: SKIP (microphone not granted)")
             exit(3)
         }
         startRecording(detectedApp: nil, source: "headless")
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(seconds))
             guard isRecording else {
-                print("BotinaV2 --record: FAILED to start — \(lastError ?? "no error recorded")")
+                print("LokalBotV1 --record: FAILED to start — \(lastError ?? "no error recorded")")
                 exit(1)
             }
             stopRecording(process: false)
-            guard let meeting = meetings.first else { print("BotinaV2 --record: no meeting"); exit(1) }
-            print("BotinaV2 --record: done → \(meeting.folderURL(in: storage).path)")
+            guard let meeting = meetings.first else { print("LokalBotV1 --record: no meeting"); exit(1) }
+            print("LokalBotV1 --record: done → \(meeting.folderURL(in: storage).path)")
             exit(0)
         }
         return true
     }
 
-    /// `BotinaV2 --shot-test`: one screenshot capture, exit 0 ok / 3 skip / 1 fail.
+    /// `LokalBotV1 --shot-test`: one screenshot capture, exit 0 ok / 3 skip / 1 fail.
     private func handleHeadlessShotTest() -> Bool {
         guard CommandLine.arguments.contains("--shot-test") else { return false }
         Task { @MainActor in
             guard CGPreflightScreenCaptureAccess() else {
-                print("BotinaV2 --shot-test: SKIP (screen recording not granted)")
+                print("LokalBotV1 --shot-test: SKIP (screen recording not granted)")
                 exit(3)
             }
             let before = Date()
             screenshots.captureNow()
             try? await Task.sleep(for: .seconds(8))
             if let shot = activityStore.screenshots(on: Date()).last(where: { $0.ts >= before }) {
-                print("BotinaV2 --shot-test: ok (app: \(shot.app))")
+                print("LokalBotV1 --shot-test: ok (app: \(shot.app))")
                 exit(0)
             }
-            print("BotinaV2 --shot-test: FAILED (no screenshot row — see debug.log)")
+            print("LokalBotV1 --shot-test: FAILED (no screenshot row — see debug.log)")
             exit(1)
         }
         return true
     }
 
-    /// `BotinaV2 --digest today`: generate today's journal digest and exit.
+    /// `LokalBotV1 --digest today`: generate today's journal digest and exit.
     private func handleHeadlessDigest() -> Bool {
         guard CommandLine.arguments.contains("--digest") else { return false }
         Task { @MainActor in
@@ -376,11 +376,11 @@ final class AppState: ObservableObject {
                 let (text, url) = try await pipeline.generateDayDigest(
                     for: day, blocks: activityStore.blocks(on: day),
                     meetings: todays, config: settings)
-                print("BotinaV2 --digest: \(url.path) (\(text.count) chars)")
+                print("LokalBotV1 --digest: \(url.path) (\(text.count) chars)")
                 await LlamaServer.shared.stop()
                 exit(0)
             } catch {
-                print("BotinaV2 --digest: FAILED — \(error.localizedDescription)")
+                print("LokalBotV1 --digest: FAILED — \(error.localizedDescription)")
                 await LlamaServer.shared.stop()
                 exit(1)
             }
@@ -388,14 +388,14 @@ final class AppState: ObservableObject {
         return true
     }
 
-    /// `BotinaV2 --search <query>`: print index hits and exit. Test hook
+    /// `LokalBotV1 --search <query>`: print index hits and exit. Test hook
     /// for the FTS5 index, same spirit as --process.
     private func handleHeadlessSearch() -> Bool {
         let args = CommandLine.arguments
         guard let flag = args.firstIndex(of: "--search"), args.count > flag + 1 else { return false }
         let query = args[flag + 1]
         let hits = searchIndex.search(query)
-        print("BotinaV2 --search: \(hits.count) keyword hit(s)")
+        print("LokalBotV1 --search: \(hits.count) keyword hit(s)")
         for hit in hits {
             let meeting = meetings.first { $0.id == hit.meetingID }
             print("[\(hit.kind.rawValue)] \(meeting?.title ?? hit.meetingID.uuidString) @ \(Transcript.stamp(hit.start)): \(hit.snippet)")
@@ -404,7 +404,7 @@ final class AppState: ObservableObject {
             if settings.semanticSearchEnabled {
                 await embeddingIndex.reindexAll(meetings)
                 let semantic = await embeddingIndex.search(query)
-                print("BotinaV2 --search: \(semantic.count) semantic hit(s)")
+                print("LokalBotV1 --search: \(semantic.count) semantic hit(s)")
                 for hit in semantic {
                     let meeting = meetings.first { $0.id == hit.meetingID }
                     print(String(format: "[≈%.2f] %@ @ %@: %@", hit.score,

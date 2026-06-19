@@ -6,7 +6,7 @@ import Foundation
 /// CLI binary stays light.
 enum SessionLookup {
 
-    /// `~/Library/Application Support/com.dotenv.BotinaV2`. The bundle id is
+    /// `~/Library/Application Support/com.dotenv.LokalBotV1`. The bundle id is
     /// hard-coded (not `Bundle.main.bundleIdentifier`) so the CLI process,
     /// whose own bundle id differs, still resolves to the same library the
     /// app writes.

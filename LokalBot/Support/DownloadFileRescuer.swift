@@ -23,7 +23,7 @@ enum DownloadFileRescuer {
     /// MUST be called inside `didFinishDownloadingTo`, before it returns.
     static func stash(_ location: URL, fileManager: FileManager = .default) -> URL? {
         let holding = fileManager.temporaryDirectory
-            .appendingPathComponent("BotinaV2-download-\(UUID().uuidString)", isDirectory: false)
+            .appendingPathComponent("LokalBotV1-download-\(UUID().uuidString)", isDirectory: false)
         do {
             try fileManager.moveItem(at: location, to: holding)
             return holding

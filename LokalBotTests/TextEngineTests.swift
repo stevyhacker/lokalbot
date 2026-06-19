@@ -1,5 +1,5 @@
 import XCTest
-@testable import BotinaV2
+@testable import LokalBotV1
 
 final class TextEngineTests: XCTestCase {
     func testStrippingReasoningRemovesThinkBlocks() {

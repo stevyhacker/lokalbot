@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Render a Sparkle 2 appcast entry for a notarized BotinaV2 DMG.
+"""Render a Sparkle 2 appcast entry for a notarized LokalBotV1 DMG.
 
-BotinaV2's release flow is small and predictable, so this script renders one
+LokalBotV1's release flow is small and predictable, so this script renders one
 `appcast.xml` from a checked-in template rather than depending on Sparkle's
 `generate_appcast` helper (which expects a directory of archives and a private
 hosting layout):
 
-1. a notarized + stapled `BotinaV2.dmg` is uploaded to a GitHub Release
+1. a notarized + stapled `LokalBotV1.dmg` is uploaded to a GitHub Release
 2. Sparkle's `sign_update` tool produces the EdDSA enclosure signature + length
 3. this script reads the marketing/build version from the .app and renders the
    feed from Scripts/appcast.template.xml
@@ -16,10 +16,10 @@ AFTER notarization/stapling and never modify the DMG afterward.
 
 Usage:
     python3 Scripts/generate_appcast.py \
-        --archive build/BotinaV2.dmg \
-        --app build/export/BotinaV2.app \
+        --archive build/LokalBotV1.dmg \
+        --app build/export/LokalBotV1.app \
         --repo OWNER/REPO \
-        --ed-key-file ~/secure/BotinaV2-sparkle-key.txt
+        --ed-key-file ~/secure/LokalBotV1-sparkle-key.txt
 """
 
 from __future__ import annotations
@@ -52,17 +52,17 @@ def repo_root() -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate BotinaV2's Sparkle appcast XML.")
+    parser = argparse.ArgumentParser(description="Generate LokalBotV1's Sparkle appcast XML.")
     parser.add_argument(
         "--archive",
         required=True,
-        help="Path to the notarized, stapled BotinaV2.dmg to sign and enclose.",
+        help="Path to the notarized, stapled LokalBotV1.dmg to sign and enclose.",
     )
     parser.add_argument(
         "--app",
         default=None,
         help=(
-            "Path to BotinaV2.app, read for CFBundleShortVersionString / "
+            "Path to LokalBotV1.app, read for CFBundleShortVersionString / "
             "CFBundleVersion / LSMinimumSystemVersion. Optional when "
             "--short-version and --build-version are both supplied."
         ),
@@ -167,7 +167,7 @@ def resolve_versions(args: argparse.Namespace) -> tuple[str, str, str]:
 
     if not short_version or not build_version:
         raise SystemExit(
-            "Could not determine the version. Pass --app /path/to/BotinaV2.app, "
+            "Could not determine the version. Pass --app /path/to/LokalBotV1.app, "
             "or both --short-version and --build-version."
         )
     return str(short_version), str(build_version), str(minimum_system)

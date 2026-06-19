@@ -107,7 +107,7 @@ struct MainWindowView: View {
         .task {
             // Auto-open once, ever. After that it lives behind
             // menu bar → "Permissions…" and never nags.
-            let key = "botinav2.onboarding.shown"
+            let key = "lokalbotv1.onboarding.shown"
             if !PermissionManager.shared.allGranted && !UserDefaults.standard.bool(forKey: key) {
                 UserDefaults.standard.set(true, forKey: key)
                 openWindow(id: "onboarding")

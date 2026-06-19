@@ -99,7 +99,7 @@ final class FileLogSink: @unchecked Sendable {
 /// A swift-log ``LogHandler`` that appends one formatted, human-readable line
 /// per event to a shared ``FileLogSink``. This is LokalBot's on-disk diagnostic
 /// sink — the file an operator (or an AI agent) can `tail` directly, and the
-/// destination the legacy `botinav2Log(_:)` shim is rerouted to.
+/// destination the legacy `lokalbotv1Log(_:)` shim is rerouted to.
 ///
 /// Types are qualified as `Logging.*` because the module mixes logging
 /// frameworks (`os.Logger` lives in other files); qualification keeps `Logger`
@@ -138,7 +138,7 @@ struct FileLogHandler: LogHandler {
         sink.write("\(timestamp) \(level.rawValue.uppercased()) [\(category)] \(message)\(suffix)\n")
     }
 
-    /// `com.dotenv.BotinaV2.networking` → `networking`. The trailing dot-segment
+    /// `com.dotenv.LokalBotV1.networking` → `networking`. The trailing dot-segment
     /// keeps each line short while still identifying the source category.
     private static func shortCategory(from label: String) -> String {
         label.split(separator: ".").last.map(String.init) ?? label

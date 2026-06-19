@@ -33,10 +33,10 @@ packages:
 # (product name, bundle id, dev compilation flag). The dev build therefore
 # holds its OWN Accessibility/Screen-Recording/Mic TCC grant under a distinct
 # bundle id, so running from Xcode never disturbs the released app's grants —
-# and Sparkle is compiled out of dev (BOTINA_DEV) so the prod appcast can never
+# and Sparkle is compiled out of dev (LOKALBOTV1_DEV) so the prod appcast can never
 # replace the dev bundle with the shipped app.
 targetTemplates:
-  BotinaApp:
+  LokalBotV1App:
     type: application
     platform: macOS
     sources:
@@ -89,13 +89,13 @@ targetTemplates:
     info:
       path: LokalBot/Info.plist
       properties:
-        CFBundleDisplayName: BotinaV2
+        CFBundleDisplayName: LokalBotV1
         CFBundleIconFile: AppIcon
         NSMicrophoneUsageDescription: >-
-          BotinaV2 records your side of meetings from the microphone.
+          LokalBotV1 records your side of meetings from the microphone.
           Audio never leaves this Mac.
         NSAudioCaptureUsageDescription: >-
-          BotinaV2 records the meeting app's audio output so the other
+          LokalBotV1 records the meeting app's audio output so the other
           participants are captured. Audio never leaves this Mac.
         LSApplicationCategoryType: public.app-category.productivity
         # Sparkle auto-update. SUFeedURL points at the appcast published with
@@ -121,28 +121,28 @@ targetTemplates:
 targets:
   LokalBot:
     templates:
-      - BotinaApp
+      - LokalBotV1App
     settings:
       base:
-        PRODUCT_NAME: BotinaV2
-        PRODUCT_MODULE_NAME: BotinaV2
-        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.BotinaV2
+        PRODUCT_NAME: LokalBotV1
+        PRODUCT_MODULE_NAME: LokalBotV1
+        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV1
 
   # Local development build. Distinct bundle id + product name means a separate,
   # stable TCC identity (Mic, Screen Recording, Accessibility survive rebuilds),
-  # and BOTINA_DEV compiles Sparkle's launch path out so the prod appcast never
-  # swaps this bundle for the released app. Keep BOTINA_DEV under `base:` so it
+  # and LOKALBOTV1_DEV compiles Sparkle's launch path out so the prod appcast never
+  # swaps this bundle for the released app. Keep LOKALBOTV1_DEV under `base:` so it
   # is defined in EVERY configuration (Release included) — a Release-config dev
   # build (Profile/Archive) must still keep Sparkle inert.
   "LokalBot Dev":
     templates:
-      - BotinaApp
+      - LokalBotV1App
     settings:
       base:
-        PRODUCT_NAME: "BotinaV2 Dev"
-        PRODUCT_MODULE_NAME: BotinaV2Dev
-        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.BotinaV2.dev
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: BOTINA_DEV $(inherited)
+        PRODUCT_NAME: "LokalBotV1 Dev"
+        PRODUCT_MODULE_NAME: LokalBotV1Dev
+        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV1.dev
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: LOKALBOTV1_DEV $(inherited)
 
   LokalBotTests:
     type: bundle.unit-test
@@ -154,10 +154,10 @@ targets:
     settings:
       base:
         BUNDLE_LOADER: "$(TEST_HOST)"
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/BotinaV2.app/Contents/MacOS/BotinaV2"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LokalBotV1.app/Contents/MacOS/LokalBotV1"
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_MODULE_NAME: BotinaV2Tests
-        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.BotinaV2Tests
+        PRODUCT_MODULE_NAME: LokalBotV1Tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV1Tests
 
   lokalbot-cli:
     type: tool
@@ -181,7 +181,7 @@ targets:
         DEVELOPMENT_TEAM: K96P3M3997
         ENABLE_HARDENED_RUNTIME: NO  # flip ON in notarised release builds
         GENERATE_INFOPLIST_FILE: YES
-        # Embedded into BotinaV2.app/Contents/Helpers rather than installed
+        # Embedded into LokalBotV1.app/Contents/Helpers rather than installed
         # as a standalone product, so keep it out of the archive's
         # install location.
         SKIP_INSTALL: YES

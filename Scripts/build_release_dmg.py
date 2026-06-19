@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a styled release DMG for BotinaV2 with dmgbuild.
+"""Build a styled release DMG for LokalBotV1 with dmgbuild.
 
 The GitHub Actions workflow decides *when* to package; this script decides
 *how* the installer disk image is assembled, so the layout policy (window
@@ -7,7 +7,7 @@ geometry, the drag-to-Applications arrangement, the volume icon) lives in one
 auditable place rather than scattered through YAML.
 
 Flow:
-1. Validate the built `BotinaV2.app` (auto-discovered when --app is omitted).
+1. Validate the built `LokalBotV1.app` (auto-discovered when --app is omitted).
 2. Resolve a best-effort volume icon from the app bundle (CFBundleIconFile).
 3. Optionally normalize a background PNG (combining a sibling @2x rep for HiDPI).
 4. Render an ephemeral dmgbuild settings module and invoke dmgbuild.
@@ -18,8 +18,8 @@ staging.
 
 Usage (all flags optional):
     python3 Scripts/build_release_dmg.py \
-        --app build/export/BotinaV2.app \
-        --output build/BotinaV2.dmg \
+        --app build/export/LokalBotV1.app \
+        --output build/LokalBotV1.dmg \
         --background assets/release/dmg_background.png
 """
 
@@ -34,10 +34,10 @@ import tempfile
 from pathlib import Path
 from textwrap import dedent
 
-# Product constants. BotinaV2 ships as a single window; keep the geometry
+# Product constants. LokalBotV1 ships as a single window; keep the geometry
 # compact so the mounted volume opens without scrollbars on a laptop display.
-VOLUME_NAME = "BotinaV2"
-APP_BUNDLE_NAME = "BotinaV2.app"
+VOLUME_NAME = "LokalBotV1"
+APP_BUNDLE_NAME = "LokalBotV1.app"
 WINDOW_RECT = ((200, 120), (520, 360))  # ((origin_x, origin_y), (width, height))
 ICON_SIZE = 128
 APP_ICON_LOCATION = (130, 170)
@@ -54,20 +54,20 @@ def parse_args() -> argparse.Namespace:
     """Parse the small CLI contract used by local releases and CI."""
 
     parser = argparse.ArgumentParser(
-        description="Build a styled BotinaV2 release DMG with dmgbuild."
+        description="Build a styled LokalBotV1 release DMG with dmgbuild."
     )
     parser.add_argument(
         "--app",
         default=None,
         help=(
-            "Path to the built BotinaV2.app. When omitted, the newest bundle "
+            "Path to the built LokalBotV1.app. When omitted, the newest bundle "
             "under build/export/ or the Xcode DerivedData Release products is used."
         ),
     )
     parser.add_argument(
         "--output",
         default=None,
-        help="Path for the final DMG. Defaults to build/BotinaV2.dmg.",
+        help="Path for the final DMG. Defaults to build/LokalBotV1.dmg.",
     )
     parser.add_argument(
         "--background",
@@ -281,11 +281,11 @@ def main() -> int:
     output_path = (
         Path(args.output).expanduser().resolve()
         if args.output
-        else repo_root() / "build" / "BotinaV2.dmg"
+        else repo_root() / "build" / "LokalBotV1.dmg"
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory(prefix="BotinaV2-dmgbuild-") as temporary_root:
+    with tempfile.TemporaryDirectory(prefix="LokalBotV1-dmgbuild-") as temporary_root:
         work_dir = Path(temporary_root)
         background = resolve_background(args.background, work_dir)
         volume_icon = resolve_volume_icon(app_path)

@@ -75,7 +75,7 @@ struct AppSettings: Codable {
     /// of post-processing per meeting; most users record 1:1 calls.
     var multiSpeakerDiarization: Bool = false
 
-    private static let key = "botinav2.settings"
+    private static let key = "lokalbotv1.settings"
 
     private enum CodingKeys: String, CodingKey {
         case autoRecordMode

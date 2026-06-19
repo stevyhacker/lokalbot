@@ -43,8 +43,8 @@ struct SettingsView: View {
 
             if shows("General", ["launch", "login", "startup", "open at login", "auto start"]) {
                 Section("General") {
-                    LaunchAtLogin.Toggle("Launch BotinaV2 at login")
-                    Text("Start BotinaV2 automatically so it's ready to catch meetings.")
+                    LaunchAtLogin.Toggle("Launch LokalBotV1 at login")
+                    Text("Start LokalBotV1 automatically so it's ready to catch meetings.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -306,7 +306,7 @@ struct SettingsView: View {
                                 Label("Installed", systemImage: "checkmark.circle.fill")
                                     .foregroundStyle(.green)
                             } else if !installer.isBundleLocationStable {
-                                Label("Move BotinaV2.app to /Applications first",
+                                Label("Move LokalBotV1.app to /Applications first",
                                       systemImage: "exclamationmark.triangle.fill")
                                     .foregroundStyle(.orange)
                             } else {
