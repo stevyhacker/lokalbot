@@ -58,6 +58,13 @@ final class AppState: ObservableObject {
         case meetings, timeline, search, settings
     }
 
+    /// True when launched by an XCUITest harness — gates the side-effectful
+    /// startup paths (Core Audio polling, accessibility-trusted detector,
+    /// Sparkle, periodic screenshots) so the UI renders against synthetic
+    /// data without touching real audio, TCC, or the network. The env var
+    /// is set by `LokalBotUITests` only; production launches never see it.
+    static let isUITesting: Bool = ProcessInfo.processInfo.environment["LOKALBOTV1_UI_TEST"] == "1"
+
     @Published private(set) var status: Status = .idle
     @Published private(set) var meetings: [Meeting] = []
     @Published var lastError: String?
@@ -147,6 +154,10 @@ final class AppState: ObservableObject {
             || handleHeadlessDigest() {
             return
         }
+        // UI tests render against pre-seeded fixtures, not a real audio/Sparkle
+        // session — bail out before any subsystem reaches for the mic, the
+        // process list, or the network.
+        if Self.isUITesting { return }
         applyTrackingSetting()
         detector.onMeetingStarted = { [weak self] app in
             guard let self else { return }

@@ -80,6 +80,13 @@ In Xcode: select your team under Signing & Capabilities, then Run. On first reco
 - **Searchable settings + launch-at-login:** a search field filters Settings sections (`SettingsSearchRanker`); a `LaunchAtLogin` toggle under General.
 - **Release & CI:** `Scripts/` gains DMG build (`build_release_dmg.py`), Sparkle appcast generation (`generate_appcast.py` + `appcast.template.xml`), test-DMG/clean helpers and `RELEASING.md`; `.github/workflows/` adds build/test/lint/xcodegen/release. Prompt helpers (`TokenCountEstimator`, `WordCountFormatter`, `PromptContextSanitizer`, `PromptSectionBudget`) keep summarization prompts within the model context.
 
+
+## Testing
+
+- **Unit tests** (`LokalBotTests`, in-process): `xcodebuild -project LokalBot.xcodeproj -scheme LokalBot -destination 'platform=macOS' test`. Pure-logic coverage of the prompt sanitizers, search ranker, model fit, transcript merging, settings codecs, etc.
+- **UI tests** (`LokalBotUITests`, XCUITest): `Scripts/ui-tests.sh`. Drives the real `LokalBotV1.app` binary against a synthetic meetings library planted under a tmp `LOKALBOTV1_STORAGE_ROOT`. The app sees `LOKALBOTV1_UI_TEST=1` and skips every side-effectful subsystem (Core Audio polling, accessibility-trusted detector, Sparkle, screenshots), so no TCC permissions on the app are needed. Seven tests cover meeting-list grouping (+ Record button), sidebar navigation, detail tabs (Summary/Transcript), FTS5 search → deep-link, multi-select state, and both branches of the delete dialog (cancel keeps the files; confirm removes the rows **and** the on-disk folders). The first run needs the controlling terminal/IDE to hold **Automation → Xcode** and **Accessibility** TCC grants (granted once via System Settings); without them XCUITest fails with "Timed out while enabling automation mode."
+- **End-to-end smoke** (`Scripts/e2e.sh`): exercises real audio, CoreML transcription, the bundled llama-server and SQLite via the headless flags. Skips flows that need ungranted TCC permissions; useful pre- and post-grant.
+
 ## Known limitations / TODO
 
 - Sparkle ships with a placeholder `SUFeedURL` (`OWNER/REPO`) + `SUPublicEDKey` — generate a key and set the repo's appcast URL before the first release (see `RELEASING.md`); until then `AppUpdateManager` stays inert (no accidental self-update).

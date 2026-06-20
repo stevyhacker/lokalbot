@@ -8,10 +8,18 @@ struct MainWindowView: View {
     var body: some View {
         NavigationSplitView {
             List(selection: sidebarSelection) {
-                Label("Meetings", systemImage: "waveform.circle").tag(AppState.NavSection.meetings)
-                Label("Timeline", systemImage: "calendar.day.timeline.left").tag(AppState.NavSection.timeline)
-                Label("Search", systemImage: "magnifyingglass").tag(AppState.NavSection.search)
-                Label("Settings", systemImage: "gearshape").tag(AppState.NavSection.settings)
+                Label("Meetings", systemImage: "waveform.circle")
+                    .tag(AppState.NavSection.meetings)
+                    .accessibilityIdentifier("sidebar.meetings")
+                Label("Timeline", systemImage: "calendar.day.timeline.left")
+                    .tag(AppState.NavSection.timeline)
+                    .accessibilityIdentifier("sidebar.timeline")
+                Label("Search", systemImage: "magnifyingglass")
+                    .tag(AppState.NavSection.search)
+                    .accessibilityIdentifier("sidebar.search")
+                Label("Settings", systemImage: "gearshape")
+                    .tag(AppState.NavSection.settings)
+                    .accessibilityIdentifier("sidebar.settings")
             }
             .navigationSplitViewColumnWidth(min: 150, ideal: 170)
         } content: {
@@ -70,6 +78,7 @@ struct MainWindowView: View {
                           systemImage: app.isRecording ? "stop.circle.fill" : "record.circle")
                 }
                 .tint(app.isRecording ? .red : nil)
+                .accessibilityIdentifier("toolbar.record")
             }
         }
         .overlay(alignment: .bottom) {
@@ -106,7 +115,10 @@ struct MainWindowView: View {
         }
         .task {
             // Auto-open once, ever. After that it lives behind
-            // menu bar → "Permissions…" and never nags.
+            // menu bar → "Permissions…" and never nags. UI tests bypass it —
+            // synthetic-data tests never need (and would be derailed by) the
+            // permissions sheet stealing focus.
+            if AppState.isUITesting { return }
             let key = "lokalbotv1.onboarding.shown"
             if !PermissionManager.shared.allGranted && !UserDefaults.standard.bool(forKey: key) {
                 UserDefaults.standard.set(true, forKey: key)
@@ -151,6 +163,9 @@ struct MainWindowView: View {
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(.vertical, 1)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(meeting.title)
+        .accessibilityIdentifier("meeting.row.\(meeting.id.uuidString)")
     }
 
     private var meetingList: some View {
@@ -166,6 +181,7 @@ struct MainWindowView: View {
                 }
             }
         }
+        .accessibilityIdentifier("meeting.list")
         .overlay(alignment: .topTrailing) {
             if app.isRecording {
                 HStack(spacing: 5) {
@@ -211,7 +227,7 @@ struct MeetingDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(meeting.title).font(.title2.bold())
+            Text(meeting.title).font(.title2.bold()).accessibilityIdentifier("detail.title")
             HStack(spacing: 8) {
                 badge("📅 \(meeting.startedAt.formatted(date: .abbreviated, time: .shortened))")
                 badge("⏱ \(meeting.durationLabel)")
@@ -233,11 +249,14 @@ struct MeetingDetailView: View {
             statusRow
 
             Picker("", selection: $tab) {
-                ForEach(Tab.allCases) { t in Text(t.rawValue).tag(t) }
+                ForEach(Tab.allCases) { t in
+                    Text(t.rawValue).tag(t).accessibilityIdentifier("detail.tab.\(t.rawValue.lowercased())")
+                }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .frame(width: 260)
+            .accessibilityIdentifier("detail.tabs")
 
             Group {
                 switch tab {

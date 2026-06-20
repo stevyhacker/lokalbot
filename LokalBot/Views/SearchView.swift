@@ -36,12 +36,16 @@ struct SearchView: View {
                 TextField("Search transcripts, summaries, titles…", text: $query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 15))
+                    .accessibilityIdentifier("search.field")
                 Picker("", selection: $scope) {
-                    ForEach(Scope.allCases) { Text($0.rawValue).tag($0) }
+                    ForEach(Scope.allCases) {
+                        Text($0.rawValue).tag($0).accessibilityIdentifier("search.scope.\($0.rawValue.lowercased())")
+                    }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
+                .accessibilityIdentifier("search.scope")
             }
             .padding(12)
             Divider()
@@ -90,6 +94,7 @@ struct SearchView: View {
                 SearchHitRow(hit: hit, meeting: app.meetings.first { $0.id == hit.meetingID })
                     .contentShape(Rectangle())
                     .onTapGesture { app.openSearchHit(hit) }
+                    .accessibilityIdentifier("search.hit.\(hit.meetingID.uuidString).\(hit.kind.rawValue)")
             }
             if scope == .all && !semanticHits.isEmpty {
                 Section("Related (semantic)") {
@@ -101,11 +106,13 @@ struct SearchView: View {
                                 app.selectedMeetingIDs = [hit.meetingID]
                                 if hit.start > 0 { app.pendingSeek = hit.start }
                             }
+                            .accessibilityIdentifier("search.hit.semantic.\(hit.meetingID.uuidString)")
                     }
                 }
             }
         }
         .listStyle(.inset)
+        .accessibilityIdentifier("search.results")
     }
 
     private func runSearch() {

@@ -159,6 +159,26 @@ targets:
         PRODUCT_MODULE_NAME: LokalBotV1Tests
         PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV1Tests
 
+  # Synthetic-data UI tests. Drives the LokalBotV1.app binary headlessly via
+  # XCUITest with `LOKALBOTV1_UI_TEST=1` so the app skips Core Audio polling,
+  # the accessibility-trusted meeting detector, Sparkle and screenshots —
+  # the suite renders the SwiftUI surfaces against a synthetic meetings
+  # library planted under `LOKALBOTV1_STORAGE_ROOT` (a per-test tmp dir).
+  # No TCC permissions required.
+  LokalBotUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - LokalBotUITests
+    dependencies:
+      - target: LokalBot
+    settings:
+      base:
+        TEST_TARGET_NAME: LokalBot
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_MODULE_NAME: LokalBotV1UITests
+        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV1UITests
+
   lokalbot-cli:
     type: tool
     platform: macOS
