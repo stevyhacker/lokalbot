@@ -82,6 +82,29 @@ if [[ "$OUT" == *"--digest: /"* && -s "$JOURNAL" ]] && grep -q "^## " "$JOURNAL"
   pass "digest written: $(basename "$JOURNAL")"
 else fail "digest: $OUT"; fi
 
+echo "== T8: digest folds in screenshot OCR, not just window titles =="
+# Seed today's OCR with a proper noun that appears in NO window title or
+# meeting, so if it lands in the digest it can only have come from the
+# screenshot -> OCR path wired into generateDayDigest. A generic activity
+# block gives the day material; its title carries no token.
+NOW=$(date +%s)
+sqlite3 -cmd ".timeout 5000" "$ROOT/lokalbotv1.sqlite" \
+  "INSERT INTO ocr_fts (text, ts, app) VALUES ('Working through the Project Zephyrus migration runbook: rollback steps, feature flags, and the on-call rota for the cutover.', $NOW, 'Safari');" 2>/dev/null
+sqlite3 -cmd ".timeout 5000" "$ROOT/lokalbotv1.sqlite" \
+  "INSERT INTO activity_blocks (app, title, start, end) VALUES ('Safari', 'Internal wiki', $((NOW-600)), $NOW);" 2>/dev/null
+OUT=$("$BIN" --digest today 2>/dev/null | tail -1)
+JOURNAL="${OUT#*: }"; JOURNAL="${JOURNAL%% (*}"
+if [[ "$OUT" == *"--digest: /"* && -s "$JOURNAL" ]]; then
+  grep -qi "zephyrus" "$JOURNAL" \
+    && pass "OCR'd screen text reached the digest ('Zephyrus' came only from screen text)" \
+    || fail "digest written but OCR token absent — screenshots not feeding the summary"
+else
+  fail "digest: $OUT"
+fi
+# Undo the seed so the suite never pollutes the real library.
+sqlite3 -cmd ".timeout 5000" "$ROOT/lokalbotv1.sqlite" \
+  "DELETE FROM ocr_fts WHERE ts=$NOW; DELETE FROM activity_blocks WHERE start=$((NOW-600));" 2>/dev/null
+
 echo
 echo "passed: $P · failed: $F · skipped: $S"
 [ "$F" -eq 0 ]
