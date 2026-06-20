@@ -2,9 +2,36 @@ import SwiftUI
 import Combine
 import AVFoundation
 
+/// Whether this launch should come up menu-bar-only (accessory: no Dock icon,
+/// no window). Computed identically in the pre-launch entry point (to disable
+/// window restoration before AppKit reads the flag) and in the app delegate (to
+/// set the activation policy). "Established" = has seen onboarding OR already
+/// granted every permission, so upgrades that predate the onboarding flag still
+/// go menu-bar-only; only a genuinely-new user (and UI tests) stays windowed.
+func lokalbotLaunchesMenuBarOnly() -> Bool {
+    guard !AppState.isUITesting else { return false }
+    let onboarded = UserDefaults.standard.bool(forKey: AppState.onboardingShownKey)
+        || AppPermission.allCases.allSatisfy { $0.isGranted }
+    return AppSettings.load().menuBarOnly && onboarded
+}
+
+/// Process entry point. Disables AppKit window restoration *before* SwiftUI
+/// launches when starting menu-bar-only — `applicationWillFinishLaunching` runs
+/// after AppKit has already read the flag, so a previously-open window would be
+/// restored and force the Dock icon back on. Setting it pre-launch is the only
+/// reliable point.
 @main
+enum LokalBotMain {
+    static func main() {
+        UserDefaults.standard.set(lokalbotLaunchesMenuBarOnly(),
+                                  forKey: "ApplePersistenceIgnoreState")
+        LokalBotV1App.main()
+    }
+}
+
 struct LokalBotV1App: App {
     @StateObject private var app = AppState()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
         WindowGroup("LokalBotV1", id: "main") {
@@ -33,14 +60,149 @@ struct LokalBotV1App: App {
             MenuBarView()
                 .environmentObject(app)
         } label: {
-            Image(systemName: app.isRecording ? "record.circle.fill" : "waveform.circle")
-                .symbolRenderingMode(app.isRecording ? .multicolor : .monochrome)
+            MenuBarLabel(app: app)
         }
         .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView()
                 .environmentObject(app)
+        }
+    }
+}
+
+// MARK: - Menu-bar-only plumbing
+
+/// Bridges AppKit launch + window lifecycle into the menu-bar-only experience.
+/// SwiftUI alone can't suppress the launch window on macOS 14, so the Dock /
+/// activation policy is driven from here.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+
+    /// Hides the Dock icon for a menu-bar-only start. Setting `.accessory` this
+    /// early also stops SwiftUI from auto-opening the launch window; restoration
+    /// was already disabled in `LokalBotMain`. UI tests and not-yet-onboarded
+    /// users stay windowed — see `lokalbotLaunchesMenuBarOnly()`.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if lokalbotLaunchesMenuBarOnly() {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    /// Keep the Dock icon in sync with what's on screen: a real (titled) window
+    /// → show the Dock icon + app menu for full window UX; nothing open → fall
+    /// back to a pure menu-bar accessory.
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !AppState.isUITesting else { return }
+        // macOS may still restore/auto-open the main window at launch despite
+        // `.accessory`; for a menu-bar-only start, evict any window that appears
+        // in the first moments (the user can't have opened one yet).
+        if lokalbotLaunchesMenuBarOnly() {
+            DispatchQueue.main.async { DockPolicy.beginLaunchSuppression() }
+        }
+        let center = NotificationCenter.default
+        for name: NSNotification.Name in [
+            NSWindow.didBecomeKeyNotification,
+            NSWindow.willCloseNotification,
+        ] {
+            center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                // `willClose` fires while the window still reports visible —
+                // re-evaluate on the next tick once it's actually gone.
+                DispatchQueue.main.async { DockPolicy.sync() }
+            }
+        }
+    }
+
+    /// Reopening the app (Finder/Launchpad relaunch, Dock click) with nothing on
+    /// screen brings the main window back instead of being a silent no-op.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !hasVisibleWindows { WindowAccess.shared.open("main") }
+        return true
+    }
+}
+
+/// Drives the Dock/menu-bar activation policy from the current setting and the
+/// windows on screen: accessory (menu-bar-only) unless the user opted into a
+/// Dock icon or a real window is open. Also the launch-time backstop that evicts
+/// windows macOS restores behind a menu-bar-only start.
+@MainActor
+enum DockPolicy {
+    /// True from a menu-bar-only launch until the first explicit user-initiated
+    /// open. While set, any titled window on screen was restored or auto-opened
+    /// by macOS (the user hasn't asked for one yet) and is evicted — `.accessory`
+    /// and `ApplePersistenceIgnoreState` don't reliably stop that restore, so
+    /// this is the deterministic backstop. Cleared by `WindowAccess.open`.
+    static var evictRestoredWindows = false
+
+    /// Start evicting restored/auto windows after a menu-bar-only launch. Sweeps
+    /// a few times to catch windows SwiftUI restores asynchronously (or without
+    /// firing a key notification); the flag itself persists until the first real
+    /// open, so even a late restore is caught.
+    static func beginLaunchSuppression() {
+        evictRestoredWindows = true
+        for delay: Double in [0, 0.3, 1.0, 2.5] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { sync() }
+        }
+    }
+
+    static func sync() {
+        guard !AppState.isUITesting else { return }
+        let menuBarOnly = AppSettings.load().menuBarOnly
+
+        if menuBarOnly {
+            for window in NSApp.windows where isContentWindow(window) {
+                window.isRestorable = false                 // never restore in menu-bar mode
+                if evictRestoredWindows { window.close() }   // restored/auto → evict
+            }
+            if evictRestoredWindows { setPolicy(.accessory); return }
+        }
+
+        // The menu bar popover is a borderless, non-normal-level panel; only
+        // titled, normal-level windows (main / onboarding / settings) count.
+        let hasWindow = NSApp.windows.contains(where: isContentWindow)
+        setPolicy((!menuBarOnly || hasWindow) ? .regular : .accessory)
+    }
+
+    private static func isContentWindow(_ window: NSWindow) -> Bool {
+        window.isVisible && window.styleMask.contains(.titled) && window.level == .normal
+    }
+
+    private static func setPolicy(_ policy: NSApplication.ActivationPolicy) {
+        guard NSApp.activationPolicy() != policy else { return }
+        NSApp.setActivationPolicy(policy)
+    }
+}
+
+/// Opens SwiftUI windows from non-View code (AppDelegate, AppState). SwiftUI's
+/// `openWindow` only exists inside the View tree, so views register it here and
+/// requests made before a view is alive are queued and flushed on registration.
+@MainActor
+final class WindowAccess {
+    static let shared = WindowAccess()
+
+    private var opener: ((String) -> Void)?
+    private var pending: [String] = []
+
+    /// Called from the first view that comes alive (the menu bar label at
+    /// launch, then the popover/window). Flushes anything queued before now.
+    func register(_ opener: @escaping (String) -> Void) {
+        self.opener = opener
+        let queued = pending
+        pending.removeAll()
+        queued.forEach(open)
+    }
+
+    func open(_ id: String) {
+        // An explicit, user-initiated open: cancel any launch-time window
+        // eviction, then switch to a regular, Dock-visible app so the window
+        // gets standard chrome and the app menu. `willClose` drops back to
+        // accessory afterwards when menu-bar-only.
+        DockPolicy.evictRestoredWindows = false
+        if !AppState.isUITesting { NSApp.setActivationPolicy(.regular) }
+        NSApp.activate(ignoringOtherApps: true)
+        if let opener {
+            opener(id)
+        } else {
+            pending.append(id)
         }
     }
 }
@@ -64,6 +226,10 @@ final class AppState: ObservableObject {
     /// data without touching real audio, TCC, or the network. The env var
     /// is set by `LokalBotUITests` only; production launches never see it.
     static let isUITesting: Bool = ProcessInfo.processInfo.environment["LOKALBOTV1_UI_TEST"] == "1"
+
+    /// UserDefaults flag: the permission onboarding has been shown once. Also
+    /// read by `AppDelegate` to keep the first run windowed.
+    static let onboardingShownKey = "lokalbotv1.onboarding.shown"
 
     @Published private(set) var status: Status = .idle
     @Published private(set) var meetings: [Meeting] = []
@@ -114,10 +280,28 @@ final class AppState: ObservableObject {
     private var audioMonitorObserver: AnyCancellable?
     private var audioMonitorChangeForwarder: AnyCancellable?
 
+    /// Ticks once a second while recording so the menu bar timer (and popover)
+    /// stay live even with no window open. Nil when idle.
+    private var recordingTick: AnyCancellable?
+    /// Drives `elapsed`; bumped each second by `recordingTick`.
+    @Published private(set) var now = Date()
+    /// True only on the real interactive launch path (not headless / UI test) —
+    /// gates recording notifications and first-run onboarding.
+    private var interactive = false
+
     var isRecording: Bool { if case .recording = status { true } else { false } }
     var elapsed: TimeInterval {
         guard let m = currentMeeting else { return 0 }
-        return Date().timeIntervalSince(m.startedAt)
+        return max(0, now.timeIntervalSince(m.startedAt))
+    }
+
+    /// Compact "MM:SS" (or "H:MM:SS") elapsed string for the menu bar label.
+    var menuBarTimer: String {
+        let total = Int(elapsed)
+        let (h, m, s) = (total / 3600, (total % 3600) / 60, total % 60)
+        return h > 0
+            ? String(format: "%d:%02d:%02d", h, m, s)
+            : String(format: "%02d:%02d", m, s)
     }
 
     init() {
@@ -158,6 +342,8 @@ final class AppState: ObservableObject {
         // session — bail out before any subsystem reaches for the mic, the
         // process list, or the network.
         if Self.isUITesting { return }
+        interactive = true
+        RecordingNotifier.shared.bootstrap()
         applyTrackingSetting()
         detector.onMeetingStarted = { [weak self] app in
             guard let self else { return }
@@ -188,6 +374,16 @@ final class AppState: ObservableObject {
         // Start Sparkle (silent background check). No-op on dev builds and
         // until the appcast feed URL + public key are configured (RELEASING.md).
         AppUpdateManager.shared.start()
+        // First-run check. A genuinely-new user with missing permissions gets
+        // onboarding (windowed — see AppDelegate). We persist the flag in every
+        // case so established/permissioned users are recognised next launch and
+        // start straight into menu-bar-only mode.
+        if !UserDefaults.standard.bool(forKey: Self.onboardingShownKey) {
+            UserDefaults.standard.set(true, forKey: Self.onboardingShownKey)
+            if !PermissionManager.shared.allGranted {
+                WindowAccess.shared.open("onboarding")
+            }
+        }
     }
 
     // MARK: - Recording control
@@ -229,6 +425,10 @@ final class AppState: ObservableObject {
                 }
                 currentMeeting = meeting
                 status = .recording(meetingID: meeting.id)
+                startRecordingTick()
+                if interactive {
+                    RecordingNotifier.shared.recordingStarted(title: meeting.title)
+                }
             } catch {
                 lastError = "Could not start recording: \(error.localizedDescription)"
                 lokalbotv1Log("startRecording FAILED: \(error.localizedDescription)")
@@ -257,14 +457,36 @@ final class AppState: ObservableObject {
         systemRecorder.stop()
         audioMonitor.isRecordingActive = false
         audioMonitor.reseed()
-        meeting.endedAt = Date()
+        stopRecordingTick()
+        let endedAt = Date()
+        meeting.endedAt = endedAt
         try? storage.saveMeta(meeting)
         meetings.insert(meeting, at: 0)
         currentMeeting = nil
         status = .idle
-        if process && settings.autoTranscribe {
+        let willTranscribe = process && settings.autoTranscribe
+        if interactive {
+            RecordingNotifier.shared.recordingStopped(
+                title: meeting.title,
+                duration: endedAt.timeIntervalSince(meeting.startedAt),
+                willTranscribe: willTranscribe)
+        }
+        if willTranscribe {
             pipeline.enqueue(meeting, transcribe: true, summarize: settings.autoSummarize)
         }
+    }
+
+    /// Start/stop the once-a-second clock that keeps the menu bar timer live.
+    private func startRecordingTick() {
+        now = Date()
+        recordingTick = Timer.publish(every: 1, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] date in self?.now = date }
+    }
+
+    private func stopRecordingTick() {
+        recordingTick?.cancel()
+        recordingTick = nil
     }
 
     func reprocess(_ meeting: Meeting, transcribe: Bool, summarize: Bool) {

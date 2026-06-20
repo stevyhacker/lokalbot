@@ -20,6 +20,12 @@ struct AppSettings: Codable {
     /// Seconds the mic must be released before a meeting counts as ended.
     var stopDebounceSeconds: TimeInterval = 60
 
+    /// Run as a menu-bar-only app: no Dock icon, no window at launch. The
+    /// recording state lives in the menu bar (live timer + indicator) so the
+    /// main window is never required to know a meeting is being captured.
+    /// When off, LokalBotV1 behaves like a normal windowed app with a Dock icon.
+    var menuBarOnly: Bool = true
+
     // MARK: Models (M2)
 
     var transcriptionModel: TranscriptionModelChoice = .parakeetV3
@@ -80,6 +86,7 @@ struct AppSettings: Codable {
     private enum CodingKeys: String, CodingKey {
         case autoRecordMode
         case stopDebounceSeconds
+        case menuBarOnly
         case transcriptionModel
         case transcriptionLanguage
         case languageHint // legacy key used by builds before typed language selection
@@ -125,6 +132,7 @@ struct AppSettings: Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(autoRecordMode, forKey: .autoRecordMode)
         try c.encode(stopDebounceSeconds, forKey: .stopDebounceSeconds)
+        try c.encode(menuBarOnly, forKey: .menuBarOnly)
         try c.encode(transcriptionModel, forKey: .transcriptionModel)
         try c.encode(transcriptionLanguage, forKey: .transcriptionLanguage)
         try c.encode(autoTranscribe, forKey: .autoTranscribe)
@@ -152,6 +160,7 @@ struct AppSettings: Codable {
         let defaults = AppSettings()
         autoRecordMode = (try? c.decode(AutoRecordMode.self, forKey: .autoRecordMode)) ?? defaults.autoRecordMode
         stopDebounceSeconds = (try? c.decode(TimeInterval.self, forKey: .stopDebounceSeconds)) ?? defaults.stopDebounceSeconds
+        menuBarOnly = (try? c.decode(Bool.self, forKey: .menuBarOnly)) ?? defaults.menuBarOnly
         transcriptionModel = (try? c.decode(TranscriptionModelChoice.self, forKey: .transcriptionModel)) ?? defaults.transcriptionModel
         if let language = try? c.decode(TranscriptionLanguage.self, forKey: .transcriptionLanguage) {
             transcriptionLanguage = language

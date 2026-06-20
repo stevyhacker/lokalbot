@@ -114,16 +114,9 @@ struct MainWindowView: View {
             .transition(.move(edge: .top).combined(with: .opacity))
         }
         .task {
-            // Auto-open once, ever. After that it lives behind
-            // menu bar → "Permissions…" and never nags. UI tests bypass it —
-            // synthetic-data tests never need (and would be derailed by) the
-            // permissions sheet stealing focus.
-            if AppState.isUITesting { return }
-            let key = "lokalbotv1.onboarding.shown"
-            if !PermissionManager.shared.allGranted && !UserDefaults.standard.bool(forKey: key) {
-                UserDefaults.standard.set(true, forKey: key)
-                openWindow(id: "onboarding")
-            }
+            // Let non-View code (menu bar, AppDelegate reopen) open windows.
+            // First-run permission onboarding is now triggered from AppState.
+            WindowAccess.shared.register { openWindow(id: $0) }
         }
     }
 

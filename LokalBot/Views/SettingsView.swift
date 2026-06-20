@@ -3,6 +3,7 @@ import LaunchAtLogin
 
 struct SettingsView: View {
     @EnvironmentObject var app: AppState
+    @Environment(\.openWindow) private var openWindow
 
     @State private var ollamaModels: [String] = []
     @State private var ollamaReachable = false
@@ -41,10 +42,19 @@ struct SettingsView: View {
                 }
             }
 
-            if shows("General", ["launch", "login", "startup", "open at login", "auto start"]) {
+            if shows("General", ["launch", "login", "startup", "open at login", "auto start",
+                                 "menu bar", "menubar", "dock", "window", "background", "tray"]) {
                 Section("General") {
                     LaunchAtLogin.Toggle("Launch LokalBotV1 at login")
                     Text("Start LokalBotV1 automatically so it's ready to catch meetings.")
+                        .font(.caption).foregroundStyle(.secondary)
+
+                    Toggle("Menu bar only (hide Dock icon)", isOn: $app.settings.menuBarOnly)
+                        .onChange(of: app.settings.menuBarOnly) { _, menuBarOnly in
+                            DockPolicy.sync()
+                            if !menuBarOnly { openWindow(id: "main") }
+                        }
+                    Text("Run from the menu bar with a live recording timer — no Dock icon, no window at launch. The window stays one click away. Takes full effect once open windows are closed.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
