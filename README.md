@@ -48,11 +48,11 @@ In Xcode: select your team under Signing & Capabilities, then Run. On first reco
 **M4 — day tracking**
 - **Sampler:** frontmost app + focused-window title (Accessibility, degrades to app-name-only) every 5 s; idle-aware (3 min); blocks close on app/title change; min 5 s; pause/resume from menu bar. Stored in `activity_blocks` (same SQLite db).
 - **Timeline screen:** per-day colored block bar with hover details, time-by-app totals with %, day navigation.
-- **Day digest:** "Generate digest" runs the configured LLM over the day's blocks + meetings → `journal/YYYY-MM-DD.md` (## What I worked on / ## Meetings / ## Time allocation).
+- **Day digest:** "Generate digest" runs the configured LLM over the day's blocks + meetings + OCR'd screen text → `journal/YYYY-MM-DD.md` (## What I worked on / ## Meetings / ## Time allocation).
 
 **M5 — screenshots, OCR, privacy**
 - **Capture:** ScreenCaptureKit screenshot of the main display every N min (default 3, Settings slider), downscaled to ≤1500 px, HEIC. Skipped when idle (3 min), paused, locked, or when an excluded app is frontmost. Requires the Screen Recording permission (macOS prompts on first capture).
-- **OCR:** Vision (`VNRecognizeTextRequest`, on-device) runs immediately; text goes into `ocr_fts` and is searchable under Search → Screen scope, and feeds day Q&A.
+- **OCR:** Vision (`VNRecognizeTextRequest`, on-device) runs immediately; text goes into `ocr_fts` and is searchable under Search → Screen scope, and feeds day Q&A and digests.
 - **Encryption & retention:** each screenshot is AES-GCM encrypted with a per-install key in the macOS Keychain; pixels auto-delete after N days (default 14, Settings stepper) while OCR text is kept. Timeline shows a decrypted thumbnail filmstrip.
 - **Exclusions:** comma-separated app list in Settings (preseeded with password managers); excluded time logs as "Private" with no titles and no screenshots.
 

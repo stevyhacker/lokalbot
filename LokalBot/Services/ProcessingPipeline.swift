@@ -251,9 +251,12 @@ final class ProcessingPipeline: ObservableObject {
         return header + body + "\n"
     }
 
-    /// Day digest (M4/M6) — shared by the Timeline UI and `--digest`.
+    /// Day digest (M4/M6) — shared by the Timeline UI and `--digest`. `ocr` is
+    /// the day's OCR'd screen text from periodic screenshots; it carries the
+    /// on-screen detail window titles alone can't (what was actually read,
+    /// written, or discussed), so the summary isn't limited to app/title names.
     func generateDayDigest(for day: Date, blocks: [ActivityBlock], meetings: [Meeting],
-                           config: AppSettings) async throws -> (String, URL) {
+                           ocr: String, config: AppSettings) async throws -> (String, URL) {
         let lines = blocks.map {
             "\($0.start.formatted(date: .omitted, time: .shortened))–\($0.end.formatted(date: .omitted, time: .shortened)) \($0.app)\($0.title.isEmpty ? "" : ": \($0.title)") (\(Int($0.duration / 60))m)"
         }
@@ -261,16 +264,31 @@ final class ProcessingPipeline: ObservableObject {
         let engine = try await makeTextEngine(config)
         let material = PromptContextSanitizer.sanitize(
             (meetingLines + lines).joined(separator: "\n"), maxCharacters: 24_000)
+        let context = Self.digestContext(date: day, ocr: ocr)
         let text = try await engine.generate(
-            system: "You summarize a person's workday from their app/window activity log and meeting list. Write Markdown: ## What I worked on (grouped bullets, by project/topic inferred from window titles), ## Meetings (or 'None'), ## Time allocation (one-line table of top apps). Be concrete, never invent.",
+            system: "You summarize a person's workday from their app/window activity log, meeting list, and OCR'd on-screen text. Write Markdown: ## What I worked on (grouped bullets, by project/topic inferred from window titles AND the on-screen text), ## Meetings (or 'None'), ## Time allocation (one-line table of top apps). Lean on the screen text for concrete detail; be specific, never invent.",
             prompt: material.isEmpty ? "No activity was recorded this day." : material,
-            context: ["Date: \(day.formatted(date: .complete, time: .omitted))"])
+            context: context)
         let name = day.formatted(.iso8601.year().month().day())
         let url = storage.rootURL.appendingPathComponent("journal/\(name).md")
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try text.data(using: .utf8)?.write(to: url, options: .atomic)
         return (text, url)
+    }
+
+    /// LLM context blocks for a day digest: the date plus — when present — the
+    /// OCR'd screen text from the day's screenshots. The OCR block is what lets
+    /// the digest reflect actual on-screen content, not just window titles.
+    /// Pure + `nonisolated static` so the screenshot→digest wiring is unit-
+    /// testable without a model, mirroring `AppleIntelligenceEngine.composePrompt`.
+    nonisolated static func digestContext(date: Date, ocr: String) -> [String] {
+        var context = ["Date: \(date.formatted(date: .complete, time: .omitted))"]
+        let screenText = PromptContextSanitizer.sanitize(ocr, maxCharacters: 12_000)
+        if !screenText.isEmpty {
+            context.append("Screen text OCR'd from periodic screenshots:\n" + screenText)
+        }
+        return context
     }
 
     func makeTextEngine(_ config: AppSettings) async throws -> TextEngine {

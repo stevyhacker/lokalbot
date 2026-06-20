@@ -207,9 +207,10 @@ struct TimelineView: View {
         generating = true
         defer { generating = false }
         let todays = app.meetings.filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }
+        let ocr = app.activityStore.ocrText(on: day)
         do {
             let (text, _) = try await app.pipeline.generateDayDigest(
-                for: day, blocks: blocks, meetings: todays, config: app.settings)
+                for: day, blocks: blocks, meetings: todays, ocr: ocr, config: app.settings)
             digest = text
         } catch {
             digestError = error.localizedDescription

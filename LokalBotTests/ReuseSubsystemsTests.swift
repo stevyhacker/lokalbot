@@ -143,4 +143,32 @@ final class ReuseSubsystemsTests: XCTestCase {
         XCTAssertEqual(AppleIntelligenceEngine.cappedToTail("abcdef", limit: 3), "def")
         XCTAssertEqual(AppleIntelligenceEngine.cappedToTail("ab", limit: 5), "ab")
     }
+
+    // MARK: - ProcessingPipeline.digestContext (screenshot OCR → day digest)
+
+    func testDigestContextIncludesScreenOCRWhenPresent() {
+        let ctx = ProcessingPipeline.digestContext(
+            date: Date(), ocr: "[Xcode] func generateDayDigest() — launch failed")
+        // Date block is always first; non-empty OCR adds a second screen-text block.
+        XCTAssertEqual(ctx.count, 2)
+        let screen = ctx[1]
+        XCTAssertTrue(screen.hasPrefix("Screen text"))
+        // The actual on-screen content reaches the prompt — not just window titles.
+        XCTAssertTrue(screen.contains("generateDayDigest"))
+        XCTAssertTrue(screen.contains("launch failed"))
+    }
+
+    func testDigestContextOmitsScreenBlockWhenOCRBlank() {
+        XCTAssertEqual(ProcessingPipeline.digestContext(date: Date(), ocr: "").count, 1)
+        // Whitespace-only OCR sanitizes to empty, so no dangling screen block.
+        XCTAssertEqual(ProcessingPipeline.digestContext(date: Date(), ocr: "  \n\t  ").count, 1)
+    }
+
+    func testDigestContextCapsLargeOCR() {
+        let ctx = ProcessingPipeline.digestContext(
+            date: Date(), ocr: String(repeating: "x", count: 50_000))
+        XCTAssertEqual(ctx.count, 2)
+        // A busy day's screen text is capped so it can't blow the prompt budget.
+        XCTAssertLessThan(ctx[1].count, 13_000)
+    }
 }

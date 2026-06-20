@@ -608,7 +608,7 @@ final class AppState: ObservableObject {
                 let todays = meetings.filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }
                 let (text, url) = try await pipeline.generateDayDigest(
                     for: day, blocks: activityStore.blocks(on: day),
-                    meetings: todays, config: settings)
+                    meetings: todays, ocr: activityStore.ocrText(on: day), config: settings)
                 print("LokalBotV1 --digest: \(url.path) (\(text.count) chars)")
                 await LlamaServer.shared.stop()
                 exit(0)
