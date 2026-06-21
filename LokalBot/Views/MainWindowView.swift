@@ -21,7 +21,7 @@ struct MainWindowView: View {
                     .tag(AppState.NavSection.settings)
                     .accessibilityIdentifier("sidebar.settings")
             }
-            .navigationSplitViewColumnWidth(min: 150, ideal: 170)
+            .navigationSplitViewColumnWidth(min: 180, ideal: 210)
         } content: {
             switch app.navSection {
             case .meetings: meetingList
@@ -150,7 +150,7 @@ struct MainWindowView: View {
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 if live { Circle().fill(.red).frame(width: 9, height: 9) }
-                Text(meeting.title).font(.system(size: 13.5, weight: .semibold))
+                Text(meeting.title).font(.headline)
             }
             Text("\(meeting.appName) · \(time) · \(duration)")
                 .font(.caption).foregroundStyle(.secondary)
@@ -221,21 +221,12 @@ struct MeetingDetailView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(meeting.title).font(.title2.bold()).accessibilityIdentifier("detail.title")
-            HStack(spacing: 8) {
-                badge("📅 \(meeting.startedAt.formatted(date: .abbreviated, time: .shortened))")
-                badge("⏱ \(meeting.durationLabel)")
-                badge("🎥 \(meeting.appName)")
-                badge(meeting.hasSystemTrack ? "🎚 mic + system" : "🎙 mic only")
-                Spacer()
-                Button("Show in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([folder])
-                }
-                Menu("Process") {
-                    Button("Transcribe & summarize") { app.reprocess(meeting, transcribe: true, summarize: true) }
-                    Button("Transcribe only") { app.reprocess(meeting, transcribe: true, summarize: false) }
-                    Button("Re-summarize (keep transcript)") { app.reprocess(meeting, transcribe: false, summarize: true) }
-                }
-                .fixedSize()
+            HStack(spacing: 6) {
+                metaBadge("calendar", meeting.startedAt.formatted(date: .abbreviated, time: .shortened))
+                metaBadge("clock", meeting.durationLabel)
+                metaBadge("video", meeting.appName)
+                metaBadge(meeting.hasSystemTrack ? "speaker.wave.2.fill" : "mic.fill",
+                          meeting.hasSystemTrack ? "Mic + system" : "Mic only")
             }
 
             if player.isLoaded { playerBar }
@@ -268,6 +259,22 @@ struct MeetingDetailView: View {
         }
         .onChange(of: app.pendingSeek) { consumePendingSeek() }
         .onDisappear { player.stop() }
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([folder])
+                } label: {
+                    Label("Show in Finder", systemImage: "folder")
+                }
+                Menu {
+                    Button("Transcribe & Summarize") { app.reprocess(meeting, transcribe: true, summarize: true) }
+                    Button("Transcribe Only") { app.reprocess(meeting, transcribe: true, summarize: false) }
+                    Button("Re-summarize (Keep Transcript)") { app.reprocess(meeting, transcribe: false, summarize: true) }
+                } label: {
+                    Label("Process", systemImage: "wand.and.stars")
+                }
+            }
+        }
     }
 
     /// Reload from disk when the meeting changes or the pipeline finishes a stage.
@@ -374,7 +381,7 @@ struct MeetingDetailView: View {
                 .background(segment.speaker == "me" ? Color.accentColor.opacity(0.18)
                                                     : Color.secondary.opacity(0.15),
                             in: Capsule())
-            Text(segment.text).font(.system(size: 13))
+            Text(segment.text).font(.body)
                 .textSelection(.enabled)
         }
         .padding(.vertical, 4).padding(.horizontal, 6)
@@ -391,9 +398,12 @@ struct MeetingDetailView: View {
         transcript = try? app.pipeline.loadTranscript(from: folder)
     }
 
-    private func badge(_ text: String) -> some View {
-        Text(text).font(.caption)
-            .padding(.horizontal, 9).padding(.vertical, 3)
+    private func metaBadge(_ systemImage: String, _ text: String) -> some View {
+        Label(text, systemImage: systemImage)
+            .labelStyle(.titleAndIcon)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 9).padding(.vertical, 4)
             .background(.quaternary, in: Capsule())
     }
 }

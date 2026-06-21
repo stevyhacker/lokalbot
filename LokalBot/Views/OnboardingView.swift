@@ -39,7 +39,7 @@ struct OnboardingView: View {
                     .onDrag { NSItemProvider(object: Bundle.main.bundleURL as NSURL) }
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Adding LokalBotV1 manually in System Settings?")
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.headline)
                     Text("Drag this icon straight into the permission list — it's always the right copy. Remove any older “LokalBotV1” entries first.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -50,7 +50,7 @@ struct OnboardingView: View {
                 }
             }
             .padding(10)
-            .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+            .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
 
             Divider()
             HStack {
@@ -79,7 +79,7 @@ struct OnboardingView: View {
                 .font(.system(size: 19)).frame(width: 30)
                 .foregroundStyle(granted ? .green : .secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13.5, weight: .semibold))
+                Text(title).font(.headline)
                 Text(why).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

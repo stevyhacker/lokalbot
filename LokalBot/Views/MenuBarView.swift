@@ -76,7 +76,7 @@ struct MenuBarView: View {
                 statusDot
                 VStack(alignment: .leading, spacing: 2) {
                     Text(app.isRecording ? "Recording" : "Not recording")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.headline)
                     Text(statusSubtitle)
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
@@ -105,7 +105,7 @@ struct MenuBarView: View {
             .tint(app.isRecording ? .red : .accentColor)
         }
         .padding(12)
-        .background(.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(app.isRecording ? Color.red.opacity(0.35) : Color.clear))
@@ -167,7 +167,7 @@ struct MenuBarView: View {
                                 .foregroundStyle(.secondary).font(.caption)
                             VStack(alignment: .leading, spacing: 0) {
                                 Text(shortMenuTitle(meeting.title))
-                                    .font(.system(size: 12.5)).lineLimit(1)
+                                    .font(.callout).lineLimit(1)
                                 Text("\(meeting.appName) · \(meeting.durationLabel)")
                                     .font(.caption2).foregroundStyle(.secondary)
                             }

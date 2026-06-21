@@ -41,20 +41,37 @@ struct TimelineView: View {
         }
         .task(id: day.formatted(date: .numeric, time: .omitted)) { reload() }
         .navigationTitle("Timeline")
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    app.sampler.isPaused.toggle()
+                } label: {
+                    Label(app.sampler.isPaused ? "Resume Tracking" : "Pause Tracking",
+                          systemImage: app.sampler.isPaused ? "play.fill" : "pause.fill")
+                }
+                Button {
+                    reload()
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+            }
+        }
     }
 
     private var header: some View {
-        HStack {
-            Button { day = day.addingTimeInterval(-86_400) } label: { Image(systemName: "chevron.left") }
+        HStack(spacing: 8) {
+            Button { day = day.addingTimeInterval(-86_400) } label: {
+                Image(systemName: "chevron.left")
+            }
+            .accessibilityLabel("Previous day")
             DatePicker("", selection: $day, displayedComponents: .date)
                 .labelsHidden().fixedSize()
-            Button { day = day.addingTimeInterval(86_400) } label: { Image(systemName: "chevron.right") }
-                .disabled(Calendar.current.isDateInToday(day))
-            Spacer()
-            Button(app.sampler.isPaused ? "Resume tracking" : "Pause tracking") {
-                app.sampler.isPaused.toggle()
+            Button { day = day.addingTimeInterval(86_400) } label: {
+                Image(systemName: "chevron.right")
             }
-            Button("Refresh") { reload() }
+            .accessibilityLabel("Next day")
+            .disabled(Calendar.current.isDateInToday(day))
+            Spacer()
         }
     }
 
@@ -96,9 +113,9 @@ struct TimelineView: View {
             ForEach(perApp.prefix(12), id: \.key) { appName, seconds in
                 HStack(spacing: 8) {
                     Circle().fill(Self.color(for: appName)).frame(width: 9, height: 9)
-                    Text(appName).font(.system(size: 13))
+                    Text(appName).font(.body)
                     Spacer()
-                    Text(Self.hm(seconds)).font(.system(size: 12).monospacedDigit())
+                    Text(Self.hm(seconds)).font(.callout.monospacedDigit())
                         .foregroundStyle(.secondary)
                     Text(String(format: "%2.0f%%", seconds / max(total, 1) * 100))
                         .font(.caption.monospacedDigit()).foregroundStyle(.tertiary)

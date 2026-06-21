@@ -32,11 +32,22 @@ struct SearchView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search transcripts, summaries, titles…", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 15))
-                    .accessibilityIdentifier("search.field")
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search transcripts, summaries, titles…", text: $query)
+                        .textFieldStyle(.plain)
+                        .accessibilityIdentifier("search.field")
+                    if !query.isEmpty {
+                        Button { query = "" } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Clear search")
+                    }
+                }
+                .padding(.horizontal, 8).padding(.vertical, 6)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
                 Picker("", selection: $scope) {
                     ForEach(Scope.allCases) {
                         Text($0.rawValue).tag($0).accessibilityIdentifier("search.scope.\($0.rawValue.lowercased())")
@@ -59,14 +70,14 @@ struct SearchView: View {
                     List(ocrHits) { hit in
                         VStack(alignment: .leading, spacing: 3) {
                             HStack {
-                                Text(hit.app).font(.system(size: 13, weight: .semibold))
+                                Text(hit.app).font(.headline)
                                 Text(hit.ts.formatted(date: .abbreviated, time: .shortened))
                                     .font(.caption).foregroundStyle(.secondary)
                                 Spacer()
                             }
                             Text(hit.snippet.replacingOccurrences(of: "«", with: "")
                                     .replacingOccurrences(of: "»", with: ""))
-                                .font(.system(size: 12.5)).foregroundStyle(.secondary).lineLimit(3)
+                                .font(.callout).foregroundStyle(.secondary).lineLimit(3)
                         }
                         .padding(.vertical, 3)
                     }
@@ -147,14 +158,14 @@ private struct SemanticHitRow: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 Text(meeting?.title ?? "Unknown meeting")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.headline)
                 Spacer()
                 Text(String(format: "≈ %.0f%%", hit.score * 100))
                     .font(.caption2.monospacedDigit())
                     .padding(.horizontal, 7).padding(.vertical, 2)
                     .background(.quaternary, in: Capsule())
             }
-            Text(hit.text).font(.system(size: 12.5))
+            Text(hit.text).font(.callout)
                 .foregroundStyle(.secondary).lineLimit(3)
         }
         .padding(.vertical, 3)
@@ -169,7 +180,7 @@ private struct SearchHitRow: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 Text(meeting?.title ?? "Unknown meeting")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.headline)
                 if let meeting {
                     Text(meeting.startedAt.formatted(date: .abbreviated, time: .omitted))
                         .font(.caption).foregroundStyle(.secondary)
@@ -178,7 +189,7 @@ private struct SearchHitRow: View {
                 kindChip
             }
             highlighted(hit.snippet)
-                .font(.system(size: 12.5))
+                .font(.callout)
                 .foregroundStyle(.secondary)
                 .lineLimit(3)
         }
