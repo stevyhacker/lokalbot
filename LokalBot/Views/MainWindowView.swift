@@ -6,56 +6,7 @@ struct MainWindowView: View {
     @State private var pendingDelete: Set<Meeting.ID>?
 
     var body: some View {
-        NavigationSplitView {
-            List(selection: sidebarSelection) {
-                Label("Meetings", systemImage: "waveform.circle")
-                    .tag(AppState.NavSection.meetings)
-                    .accessibilityIdentifier("sidebar.meetings")
-                Label("Timeline", systemImage: "calendar.day.timeline.left")
-                    .tag(AppState.NavSection.timeline)
-                    .accessibilityIdentifier("sidebar.timeline")
-                Label("Search", systemImage: "magnifyingglass")
-                    .tag(AppState.NavSection.search)
-                    .accessibilityIdentifier("sidebar.search")
-                Label("Settings", systemImage: "gearshape")
-                    .tag(AppState.NavSection.settings)
-                    .accessibilityIdentifier("sidebar.settings")
-            }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 210)
-        } content: {
-            switch app.navSection {
-            case .meetings: meetingList
-            case .timeline: TimelineView()
-            case .search: SearchView().navigationTitle("Search")
-            case .settings:
-                SettingsView()
-                    .navigationSplitViewColumnWidth(min: 470, ideal: 560)
-            }
-        } detail: {
-            if app.navSection == .settings {
-                // Settings selected → the detail pane shows live permission
-                // status (same panel as onboarding).
-                ScrollView { OnboardingView() }
-            } else if let meeting = app.selectedMeeting {
-                MeetingDetailView(meeting: meeting)
-                    .id(meeting.id)
-            } else if app.selectedMeetingIDs.count > 1 {
-                ContentUnavailableView {
-                    Label("\(app.selectedMeetingIDs.count) meetings selected", systemImage: "checklist")
-                } description: {
-                    Text("Press ⌫ or right-click to delete them.")
-                } actions: {
-                    Button("Delete \(app.selectedMeetingIDs.count) meetings", role: .destructive) {
-                        pendingDelete = app.selectedMeetingIDs
-                    }
-                }
-            } else {
-                ContentUnavailableView(
-                    "No meeting selected",
-                    systemImage: "waveform.circle",
-                    description: Text("Recordings appear here automatically and are transcribed & summarized after the meeting ends."))
-            }
-        }
+        navigation
         .confirmationDialog(
             "Delete \(pendingDelete?.count ?? 0) meeting\((pendingDelete?.count ?? 0) == 1 ? "" : "s")?",
             isPresented: Binding(get: { pendingDelete != nil },
@@ -117,6 +68,81 @@ struct MainWindowView: View {
             // Let non-View code (menu bar, AppDelegate reopen) open windows.
             // First-run permission onboarding is now triggered from AppState.
             WindowAccess.shared.register { openWindow(id: $0) }
+        }
+    }
+
+    /// Timeline gets the full main area (sidebar + detail, two columns); every
+    /// other section keeps the three-column master/detail split.
+    @ViewBuilder private var navigation: some View {
+        if app.navSection == .timeline {
+            NavigationSplitView {
+                sidebar
+            } detail: {
+                TimelineView()
+            }
+        } else {
+            NavigationSplitView {
+                sidebar
+            } content: {
+                contentPane
+            } detail: {
+                detailPane
+            }
+        }
+    }
+
+    private var sidebar: some View {
+        List(selection: sidebarSelection) {
+            Label("Meetings", systemImage: "waveform.circle")
+                .tag(AppState.NavSection.meetings)
+                .accessibilityIdentifier("sidebar.meetings")
+            Label("Timeline", systemImage: "calendar.day.timeline.left")
+                .tag(AppState.NavSection.timeline)
+                .accessibilityIdentifier("sidebar.timeline")
+            Label("Search", systemImage: "magnifyingglass")
+                .tag(AppState.NavSection.search)
+                .accessibilityIdentifier("sidebar.search")
+            Label("Settings", systemImage: "gearshape")
+                .tag(AppState.NavSection.settings)
+                .accessibilityIdentifier("sidebar.settings")
+        }
+        .navigationSplitViewColumnWidth(min: 180, ideal: 210)
+    }
+
+    @ViewBuilder private var contentPane: some View {
+        switch app.navSection {
+        case .meetings: meetingList
+        case .timeline: EmptyView()
+        case .search: SearchView().navigationTitle("Search")
+        case .settings:
+            SettingsView()
+                .navigationSplitViewColumnWidth(min: 470, ideal: 560)
+        }
+    }
+
+    @ViewBuilder private var detailPane: some View {
+        if app.navSection == .settings {
+            // Settings selected → the detail pane shows live permission
+            // status (same panel as onboarding).
+            ScrollView { OnboardingView() }
+        } else if let meeting = app.selectedMeeting {
+            MeetingDetailView(meeting: meeting)
+                .id(meeting.id)
+        } else if app.selectedMeetingIDs.count > 1 {
+            ContentUnavailableView {
+                Label("\(app.selectedMeetingIDs.count) meetings selected", systemImage: "checklist")
+            } description: {
+                Text("Press ⌫ or right-click to delete them.")
+            } actions: {
+                Button("Delete \(app.selectedMeetingIDs.count) meetings", role: .destructive) {
+                    pendingDelete = app.selectedMeetingIDs
+                }
+            }
+        } else {
+            ContentUnavailableView(
+                "No meeting selected",
+                systemImage: "waveform.circle",
+                description: Text("Recordings appear here automatically and are transcribed & summarized after the meeting ends."))
         }
     }
 
