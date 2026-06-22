@@ -17,7 +17,7 @@ final class AppUpdateManager: ObservableObject {
     /// ed25519 public key replaces it, `hasUsableConfiguration` is false and the
     /// updater never starts — a fresh clone can't accidentally self-update.
     static let publicKeyPlaceholder = "REPLACE_WITH_GENERATED_SPARKLE_PUBLIC_ED_KEY"
-    private static let debugCheckOnLaunchArgument = "-lokalbotv2-check-for-updates-on-launch"
+    private static let debugCheckOnLaunchArgument = "-lokalbotv3-check-for-updates-on-launch"
 
     /// Retained for the process lifetime — Sparkle expects its controller alive.
     private let updaterController: SPUStandardUpdaterController
@@ -51,15 +51,15 @@ final class AppUpdateManager: ObservableObject {
     func start() {
         guard !isStarted else { return }
         guard Self.isUpdaterEnabledForThisBuild else {
-            lokalbotv2Log("Sparkle disabled for dev build."); return
+            lokalbotv3Log("Sparkle disabled for dev build."); return
         }
         guard hasUsableConfiguration else {
-            lokalbotv2Log("Sparkle not started: updater config incomplete (see RELEASING.md).")
+            lokalbotv3Log("Sparkle not started: updater config incomplete (see RELEASING.md).")
             return
         }
         updaterController.startUpdater()
         isStarted = true
-        lokalbotv2Log("Sparkle updater started.")
+        lokalbotv3Log("Sparkle updater started.")
         // Background check on launch only when the user opted in. Sparkle's
         // scheduled interval covers long-running sessions; this covers users who
         // reopen within a day without creating opt-out network traffic.
@@ -77,16 +77,16 @@ final class AppUpdateManager: ObservableObject {
     /// for the explicit Settings button; launch uses the silent background check.
     func checkForUpdates() {
         guard isStarted else {
-            lokalbotv2Log("Ignoring manual update check; updater not started.")
+            lokalbotv3Log("Ignoring manual update check; updater not started.")
             return
         }
         updaterController.checkForUpdates(nil)
     }
 
-    /// Compiled to `false` in the dev configuration (LOKALBOTV2_DEV), which ships a
+    /// Compiled to `false` in the dev configuration (LOKALBOTV3_DEV), which ships a
     /// distinct bundle id the prod appcast must never replace.
     private static var isUpdaterEnabledForThisBuild: Bool {
-        #if LOKALBOTV2_DEV
+        #if LOKALBOTV3_DEV
         false
         #else
         true
@@ -99,11 +99,11 @@ final class AppUpdateManager: ObservableObject {
         guard let feed = configuredString("SUFeedURL"),
               let url = URL(string: feed), url.scheme != nil,
               !feed.contains("OWNER/REPO") else {
-            lokalbotv2Log("Sparkle: missing/placeholder SUFeedURL.")
+            lokalbotv3Log("Sparkle: missing/placeholder SUFeedURL.")
             return false
         }
         guard let key = configuredString("SUPublicEDKey"), key != Self.publicKeyPlaceholder else {
-            lokalbotv2Log("Sparkle: missing/placeholder SUPublicEDKey.")
+            lokalbotv3Log("Sparkle: missing/placeholder SUPublicEDKey.")
             return false
         }
         return true

@@ -1,6 +1,6 @@
-# Releasing LokalBotV2 (Sparkle)
+# Releasing LokalBotV3 (Sparkle)
 
-Practical runbook for cutting a notarized LokalBotV2 release and publishing a
+Practical runbook for cutting a notarized LokalBotV3 release and publishing a
 Sparkle update. The release tooling lives in `Scripts/`:
 
 | File | Role |
@@ -28,7 +28,7 @@ notarization and stapling, with no further edits to the DMG.
 
 ## Current config
 
-- Product: **LokalBotV2** · bundle id `com.dotenv.LokalBotV2` · team `K96P3M3997`
+- Product: **LokalBotV3** · bundle id `com.dotenv.LokalBotV3` · team `K96P3M3997`
 - Xcode project `LokalBot.xcodeproj` · schemes `LokalBot` (prod), `LokalBot Dev` (dev)
 - Sparkle feed (`SUFeedURL`):
   `https://github.com/OWNER/REPO/releases/latest/download/appcast.xml`
@@ -81,13 +81,13 @@ sparkle-generate-keys -p        # prints the base64 SUPublicEDKey
 Back the private key up somewhere safe (you can never regenerate a matching one):
 
 ```sh
-sparkle-generate-keys -x ~/secure/LokalBotV2-sparkle-key.txt
+sparkle-generate-keys -x ~/secure/LokalBotV3-sparkle-key.txt
 ```
 
 ### 3. Publish the public key in the app
 
 Add the Sparkle Info.plist keys via `project.yml` (so xcodegen writes them into
-`LokalBotV2.app/Contents/Info.plist`). Under `targets.LokalBot.info.properties`:
+`LokalBotV3.app/Contents/Info.plist`). Under `targets.LokalBot.info.properties`:
 
 ```yaml
         SUFeedURL: https://github.com/OWNER/REPO/releases/latest/download/appcast.xml
@@ -108,7 +108,7 @@ Create an app-specific password at <https://appleid.apple.com>, then cache it as
 a notarytool keychain profile so the release commands stay credential-free:
 
 ```sh
-xcrun notarytool store-credentials "LokalBotV2-notary" \
+xcrun notarytool store-credentials "LokalBotV3-notary" \
   --apple-id "you@example.com" \
   --team-id "K96P3M3997" \
   --password "<app-specific-password>"
@@ -143,7 +143,7 @@ xcodebuild archive \
   -project LokalBot.xcodeproj \
   -scheme LokalBot \
   -configuration Release \
-  -archivePath build/LokalBotV2.xcarchive \
+  -archivePath build/LokalBotV3.xcarchive \
   -allowProvisioningUpdates \
   ENABLE_HARDENED_RUNTIME=YES
 ```
@@ -162,12 +162,12 @@ Create `build/exportOptions.plist`:
 </plist>
 ```
 
-Export the signed app to `build/export/LokalBotV2.app` (the default the DMG
+Export the signed app to `build/export/LokalBotV3.app` (the default the DMG
 builder looks for):
 
 ```sh
 xcodebuild -exportArchive \
-  -archivePath build/LokalBotV2.xcarchive \
+  -archivePath build/LokalBotV3.xcarchive \
   -exportPath build/export \
   -exportOptionsPlist build/exportOptions.plist
 ```
@@ -177,9 +177,9 @@ xcodebuild -exportArchive \
 Stapling the app (not just the DMG) lets first launch succeed offline:
 
 ```sh
-ditto -c -k --keepParent build/export/LokalBotV2.app build/LokalBotV2-app.zip
-xcrun notarytool submit build/LokalBotV2-app.zip --keychain-profile "LokalBotV2-notary" --wait
-xcrun stapler staple build/export/LokalBotV2.app
+ditto -c -k --keepParent build/export/LokalBotV3.app build/LokalBotV3-app.zip
+xcrun notarytool submit build/LokalBotV3-app.zip --keychain-profile "LokalBotV3-notary" --wait
+xcrun stapler staple build/export/LokalBotV3.app
 ```
 
 ### 4. Build the styled DMG
@@ -187,11 +187,11 @@ xcrun stapler staple build/export/LokalBotV2.app
 ```sh
 pip3 install dmgbuild   # once per machine; pip3 install "dmgbuild[badge_icons]" for a badged volume icon
 python3 Scripts/build_release_dmg.py \
-  --app build/export/LokalBotV2.app \
-  --output build/LokalBotV2.dmg
+  --app build/export/LokalBotV3.app \
+  --output build/LokalBotV3.dmg
 ```
 
-This stages `LokalBotV2.app` beside an `Applications` shortcut, locks the
+This stages `LokalBotV3.app` beside an `Applications` shortcut, locks the
 drag-to-install icon layout, and reuses the bundle's `AppIcon.icns` as the
 volume icon. Pass `--background path/to/dmg_background.png` (with an optional
 sibling `@2x` for HiDPI) for custom art.
@@ -199,8 +199,8 @@ sibling `@2x` for HiDPI) for custom art.
 ### 5. Notarize + staple the DMG
 
 ```sh
-xcrun notarytool submit build/LokalBotV2.dmg --keychain-profile "LokalBotV2-notary" --wait
-xcrun stapler staple build/LokalBotV2.dmg
+xcrun notarytool submit build/LokalBotV3.dmg --keychain-profile "LokalBotV3-notary" --wait
+xcrun stapler staple build/LokalBotV3.dmg
 ```
 
 ### 6. Sparkle-sign + generate the appcast (LAST)
@@ -209,17 +209,17 @@ No edits to the DMG after this point — the signature covers these exact bytes:
 
 ```sh
 python3 Scripts/generate_appcast.py \
-  --archive build/LokalBotV2.dmg \
-  --app build/export/LokalBotV2.app \
+  --archive build/LokalBotV3.dmg \
+  --app build/export/LokalBotV3.app \
   --repo OWNER/REPO \
   --output build/appcast.xml
-  # --ed-key-file ~/secure/LokalBotV2-sparkle-key.txt   # only if the key isn't in your Keychain
+  # --ed-key-file ~/secure/LokalBotV3-sparkle-key.txt   # only if the key isn't in your Keychain
 ```
 
 The script reads `CFBundleShortVersionString` / `CFBundleVersion` from the app,
 locates `sign_update` (via `--sign-update-tool`, `$SPARKLE_BIN`, your PATH,
 `xcrun`, or DerivedData), signs the DMG, and renders `appcast.xml` with the
-enclosure URL `https://github.com/OWNER/REPO/releases/download/v1.0.0/LokalBotV2.dmg`.
+enclosure URL `https://github.com/OWNER/REPO/releases/download/v1.0.0/LokalBotV3.dmg`.
 
 ### 7. Publish the GitHub Release
 
@@ -229,9 +229,9 @@ Upload **both** the DMG and the appcast as release assets so the feed at
 ```sh
 git tag v1.0.0 && git push origin v1.0.0
 gh release create v1.0.0 \
-  build/LokalBotV2.dmg \
+  build/LokalBotV3.dmg \
   build/appcast.xml \
-  --title "LokalBotV2 1.0.0" \
+  --title "LokalBotV3 1.0.0" \
   --notes "What's new in this release."
 ```
 
@@ -245,7 +245,7 @@ on GitHub and won't become "Latest"; tag without a suffix for a stable release.
 A tag-triggered GitHub Actions workflow (`.github/workflows/release.yml`)
 automates the flow above: import the Developer ID cert into a temp keychain,
 archive + export, build the DMG, notarize + staple, download the Sparkle tarball
-for `sign_update`, run `generate_appcast.py`, and upload `LokalBotV2.dmg` +
+for `sign_update`, run `generate_appcast.py`, and upload `LokalBotV3.dmg` +
 `appcast.xml` to the Release. Required repo secrets:
 
 - `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PWD`, `KEYCHAIN_PWD`
@@ -262,21 +262,21 @@ resolved automatically there.
 
 ```sh
 # Apple: app and DMG accepted by Gatekeeper
-spctl -a -t exec -vv build/export/LokalBotV2.app
-spctl -a -t open --context context:primary-signature -vv build/LokalBotV2.dmg
+spctl -a -t exec -vv build/export/LokalBotV3.app
+spctl -a -t open --context context:primary-signature -vv build/LokalBotV3.dmg
 
 # Stapling present (offline launch)
-xcrun stapler validate build/LokalBotV2.dmg
+xcrun stapler validate build/LokalBotV3.dmg
 
 # Sparkle: signature verifies against the public key
 sparkle-sign-update --verify "$(python3 - <<'PY'
 import re,sys
 print(re.search(r'edSignature="([^"]+)"', open('build/appcast.xml').read()).group(1))
 PY
-)" build/LokalBotV2.dmg
+)" build/LokalBotV3.dmg
 
 # Installer layout: mounts in icon view, app above the Applications drop target
-hdiutil attach build/LokalBotV2.dmg
+hdiutil attach build/LokalBotV3.dmg
 ```
 
 ---

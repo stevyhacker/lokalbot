@@ -17,10 +17,10 @@ private let logger = Logger(subsystem: AppIdentifiers.appBundleID, category: "CL
 /// canonical skill path only (LokalBot does not also link `~/.claude/skills`).
 struct LokalBotCLIInstaller {
     var home: URL
-    /// The embedded CLI at `LokalBotV2.app/Contents/Helpers/lokalbot-cli`, nil
+    /// The embedded CLI at `LokalBotV3.app/Contents/Helpers/lokalbot-cli`, nil
     /// when the bundle hasn't been built with CLI embedding enabled.
     var bundledBinary: URL?
-    /// The embedded skill folder at `LokalBotV2.app/Contents/Resources/lokalbot-cli/`,
+    /// The embedded skill folder at `LokalBotV3.app/Contents/Resources/lokalbot-cli/`,
     /// nil when the SKILL.md asset wasn't copied in.
     var bundledSkillDir: URL?
     var fileManager: FileManager
@@ -56,7 +56,7 @@ struct LokalBotCLIInstaller {
 
     /// True only when both the binary and the skill symlink resolve into the
     /// running app bundle. A half-install (one link missing, or pointing at a
-    /// stale `LokalBotV2.app` copy) reads as "not installed" so the UI re-offers
+    /// stale `LokalBotV3.app` copy) reads as "not installed" so the UI re-offers
     /// the Install action instead of hiding a broken state.
     var isInstalled: Bool {
         guard let binary = bundledBinary, let skill = bundledSkillDir else { return false }
@@ -73,7 +73,7 @@ struct LokalBotCLIInstaller {
         let bundle = binary
             .deletingLastPathComponent()  // …/Contents/Helpers
             .deletingLastPathComponent()  // …/Contents
-            .deletingLastPathComponent()  // …/LokalBotV2.app
+            .deletingLastPathComponent()  // …/LokalBotV3.app
         if let values = try? bundle.resourceValues(forKeys: [.volumeIsReadOnlyKey]),
            values.volumeIsReadOnly == true { return false }
         return true
@@ -106,7 +106,7 @@ struct LokalBotCLIInstaller {
             case .bundleNotShipped:
                 return "This build doesn't ship the lokalbot-cli — install the latest release."
             case .bundleNotStable:
-                return "The app is running from a translocated or read-only location. Move LokalBotV2.app to /Applications and relaunch."
+                return "The app is running from a translocated or read-only location. Move LokalBotV3.app to /Applications and relaunch."
             case .fileSystem(let message):
                 return message
             }
@@ -135,9 +135,9 @@ struct LokalBotCLIInstaller {
             guard let destPath = try? fileManager.destinationOfSymbolicLink(atPath: link.path) else {
                 continue
             }
-            // Only remove links that resolve into *some* LokalBotV2.app — never
+            // Only remove links that resolve into *some* LokalBotV3.app — never
             // foreign symlinks at our canonical paths.
-            if destPath.contains("LokalBotV2.app/") {
+            if destPath.contains("LokalBotV3.app/") {
                 try fileManager.removeItem(at: link)
             }
         }
@@ -151,7 +151,7 @@ struct LokalBotCLIInstaller {
         guard !existing.contains(Self.pathExportLine) else { return }
         var updated = existing
         if !updated.isEmpty && !updated.hasSuffix("\n") { updated += "\n" }
-        updated += "\n# Added by LokalBotV2 / lokalbot-cli\n\(Self.pathExportLine)\n"
+        updated += "\n# Added by LokalBotV3 / lokalbot-cli\n\(Self.pathExportLine)\n"
         do {
             try updated.write(to: zshrc, atomically: true, encoding: .utf8)
         } catch {

@@ -2,7 +2,7 @@ import Foundation
 import SQLite3
 
 /// SQLite + FTS5 full-text index (design doc §4.1) over meeting titles,
-/// transcript segments and summaries. Lives at <storage root>/lokalbotv2.sqlite.
+/// transcript segments and summaries. Lives at <storage root>/lokalbotv3.sqlite.
 /// Segment-level rows let transcript hits deep-link to their audio timestamp.
 /// macOS ships SQLite with FTS5 enabled, so this adds no dependency.
 @MainActor

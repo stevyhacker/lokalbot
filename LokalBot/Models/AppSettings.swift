@@ -23,7 +23,7 @@ struct AppSettings: Codable {
     /// Run as a menu-bar-only app: no Dock icon, no window at launch. The
     /// recording state lives in the menu bar (live timer + indicator) so the
     /// main window is never required to know a meeting is being captured.
-    /// When off, LokalBotV2 behaves like a normal windowed app with a Dock icon.
+    /// When off, LokalBotV3 behaves like a normal windowed app with a Dock icon.
     var menuBarOnly: Bool = true
 
     // MARK: Models (M2)
@@ -81,7 +81,9 @@ struct AppSettings: Codable {
     /// of post-processing per meeting; most users record 1:1 calls.
     var multiSpeakerDiarization: Bool = false
 
-    private static let key = "lokalbotv2.settings"
+    /// UserDefaults key for the encoded settings blob. Internal (not private)
+    /// so `DataMigration` can copy a prior install's settings under it.
+    static let key = "lokalbotv3.settings"
 
     private enum CodingKeys: String, CodingKey {
         case autoRecordMode

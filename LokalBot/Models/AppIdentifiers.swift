@@ -2,12 +2,12 @@ import Foundation
 import Security
 
 enum AppIdentifiers {
-    /// The host LokalBotV2 app's bundle id, used to resolve its Application
+    /// The host LokalBotV3 app's bundle id, used to resolve its Application
     /// Support directory and Keychain consistently from any binary that
     /// belongs to the app (the app itself, the embedded `lokalbot-cli`, …).
     /// Hard-coded so the CLI process — whose own bundle id differs from
     /// the app's — still reads/writes the same paths.
-    static let appBundleID = "com.dotenv.LokalBotV2"
+    static let appBundleID = "com.dotenv.LokalBotV3"
 
     static var bundleID: String { appBundleID }
 }

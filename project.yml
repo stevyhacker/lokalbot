@@ -33,10 +33,10 @@ packages:
 # (product name, bundle id, dev compilation flag). The dev build therefore
 # holds its OWN Accessibility/Screen-Recording/Mic TCC grant under a distinct
 # bundle id, so running from Xcode never disturbs the released app's grants —
-# and Sparkle is compiled out of dev (LOKALBOTV2_DEV) so the prod appcast can never
+# and Sparkle is compiled out of dev (LOKALBOTV3_DEV) so the prod appcast can never
 # replace the dev bundle with the shipped app.
 targetTemplates:
-  LokalBotV2App:
+  LokalBotV3App:
     type: application
     platform: macOS
     sources:
@@ -89,13 +89,13 @@ targetTemplates:
     info:
       path: LokalBot/Info.plist
       properties:
-        CFBundleDisplayName: LokalBotV2
+        CFBundleDisplayName: LokalBotV3
         CFBundleIconFile: AppIcon
         NSMicrophoneUsageDescription: >-
-          LokalBotV2 records your side of meetings from the microphone.
+          LokalBotV3 records your side of meetings from the microphone.
           Audio never leaves this Mac.
         NSAudioCaptureUsageDescription: >-
-          LokalBotV2 records the meeting app's audio output so the other
+          LokalBotV3 records the meeting app's audio output so the other
           participants are captured. Audio never leaves this Mac.
         LSApplicationCategoryType: public.app-category.productivity
         # Sparkle auto-update. SUFeedURL points at the appcast published with
@@ -121,28 +121,28 @@ targetTemplates:
 targets:
   LokalBot:
     templates:
-      - LokalBotV2App
+      - LokalBotV3App
     settings:
       base:
-        PRODUCT_NAME: LokalBotV2
-        PRODUCT_MODULE_NAME: LokalBotV2
-        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV2
+        PRODUCT_NAME: LokalBotV3
+        PRODUCT_MODULE_NAME: LokalBotV3
+        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV3
 
   # Local development build. Distinct bundle id + product name means a separate,
   # stable TCC identity (Mic, Screen Recording, Accessibility survive rebuilds),
-  # and LOKALBOTV2_DEV compiles Sparkle's launch path out so the prod appcast never
-  # swaps this bundle for the released app. Keep LOKALBOTV2_DEV under `base:` so it
+  # and LOKALBOTV3_DEV compiles Sparkle's launch path out so the prod appcast never
+  # swaps this bundle for the released app. Keep LOKALBOTV3_DEV under `base:` so it
   # is defined in EVERY configuration (Release included) — a Release-config dev
   # build (Profile/Archive) must still keep Sparkle inert.
   "LokalBot Dev":
     templates:
-      - LokalBotV2App
+      - LokalBotV3App
     settings:
       base:
-        PRODUCT_NAME: "LokalBotV2 Dev"
-        PRODUCT_MODULE_NAME: LokalBotV2Dev
-        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV2.dev
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: LOKALBOTV2_DEV $(inherited)
+        PRODUCT_NAME: "LokalBotV3 Dev"
+        PRODUCT_MODULE_NAME: LokalBotV3Dev
+        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV3.dev
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: LOKALBOTV3_DEV $(inherited)
 
   LokalBotTests:
     type: bundle.unit-test
@@ -154,16 +154,16 @@ targets:
     settings:
       base:
         BUNDLE_LOADER: "$(TEST_HOST)"
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LokalBotV2.app/Contents/MacOS/LokalBotV2"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LokalBotV3.app/Contents/MacOS/LokalBotV3"
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_MODULE_NAME: LokalBotV2Tests
-        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV2Tests
+        PRODUCT_MODULE_NAME: LokalBotV3Tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV3Tests
 
-  # Synthetic-data UI tests. Drives the LokalBotV2.app binary headlessly via
-  # XCUITest with `LOKALBOTV2_UI_TEST=1` so the app skips Core Audio polling,
+  # Synthetic-data UI tests. Drives the LokalBotV3.app binary headlessly via
+  # XCUITest with `LOKALBOTV3_UI_TEST=1` so the app skips Core Audio polling,
   # the accessibility-trusted meeting detector, Sparkle and screenshots —
   # the suite renders the SwiftUI surfaces against a synthetic meetings
-  # library planted under `LOKALBOTV2_STORAGE_ROOT` (a per-test tmp dir).
+  # library planted under `LOKALBOTV3_STORAGE_ROOT` (a per-test tmp dir).
   # No TCC permissions required.
   LokalBotUITests:
     type: bundle.ui-testing
@@ -176,8 +176,8 @@ targets:
       base:
         TEST_TARGET_NAME: LokalBot
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_MODULE_NAME: LokalBotV2UITests
-        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV2UITests
+        PRODUCT_MODULE_NAME: LokalBotV3UITests
+        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV3UITests
 
   lokalbot-cli:
     type: tool
@@ -201,7 +201,7 @@ targets:
         DEVELOPMENT_TEAM: K96P3M3997
         ENABLE_HARDENED_RUNTIME: NO  # flip ON in notarised release builds
         GENERATE_INFOPLIST_FILE: YES
-        # Embedded into LokalBotV2.app/Contents/Helpers rather than installed
+        # Embedded into LokalBotV3.app/Contents/Helpers rather than installed
         # as a standalone product, so keep it out of the archive's
         # install location.
         SKIP_INSTALL: YES

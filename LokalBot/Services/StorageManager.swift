@@ -1,11 +1,11 @@
 import Foundation
 
 /// Owns the on-disk layout (design doc §6):
-/// ~/Library/Application Support/com.dotenv.LokalBotV2/
+/// ~/Library/Application Support/com.dotenv.LokalBotV3/
 ///   meetings/YYYY/MM/dd-slug/{mic.m4a, system.m4a, meta.json}
 ///
-/// Rooted at the bundle id, NOT "LokalBotV2": an unrelated app may own
-/// ~/Library/Application Support/LokalBotV2/ on some machines, and its
+/// Rooted at the bundle id, NOT "LokalBotV3": an unrelated app may own
+/// ~/Library/Application Support/LokalBotV3/ on some machines, and its
 /// "Meetings" folder would collide with our "meetings" on the default
 /// case-insensitive filesystem.
 final class StorageManager {
@@ -16,7 +16,7 @@ final class StorageManager {
         // UI-test isolation hook: when the env var points at a directory,
         // every read/write goes there instead of the user's real library.
         // Production launches never set it, so default behaviour is unchanged.
-        if let override = ProcessInfo.processInfo.environment["LOKALBOTV2_STORAGE_ROOT"],
+        if let override = ProcessInfo.processInfo.environment["LOKALBOTV3_STORAGE_ROOT"],
            !override.isEmpty {
             rootURL = URL(fileURLWithPath: override, isDirectory: true)
         } else {

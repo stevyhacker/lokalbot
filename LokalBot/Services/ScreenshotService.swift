@@ -7,7 +7,7 @@ import CryptoKit
 /// Plain-line diagnostics, now routed through swift-log (`AppLog`) which fans
 /// out to stdout + the rotating `<storage>/debug.log`. Kept as a free function
 /// so every existing call site stays unchanged.
-func lokalbotv2Log(_ message: String) {
+func lokalbotv3Log(_ message: String) {
     AppLog.line(message)
 }
 
@@ -62,28 +62,28 @@ final class ScreenshotService: ObservableObject {
     private func captureIfAppropriate() async {
         let config = settings()
         guard config.screenshotsEnabled, config.trackingEnabled else {
-            lokalbotv2Log("shot skip: disabled"); return
+            lokalbotv3Log("shot skip: disabled"); return
         }
-        guard !sampler.isPaused else { lokalbotv2Log("shot skip: paused"); return }
+        guard !sampler.isPaused else { lokalbotv3Log("shot skip: paused"); return }
         // Never let the background timer trigger a TCC dialog: preflight is
         // prompt-free. Prompting belongs to onboarding / explicit clicks only.
         guard CGPreflightScreenCaptureAccess() else {
-            lokalbotv2Log("shot skip: screen recording not granted"); return
+            lokalbotv3Log("shot skip: screen recording not granted"); return
         }
         let idle = CGEventSource.secondsSinceLastEventType(
             .combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
-        guard idle < 180 else { lokalbotv2Log("shot skip: idle \(Int(idle))s"); return }
+        guard idle < 180 else { lokalbotv3Log("shot skip: idle \(Int(idle))s"); return }
         guard let frontmost = NSWorkspace.shared.frontmostApplication?.localizedName,
-              frontmost != "loginwindow" else { lokalbotv2Log("shot skip: lock screen"); return }
+              frontmost != "loginwindow" else { lokalbotv3Log("shot skip: lock screen"); return }
         guard !config.excludedAppList.contains(where: { frontmost.localizedCaseInsensitiveContains($0) })
-        else { lokalbotv2Log("shot skip: excluded (\(frontmost))"); return }
+        else { lokalbotv3Log("shot skip: excluded (\(frontmost))"); return }
 
         do {
             try await capture(frontApp: frontmost)
             lastError = nil
         } catch {
             lastError = error.localizedDescription
-            lokalbotv2Log("shot FAILED: \(error)")
+            lokalbotv3Log("shot FAILED: \(error)")
         }
     }
 
@@ -117,7 +117,7 @@ final class ScreenshotService: ObservableObject {
 
         store.insertScreenshot(ts: timestamp, path: file.path, app: frontApp, ocr: ocrText)
         lastCapture = timestamp
-        lokalbotv2Log("shot ok: \(file.lastPathComponent) (\(ocrText.count) OCR chars, app: \(frontApp))")
+        lokalbotv3Log("shot ok: \(file.lastPathComponent) (\(ocrText.count) OCR chars, app: \(frontApp))")
     }
 
     /// Manual trigger (menu bar) — the one non-onboarding place allowed to
@@ -125,7 +125,7 @@ final class ScreenshotService: ObservableObject {
     func captureNow() {
         Task { @MainActor in
             if !CGPreflightScreenCaptureAccess() {
-                lokalbotv2Log("capture now: requesting screen recording access")
+                lokalbotv3Log("capture now: requesting screen recording access")
                 guard CGRequestScreenCaptureAccess() else { return }
             }
             await captureIfAppropriate()
@@ -179,7 +179,7 @@ final class ScreenshotService: ObservableObject {
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
             data, "public.heic" as CFString, 1, nil) else {
-            throw NSError(domain: "LokalBotV2", code: 5,
+            throw NSError(domain: "LokalBotV3", code: 5,
                           userInfo: [NSLocalizedDescriptionKey: "HEIC encoder unavailable"])
         }
         CGImageDestinationAddImage(destination, image,
@@ -201,7 +201,7 @@ final class ScreenshotService: ObservableObject {
         let data = key.withUnsafeBytes { Data($0) }
         KeychainSecrets.set(data, account: "screenshot-key")
         guard KeychainSecrets.data(account: "screenshot-key") != nil else {
-            throw NSError(domain: "LokalBotV2", code: 6,
+            throw NSError(domain: "LokalBotV3", code: 6,
                           userInfo: [NSLocalizedDescriptionKey: "Could not save screenshot encryption key"])
         }
         cachedKey = key

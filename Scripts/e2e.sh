@@ -1,5 +1,5 @@
 #!/bin/bash
-# LokalBotV2 end-to-end test suite. Drives the REAL app binary headlessly:
+# LokalBotV3 end-to-end test suite. Drives the REAL app binary headlessly:
 # real audio (synthesized with `say`), real CoreML transcription, the real
 # bundled llama.cpp server, real SQLite. Run on a Mac with the app built:
 #   Scripts/install-app.sh && Scripts/e2e.sh
@@ -7,8 +7,8 @@
 # the permission is missing, so the suite is useful pre- and post-grant.
 set -uo pipefail
 
-BIN="${LOKALBOTV2_APP:-/Applications/LokalBotV2.app}/Contents/MacOS/LokalBotV2"
-ROOT="$HOME/Library/Application Support/com.dotenv.LokalBotV2"
+BIN="${LOKALBOTV3_APP:-/Applications/LokalBotV3.app}/Contents/MacOS/LokalBotV3"
+ROOT="$HOME/Library/Application Support/com.dotenv.LokalBotV3"
 [ -x "$BIN" ] || { echo "no binary at $BIN — run Scripts/install-app.sh first"; exit 2; }
 
 P=0; F=0; S=0
@@ -67,7 +67,7 @@ echo "== T5: semantic search (embeddings, zero keyword overlap) =="
 echo "== T6: screenshot + OCR + encryption =="
 "$BIN" --shot-test >/dev/null 2>&1
 case $? in
-  0) LAST=$(sqlite3 "$ROOT/lokalbotv2.sqlite" "SELECT path FROM screenshots WHERE path!='' ORDER BY ts DESC LIMIT 1")
+  0) LAST=$(sqlite3 "$ROOT/lokalbotv3.sqlite" "SELECT path FROM screenshots WHERE path!='' ORDER BY ts DESC LIMIT 1")
      if [ -n "$LAST" ] && ! xxd -l 12 "$LAST" | grep -q ftyp; then
        pass "capture ok, file encrypted (no HEIC magic)"
      else fail "capture row exists but file looks wrong"; fi ;;
@@ -88,9 +88,9 @@ echo "== T8: digest folds in screenshot OCR, not just window titles =="
 # screenshot -> OCR path wired into generateDayDigest. A generic activity
 # block gives the day material; its title carries no token.
 NOW=$(date +%s)
-sqlite3 -cmd ".timeout 5000" "$ROOT/lokalbotv2.sqlite" \
+sqlite3 -cmd ".timeout 5000" "$ROOT/lokalbotv3.sqlite" \
   "INSERT INTO ocr_fts (text, ts, app) VALUES ('Working through the Project Zephyrus migration runbook: rollback steps, feature flags, and the on-call rota for the cutover.', $NOW, 'Safari');" 2>/dev/null
-sqlite3 -cmd ".timeout 5000" "$ROOT/lokalbotv2.sqlite" \
+sqlite3 -cmd ".timeout 5000" "$ROOT/lokalbotv3.sqlite" \
   "INSERT INTO activity_blocks (app, title, start, end) VALUES ('Safari', 'Internal wiki', $((NOW-600)), $NOW);" 2>/dev/null
 OUT=$("$BIN" --digest today 2>/dev/null | tail -1)
 JOURNAL="${OUT#*: }"; JOURNAL="${JOURNAL%% (*}"
@@ -102,7 +102,7 @@ else
   fail "digest: $OUT"
 fi
 # Undo the seed so the suite never pollutes the real library.
-sqlite3 -cmd ".timeout 5000" "$ROOT/lokalbotv2.sqlite" \
+sqlite3 -cmd ".timeout 5000" "$ROOT/lokalbotv3.sqlite" \
   "DELETE FROM ocr_fts WHERE ts=$NOW; DELETE FROM activity_blocks WHERE start=$((NOW-600));" 2>/dev/null
 
 echo

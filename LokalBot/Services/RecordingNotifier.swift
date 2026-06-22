@@ -52,7 +52,7 @@ final class RecordingNotifier: NSObject, UNUserNotificationCenterDelegate {
         UNUserNotificationCenter.current().add(request)
     }
 
-    // Show the banner even when LokalBotV2 happens to be the active app (e.g. the
+    // Show the banner even when LokalBotV3 happens to be the active app (e.g. the
     // window is open), instead of silently dropping it.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,

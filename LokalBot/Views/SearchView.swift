@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Search across everything LokalBotV2 has indexed (design doc §4.2):
+/// Search across everything LokalBotV3 has indexed (design doc §4.2):
 /// one box, scope filter, highlighted snippets; transcript hits deep-link
 /// to the meeting at their audio timestamp.
 struct SearchView: View {
