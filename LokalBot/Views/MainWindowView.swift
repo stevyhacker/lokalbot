@@ -5,6 +5,19 @@ struct MainWindowView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var pendingDelete: Set<Meeting.ID>?
 
+    private enum ThreeColumnSection {
+        case meetings, search, settings
+
+        init?(_ section: AppState.NavSection) {
+            switch section {
+            case .meetings: self = .meetings
+            case .search: self = .search
+            case .settings: self = .settings
+            case .timeline: return nil
+            }
+        }
+    }
+
     var body: some View {
         navigation
         .confirmationDialog(
@@ -84,7 +97,9 @@ struct MainWindowView: View {
             NavigationSplitView {
                 sidebar
             } content: {
-                contentPane
+                if let section = ThreeColumnSection(app.navSection) {
+                    contentPane(for: section)
+                }
             } detail: {
                 detailPane
             }
@@ -109,10 +124,9 @@ struct MainWindowView: View {
         .navigationSplitViewColumnWidth(min: 180, ideal: 210)
     }
 
-    @ViewBuilder private var contentPane: some View {
-        switch app.navSection {
+    @ViewBuilder private func contentPane(for section: ThreeColumnSection) -> some View {
+        switch section {
         case .meetings: meetingList
-        case .timeline: EmptyView()
         case .search: SearchView().navigationTitle("Search")
         case .settings:
             SettingsView()

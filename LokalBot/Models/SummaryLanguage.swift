@@ -8,43 +8,42 @@ import NaturalLanguage
 /// construction. Ported from Seminarly's `SummaryLanguage`.
 enum SummaryLanguage: Equatable, Hashable, Sendable {
     case matchTranscript
-    case en, zh, zhHant, yue, ja, ko, es, fr, de, pt, ptPT, ru, ar, hi, it, nl, tr, pl, sv, da, no, nn, th, vi
+    case language(LanguageCode)
     case custom(String)
 
-    /// Stable preset cases (excludes `.matchTranscript` and `.custom`) — used
+    static let en: SummaryLanguage = .language(.en)
+    static let zh: SummaryLanguage = .language(.zh)
+    static let zhHant: SummaryLanguage = .language(.zhHant)
+    static let yue: SummaryLanguage = .language(.yue)
+    static let ja: SummaryLanguage = .language(.ja)
+    static let ko: SummaryLanguage = .language(.ko)
+    static let es: SummaryLanguage = .language(.es)
+    static let fr: SummaryLanguage = .language(.fr)
+    static let de: SummaryLanguage = .language(.de)
+    static let pt: SummaryLanguage = .language(.pt)
+    static let ptPT: SummaryLanguage = .language(.ptPT)
+    static let ru: SummaryLanguage = .language(.ru)
+    static let ar: SummaryLanguage = .language(.ar)
+    static let hi: SummaryLanguage = .language(.hi)
+    static let it: SummaryLanguage = .language(.it)
+    static let nl: SummaryLanguage = .language(.nl)
+    static let tr: SummaryLanguage = .language(.tr)
+    static let pl: SummaryLanguage = .language(.pl)
+    static let sv: SummaryLanguage = .language(.sv)
+    static let da: SummaryLanguage = .language(.da)
+    static let no: SummaryLanguage = .language(.no)
+    static let nn: SummaryLanguage = .language(.nn)
+    static let th: SummaryLanguage = .language(.th)
+    static let vi: SummaryLanguage = .language(.vi)
+
+    /// Stable preset cases (excludes `.matchTranscript` and `.custom`) - used
     /// to drive Pickers without exposing two-mode logic.
-    static let presets: [SummaryLanguage] = [
-        .en, .zh, .zhHant, .yue, .ja, .ko, .es, .fr, .de, .pt, .ptPT, .ru,
-        .ar, .hi, .it, .nl, .tr, .pl, .sv, .da, .no, .nn, .th, .vi,
-    ]
+    static let presets: [SummaryLanguage] = LanguageCode.summaryPresets.map { .language($0) }
 
     var displayName: String {
         switch self {
         case .matchTranscript: return "Match Transcript"
-        case .en: return "English"
-        case .zh: return "Simplified Chinese (Mandarin)"
-        case .zhHant: return "Traditional Chinese (Mandarin)"
-        case .yue: return "Cantonese"
-        case .ja: return "Japanese"
-        case .ko: return "Korean"
-        case .es: return "Spanish"
-        case .fr: return "French"
-        case .de: return "German"
-        case .pt: return "Portuguese (Brazil)"
-        case .ptPT: return "Portuguese (Portugal)"
-        case .ru: return "Russian"
-        case .ar: return "Arabic"
-        case .hi: return "Hindi"
-        case .it: return "Italian"
-        case .nl: return "Dutch"
-        case .tr: return "Turkish"
-        case .pl: return "Polish"
-        case .sv: return "Swedish"
-        case .da: return "Danish"
-        case .no: return "Norwegian (Bokmål)"
-        case .nn: return "Norwegian (Nynorsk)"
-        case .th: return "Thai"
-        case .vi: return "Vietnamese"
+        case .language(let code): return code.summaryDisplayName
         case .custom(let name): return name.isEmpty ? "Custom" : name
         }
     }
@@ -53,11 +52,13 @@ enum SummaryLanguage: Equatable, Hashable, Sendable {
     /// nil for `.matchTranscript`, signalling the caller to inject no directive.
     var promptLanguageName: String? {
         switch self {
-        case .matchTranscript: return nil
+        case .matchTranscript:
+            return nil
+        case .language(let code):
+            return code.summaryDisplayName
         case .custom(let name):
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed
-        default: return displayName
         }
     }
 
@@ -100,39 +101,22 @@ enum SummaryLanguage: Equatable, Hashable, Sendable {
         guard !normalized.isEmpty else { return nil }
 
         switch normalized {
-        case "en": return .en
         case "zh-hant", "zh-tw", "zh-hk": return .zhHant
         case "zh-hans", "zh-cn", "zh-sg", "zh":
             return chineseScriptLanguage(in: sample, allowLowSignal: true) ?? .zh
-        case "yue": return .yue
-        case "ja": return .ja
-        case "ko": return .ko
-        case "es": return .es
-        case "fr": return .fr
-        case "de": return .de
         case "pt-pt": return .ptPT
-        case "pt": return .pt
-        case "ru": return .ru
-        case "ar": return .ar
-        case "hi": return .hi
-        case "it": return .it
-        case "nl": return .nl
-        case "tr": return .tr
-        case "pl": return .pl
-        case "sv": return .sv
-        case "da": return .da
         case "nb", "no": return .no
-        case "nn": return .nn
-        case "th": return .th
-        case "vi": return .vi
-        default: return nil
+        default:
+            guard let language = LanguageCode(rawValue: normalized),
+                  LanguageCode.summaryPresets.contains(language) else { return nil }
+            return .language(language)
         }
     }
 
     // MARK: - Chinese script detection
     //
-    // Simplified vs Traditional vs Cantonese is *script*, not language code —
-    // we look at the character set to pick the right Mandarin variant (or
+    // Simplified vs Traditional vs Cantonese is script, not language code - we
+    // look at the character set to pick the right Mandarin variant (or
     // Cantonese when bopomofo appears).
 
     private static func chineseScriptLanguage(in text: String, allowLowSignal: Bool = false) -> SummaryLanguage? {
@@ -199,34 +183,14 @@ enum SummaryLanguage: Equatable, Hashable, Sendable {
 extension SummaryLanguage: RawRepresentable {
     init?(rawValue: String) {
         switch rawValue {
-        case "match": self = .matchTranscript
-        case "en": self = .en
-        case "zh": self = .zh
-        case "zh-Hant": self = .zhHant
-        case "yue": self = .yue
-        case "ja": self = .ja
-        case "ko": self = .ko
-        case "es": self = .es
-        case "fr": self = .fr
-        case "de": self = .de
-        case "pt": self = .pt
-        case "pt-PT": self = .ptPT
-        case "ru": self = .ru
-        case "ar": self = .ar
-        case "hi": self = .hi
-        case "it": self = .it
-        case "nl": self = .nl
-        case "tr": self = .tr
-        case "pl": self = .pl
-        case "sv": self = .sv
-        case "da": self = .da
-        case "no": self = .no
-        case "nn": self = .nn
-        case "th": self = .th
-        case "vi": self = .vi
+        case "match":
+            self = .matchTranscript
         default:
             if rawValue.hasPrefix("custom:") {
                 self = .custom(String(rawValue.dropFirst("custom:".count)))
+            } else if let code = LanguageCode(rawValue: rawValue),
+                      LanguageCode.summaryPresets.contains(code) {
+                self = .language(code)
             } else {
                 return nil
             }
@@ -236,33 +200,27 @@ extension SummaryLanguage: RawRepresentable {
     var rawValue: String {
         switch self {
         case .matchTranscript: return "match"
-        case .en: return "en"
-        case .zh: return "zh"
-        case .zhHant: return "zh-Hant"
-        case .yue: return "yue"
-        case .ja: return "ja"
-        case .ko: return "ko"
-        case .es: return "es"
-        case .fr: return "fr"
-        case .de: return "de"
-        case .pt: return "pt"
-        case .ptPT: return "pt-PT"
-        case .ru: return "ru"
-        case .ar: return "ar"
-        case .hi: return "hi"
-        case .it: return "it"
-        case .nl: return "nl"
-        case .tr: return "tr"
-        case .pl: return "pl"
-        case .sv: return "sv"
-        case .da: return "da"
-        case .no: return "no"
-        case .nn: return "nn"
-        case .th: return "th"
-        case .vi: return "vi"
+        case .language(let code): return code.rawValue
         case .custom(let name): return "custom:\(name)"
         }
     }
 }
 
-extension SummaryLanguage: Codable {}
+extension SummaryLanguage: Codable {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        guard let language = Self(rawValue: rawValue) else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unknown summary language: \(rawValue)"
+            )
+        }
+        self = language
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}

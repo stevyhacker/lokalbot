@@ -23,16 +23,16 @@ final class SearchIndex {
         let speaker: String
     }
 
-    private var db: OpaquePointer?
-    private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+    private let database: SQLiteDatabase?
 
     init(databaseURL: URL) {
-        if sqlite3_open(databaseURL.path, &db) != SQLITE_OK {
+        guard let database = SQLiteDatabase(url: databaseURL) else {
             assertionFailure("SearchIndex: cannot open \(databaseURL.path)")
-            db = nil
+            self.database = nil
             return
         }
-        exec("""
+        self.database = database
+        database.exec("""
             CREATE TABLE IF NOT EXISTS indexed_meetings (
                 meeting_id TEXT PRIMARY KEY,
                 source_mtime REAL NOT NULL
@@ -48,10 +48,6 @@ final class SearchIndex {
             """)
     }
 
-    deinit {
-        sqlite3_close(db)
-    }
-
     // MARK: - Indexing
 
     /// Re-index every meeting whose files changed since the last pass.
@@ -64,7 +60,7 @@ final class SearchIndex {
         let mtime = Self.latestMtime(in: folder)
         if let indexed = indexedMtime(of: meeting.id), indexed >= mtime { return }
 
-        run("DELETE FROM docs WHERE meeting_id = ?1", bind: [meeting.id.uuidString])
+        database?.run("DELETE FROM docs WHERE meeting_id = ?1", bind: [meeting.id.uuidString])
         insert(text: "\(meeting.title) \(meeting.appName)", meeting: meeting.id,
                kind: .title, start: 0, speaker: "")
 
@@ -79,13 +75,14 @@ final class SearchIndex {
                                      encoding: .utf8) {
             insert(text: summary, meeting: meeting.id, kind: .summary, start: 0, speaker: "")
         }
-        run("INSERT OR REPLACE INTO indexed_meetings (meeting_id, source_mtime) VALUES (?1, ?2)",
+        database?.run(
+            "INSERT OR REPLACE INTO indexed_meetings (meeting_id, source_mtime) VALUES (?1, ?2)",
             bind: [meeting.id.uuidString, mtime])
     }
 
     func remove(_ meetingID: UUID) {
-        run("DELETE FROM docs WHERE meeting_id = ?1", bind: [meetingID.uuidString])
-        run("DELETE FROM indexed_meetings WHERE meeting_id = ?1", bind: [meetingID.uuidString])
+        database?.run("DELETE FROM docs WHERE meeting_id = ?1", bind: [meetingID.uuidString])
+        database?.run("DELETE FROM indexed_meetings WHERE meeting_id = ?1", bind: [meetingID.uuidString])
     }
 
     // MARK: - Query
@@ -93,7 +90,7 @@ final class SearchIndex {
     /// FTS5 search; terms are AND-ed, the last gets prefix matching so
     /// search-as-you-type works. `kind` nil = all kinds.
     func search(_ query: String, kind: Kind? = nil, limit: Int = 60) -> [Hit] {
-        guard let match = Self.ftsQuery(from: query), db != nil else { return [] }
+        guard let match = Self.ftsQuery(from: query), let database else { return [] }
         var sql = """
             SELECT meeting_id, kind, start, speaker,
                    snippet(docs, 0, '«', '»', '…', 14)
@@ -102,26 +99,24 @@ final class SearchIndex {
         if kind != nil { sql += " AND kind = ?2" }
         sql += " ORDER BY rank LIMIT \(limit)"
 
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(statement) }
-        sqlite3_bind_text(statement, 1, match, -1, Self.transient)
-        if let kind { sqlite3_bind_text(statement, 2, kind.rawValue, -1, Self.transient) }
-
-        var hits: [Hit] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
+        let values: [Any]
+        if let kind {
+            values = [match, kind.rawValue]
+        } else {
+            values = [match]
+        }
+        return database.query(sql, bind: values) { statement in
             guard let idText = sqlite3_column_text(statement, 0),
                   let meetingID = UUID(uuidString: String(cString: idText)),
                   let kindText = sqlite3_column_text(statement, 1),
                   let kind = Kind(rawValue: String(cString: kindText)),
-                  let snippetText = sqlite3_column_text(statement, 4) else { continue }
+                  let snippetText = sqlite3_column_text(statement, 4) else { return nil }
             let speaker = sqlite3_column_text(statement, 3).map { String(cString: $0) } ?? ""
-            hits.append(Hit(meetingID: meetingID, kind: kind,
-                            start: sqlite3_column_double(statement, 2),
-                            snippet: String(cString: snippetText),
-                            speaker: speaker))
+            return Hit(meetingID: meetingID, kind: kind,
+                       start: sqlite3_column_double(statement, 2),
+                       snippet: String(cString: snippetText),
+                       speaker: speaker)
         }
-        return hits
     }
 
     /// "fts5 syntax" is user-hostile; quote each term so punctuation can't
@@ -144,17 +139,14 @@ final class SearchIndex {
                         start: TimeInterval, speaker: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        run("INSERT INTO docs (text, meeting_id, kind, start, speaker) VALUES (?1, ?2, ?3, ?4, ?5)",
+        database?.run(
+            "INSERT INTO docs (text, meeting_id, kind, start, speaker) VALUES (?1, ?2, ?3, ?4, ?5)",
             bind: [trimmed, meeting.uuidString, kind.rawValue, start, speaker])
     }
 
     private func indexedMtime(of meetingID: UUID) -> TimeInterval? {
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT source_mtime FROM indexed_meetings WHERE meeting_id = ?1",
-                                 -1, &statement, nil) == SQLITE_OK else { return nil }
-        defer { sqlite3_finalize(statement) }
-        sqlite3_bind_text(statement, 1, meetingID.uuidString, -1, Self.transient)
-        return sqlite3_step(statement) == SQLITE_ROW ? sqlite3_column_double(statement, 0) : nil
+        database?.firstDouble("SELECT source_mtime FROM indexed_meetings WHERE meeting_id = ?1",
+                              bind: [meetingID.uuidString])
     }
 
     private static func latestMtime(in folder: URL) -> TimeInterval {
@@ -165,22 +157,4 @@ final class SearchIndex {
         }.max() ?? 0
     }
 
-    private func run(_ sql: String, bind values: [Any]) {
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return }
-        defer { sqlite3_finalize(statement) }
-        for (index, value) in values.enumerated() {
-            let position = Int32(index + 1)
-            switch value {
-            case let text as String: sqlite3_bind_text(statement, position, text, -1, Self.transient)
-            case let number as Double: sqlite3_bind_double(statement, position, number)
-            default: assertionFailure("SearchIndex: unsupported bind type")
-            }
-        }
-        sqlite3_step(statement)
-    }
-
-    private func exec(_ sql: String) {
-        sqlite3_exec(db, sql, nil, nil, nil)
-    }
 }

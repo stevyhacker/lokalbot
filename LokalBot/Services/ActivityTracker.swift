@@ -19,12 +19,11 @@ struct ActivityBlock: Identifiable {
 /// Storage for activity blocks (own connection to lokalbotv2.sqlite).
 @MainActor
 final class ActivityStore {
-    private var db: OpaquePointer?
-    private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+    private let database: SQLiteDatabase?
 
     init(databaseURL: URL) {
-        guard sqlite3_open(databaseURL.path, &db) == SQLITE_OK else { db = nil; return }
-        sqlite3_exec(db, """
+        database = SQLiteDatabase(url: databaseURL)
+        database?.exec("""
             CREATE TABLE IF NOT EXISTS activity_blocks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 app TEXT NOT NULL, title TEXT NOT NULL,
@@ -36,22 +35,13 @@ final class ActivityStore {
             CREATE VIRTUAL TABLE IF NOT EXISTS ocr_fts USING fts5(
                 text, ts UNINDEXED, app UNINDEXED,
                 tokenize='unicode61 remove_diacritics 2');
-            """, nil, nil, nil)
+            """)
     }
 
-    deinit { sqlite3_close(db) }
-
     func insert(_ block: ActivityBlock) {
-        var s: OpaquePointer?
-        guard sqlite3_prepare_v2(db,
+        database?.run(
             "INSERT INTO activity_blocks (app, title, start, end) VALUES (?1, ?2, ?3, ?4)",
-            -1, &s, nil) == SQLITE_OK else { return }
-        defer { sqlite3_finalize(s) }
-        sqlite3_bind_text(s, 1, block.app, -1, Self.transient)
-        sqlite3_bind_text(s, 2, block.title, -1, Self.transient)
-        sqlite3_bind_double(s, 3, block.start.timeIntervalSince1970)
-        sqlite3_bind_double(s, 4, block.end.timeIntervalSince1970)
-        sqlite3_step(s)
+            bind: [block.app, block.title, block.start.timeIntervalSince1970, block.end.timeIntervalSince1970])
     }
 
     // MARK: Screenshots / OCR (M5)
@@ -71,126 +61,82 @@ final class ActivityStore {
     }
 
     func insertScreenshot(ts: Date, path: String, app: String, ocr: String) {
-        run("INSERT INTO screenshots (ts, path, app) VALUES (?1, ?2, ?3)",
-            [ts.timeIntervalSince1970, path, app])
+        database?.run("INSERT INTO screenshots (ts, path, app) VALUES (?1, ?2, ?3)",
+                      bind: [ts.timeIntervalSince1970, path, app])
         if !ocr.isEmpty {
-            run("INSERT INTO ocr_fts (text, ts, app) VALUES (?1, ?2, ?3)",
-                [ocr, ts.timeIntervalSince1970, app])
+            database?.run("INSERT INTO ocr_fts (text, ts, app) VALUES (?1, ?2, ?3)",
+                          bind: [ocr, ts.timeIntervalSince1970, app])
         }
     }
 
     func screenshots(on day: Date) -> [Screenshot] {
         let dayStart = Calendar.current.startOfDay(for: day).timeIntervalSince1970
-        var s: OpaquePointer?
-        guard sqlite3_prepare_v2(db, """
+        return database?.query("""
             SELECT id, ts, path, app FROM screenshots
             WHERE ts >= ?1 AND ts < ?2 AND path != '' ORDER BY ts
-            """, -1, &s, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(s) }
-        sqlite3_bind_double(s, 1, dayStart)
-        sqlite3_bind_double(s, 2, dayStart + 86_400)
-        var result: [Screenshot] = []
-        while sqlite3_step(s) == SQLITE_ROW {
-            result.append(Screenshot(id: sqlite3_column_int64(s, 0),
-                                     ts: Date(timeIntervalSince1970: sqlite3_column_double(s, 1)),
-                                     path: String(cString: sqlite3_column_text(s, 2)),
-                                     app: String(cString: sqlite3_column_text(s, 3))))
-        }
-        return result
+            """, bind: [dayStart, dayStart + 86_400]) { statement in
+            Screenshot(id: sqlite3_column_int64(statement, 0),
+                       ts: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
+                       path: String(cString: sqlite3_column_text(statement, 2)),
+                       app: String(cString: sqlite3_column_text(statement, 3)))
+        } ?? []
     }
 
     func searchOCR(_ query: String, limit: Int = 40) -> [OCRHit] {
         guard let match = SearchIndex.ftsQuery(from: query) else { return [] }
-        var s: OpaquePointer?
-        guard sqlite3_prepare_v2(db, """
+        return database?.query("""
             SELECT ts, app, snippet(ocr_fts, 0, '«', '»', '…', 14)
             FROM ocr_fts WHERE ocr_fts MATCH ?1 ORDER BY rank LIMIT \(limit)
-            """, -1, &s, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(s) }
-        sqlite3_bind_text(s, 1, match, -1, Self.transient)
-        var result: [OCRHit] = []
-        while sqlite3_step(s) == SQLITE_ROW {
-            result.append(OCRHit(ts: Date(timeIntervalSince1970: sqlite3_column_double(s, 0)),
-                                 app: String(cString: sqlite3_column_text(s, 1)),
-                                 snippet: String(cString: sqlite3_column_text(s, 2))))
-        }
-        return result
+            """, bind: [match]) { statement in
+            OCRHit(ts: Date(timeIntervalSince1970: sqlite3_column_double(statement, 0)),
+                   app: String(cString: sqlite3_column_text(statement, 1)),
+                   snippet: String(cString: sqlite3_column_text(statement, 2)))
+        } ?? []
     }
 
     /// OCR text for a day, for the "ask your day" LLM context.
     func ocrText(on day: Date, maxChars: Int = 9_000) -> String {
         let dayStart = Calendar.current.startOfDay(for: day).timeIntervalSince1970
-        var s: OpaquePointer?
-        guard sqlite3_prepare_v2(db, """
+        return database?.withStatement("""
             SELECT app, text FROM ocr_fts WHERE ts >= ?1 AND ts < ?2 ORDER BY ts
-            """, -1, &s, nil) == SQLITE_OK else { return "" }
-        defer { sqlite3_finalize(s) }
-        sqlite3_bind_double(s, 1, dayStart)
-        sqlite3_bind_double(s, 2, dayStart + 86_400)
-        var out = ""
-        while sqlite3_step(s) == SQLITE_ROW, out.count < maxChars {
-            let app = String(cString: sqlite3_column_text(s, 0))
-            let text = String(cString: sqlite3_column_text(s, 1))
-            out += "[\(app)] \(text.prefix(600))\n"
-        }
-        return out
+            """, bind: [dayStart, dayStart + 86_400]) { statement in
+            var out = ""
+            while sqlite3_step(statement) == SQLITE_ROW, out.count < maxChars {
+                let app = String(cString: sqlite3_column_text(statement, 0))
+                let text = String(cString: sqlite3_column_text(statement, 1))
+                out += "[\(app)] \(text.prefix(600))\n"
+            }
+            return out
+        } ?? ""
     }
 
     func screenshotPaths(olderThan cutoff: Date) -> [String] {
-        var s: OpaquePointer?
-        guard sqlite3_prepare_v2(db,
-            "SELECT path FROM screenshots WHERE ts < ?1 AND path != ''",
-            -1, &s, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(s) }
-        sqlite3_bind_double(s, 1, cutoff.timeIntervalSince1970)
-        var paths: [String] = []
-        while sqlite3_step(s) == SQLITE_ROW {
-            paths.append(String(cString: sqlite3_column_text(s, 0)))
-        }
-        return paths
+        database?.query("SELECT path FROM screenshots WHERE ts < ?1 AND path != ''",
+                        bind: [cutoff.timeIntervalSince1970]) { statement in
+            String(cString: sqlite3_column_text(statement, 0))
+        } ?? []
     }
 
     func clearScreenshotPaths(olderThan cutoff: Date) {
-        run("UPDATE screenshots SET path = '' WHERE ts < ?1", [cutoff.timeIntervalSince1970])
-    }
-
-    private func run(_ sql: String, _ values: [Any]) {
-        var s: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &s, nil) == SQLITE_OK else { return }
-        defer { sqlite3_finalize(s) }
-        for (index, value) in values.enumerated() {
-            let position = Int32(index + 1)
-            switch value {
-            case let text as String: sqlite3_bind_text(s, position, text, -1, Self.transient)
-            case let number as Double: sqlite3_bind_double(s, position, number)
-            default: break
-            }
-        }
-        sqlite3_step(s)
+        database?.run("UPDATE screenshots SET path = '' WHERE ts < ?1",
+                      bind: [cutoff.timeIntervalSince1970])
     }
 
     /// All blocks overlapping the given day, oldest first.
     func blocks(on day: Date) -> [ActivityBlock] {
         let dayStart = Calendar.current.startOfDay(for: day)
         let dayEnd = dayStart.addingTimeInterval(86_400)
-        var s: OpaquePointer?
-        guard sqlite3_prepare_v2(db, """
+        return database?.query("""
             SELECT id, app, title, start, end FROM activity_blocks
             WHERE end > ?1 AND start < ?2 ORDER BY start
-            """, -1, &s, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(s) }
-        sqlite3_bind_double(s, 1, dayStart.timeIntervalSince1970)
-        sqlite3_bind_double(s, 2, dayEnd.timeIntervalSince1970)
-        var result: [ActivityBlock] = []
-        while sqlite3_step(s) == SQLITE_ROW {
-            result.append(ActivityBlock(
-                id: sqlite3_column_int64(s, 0),
-                app: String(cString: sqlite3_column_text(s, 1)),
-                title: String(cString: sqlite3_column_text(s, 2)),
-                start: Date(timeIntervalSince1970: sqlite3_column_double(s, 3)),
-                end: Date(timeIntervalSince1970: sqlite3_column_double(s, 4))))
-        }
-        return result
+            """, bind: [dayStart.timeIntervalSince1970, dayEnd.timeIntervalSince1970]) { statement in
+            ActivityBlock(
+                id: sqlite3_column_int64(statement, 0),
+                app: String(cString: sqlite3_column_text(statement, 1)),
+                title: String(cString: sqlite3_column_text(statement, 2)),
+                start: Date(timeIntervalSince1970: sqlite3_column_double(statement, 3)),
+                end: Date(timeIntervalSince1970: sqlite3_column_double(statement, 4)))
+        } ?? []
     }
 }
 

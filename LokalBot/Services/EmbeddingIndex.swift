@@ -20,23 +20,20 @@ final class EmbeddingIndex {
     private static let modelURL =
         "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf"
 
-    private var db: OpaquePointer?
+    private let database: SQLiteDatabase?
     private let storage: StorageManager
-    private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     init(databaseURL: URL, storage: StorageManager) {
         self.storage = storage
-        guard sqlite3_open(databaseURL.path, &db) == SQLITE_OK else { db = nil; return }
-        sqlite3_exec(db, """
+        database = SQLiteDatabase(url: databaseURL)
+        database?.exec("""
             CREATE TABLE IF NOT EXISTS embeddings (
                 meeting_id TEXT NOT NULL, start REAL NOT NULL,
                 text TEXT NOT NULL, vec BLOB NOT NULL);
             CREATE TABLE IF NOT EXISTS embedded_meetings (
                 meeting_id TEXT PRIMARY KEY, source_mtime REAL NOT NULL);
-            """, nil, nil, nil)
+            """)
     }
-
-    deinit { sqlite3_close(db) }
 
     // MARK: - Indexing
 
@@ -79,65 +76,51 @@ final class EmbeddingIndex {
 
         let vectors = try await Self.embed(chunks.map(\.text), prefix: "search_document: ",
                                            storage: storage)
-        run("DELETE FROM embeddings WHERE meeting_id = ?1", [meeting.id.uuidString])
+        database?.run("DELETE FROM embeddings WHERE meeting_id = ?1", bind: [meeting.id.uuidString])
         for (chunk, vector) in zip(chunks, vectors) {
-            var s: OpaquePointer?
-            guard sqlite3_prepare_v2(db,
-                "INSERT INTO embeddings (meeting_id, start, text, vec) VALUES (?1, ?2, ?3, ?4)",
-                -1, &s, nil) == SQLITE_OK else { continue }
-            sqlite3_bind_text(s, 1, meeting.id.uuidString, -1, Self.transient)
-            sqlite3_bind_double(s, 2, chunk.start)
-            sqlite3_bind_text(s, 3, String(chunk.text.prefix(300)), -1, Self.transient)
-            _ = vector.withUnsafeBufferPointer {
-                sqlite3_bind_blob(s, 4, $0.baseAddress, Int32($0.count * 4), Self.transient)
+            let vectorData = vector.withUnsafeBufferPointer { buffer -> Data in
+                guard let baseAddress = buffer.baseAddress else { return Data() }
+                return Data(bytes: baseAddress, count: buffer.count * MemoryLayout<Float>.stride)
             }
-            sqlite3_step(s)
-            sqlite3_finalize(s)
+            database?.run(
+                "INSERT INTO embeddings (meeting_id, start, text, vec) VALUES (?1, ?2, ?3, ?4)",
+                bind: [meeting.id.uuidString, chunk.start, String(chunk.text.prefix(300)), vectorData])
         }
-        run("INSERT OR REPLACE INTO embedded_meetings (meeting_id, source_mtime) VALUES (?1, ?2)",
-            [meeting.id.uuidString, mtime])
+        database?.run(
+            "INSERT OR REPLACE INTO embedded_meetings (meeting_id, source_mtime) VALUES (?1, ?2)",
+            bind: [meeting.id.uuidString, mtime])
     }
 
     func remove(_ meetingID: UUID) {
-        run("DELETE FROM embeddings WHERE meeting_id = ?1", [meetingID.uuidString])
-        run("DELETE FROM embedded_meetings WHERE meeting_id = ?1", [meetingID.uuidString])
+        database?.run("DELETE FROM embeddings WHERE meeting_id = ?1", bind: [meetingID.uuidString])
+        database?.run("DELETE FROM embedded_meetings WHERE meeting_id = ?1", bind: [meetingID.uuidString])
     }
 
     // MARK: - Query
 
     var hasEmbeddings: Bool {
-        var s: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT 1 FROM embeddings LIMIT 1",
-                                 -1, &s, nil) == SQLITE_OK else { return false }
-        defer { sqlite3_finalize(s) }
-        return sqlite3_step(s) == SQLITE_ROW
+        database?.hasRow("SELECT 1 FROM embeddings LIMIT 1") ?? false
     }
 
     func search(_ query: String, limit: Int = 10) async -> [Hit] {
-        guard hasEmbeddings else { return [] }
+        guard let database, hasEmbeddings else { return [] }
         guard let queryVector = try? await Self.embed([query], prefix: "search_query: ",
                                                       storage: storage).first else { return [] }
-        var s: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT meeting_id, start, text, vec FROM embeddings",
-                                 -1, &s, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(s) }
-        var hits: [Hit] = []
-        while sqlite3_step(s) == SQLITE_ROW {
-            guard let idText = sqlite3_column_text(s, 0),
+        let hits: [Hit] = database.query("SELECT meeting_id, start, text, vec FROM embeddings") { statement in
+            guard let idText = sqlite3_column_text(statement, 0),
                   let meetingID = UUID(uuidString: String(cString: idText)),
-                  let blob = sqlite3_column_blob(s, 3) else { continue }
-            let count = Int(sqlite3_column_bytes(s, 3)) / 4
-            guard count == queryVector.count else { continue }
+                  let blob = sqlite3_column_blob(statement, 3) else { return nil }
+            let count = Int(sqlite3_column_bytes(statement, 3)) / 4
+            guard count == queryVector.count else { return nil }
             let vector = blob.withMemoryRebound(to: Float.self, capacity: count) {
                 Array(UnsafeBufferPointer(start: $0, count: count))
             }
             let score = zip(queryVector, vector).reduce(Float(0)) { $0 + $1.0 * $1.1 }
-            if score > 0.45 {
-                hits.append(Hit(meetingID: meetingID,
-                                start: sqlite3_column_double(s, 1),
-                                text: String(cString: sqlite3_column_text(s, 2)),
-                                score: score))
-            }
+            guard score > 0.45 else { return nil }
+            return Hit(meetingID: meetingID,
+                       start: sqlite3_column_double(statement, 1),
+                       text: String(cString: sqlite3_column_text(statement, 2)),
+                       score: score)
         }
         return Array(hits.sorted { $0.score > $1.score }.prefix(limit))
     }
@@ -191,26 +174,7 @@ final class EmbeddingIndex {
     // MARK: - Plumbing
 
     private func indexedMtime(_ id: UUID) -> TimeInterval? {
-        var s: OpaquePointer?
-        guard sqlite3_prepare_v2(db,
-            "SELECT source_mtime FROM embedded_meetings WHERE meeting_id = ?1",
-            -1, &s, nil) == SQLITE_OK else { return nil }
-        defer { sqlite3_finalize(s) }
-        sqlite3_bind_text(s, 1, id.uuidString, -1, Self.transient)
-        return sqlite3_step(s) == SQLITE_ROW ? sqlite3_column_double(s, 0) : nil
-    }
-
-    private func run(_ sql: String, _ values: [Any]) {
-        var s: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &s, nil) == SQLITE_OK else { return }
-        defer { sqlite3_finalize(s) }
-        for (index, value) in values.enumerated() {
-            switch value {
-            case let text as String: sqlite3_bind_text(s, Int32(index + 1), text, -1, Self.transient)
-            case let number as Double: sqlite3_bind_double(s, Int32(index + 1), number)
-            default: break
-            }
-        }
-        sqlite3_step(s)
+        database?.firstDouble("SELECT source_mtime FROM embedded_meetings WHERE meeting_id = ?1",
+                              bind: [id.uuidString])
     }
 }
