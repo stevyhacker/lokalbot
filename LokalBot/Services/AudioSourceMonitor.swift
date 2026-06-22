@@ -61,11 +61,25 @@ final class AudioSourceMonitor: ObservableObject {
     /// "Record …?" suggestion. Browsers are intentionally absent: a web
     /// meeting (Meet/Jitsi/Whereby) runs inside one, so those stay recordable.
     nonisolated static let mediaBundleIDs: Set<String> = [
+        // Streaming music
         "com.spotify.client",          // Spotify
         "com.apple.Music",             // Apple Music
         "com.apple.iTunes",            // iTunes (legacy)
-        "com.apple.TV",                // Apple TV
+        "com.amazon.music",            // Amazon Music
+        "com.tidal.desktop",           // TIDAL
+        "com.deezer.deezer-desktop",   // Deezer
+        "com.netease.163music",        // NetEase Cloud Music
+        "com.tencent.QQMusicMac",      // QQ Music
+        // Local-library / audiophile players
+        "com.swinsian.Swinsian",       // Swinsian
+        "com.audirvana.Audirvana",     // Audirvana
+        "com.foobar2000.mac",          // foobar2000
+        "com.roon.Roon",               // Roon
+        "com.coppertino.Vox",          // VOX
+        "tv.plex.plexamp",             // Plexamp
+        // Podcasts & video players (also never meetings)
         "com.apple.podcasts",          // Apple Podcasts
+        "com.apple.TV",                // Apple TV
         "com.apple.QuickTimePlayerX",  // QuickTime Player
         "org.videolan.vlc",            // VLC
         "com.colliderli.iina",         // IINA
