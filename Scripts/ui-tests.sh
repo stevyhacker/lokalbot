@@ -1,9 +1,9 @@
 #!/bin/bash
-# LokalBotV1 UI test runner.
+# LokalBotV2 UI test runner.
 #
-# Drives LokalBotV1.app headlessly via XCUITest against a synthetic meetings
+# Drives LokalBotV2.app headlessly via XCUITest against a synthetic meetings
 # library — no microphone/screen-recording permissions, no real audio,
-# no network. The app sees LOKALBOTV1_UI_TEST=1 and skips every
+# no network. The app sees LOKALBOTV2_UI_TEST=1 and skips every
 # side-effectful subsystem (Core Audio polling, accessibility-trusted
 # detector, Sparkle, screenshots).
 #

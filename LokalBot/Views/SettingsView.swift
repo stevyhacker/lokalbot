@@ -45,8 +45,8 @@ struct SettingsView: View {
             if shows("General", ["launch", "login", "startup", "open at login", "auto start",
                                  "menu bar", "menubar", "dock", "window", "background", "tray"]) {
                 Section("General") {
-                    LaunchAtLogin.Toggle("Launch LokalBotV1 at login")
-                    Text("Start LokalBotV1 automatically so it's ready to catch meetings.")
+                    LaunchAtLogin.Toggle("Launch LokalBotV2 at login")
+                    Text("Start LokalBotV2 automatically so it's ready to catch meetings.")
                         .font(.caption).foregroundStyle(.secondary)
 
                     Toggle("Menu bar only (hide Dock icon)", isOn: $app.settings.menuBarOnly)
@@ -316,7 +316,7 @@ struct SettingsView: View {
                                 Label("Installed", systemImage: "checkmark.circle.fill")
                                     .foregroundStyle(.green)
                             } else if !installer.isBundleLocationStable {
-                                Label("Move LokalBotV1.app to /Applications first",
+                                Label("Move LokalBotV2.app to /Applications first",
                                       systemImage: "exclamationmark.triangle.fill")
                                     .foregroundStyle(.orange)
                             } else {

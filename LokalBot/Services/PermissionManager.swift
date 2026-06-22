@@ -4,7 +4,7 @@ import ApplicationServices
 import Combine
 import CoreGraphics
 
-/// The exactly three macOS privacy permissions LokalBotV1 needs. System-audio
+/// The exactly three macOS privacy permissions LokalBotV2 needs. System-audio
 /// capture rides on the `com.apple.security.device.audio-input` entitlement, so
 /// it is not a TCC prompt and is intentionally absent here.
 ///
@@ -86,7 +86,7 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
     }
 }
 
-/// Single source of truth for LokalBotV1's permission state.
+/// Single source of truth for LokalBotV2's permission state.
 ///
 /// Folds the three ad-hoc TCC checks once scattered across views and services
 /// into one observable cache so every surface reads the same value. A short poll
@@ -157,7 +157,7 @@ final class PermissionManager: ObservableObject {
         pollTimer = nil
     }
 
-    /// Re-launches LokalBotV1. Accessibility grants only take effect at process
+    /// Re-launches LokalBotV2. Accessibility grants only take effect at process
     /// launch, so granting it mid-session needs a restart to apply. Spawns a
     /// fresh instance via `open -n`, then terminates this one a beat later.
     static func relaunch() {

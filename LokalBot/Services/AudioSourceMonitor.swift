@@ -49,12 +49,33 @@ final class AudioSourceMonitor: ObservableObject {
     /// Bundle IDs whose audio is uninteresting — our own app and a few system
     /// processes that emit short blips Core Audio still reports as "running".
     private static let ignoredBundleIDs: Set<String> = [
-        "com.dotenv.LokalBotV1",
+        "com.dotenv.LokalBotV2",
         "com.apple.controlcenter",
         "com.apple.SystemSounds",
         "com.apple.finder",
         "com.apple.notificationcenterui",
     ]
+
+    /// Pure media/music players. They emit continuous output but are never
+    /// meetings, so — unlike an unknown app — they must not surface a
+    /// "Record …?" suggestion. Browsers are intentionally absent: a web
+    /// meeting (Meet/Jitsi/Whereby) runs inside one, so those stay recordable.
+    nonisolated static let mediaBundleIDs: Set<String> = [
+        "com.spotify.client",          // Spotify
+        "com.apple.Music",             // Apple Music
+        "com.apple.iTunes",            // iTunes (legacy)
+        "com.apple.TV",                // Apple TV
+        "com.apple.podcasts",          // Apple Podcasts
+        "com.apple.QuickTimePlayerX",  // QuickTime Player
+        "org.videolan.vlc",            // VLC
+        "com.colliderli.iina",         // IINA
+    ]
+
+    /// Whether `bundleID` is a pure media player that should never trigger a
+    /// recording suggestion. See ``mediaBundleIDs``.
+    nonisolated static func isMediaPlayer(_ bundleID: String) -> Bool {
+        mediaBundleIDs.contains(bundleID)
+    }
 
     private static let pollInterval: TimeInterval = 3.0
     private static let bannerTimeout: TimeInterval = 20.0
@@ -132,6 +153,7 @@ final class AudioSourceMonitor: ObservableObject {
             guard newlyActiveIDs.contains(process.objectID) else { return false }
             if let bundleID = process.bundleID {
                 if Self.ignoredBundleIDs.contains(bundleID) { return false }
+                if Self.isMediaPlayer(bundleID) { return false }
                 if dismissedBundleIDs.contains(bundleID) { return false }
             }
             return true

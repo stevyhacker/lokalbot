@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Sparkle 2 appcast skeleton for LokalBotV1 (com.dotenv.LokalBotV1).
+  Sparkle 2 appcast skeleton for LokalBotV2 (com.dotenv.LokalBotV2).
 
   Rendered by Scripts/generate_appcast.py: every double-brace placeholder below
   with a concrete value for one release, then the result is uploaded to the
@@ -15,9 +15,9 @@
      xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
      xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
-    <title>LokalBotV1 Updates</title>
+    <title>LokalBotV2 Updates</title>
     <link>{{REPOSITORY_URL}}</link>
-    <description>LokalBotV1 release feed</description>
+    <description>LokalBotV2 release feed</description>
     <language>en</language>
     <item>
       <title>Version {{SHORT_VERSION}}</title>

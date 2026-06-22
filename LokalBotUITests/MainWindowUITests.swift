@@ -1,9 +1,9 @@
 import XCTest
 
-/// End-to-end UI tests that drive `LokalBotV1.app` against a synthetic
+/// End-to-end UI tests that drive `LokalBotV2.app` against a synthetic
 /// meetings library planted on disk before launch.
 ///
-/// The app sees `LOKALBOTV1_UI_TEST=1` and skips every side-effectful
+/// The app sees `LOKALBOTV2_UI_TEST=1` and skips every side-effectful
 /// startup path (Core Audio polling, accessibility-trusted detector,
 /// Sparkle, screenshots), so the suite needs no TCC permissions and
 /// never touches the user's real library.
@@ -16,8 +16,8 @@ final class MainWindowUITests: XCTestCase {
         continueAfterFailure = false
         fixture = try SyntheticFixture.plant()
         app = XCUIApplication()
-        app.launchEnvironment["LOKALBOTV1_UI_TEST"] = "1"
-        app.launchEnvironment["LOKALBOTV1_STORAGE_ROOT"] = fixture.root.path
+        app.launchEnvironment["LOKALBOTV2_UI_TEST"] = "1"
+        app.launchEnvironment["LOKALBOTV2_STORAGE_ROOT"] = fixture.root.path
         app.launch()
         // Wait until the main window has rendered the meeting list — every
         // test starts from a known surface, otherwise XCUITest races the

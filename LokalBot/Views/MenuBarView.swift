@@ -28,7 +28,7 @@ struct MenuBarLabel: View {
 }
 
 /// The dropdown shown when the menu bar item is clicked. The primary surface for
-/// running LokalBotV1 without ever opening the main window: live recording state,
+/// running LokalBotV2 without ever opening the main window: live recording state,
 /// the record/stop control, recent meetings, and app actions (Settings, Quit).
 struct MenuBarView: View {
     @EnvironmentObject var app: AppState
@@ -185,7 +185,7 @@ struct MenuBarView: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Button("Open LokalBotV1") { WindowAccess.shared.open("main") }
+            Button("Open LokalBotV2") { WindowAccess.shared.open("main") }
                 .buttonStyle(.plain).foregroundStyle(.tint)
             Button("Settings") {
                 app.navSection = .settings

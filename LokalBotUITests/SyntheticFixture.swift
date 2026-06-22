@@ -1,6 +1,6 @@
 import Foundation
 
-/// Plants a self-contained LokalBotV1 storage root on disk for one UI test run.
+/// Plants a self-contained LokalBotV2 storage root on disk for one UI test run.
 /// Mirrors `StorageManager`'s on-disk layout
 /// (`meetings/YYYY/MM/dd-slug/{meta.json, transcript.json, transcript.md, summary.md}`)
 /// without `@testable`-importing the app — the UI test bundle runs out-of-process,
@@ -11,7 +11,7 @@ import Foundation
 enum SyntheticFixture {
 
     /// Static handle on one planted fixture: the tmp `root` to point
-    /// `LOKALBOTV1_STORAGE_ROOT` at, plus the three meetings the tests assert on.
+    /// `LOKALBOTV2_STORAGE_ROOT` at, plus the three meetings the tests assert on.
     struct Library {
         let root: URL
         let designReview: Meeting
@@ -57,10 +57,10 @@ enum SyntheticFixture {
     }
 
     /// Build a fresh tmp library and write every fixture file to disk.
-    /// Caller passes the resulting `root` to the app as `LOKALBOTV1_STORAGE_ROOT`.
+    /// Caller passes the resulting `root` to the app as `LOKALBOTV2_STORAGE_ROOT`.
     static func plant() throws -> Library {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LokalBotV1UITests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("LokalBotV2UITests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(
             at: root.appendingPathComponent("meetings"), withIntermediateDirectories: true)
 
