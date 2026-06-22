@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 /// M4 timeline (design doc §4.2): one day at a time — colored blocks on a
 /// time axis, per-app totals, and an on-demand LLM day digest saved to
@@ -189,6 +191,16 @@ struct TimelineView: View {
                 Text("Day digest").font(.headline)
                 if generating { ProgressView().controlSize(.small) }
                 Spacer()
+                if let digest {
+                    Button { copyDigest(digest) } label: {
+                        Label("Copy", systemImage: "doc.on.doc")
+                    }
+                    .help("Copy the digest to the clipboard")
+                    Button { exportDigest(digest) } label: {
+                        Label("Export…", systemImage: "square.and.arrow.up")
+                    }
+                    .help("Save the digest as a Markdown file")
+                }
                 Button(digest == nil ? "Generate digest" : "Regenerate") {
                     Task { await generateDigest() }
                 }
@@ -231,6 +243,31 @@ struct TimelineView: View {
             digest = text
         } catch {
             digestError = error.localizedDescription
+        }
+    }
+
+    /// Copy the raw digest Markdown to the clipboard. The rendered text is
+    /// selectable too, but one click grabs the whole document without a
+    /// fiddly multi-line drag across the per-line Markdown layout.
+    private func copyDigest(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Export the digest to a user-chosen `.md` file via the standard save
+    /// panel. The digest is already auto-saved to `journal/<date>.md`; this
+    /// drops a shareable copy wherever the user picks.
+    private func exportDigest(_ text: String) {
+        let panel = NSSavePanel()
+        panel.title = "Export Day Digest"
+        panel.nameFieldStringValue = "\(day.formatted(.iso8601.year().month().day())).md"
+        panel.canCreateDirectories = true
+        if let md = UTType(filenameExtension: "md") { panel.allowedContentTypes = [md] }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            digestError = "Export failed — \(error.localizedDescription)"
         }
     }
 
