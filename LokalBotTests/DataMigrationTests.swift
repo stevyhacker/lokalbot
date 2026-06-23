@@ -108,4 +108,18 @@ final class DataMigrationTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(AppSettings.self, from: data).retentionDays, 7,
                        "existing V3 settings must win over a stale V2 copy")
     }
+
+    // MARK: - Test-host guard (regression: `xcodebuild test` must not move real data)
+
+    func testRunIfNeededIsNoOpUnderXCTestHost() {
+        // Running the app as a unit-test host executes main() and thus
+        // runIfNeeded; the XCTestConfigurationFilePath guard must make it bail
+        // before it marks itself done or touches the real user library.
+        let defaults = freshSuite()
+        DataMigration.runIfNeeded(
+            environment: ["XCTestConfigurationFilePath": "/tmp/x.xctestconfiguration"],
+            defaults: defaults)
+        XCTAssertFalse(defaults.bool(forKey: "lokalbotv3.migratedFromV2"),
+                       "migration must not run (or mark itself done) under an XCTest host")
+    }
 }

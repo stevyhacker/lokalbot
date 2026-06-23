@@ -44,8 +44,12 @@ enum DataMigration {
     /// Migrate the V2 library/settings/secrets into the V3 identity exactly once.
     static func runIfNeeded(environment: [String: String] = ProcessInfo.processInfo.environment,
                             defaults: UserDefaults = .standard) {
-        // Never migrate under a test/isolation launch: those point storage at a
-        // throwaway dir, and we must not move the user's real library for them.
+        // A unit-test run launches the app as its XCTest host, which still
+        // executes main() — never let `xcodebuild test` move the real user
+        // library. XCTest sets XCTestConfigurationFilePath in that process.
+        if environment["XCTestConfigurationFilePath"] != nil { return }
+        // Never migrate under a UI-test / storage-isolation launch either: those
+        // point storage at a throwaway dir, so there's no real library to move.
         if let root = environment["LOKALBOTV3_STORAGE_ROOT"], !root.isEmpty { return }
         if environment["LOKALBOTV3_UI_TEST"] == "1" { return }
 
