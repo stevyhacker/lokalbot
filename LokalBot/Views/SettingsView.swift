@@ -217,6 +217,10 @@ struct SettingsView: View {
                         Toggle("Autocorrect the word you're typing", isOn: $app.settings.cotypingAutocorrect)
                         Text("Spots a misspelled word and offers the fix inline — Tab swaps it. Uses the macOS spell checker (on-device); never touches code, URLs, or numbers.")
                             .font(.caption).foregroundStyle(.secondary)
+                        Toggle("Emoji autocomplete (\u{201c}:rocket:\u{201d} \u{2192} \u{1f680})", isOn: $app.settings.cotypingEmoji)
+                        Toggle("Macros (\u{201c}/5+5\u{201d}, \u{201c}/today\u{201d}, \u{201c}/10km->mi\u{201d})", isOn: $app.settings.cotypingMacros)
+                        Text("Type \u{201c}/\u{201d} then an expression — math, dates, unit/currency conversion, or random — and the result shows inline. Accept to swap it in.")
+                            .font(.caption).foregroundStyle(.secondary)
                         Picker("Accept next", selection: $app.settings.cotypingAcceptKey) {
                             ForEach(CotypingAcceptKey.allCases) { Text($0.label).tag($0) }
                         }
@@ -236,6 +240,10 @@ struct SettingsView: View {
                         TextField("Never suggest in (app names, comma-separated)",
                                   text: $app.settings.cotypingExcludedApps)
                         Text("Cotyping never runs in password fields. Add apps (or terminals) here to exclude them too.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        TextField("Never suggest on (websites, comma-separated)",
+                                  text: $app.settings.cotypingExcludedDomains)
+                        Text("Block cotyping on specific sites (e.g. \u{201c}bank.com\u{201d}). Subdomains included; read locally via Accessibility in browsers.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }

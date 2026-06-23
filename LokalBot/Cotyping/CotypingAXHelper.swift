@@ -34,7 +34,7 @@ enum CotypingAXHelper {
 
     /// Resolve the current focus into a cotyping snapshot. Pure read; safe to
     /// call from the focus-tracker timer on the main thread.
-    static func resolveFocus(includeSurface: Bool = false) -> CotypingFocus {
+    static func resolveFocus(includeSurface: Bool = false, includeURL: Bool = false) -> CotypingFocus {
         guard isTrusted else {
             return CotypingFocus(appName: "", bundleID: nil,
                                  capability: .unsupported("Accessibility permission needed."),
@@ -85,6 +85,9 @@ enum CotypingAXHelper {
         let surfaceTitle = includeSurface ? windowTitle(near: element) : nil
         let surfacePlaceholder = includeSurface
             ? stringAttribute(element, kAXPlaceholderValueAttribute as String) : nil
+        // Per-site rules: read the tab URL only when domains are configured (it
+        // costs an extra bounded ancestor walk), gated by the coordinator.
+        let host = includeURL ? webURL(near: element).flatMap(CotypingBrowserDomain.host(fromURLString:)) : nil
 
         let field = CotypingField(
             appName: appName, bundleID: bundleID, processID: pid, role: role,
@@ -92,7 +95,7 @@ enum CotypingAXHelper {
             selectionLength: selection.length, caretRect: caretRect,
             isSecure: false, caretIsExact: exact,
             windowTitle: surfaceTitle, fieldPlaceholder: surfacePlaceholder)
-        return CotypingFocus(appName: appName, bundleID: bundleID, capability: .supported, field: field)
+        return CotypingFocus(appName: appName, bundleID: bundleID, capability: .supported, field: field, host: host)
     }
 
     /// Best-effort title of the window containing `element`: `kAXWindowAttribute`
@@ -102,6 +105,36 @@ enum CotypingAXHelper {
         guard let raw = copyAttribute(element, kAXWindowAttribute as String),
               CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
         return stringAttribute(raw as! AXUIElement, kAXTitleAttribute as String)
+    }
+
+    /// Best-effort, fail-safe read of the focused tab's URL near `element`, for
+    /// per-site rules. Browsers expose `kAXURLAttribute` on the web area or window
+    /// rather than the focused field, so walk up a bounded number of ancestors.
+    /// Nil on any miss (non-browser, attribute absent, climb exhausted) — a failed
+    /// read degrades to "no per-site rule applies". Never mutates AX state.
+    private static func webURL(near element: AXUIElement, maxClimb: Int = 6) -> String? {
+        var current = element
+        for _ in 0...maxClimb {
+            if let url = urlString(on: current) { return url }
+            guard let parent = parentElement(of: current) else { break }
+            current = parent
+        }
+        return nil
+    }
+
+    /// Reads `kAXURLAttribute` as a string, tolerating a `URL`/`NSURL` (the usual
+    /// case) or an already-string value.
+    private static func urlString(on element: AXUIElement) -> String? {
+        guard let value = copyAttribute(element, kAXURLAttribute as String) else { return nil }
+        if let url = value as? URL { return url.absoluteString }
+        if let url = value as? NSURL { return url.absoluteString }
+        return value as? String
+    }
+
+    private static func parentElement(of element: AXUIElement) -> AXUIElement? {
+        guard let raw = copyAttribute(element, kAXParentAttribute as String),
+              CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
+        return (raw as! AXUIElement)
     }
 
     // MARK: - Element + owner

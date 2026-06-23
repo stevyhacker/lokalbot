@@ -11,6 +11,7 @@ enum CotypingAvailability {
     static func disabledReason(
         enabled: Bool,
         excludedApps: [String],
+        excludedDomains: [String] = [],
         selfBundleID: String?,
         focus: CotypingFocus
     ) -> String? {
@@ -23,6 +24,10 @@ enum CotypingAvailability {
 
         if isExcluded(appName: focus.appName, bundleID: focus.bundleID, excluded: excludedApps) {
             return "Disabled in \(focus.appName.isEmpty ? "this app" : focus.appName)."
+        }
+
+        if CotypingBrowserDomain.isHostDisabled(focus.host, excludedDomains: excludedDomains) {
+            return "Disabled on \(focus.host ?? "this site")."
         }
 
         switch focus.capability {

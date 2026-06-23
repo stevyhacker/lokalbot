@@ -69,6 +69,9 @@ struct CotypingFocus: Equatable, Sendable {
     var bundleID: String?
     var capability: CotypingCapability
     var field: CotypingField?
+    /// Normalized host of the focused tab's URL (browsers only), read over AX when
+    /// per-domain rules are configured. Nil otherwise. Used only for site gating.
+    var host: String? = nil
 
     static let none = CotypingFocus(
         appName: "", bundleID: nil,
@@ -143,6 +146,11 @@ enum CotypingSuggestionKind: Equatable, Sendable {
     case continuation
     /// Replace the misspelled `typoWord` just before the caret with `fullText`.
     case correction(typoWord: String)
+    /// Replace the trailing `:shortcode` token with the emoji glyph (`fullText`).
+    case emoji(shortcode: String)
+    /// Replace the trailing `/query` run with the macro result (`fullText`); the
+    /// run is re-scanned and re-evaluated against the live text on accept.
+    case macro
 }
 
 /// An active suggestion: the field it was generated against, the full completion,

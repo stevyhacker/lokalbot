@@ -107,6 +107,9 @@ struct AppSettings: Codable {
     /// Comma-separated app-name / bundle-id substrings never suggested into.
     /// Preseeded with password managers and terminals.
     var cotypingExcludedApps: String = "1Password, Keychain Access, Bitwarden, KeePassXC, Terminal, iTerm"
+    /// Comma-separated domains where cotyping never runs (bare host or full URL;
+    /// subdomains included). Read over Accessibility in browsers only.
+    var cotypingExcludedDomains: String = ""
     /// Condition suggestions on the focused app + window title / field label
     /// (e.g. the email subject or chat channel). On by default; reads window
     /// titles via Accessibility (already required for cotyping), stays on-device.
@@ -114,6 +117,11 @@ struct AppSettings: Codable {
     /// One-key inline autocorrect of the word you're typing (NSSpellChecker).
     /// On by default; suppresses a continuation on an unresolved typo.
     var cotypingAutocorrect: Bool = true
+    /// Inline `:shortcode:` emoji autocomplete (e.g. `:rocket:` → 🚀). On by default.
+    var cotypingEmoji: Bool = true
+    /// Inline `/macro` autocomplete (math `/5+5`, dates `/today`, units `/10km->mi`,
+    /// currency `/100usd to eur`, random `/d20`). On by default.
+    var cotypingMacros: Bool = true
     /// Languages you usually write in (comma-separated) — a prompt voice hint.
     var cotypingLanguages: String = ""
     /// Free-form notes / glossary / jargon folded into the prompt as context.
@@ -121,6 +129,13 @@ struct AppSettings: Codable {
 
     var cotypingExcludedAppList: [String] {
         cotypingExcludedApps
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    var cotypingExcludedDomainList: [String] {
+        cotypingExcludedDomains
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
@@ -183,8 +198,11 @@ struct AppSettings: Codable {
         case cotypingAcceptKey
         case cotypingFullAcceptKey
         case cotypingExcludedApps
+        case cotypingExcludedDomains
         case cotypingUseAppContext
         case cotypingAutocorrect
+        case cotypingEmoji
+        case cotypingMacros
         case cotypingLanguages
         case cotypingExtendedContext
     }
@@ -242,8 +260,11 @@ struct AppSettings: Codable {
         try c.encode(cotypingAcceptKey, forKey: .cotypingAcceptKey)
         try c.encode(cotypingFullAcceptKey, forKey: .cotypingFullAcceptKey)
         try c.encode(cotypingExcludedApps, forKey: .cotypingExcludedApps)
+        try c.encode(cotypingExcludedDomains, forKey: .cotypingExcludedDomains)
         try c.encode(cotypingUseAppContext, forKey: .cotypingUseAppContext)
         try c.encode(cotypingAutocorrect, forKey: .cotypingAutocorrect)
+        try c.encode(cotypingEmoji, forKey: .cotypingEmoji)
+        try c.encode(cotypingMacros, forKey: .cotypingMacros)
         try c.encode(cotypingLanguages, forKey: .cotypingLanguages)
         try c.encode(cotypingExtendedContext, forKey: .cotypingExtendedContext)
     }
@@ -290,8 +311,11 @@ struct AppSettings: Codable {
         cotypingAcceptKey = (try? c.decode(CotypingAcceptKey.self, forKey: .cotypingAcceptKey)) ?? defaults.cotypingAcceptKey
         cotypingFullAcceptKey = (try? c.decode(CotypingFullAcceptKey.self, forKey: .cotypingFullAcceptKey)) ?? defaults.cotypingFullAcceptKey
         cotypingExcludedApps = (try? c.decode(String.self, forKey: .cotypingExcludedApps)) ?? defaults.cotypingExcludedApps
+        cotypingExcludedDomains = (try? c.decode(String.self, forKey: .cotypingExcludedDomains)) ?? defaults.cotypingExcludedDomains
         cotypingUseAppContext = (try? c.decode(Bool.self, forKey: .cotypingUseAppContext)) ?? defaults.cotypingUseAppContext
         cotypingAutocorrect = (try? c.decode(Bool.self, forKey: .cotypingAutocorrect)) ?? defaults.cotypingAutocorrect
+        cotypingEmoji = (try? c.decode(Bool.self, forKey: .cotypingEmoji)) ?? defaults.cotypingEmoji
+        cotypingMacros = (try? c.decode(Bool.self, forKey: .cotypingMacros)) ?? defaults.cotypingMacros
         cotypingLanguages = (try? c.decode(String.self, forKey: .cotypingLanguages)) ?? defaults.cotypingLanguages
         cotypingExtendedContext = (try? c.decode(String.self, forKey: .cotypingExtendedContext)) ?? defaults.cotypingExtendedContext
     }

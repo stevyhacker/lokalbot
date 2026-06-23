@@ -32,6 +32,7 @@ final class CotypingCoordinator: ObservableObject {
     private var generation: UInt64 = 0
     private var debounceTask: Task<Void, Never>?
     private var wired = false
+    private var lastLatencyMilliseconds: Int?
     private let spellChecker = CotypingSpellChecker()
 
     init(
@@ -155,7 +156,9 @@ final class CotypingCoordinator: ObservableObject {
         let work = generation
         clearSuggestion()
         state = .debouncing
-        let delay = max(50, settingsProvider().cotypingDebounceMs)
+        let delay = max(50, CotypingDebouncePolicy.milliseconds(
+            lastLatencyMilliseconds: lastLatencyMilliseconds,
+            configured: settingsProvider().cotypingDebounceMs))
         debounceTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(delay))
             guard !Task.isCancelled else { return }
@@ -166,16 +169,39 @@ final class CotypingCoordinator: ObservableObject {
     private func generate(work: UInt64) async {
         guard work == generation, isRunning else { return }
         let settings = settingsProvider()
-        let focus = focusTracker.refreshNow(includeSurface: settings.cotypingUseAppContext)
+        let focus = focusTracker.refreshNow(
+            includeSurface: settings.cotypingUseAppContext,
+            includeURL: !settings.cotypingExcludedDomainList.isEmpty)
 
         if let reason = CotypingAvailability.disabledReason(
             enabled: settings.cotypingEnabled,
             excludedApps: settings.cotypingExcludedAppList,
+            excludedDomains: settings.cotypingExcludedDomainList,
             selfBundleID: selfBundleID, focus: focus) {
             state = .disabled(reason)
             return
         }
         guard let field = focus.field else { state = .idle; return }
+
+        // Emoji: an explicit `:shortcode` intent wins over autocorrect and the LLM.
+        if settings.cotypingEmoji, let emoji = CotypingEmoji.match(trailing: field.precedingText) {
+            session = CotypingSession(field: field, fullText: emoji.glyph, kind: .emoji(shortcode: emoji.shortcode))
+            overlay.show(text: "\(emoji.glyph) :\(emoji.shortcode):", caretRect: field.caretRect)
+            inputMonitor.setAcceptActive(overlay.isVisible)
+            lastSuggestion = emoji.glyph
+            state = .ready(text: emoji.glyph)
+            return
+        }
+
+        // Macros: an explicit `/expr` (math, date, unit, currency, random) wins too.
+        if settings.cotypingMacros, let macro = CotypingMacro.match(trailing: field.precedingText) {
+            session = CotypingSession(field: field, fullText: macro.result.insertion, kind: .macro)
+            overlay.show(text: macro.result.preview, caretRect: field.caretRect)
+            inputMonitor.setAcceptActive(overlay.isVisible)
+            lastSuggestion = macro.result.insertion
+            state = .ready(text: macro.result.insertion)
+            return
+        }
 
         // Autocorrect: offer to fix the trailing word before spending an LLM call.
         switch typoDecision(for: field.precedingText, enabled: settings.cotypingAutocorrect) {
@@ -204,6 +230,7 @@ final class CotypingCoordinator: ObservableObject {
         }
 
         state = .generating
+        let start = Date()
         do {
             // Stream: paint ghost text as tokens arrive instead of waiting for the
             // whole completion. The final result is authoritative.
@@ -211,6 +238,7 @@ final class CotypingCoordinator: ObservableObject {
                 Task { @MainActor in self?.renderStreamPartial(partial, work: work, field: field) }
             }
             guard work == generation, isRunning else { return }
+            lastLatencyMilliseconds = Int(Date().timeIntervalSince(start) * 1000)
             let text = result.text
             guard !text.isEmpty else {
                 clearSuggestion()
@@ -272,6 +300,34 @@ final class CotypingCoordinator: ObservableObject {
                 return false
             }
             acceptedWordCount += 1
+            clearSuggestion()
+            state = .idle
+            return true
+        }
+
+        // Emoji: replace the trailing `:shortcode` token with the glyph.
+        if case .emoji = current.kind {
+            guard let liveField = live.field,
+                  liveField.processID == current.field.processID,
+                  let tokenLength = CotypingEmoji.trailingTokenLength(in: liveField.precedingText),
+                  inserter.replace(deletingCharacters: tokenLength, with: current.fullText) else {
+                clearSuggestion()
+                return false
+            }
+            clearSuggestion()
+            state = .idle
+            return true
+        }
+
+        // Macro: re-scan + re-evaluate the live `/query` and swap it for the result.
+        if case .macro = current.kind {
+            guard let liveField = live.field,
+                  liveField.processID == current.field.processID,
+                  let macro = CotypingMacro.match(trailing: liveField.precedingText),
+                  inserter.replace(deletingCharacters: macro.tokenLength, with: macro.result.insertion) else {
+                clearSuggestion()
+                return false
+            }
             clearSuggestion()
             state = .idle
             return true
