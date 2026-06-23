@@ -11,7 +11,7 @@ final class CotypingOverlayController {
     private var hosting: NSHostingView<CotypingGhostView>?
     private(set) var isVisible = false
 
-    func show(text: String, caretRect: CGRect) {
+    func show(text: String, caretRect: CGRect, style: CotypingFieldStyle? = nil) {
         guard !text.isEmpty,
               caretRect.origin.x.isFinite, caretRect.origin.y.isFinite,
               caretRect.width.isFinite, caretRect.height.isFinite else {
@@ -20,7 +20,7 @@ final class CotypingOverlayController {
         }
         let panel = ensurePanel()
         guard let hosting else { return }
-        hosting.rootView = CotypingGhostView(text: text)
+        hosting.rootView = CotypingGhostView(text: text, style: style)
         hosting.layoutSubtreeIfNeeded()
 
         let fitting = hosting.fittingSize
@@ -77,11 +77,25 @@ final class CotypingOverlayPanel: NSPanel {
 /// label/background colors so contrast is correct in both light and dark mode.
 struct CotypingGhostView: View {
     let text: String
+    var style: CotypingFieldStyle? = nil
+
+    /// Matches the host field's font family at a clamped size; falls back to the
+    /// system font at the field's (clamped) size — never a fixed 13 pt.
+    private var font: Font {
+        if let nsFont = CotypingGhostStyle.font(from: style) { return Font(nsFont: nsFont) }
+        return .system(size: CotypingGhostStyle.clampedPointSize(style?.fontPointSize))
+    }
+    /// Dimmed host text color so the ghost reads as a suggestion; falls back to
+    /// the secondary label color.
+    private var color: Color {
+        if let nsColor = CotypingGhostStyle.ghostColor(from: style) { return Color(nsColor: nsColor) }
+        return Color(nsColor: .secondaryLabelColor)
+    }
 
     var body: some View {
         Text(text)
-            .font(.system(size: 13))
-            .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+            .font(font)
+            .foregroundStyle(color)
             .lineLimit(1)
             .truncationMode(.tail)
             .fixedSize()

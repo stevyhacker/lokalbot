@@ -32,9 +32,15 @@ enum CotypingAXHelper {
     /// True when the process holds the Accessibility grant (no prompt).
     static var isTrusted: Bool { AXIsProcessTrusted() }
 
+    /// Per-element cache of resolved field styles so the focus poll (every ~200 ms)
+    /// doesn't re-read `AXAttributedStringForRange` for a field it already styled.
+    /// Keyed by the element's stable `AXIdentifier`; cleared wholesale at 64 entries.
+    @MainActor private static var fieldStyleCache: [String: CotypingFieldStyle] = [:]
+
     /// Resolve the current focus into a cotyping snapshot. Pure read; safe to
     /// call from the focus-tracker timer on the main thread.
-    static func resolveFocus(includeSurface: Bool = false, includeURL: Bool = false) -> CotypingFocus {
+    @MainActor
+    static func resolveFocus(includeSurface: Bool = false, includeURL: Bool = false, includeStyle: Bool = false) -> CotypingFocus {
         guard isTrusted else {
             return CotypingFocus(appName: "", bundleID: nil,
                                  capability: .unsupported("Accessibility permission needed."),
@@ -88,14 +94,87 @@ enum CotypingAXHelper {
         // Per-site rules: read the tab URL only when domains are configured (it
         // costs an extra bounded ancestor walk), gated by the coordinator.
         let host = includeURL ? webURL(near: element).flatMap(CotypingBrowserDomain.host(fromURLString:)) : nil
+        // Host field font/color — read (cached per element) only when matching is
+        // enabled, so the overlay can mimic the field instead of a fixed style.
+        let resolvedStyle = includeStyle
+            ? resolveFieldStyle(for: element, caretLocation: caret, textLength: nsValue.length)
+            : nil
 
         let field = CotypingField(
             appName: appName, bundleID: bundleID, processID: pid, role: role,
             precedingText: preceding, trailingText: trailing,
             selectionLength: selection.length, caretRect: caretRect,
             isSecure: false, caretIsExact: exact,
-            windowTitle: surfaceTitle, fieldPlaceholder: surfacePlaceholder)
+            windowTitle: surfaceTitle, fieldPlaceholder: surfacePlaceholder, fieldStyle: resolvedStyle)
         return CotypingFocus(appName: appName, bundleID: bundleID, capability: .supported, field: field, host: host)
+    }
+
+    /// Reads the focused field's own font + text color (cached per element) so
+    /// the ghost overlay can match it. Best-effort: nil on any miss → overlay
+    /// defaults. The parameterized attributed-string read is a synchronous
+    /// cross-process call, so it is cached and gated behind `includeStyle`.
+    @MainActor
+    private static func resolveFieldStyle(for element: AXUIElement, caretLocation: Int, textLength: Int) -> CotypingFieldStyle? {
+        guard textLength > 0 else { return nil }
+        let identifier = stringAttribute(element, kAXIdentifierAttribute as String)
+        if let identifier, !identifier.isEmpty, let cached = fieldStyleCache[identifier] {
+            return cached
+        }
+        // Prefer the character just before the caret (what the user is extending),
+        // then the first character; clamp so an off-by-one caret never reads OOB.
+        let clampedCaret = min(max(caretLocation - 1, 0), textLength - 1)
+        let candidateIndices = clampedCaret == 0 ? [0] : [clampedCaret, 0]
+        var resolved: CotypingFieldStyle?
+        for index in candidateIndices {
+            guard let attributed = attributedString(forRange: NSRange(location: index, length: 1), on: element),
+                  attributed.length > 0,
+                  let style = extractFieldStyle(from: attributed.attributes(at: 0, effectiveRange: nil)) else { continue }
+            resolved = style
+            break
+        }
+        if let identifier, !identifier.isEmpty, let resolved {
+            fieldStyleCache[identifier] = resolved
+            if fieldStyleCache.count > 64 { fieldStyleCache.removeAll() }
+        }
+        return resolved
+    }
+
+    private static func attributedString(forRange range: NSRange, on element: AXUIElement) -> NSAttributedString? {
+        var cfRange = CFRange(location: range.location, length: range.length)
+        guard let axRange = AXValueCreate(.cfRange, &cfRange) else { return nil }
+        var value: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            element, "AXAttributedStringForRange" as CFString, axRange, &value) == .success else { return nil }
+        return value as? NSAttributedString
+    }
+
+    /// Extracts a `CotypingFieldStyle` from one character's attributes, handling
+    /// both the AppKit `.font`/`.foregroundColor` shapes and the AX font-dict /
+    /// CGColor shapes AX returns from web content.
+    private static func extractFieldStyle(from attributes: [NSAttributedString.Key: Any]) -> CotypingFieldStyle? {
+        var fontName: String?
+        var fontPointSize: CGFloat?
+        if let font = attributes[.font] as? NSFont {
+            fontName = font.fontName
+            fontPointSize = font.pointSize
+        } else if let fontInfo = attributes[NSAttributedString.Key("AXFont")] as? [String: Any] {
+            fontName = fontInfo["AXFontName"] as? String
+            if let size = fontInfo["AXFontSize"] as? NSNumber { fontPointSize = CGFloat(size.doubleValue) }
+        }
+        var colorHex: String?
+        if let nsColor = attributes[.foregroundColor] as? NSColor {
+            colorHex = CotypingTextColorCodec.hexString(from: nsColor)
+        } else if let foreground = attributes[.foregroundColor],
+                  CFGetTypeID(foreground as CFTypeRef) == CGColor.typeID {
+            // AX often reports the foreground as a CGColor; a conditional `as?` does
+            // not compile against `Any`, so verify the CF type id and force-cast.
+            let cgColor = foreground as! CGColor
+            if let nsColor = NSColor(cgColor: cgColor) {
+                colorHex = CotypingTextColorCodec.hexString(from: nsColor)
+            }
+        }
+        let style = CotypingFieldStyle(fontName: fontName, fontPointSize: fontPointSize, colorHex: colorHex)
+        return style.isEmpty ? nil : style
     }
 
     /// Best-effort title of the window containing `element`: `kAXWindowAttribute`

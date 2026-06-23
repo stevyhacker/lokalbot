@@ -424,7 +424,7 @@ final class AppState: ObservableObject {
             }
             var created: Meeting?
             do {
-                let title = detectedApp.map { "\($0.name) meeting" } ?? "Manual recording"
+                let title = detectedApp.map { Self.meetingTitle(for: $0.name) } ?? "Manual recording"
                 var meeting = try storage.createMeetingFolder(title: title,
                                                               appName: detectedApp?.name ?? "Manual")
                 created = meeting
@@ -460,12 +460,29 @@ final class AppState: ObservableObject {
     /// back to the lastError banner otherwise so the user can choose.
     private func audioMonitorDetected(_ process: AudioProcess) {
         guard !isRecording, !isStartingRecording else { return }
-        let isKnownMeetingApp = process.bundleID.map { MeetingDetector.knownApps[$0] != nil
-            || MeetingDetector.browsers.contains($0) } ?? false
-        guard isKnownMeetingApp, settings.autoRecordMode == .automatic else { return }
-        let detected = MeetingDetector.DetectedApp(
-            name: process.name, bundleID: process.bundleID ?? "", pid: process.id)
-        startRecording(detectedApp: detected, source: "audio-monitor")
+        guard settings.autoRecordMode == .automatic, let bundleID = process.bundleID else { return }
+        if let name = MeetingDetector.knownApps[bundleID] {
+            let detected = MeetingDetector.DetectedApp(name: name, bundleID: bundleID, pid: process.id)
+            startRecording(detectedApp: detected, source: "audio-monitor")
+            return
+        }
+        if let hostBundleID = MeetingDetector.hostBrowserBundleID(forAudioBundleID: bundleID),
+           let browserMeeting = MeetingDetector.visibleBrowserMeeting(),
+           browserMeeting.bundleID == hostBundleID {
+            let detected = MeetingDetector.DetectedApp(name: browserMeeting.name,
+                                                       bundleID: browserMeeting.bundleID,
+                                                       pid: process.id)
+            startRecording(detectedApp: detected, source: "audio-monitor")
+        }
+    }
+
+    nonisolated static func meetingTitle(for appName: String) -> String {
+        let trimmed = appName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Meeting" }
+        return trimmed.localizedCaseInsensitiveContains("meeting")
+            && trimmed.lowercased().hasSuffix("meeting")
+            ? trimmed
+            : "\(trimmed) meeting"
     }
 
     func stopRecording(process: Bool = true) {

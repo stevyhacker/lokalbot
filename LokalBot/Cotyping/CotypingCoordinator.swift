@@ -171,7 +171,8 @@ final class CotypingCoordinator: ObservableObject {
         let settings = settingsProvider()
         let focus = focusTracker.refreshNow(
             includeSurface: settings.cotypingUseAppContext,
-            includeURL: !settings.cotypingExcludedDomainList.isEmpty)
+            includeURL: !settings.cotypingExcludedDomainList.isEmpty,
+            includeStyle: settings.cotypingMatchHostStyle)
 
         if let reason = CotypingAvailability.disabledReason(
             enabled: settings.cotypingEnabled,
@@ -186,7 +187,7 @@ final class CotypingCoordinator: ObservableObject {
         // Emoji: an explicit `:shortcode` intent wins over autocorrect and the LLM.
         if settings.cotypingEmoji, let emoji = CotypingEmoji.match(trailing: field.precedingText) {
             session = CotypingSession(field: field, fullText: emoji.glyph, kind: .emoji(shortcode: emoji.shortcode))
-            overlay.show(text: "\(emoji.glyph) :\(emoji.shortcode):", caretRect: field.caretRect)
+            overlay.show(text: "\(emoji.glyph) :\(emoji.shortcode):", caretRect: field.caretRect, style: field.fieldStyle)
             inputMonitor.setAcceptActive(overlay.isVisible)
             lastSuggestion = emoji.glyph
             state = .ready(text: emoji.glyph)
@@ -196,7 +197,7 @@ final class CotypingCoordinator: ObservableObject {
         // Macros: an explicit `/expr` (math, date, unit, currency, random) wins too.
         if settings.cotypingMacros, let macro = CotypingMacro.match(trailing: field.precedingText) {
             session = CotypingSession(field: field, fullText: macro.result.insertion, kind: .macro)
-            overlay.show(text: macro.result.preview, caretRect: field.caretRect)
+            overlay.show(text: macro.result.preview, caretRect: field.caretRect, style: field.fieldStyle)
             inputMonitor.setAcceptActive(overlay.isVisible)
             lastSuggestion = macro.result.insertion
             state = .ready(text: macro.result.insertion)
@@ -207,7 +208,7 @@ final class CotypingCoordinator: ObservableObject {
         switch typoDecision(for: field.precedingText, enabled: settings.cotypingAutocorrect) {
         case .offerCorrection(let word, let corrected):
             session = CotypingSession(field: field, fullText: corrected, kind: .correction(typoWord: word))
-            overlay.show(text: corrected, caretRect: field.caretRect)
+            overlay.show(text: corrected, caretRect: field.caretRect, style: field.fieldStyle)
             inputMonitor.setAcceptActive(overlay.isVisible)
             lastSuggestion = corrected
             state = .ready(text: corrected)
@@ -246,7 +247,7 @@ final class CotypingCoordinator: ObservableObject {
                 return
             }
             session = CotypingSession(field: field, fullText: text, kind: .continuation)
-            overlay.show(text: text, caretRect: field.caretRect)
+            overlay.show(text: text, caretRect: field.caretRect, style: field.fieldStyle)
             inputMonitor.setAcceptActive(overlay.isVisible)
             lastSuggestion = text
             state = .ready(text: text)
@@ -267,7 +268,7 @@ final class CotypingCoordinator: ObservableObject {
         if let session, session.field.contentSignature == field.contentSignature,
            session.fullText.count >= result.text.count { return }
         session = CotypingSession(field: field, fullText: result.text, kind: .continuation)
-        overlay.show(text: result.text, caretRect: field.caretRect)
+            overlay.show(text: result.text, caretRect: field.caretRect, style: field.fieldStyle)
         inputMonitor.setAcceptActive(overlay.isVisible)
         lastSuggestion = result.text
         state = .ready(text: result.text)
@@ -363,14 +364,14 @@ final class CotypingCoordinator: ObservableObject {
         } else {
             // Re-anchor the ghost after the host commits the insert (AX lag).
             let remainingText = current.remainingText
-            overlay.show(text: remainingText, caretRect: live.field?.caretRect ?? current.field.caretRect)
+            overlay.show(text: remainingText, caretRect: live.field?.caretRect ?? current.field.caretRect, style: (live.field ?? current.field).fieldStyle)
             Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(30))
                 guard let self, self.overlay.isVisible, let liveSession = self.session,
                       liveSession.remainingText == remainingText else { return }
                 let focus = self.focusTracker.refreshNow()
                 if let field = focus.field {
-                    self.overlay.show(text: remainingText, caretRect: field.caretRect)
+                    self.overlay.show(text: remainingText, caretRect: field.caretRect, style: field.fieldStyle)
                 }
             }
         }

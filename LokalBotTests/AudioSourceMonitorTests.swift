@@ -37,6 +37,14 @@ final class AudioSourceMonitorTests: XCTestCase {
         XCTAssertFalse(AudioSourceMonitor.isMediaPlayer("company.thebrowser.Browser"), "Arc")
     }
 
+    func testBrowserAudioHelpersMapToBrowserHost() {
+        XCTAssertEqual(MeetingDetector.hostBrowserBundleID(forAudioBundleID: "com.google.Chrome.helper"),
+                       "com.google.Chrome")
+        XCTAssertEqual(MeetingDetector.hostBrowserBundleID(forAudioBundleID: "com.google.Chrome"),
+                       "com.google.Chrome")
+        XCTAssertNil(MeetingDetector.hostBrowserBundleID(forAudioBundleID: "com.spotify.client"))
+    }
+
     /// Unknown apps stay eligible so a genuinely-new meeting tool is still
     /// surfaced via the monitor's fallback candidate path.
     func testUnknownAppIsNotExcluded() {

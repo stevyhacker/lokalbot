@@ -52,6 +52,9 @@ struct CotypingField: Equatable, Sendable {
     var windowTitle: String? = nil
     /// The field's placeholder / label (e.g. "To:", "Search", "Message #general").
     var fieldPlaceholder: String? = nil
+    /// The field's own font/color (resolved from AX, cached per element) when
+    /// host-style matching is enabled, so the ghost can mimic the field.
+    var fieldStyle: CotypingFieldStyle? = nil
 
     /// Content-only fingerprint used to detect "did the field actually change"
     /// across keystrokes and to drop stale async generations. Excludes the AX

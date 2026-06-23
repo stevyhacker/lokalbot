@@ -140,22 +140,24 @@ final class MeetingDetector {
 
     private func tick() {
         let running = NSWorkspace.shared.runningApplications
-        let runningMeetingApp = running
-            .compactMap { app -> DetectedApp? in
-                guard let bid = app.bundleIdentifier, let name = Self.knownApps[bid] else { return nil }
-                return DetectedApp(name: name, bundleID: bid, pid: app.processIdentifier)
-            }
-            .first
+        let runningMeetingApp = Self.nativeMeetingApp(in: running)
             ?? Self.browserMeeting(in: running)
+        let continuingApp = activeApp.flatMap { Self.continuingApp($0, in: running) }
+        let app = runningMeetingApp ?? continuingApp
+        let micInUse = Self.isMicInUse()
+        let canStart = activeApp == nil && runningMeetingApp != nil && micInUse
+        let canContinue = activeApp != nil && app != nil
+            && (micInUse || Self.hasOutputAudio(for: app!))
+        let inMeeting = canStart || canContinue
 
-        let inMeeting = runningMeetingApp != nil && Self.isMicInUse()
-
-        if inMeeting, let app = runningMeetingApp {
+        if inMeeting, let app {
             pendingStop?.cancel()
             pendingStop = nil
             if activeApp == nil {
                 activeApp = app
                 onMeetingStarted?(app)
+            } else {
+                activeApp = app
             }
         } else if activeApp != nil, pendingStop == nil {
             let work = DispatchWorkItem { [weak self] in
@@ -169,18 +171,67 @@ final class MeetingDetector {
         }
     }
 
+    private static func nativeMeetingApp(in running: [NSRunningApplication]) -> DetectedApp? {
+        running.compactMap { app -> DetectedApp? in
+            guard let bid = app.bundleIdentifier, let name = knownApps[bid] else { return nil }
+            return DetectedApp(name: name, bundleID: bid, pid: app.processIdentifier)
+        }.first
+    }
+
     /// Web meetings: a running browser whose focused window title looks like
     /// a meeting (design §9). The system-audio tap then captures the browser.
+    static func visibleBrowserMeeting(in running: [NSRunningApplication] = NSWorkspace.shared.runningApplications) -> DetectedApp? {
+        browserMeeting(in: running)
+    }
+
     private static func browserMeeting(in running: [NSRunningApplication]) -> DetectedApp? {
         for app in running {
             guard let bid = app.bundleIdentifier, browsers.contains(bid),
                   let title = ActivitySampler.focusedWindowTitle(pid: app.processIdentifier),
                   webMeetingMarkers.contains(where: { title.localizedCaseInsensitiveContains($0) })
             else { continue }
-            return DetectedApp(name: "\(app.localizedName ?? "Browser") meeting",
-                               bundleID: bid, pid: app.processIdentifier)
+            let audioProcess = bestBrowserAudioProcess(forBrowserBundleID: bid)
+            return DetectedApp(name: app.localizedName ?? "Browser",
+                               bundleID: bid,
+                               pid: audioProcess?.id ?? app.processIdentifier)
         }
         return nil
+    }
+
+    static func hostBrowserBundleID(forAudioBundleID bundleID: String) -> String? {
+        if browsers.contains(bundleID) { return bundleID }
+        return browsers.first { browserAudioBundleID(bundleID, belongsTo: $0) }
+    }
+
+    static func browserAudioBundleID(_ bundleID: String, belongsTo browserBundleID: String) -> Bool {
+        let bundle = bundleID.lowercased()
+        let browser = browserBundleID.lowercased()
+        return bundle == browser || bundle.hasPrefix("\(browser).helper")
+    }
+
+    private static func bestBrowserAudioProcess(forBrowserBundleID browserBundleID: String) -> AudioProcess? {
+        let processes = (try? CoreAudioUtils.listAudioProcesses()) ?? []
+        return processes.first { process in
+            guard process.isRunningOutput, let bundleID = process.bundleID else { return false }
+            return browserAudioBundleID(bundleID, belongsTo: browserBundleID)
+        }
+    }
+
+    private static func continuingApp(_ app: DetectedApp, in running: [NSRunningApplication]) -> DetectedApp? {
+        if knownApps[app.bundleID] != nil {
+            return running.contains { $0.bundleIdentifier == app.bundleID } ? app : nil
+        }
+        if browsers.contains(app.bundleID) {
+            return running.contains { $0.bundleIdentifier == app.bundleID } ? app : nil
+        }
+        return NSRunningApplication(processIdentifier: app.pid) == nil ? nil : app
+    }
+
+    private static func hasOutputAudio(for app: DetectedApp) -> Bool {
+        if browsers.contains(app.bundleID) {
+            return bestBrowserAudioProcess(forBrowserBundleID: app.bundleID) != nil
+        }
+        return CoreAudioUtils.isProcessRunningOutput(pid: app.pid)
     }
 
     // MARK: - Core Audio: is any process using the default input device?

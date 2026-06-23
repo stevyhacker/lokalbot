@@ -40,4 +40,9 @@ final class MeetingTests: XCTestCase {
 
         XCTAssertEqual(meeting.durationLabel, "2h 5m")
     }
+
+    func testMeetingTitleDoesNotDuplicateMeetingSuffix() {
+        XCTAssertEqual(AppState.meetingTitle(for: "Google Chrome"), "Google Chrome meeting")
+        XCTAssertEqual(AppState.meetingTitle(for: "Google Chrome meeting"), "Google Chrome meeting")
+    }
 }
