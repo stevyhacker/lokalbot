@@ -6,3 +6,6 @@ Vendor/
 
 .DS_Store
 .build/
+
+# Vercel CLI local link
+.vercel/
