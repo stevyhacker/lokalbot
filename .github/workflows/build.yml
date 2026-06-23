@@ -60,7 +60,7 @@ jobs:
       # that script (which holds the pinned llama.cpp tag + model name), so only
       # a script change forces a re-download.
       - name: Cache llama.cpp vendor
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: Vendor
           key: vendor-${{ runner.os }}-${{ hashFiles('Scripts/fetch-llama.sh') }}
