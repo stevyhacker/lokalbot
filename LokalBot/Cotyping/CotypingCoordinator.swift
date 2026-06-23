@@ -240,6 +240,7 @@ final class CotypingCoordinator: ObservableObject {
             }
             guard work == generation, isRunning else { return }
             lastLatencyMilliseconds = Int(Date().timeIntervalSince(start) * 1000)
+            CotypingStatsStore.shared.recordGeneration(latencyMs: lastLatencyMilliseconds ?? 0)
             let text = result.text
             guard !text.isEmpty else {
                 clearSuggestion()
@@ -258,6 +259,7 @@ final class CotypingCoordinator: ObservableObject {
         } catch {
             guard work == generation else { return }
             state = .failed(shortError(error))
+            CotypingStatsStore.shared.recordError()
         }
     }
 
@@ -362,6 +364,7 @@ final class CotypingCoordinator: ObservableObject {
             }
         }
         guard !chunk.isEmpty, inserter.insert(chunk) else { return false }
+        CotypingStatsStore.shared.recordAccept(charsAccepted: chunk.count)
 
         acceptedWordCount += chunk.split(whereSeparator: { $0.isWhitespace }).count
         current = current.advanced(by: chunk.count)

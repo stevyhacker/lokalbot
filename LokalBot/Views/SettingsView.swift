@@ -21,6 +21,7 @@ struct SettingsView: View {
     @State private var settingsQuery = ""
     @StateObject private var power = PowerSourceMonitor()
     @ObservedObject private var metrics = GenerationMetricsStore.shared
+    @ObservedObject private var cotypingStats = CotypingStatsStore.shared
     @StateObject private var hfSearch = HuggingFaceSearchService()
     @State private var showingHFBrowse = false
     @State private var hfSelectedModel: String?
@@ -253,6 +254,30 @@ struct SettingsView: View {
                                   text: $app.settings.cotypingExcludedDomains)
                         Text("Block cotyping on specific sites (e.g. \u{201c}bank.com\u{201d}). Subdomains included; read locally via Accessibility in browsers.")
                             .font(.caption).foregroundStyle(.secondary)
+                        Divider().padding(.vertical, 2)
+                        LabeledContent("Suggestions generated") {
+                            Text("\(cotypingStats.stats.generations)").foregroundStyle(.secondary)
+                        }
+                        LabeledContent("Accepted") {
+                            Text("\(cotypingStats.stats.accepts)  (\(String(format: "%.2f", cotypingStats.stats.acceptsPerGeneration))/gen)").foregroundStyle(.secondary)
+                        }
+                        LabeledContent("Characters inserted") {
+                            Text("\(cotypingStats.stats.charsAccepted)").foregroundStyle(.secondary)
+                        }
+                        if cotypingStats.stats.errors > 0 {
+                            LabeledContent("Failed generations") {
+                                Text("\(cotypingStats.stats.errors)").foregroundStyle(.secondary)
+                            }
+                        }
+                        if let avg = cotypingStats.stats.avgLatencyMs {
+                            LabeledContent("Generation latency") {
+                                Text("avg \(avg) ms · p95 \(cotypingStats.stats.p95LatencyMs ?? avg) · max \(cotypingStats.stats.maxLatencyMs ?? avg)").foregroundStyle(.secondary)
+                            }
+                        }
+                        if cotypingStats.stats != CotypingStats() {
+                            Button("Reset cotyping stats", role: .destructive) { cotypingStats.clear() }
+                                .font(.caption)
+                        }
                     }
                 }
             }
