@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LokalBot: meetings transcribed and summarized on your Mac</title>
+  <meta name="description" content="LokalBot records both sides of every call, transcribes it, and writes the recap. All on-device on Apple Silicon. No cloud, no account." />
+  <meta name="theme-color" content="#0b1119" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="LokalBot, the strictly-local meeting recorder for macOS" />
+  <meta property="og:description" content="Record, transcribe, and summarize meetings entirely on your Mac. Plus inline AI autocomplete and a private day timeline." />
+  <meta property="og:image" content="assets/lokalbot-icon.svg" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <link rel="icon" href="assets/lokalbot-icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="assets/lokalbot-icon.svg" />
+
+  <link rel="preconnect" href="https://unpkg.com" crossorigin />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://unpkg.com/@phosphor-icons/web@2.1.1" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#features">Skip to features</a>
+
+  <!-- ambient brand background -->
+  <div class="bg-field" aria-hidden="true">
+    <div class="bg-glow bg-glow--a"></div>
+    <div class="bg-glow bg-glow--b"></div>
+    <div class="bg-grain"></div>
+  </div>
+
+  <!-- ───────────────────────── NAV ───────────────────────── -->
+  <header class="nav" id="top">
+    <a class="brand" href="#top" aria-label="LokalBot home">
+      <img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="32" height="32" />
+      <span class="brand__name">LokalBot</span>
+    </a>
+    <nav class="nav__links" aria-label="Primary">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#privacy">Privacy</a>
+    </nav>
+    <div class="nav__actions">
+      <a class="icon-link" href="https://github.com/stevyhacker/lokalbot" aria-label="LokalBot on GitHub" target="_blank" rel="noopener">
+        <i class="ph ph-github-logo" aria-hidden="true"></i>
+      </a>
+      <a class="btn btn--primary btn--sm" href="#download">Download</a>
+    </div>
+  </header>
+
+  <main>
+    <!-- ───────────────────────── HERO ───────────────────────── -->
+    <section class="hero">
+      <div class="hero__copy reveal">
+        <p class="eyebrow">Strictly local. Built for macOS.</p>
+        <h1 class="hero__title">Record and summarize meetings on your Mac.</h1>
+        <p class="hero__sub">Records both sides of every call, transcribes it, and writes the recap. All on-device. No cloud, no account.</p>
+        <div class="hero__cta">
+          <a class="btn btn--primary" href="#download">
+            <i class="ph ph-apple-logo" aria-hidden="true"></i>
+            Download for macOS
+          </a>
+          <a class="btn btn--ghost" href="#how">See how it works</a>
+        </div>
+        <p class="hero__meta">Free, for macOS 14.4 and later on Apple Silicon.</p>
+      </div>
+
+      <div class="hero__stage reveal" aria-hidden="true">
+        <div class="appcard">
+          <div class="appcard__glow"></div>
+          <img class="appcard__icon" src="assets/lokalbot-icon.svg" alt="" width="132" height="132" />
+          <div class="appcard__title">LokalBot</div>
+          <div class="recorder">
+            <span class="recorder__dot"></span>
+            <span class="recorder__label">Recording</span>
+            <div class="wave" data-wave>
+              <span></span><span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span><span></span>
+            </div>
+          </div>
+          <div class="tracks">
+            <span class="track track--me">Me</span>
+            <span class="track track--them">Them</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─────────────────────── PROOF STRIP ─────────────────────── -->
+    <section class="proof reveal" aria-label="Why LokalBot">
+      <div class="proof__item">
+        <i class="ph ph-cpu" aria-hidden="true"></i>
+        <div>
+          <strong>100% on-device</strong>
+          <span>Audio, transcripts, and models stay on your Mac.</span>
+        </div>
+      </div>
+      <div class="proof__item">
+        <i class="ph ph-seal-check" aria-hidden="true"></i>
+        <div>
+          <strong>Free, no account</strong>
+          <span>No sign-up, no subscription, no telemetry.</span>
+        </div>
+      </div>
+      <div class="proof__item">
+        <i class="ph ph-github-logo" aria-hidden="true"></i>
+        <div>
+          <strong>Source on GitHub</strong>
+          <span>Read every line, or build it yourself.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────────────────── FEATURES ───────────────────────── -->
+    <section class="section" id="features">
+      <header class="section__head reveal">
+        <p class="eyebrow">Features</p>
+        <h2 class="section__title">A full meeting workflow that runs in the device in your hands.</h2>
+      </header>
+
+      <div class="bento">
+        <article class="tile tile--flag reveal">
+          <i class="ph ph-waveform tile__icon" aria-hidden="true"></i>
+          <h3>Records the call, writes the recap</h3>
+          <p>Detects Zoom, Teams, Meet, Slack, Webex, and FaceTime, then captures you and them on two synced tracks. When the call ends, a local model writes a TL;DR with decisions and action items.</p>
+          <ul class="tile__tags">
+            <li>Auto-detect</li><li>Me / Them tracks</li><li>Templates</li>
+          </ul>
+        </article>
+
+        <article class="tile tile--transcribe reveal">
+          <i class="ph ph-translate tile__icon" aria-hidden="true"></i>
+          <h3>Transcription in 25 languages</h3>
+          <p>Parakeet runs at roughly 190&times; realtime on the Neural Engine. Switch to Whisper for 99 languages with word-level timestamps.</p>
+        </article>
+
+        <article class="tile reveal">
+          <i class="ph ph-magnifying-glass tile__icon" aria-hidden="true"></i>
+          <h3>Search every word you have heard</h3>
+          <p>Full-text and meaning-based search across transcripts, summaries, and on-screen text. Click a hit to play from that second.</p>
+        </article>
+
+        <article class="tile reveal">
+          <i class="ph ph-clock-countdown tile__icon" aria-hidden="true"></i>
+          <h3>See where your day went</h3>
+          <p>A private timeline of apps and meetings, plus a generated daily digest. Ask your day a question in plain language.</p>
+        </article>
+
+        <article class="tile reveal" id="privacy">
+          <i class="ph ph-lock-key tile__icon" aria-hidden="true"></i>
+          <h3>Private by construction</h3>
+          <p>Optional screenshots are AES-GCM encrypted and auto-delete after 14 days. Password fields and excluded apps are never read.</p>
+        </article>
+
+        <article class="tile tile--cli reveal">
+          <div class="tile__cli-copy">
+            <i class="ph ph-terminal-window tile__icon" aria-hidden="true"></i>
+            <h3>Built for your coding agent</h3>
+            <p><code>lokalbot-cli</code> gives agents read-only access to the meeting library. JSON by default.</p>
+          </div>
+          <pre class="code code--inline" aria-label="lokalbot-cli example"><span class="c-prompt">$</span> lokalbot-cli search <span class="c-str">"auth refactor"</span>
+<span class="c-prompt">$</span> lokalbot-cli get latest <span class="c-flag">--include</span> summary</pre>
+        </article>
+      </div>
+    </section>
+
+    <!-- ───────────────────────── HOW IT WORKS ───────────────────────── -->
+    <section class="section how" id="how">
+      <header class="section__head reveal">
+        <p class="eyebrow">How it works</p>
+        <h2 class="section__title">Three steps, zero cloud.</h2>
+      </header>
+
+      <ol class="steps">
+        <li class="step reveal">
+          <span class="step__num">01</span>
+          <h3>It notices the meeting</h3>
+          <p>LokalBot watches for calls and starts recording both sides on its own, or you start it from the menu bar.</p>
+        </li>
+        <li class="step reveal">
+          <span class="step__num">02</span>
+          <h3>It transcribes and summarizes</h3>
+          <p>On-device models turn the audio into a labeled transcript and a structured recap the moment the call ends.</p>
+        </li>
+        <li class="step reveal">
+          <span class="step__num">03</span>
+          <h3>It stays on your Mac</h3>
+          <p>Everything lands in a local library you can search, replay, and hand to your tools. Nothing is uploaded.</p>
+        </li>
+      </ol>
+    </section>
+
+    <!-- ───────────────────────── COTYPING SPOTLIGHT ───────────────────────── -->
+    <section class="section spotlight">
+      <div class="spotlight__demo reveal">
+        <div class="cotype">
+          <div class="cotype__bar" aria-hidden="true">
+            <span class="cotype__chrome"></span><span class="cotype__chrome"></span><span class="cotype__chrome"></span>
+            <span class="cotype__app">Messages</span>
+          </div>
+          <label class="cotype__label" for="ctInput">New message</label>
+          <div class="cotype__field" id="cotypeField">
+            <span class="ct-typed" id="ctTyped">Following up on</span><span class="ct-caret" aria-hidden="true"></span><span class="ct-ghost" id="ctGhost"> our sync, the on-device build is ready to ship.</span>
+          </div>
+          <input id="ctInput" class="ct-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Cotyping demo. Type, then press Tab to accept the suggestion." />
+          <div class="cotype__hint"><kbd>Tab</kbd> to accept &middot; <kbd>Esc</kbd> to dismiss</div>
+        </div>
+      </div>
+      <div class="spotlight__copy reveal">
+        <p class="eyebrow">Cotyping</p>
+        <h2 class="section__title">Autocomplete that never phones home.</h2>
+        <p class="section__lead">Ghost text appears as you type in almost any app. Press Tab to accept a word or the whole line. It runs on the same local model as your summaries, so nothing you write leaves the Mac.</p>
+        <ul class="checklist">
+          <li><i class="ph ph-check" aria-hidden="true"></i> Works system-wide, opt-in per app</li>
+          <li><i class="ph ph-check" aria-hidden="true"></i> Skips password and secure fields</li>
+          <li><i class="ph ph-check" aria-hidden="true"></i> Same backend as your summaries</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───────────────────────── DOWNLOAD ───────────────────────── -->
+    <section class="section download" id="download">
+      <div class="download__panel reveal">
+        <img class="download__icon" src="assets/lokalbot-icon.svg" alt="" width="80" height="80" />
+        <p class="eyebrow">Download</p>
+        <h2 class="section__title">Get LokalBot for macOS.</h2>
+        <p class="section__lead">A signed, notarized app. Models download on first run, then it works fully offline.</p>
+
+        <a class="btn btn--primary btn--lg" href="https://github.com/stevyhacker/lokalbot/releases/latest/download/LokalBotV3.dmg">
+          <i class="ph ph-download-simple" aria-hidden="true"></i>
+          Download for macOS
+        </a>
+        <p class="download__sub">.dmg installer &middot; <a href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">all releases and notes</a></p>
+
+        <ul class="reqs">
+          <li><i class="ph ph-apple-logo" aria-hidden="true"></i> Apple Silicon (M1 and later)</li>
+          <li><i class="ph ph-monitor" aria-hidden="true"></i> macOS 14.4 or later</li>
+          <li><i class="ph ph-hard-drives" aria-hidden="true"></i> About 1 GB of models on first run</li>
+        </ul>
+
+        <div class="build">
+          <p class="build__label">Prefer to build it yourself?</p>
+          <pre class="code" aria-label="Build from source"><span class="c-prompt">$</span> git clone https://github.com/stevyhacker/lokalbot.git
+<span class="c-prompt">$</span> cd lokalbot
+<span class="c-prompt">$</span> xcodegen generate <span class="c-op">&amp;&amp;</span> open LokalBot.xcodeproj</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────────────────── FAQ ───────────────────────── -->
+    <section class="section faq">
+      <header class="section__head reveal">
+        <p class="eyebrow">Questions</p>
+        <h2 class="section__title">The short answers.</h2>
+      </header>
+
+      <div class="faq__list reveal">
+        <details class="qa">
+          <summary>Does anything leave my Mac?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>Your audio, transcripts, and summaries never leave the device. The only network calls are optional: downloading a model once, or pointing summaries at a backend you choose yourself.</p>
+        </details>
+        <details class="qa">
+          <summary>Is it really free?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>Yes. No account, no subscription, no telemetry. The full source is on GitHub, and you can build it yourself.</p>
+        </details>
+        <details class="qa">
+          <summary>Which Macs are supported?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>Apple Silicon Macs (M1 and later) running macOS 14.4 or newer. The on-device models lean on the Neural Engine and Metal.</p>
+        </details>
+        <details class="qa">
+          <summary>How does it record both sides?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>Your microphone is one track, labeled Me. A Core Audio tap on the meeting app is the other, labeled Them. That split gives you speaker labels for free.</p>
+        </details>
+        <details class="qa">
+          <summary>Can I use my own model?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>Yes. The bundled llama.cpp model needs no setup, or point LokalBot at Ollama, any OpenAI-compatible server, or Apple Intelligence.</p>
+        </details>
+        <details class="qa">
+          <summary>Is my screen being watched?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>Only if you turn on screenshots. They are encrypted on disk and deleted after 14 days by default. Password fields and excluded apps are never captured.</p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <!-- ───────────────────────── FOOTER ───────────────────────── -->
+  <footer class="footer">
+    <div class="footer__brand">
+      <a class="brand" href="#top">
+        <img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="30" height="30" />
+        <span class="brand__name">LokalBot</span>
+      </a>
+      <p>Strictly-local meeting recorder, transcriber, and inline autocomplete for macOS.</p>
+      <p class="footer__meta">Apple Silicon &middot; macOS 14.4+</p>
+    </div>
+    <nav class="footer__col" aria-label="Product">
+      <h4>Product</h4>
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#download">Download</a>
+    </nav>
+    <nav class="footer__col" aria-label="Project">
+      <h4>Project</h4>
+      <a href="https://github.com/stevyhacker/lokalbot" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">Releases</a>
+      <a href="https://github.com/stevyhacker/lokalbot#build--run" target="_blank" rel="noopener">Build from source</a>
+    </nav>
+    <p class="footer__legal">Runs entirely on your Mac. Your meetings are yours.</p>
+  </footer>
+</body>
+</html>
