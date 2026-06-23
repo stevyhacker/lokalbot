@@ -12,6 +12,13 @@ protocol TextEngine {
     /// every backend works; `OpenAICompatibleEngine` overrides it to hit raw
     /// `/v1/completions`, which is faster and behaves as a pure text continuer.
     func complete(_ request: CompletionRequest) async throws -> String
+
+    /// Streaming variant of `complete`: `onPartial` receives the cumulative
+    /// completion text as tokens arrive, so the UI can paint ghost text before
+    /// the full response finishes. Returns the final text. Default is
+    /// non-streaming; `OpenAICompatibleEngine` overrides it with SSE.
+    func completeStreaming(_ request: CompletionRequest,
+                           onPartial: @escaping @Sendable (String) -> Void) async throws -> String
 }
 
 enum TextEngineError: LocalizedError {
@@ -90,6 +97,21 @@ func cotypingCompletionSend(_ request: URLRequest, base: URL) async throws -> (D
     }
 }
 
+/// Extracts the text delta from one Server-Sent-Events line of an OpenAI-style
+/// streaming completions response. Returns nil for keep-alives, `[DONE]`, blank
+/// lines, or chunks without text. Pure → unit-testable.
+func cotypingParseSSEDelta(_ line: String) -> String? {
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    guard trimmed.hasPrefix("data:") else { return nil }
+    let payload = trimmed.dropFirst("data:".count).trimmingCharacters(in: .whitespaces)
+    guard !payload.isEmpty, payload != "[DONE]" else { return nil }
+    guard let data = payload.data(using: .utf8),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let choices = json["choices"] as? [[String: Any]],
+          let text = choices.first?["text"] as? String else { return nil }
+    return text
+}
+
 extension TextEngine {
     /// Chat-backend fallback: ask the model to continue the text and emit only
     /// the continuation. Used by Ollama / Apple Intelligence; the built-in
@@ -97,6 +119,14 @@ extension TextEngine {
     func complete(_ request: CompletionRequest) async throws -> String {
         let system = "You are an autocomplete engine. Continue the user's text naturally from exactly where it stops. Output ONLY the continuation — no quotes, no preamble, no explanation, no restating prior text. Keep it to a short phrase."
         return try await generate(system: system, prompt: request.prompt, context: [])
+    }
+
+    /// Non-streaming fallback: run once, emit the whole result as one partial.
+    func completeStreaming(_ request: CompletionRequest,
+                           onPartial: @escaping @Sendable (String) -> Void) async throws -> String {
+        let result = try await complete(request)
+        onPartial(result)
+        return result
     }
 }
 
@@ -231,6 +261,59 @@ struct OpenAICompatibleEngine: TextEngine {
             throw TextEngineError.badResponse("unexpected /completions payload")
         }
         return text
+    }
+
+    /// Streaming `/v1/completions` (SSE). Accumulates `choices[].text` deltas,
+    /// emitting the running text via `onPartial`. Falls back to the non-streaming
+    /// request if streaming errors (a server that doesn't support `stream`).
+    func completeStreaming(_ request: CompletionRequest,
+                           onPartial: @escaping @Sendable (String) -> Void) async throws -> String {
+        guard !model.isEmpty else { throw TextEngineError.noModel }
+        var urlRequest = URLRequest(url: baseURL.appendingPathComponent("completions"))
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let apiKey, !apiKey.isEmpty {
+            urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
+        var body: [String: Any] = [
+            "model": model,
+            "prompt": request.prompt,
+            "max_tokens": request.maxTokens,
+            "temperature": request.temperature,
+            "top_p": request.topP,
+            "top_k": request.topK,
+            "min_p": request.minP,
+            "repeat_penalty": request.repeatPenalty,
+            "seed": request.seed,
+            "stream": true,
+        ]
+        if !request.stop.isEmpty { body["stop"] = request.stop }
+        body.merge(extraBody) { _, new in new }
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        var accumulated = ""
+        do {
+            let (bytes, response) = try await completionSession.bytes(for: urlRequest)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                throw TextEngineError.badResponse("HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+            }
+            for try await line in bytes.lines {
+                if let delta = cotypingParseSSEDelta(line) {
+                    accumulated += delta
+                    onPartial(accumulated)
+                }
+            }
+        } catch let error as URLError where error.code == .cancelled {
+            throw error
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // Server didn't stream cleanly — one non-streaming request instead.
+            let full = try await complete(request)
+            onPartial(full)
+            return full
+        }
+        return accumulated
     }
 }
 

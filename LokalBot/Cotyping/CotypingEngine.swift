@@ -69,6 +69,19 @@ enum CotypingRequestBuilder {
 @MainActor
 protocol CotypingCompleting: AnyObject {
     func generate(_ request: CotypingRequest) async throws -> CotypingNormalizationResult
+    /// Streaming variant: `onPartial` receives normalized partials as they
+    /// arrive. Default (below) is non-streaming.
+    func generateStreaming(_ request: CotypingRequest,
+                           onPartial: @escaping @Sendable (CotypingNormalizationResult) -> Void) async throws -> CotypingNormalizationResult
+}
+
+extension CotypingCompleting {
+    func generateStreaming(_ request: CotypingRequest,
+                           onPartial: @escaping @Sendable (CotypingNormalizationResult) -> Void) async throws -> CotypingNormalizationResult {
+        let result = try await generate(request)
+        onPartial(result)
+        return result
+    }
 }
 
 /// Production engine: resolves LokalBot's configured `TextEngine` (the very same
@@ -101,6 +114,20 @@ final class CotypingEngine: CotypingCompleting {
             // normalizer still collapses defensively.
             stop: request.isMultiLine ? [] : ["\n"])
         let raw = try await engine.complete(completion)
+        return CotypingTextNormalizer.normalizeDetailed(raw, for: request)
+    }
+
+    func generateStreaming(_ request: CotypingRequest,
+                           onPartial: @escaping @Sendable (CotypingNormalizationResult) -> Void) async throws -> CotypingNormalizationResult {
+        let engine = try await makeEngine()
+        let completion = CompletionRequest(
+            prompt: request.prompt, maxTokens: request.maxTokens, temperature: request.temperature,
+            topP: request.topP, topK: request.topK, minP: request.minP,
+            repeatPenalty: request.repeatPenalty, seed: request.seed,
+            stop: request.isMultiLine ? [] : ["\n"])
+        let raw = try await engine.completeStreaming(completion) { cumulative in
+            onPartial(CotypingTextNormalizer.normalizeDetailed(cumulative, for: request))
+        }
         return CotypingTextNormalizer.normalizeDetailed(raw, for: request)
     }
 }

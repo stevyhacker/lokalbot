@@ -209,6 +209,9 @@ struct SettingsView: View {
                         Toggle("Use app & window context", isOn: $app.settings.cotypingUseAppContext)
                         Text("Conditions suggestions on the focused app and its window title (email subject, chat channel, page title) for sharper, on-topic completions. Read locally via Accessibility; skipped in code editors and terminals.")
                             .font(.caption).foregroundStyle(.secondary)
+                        Toggle("Autocorrect the word you're typing", isOn: $app.settings.cotypingAutocorrect)
+                        Text("Spots a misspelled word and offers the fix inline — Tab swaps it. Uses the macOS spell checker (on-device); never touches code, URLs, or numbers.")
+                            .font(.caption).foregroundStyle(.secondary)
                         Toggle("Tab accepts the whole suggestion (off = one word per Tab)",
                                isOn: $app.settings.cotypingAcceptWholeSuggestion)
                         LabeledContent("Pause before suggesting") {

@@ -108,6 +108,9 @@ struct AppSettings: Codable {
     /// (e.g. the email subject or chat channel). On by default; reads window
     /// titles via Accessibility (already required for cotyping), stays on-device.
     var cotypingUseAppContext: Bool = true
+    /// One-key inline autocorrect of the word you're typing (NSSpellChecker).
+    /// On by default; suppresses a continuation on an unresolved typo.
+    var cotypingAutocorrect: Bool = true
 
     var cotypingExcludedAppList: [String] {
         cotypingExcludedApps
@@ -169,6 +172,7 @@ struct AppSettings: Codable {
         case cotypingAcceptWholeSuggestion
         case cotypingExcludedApps
         case cotypingUseAppContext
+        case cotypingAutocorrect
     }
 
     static func load() -> AppSettings {
@@ -223,6 +227,7 @@ struct AppSettings: Codable {
         try c.encode(cotypingAcceptWholeSuggestion, forKey: .cotypingAcceptWholeSuggestion)
         try c.encode(cotypingExcludedApps, forKey: .cotypingExcludedApps)
         try c.encode(cotypingUseAppContext, forKey: .cotypingUseAppContext)
+        try c.encode(cotypingAutocorrect, forKey: .cotypingAutocorrect)
     }
 
     init(from decoder: Decoder) throws {
@@ -266,5 +271,6 @@ struct AppSettings: Codable {
         cotypingAcceptWholeSuggestion = (try? c.decode(Bool.self, forKey: .cotypingAcceptWholeSuggestion)) ?? defaults.cotypingAcceptWholeSuggestion
         cotypingExcludedApps = (try? c.decode(String.self, forKey: .cotypingExcludedApps)) ?? defaults.cotypingExcludedApps
         cotypingUseAppContext = (try? c.decode(Bool.self, forKey: .cotypingUseAppContext)) ?? defaults.cotypingUseAppContext
+        cotypingAutocorrect = (try? c.decode(Bool.self, forKey: .cotypingAutocorrect)) ?? defaults.cotypingAutocorrect
     }
 }

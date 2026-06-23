@@ -32,6 +32,7 @@ final class CotypingCoordinator: ObservableObject {
     private var generation: UInt64 = 0
     private var debounceTask: Task<Void, Never>?
     private var wired = false
+    private let spellChecker = CotypingSpellChecker()
 
     init(
         engine: CotypingCompleting,
@@ -170,6 +171,23 @@ final class CotypingCoordinator: ObservableObject {
         }
         guard let field = focus.field else { state = .idle; return }
 
+        // Autocorrect: offer to fix the trailing word before spending an LLM call.
+        switch typoDecision(for: field.precedingText, enabled: settings.cotypingAutocorrect) {
+        case .offerCorrection(let word, let corrected):
+            session = CotypingSession(field: field, fullText: corrected, kind: .correction(typoWord: word))
+            overlay.show(text: corrected, caretRect: field.caretRect)
+            inputMonitor.setAcceptActive(overlay.isVisible)
+            lastSuggestion = corrected
+            state = .ready(text: corrected)
+            return
+        case .suppress:
+            clearSuggestion()
+            state = .idle
+            return
+        case .proceed:
+            break
+        }
+
         var cfg = config
         cfg.maxResponseTokens = settings.cotypingMaxResponseTokens
         guard let request = CotypingRequestBuilder.build(
@@ -181,7 +199,11 @@ final class CotypingCoordinator: ObservableObject {
 
         state = .generating
         do {
-            let result = try await engine.generate(request)
+            // Stream: paint ghost text as tokens arrive instead of waiting for the
+            // whole completion. The final result is authoritative.
+            let result = try await engine.generateStreaming(request) { [weak self] partial in
+                Task { @MainActor in self?.renderStreamPartial(partial, work: work, field: field) }
+            }
             guard work == generation, isRunning else { return }
             let text = result.text
             guard !text.isEmpty else {
@@ -189,7 +211,7 @@ final class CotypingCoordinator: ObservableObject {
                 state = .idle
                 return
             }
-            session = CotypingSession(field: field, fullText: text)
+            session = CotypingSession(field: field, fullText: text, kind: .continuation)
             overlay.show(text: text, caretRect: field.caretRect)
             inputMonitor.setAcceptActive(overlay.isVisible)
             lastSuggestion = text
@@ -204,16 +226,52 @@ final class CotypingCoordinator: ObservableObject {
         }
     }
 
+    /// Renders a streamed partial (off the generation task, hopped to the main
+    /// actor). Monotonic: ignores reordered/shorter partials so the ghost only grows.
+    private func renderStreamPartial(_ result: CotypingNormalizationResult, work: UInt64, field: CotypingField) {
+        guard work == generation, isRunning, !result.text.isEmpty else { return }
+        if let session, session.field.contentSignature == field.contentSignature,
+           session.fullText.count >= result.text.count { return }
+        session = CotypingSession(field: field, fullText: result.text, kind: .continuation)
+        overlay.show(text: result.text, caretRect: field.caretRect)
+        inputMonitor.setAcceptActive(overlay.isVisible)
+        lastSuggestion = result.text
+        state = .ready(text: result.text)
+    }
+
+    /// Resolves the typo gate for the trailing word using the native spell checker.
+    private func typoDecision(for precedingText: String, enabled: Bool) -> CotypingTypoDecision {
+        CotypingTypoGate.resolve(
+            precedingText: precedingText, enabled: enabled,
+            isTypo: { spellChecker.isTypo($0) },
+            bestCorrection: { spellChecker.bestCorrection(for: $0) })
+    }
+
     // MARK: - Acceptance (called synchronously from the accept tap)
 
     private func acceptFromTap() -> Bool {
         guard isRunning, overlay.isVisible, var current = session else { return false }
-        // The accept tap can still be armed after focus slipped to another editable
-        // field in the SAME app (a mouse click fires no keystroke to clear the
-        // session). Re-read AX directly and bail unless the live field is still this
-        // session's field (grown only by words we accepted), so a stale suggestion
-        // is never inserted into the wrong field.
         let live = CotypingAXHelper.resolveFocus()
+
+        // Typo correction: swap the misspelled word for its fix in one edit,
+        // recomputed against the live text (the field may have changed).
+        if case .correction(let typoWord) = current.kind {
+            guard let liveField = live.field,
+                  liveField.processID == current.field.processID,
+                  let plan = CotypingCorrectionPlan.plan(
+                      precedingText: liveField.precedingText,
+                      expectedTypo: typoWord, correctedWord: current.fullText),
+                  inserter.replace(deletingCharacters: plan.deletingCharacters, with: plan.replacementText) else {
+                clearSuggestion()
+                return false
+            }
+            acceptedWordCount += 1
+            clearSuggestion()
+            state = .idle
+            return true
+        }
+
+        // Continuation: never insert into the wrong field (mouse-moved focus).
         guard Self.isContinuation(of: current, liveField: live.field) else {
             clearSuggestion()
             return false
@@ -239,8 +297,8 @@ final class CotypingCoordinator: ObservableObject {
             overlay.show(text: remainingText, caretRect: live.field?.caretRect ?? current.field.caretRect)
             Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(30))
-                guard let self, self.overlay.isVisible, let live = self.session,
-                      live.remainingText == remainingText else { return }
+                guard let self, self.overlay.isVisible, let liveSession = self.session,
+                      liveSession.remainingText == remainingText else { return }
                 let focus = self.focusTracker.refreshNow()
                 if let field = focus.field {
                     self.overlay.show(text: remainingText, caretRect: field.caretRect)

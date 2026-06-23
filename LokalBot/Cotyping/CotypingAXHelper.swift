@@ -167,6 +167,13 @@ enum CotypingAXHelper {
            rect.width.isFinite, rect.height.isFinite, rect.height > 0 {
             return (cocoaRect(fromAX: rect), true)
         }
+        // Web engines (Chromium / WebKit / Electron) ignore NSRange-based
+        // BoundsForRange and expose caret geometry only via opaque AX text
+        // markers. This is what fixes ghost placement in Chrome/Slack/VS Code-web.
+        if let rect = textMarkerCaretRect(element),
+           rect.width.isFinite, rect.height.isFinite, rect.height > 0 {
+            return (cocoaRect(fromAX: rect), true)
+        }
         // Fallback: estimate a thin caret at the element's leading edge.
         if let frame = elementFrame(element) {
             let estimate = CGRect(x: frame.minX + 4, y: frame.minY,
@@ -187,6 +194,23 @@ enum CotypingAXHelper {
         }
         var rect = CGRect.zero
         guard AXValueGetValue(value as! AXValue, .cgRect, &rect) else { return nil }
+        return rect
+    }
+
+    /// Caret rect for web engines that vend geometry via opaque AX text markers
+    /// (`AXSelectedTextMarkerRange` → `AXBoundsForTextMarkerRange`) rather than
+    /// NSRange-based `AXBoundsForRange`. Ported from Cotabby's AXHelper.
+    private static func textMarkerCaretRect(_ element: AXUIElement) -> CGRect? {
+        var markerRangeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element, "AXSelectedTextMarkerRange" as CFString, &markerRangeValue) == .success,
+              let markerRange = markerRangeValue else { return nil }
+        var boundsValue: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            element, "AXBoundsForTextMarkerRange" as CFString, markerRange, &boundsValue) == .success,
+              let bounds = boundsValue, CFGetTypeID(bounds) == AXValueGetTypeID() else { return nil }
+        var rect = CGRect.zero
+        guard AXValueGetValue(bounds as! AXValue, .cgRect, &rect) else { return nil }
         return rect
     }
 

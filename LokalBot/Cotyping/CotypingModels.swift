@@ -137,6 +137,14 @@ struct CotypingRequest: Sendable, Equatable {
     }
 }
 
+/// What an active suggestion does when accepted.
+enum CotypingSuggestionKind: Equatable, Sendable {
+    /// Append a continuation of the current text (the normal case).
+    case continuation
+    /// Replace the misspelled `typoWord` just before the caret with `fullText`.
+    case correction(typoWord: String)
+}
+
 /// An active suggestion: the field it was generated against, the full completion,
 /// and how much of it the user has already accepted (in Characters). Accepting a
 /// word advances `consumedCount`; the overlay then shows only `remainingText`.
@@ -144,6 +152,8 @@ struct CotypingSession: Equatable, Sendable {
     let field: CotypingField
     let fullText: String
     var consumedCount: Int = 0
+    /// Continuation vs typo correction — drives how `accept` applies it.
+    var kind: CotypingSuggestionKind = .continuation
 
     var acceptedText: String { String(fullText.prefix(consumedCount)) }
     var remainingText: String { String(fullText.dropFirst(consumedCount)) }
