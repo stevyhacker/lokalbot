@@ -11,7 +11,7 @@ import AVFoundation
 func lokalbotLaunchesMenuBarOnly() -> Bool {
     guard !AppState.isUITesting else { return false }
     let onboarded = UserDefaults.standard.bool(forKey: AppState.onboardingShownKey)
-        || AppPermission.allCases.allSatisfy { $0.isGranted }
+        || AppPermission.coreCases.allSatisfy { $0.isGranted }
     return AppSettings.load().menuBarOnly && onboarded
 }
 
@@ -221,7 +221,7 @@ final class AppState: ObservableObject {
     }
 
     enum NavSection: Hashable {
-        case meetings, timeline, search, settings
+        case meetings, timeline, cotyping, search, settings
     }
 
     /// True when launched by an XCUITest harness — gates the side-effectful
@@ -242,6 +242,7 @@ final class AppState: ObservableObject {
         didSet {
             settings.save()
             detector.stopDebounce = settings.stopDebounceSeconds
+            if interactive { cotyping.applySettings() }
         }
     }
 
@@ -275,6 +276,15 @@ final class AppState: ObservableObject {
     private(set) lazy var pipeline = ProcessingPipeline(storage: storage) { [weak self] in
         self?.settings ?? AppSettings()
     }
+    /// Cotyping (inline AI autocomplete) reuses the same `TextEngine` the
+    /// summarizer uses — the bundled llama-server by default.
+    private(set) lazy var cotypingEngine = CotypingEngine(makeEngine: { [weak self] in
+        guard let self else { throw TextEngineError.unavailable("LokalBot is shutting down.") }
+        return try await self.pipeline.makeTextEngine(self.settings)
+    })
+    private(set) lazy var cotyping = CotypingCoordinator(
+        engine: cotypingEngine,
+        settingsProvider: { [weak self] in self?.settings ?? AppSettings() })
 
     private let micRecorder = MicRecorder()
     private let systemRecorder = SystemAudioRecorder()
@@ -388,6 +398,9 @@ final class AppState: ObservableObject {
                 WindowAccess.shared.open("onboarding")
             }
         }
+        // Bring cotyping up if the user left it enabled and the grants are in
+        // place; otherwise it parks itself (no taps installed).
+        cotyping.applySettings()
     }
 
     // MARK: - Recording control

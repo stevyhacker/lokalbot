@@ -15,8 +15,14 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
     case microphone
     case screenRecording
     case accessibility
+    /// Cotyping only — detects keystrokes and consumes the accept key.
+    case inputMonitoring
 
     var id: Self { self }
+
+    /// The permissions the core app needs (recording + day tracking). Cotyping's
+    /// Input Monitoring is opt-in, so onboarding / `allGranted` exclude it.
+    static let coreCases: [AppPermission] = [.microphone, .screenRecording, .accessibility]
 
     /// System-Settings-style label.
     var title: String {
@@ -24,6 +30,7 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
         case .microphone: "Microphone"
         case .screenRecording: "Screen Recording"
         case .accessibility: "Accessibility"
+        case .inputMonitoring: "Input Monitoring"
         }
     }
 
@@ -36,6 +43,8 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
             "Captures periodic screenshots that are OCR'd into your meeting timeline."
         case .accessibility:
             "Reads window titles to track your activity."
+        case .inputMonitoring:
+            "Lets cotyping see your keystrokes so it can suggest as you type and accept on Tab."
         }
     }
 
@@ -52,6 +61,8 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
             CGPreflightScreenCaptureAccess()
         case .accessibility:
             AXIsProcessTrusted()
+        case .inputMonitoring:
+            CGPreflightListenEventAccess()
         }
     }
 
@@ -70,6 +81,8 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
             // `prompt: true` shows the "Open System Settings" dialog on first ask.
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options)
+        case .inputMonitoring:
+            _ = CGRequestListenEventAccess()
         }
     }
 
@@ -81,6 +94,7 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
         case .microphone: pane = "Privacy_Microphone"
         case .screenRecording: pane = "Privacy_ScreenCapture"
         case .accessibility: pane = "Privacy_Accessibility"
+        case .inputMonitoring: pane = "Privacy_ListenEvent"
         }
         return URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")
     }
@@ -138,7 +152,7 @@ final class PermissionManager: ObservableObject {
 
     /// Whether all three permissions are currently granted.
     var allGranted: Bool {
-        AppPermission.allCases.allSatisfy { granted[$0] == true }
+        AppPermission.coreCases.allSatisfy { granted[$0] == true }
     }
 
     /// Arms a ~1.5s catch-up poll so the UI reflects grants made over in System

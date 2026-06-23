@@ -1,6 +1,6 @@
 # LokalBot
 
-Strictly-local meeting recorder, transcriber, and day tracker for macOS. It records meetings, transcribes and summarizes them, indexes everything for search, and tracks how you spend your day — with **no external service in the loop**. Transcription (Parakeet / Whisper / Cohere via CoreML) and summarization (a bundled llama.cpp server with a built-in model) run entirely on-device. Ollama, an OpenAI-compatible localhost server, and Apple Intelligence are optional alternative backends.
+Strictly-local meeting recorder, transcriber, day tracker, and inline AI autocomplete for macOS. It records meetings, transcribes and summarizes them, indexes everything for search, tracks how you spend your day, and — with **cotyping** — suggests text inline as you type in any app, with **no external service in the loop**. Transcription (Parakeet / Whisper / Cohere via CoreML) and summarization + cotyping (a bundled llama.cpp server with a built-in model) run entirely on-device. Ollama, an OpenAI-compatible localhost server, and Apple Intelligence are optional alternative backends.
 
 The shipped app is **LokalBotV3** (`com.dotenv.LokalBotV3`); the Xcode project and scheme are named `LokalBot`.
 
@@ -66,6 +66,12 @@ The first build runs `Scripts/fetch-llama.sh` (a pre-build phase) which vendors 
 - **Timeline:** per-day colored block bar with hover details, time-by-app totals with %, and day navigation. An **Ask your day** box answers free-form questions from the day's activity blocks + OCR'd screen text + meetings via the local LLM.
 - **Day digest:** "Generate digest" runs the configured LLM over the day's blocks + meetings + OCR'd text → `journal/YYYY-MM-DD.md` (What I worked on / Meetings / Time allocation).
 
+### Cotyping (inline AI autocomplete)
+- **Ghost text everywhere:** as you type in almost any macOS text field, a gray suggestion appears next to the cursor; press **Tab** to accept (a word at a time, or the whole thing — Settings → Cotyping), or keep typing / press **Esc** to dismiss. Built on the same loop as [Cotabby](https://cotabby.app): an Accessibility poll resolves the focused field + caret, a `CGEventTap` watches keystrokes (and swallows the accept key only while a suggestion shows), a borderless click-through `NSPanel` renders the ghost at the caret, and accepted text is inserted as synthetic Unicode keystrokes.
+- **Reuses the local LLM:** suggestions come from the **same** backend as summaries (built-in llama-server by default, or Ollama / OpenAI-compatible / Apple Intelligence) through a low-latency raw `/v1/completions` call. The prompt treats the model as a pure text-continuer (optional name/style preface + the caret prefix last); raw output is cleaned by a shared normalizer (strips chat/`<think>` scaffolding, prompt echoes, and trailing-text duplication; collapses to one line). Nothing leaves the Mac.
+- **Opt-in & private:** off by default; needs **Accessibility** + **Input Monitoring**. Never reads password/secure fields; honors a per-user app exclusion list (preseeded with password managers and terminals).
+- **In-app preview:** the **Cotyping** tab has a live playground that runs the real pipeline on text typed *inside LokalBot* — try it with zero system permissions. Quick-toggle from the menu bar.
+
 ### Screenshots, OCR & privacy
 - **Capture:** ScreenCaptureKit screenshot of the main display every N minutes (default 3, Settings slider), downscaled to ≤1500 px, HEIC. Skipped when idle (3 min), paused, locked, or when an excluded app is frontmost. Requires the Screen Recording permission.
 - **OCR:** Vision (`VNRecognizeTextRequest`, on-device) runs immediately; text goes into `ocr_fts` (searchable under Search → Screen) and feeds day digests and Ask-your-day.
@@ -127,12 +133,15 @@ LokalBot/
     ├── Engines/            # TranscriptionEngine, TextEngine, AppleIntelligenceEngine,
     │                       #   ModelCatalog / ModelDownloadManager / LlamaServer
     ├── Support/            # prompt budgeting, download rescue, DeviceInfo/HardwareCapabilityProbe, ranker
-    └── Views/              # MenuBar, MainWindow, Timeline, Search, Settings, Onboarding, banners
+    ├── Cotyping/           # CotypingCoordinator + AX focus tracker, CGEventTap input monitor,
+    │                       #   ghost-text overlay, synthetic inserter, prompt renderer + output
+    │                       #   normalizer, and the HTTP completion engine (reuses TextEngine)
+    └── Views/              # MenuBar, MainWindow, Timeline, Search, Settings, Cotyping, Onboarding, banners
 ```
 
 ## Status
 
-**Done:** recording + robust device/PID handling, transcription (4 engines) + opt-in neural diarization, summarization (4 backends) + templates/languages, FTS5 + semantic search, synced player, day tracking + digests, screenshots/OCR/privacy, Ask-your-day, agent CLI, Sparkle updates, dev/prod split, in-app model manager + Hugging Face browse.
+**Done:** recording + robust device/PID handling, transcription (4 engines) + opt-in neural diarization, summarization (4 backends) + templates/languages, FTS5 + semantic search, synced player, day tracking + digests, screenshots/OCR/privacy, Ask-your-day, agent CLI, Sparkle updates, dev/prod split, in-app model manager + Hugging Face browse, cotyping (inline AI autocomplete reusing the LLM — opt-in).
 
 **Not yet built:** VLM screenshot captions (needs a multimodal model + an mmproj slot in `LlamaServer`).
 

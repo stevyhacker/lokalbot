@@ -195,6 +195,34 @@ struct SettingsView: View {
                 }
             }
 
+            if shows("Cotyping", ["cotyping", "autocomplete", "inline", "ghost", "suggestion", "typing", "complete", "tab", "autocorrect"]) {
+                Section("Cotyping") {
+                    Toggle("Inline AI autocomplete (cotyping)", isOn: $app.settings.cotypingEnabled)
+                    Text("Suggests text inline as you type in other apps, using your summarization model. Needs Accessibility + Input Monitoring. Open the Cotyping tab for setup and a live preview.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if app.settings.cotypingEnabled {
+                        TextField("Your name (optional — tunes the voice)", text: $app.settings.cotypingUserName)
+                        TextField("Writing style (optional, e.g. \u{201c}concise, British spelling\u{201d})", text: $app.settings.cotypingStyleNote)
+                        Stepper("Suggestion length: up to \(app.settings.cotypingMaxWords) words",
+                                value: $app.settings.cotypingMaxWords, in: 2...30)
+                        Toggle("Allow multi-line suggestions", isOn: $app.settings.cotypingMultiLine)
+                        Toggle("Tab accepts the whole suggestion (off = one word per Tab)",
+                               isOn: $app.settings.cotypingAcceptWholeSuggestion)
+                        LabeledContent("Pause before suggesting") {
+                            Text("\(app.settings.cotypingDebounceMs) ms").foregroundStyle(.secondary)
+                        }
+                        Slider(value: Binding(
+                            get: { Double(app.settings.cotypingDebounceMs) },
+                            set: { app.settings.cotypingDebounceMs = Int($0) }),
+                            in: 100...1000, step: 50)
+                        TextField("Never suggest in (app names, comma-separated)",
+                                  text: $app.settings.cotypingExcludedApps)
+                        Text("Cotyping never runs in password fields. Add apps (or terminals) here to exclude them too.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+
             if shows("Day tracking", ["tracking", "activity", "screenshots", "ocr", "window", "accessibility", "retention", "private"]) {
                 Section("Day tracking") {
                     Toggle("Track app & window activity", isOn: Binding(

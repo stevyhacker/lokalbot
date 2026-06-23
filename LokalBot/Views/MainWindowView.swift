@@ -14,6 +14,7 @@ struct MainWindowView: View {
             case .search: self = .search
             case .settings: self = .settings
             case .timeline: return nil
+            case .cotyping: return nil
             }
         }
     }
@@ -93,6 +94,12 @@ struct MainWindowView: View {
             } detail: {
                 TimelineView()
             }
+        } else if app.navSection == .cotyping {
+            NavigationSplitView {
+                sidebar
+            } detail: {
+                CotypingView()
+            }
         } else {
             NavigationSplitView {
                 sidebar
@@ -114,6 +121,9 @@ struct MainWindowView: View {
             Label("Timeline", systemImage: "calendar.day.timeline.left")
                 .tag(AppState.NavSection.timeline)
                 .accessibilityIdentifier("sidebar.timeline")
+            Label("Cotyping", systemImage: "text.cursor")
+                .tag(AppState.NavSection.cotyping)
+                .accessibilityIdentifier("sidebar.cotyping")
             Label("Search", systemImage: "magnifyingglass")
                 .tag(AppState.NavSection.search)
                 .accessibilityIdentifier("sidebar.search")

@@ -81,6 +81,49 @@ struct AppSettings: Codable {
     /// of post-processing per meeting; most users record 1:1 calls.
     var multiSpeakerDiarization: Bool = false
 
+    // MARK: - Cotyping (inline AI autocomplete)
+
+    /// Master switch. Off by default — cotyping needs Accessibility + Input
+    /// Monitoring grants and types into other apps, so it is strictly opt-in.
+    var cotypingEnabled: Bool = false
+    /// Optional author name folded into the prompt as a voice cue.
+    var cotypingUserName: String = ""
+    /// Optional free-form style guidance ("concise", "British spelling", …).
+    var cotypingStyleNote: String = ""
+    /// Allow multi-line completions (off keeps suggestions to one line).
+    var cotypingMultiLine: Bool = false
+    /// Soft length target; drives the per-request token budget.
+    var cotypingMaxWords: Int = 8
+    /// Idle time after the last keystroke before asking the model. Higher than
+    /// Cotabby's in-process default because each suggestion is an HTTP round-trip.
+    var cotypingDebounceMs: Int = 350
+    /// When true, the accept key takes the whole suggestion; otherwise one word.
+    var cotypingAcceptWholeSuggestion: Bool = false
+    /// Comma-separated app-name / bundle-id substrings never suggested into.
+    /// Preseeded with password managers and terminals.
+    var cotypingExcludedApps: String = "1Password, Keychain Access, Bitwarden, KeePassXC, Terminal, iTerm"
+
+    var cotypingExcludedAppList: [String] {
+        cotypingExcludedApps
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// Prompt personalization derived from the cotyping settings.
+    var cotypingPersonalization: CotypingPersonalization {
+        CotypingPersonalization(
+            userName: cotypingUserName.trimmingCharacters(in: .whitespaces).isEmpty ? nil : cotypingUserName,
+            styleNote: cotypingStyleNote.trimmingCharacters(in: .whitespaces).isEmpty ? nil : cotypingStyleNote,
+            languageHint: nil,
+            isMultiLine: cotypingMultiLine)
+    }
+
+    /// Token ceiling for one completion (≈3 tokens/word, with a small floor).
+    var cotypingMaxResponseTokens: Int {
+        max(8, min(120, cotypingMaxWords * 3))
+    }
+
     /// UserDefaults key for the encoded settings blob. Internal (not private)
     /// so `DataMigration` can copy a prior install's settings under it.
     static let key = "lokalbotv3.settings"
@@ -110,6 +153,14 @@ struct AppSettings: Codable {
         case noteTemplate
         case summaryLanguage
         case multiSpeakerDiarization
+        case cotypingEnabled
+        case cotypingUserName
+        case cotypingStyleNote
+        case cotypingMultiLine
+        case cotypingMaxWords
+        case cotypingDebounceMs
+        case cotypingAcceptWholeSuggestion
+        case cotypingExcludedApps
     }
 
     static func load() -> AppSettings {
@@ -155,6 +206,14 @@ struct AppSettings: Codable {
         try c.encode(noteTemplate, forKey: .noteTemplate)
         try c.encode(summaryLanguage, forKey: .summaryLanguage)
         try c.encode(multiSpeakerDiarization, forKey: .multiSpeakerDiarization)
+        try c.encode(cotypingEnabled, forKey: .cotypingEnabled)
+        try c.encode(cotypingUserName, forKey: .cotypingUserName)
+        try c.encode(cotypingStyleNote, forKey: .cotypingStyleNote)
+        try c.encode(cotypingMultiLine, forKey: .cotypingMultiLine)
+        try c.encode(cotypingMaxWords, forKey: .cotypingMaxWords)
+        try c.encode(cotypingDebounceMs, forKey: .cotypingDebounceMs)
+        try c.encode(cotypingAcceptWholeSuggestion, forKey: .cotypingAcceptWholeSuggestion)
+        try c.encode(cotypingExcludedApps, forKey: .cotypingExcludedApps)
     }
 
     init(from decoder: Decoder) throws {
@@ -189,5 +248,13 @@ struct AppSettings: Codable {
         noteTemplate = (try? c.decode(NoteTemplate.self, forKey: .noteTemplate)) ?? defaults.noteTemplate
         summaryLanguage = (try? c.decode(SummaryLanguage.self, forKey: .summaryLanguage)) ?? defaults.summaryLanguage
         multiSpeakerDiarization = (try? c.decode(Bool.self, forKey: .multiSpeakerDiarization)) ?? defaults.multiSpeakerDiarization
+        cotypingEnabled = (try? c.decode(Bool.self, forKey: .cotypingEnabled)) ?? defaults.cotypingEnabled
+        cotypingUserName = (try? c.decode(String.self, forKey: .cotypingUserName)) ?? defaults.cotypingUserName
+        cotypingStyleNote = (try? c.decode(String.self, forKey: .cotypingStyleNote)) ?? defaults.cotypingStyleNote
+        cotypingMultiLine = (try? c.decode(Bool.self, forKey: .cotypingMultiLine)) ?? defaults.cotypingMultiLine
+        cotypingMaxWords = (try? c.decode(Int.self, forKey: .cotypingMaxWords)) ?? defaults.cotypingMaxWords
+        cotypingDebounceMs = (try? c.decode(Int.self, forKey: .cotypingDebounceMs)) ?? defaults.cotypingDebounceMs
+        cotypingAcceptWholeSuggestion = (try? c.decode(Bool.self, forKey: .cotypingAcceptWholeSuggestion)) ?? defaults.cotypingAcceptWholeSuggestion
+        cotypingExcludedApps = (try? c.decode(String.self, forKey: .cotypingExcludedApps)) ?? defaults.cotypingExcludedApps
     }
 }

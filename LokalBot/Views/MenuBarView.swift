@@ -55,6 +55,8 @@ struct MenuBarView: View {
             Divider()
             recentSection
             Divider()
+            cotypingRow
+            Divider()
             footer
         }
         .padding(14)
@@ -209,6 +211,15 @@ struct MenuBarView: View {
                 .buttonStyle(.plain).foregroundStyle(.secondary)
         }
         .font(.callout)
+    }
+
+    private var cotypingRow: some View {
+        Toggle(isOn: $app.settings.cotypingEnabled) {
+            Label("Cotyping (inline autocomplete)", systemImage: "text.cursor")
+                .font(.callout)
+        }
+        .toggleStyle(.switch)
+        .controlSize(.mini)
     }
 
     private func shortMenuTitle(_ title: String) -> String {
