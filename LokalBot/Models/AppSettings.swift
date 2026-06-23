@@ -114,6 +114,12 @@ struct AppSettings: Codable {
     /// (e.g. the email subject or chat channel). On by default; reads window
     /// titles via Accessibility (already required for cotyping), stays on-device.
     var cotypingUseAppContext: Bool = true
+    /// Match the host field's font and text color so ghost text reads as a
+    /// continuation. On by default; reads via Accessibility (cached per field).
+    var cotypingMatchHostStyle: Bool = true
+    /// How ghost text is shown: inline at the caret, or a popup when geometry is
+    /// unreliable / the caret is mid-line. `.auto` defers to caret quality.
+    var cotypingMirrorPreference: CotypingMirrorPreference = .auto
     /// One-key inline autocorrect of the word you're typing (NSSpellChecker).
     /// On by default; suppresses a continuation on an unresolved typo.
     var cotypingAutocorrect: Bool = true
@@ -200,6 +206,8 @@ struct AppSettings: Codable {
         case cotypingExcludedApps
         case cotypingExcludedDomains
         case cotypingUseAppContext
+        case cotypingMatchHostStyle
+        case cotypingMirrorPreference
         case cotypingAutocorrect
         case cotypingEmoji
         case cotypingMacros
@@ -262,6 +270,8 @@ struct AppSettings: Codable {
         try c.encode(cotypingExcludedApps, forKey: .cotypingExcludedApps)
         try c.encode(cotypingExcludedDomains, forKey: .cotypingExcludedDomains)
         try c.encode(cotypingUseAppContext, forKey: .cotypingUseAppContext)
+        try c.encode(cotypingMatchHostStyle, forKey: .cotypingMatchHostStyle)
+        try c.encode(cotypingMirrorPreference, forKey: .cotypingMirrorPreference)
         try c.encode(cotypingAutocorrect, forKey: .cotypingAutocorrect)
         try c.encode(cotypingEmoji, forKey: .cotypingEmoji)
         try c.encode(cotypingMacros, forKey: .cotypingMacros)
@@ -313,6 +323,8 @@ struct AppSettings: Codable {
         cotypingExcludedApps = (try? c.decode(String.self, forKey: .cotypingExcludedApps)) ?? defaults.cotypingExcludedApps
         cotypingExcludedDomains = (try? c.decode(String.self, forKey: .cotypingExcludedDomains)) ?? defaults.cotypingExcludedDomains
         cotypingUseAppContext = (try? c.decode(Bool.self, forKey: .cotypingUseAppContext)) ?? defaults.cotypingUseAppContext
+        cotypingMatchHostStyle = (try? c.decode(Bool.self, forKey: .cotypingMatchHostStyle)) ?? defaults.cotypingMatchHostStyle
+        cotypingMirrorPreference = (try? c.decode(CotypingMirrorPreference.self, forKey: .cotypingMirrorPreference)) ?? defaults.cotypingMirrorPreference
         cotypingAutocorrect = (try? c.decode(Bool.self, forKey: .cotypingAutocorrect)) ?? defaults.cotypingAutocorrect
         cotypingEmoji = (try? c.decode(Bool.self, forKey: .cotypingEmoji)) ?? defaults.cotypingEmoji
         cotypingMacros = (try? c.decode(Bool.self, forKey: .cotypingMacros)) ?? defaults.cotypingMacros

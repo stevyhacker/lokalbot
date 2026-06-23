@@ -214,6 +214,14 @@ struct SettingsView: View {
                         Toggle("Use app & window context", isOn: $app.settings.cotypingUseAppContext)
                         Text("Conditions suggestions on the focused app and its window title (email subject, chat channel, page title) for sharper, on-topic completions. Read locally via Accessibility; skipped in code editors and terminals.")
                             .font(.caption).foregroundStyle(.secondary)
+                        Toggle("Match the app\u{2019}s font and text color", isOn: $app.settings.cotypingMatchHostStyle)
+                        Text("Ghost text mimics the field you\u{2019}re typing in (font family and a dimmed version of its text color) instead of a fixed style. Read locally via Accessibility; cached per field.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Picker("Show suggestions", selection: $app.settings.cotypingMirrorPreference) {
+                            ForEach(CotypingMirrorPreference.allCases) { Text($0.label).tag($0) }
+                        }
+                        Text("\u{201c}Automatic\u{201d} draws ghost text inline at the caret, but falls back to a popup below the caret when its geometry is unreliable or the caret is mid-line.")
+                            .font(.caption).foregroundStyle(.secondary)
                         Toggle("Autocorrect the word you're typing", isOn: $app.settings.cotypingAutocorrect)
                         Text("Spots a misspelled word and offers the fix inline — Tab swaps it. Uses the macOS spell checker (on-device); never touches code, URLs, or numbers.")
                             .font(.caption).foregroundStyle(.secondary)

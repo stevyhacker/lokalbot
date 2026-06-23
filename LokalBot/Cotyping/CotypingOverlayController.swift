@@ -11,7 +11,12 @@ final class CotypingOverlayController {
     private var hosting: NSHostingView<CotypingGhostView>?
     private(set) var isVisible = false
 
-    func show(text: String, caretRect: CGRect, style: CotypingFieldStyle? = nil) {
+    func show(
+        text: String,
+        caretRect: CGRect,
+        style: CotypingFieldStyle? = nil,
+        placement: CotypingOverlayPlacement = .inlineDefault
+    ) {
         guard !text.isEmpty,
               caretRect.origin.x.isFinite, caretRect.origin.y.isFinite,
               caretRect.width.isFinite, caretRect.height.isFinite else {
@@ -26,10 +31,31 @@ final class CotypingOverlayController {
         let fitting = hosting.fittingSize
         let height = max(fitting.height, caretRect.height > 1 ? caretRect.height : 18)
         let width = max(fitting.width, 8)
-        let frame = CGRect(
-            x: caretRect.maxX + 2,
-            y: caretRect.midY - height / 2,
-            width: width, height: height)
+        let visible = screenVisibleFrame(containing: caretRect)
+
+        // Inline: anchor to the caret's right edge, vertically centered. Clamp X
+        // so a long suggestion never renders past the screen's right edge (it
+        // shifts left rather than overflowing), and keep Y on-screen.
+        // Mirror: the caret is mid-line or its geometry is unreliable, so there is
+        // no inline home — render the popup one line below the caret (flipped
+        // above if there is no room below).
+        let frame: CGRect
+        switch placement.mode {
+        case .inline:
+            var x = caretRect.maxX + 2
+            if let visible, x + width > visible.maxX {
+                x = max(visible.minX + 2, visible.maxX - width - 2)
+            }
+            var y = caretRect.midY - height / 2
+            if let visible, y < visible.minY { y = visible.minY + 2 }
+            frame = CGRect(x: x, y: y, width: width, height: height)
+        case .mirror:
+            var x = min(caretRect.minX, (visible?.maxX ?? caretRect.minX) - width)
+            if let visible { x = max(visible.minX + 2, x) }
+            var y = caretRect.minY - height - 2
+            if let visible, y < visible.minY { y = caretRect.maxY + 2 }
+            frame = CGRect(x: x, y: y, width: width, height: height)
+        }
         guard frame.origin.x.isFinite, frame.origin.y.isFinite else { hide(); return }
 
         panel.setFrame(frame.integral, display: true)
@@ -40,6 +66,12 @@ final class CotypingOverlayController {
     func hide() {
         panel?.orderOut(nil)
         isVisible = false
+    }
+
+    /// Visible frame of the screen containing `rect`, or nil if none matches.
+    private func screenVisibleFrame(containing rect: CGRect) -> CGRect? {
+        let point = CGPoint(x: rect.midX, y: rect.midY)
+        return NSScreen.screens.first(where: { $0.frame.contains(point) })?.visibleFrame
     }
 
     private func ensurePanel() -> CotypingOverlayPanel {
@@ -82,7 +114,7 @@ struct CotypingGhostView: View {
     /// Matches the host field's font family at a clamped size; falls back to the
     /// system font at the field's (clamped) size — never a fixed 13 pt.
     private var font: Font {
-        if let nsFont = CotypingGhostStyle.font(from: style) { return Font(nsFont: nsFont) }
+        if let nsFont = CotypingGhostStyle.font(from: style) { return Font(nsFont) }
         return .system(size: CotypingGhostStyle.clampedPointSize(style?.fontPointSize))
     }
     /// Dimmed host text color so the ghost reads as a suggestion; falls back to

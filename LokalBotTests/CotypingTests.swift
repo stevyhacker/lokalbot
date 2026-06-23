@@ -844,3 +844,120 @@ final class CotypingDomainGateTests: XCTestCase {
         XCTAssertEqual(settings.cotypingExcludedDomainList, ["bank.com", "https://x.com/y"])
     }
 }
+
+// MARK: - Ghost styling (host font/color match)
+
+final class CotypingFieldStyleTests: XCTestCase {
+    func testIsEmpty() {
+        XCTAssertTrue(CotypingFieldStyle().isEmpty)
+        XCTAssertFalse(CotypingFieldStyle(fontName: "Helvetica").isEmpty)
+        XCTAssertFalse(CotypingFieldStyle(colorHex: "336699").isEmpty)
+    }
+
+    func testHexRoundTrip() {
+        let color = NSColor(srgbRed: 0.2, green: 0.4, blue: 0.6, alpha: 1)
+        let hex = CotypingTextColorCodec.hexString(from: color)
+        XCTAssertEqual(hex, "336699")
+        let back = CotypingTextColorCodec.nsColor(fromHex: hex)
+        XCTAssertEqual(back?.redComponent ?? 0, 51.0 / 255, accuracy: 0.001)
+        XCTAssertEqual(back?.greenComponent ?? 0, 102.0 / 255, accuracy: 0.001)
+        XCTAssertEqual(back?.blueComponent ?? 0, 153.0 / 255, accuracy: 0.001)
+    }
+
+    func testHexParseRejectsInvalid() {
+        XCTAssertNil(CotypingTextColorCodec.nsColor(fromHex: nil))
+        XCTAssertNil(CotypingTextColorCodec.nsColor(fromHex: "xyz"))
+        XCTAssertNil(CotypingTextColorCodec.nsColor(fromHex: "12345"))   // 5 digits
+        XCTAssertNil(CotypingTextColorCodec.nsColor(fromHex: "GGGGGG"))
+        XCTAssertNotNil(CotypingTextColorCodec.nsColor(fromHex: "FFFFFF"))
+    }
+
+    func testClampedPointSize() {
+        XCTAssertEqual(CotypingGhostStyle.clampedPointSize(nil), 13)
+        XCTAssertEqual(CotypingGhostStyle.clampedPointSize(8), 9)      // below floor
+        XCTAssertEqual(CotypingGhostStyle.clampedPointSize(50), 28)    // above ceiling
+        XCTAssertEqual(CotypingGhostStyle.clampedPointSize(16), 16)    // in range
+    }
+
+    func testFontFromStyleClampsSize() {
+        // "Helvetica" is always present on macOS.
+        let font = CotypingGhostStyle.font(from: CotypingFieldStyle(fontName: "Helvetica", fontPointSize: 50))
+        XCTAssertEqual(font?.pointSize, 28)
+        XCTAssertEqual(font?.fontName, "Helvetica")
+    }
+
+    func testFontNilForUnknownNameOrNoStyle() {
+        XCTAssertNil(CotypingGhostStyle.font(from: nil))
+        XCTAssertNil(CotypingGhostStyle.font(from: CotypingFieldStyle(fontName: "Definitely-Not-A-Font")))
+    }
+
+    func testGhostColorDimsHostColor() {
+        let color = CotypingGhostStyle.ghostColor(from: CotypingFieldStyle(colorHex: "336699"))
+        XCTAssertEqual(color?.alphaComponent ?? 0, CotypingGhostStyle.ghostOpacity, accuracy: 0.001)
+        XCTAssertEqual(color?.redComponent ?? 0, 51.0 / 255, accuracy: 0.001)
+    }
+
+    func testGhostColorNilWithoutHex() {
+        XCTAssertNil(CotypingGhostStyle.ghostColor(from: nil))
+        XCTAssertNil(CotypingGhostStyle.ghostColor(from: CotypingFieldStyle(fontName: "Helvetica")))
+    }
+
+    func testMatchHostStyleDefaultsOn() {
+        XCTAssertTrue(AppSettings().cotypingMatchHostStyle)
+    }
+}
+
+// MARK: - Mirror render mode
+
+final class CotypingRenderModeTests: XCTestCase {
+    func testIsCaretAtEndOfLine() {
+        XCTAssertTrue(CotypingRenderModePolicy.isCaretAtEndOfLine(trailingText: ""))
+        XCTAssertTrue(CotypingRenderModePolicy.isCaretAtEndOfLine(trailingText: "\nrest"))
+        XCTAssertFalse(CotypingRenderModePolicy.isCaretAtEndOfLine(trailingText: "world"))
+        XCTAssertFalse(CotypingRenderModePolicy.isCaretAtEndOfLine(trailingText: " \n"))  // leading space = mid-line
+    }
+
+    func testAutoExactEndOfLineIsInline() {
+        let mode = CotypingRenderModePolicy(userPreference: .auto).mode(caretIsExact: true, isCaretAtEndOfLine: true)
+        XCTAssertEqual(mode, .inline)
+    }
+
+    func testAutoExactMidLinePromotesToMirror() {
+        let mode = CotypingRenderModePolicy(userPreference: .auto).mode(caretIsExact: true, isCaretAtEndOfLine: false)
+        XCTAssertEqual(mode, .mirror(reason: .caretMidLine))
+    }
+
+    func testAutoEstimatedGoesToMirror() {
+        let endOfLine = CotypingRenderModePolicy(userPreference: .auto).mode(caretIsExact: false, isCaretAtEndOfLine: true)
+        let midLine = CotypingRenderModePolicy(userPreference: .auto).mode(caretIsExact: false, isCaretAtEndOfLine: false)
+        XCTAssertEqual(endOfLine, .mirror(reason: .caretGeometryEstimated))
+        XCTAssertEqual(midLine, .mirror(reason: .caretGeometryEstimated))  // base already mirror; mid-line override is a no-op
+    }
+
+    func testAlwaysInlineMidLineStillOverrides() {
+        // An explicit inline pin cannot render mid-line, so it is promoted too.
+        let mode = CotypingRenderModePolicy(userPreference: .alwaysInline).mode(caretIsExact: true, isCaretAtEndOfLine: false)
+        XCTAssertEqual(mode, .mirror(reason: .caretMidLine))
+    }
+
+    func testAlwaysInlineEndOfLineIsInline() {
+        let mode = CotypingRenderModePolicy(userPreference: .alwaysInline).mode(caretIsExact: true, isCaretAtEndOfLine: true)
+        XCTAssertEqual(mode, .inline)
+    }
+
+    func testAlwaysMirrorReasonIsUserPreference() {
+        let mode = CotypingRenderModePolicy(userPreference: .alwaysMirror).mode(caretIsExact: true, isCaretAtEndOfLine: true)
+        XCTAssertEqual(mode, .mirror(reason: .userPreference))
+    }
+
+    func testPlacementComposesIntoMode() {
+        let inline = CotypingOverlayPlacement(caretIsExact: true, isCaretAtEndOfLine: true, preference: .auto)
+        let popup = CotypingOverlayPlacement(caretIsExact: false, isCaretAtEndOfLine: true, preference: .auto)
+        XCTAssertEqual(inline.mode, .inline)
+        XCTAssertEqual(popup.mode, .mirror(reason: .caretGeometryEstimated))
+    }
+
+    func testPreferenceDefaultsToAuto() {
+        XCTAssertEqual(AppSettings().cotypingMirrorPreference, .auto)
+    }
+}
