@@ -162,7 +162,7 @@ final class CotypingRequestBuilderTests: XCTestCase {
 
     func testPersonalizationEntersPrompt() throws {
         let personalization = CotypingPersonalization(
-            userName: "Sam", styleNote: nil, languageHint: nil, isMultiLine: true)
+            userName: "Sam", styleNote: nil, languageHint: nil, isMultiLine: true, appContextEnabled: false)
         let request = try XCTUnwrap(CotypingRequestBuilder.build(
             field: field(preceding: "Dear team"), config: .standard,
             personalization: personalization, generation: 0))
@@ -293,5 +293,86 @@ final class CotypingContinuationTests: XCTestCase {
 
     func testNoLiveFieldIsNotContinuation() {
         XCTAssertFalse(CotypingCoordinator.isContinuation(of: session("I wanted to follow"), liveField: nil))
+    }
+}
+
+// MARK: - App/window (surface) context
+
+final class CotypingSurfaceContextTests: XCTestCase {
+    func testClassifier() {
+        XCTAssertEqual(CotypingSurfaceClassifier.classify(bundleID: "com.tinyspeck.slackmacgap"), .chat)
+        XCTAssertEqual(CotypingSurfaceClassifier.classify(bundleID: "com.apple.mail"), .email)
+        XCTAssertEqual(CotypingSurfaceClassifier.classify(bundleID: "com.google.Chrome"), .browser)
+        XCTAssertEqual(CotypingSurfaceClassifier.classify(bundleID: "com.apple.dt.Xcode"), .codeEditor)
+        XCTAssertEqual(CotypingSurfaceClassifier.classify(bundleID: "com.apple.Terminal"), .terminal)
+        XCTAssertEqual(CotypingSurfaceClassifier.classify(bundleID: "com.acme.unknown"), .other)
+        XCTAssertEqual(CotypingSurfaceClassifier.classify(bundleID: nil), .other)
+    }
+
+    func testSuppressedInCodeEditorAndTerminal() {
+        XCTAssertNil(CotypingSurfaceComposer.compose(
+            appName: "Xcode", bundleID: "com.apple.dt.Xcode", windowTitle: "main.swift", fieldPlaceholder: nil))
+        XCTAssertNil(CotypingSurfaceComposer.compose(
+            appName: "Terminal", bundleID: "com.apple.Terminal", windowTitle: "bash", fieldPlaceholder: nil))
+    }
+
+    func testGenericAppWithNoCuesIsNil() {
+        XCTAssertNil(CotypingSurfaceComposer.compose(
+            appName: "SomeApp", bundleID: "com.acme.app", windowTitle: nil, fieldPlaceholder: nil))
+    }
+
+    func testEmailPrefaceLines() throws {
+        let surface = try XCTUnwrap(CotypingSurfaceComposer.compose(
+            appName: "Mail", bundleID: "com.apple.mail", windowTitle: "Re: Q3 planning", fieldPlaceholder: nil))
+        let lines = CotypingSurfaceComposer.prefaceLines(for: surface)
+        XCTAssertEqual(lines.first, "An email being written in Mail.")
+        XCTAssertTrue(lines.contains("The window is titled \"Re: Q3 planning\"."))
+    }
+
+    func testTitleStripsAppSuffix() {
+        XCTAssertEqual(CotypingSurfaceComposer.sanitizedTitle("Inbox - Gmail", applicationName: "Gmail"), "Inbox")
+        XCTAssertEqual(CotypingSurfaceComposer.sanitizedTitle("Notes — Pages", applicationName: "Pages"), "Notes")
+    }
+
+    func testChatPlaceholderLine() throws {
+        let surface = try XCTUnwrap(CotypingSurfaceComposer.compose(
+            appName: "Slack", bundleID: "com.tinyspeck.slackmacgap", windowTitle: nil, fieldPlaceholder: "Message #general"))
+        let lines = CotypingSurfaceComposer.prefaceLines(for: surface)
+        XCTAssertEqual(lines.first, "A chat message being typed in Slack.")
+        XCTAssertTrue(lines.contains("The text field is labeled \"Message #general\"."))
+    }
+
+    func testPromptPutsSurfaceFirst() {
+        let prompt = CotypingPromptRenderer.prompt(
+            prefixText: "Thanks for", surfaceLines: ["An email being written in Mail."], userName: "Sam")
+        XCTAssertEqual(prompt, "An email being written in Mail.\nWritten by Sam.\n\nThanks for")
+    }
+
+    func testRequestBuilderFoldsAppContextWhenEnabled() throws {
+        let field = CotypingField(
+            appName: "Mail", bundleID: "com.apple.mail", processID: 1, role: "AXTextArea",
+            precedingText: "Hi Sarah,", trailingText: "", selectionLength: 0,
+            caretRect: .zero, isSecure: false, caretIsExact: true,
+            windowTitle: "Re: Q3 planning", fieldPlaceholder: nil)
+        let on = CotypingPersonalization(
+            userName: nil, styleNote: nil, languageHint: nil, isMultiLine: false, appContextEnabled: true)
+        let req = try XCTUnwrap(CotypingRequestBuilder.build(field: field, config: .standard, personalization: on, generation: 0))
+        XCTAssertTrue(req.prompt.contains("An email being written in Mail."))
+        XCTAssertTrue(req.prompt.contains("Re: Q3 planning"))
+        XCTAssertTrue(req.prompt.hasSuffix("Hi Sarah,"))
+
+        let off = CotypingPersonalization(
+            userName: nil, styleNote: nil, languageHint: nil, isMultiLine: false, appContextEnabled: false)
+        let reqOff = try XCTUnwrap(CotypingRequestBuilder.build(field: field, config: .standard, personalization: off, generation: 0))
+        XCTAssertEqual(reqOff.prompt, "Hi Sarah,")
+    }
+
+    func testAppContextSettingDefaultsOnAndRoundTrips() throws {
+        XCTAssertTrue(AppSettings().cotypingUseAppContext)
+        var s = AppSettings()
+        s.cotypingUseAppContext = false
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(s))
+        XCTAssertFalse(decoded.cotypingUseAppContext)
+        XCTAssertFalse(decoded.cotypingPersonalization.appContextEnabled)
     }
 }

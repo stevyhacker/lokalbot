@@ -51,7 +51,7 @@ final class CotypingOverlayController {
         panel.isReleasedWhenClosed = false
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = false
+        panel.hasShadow = true
         panel.ignoresMouseEvents = true
         panel.animationBehavior = .none
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
@@ -71,20 +71,29 @@ final class CotypingOverlayPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-/// The inline ghost text. Gray, single visual run, with a faint legibility
-/// backing so it reads over any host app.
+/// The inline ghost text. Renders on an opaque, theme-aware pill (not a
+/// translucent material) so it stays legible over any host app's background —
+/// the earlier `.regularMaterial.opacity(0.6)` washed the text out. Uses system
+/// label/background colors so contrast is correct in both light and dark mode.
 struct CotypingGhostView: View {
     let text: String
 
     var body: some View {
         Text(text)
             .font(.system(size: 13))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Color(nsColor: .secondaryLabelColor))
             .lineLimit(1)
+            .truncationMode(.tail)
             .fixedSize()
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(.regularMaterial.opacity(0.6), in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.secondary.opacity(0.25)))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color(nsColor: .windowBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+            )
     }
 }

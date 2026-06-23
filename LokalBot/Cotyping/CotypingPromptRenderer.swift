@@ -24,13 +24,14 @@ enum CotypingPromptRenderer {
     ///   - languageHint: optional language preface (already phrased).
     static func prompt(
         prefixText: String,
+        surfaceLines: [String] = [],
         userName: String? = nil,
         styleNote: String? = nil,
         languageHint: String? = nil
     ) -> String {
         let prefix = trimmingTrailingWhitespace(prefixText)
 
-        var preface: [String] = []
+        var preface: [String] = surfaceLines
         if let persona = personaLine(userName) { preface.append(persona) }
         if let style = styleLine(styleNote) { preface.append(style) }
         if let language = nonEmpty(languageHint) { preface.append(language) }

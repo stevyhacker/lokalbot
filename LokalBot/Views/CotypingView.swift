@@ -210,7 +210,7 @@ private struct CotypingContent: View {
         let text = previewText
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         previewTask = Task {
-            try? await Task.sleep(for: .milliseconds(450))
+            try? await Task.sleep(for: .milliseconds(app.settings.cotypingDebounceMs))
             guard !Task.isCancelled else { return }
             previewing = true
             defer { previewing = false }

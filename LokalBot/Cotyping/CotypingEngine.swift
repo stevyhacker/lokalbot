@@ -7,9 +7,12 @@ struct CotypingPersonalization: Sendable, Equatable {
     var styleNote: String?
     var languageHint: String?
     var isMultiLine: Bool
+    /// Condition the prompt on the focused app + window title / field placeholder.
+    var appContextEnabled: Bool
 
     static let none = CotypingPersonalization(
-        userName: nil, styleNote: nil, languageHint: nil, isMultiLine: false)
+        userName: nil, styleNote: nil, languageHint: nil,
+        isMultiLine: false, appContextEnabled: false)
 }
 
 /// Pure assembly of a `CotypingRequest` from a focused field. Separated from the
@@ -27,8 +30,18 @@ enum CotypingRequestBuilder {
             from: field.precedingText,
             maxCharacters: config.maxPrefixCharacters,
             maxWords: config.maxPrefixWords)
+        let surfaceLines: [String]
+        if personalization.appContextEnabled,
+           let surface = CotypingSurfaceComposer.compose(
+               appName: field.appName, bundleID: field.bundleID,
+               windowTitle: field.windowTitle, fieldPlaceholder: field.fieldPlaceholder) {
+            surfaceLines = CotypingSurfaceComposer.prefaceLines(for: surface)
+        } else {
+            surfaceLines = []
+        }
         let prompt = CotypingPromptRenderer.prompt(
             prefixText: prefix,
+            surfaceLines: surfaceLines,
             userName: personalization.userName,
             styleNote: personalization.styleNote,
             languageHint: personalization.languageHint)

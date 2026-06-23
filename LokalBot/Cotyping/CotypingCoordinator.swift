@@ -159,7 +159,7 @@ final class CotypingCoordinator: ObservableObject {
     private func generate(work: UInt64) async {
         guard work == generation, isRunning else { return }
         let settings = settingsProvider()
-        let focus = focusTracker.refreshNow()
+        let focus = focusTracker.refreshNow(includeSurface: settings.cotypingUseAppContext)
 
         if let reason = CotypingAvailability.disabledReason(
             enabled: settings.cotypingEnabled,

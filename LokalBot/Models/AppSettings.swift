@@ -92,16 +92,22 @@ struct AppSettings: Codable {
     var cotypingStyleNote: String = ""
     /// Allow multi-line completions (off keeps suggestions to one line).
     var cotypingMultiLine: Bool = false
-    /// Soft length target; drives the per-request token budget.
-    var cotypingMaxWords: Int = 8
-    /// Idle time after the last keystroke before asking the model. Higher than
-    /// Cotabby's in-process default because each suggestion is an HTTP round-trip.
-    var cotypingDebounceMs: Int = 350
+    /// Soft length target; drives the per-request token budget. Kept short (a
+    /// few words) so suggestions are quick to read and accept.
+    var cotypingMaxWords: Int = 4
+    /// Idle time after the last keystroke before asking the model. Low so the
+    /// suggestion feels near-instant (Cotypist-style); the floor is the HTTP
+    /// round-trip, not in-process decode like Cotabby/Cotypist.
+    var cotypingDebounceMs: Int = 150
     /// When true, the accept key takes the whole suggestion; otherwise one word.
     var cotypingAcceptWholeSuggestion: Bool = false
     /// Comma-separated app-name / bundle-id substrings never suggested into.
     /// Preseeded with password managers and terminals.
     var cotypingExcludedApps: String = "1Password, Keychain Access, Bitwarden, KeePassXC, Terminal, iTerm"
+    /// Condition suggestions on the focused app + window title / field label
+    /// (e.g. the email subject or chat channel). On by default; reads window
+    /// titles via Accessibility (already required for cotyping), stays on-device.
+    var cotypingUseAppContext: Bool = true
 
     var cotypingExcludedAppList: [String] {
         cotypingExcludedApps
@@ -116,7 +122,8 @@ struct AppSettings: Codable {
             userName: cotypingUserName.trimmingCharacters(in: .whitespaces).isEmpty ? nil : cotypingUserName,
             styleNote: cotypingStyleNote.trimmingCharacters(in: .whitespaces).isEmpty ? nil : cotypingStyleNote,
             languageHint: nil,
-            isMultiLine: cotypingMultiLine)
+            isMultiLine: cotypingMultiLine,
+            appContextEnabled: cotypingUseAppContext)
     }
 
     /// Token ceiling for one completion (≈3 tokens/word, with a small floor).
@@ -161,6 +168,7 @@ struct AppSettings: Codable {
         case cotypingDebounceMs
         case cotypingAcceptWholeSuggestion
         case cotypingExcludedApps
+        case cotypingUseAppContext
     }
 
     static func load() -> AppSettings {
@@ -214,6 +222,7 @@ struct AppSettings: Codable {
         try c.encode(cotypingDebounceMs, forKey: .cotypingDebounceMs)
         try c.encode(cotypingAcceptWholeSuggestion, forKey: .cotypingAcceptWholeSuggestion)
         try c.encode(cotypingExcludedApps, forKey: .cotypingExcludedApps)
+        try c.encode(cotypingUseAppContext, forKey: .cotypingUseAppContext)
     }
 
     init(from decoder: Decoder) throws {
@@ -256,5 +265,6 @@ struct AppSettings: Codable {
         cotypingDebounceMs = (try? c.decode(Int.self, forKey: .cotypingDebounceMs)) ?? defaults.cotypingDebounceMs
         cotypingAcceptWholeSuggestion = (try? c.decode(Bool.self, forKey: .cotypingAcceptWholeSuggestion)) ?? defaults.cotypingAcceptWholeSuggestion
         cotypingExcludedApps = (try? c.decode(String.self, forKey: .cotypingExcludedApps)) ?? defaults.cotypingExcludedApps
+        cotypingUseAppContext = (try? c.decode(Bool.self, forKey: .cotypingUseAppContext)) ?? defaults.cotypingUseAppContext
     }
 }

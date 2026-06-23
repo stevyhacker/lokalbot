@@ -206,6 +206,9 @@ struct SettingsView: View {
                         Stepper("Suggestion length: up to \(app.settings.cotypingMaxWords) words",
                                 value: $app.settings.cotypingMaxWords, in: 2...30)
                         Toggle("Allow multi-line suggestions", isOn: $app.settings.cotypingMultiLine)
+                        Toggle("Use app & window context", isOn: $app.settings.cotypingUseAppContext)
+                        Text("Conditions suggestions on the focused app and its window title (email subject, chat channel, page title) for sharper, on-topic completions. Read locally via Accessibility; skipped in code editors and terminals.")
+                            .font(.caption).foregroundStyle(.secondary)
                         Toggle("Tab accepts the whole suggestion (off = one word per Tab)",
                                isOn: $app.settings.cotypingAcceptWholeSuggestion)
                         LabeledContent("Pause before suggesting") {

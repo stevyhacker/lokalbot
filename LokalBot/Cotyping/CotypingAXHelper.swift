@@ -34,7 +34,7 @@ enum CotypingAXHelper {
 
     /// Resolve the current focus into a cotyping snapshot. Pure read; safe to
     /// call from the focus-tracker timer on the main thread.
-    static func resolveFocus() -> CotypingFocus {
+    static func resolveFocus(includeSurface: Bool = false) -> CotypingFocus {
         guard isTrusted else {
             return CotypingFocus(appName: "", bundleID: nil,
                                  capability: .unsupported("Accessibility permission needed."),
@@ -80,13 +80,28 @@ enum CotypingAXHelper {
         let trailing = String(trailingFull.prefix(maxTrailingCharacters))
 
         let (caretRect, exact) = caretRect(element, caretLocation: caret)
+        // App/window context — only read when actually building a suggestion (it
+        // costs extra AX round-trips), gated by the cotyping setting upstream.
+        let surfaceTitle = includeSurface ? windowTitle(near: element) : nil
+        let surfacePlaceholder = includeSurface
+            ? stringAttribute(element, kAXPlaceholderValueAttribute as String) : nil
 
         let field = CotypingField(
             appName: appName, bundleID: bundleID, processID: pid, role: role,
             precedingText: preceding, trailingText: trailing,
             selectionLength: selection.length, caretRect: caretRect,
-            isSecure: false, caretIsExact: exact)
+            isSecure: false, caretIsExact: exact,
+            windowTitle: surfaceTitle, fieldPlaceholder: surfacePlaceholder)
         return CotypingFocus(appName: appName, bundleID: bundleID, capability: .supported, field: field)
+    }
+
+    /// Best-effort title of the window containing `element`: `kAXWindowAttribute`
+    /// → `kAXTitleAttribute`. One bounded round-trip; nil on miss. Carries the
+    /// email subject, document name, channel, or page title.
+    private static func windowTitle(near element: AXUIElement) -> String? {
+        guard let raw = copyAttribute(element, kAXWindowAttribute as String),
+              CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
+        return stringAttribute(raw as! AXUIElement, kAXTitleAttribute as String)
     }
 
     // MARK: - Element + owner

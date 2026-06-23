@@ -47,6 +47,11 @@ struct CotypingField: Equatable, Sendable {
     /// `true` when the caret rect came from an exact AX range query; `false`
     /// when it was estimated from the field frame (lower placement confidence).
     var caretIsExact: Bool
+    /// The focused window's title (email subject, doc name, chat channel, page
+    /// title) when app-context is enabled — the strongest topic cue we get.
+    var windowTitle: String? = nil
+    /// The field's placeholder / label (e.g. "To:", "Search", "Message #general").
+    var fieldPlaceholder: String? = nil
 
     /// Content-only fingerprint used to detect "did the field actually change"
     /// across keystrokes and to drop stale async generations. Excludes the AX

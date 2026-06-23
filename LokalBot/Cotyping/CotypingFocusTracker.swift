@@ -43,8 +43,8 @@ final class CotypingFocusTracker: ObservableObject {
     /// Synchronous capture. Publishes only on a real change so SwiftUI surfaces
     /// and the coordinator do not churn every tick.
     @discardableResult
-    func refreshNow() -> CotypingFocus {
-        let latest = CotypingAXHelper.resolveFocus()
+    func refreshNow(includeSurface: Bool = false) -> CotypingFocus {
+        let latest = CotypingAXHelper.resolveFocus(includeSurface: includeSurface)
         if latest != focus {
             focus = latest
             onChange?(latest)
