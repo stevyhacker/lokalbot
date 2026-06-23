@@ -125,6 +125,10 @@ struct CotypingRequest: Sendable, Equatable {
     /// Monotonic freshness token — the coordinator drops results whose
     /// generation no longer matches the live focus.
     let generation: UInt64
+    /// True when the caret is strictly inside a word (Cotabby's
+    /// `forceWordContinuation`): the completion must continue the current word.
+    /// Enforced at the output layer by `CotypingTextNormalizer`.
+    var forceWordContinuation: Bool = false
 
     /// `true` when the caret prefix ends on whitespace, so the normalizer drops
     /// a leading space the model may add (deterministic space management).

@@ -63,6 +63,20 @@ enum CotypingTextNormalizer {
             normalized = String(firstLine)
         }
 
+        // Mid-word: don't re-type the partial word the caret sits in, and (when
+        // strictly inside a word — Cotabby's forceWordContinuation) don't begin
+        // with whitespace, so the suggestion continues the current word instead
+        // of restarting or space-breaking it. The HTTP backend can't mask the
+        // first token like Cotabby's in-process runtime, so it's reproduced here.
+        let partialWord = CotypingMidWord.currentPartialWord(in: request.prefixText)
+        if partialWord.count >= 2, normalized.count > partialWord.count,
+           normalized.lowercased().hasPrefix(partialWord.lowercased()) {
+            normalized = String(normalized.dropFirst(partialWord.count))
+        }
+        if request.forceWordContinuation {
+            normalized = String(normalized.drop(while: { $0.isWhitespace }))
+        }
+
         if CotypingTrailingDuplicationFilter.duplicatesTrailingText(
             normalized, trailingText: request.trailingText) {
             return CotypingNormalizationResult(text: "", suppression: .duplicatesTrailingText)

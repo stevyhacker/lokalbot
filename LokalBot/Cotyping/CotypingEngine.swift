@@ -57,7 +57,9 @@ enum CotypingRequestBuilder {
             minP: config.minP,
             repeatPenalty: config.repeatPenalty,
             seed: config.seed,
-            generation: generation)
+            generation: generation,
+            forceWordContinuation: CotypingMidWord.shouldForceContinuation(
+                precedingText: field.precedingText, trailingText: field.trailingText))
     }
 }
 
