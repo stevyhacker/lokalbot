@@ -9,6 +9,8 @@ struct CotypingPersonalization: Sendable, Equatable {
     var isMultiLine: Bool
     /// Condition the prompt on the focused app + window title / field placeholder.
     var appContextEnabled: Bool
+    /// Free-form glossary / jargon / notes folded into the prompt as context.
+    var extendedContext: String? = nil
 
     static let none = CotypingPersonalization(
         userName: nil, styleNote: nil, languageHint: nil,
@@ -44,7 +46,8 @@ enum CotypingRequestBuilder {
             surfaceLines: surfaceLines,
             userName: personalization.userName,
             styleNote: personalization.styleNote,
-            languageHint: personalization.languageHint)
+            languageHint: personalization.languageHint,
+            extendedContext: personalization.extendedContext)
         return CotypingRequest(
             prompt: prompt,
             prefixText: prefix,

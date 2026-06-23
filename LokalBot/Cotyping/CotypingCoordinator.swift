@@ -93,8 +93,14 @@ final class CotypingCoordinator: ObservableObject {
         wired = true
         focusTracker.onChange = { [weak self] focus in self?.handleFocusChange(focus) }
         inputMonitor.onKey = { [weak self] kind in self?.handleKey(kind) }
-        inputMonitor.onAcceptKey = { [weak self] in self?.acceptFromTap() ?? false }
+        inputMonitor.onAcceptKey = { [weak self] scope in self?.acceptFromTap(scope) ?? false }
         inputMonitor.acceptGate = { [weak self] in self?.overlay.isVisible ?? false }
+        inputMonitor.acceptKeyCodeProvider = { [weak self] in
+            self?.settingsProvider().cotypingAcceptKey.keyCode ?? 48
+        }
+        inputMonitor.fullAcceptKeyCodeProvider = { [weak self] in
+            self?.settingsProvider().cotypingFullAcceptKey.keyCode
+        }
     }
 
     // MARK: - Input handling
@@ -102,7 +108,7 @@ final class CotypingCoordinator: ObservableObject {
     private func handleKey(_ kind: CotypingKeyKind) {
         guard isRunning else { return }
         switch kind {
-        case .acceptance:
+        case .acceptance, .fullAcceptance:
             break // owned by the accept tap
         case .textMutation:
             scheduleGeneration()
@@ -249,7 +255,7 @@ final class CotypingCoordinator: ObservableObject {
 
     // MARK: - Acceptance (called synchronously from the accept tap)
 
-    private func acceptFromTap() -> Bool {
+    private func acceptFromTap(_ scope: CotypingAcceptScope) -> Bool {
         guard isRunning, overlay.isVisible, var current = session else { return false }
         let live = CotypingAXHelper.resolveFocus()
 
@@ -279,9 +285,16 @@ final class CotypingCoordinator: ObservableObject {
         let remaining = current.remainingText
         guard !remaining.isEmpty else { clearSuggestion(); return false }
 
-        let chunk = settingsProvider().cotypingAcceptWholeSuggestion
-            ? remaining
-            : Self.nextWord(in: remaining)
+        let chunk: String
+        switch scope {
+        case .whole:
+            chunk = remaining
+        case .chunk:
+            switch settingsProvider().cotypingAcceptGranularity {
+            case .word: chunk = Self.nextWord(in: remaining)
+            case .phrase: chunk = Self.nextPhrase(in: remaining)
+            }
+        }
         guard !chunk.isEmpty, inserter.insert(chunk) else { return false }
 
         acceptedWordCount += chunk.split(whereSeparator: { $0.isWhitespace }).count
@@ -342,6 +355,25 @@ final class CotypingCoordinator: ObservableObject {
         var index = text.startIndex
         while index < text.endIndex, text[index].isWhitespace { index = text.index(after: index) }
         while index < text.endIndex, !text[index].isWhitespace { index = text.index(after: index) }
+        if index < text.endIndex, text[index] == " " { index = text.index(after: index) }
+        return String(text[text.startIndex..<index])
+    }
+
+    /// Text up to and including the next sentence/clause boundary (or the whole
+    /// remaining text when there is none), plus one trailing space. Mirrors
+    /// Cotabby's phrase acceptance granularity (CJK punctuation included).
+    nonisolated static func nextPhrase(in text: String) -> String {
+        let boundaries: Set<Character> = [
+            ".", "!", "?", ",", ";", ":",
+            "\u{3002}", "\u{ff01}", "\u{ff1f}", "\u{3001}", "\u{ff1b}", "\u{ff1a}",
+        ]
+        var index = text.startIndex
+        while index < text.endIndex, text[index].isWhitespace { index = text.index(after: index) }
+        while index < text.endIndex {
+            let character = text[index]
+            index = text.index(after: index)
+            if boundaries.contains(character) { break }
+        }
         if index < text.endIndex, text[index] == " " { index = text.index(after: index) }
         return String(text[text.startIndex..<index])
     }

@@ -99,8 +99,11 @@ struct AppSettings: Codable {
     /// suggestion feels near-instant (Cotypist-style); the floor is the HTTP
     /// round-trip, not in-process decode like Cotabby/Cotypist.
     var cotypingDebounceMs: Int = 150
-    /// When true, the accept key takes the whole suggestion; otherwise one word.
-    var cotypingAcceptWholeSuggestion: Bool = false
+    /// How much the primary accept key takes (the full-accept key always takes all).
+    var cotypingAcceptGranularity: CotypingAcceptGranularity = .word
+    /// Primary accept key (next word/phrase) and the full-accept key (whole tail).
+    var cotypingAcceptKey: CotypingAcceptKey = .tab
+    var cotypingFullAcceptKey: CotypingFullAcceptKey = .backtick
     /// Comma-separated app-name / bundle-id substrings never suggested into.
     /// Preseeded with password managers and terminals.
     var cotypingExcludedApps: String = "1Password, Keychain Access, Bitwarden, KeePassXC, Terminal, iTerm"
@@ -111,6 +114,10 @@ struct AppSettings: Codable {
     /// One-key inline autocorrect of the word you're typing (NSSpellChecker).
     /// On by default; suppresses a continuation on an unresolved typo.
     var cotypingAutocorrect: Bool = true
+    /// Languages you usually write in (comma-separated) — a prompt voice hint.
+    var cotypingLanguages: String = ""
+    /// Free-form notes / glossary / jargon folded into the prompt as context.
+    var cotypingExtendedContext: String = ""
 
     var cotypingExcludedAppList: [String] {
         cotypingExcludedApps
@@ -121,12 +128,15 @@ struct AppSettings: Codable {
 
     /// Prompt personalization derived from the cotyping settings.
     var cotypingPersonalization: CotypingPersonalization {
-        CotypingPersonalization(
+        let langs = cotypingLanguages.trimmingCharacters(in: .whitespaces)
+        let notes = cotypingExtendedContext.trimmingCharacters(in: .whitespacesAndNewlines)
+        return CotypingPersonalization(
             userName: cotypingUserName.trimmingCharacters(in: .whitespaces).isEmpty ? nil : cotypingUserName,
             styleNote: cotypingStyleNote.trimmingCharacters(in: .whitespaces).isEmpty ? nil : cotypingStyleNote,
-            languageHint: nil,
+            languageHint: langs.isEmpty ? nil : "The text is usually written in \(langs).",
             isMultiLine: cotypingMultiLine,
-            appContextEnabled: cotypingUseAppContext)
+            appContextEnabled: cotypingUseAppContext,
+            extendedContext: notes.isEmpty ? nil : notes)
     }
 
     /// Token ceiling for one completion (≈3 tokens/word, with a small floor).
@@ -169,10 +179,14 @@ struct AppSettings: Codable {
         case cotypingMultiLine
         case cotypingMaxWords
         case cotypingDebounceMs
-        case cotypingAcceptWholeSuggestion
+        case cotypingAcceptGranularity
+        case cotypingAcceptKey
+        case cotypingFullAcceptKey
         case cotypingExcludedApps
         case cotypingUseAppContext
         case cotypingAutocorrect
+        case cotypingLanguages
+        case cotypingExtendedContext
     }
 
     static func load() -> AppSettings {
@@ -224,10 +238,14 @@ struct AppSettings: Codable {
         try c.encode(cotypingMultiLine, forKey: .cotypingMultiLine)
         try c.encode(cotypingMaxWords, forKey: .cotypingMaxWords)
         try c.encode(cotypingDebounceMs, forKey: .cotypingDebounceMs)
-        try c.encode(cotypingAcceptWholeSuggestion, forKey: .cotypingAcceptWholeSuggestion)
+        try c.encode(cotypingAcceptGranularity, forKey: .cotypingAcceptGranularity)
+        try c.encode(cotypingAcceptKey, forKey: .cotypingAcceptKey)
+        try c.encode(cotypingFullAcceptKey, forKey: .cotypingFullAcceptKey)
         try c.encode(cotypingExcludedApps, forKey: .cotypingExcludedApps)
         try c.encode(cotypingUseAppContext, forKey: .cotypingUseAppContext)
         try c.encode(cotypingAutocorrect, forKey: .cotypingAutocorrect)
+        try c.encode(cotypingLanguages, forKey: .cotypingLanguages)
+        try c.encode(cotypingExtendedContext, forKey: .cotypingExtendedContext)
     }
 
     init(from decoder: Decoder) throws {
@@ -268,9 +286,13 @@ struct AppSettings: Codable {
         cotypingMultiLine = (try? c.decode(Bool.self, forKey: .cotypingMultiLine)) ?? defaults.cotypingMultiLine
         cotypingMaxWords = (try? c.decode(Int.self, forKey: .cotypingMaxWords)) ?? defaults.cotypingMaxWords
         cotypingDebounceMs = (try? c.decode(Int.self, forKey: .cotypingDebounceMs)) ?? defaults.cotypingDebounceMs
-        cotypingAcceptWholeSuggestion = (try? c.decode(Bool.self, forKey: .cotypingAcceptWholeSuggestion)) ?? defaults.cotypingAcceptWholeSuggestion
+        cotypingAcceptGranularity = (try? c.decode(CotypingAcceptGranularity.self, forKey: .cotypingAcceptGranularity)) ?? defaults.cotypingAcceptGranularity
+        cotypingAcceptKey = (try? c.decode(CotypingAcceptKey.self, forKey: .cotypingAcceptKey)) ?? defaults.cotypingAcceptKey
+        cotypingFullAcceptKey = (try? c.decode(CotypingFullAcceptKey.self, forKey: .cotypingFullAcceptKey)) ?? defaults.cotypingFullAcceptKey
         cotypingExcludedApps = (try? c.decode(String.self, forKey: .cotypingExcludedApps)) ?? defaults.cotypingExcludedApps
         cotypingUseAppContext = (try? c.decode(Bool.self, forKey: .cotypingUseAppContext)) ?? defaults.cotypingUseAppContext
         cotypingAutocorrect = (try? c.decode(Bool.self, forKey: .cotypingAutocorrect)) ?? defaults.cotypingAutocorrect
+        cotypingLanguages = (try? c.decode(String.self, forKey: .cotypingLanguages)) ?? defaults.cotypingLanguages
+        cotypingExtendedContext = (try? c.decode(String.self, forKey: .cotypingExtendedContext)) ?? defaults.cotypingExtendedContext
     }
 }

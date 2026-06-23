@@ -15,7 +15,7 @@ enum CotypingPromptRenderer {
     /// Upper bound on the conditioning preface so a long style note can never
     /// crowd the prompt; the caret prefix arrives pre-windowed by
     /// `CotypingPrefixWindow`.
-    static let maxPrefaceCharacters = 600
+    static let maxPrefaceCharacters = 800
 
     /// - Parameters:
     ///   - prefixText: the windowed text immediately before the caret.
@@ -27,7 +27,8 @@ enum CotypingPromptRenderer {
         surfaceLines: [String] = [],
         userName: String? = nil,
         styleNote: String? = nil,
-        languageHint: String? = nil
+        languageHint: String? = nil,
+        extendedContext: String? = nil
     ) -> String {
         let prefix = trimmingTrailingWhitespace(prefixText)
 
@@ -35,6 +36,9 @@ enum CotypingPromptRenderer {
         if let persona = personaLine(userName) { preface.append(persona) }
         if let style = styleLine(styleNote) { preface.append(style) }
         if let language = nonEmpty(languageHint) { preface.append(language) }
+        if let notes = nonEmpty(extendedContext) {
+            preface.append("Notes the writer keeps in mind: \(String(notes.prefix(300)))")
+        }
 
         guard !preface.isEmpty else {
             // No context to condition on: hand the model the bare text.

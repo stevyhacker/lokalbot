@@ -225,7 +225,8 @@ final class CotypingSettingsTests: XCTestCase {
         settings.cotypingMaxWords = 12
         settings.cotypingMultiLine = true
         settings.cotypingDebounceMs = 500
-        settings.cotypingAcceptWholeSuggestion = true
+        settings.cotypingAcceptGranularity = .phrase
+        settings.cotypingFullAcceptKey = .rightArrow
         settings.cotypingExcludedApps = "Terminal, 1Password"
 
         let data = try JSONEncoder().encode(settings)
@@ -236,7 +237,8 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertEqual(decoded.cotypingMaxWords, 12)
         XCTAssertTrue(decoded.cotypingMultiLine)
         XCTAssertEqual(decoded.cotypingDebounceMs, 500)
-        XCTAssertTrue(decoded.cotypingAcceptWholeSuggestion)
+        XCTAssertEqual(decoded.cotypingAcceptGranularity, .phrase)
+        XCTAssertEqual(decoded.cotypingFullAcceptKey, .rightArrow)
         XCTAssertEqual(decoded.cotypingExcludedAppList, ["Terminal", "1Password"])
     }
 
@@ -527,5 +529,60 @@ final class CotypingStreamingTests: XCTestCase {
 
     func testEmptyTextDeltaIsEmptyNotNil() {
         XCTAssertEqual(cotypingParseSSEDelta(#"data: {"choices":[{"text":""}]}"#), "")
+    }
+}
+
+// MARK: - Phrase acceptance, accept options, context prompt
+
+final class CotypingPhraseTests: XCTestCase {
+    func testStopsAtClauseBoundary() {
+        XCTAssertEqual(CotypingCoordinator.nextPhrase(in: "Hi Sarah, thanks"), "Hi Sarah, ")
+    }
+    func testWholeTextWhenNoBoundary() {
+        XCTAssertEqual(CotypingCoordinator.nextPhrase(in: "the quick brown"), "the quick brown")
+    }
+    func testStopsAtSentenceEnd() {
+        XCTAssertEqual(CotypingCoordinator.nextPhrase(in: "done. next thing"), "done. ")
+    }
+    func testCJKClauseBoundary() {
+        XCTAssertEqual(
+            CotypingCoordinator.nextPhrase(in: "\u{4f60}\u{597d}\u{3002}\u{518d}\u{89c1}"),
+            "\u{4f60}\u{597d}\u{3002}")
+    }
+}
+
+final class CotypingAcceptOptionsTests: XCTestCase {
+    func testDefaults() {
+        let settings = AppSettings()
+        XCTAssertEqual(settings.cotypingAcceptGranularity, .word)
+        XCTAssertEqual(settings.cotypingAcceptKey, .tab)
+        XCTAssertEqual(settings.cotypingFullAcceptKey, .backtick)
+    }
+    func testKeyCodes() {
+        XCTAssertEqual(CotypingAcceptKey.tab.keyCode, 48)
+        XCTAssertEqual(CotypingAcceptKey.rightArrow.keyCode, 124)
+        XCTAssertEqual(CotypingFullAcceptKey.backtick.keyCode, 50)
+        XCTAssertNil(CotypingFullAcceptKey.off.keyCode)
+    }
+}
+
+final class CotypingContextPromptTests: XCTestCase {
+    func testLanguageAndNotesEnterPreface() {
+        let prompt = CotypingPromptRenderer.prompt(
+            prefixText: "Dear team",
+            languageHint: "The text is usually written in German.",
+            extendedContext: "Acme = our product")
+        XCTAssertTrue(prompt.contains("The text is usually written in German."))
+        XCTAssertTrue(prompt.contains("Notes the writer keeps in mind: Acme = our product"))
+        XCTAssertTrue(prompt.hasSuffix("Dear team"))
+    }
+
+    func testPersonalizationDerivesLanguageAndNotes() {
+        var settings = AppSettings()
+        settings.cotypingLanguages = "English, German"
+        settings.cotypingExtendedContext = "Acme = our product"
+        let personalization = settings.cotypingPersonalization
+        XCTAssertEqual(personalization.languageHint, "The text is usually written in English, German.")
+        XCTAssertEqual(personalization.extendedContext, "Acme = our product")
     }
 }

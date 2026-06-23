@@ -203,6 +203,11 @@ struct SettingsView: View {
                     if app.settings.cotypingEnabled {
                         TextField("Your name (optional — tunes the voice)", text: $app.settings.cotypingUserName)
                         TextField("Writing style (optional, e.g. \u{201c}concise, British spelling\u{201d})", text: $app.settings.cotypingStyleNote)
+                        TextField("Languages you write in (optional, e.g. \u{201c}English, German\u{201d})",
+                                  text: $app.settings.cotypingLanguages)
+                        TextField("Notes / glossary (optional — names, jargon, style)",
+                                  text: $app.settings.cotypingExtendedContext, axis: .vertical)
+                            .lineLimit(1...3)
                         Stepper("Suggestion length: up to \(app.settings.cotypingMaxWords) words",
                                 value: $app.settings.cotypingMaxWords, in: 2...30)
                         Toggle("Allow multi-line suggestions", isOn: $app.settings.cotypingMultiLine)
@@ -212,8 +217,15 @@ struct SettingsView: View {
                         Toggle("Autocorrect the word you're typing", isOn: $app.settings.cotypingAutocorrect)
                         Text("Spots a misspelled word and offers the fix inline — Tab swaps it. Uses the macOS spell checker (on-device); never touches code, URLs, or numbers.")
                             .font(.caption).foregroundStyle(.secondary)
-                        Toggle("Tab accepts the whole suggestion (off = one word per Tab)",
-                               isOn: $app.settings.cotypingAcceptWholeSuggestion)
+                        Picker("Accept next", selection: $app.settings.cotypingAcceptKey) {
+                            ForEach(CotypingAcceptKey.allCases) { Text($0.label).tag($0) }
+                        }
+                        Picker("Each accept takes", selection: $app.settings.cotypingAcceptGranularity) {
+                            ForEach(CotypingAcceptGranularity.allCases) { Text($0.label).tag($0) }
+                        }
+                        Picker("Accept whole suggestion", selection: $app.settings.cotypingFullAcceptKey) {
+                            ForEach(CotypingFullAcceptKey.allCases) { Text($0.label).tag($0) }
+                        }
                         LabeledContent("Pause before suggesting") {
                             Text("\(app.settings.cotypingDebounceMs) ms").foregroundStyle(.secondary)
                         }

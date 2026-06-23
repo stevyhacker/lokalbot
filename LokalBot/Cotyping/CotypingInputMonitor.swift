@@ -4,6 +4,7 @@ import Foundation
 /// How an observed keystroke relates to cotyping.
 enum CotypingKeyKind: Equatable, Sendable {
     case acceptance    // plain Tab — consumed by the accept tap, reported for awareness
+    case fullAcceptance // the full-accept key — consumed by the accept tap
     case dismissal     // Esc / Return / Enter
     case navigation    // arrow keys
     case shortcut      // any Command/Control-modified key
@@ -26,12 +27,14 @@ enum CotypingKeyKind: Equatable, Sendable {
 final class CotypingInputMonitor {
     /// Fired for every observed keyDown (not the accept key consumption itself).
     var onKey: ((CotypingKeyKind) -> Void)?
-    /// Invoked by the accept tap when Tab should be consumed. Returns `true` if
-    /// it acted on a suggestion (then Tab is swallowed); `false` → pass through.
-    var onAcceptKey: (() -> Bool)?
+    /// Invoked by the accept tap with the scope of the key that fired (next
+    /// chunk vs whole). Returns `true` if it acted (key swallowed); else passthrough.
+    var onAcceptKey: ((CotypingAcceptScope) -> Bool)?
     /// Consulted at event time: should the accept tap even consider this key?
-    /// (The coordinator sets this to "overlay visible".)
     var acceptGate: () -> Bool = { false }
+    /// The configured accept keys, read live at event time.
+    var acceptKeyCodeProvider: () -> CGKeyCode = { 48 }
+    var fullAcceptKeyCodeProvider: () -> CGKeyCode? = { 50 }
 
     private var observerTap: CFMachPort?
     private var observerSource: CFRunLoopSource?
@@ -126,7 +129,7 @@ final class CotypingInputMonitor {
             return
         }
         guard type == .keyDown, !CotypingSyntheticMarker.isSynthetic(event) else { return }
-        onKey?(Self.classify(event))
+        onKey?(classify(event))
     }
 
     /// Returns `true` to swallow the key.
@@ -136,23 +139,28 @@ final class CotypingInputMonitor {
             return false
         }
         guard type == .keyDown, !CotypingSyntheticMarker.isSynthetic(event) else { return false }
-        guard Self.isPlainTab(event), acceptGate() else { return false }
-        return onAcceptKey?() ?? false
+        guard acceptGate(), let scope = acceptScope(for: event) else { return false }
+        return onAcceptKey?(scope) ?? false
     }
 
     // MARK: - Classification
 
-    static func classify(_ event: CGEvent) -> CotypingKeyKind {
-        let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
+    private func classify(_ event: CGEvent) -> CotypingKeyKind {
+        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
+        let plain = !flags.contains(.maskCommand) && !flags.contains(.maskControl)
+            && !flags.contains(.maskAlternate) && !flags.contains(.maskShift)
+        if plain {
+            if keyCode == acceptKeyCodeProvider() { return .acceptance }
+            if let full = fullAcceptKeyCodeProvider(), keyCode == full { return .fullAcceptance }
+        }
         if flags.contains(.maskCommand) || flags.contains(.maskControl) { return .shortcut }
-        switch keyCode {
-        case 48: return .acceptance                 // Tab
+        switch Int(keyCode) {
         case 53, 36, 76: return .dismissal          // Esc, Return, Keypad Enter
         case 123, 124, 125, 126: return .navigation // arrows
         case 51, 117: return .textMutation          // Backspace, Forward Delete
         default:
-            let chars = characters(from: event)
+            let chars = Self.characters(from: event)
             if !chars.isEmpty, chars.unicodeScalars.allSatisfy({ $0.value >= 0x20 }) {
                 return .textMutation
             }
@@ -160,12 +168,16 @@ final class CotypingInputMonitor {
         }
     }
 
-    /// Plain Tab — no Command/Control/Option/Shift.
-    static func isPlainTab(_ event: CGEvent) -> Bool {
-        guard Int(event.getIntegerValueField(.keyboardEventKeycode)) == 48 else { return false }
+    /// The accept scope for a plain (unmodified) keypress, or nil if it isn't an
+    /// accept key. The primary key wins if both map to the same code.
+    private func acceptScope(for event: CGEvent) -> CotypingAcceptScope? {
         let flags = event.flags
-        return !flags.contains(.maskCommand) && !flags.contains(.maskControl)
-            && !flags.contains(.maskAlternate) && !flags.contains(.maskShift)
+        guard !flags.contains(.maskCommand), !flags.contains(.maskControl),
+              !flags.contains(.maskAlternate), !flags.contains(.maskShift) else { return nil }
+        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        if keyCode == acceptKeyCodeProvider() { return .chunk }
+        if let full = fullAcceptKeyCodeProvider(), keyCode == full { return .whole }
+        return nil
     }
 
     static func characters(from event: CGEvent) -> String {
