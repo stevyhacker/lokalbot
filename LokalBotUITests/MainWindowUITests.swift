@@ -118,9 +118,21 @@ final class MainWindowUITests: XCTestCase {
     func testSearchFindsTranscriptHitAndDeepLinks() {
         clickSidebar("sidebar.search")
 
-        let field = app.textFields["search.field"]
-        XCTAssertTrue(field.waitForExistence(timeout: 4))
-        field.click()
+        // SwiftUI exposes an empty AX identifier for `TextField` on current
+        // macOS, so the `["search.field"]` id match no longer resolves — the
+        // search view has a single text field, so take the first match.
+        let field = app.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 8), "search field missing")
+        // The field can momentarily report a ~2pt frame right after the search
+        // view appears; wait for it to lay out before clicking, otherwise the
+        // click lands on a sliver and never takes keyboard focus.
+        let layoutDeadline = Date().addingTimeInterval(4)
+        while field.frame.width < 40, Date() < layoutDeadline { usleep(150_000) }
+        // XCUI reports the empty field as a ~2pt caret sliver at its trailing
+        // edge; a plain click there misses the editable body. Click a point
+        // offset left into the field body so it takes keyboard focus.
+        field.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+            .withOffset(CGVector(dx: -120, dy: 0)).click()
         field.typeText("failover")
 
         // The row's accessibility identifier propagates to every StaticText
@@ -240,6 +252,11 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(first.waitForExistence(timeout: 4),
                       "row for \(a.title) not found")
         first.click()
+        // Confirm the first selection committed before extending it: the
+        // modifier-held ⌘-click can otherwise race an unsettled selection and
+        // land as a plain click (leaving a single selection, so the aggregate
+        // "Delete 2 meetings" button never appears).
+        _ = app.staticTexts["detail.title"].waitForExistence(timeout: 4)
         XCUIElement.perform(withKeyModifiers: .command) { meetingRow(for: b).click() }
         let deleteButton = app.buttons["Delete 2 meetings"]
         XCTAssertTrue(deleteButton.waitForExistence(timeout: 4),
