@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import CryptoKit
 
 enum AppIdentifiers {
     /// The host LokalBotV3 app's bundle id, used to resolve its Application
@@ -63,5 +64,28 @@ enum KeychainSecrets {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
+    }
+
+    /// A per-install AES-256 key for `account`, generated on first use and
+    /// stored in the Keychain (design §3.4). Used to seal at-rest data —
+    /// screenshots (`screenshot-key`) and chat history (`chat-key`) — with
+    /// `AES.GCM`. Cached in-process per account; `@MainActor` because the cache
+    /// is shared mutable state and every caller already runs on the main actor.
+    @MainActor private static var symmetricKeyCache: [String: SymmetricKey] = [:]
+    @MainActor static func symmetricKey(account: String) throws -> SymmetricKey {
+        if let cached = symmetricKeyCache[account] { return cached }
+        if let data = data(account: account) {
+            let key = SymmetricKey(data: data)
+            symmetricKeyCache[account] = key
+            return key
+        }
+        let key = SymmetricKey(size: .bits256)
+        set(key.withUnsafeBytes { Data($0) }, account: account)
+        guard data(account: account) != nil else {
+            throw NSError(domain: "LokalBotV3", code: 6,
+                          userInfo: [NSLocalizedDescriptionKey: "Could not save encryption key (\(account))"])
+        }
+        symmetricKeyCache[account] = key
+        return key
     }
 }

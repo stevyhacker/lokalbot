@@ -72,4 +72,39 @@ final class ChatStoreTests: XCTestCase {
         store.delete(conversation.id)
         XCTAssertTrue(store.loadAll().isEmpty, "deleting must remove the conversation file")
     }
+
+    func testFilesOnDiskAreEncrypted() throws {
+        let store = ChatStore(rootURL: root)
+        store.save(Conversation(title: "Secret pricing strategy",
+                                messages: [ChatMessage(role: .user, text: "raise prices 20%")]))
+
+        let chats = root.appendingPathComponent("chats", isDirectory: true)
+        let files = try FileManager.default.contentsOfDirectory(at: chats, includingPropertiesForKeys: nil)
+        let encrypted = files.filter { $0.pathExtension == "enc" }
+        XCTAssertEqual(encrypted.count, 1, "conversation should persist as a single sealed .enc file")
+
+        let raw = try Data(contentsOf: try XCTUnwrap(encrypted.first))
+        let asText = String(decoding: raw, as: UTF8.self)
+        XCTAssertFalse(asText.contains("Secret pricing strategy"), "title must not be readable on disk")
+        XCTAssertFalse(asText.contains("raise prices 20%"), "message must not be readable on disk")
+        XCTAssertEqual(store.loadAll().first?.title, "Secret pricing strategy", "but it must decrypt back")
+    }
+
+    func testLegacyPlaintextIsMigratedToEncrypted() throws {
+        let chats = root.appendingPathComponent("chats", isDirectory: true)
+        try FileManager.default.createDirectory(at: chats, withIntermediateDirectories: true)
+        let conversation = Conversation(title: "legacy", messages: [ChatMessage(role: .user, text: "old")])
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(conversation)
+            .write(to: chats.appendingPathComponent("\(conversation.id.uuidString).json"))
+
+        let loaded = ChatStore(rootURL: root).loadAll()
+        XCTAssertEqual(loaded.first?.title, "legacy", "legacy plaintext must still load")
+
+        let files = try FileManager.default.contentsOfDirectory(at: chats, includingPropertiesForKeys: nil)
+        XCTAssertTrue(files.contains { $0.pathExtension == "enc" }, "should have migrated to a sealed file")
+        XCTAssertFalse(files.contains { $0.lastPathComponent == "\(conversation.id.uuidString).json" },
+                       "plaintext must be removed once the sealed copy exists")
+    }
 }

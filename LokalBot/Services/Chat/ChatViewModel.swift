@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import CryptoKit
 
 /// One line in the chat transcript. `activity` holds the tool steps the
 /// assistant ran for this turn (shown as chips above its answer). Codable so
@@ -94,23 +95,62 @@ final class ChatStore {
         return d
     }()
 
+    private static let keyAccount = "chat-key"
+
+    private func fileURL(_ id: UUID) -> URL {
+        dir.appendingPathComponent("\(id.uuidString).json.enc")
+    }
+
     func loadAll() -> [Conversation] {
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: dir, includingPropertiesForKeys: nil) else { return [] }
-        return files
-            .filter { $0.pathExtension == "json" }
-            .compactMap { try? Data(contentsOf: $0) }
-            .compactMap { try? Self.decoder.decode(Conversation.self, from: $0) }
-            .sorted { $0.updatedAt > $1.updatedAt }
+        let key = try? KeychainSecrets.symmetricKey(account: Self.keyAccount)
+        var result: [Conversation] = []
+        for file in files {
+            switch file.pathExtension {
+            case "enc":
+                guard let key,
+                      let data = try? Data(contentsOf: file),
+                      let box = try? AES.GCM.SealedBox(combined: data),
+                      let plain = try? AES.GCM.open(box, using: key),
+                      let convo = try? Self.decoder.decode(Conversation.self, from: plain)
+                else { continue }
+                result.append(convo)
+            case "json":
+                // Legacy plaintext (pre-encryption): load it, then migrate to a
+                // sealed file — deleting the plaintext only once the encrypted
+                // copy is safely written.
+                guard let data = try? Data(contentsOf: file),
+                      let convo = try? Self.decoder.decode(Conversation.self, from: data)
+                else { continue }
+                result.append(convo)
+                if save(convo) { try? FileManager.default.removeItem(at: file) }
+            default:
+                continue
+            }
+        }
+        return result.sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    func save(_ conversation: Conversation) {
-        guard let data = try? Self.encoder.encode(conversation) else { return }
-        try? data.write(to: dir.appendingPathComponent("\(conversation.id.uuidString).json"),
-                        options: .atomic)
+    /// Encode → AES-GCM seal (per-install Keychain key) → atomic write. Returns
+    /// whether the sealed file landed, so the migration above never discards
+    /// plaintext before its encrypted replacement exists.
+    @discardableResult
+    func save(_ conversation: Conversation) -> Bool {
+        guard let key = try? KeychainSecrets.symmetricKey(account: Self.keyAccount),
+              let data = try? Self.encoder.encode(conversation),
+              let combined = try? AES.GCM.seal(data, using: key).combined else { return false }
+        do {
+            try combined.write(to: fileURL(conversation.id), options: .atomic)
+            return true
+        } catch {
+            return false
+        }
     }
 
     func delete(_ id: UUID) {
+        try? FileManager.default.removeItem(at: fileURL(id))
+        // Drop any legacy plaintext that was never migrated.
         try? FileManager.default.removeItem(
             at: dir.appendingPathComponent("\(id.uuidString).json"))
     }

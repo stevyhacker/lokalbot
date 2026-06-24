@@ -191,23 +191,9 @@ final class ScreenshotService: ObservableObject {
         return data as Data
     }
 
-    /// Per-install AES-256 key in the user Keychain (design §3.4).
-    private static var cachedKey: SymmetricKey?
+    /// Per-install AES-256 key in the user Keychain (design §3.4), via the
+    /// shared scheme also used to seal chat history.
     static func encryptionKey() throws -> SymmetricKey {
-        if let cachedKey { return cachedKey }
-        if let data = KeychainSecrets.data(account: "screenshot-key") {
-            let key = SymmetricKey(data: data)
-            cachedKey = key
-            return key
-        }
-        let key = SymmetricKey(size: .bits256)
-        let data = key.withUnsafeBytes { Data($0) }
-        KeychainSecrets.set(data, account: "screenshot-key")
-        guard KeychainSecrets.data(account: "screenshot-key") != nil else {
-            throw NSError(domain: "LokalBotV3", code: 6,
-                          userInfo: [NSLocalizedDescriptionKey: "Could not save screenshot encryption key"])
-        }
-        cachedKey = key
-        return key
+        try KeychainSecrets.symmetricKey(account: "screenshot-key")
     }
 }
