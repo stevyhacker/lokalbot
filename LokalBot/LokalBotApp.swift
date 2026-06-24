@@ -303,7 +303,8 @@ final class AppState: ObservableObject {
             storage: storage,
             searchIndex: searchIndex,
             embeddingIndex: embeddingIndex,
-            settings: { [weak self] in self?.settings ?? AppSettings() }))
+            settings: { [weak self] in self?.settings ?? AppSettings() }),
+        store: ChatStore(rootURL: storage.rootURL))
 
     private let micRecorder = MicRecorder()
     private let systemRecorder = SystemAudioRecorder()

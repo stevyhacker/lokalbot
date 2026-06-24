@@ -23,16 +23,6 @@ private struct ChatContent: View {
             Divider()
             inputBar
         }
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Button { model.clear() } label: {
-                    Label("New chat", systemImage: "square.and.pencil")
-                }
-                .disabled(model.messages.isEmpty || model.isResponding)
-                .help("Clear the conversation")
-                .accessibilityIdentifier("chat.clear")
-            }
-        }
         .onAppear { inputFocused = true }
     }
 
@@ -205,5 +195,55 @@ private struct TypingIndicator: View {
         .foregroundStyle(.secondary)
         .onReceive(timer) { _ in phase = (phase + 1) % 3 }
         .accessibilityLabel("Assistant is thinking")
+    }
+}
+
+/// The Chat section's conversation history — a selectable list of saved
+/// conversations plus a "New chat" action. Selecting one loads it into the
+/// transcript; conversations persist across launches via `ChatStore`.
+struct ChatConversationList: View {
+    @EnvironmentObject var app: AppState
+    var body: some View { ConversationListContent(model: app.chat) }
+}
+
+private struct ConversationListContent: View {
+    @ObservedObject var model: ChatViewModel
+
+    var body: some View {
+        List(selection: Binding(
+            get: { model.currentID },
+            set: { if let id = $0 { model.select(id) } })) {
+            ForEach(model.conversations) { conversation in
+                row(conversation)
+                    .tag(conversation.id)
+                    .contextMenu {
+                        Button(role: .destructive) { model.delete(conversation.id) } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+            }
+        }
+        .navigationTitle("Chats")
+        .toolbar {
+            ToolbarItem {
+                Button { model.newConversation() } label: {
+                    Label("New chat", systemImage: "square.and.pencil")
+                }
+                .help("Start a new conversation")
+                .accessibilityIdentifier("chat.new")
+            }
+        }
+        .accessibilityIdentifier("chat.conversationList")
+    }
+
+    private func row(_ conversation: Conversation) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(conversation.title.isEmpty ? ChatViewModel.newChatTitle : conversation.title)
+                .font(.body).lineLimit(1)
+            Text(conversation.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+        .accessibilityIdentifier("chat.conversation.\(conversation.id.uuidString)")
     }
 }

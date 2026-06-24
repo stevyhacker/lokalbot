@@ -14,7 +14,7 @@ import Foundation
 
 // MARK: - Value types
 
-enum ChatRole: Equatable, Sendable {
+enum ChatRole: String, Equatable, Sendable, Codable {
     case user, assistant
 }
 
