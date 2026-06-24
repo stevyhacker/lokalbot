@@ -398,10 +398,11 @@ struct MeetingDetailView: View {
     }
 
     @ViewBuilder private var transcriptTab: some View {
-        if let transcript, !transcript.segments.isEmpty {
+        let visibleSegments = transcript?.segments.filter { !$0.displayText.isEmpty } ?? []
+        if !visibleSegments.isEmpty {
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(transcript.segments.enumerated()), id: \.offset) { _, segment in
+                    ForEach(Array(visibleSegments.enumerated()), id: \.offset) { _, segment in
                         segmentRow(segment)
                     }
                 }
@@ -431,7 +432,7 @@ struct MeetingDetailView: View {
                 .background(segment.speaker == "me" ? Color.accentColor.opacity(0.18)
                                                     : Color.secondary.opacity(0.15),
                             in: Capsule())
-            Text(segment.text).font(.body)
+            Text(segment.displayText).font(.body)
                 .textSelection(.enabled)
         }
         .padding(.vertical, 4).padding(.horizontal, 6)

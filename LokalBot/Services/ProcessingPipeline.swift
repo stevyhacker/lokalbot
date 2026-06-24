@@ -113,13 +113,13 @@ final class ProcessingPipeline: ObservableObject {
         var tracks: [Transcript] = []
 
         let micURL = folder.appendingPathComponent("mic.m4a")
-        if FileManager.default.fileExists(atPath: micURL.path) {
+        if AudioFileInspector.isTranscribableAudio(at: micURL) {
             var t = try await engine.transcribe(audio: micURL, language: language)
             for i in t.segments.indices { t.segments[i].speaker = "me" }
             tracks.append(t)
         }
         let systemURL = folder.appendingPathComponent("system.m4a")
-        if meeting.hasSystemTrack, FileManager.default.fileExists(atPath: systemURL.path) {
+        if AudioFileInspector.isTranscribableAudio(at: systemURL) {
             var t = try await engine.transcribe(audio: systemURL, language: language)
             for i in t.segments.indices { t.segments[i].speaker = "them" }
             tracks.append(t)
@@ -139,9 +139,9 @@ final class ProcessingPipeline: ObservableObject {
                                 meeting: Meeting,
                                 folder: URL,
                                 config: AppSettings) async -> Transcript {
-        guard config.multiSpeakerDiarization, meeting.hasSystemTrack else { return transcript }
+        guard config.multiSpeakerDiarization else { return transcript }
         let systemURL = folder.appendingPathComponent("system.m4a")
-        guard FileManager.default.fileExists(atPath: systemURL.path) else { return transcript }
+        guard AudioFileInspector.isTranscribableAudio(at: systemURL) else { return transcript }
         await diarizer.prepareModels()
         let segments = await diarizer.diarize(url: systemURL)
         guard !segments.isEmpty else { return transcript }
@@ -336,7 +336,9 @@ final class ProcessingPipeline: ObservableObject {
         var current: [String] = []
         var length = 0
         for segment in transcript.segments {
-            let line = "**[\(Transcript.stamp(segment.start))] \(segment.speaker.capitalized):** \(segment.text)"
+            let text = segment.displayText
+            guard !text.isEmpty else { continue }
+            let line = "**[\(Transcript.stamp(segment.start))] \(segment.speaker.capitalized):** \(text)"
             if length + line.count > 12_000, !current.isEmpty {
                 chunks.append(current.joined(separator: "\n\n"))
                 current = []

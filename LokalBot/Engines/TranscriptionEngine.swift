@@ -133,7 +133,7 @@ actor ParakeetEngine: TranscriptionEngine {
     /// timestamps (Cohere). Track-level Me/Them attribution still works.
     static func singleSegment(text: String, duration: TimeInterval,
                               speaker: String) -> [Transcript.Segment] {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = Transcript.normalizedText(text)
         guard !trimmed.isEmpty else { return [] }
         return [Transcript.Segment(start: 0, end: duration, speaker: speaker,
                                    text: trimmed, confidence: nil)]
@@ -144,7 +144,7 @@ actor ParakeetEngine: TranscriptionEngine {
     /// past ~200 chars, or after 30 s regardless.
     static func segments(from result: ASRResult, speaker: String) -> [Transcript.Segment] {
         guard let timings = result.tokenTimings, !timings.isEmpty else {
-            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = Transcript.normalizedText(result.text)
             guard !text.isEmpty else { return [] }
             return [Transcript.Segment(start: 0, end: result.duration, speaker: speaker,
                                        text: text, confidence: Double(result.confidence))]
@@ -156,9 +156,9 @@ actor ParakeetEngine: TranscriptionEngine {
 
         func flush() {
             guard let first = current.first, let last = current.last else { return }
-            let text = current.map(\.token).joined()
+            let text = Transcript.normalizedText(current.map(\.token).joined()
                 .replacingOccurrences(of: "  ", with: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: .whitespacesAndNewlines))
             if !text.isEmpty {
                 let conf = current.map { Double($0.confidence) }.reduce(0, +) / Double(current.count)
                 out.append(.init(start: first.startTime, end: last.endTime,
@@ -223,7 +223,7 @@ actor WhisperEngine: TranscriptionEngine {
         let segments = results.flatMap(\.segments).map { seg in
             Transcript.Segment(start: TimeInterval(seg.start), end: TimeInterval(seg.end),
                                speaker: "speaker",
-                               text: seg.text.trimmingCharacters(in: .whitespacesAndNewlines),
+                               text: Transcript.normalizedText(seg.text),
                                confidence: nil)
         }.filter { !$0.text.isEmpty }
         return Transcript(segments: segments, engine: "whisper-large-v3-turbo (WhisperKit)")

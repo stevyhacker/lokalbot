@@ -494,6 +494,8 @@ final class AppState: ObservableObject {
         stopRecordingTick()
         let endedAt = Date()
         meeting.endedAt = endedAt
+        meeting.hasSystemTrack = AudioFileInspector.isTranscribableAudio(
+            at: meeting.folderURL(in: storage).appendingPathComponent("system.m4a"))
         try? storage.saveMeta(meeting)
         meetings.insert(meeting, at: 0)
         currentMeeting = nil

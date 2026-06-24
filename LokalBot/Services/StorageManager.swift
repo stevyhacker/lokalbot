@@ -82,6 +82,12 @@ final class StorageManager {
                     meeting.endedAt = mtime ?? meeting.startedAt
                     try? saveMeta(meeting)
                 }
+                let systemURL = url.deletingLastPathComponent().appendingPathComponent("system.m4a")
+                let hasSystemTrack = AudioFileInspector.isTranscribableAudio(at: systemURL)
+                if meeting.hasSystemTrack != hasSystemTrack {
+                    meeting.hasSystemTrack = hasSystemTrack
+                    try? saveMeta(meeting)
+                }
                 result.append(meeting)
             }
         }
