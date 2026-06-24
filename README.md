@@ -58,8 +58,14 @@ The first build runs `Scripts/fetch-llama.sh` (a pre-build phase) which vendors 
 ### Search & player
 - **Index:** SQLite + FTS5 (`lokalbotv3.sqlite` — system SQLite, no dependency) over titles, transcript segments, summaries, and OCR'd screen text. Segment rows carry their audio timestamp; incremental re-index by file mtime on launch and after each pipeline run.
 - **Semantic search:** transcript/summary chunks embedded with nomic-embed-text v1.5 (~146 MB GGUF, auto-downloaded) on a second llama-server instance (port 17873, `--embeddings --pooling mean`); vectors live in SQLite and queries are brute-force cosine — instant at personal scale, zero extra dependency. Search → All adds a "Related (semantic)" section for meaning-matches keywords miss; toggle in Settings.
-- **UI:** sidebar Meetings | Timeline | Search; debounced search-as-you-type (last term prefix-matched), All / Transcripts / Summaries / Screen scopes, «highlighted» snippets; clicking a transcript hit opens the meeting and plays from that timestamp.
+- **UI:** sidebar Meetings | Chat | Timeline | Cotyping | Search; debounced search-as-you-type (last term prefix-matched), All / Transcripts / Summaries / Screen scopes, «highlighted» snippets; clicking a transcript hit opens the meeting and plays from that timestamp.
 - **Player:** mic + system tracks play in sync (shared device-time anchor); seek bar; click any transcript line to jump the audio there; the currently-playing segment is highlighted.
+
+### Chat assistant
+- **Chat with your meetings:** the **Chat** sidebar section is a conversational assistant over your library — ask what was decided, find action items, or search transcripts in natural language. A small ReAct agent (`ChatAgent`) reuses the **same** local `TextEngine` as summaries and calls tools to ground every answer; nothing leaves the Mac.
+- **Tools (pi-agent style, mirroring the CLI):** `search_meetings` (FTS5 keyword + optional semantic search over transcripts/summaries), `list_meetings` (filter by title), and `get_meeting` (read a meeting's summary or transcript). The agent picks a tool, reads the observation, then answers — citing meeting titles and dates, and saying so plainly when nothing matches.
+- **Robust protocol:** tools are advertised in the system prompt with the recent-meeting list as ambient context; a tool call is parsed from either a JSON object **or** a model's native `name(arg=…)` function-call form (the bundled 0.8B Qwen emits the latter), with a tolerant fallback to a plain answer so a sloppy reply never hard-fails.
+- **Reuses the configured backend:** built-in llama-server by default, or Ollama / OpenAI-compatible / Apple Intelligence — the same Settings → Summarization choice.
 
 ### Day tracking
 - **Sampler:** frontmost app + focused-window title (Accessibility; degrades to app-name-only) every 5 s, idle-aware (3 min), minimum 5 s block, pause/resume from the menu bar. Stored in `activity_blocks` (same SQLite db).
@@ -95,11 +101,12 @@ The app binary doubles as a test harness; flows that need ungranted TCC permissi
 | `--record <seconds>` | Record for N seconds (needs the Mic grant) |
 | `--digest` | Generate today's day digest |
 | `--shot-test` | Capture one screenshot (needs Screen Recording) |
+| `--chat "<question>"` | Ask the meeting chat assistant once (tool-calling Q&A) and print the answer |
 
 ## Testing
 
-- **Unit** (`LokalBotTests`, in-process): `xcodebuild -project LokalBot.xcodeproj -scheme LokalBot -destination 'platform=macOS' test`. Pure-logic coverage — prompt sanitizers, search ranker, model fit, transcript merging, settings codecs, data migration.
-- **UI** (`LokalBotUITests`, XCUITest): `Scripts/ui-tests.sh`. Drives the real `LokalBotV3.app` against a synthetic library planted under a tmp `LOKALBOTV3_STORAGE_ROOT`; `LOKALBOTV3_UI_TEST=1` makes the app skip every side-effectful subsystem (Core Audio polling, the accessibility-trusted detector, Sparkle, screenshots), so no app TCC grants are needed. Seven tests cover meeting-list grouping (+ Record button), sidebar navigation, detail tabs (Summary/Transcript), FTS5 search → deep-link, multi-select state, and both branches of the delete dialog (cancel keeps files; confirm removes rows **and** on-disk folders). The first run needs the controlling terminal/IDE to hold **Automation → Xcode** and **Accessibility** grants, or XCUITest fails with "Timed out while enabling automation mode."
+- **Unit** (`LokalBotTests`, in-process): `xcodebuild -project LokalBot.xcodeproj -scheme LokalBot -destination 'platform=macOS' test`. Pure-logic coverage — prompt sanitizers, search ranker, model fit, transcript merging, settings codecs, data migration, and the chat agent (tool-call parsing for JSON **and** native function-call forms, the ReAct loop, observation formatters).
+- **UI** (`LokalBotUITests`, XCUITest): `Scripts/ui-tests.sh`. Drives the real `LokalBotV3.app` against a synthetic library planted under a tmp `LOKALBOTV3_STORAGE_ROOT`; `LOKALBOTV3_UI_TEST=1` makes the app skip every side-effectful subsystem (Core Audio polling, the accessibility-trusted detector, Sparkle, screenshots), so no app TCC grants are needed. Eight tests cover meeting-list grouping (+ Record button), sidebar navigation, the Chat section (render + input acceptance), detail tabs (Summary/Transcript), FTS5 search → deep-link, multi-select state, and both branches of the delete dialog (cancel keeps files; confirm removes rows **and** on-disk folders). The first run needs the controlling terminal/IDE to hold **Automation → Xcode** and **Accessibility** grants, or XCUITest fails with "Timed out while enabling automation mode."
 - **End-to-end** (`Scripts/e2e.sh`): exercises real audio, CoreML transcription, the bundled llama-server, and SQLite via the headless flags; skips flows needing ungranted permissions, so it's useful both pre- and post-grant.
 
 ## On-disk layout
@@ -129,19 +136,19 @@ LokalBot/
     ├── CLISupport/         # SessionLookup + SessionFormatter (shared with the CLI)
     ├── Services/           # detection, recorders, ProcessingPipeline, StorageManager, SearchIndex/
     │                       #   EmbeddingIndex, ActivityTracker/ScreenshotService (OCR), diarization,
-    │                       #   PermissionManager, AppUpdateManager, AppLog/FileLogHandler, HuggingFace/
+    │                       #   PermissionManager, AppUpdateManager, AppLog/FileLogHandler, HuggingFace/, Chat/ (agent + tools)
     ├── Engines/            # TranscriptionEngine, TextEngine, AppleIntelligenceEngine,
     │                       #   ModelCatalog / ModelDownloadManager / LlamaServer
     ├── Support/            # prompt budgeting, download rescue, DeviceInfo/HardwareCapabilityProbe, ranker
     ├── Cotyping/           # CotypingCoordinator + AX focus tracker, CGEventTap input monitor,
     │                       #   ghost-text overlay, synthetic inserter, prompt renderer + output
     │                       #   normalizer, and the HTTP completion engine (reuses TextEngine)
-    └── Views/              # MenuBar, MainWindow, Timeline, Search, Settings, Cotyping, Onboarding, banners
+    └── Views/              # MenuBar, MainWindow, Chat, Timeline, Search, Settings, Cotyping, Onboarding, banners
 ```
 
 ## Status
 
-**Done:** recording + robust device/PID handling, transcription (4 engines) + opt-in neural diarization, summarization (4 backends) + templates/languages, FTS5 + semantic search, synced player, day tracking + digests, screenshots/OCR/privacy, Ask-your-day, agent CLI, Sparkle updates, dev/prod split, in-app model manager + Hugging Face browse, cotyping (inline AI autocomplete reusing the LLM — opt-in).
+**Done:** recording + robust device/PID handling, transcription (4 engines) + opt-in neural diarization, summarization (4 backends) + templates/languages, FTS5 + semantic search, synced player, day tracking + digests, screenshots/OCR/privacy, Ask-your-day, chat assistant (tool-calling Q&A over meetings, reuses the LLM), agent CLI, Sparkle updates, dev/prod split, in-app model manager + Hugging Face browse, cotyping (inline AI autocomplete reusing the LLM — opt-in).
 
 **Not yet built:** VLM screenshot captions (needs a multimodal model + an mmproj slot in `LlamaServer`).
 

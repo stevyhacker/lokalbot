@@ -15,6 +15,7 @@ struct MainWindowView: View {
             case .settings: self = .settings
             case .timeline: return nil
             case .cotyping: return nil
+            case .chat: return nil
             }
         }
     }
@@ -100,6 +101,12 @@ struct MainWindowView: View {
             } detail: {
                 CotypingView()
             }
+        } else if app.navSection == .chat {
+            NavigationSplitView {
+                sidebar
+            } detail: {
+                ChatView()
+            }
         } else {
             NavigationSplitView {
                 sidebar
@@ -118,6 +125,9 @@ struct MainWindowView: View {
             Label("Meetings", systemImage: "waveform.circle")
                 .tag(AppState.NavSection.meetings)
                 .accessibilityIdentifier("sidebar.meetings")
+            Label("Chat", systemImage: "bubble.left.and.bubble.right")
+                .tag(AppState.NavSection.chat)
+                .accessibilityIdentifier("sidebar.chat")
             Label("Timeline", systemImage: "calendar.day.timeline.left")
                 .tag(AppState.NavSection.timeline)
                 .accessibilityIdentifier("sidebar.timeline")

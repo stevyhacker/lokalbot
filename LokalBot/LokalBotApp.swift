@@ -221,7 +221,7 @@ final class AppState: ObservableObject {
     }
 
     enum NavSection: Hashable {
-        case meetings, timeline, cotyping, search, settings
+        case meetings, timeline, cotyping, chat, search, settings
     }
 
     /// True when launched by an XCUITest harness — gates the side-effectful
@@ -291,6 +291,19 @@ final class AppState: ObservableObject {
     private(set) lazy var cotyping = CotypingCoordinator(
         engine: cotypingEngine,
         settingsProvider: { [weak self] in self?.settings ?? AppSettings() })
+    /// Chat assistant (the "Chat" section). Reuses the summariser's `TextEngine`
+    /// and a tool-calling agent over the live meeting list + search indexes.
+    private(set) lazy var chat = ChatViewModel(
+        makeEngine: { [weak self] in
+            guard let self else { throw TextEngineError.unavailable("LokalBot is shutting down.") }
+            return try await self.pipeline.makeTextEngine(self.settings)
+        },
+        tools: MeetingChatTools(
+            meetings: { [weak self] in self?.meetings ?? [] },
+            storage: storage,
+            searchIndex: searchIndex,
+            embeddingIndex: embeddingIndex,
+            settings: { [weak self] in self?.settings ?? AppSettings() }))
 
     private let micRecorder = MicRecorder()
     private let systemRecorder = SystemAudioRecorder()
@@ -365,7 +378,8 @@ final class AppState: ObservableObject {
             || handleHeadlessSearch()
             || handleHeadlessRecord()
             || handleHeadlessShotTest()
-            || handleHeadlessDigest() {
+            || handleHeadlessDigest()
+            || handleHeadlessChat() {
             return
         }
         // UI tests render against pre-seeded fixtures, not a real audio/Sparkle
@@ -724,6 +738,42 @@ final class AppState: ObservableObject {
                 exit(0)
             } catch {
                 print("LokalBotV3 --digest: FAILED — \(error.localizedDescription)")
+                await LlamaServer.shared.stop()
+                exit(1)
+            }
+        }
+        return true
+    }
+
+    /// `LokalBotV3 --chat "<question>"`: run the meeting chat agent once against
+    /// the real engine + tools and print the answer. Test hook for the chat
+    /// assistant, same spirit as --search / --digest.
+    private func handleHeadlessChat() -> Bool {
+        let args = CommandLine.arguments
+        guard let flag = args.firstIndex(of: "--chat"), args.count > flag + 1 else { return false }
+        let question = args[flag + 1]
+        Task { @MainActor in
+            do {
+                searchIndex.reindexAll(meetings, storage: storage)
+                let engine = try await pipeline.makeTextEngine(settings)
+                let tools = MeetingChatTools(
+                    meetings: { [weak self] in self?.meetings ?? [] },
+                    storage: storage, searchIndex: searchIndex, embeddingIndex: embeddingIndex,
+                    settings: { [weak self] in self?.settings ?? AppSettings() })
+                let agent = ChatAgent(engine: engine, runner: tools)
+                let answer = try await agent.respond(history: [], latest: question) { event in
+                    switch event {
+                    case .toolStarted(let call):
+                        print("LokalBotV3 --chat: tool \(call.name)(\(call.arguments))")
+                    case .toolFinished(let name, let summary):
+                        print("LokalBotV3 --chat: done \(name) — \(summary)")
+                    }
+                }
+                print("LokalBotV3 --chat: \(answer)")
+                await LlamaServer.shared.stop()
+                exit(0)
+            } catch {
+                print("LokalBotV3 --chat: FAILED — \(error.localizedDescription)")
                 await LlamaServer.shared.stop()
                 exit(1)
             }

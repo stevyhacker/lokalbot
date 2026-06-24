@@ -150,6 +150,32 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertEqual(title.value as? String, fixture.designReview.title)
     }
 
+    // MARK: - Chat
+
+    /// The Chat section is reachable from the sidebar and renders its assistant
+    /// surface — empty-state prompt + input field — proving the `.chat`
+    /// NavSection wiring and the `ChatView` render path. Stops short of sending
+    /// (that would spin up the real local LLM); typing verifies the input
+    /// binding without a model.
+    func testChatSectionRendersAndAcceptsInput() {
+        clickSidebar("sidebar.chat")
+
+        XCTAssertTrue(textWithContent("Chat with your meetings").firstMatch
+            .waitForExistence(timeout: 6),
+                      "chat empty-state did not render")
+
+        // The chat input reports its full frame (not a caret sliver like the
+        // search field), so a plain center click takes keyboard focus.
+        let field = app.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 4), "chat input field missing")
+        let layoutDeadline = Date().addingTimeInterval(4)
+        while field.frame.width < 40, Date() < layoutDeadline { usleep(150_000) }
+        field.click()
+        field.typeText("what did we decide")
+        XCTAssertEqual(field.value as? String, "what did we decide",
+                       "chat input did not accept typed text")
+    }
+
     // MARK: - Selection
 
     /// Cmd-clicking a second row enters the multi-select state — the detail

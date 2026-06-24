@@ -105,6 +105,16 @@ fi
 sqlite3 -cmd ".timeout 5000" "$ROOT/lokalbotv3.sqlite" \
   "DELETE FROM ocr_fts WHERE ts=$NOW; DELETE FROM activity_blocks WHERE start=$((NOW-600));" 2>/dev/null
 
+echo "== T9: chat assistant (tool-calling Q&A over meetings) =="
+# Reuses the T2 fixture (Redis / eviction policy) now in the real library.
+# The agent must search/read the meeting and ground its answer in it.
+CHAT=$("$BIN" --chat "What did we decide about caching? Name the datastore." 2>/dev/null)
+if echo "$CHAT" | grep -qi "redis"; then
+  pass "chat agent grounded its answer in the meeting (mentions 'Redis')"
+else
+  fail "chat agent answer missing expected content: $(echo "$CHAT" | tail -1)"
+fi
+
 echo
 echo "passed: $P · failed: $F · skipped: $S"
 [ "$F" -eq 0 ]
