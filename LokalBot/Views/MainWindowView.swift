@@ -37,7 +37,7 @@ struct MainWindowView: View {
                 Button {
                     app.isRecording
                         ? app.stopRecording()
-                        : app.startRecording(detectedApp: app.detector.activeApp)
+                        : app.startRecording(context: app.recordingContext(for: app.detector.activeApp))
                 } label: {
                     Label(app.isRecording ? "Stop recording" : "Record now",
                           systemImage: app.isRecording ? "stop.circle.fill" : "record.circle")
@@ -70,7 +70,7 @@ struct MainWindowView: View {
                                               bundleID: process.bundleID ?? "",
                                               pid: process.id)
                                           app.audioMonitor.accept()
-                                          app.startRecording(detectedApp: detected, source: "banner")
+                                          app.startRecording(context: app.recordingContext(for: detected), source: "banner")
                                       },
                                       onDismiss: { app.audioMonitor.dismiss() })
                 }

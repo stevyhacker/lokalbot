@@ -20,6 +20,18 @@ struct AppSettings: Codable {
     /// Seconds the mic must be released before a meeting counts as ended.
     var stopDebounceSeconds: TimeInterval = 60
 
+    // MARK: Calendar-assisted detection
+
+    /// Read the Mac Calendar to confirm meetings and title recordings. Off by
+    /// default and gated on a calendar TCC grant — calendar contents are
+    /// sensitive, so this is strictly opt-in.
+    var calendarDetectionEnabled: Bool = false
+    /// Prefer the matched calendar event's title over the app-derived name.
+    var useCalendarTitles: Bool = true
+    /// Stricter: only auto-record a browser tab when an active calendar event
+    /// with a meeting link backs it (ignores window-title-only matches).
+    var requireCalendarForBrowser: Bool = false
+
     /// Run as a menu-bar-only app: no Dock icon, no window at launch. The
     /// recording state lives in the menu bar (live timer + indicator) so the
     /// main window is never required to know a meeting is being captured.
@@ -180,6 +192,9 @@ struct AppSettings: Codable {
     private enum CodingKeys: String, CodingKey {
         case autoRecordMode
         case stopDebounceSeconds
+        case calendarDetectionEnabled
+        case useCalendarTitles
+        case requireCalendarForBrowser
         case menuBarOnly
         case transcriptionModel
         case transcriptionLanguage
@@ -247,6 +262,9 @@ struct AppSettings: Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(autoRecordMode, forKey: .autoRecordMode)
         try c.encode(stopDebounceSeconds, forKey: .stopDebounceSeconds)
+        try c.encode(calendarDetectionEnabled, forKey: .calendarDetectionEnabled)
+        try c.encode(useCalendarTitles, forKey: .useCalendarTitles)
+        try c.encode(requireCalendarForBrowser, forKey: .requireCalendarForBrowser)
         try c.encode(menuBarOnly, forKey: .menuBarOnly)
         try c.encode(transcriptionModel, forKey: .transcriptionModel)
         try c.encode(transcriptionLanguage, forKey: .transcriptionLanguage)
@@ -296,6 +314,9 @@ struct AppSettings: Codable {
         let defaults = AppSettings()
         autoRecordMode = (try? c.decode(AutoRecordMode.self, forKey: .autoRecordMode)) ?? defaults.autoRecordMode
         stopDebounceSeconds = (try? c.decode(TimeInterval.self, forKey: .stopDebounceSeconds)) ?? defaults.stopDebounceSeconds
+        calendarDetectionEnabled = (try? c.decode(Bool.self, forKey: .calendarDetectionEnabled)) ?? defaults.calendarDetectionEnabled
+        useCalendarTitles = (try? c.decode(Bool.self, forKey: .useCalendarTitles)) ?? defaults.useCalendarTitles
+        requireCalendarForBrowser = (try? c.decode(Bool.self, forKey: .requireCalendarForBrowser)) ?? defaults.requireCalendarForBrowser
         menuBarOnly = (try? c.decode(Bool.self, forKey: .menuBarOnly)) ?? defaults.menuBarOnly
         transcriptionModel = (try? c.decode(TranscriptionModelChoice.self, forKey: .transcriptionModel)) ?? defaults.transcriptionModel
         if let language = try? c.decode(TranscriptionLanguage.self, forKey: .transcriptionLanguage) {

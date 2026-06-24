@@ -12,6 +12,19 @@ struct Meeting: Identifiable, Codable, Equatable {
     var relativePath: String
     var hasSystemTrack: Bool = false
 
+    // MARK: Calendar provenance (optional)
+    //
+    // Populated only when a recording was matched to a calendar event. All
+    // optional so `meta.json` written before calendar support still decodes
+    // (synthesized `Codable` decodes missing keys to nil and omits nil keys on
+    // encode, so manual recordings keep their old, calendar-free shape).
+    var calendarProvider: String?
+    var calendarEventID: String?
+    var calendarTitle: String?
+    var scheduledStartAt: Date?
+    var scheduledEndAt: Date?
+    var meetingURL: URL?
+
     var duration: TimeInterval? {
         endedAt.map { $0.timeIntervalSince(startedAt) }
     }

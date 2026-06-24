@@ -28,6 +28,8 @@
 	<string>LokalBotV3 records the meeting app's audio output so the other participants are captured. Audio never leaves this Mac.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>LokalBotV3 records your side of meetings from the microphone. Audio never leaves this Mac.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>LokalBotV3 reads your calendar to confirm meetings and title recordings. Calendar data never leaves this Mac.</string>
 	<key>SUEnableAutomaticChecks</key>
 	<false/>
 	<key>SUFeedURL</key>

@@ -37,11 +37,22 @@ final class MeetingDetector {
     ]
     private static let webMeetingMarkers = ["Meet – ", "Meet - ", "meet.google.com", "Jitsi", "Whereby"]
 
-    var onMeetingStarted: ((DetectedApp) -> Void)?
+    var onMeetingStarted: ((MeetingDetectionContext) -> Void)?
     var onMeetingEnded: (() -> Void)?
     var stopDebounce: TimeInterval = 60
+    /// Extra grace before stopping while a calendar-backed meeting is still in
+    /// its scheduled window — brief audio drops mid-meeting shouldn't end it.
+    static let calendarBackedGrace: TimeInterval = 180
+
+    // Calendar-assisted detection, synced from `AppSettings` by `AppState`.
+    var calendar: CalendarEventProviding?
+    var calendarEnabled = false
+    var requireCalendarForBrowser = false
 
     private(set) var activeApp: DetectedApp?
+    /// The calendar event matched when the current session started — drives the
+    /// extended stop grace and is carried into the recording's metadata.
+    private var activeCalendarEvent: CalendarMeetingCandidate?
     private var timer: Timer?
     private var pendingStop: DispatchWorkItem?
 
@@ -139,13 +150,22 @@ final class MeetingDetector {
     }
 
     private func tick() {
+        let now = Date()
         let running = NSWorkspace.shared.runningApplications
+        let calendarEvent = calendarEnabled ? calendar?.activeCandidate(now: now) : nil
         let runningMeetingApp = Self.nativeMeetingApp(in: running)
-            ?? Self.browserMeeting(in: running)
+            ?? Self.browserMeeting(in: running, calendarEvent: calendarEvent,
+                                   calendarEnabled: calendarEnabled,
+                                   requireCalendarForBrowser: requireCalendarForBrowser)
         let continuingApp = activeApp.flatMap { Self.continuingApp($0, in: running) }
         let app = runningMeetingApp ?? continuingApp
         let micInUse = Self.isMicInUse()
-        let canStart = activeApp == nil && runningMeetingApp != nil && micInUse
+        // A calendar-confirmed browser meeting may start on output audio alone —
+        // the Google Meet case where the mic is muted or the title is generic.
+        let isBrowserApp = runningMeetingApp.map { Self.browsers.contains($0.bundleID) } ?? false
+        let calendarBackedBrowser = isBrowserApp && calendarEnabled && calendarEvent?.meetingURL != nil
+        let canStart = activeApp == nil && runningMeetingApp != nil
+            && (micInUse || (calendarBackedBrowser && Self.hasOutputAudio(for: runningMeetingApp!)))
         let canContinue = activeApp != nil && app != nil
             && (micInUse || Self.hasOutputAudio(for: app!))
         let inMeeting = canStart || canContinue
@@ -155,19 +175,31 @@ final class MeetingDetector {
             pendingStop = nil
             if activeApp == nil {
                 activeApp = app
-                onMeetingStarted?(app)
+                activeCalendarEvent = calendarEvent
+                onMeetingStarted?(MeetingDetectionContext(
+                    detectedApp: app,
+                    calendarEvent: calendarEvent,
+                    confidence: MeetingMatcher.confidence(hasApp: true, hasCalendar: calendarEvent != nil),
+                    reason: "detector"))
             } else {
                 activeApp = app
+                if let calendarEvent { activeCalendarEvent = calendarEvent }
             }
         } else if activeApp != nil, pendingStop == nil {
+            // Never stop because calendar time ended — only audio does. While the
+            // matched event is still in its window, extend the debounce so brief
+            // drops don't split a scheduled meeting.
+            let calendarStillActive = activeCalendarEvent?.isActive(at: now) ?? false
+            let debounce = calendarStillActive ? max(stopDebounce, Self.calendarBackedGrace) : stopDebounce
             let work = DispatchWorkItem { [weak self] in
                 guard let self else { return }
                 self.activeApp = nil
+                self.activeCalendarEvent = nil
                 self.pendingStop = nil
                 self.onMeetingEnded?()
             }
             pendingStop = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + stopDebounce, execute: work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + debounce, execute: work)
         }
     }
 
@@ -178,19 +210,41 @@ final class MeetingDetector {
         }.first
     }
 
-    /// Web meetings: a running browser whose focused window title looks like
-    /// a meeting (design §9). The system-audio tap then captures the browser.
+    /// Web meetings by window title only (no calendar) — used by the audio
+    /// monitor to confirm a browser tab is a meeting. The system-audio tap then
+    /// captures the browser.
     static func visibleBrowserMeeting(in running: [NSRunningApplication] = NSWorkspace.shared.runningApplications) -> DetectedApp? {
-        browserMeeting(in: running)
+        browserMeeting(in: running, calendarEvent: nil, calendarEnabled: false, requireCalendarForBrowser: false)
     }
 
-    private static func browserMeeting(in running: [NSRunningApplication]) -> DetectedApp? {
+    /// A browser that should be recorded as a meeting: window title matches a
+    /// web-meeting marker, or — when calendar detection is on — an active event
+    /// with a conferencing link is in progress and the browser is producing
+    /// audio. The latter is what makes Google Meet reliable when Accessibility
+    /// misses the title or the tab name is generic.
+    private static func browserMeeting(in running: [NSRunningApplication],
+                                       calendarEvent: CalendarMeetingCandidate?,
+                                       calendarEnabled: Bool,
+                                       requireCalendarForBrowser: Bool) -> DetectedApp? {
+        let calendarBacked = calendarEnabled && calendarEvent?.meetingURL != nil
         for app in running {
-            guard let bid = app.bundleIdentifier, browsers.contains(bid),
-                  let title = ActivitySampler.focusedWindowTitle(pid: app.processIdentifier),
-                  webMeetingMarkers.contains(where: { title.localizedCaseInsensitiveContains($0) })
-            else { continue }
+            guard let bid = app.bundleIdentifier, browsers.contains(bid) else { continue }
+            let titleMatches = ActivitySampler.focusedWindowTitle(pid: app.processIdentifier).map { title in
+                webMeetingMarkers.contains { title.localizedCaseInsensitiveContains($0) }
+            } ?? false
+            // Skip the audio probe when no signal can apply.
+            if requireCalendarForBrowser {
+                guard calendarBacked else { continue }
+            } else if !titleMatches && !calendarBacked {
+                continue
+            }
             let audioProcess = bestBrowserAudioProcess(forBrowserBundleID: bid)
+            guard MeetingMatcher.browserCountsAsMeeting(
+                    titleMatchesMarker: titleMatches,
+                    hasOutputAudio: audioProcess != nil,
+                    calendarBacked: calendarBacked,
+                    requireCalendarForBrowser: requireCalendarForBrowser)
+            else { continue }
             return DetectedApp(name: app.localizedName ?? "Browser",
                                bundleID: bid,
                                pid: audioProcess?.id ?? app.processIdentifier)

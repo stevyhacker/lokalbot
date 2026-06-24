@@ -96,7 +96,7 @@ struct MenuBarView: View {
             Button {
                 app.isRecording
                     ? app.stopRecording()
-                    : app.startRecording(detectedApp: app.detector.activeApp, source: "menubar")
+                    : app.startRecording(context: app.recordingContext(for: app.detector.activeApp), source: "menubar")
             } label: {
                 Label(app.isRecording ? "Stop recording" : "Record now",
                       systemImage: app.isRecording ? "stop.fill" : "record.circle")

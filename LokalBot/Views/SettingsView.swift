@@ -1,5 +1,6 @@
 import SwiftUI
 import LaunchAtLogin
+import AppKit
 
 struct SettingsView: View {
     @EnvironmentObject var app: AppState
@@ -60,7 +61,7 @@ struct SettingsView: View {
                 }
             }
 
-            if shows("Meetings", ["meeting", "auto record", "detect", "debounce", "recording"]) {
+            if shows("Meetings", ["meeting", "auto record", "detect", "debounce", "recording", "calendar"]) {
                 Section("Meetings") {
                     Picker("When a meeting is detected", selection: $app.settings.autoRecordMode) {
                         ForEach(AppSettings.AutoRecordMode.allCases) { mode in
@@ -75,6 +76,22 @@ struct SettingsView: View {
                     LabeledContent("Stop debounce") {
                         Text("\(Int(app.settings.stopDebounceSeconds)) s after mic releases")
                             .foregroundStyle(.secondary)
+                    }
+                    Divider()
+                    Toggle("Use calendar to improve detection", isOn: $app.settings.calendarDetectionEnabled)
+                        .onChange(of: app.settings.calendarDetectionEnabled) { _, enabled in
+                            if enabled, app.calendar.authorizationStatus == .notDetermined {
+                                app.calendar.requestAccess { _ in }
+                            }
+                        }
+                    Text("Reads your Mac Calendar (including Google/Exchange accounts synced into it) to confirm meetings — so a Google Meet in your browser is caught even when its window title is generic.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if app.settings.calendarDetectionEnabled {
+                        Toggle("Use calendar titles for recordings", isOn: $app.settings.useCalendarTitles)
+                        Toggle("Require a calendar match for browser auto-recording", isOn: $app.settings.requireCalendarForBrowser)
+                        Text("Stricter: only auto-record a browser tab when a scheduled event with a meeting link is in progress.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        LabeledContent("Calendar access") { calendarAccessControl }
                     }
                 }
             }
@@ -472,9 +489,26 @@ struct SettingsView: View {
         .frame(minWidth: 460)
         .navigationTitle("Settings")
         .task { await refreshOllama() }
-        .onAppear { power.start() }
+        .onAppear { power.start(); app.calendar.refreshAuthorizationStatus() }
         .onDisappear { power.stop() }
         .sheet(isPresented: $showingHFBrowse) { huggingFaceBrowser }
+    }
+
+    /// Calendar permission state + action for the Meetings section.
+    @ViewBuilder private var calendarAccessControl: some View {
+        switch app.calendar.authorizationStatus {
+        case .fullAccess:
+            Label("Granted", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .notDetermined:
+            Button("Grant Calendar Access…") { app.calendar.requestAccess { _ in } }
+        default:
+            Button("Open System Settings…") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        }
     }
 
     /// A section is visible when the search field is empty or its title/keywords

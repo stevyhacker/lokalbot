@@ -48,7 +48,7 @@ struct LokalBotV3App: App {
                 Button(app.isRecording ? "Stop Recording" : "Start Recording") {
                     app.isRecording
                         ? app.stopRecording()
-                        : app.startRecording(detectedApp: app.detector.activeApp, source: "command")
+                        : app.startRecording(context: app.recordingContext(for: app.detector.activeApp), source: "command")
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
             }
@@ -242,6 +242,8 @@ final class AppState: ObservableObject {
         didSet {
             settings.save()
             detector.stopDebounce = settings.stopDebounceSeconds
+            detector.calendarEnabled = settings.calendarDetectionEnabled
+            detector.requireCalendarForBrowser = settings.requireCalendarForBrowser
             if interactive { cotyping.applySettings() }
         }
     }
@@ -261,6 +263,10 @@ final class AppState: ObservableObject {
     let storage = StorageManager()
     let detector = MeetingDetector()
     let audioMonitor = AudioSourceMonitor()
+    /// Read-only calendar access (EventKit): confirms meetings and titles
+    /// recordings. Concrete type so the settings UI observes its permission
+    /// state; handed to the detector as the `CalendarEventProviding` seam.
+    let calendar = EventKitCalendarEventProvider()
     private(set) lazy var searchIndex = SearchIndex(
         databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"))
     private(set) lazy var activityStore = ActivityStore(
@@ -293,6 +299,13 @@ final class AppState: ObservableObject {
     private var pipelineObserver: AnyCancellable?
     private var audioMonitorObserver: AnyCancellable?
     private var audioMonitorChangeForwarder: AnyCancellable?
+    private var calendarObserver: AnyCancellable?
+    /// Calendar event id + stop time of the last calendar-backed recording, so
+    /// the same scheduled meeting can't immediately re-record (helper-PID churn,
+    /// brief audio drops). See `MeetingMatcher.shouldSuppressRepeat`.
+    private var lastCalendarEventID: String?
+    private var lastCalendarEventEndedAt: Date?
+    private static let calendarRepeatCooldown: TimeInterval = 5 * 60
 
     /// Ticks once a second while recording so the menu bar timer (and popover)
     /// stay live even with no window open. Nil when idle.
@@ -330,6 +343,9 @@ final class AppState: ObservableObject {
         audioMonitorChangeForwarder = audioMonitor.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
+        calendarObserver = calendar.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
         pipeline.onArtifactsWritten = { [weak self] meeting in
             guard let self else { return }
             self.searchIndex.reindex(meeting, storage: self.storage)
@@ -359,11 +375,11 @@ final class AppState: ObservableObject {
         interactive = true
         RecordingNotifier.shared.bootstrap()
         applyTrackingSetting()
-        detector.onMeetingStarted = { [weak self] app in
+        detector.onMeetingStarted = { [weak self] context in
             guard let self else { return }
             switch self.settings.autoRecordMode {
-            case .automatic: self.startRecording(detectedApp: app, source: "detector")
-            case .ask: self.notifyMeetingDetected(app)
+            case .automatic: self.startRecording(context: context, source: "detector")
+            case .ask: self.notifyMeetingDetected(context)
             case .manual: break
             }
         }
@@ -371,6 +387,9 @@ final class AppState: ObservableObject {
             self?.stopRecording()
         }
         detector.stopDebounce = settings.stopDebounceSeconds
+        detector.calendar = calendar
+        detector.calendarEnabled = settings.calendarDetectionEnabled
+        detector.requireCalendarForBrowser = settings.requireCalendarForBrowser
         systemRecorder.onCapturedProcessTerminated = { [weak self] in
             guard let self, self.isRecording else { return }
             self.lastError = "Meeting app exited — recording stopped."
@@ -410,12 +429,37 @@ final class AppState: ObservableObject {
     /// clicks) all pass the `!isRecording` guard and create empty meetings.
     private var isStartingRecording = false
 
-    func startRecording(detectedApp: MeetingDetector.DetectedApp?, source: String = "ui") {
+    /// Builds a detection context for a user-initiated recording on `detectedApp`
+    /// (nil → manual), folding in the active calendar event when calendar
+    /// detection is enabled and authorized — so the menu / command / banner
+    /// entry points get calendar titling too.
+    func recordingContext(for detectedApp: MeetingDetector.DetectedApp?) -> MeetingDetectionContext? {
+        guard let detectedApp else { return nil }
+        let event = (settings.calendarDetectionEnabled && calendar.hasAccess)
+            ? calendar.activeCandidate(now: Date()) : nil
+        return MeetingDetectionContext(
+            detectedApp: detectedApp,
+            calendarEvent: event,
+            confidence: MeetingMatcher.confidence(hasApp: true, hasCalendar: event != nil),
+            reason: "user")
+    }
+
+    func startRecording(context: MeetingDetectionContext? = nil, source: String = "ui") {
         guard !isRecording, !isStartingRecording else { return }
+        let detectedApp = context?.detectedApp
+        let calendarEvent = context?.calendarEvent
+        // Don't immediately re-record the same scheduled event after one ended.
+        if MeetingMatcher.shouldSuppressRepeat(
+            eventID: calendarEvent?.externalID, lastEventID: lastCalendarEventID,
+            lastEndedAt: lastCalendarEventEndedAt, now: Date(),
+            cooldown: Self.calendarRepeatCooldown) {
+            lokalbotv3Log("startRecording suppressed: calendar event \(calendarEvent?.externalID ?? "?") within cooldown")
+            return
+        }
         isStartingRecording = true
         audioMonitor.isRecordingActive = true
         audioMonitor.accept()
-        lokalbotv3Log("startRecording source=\(source) app=\(detectedApp?.name ?? "manual")")
+        lokalbotv3Log("startRecording source=\(source) app=\(detectedApp?.name ?? "manual") calendar=\(calendarEvent?.title ?? "none")")
         Task {
             defer { isStartingRecording = false }
             guard await MicRecorder.requestPermission() else {
@@ -424,9 +468,21 @@ final class AppState: ObservableObject {
             }
             var created: Meeting?
             do {
-                let title = detectedApp.map { Self.meetingTitle(for: $0.name) } ?? "Manual recording"
+                let title = MeetingMatcher.recordingTitle(
+                    calendarTitle: calendarEvent?.title,
+                    useCalendarTitles: settings.useCalendarTitles,
+                    appName: detectedApp?.name)
                 var meeting = try storage.createMeetingFolder(title: title,
                                                               appName: detectedApp?.name ?? "Manual")
+                if let calendarEvent {
+                    meeting.calendarProvider = calendarEvent.provider
+                    meeting.calendarEventID = calendarEvent.externalID
+                    meeting.calendarTitle = calendarEvent.title
+                    meeting.scheduledStartAt = calendarEvent.startDate
+                    meeting.scheduledEndAt = calendarEvent.endDate
+                    meeting.meetingURL = calendarEvent.meetingURL
+                    try? storage.saveMeta(meeting)
+                }
                 created = meeting
                 try micRecorder.start(writingTo: meeting.folderURL(in: storage).appendingPathComponent("mic.m4a"))
 
@@ -461,19 +517,35 @@ final class AppState: ObservableObject {
     private func audioMonitorDetected(_ process: AudioProcess) {
         guard !isRecording, !isStartingRecording else { return }
         guard settings.autoRecordMode == .automatic, let bundleID = process.bundleID else { return }
+        let calendarEvent = (settings.calendarDetectionEnabled && calendar.hasAccess)
+            ? calendar.activeCandidate(now: Date()) : nil
         if let name = MeetingDetector.knownApps[bundleID] {
             let detected = MeetingDetector.DetectedApp(name: name, bundleID: bundleID, pid: process.id)
-            startRecording(detectedApp: detected, source: "audio-monitor")
+            startRecording(context: detectionContext(detected, calendarEvent), source: "audio-monitor")
             return
         }
-        if let hostBundleID = MeetingDetector.hostBrowserBundleID(forAudioBundleID: bundleID),
-           let browserMeeting = MeetingDetector.visibleBrowserMeeting(),
-           browserMeeting.bundleID == hostBundleID {
-            let detected = MeetingDetector.DetectedApp(name: browserMeeting.name,
-                                                       bundleID: browserMeeting.bundleID,
-                                                       pid: process.id)
-            startRecording(detectedApp: detected, source: "audio-monitor")
-        }
+        guard let hostBundleID = MeetingDetector.hostBrowserBundleID(forAudioBundleID: bundleID) else { return }
+        // The browser is already producing output (the monitor fired on it), so a
+        // window-title match OR an active calendar meeting link is enough — the
+        // latter catches a generic-title Google Meet the title check misses.
+        let titleMatches = MeetingDetector.visibleBrowserMeeting()?.bundleID == hostBundleID
+        let calendarBacked = calendarEvent?.meetingURL != nil
+        guard MeetingMatcher.browserCountsAsMeeting(
+            titleMatchesMarker: titleMatches, hasOutputAudio: true,
+            calendarBacked: calendarBacked, requireCalendarForBrowser: settings.requireCalendarForBrowser)
+        else { return }
+        let name = NSRunningApplication.runningApplications(withBundleIdentifier: hostBundleID)
+            .first?.localizedName ?? "Browser"
+        let detected = MeetingDetector.DetectedApp(name: name, bundleID: hostBundleID, pid: process.id)
+        startRecording(context: detectionContext(detected, calendarEvent), source: "audio-monitor")
+    }
+
+    private func detectionContext(_ app: MeetingDetector.DetectedApp,
+                                  _ event: CalendarMeetingCandidate?) -> MeetingDetectionContext {
+        MeetingDetectionContext(
+            detectedApp: app, calendarEvent: event,
+            confidence: MeetingMatcher.confidence(hasApp: true, hasCalendar: event != nil),
+            reason: "audio-monitor")
     }
 
     nonisolated static func meetingTitle(for appName: String) -> String {
@@ -497,6 +569,8 @@ final class AppState: ObservableObject {
         meeting.hasSystemTrack = AudioFileInspector.isTranscribableAudio(
             at: meeting.folderURL(in: storage).appendingPathComponent("system.m4a"))
         try? storage.saveMeta(meeting)
+        lastCalendarEventID = meeting.calendarEventID
+        lastCalendarEventEndedAt = endedAt
         meetings.insert(meeting, at: 0)
         currentMeeting = nil
         status = .idle
@@ -599,7 +673,7 @@ final class AppState: ObservableObject {
             print("LokalBotV3 --record: SKIP (microphone not granted)")
             exit(3)
         }
-        startRecording(detectedApp: nil, source: "headless")
+        startRecording(context: nil, source: "headless")
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(seconds))
             guard isRecording else {
@@ -688,7 +762,7 @@ final class AppState: ObservableObject {
         return true
     }
 
-    private func notifyMeetingDetected(_ app: MeetingDetector.DetectedApp) {
+    private func notifyMeetingDetected(_ context: MeetingDetectionContext) {
         // M1: simple user notification via the menu bar (badge). A richer
         // UNUserNotification with a "Record" action button is a fast follow.
         lastError = nil

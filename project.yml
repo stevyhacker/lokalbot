@@ -97,6 +97,9 @@ targetTemplates:
         NSAudioCaptureUsageDescription: >-
           LokalBotV3 records the meeting app's audio output so the other
           participants are captured. Audio never leaves this Mac.
+        NSCalendarsFullAccessUsageDescription: >-
+          LokalBotV3 reads your calendar to confirm meetings and title
+          recordings. Calendar data never leaves this Mac.
         LSApplicationCategoryType: public.app-category.productivity
         # Sparkle auto-update. SUFeedURL points at the appcast published with
         # each GitHub release; SUPublicEDKey is the ed25519 public key whose
