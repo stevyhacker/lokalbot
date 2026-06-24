@@ -92,6 +92,10 @@ struct AppSettings: Codable {
     var cotypingStyleNote: String = ""
     /// Allow multi-line completions (off keeps suggestions to one line).
     var cotypingMultiLine: Bool = false
+    /// Insert large / multi-line accepts via paste (more reliable than synthetic
+    /// keystrokes in some hosts). On by default; briefly uses the clipboard and
+    /// restores it.
+    var cotypingPasteInsertion: Bool = true
     /// Soft length target; drives the per-request token budget. Kept short (a
     /// few words) so suggestions are quick to read and accept.
     var cotypingMaxWords: Int = 4
@@ -114,6 +118,10 @@ struct AppSettings: Codable {
     /// (e.g. the email subject or chat channel). On by default; reads window
     /// titles via Accessibility (already required for cotyping), stays on-device.
     var cotypingUseAppContext: Bool = true
+    /// Fold the current clipboard into the prompt as context, so suggestions can
+    /// build on what you just copied. Off by default (privacy); read fresh at
+    /// generation time, never cached or persisted.
+    var cotypingUseClipboard: Bool = false
     /// Match the host field's font and text color so ghost text reads as a
     /// continuation. On by default; reads via Accessibility (cached per field).
     var cotypingMatchHostStyle: Bool = true
@@ -198,6 +206,7 @@ struct AppSettings: Codable {
         case cotypingUserName
         case cotypingStyleNote
         case cotypingMultiLine
+        case cotypingPasteInsertion
         case cotypingMaxWords
         case cotypingDebounceMs
         case cotypingAcceptGranularity
@@ -206,6 +215,7 @@ struct AppSettings: Codable {
         case cotypingExcludedApps
         case cotypingExcludedDomains
         case cotypingUseAppContext
+        case cotypingUseClipboard
         case cotypingMatchHostStyle
         case cotypingMirrorPreference
         case cotypingAutocorrect
@@ -262,6 +272,7 @@ struct AppSettings: Codable {
         try c.encode(cotypingUserName, forKey: .cotypingUserName)
         try c.encode(cotypingStyleNote, forKey: .cotypingStyleNote)
         try c.encode(cotypingMultiLine, forKey: .cotypingMultiLine)
+        try c.encode(cotypingPasteInsertion, forKey: .cotypingPasteInsertion)
         try c.encode(cotypingMaxWords, forKey: .cotypingMaxWords)
         try c.encode(cotypingDebounceMs, forKey: .cotypingDebounceMs)
         try c.encode(cotypingAcceptGranularity, forKey: .cotypingAcceptGranularity)
@@ -270,6 +281,7 @@ struct AppSettings: Codable {
         try c.encode(cotypingExcludedApps, forKey: .cotypingExcludedApps)
         try c.encode(cotypingExcludedDomains, forKey: .cotypingExcludedDomains)
         try c.encode(cotypingUseAppContext, forKey: .cotypingUseAppContext)
+        try c.encode(cotypingUseClipboard, forKey: .cotypingUseClipboard)
         try c.encode(cotypingMatchHostStyle, forKey: .cotypingMatchHostStyle)
         try c.encode(cotypingMirrorPreference, forKey: .cotypingMirrorPreference)
         try c.encode(cotypingAutocorrect, forKey: .cotypingAutocorrect)
@@ -315,6 +327,7 @@ struct AppSettings: Codable {
         cotypingUserName = (try? c.decode(String.self, forKey: .cotypingUserName)) ?? defaults.cotypingUserName
         cotypingStyleNote = (try? c.decode(String.self, forKey: .cotypingStyleNote)) ?? defaults.cotypingStyleNote
         cotypingMultiLine = (try? c.decode(Bool.self, forKey: .cotypingMultiLine)) ?? defaults.cotypingMultiLine
+        cotypingPasteInsertion = (try? c.decode(Bool.self, forKey: .cotypingPasteInsertion)) ?? defaults.cotypingPasteInsertion
         cotypingMaxWords = (try? c.decode(Int.self, forKey: .cotypingMaxWords)) ?? defaults.cotypingMaxWords
         cotypingDebounceMs = (try? c.decode(Int.self, forKey: .cotypingDebounceMs)) ?? defaults.cotypingDebounceMs
         cotypingAcceptGranularity = (try? c.decode(CotypingAcceptGranularity.self, forKey: .cotypingAcceptGranularity)) ?? defaults.cotypingAcceptGranularity
@@ -323,6 +336,7 @@ struct AppSettings: Codable {
         cotypingExcludedApps = (try? c.decode(String.self, forKey: .cotypingExcludedApps)) ?? defaults.cotypingExcludedApps
         cotypingExcludedDomains = (try? c.decode(String.self, forKey: .cotypingExcludedDomains)) ?? defaults.cotypingExcludedDomains
         cotypingUseAppContext = (try? c.decode(Bool.self, forKey: .cotypingUseAppContext)) ?? defaults.cotypingUseAppContext
+        cotypingUseClipboard = (try? c.decode(Bool.self, forKey: .cotypingUseClipboard)) ?? defaults.cotypingUseClipboard
         cotypingMatchHostStyle = (try? c.decode(Bool.self, forKey: .cotypingMatchHostStyle)) ?? defaults.cotypingMatchHostStyle
         cotypingMirrorPreference = (try? c.decode(CotypingMirrorPreference.self, forKey: .cotypingMirrorPreference)) ?? defaults.cotypingMirrorPreference
         cotypingAutocorrect = (try? c.decode(Bool.self, forKey: .cotypingAutocorrect)) ?? defaults.cotypingAutocorrect

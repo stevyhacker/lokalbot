@@ -215,6 +215,9 @@ struct SettingsView: View {
                         Toggle("Use app & window context", isOn: $app.settings.cotypingUseAppContext)
                         Text("Conditions suggestions on the focused app and its window title (email subject, chat channel, page title) for sharper, on-topic completions. Read locally via Accessibility; skipped in code editors and terminals.")
                             .font(.caption).foregroundStyle(.secondary)
+                        Toggle("Use the clipboard as context", isOn: $app.settings.cotypingUseClipboard)
+                        Text("Folds what you just copied into the prompt so suggestions can build on it. Read fresh each time and never stored. Off by default — turn on only if you want the model to see your clipboard.")
+                            .font(.caption).foregroundStyle(.secondary)
                         Toggle("Match the app\u{2019}s font and text color", isOn: $app.settings.cotypingMatchHostStyle)
                         Text("Ghost text mimics the field you\u{2019}re typing in (font family and a dimmed version of its text color) instead of a fixed style. Read locally via Accessibility; cached per field.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -239,6 +242,9 @@ struct SettingsView: View {
                         Picker("Accept whole suggestion", selection: $app.settings.cotypingFullAcceptKey) {
                             ForEach(CotypingFullAcceptKey.allCases) { Text($0.label).tag($0) }
                         }
+                        Toggle("Paste large / multi-line accepts", isOn: $app.settings.cotypingPasteInsertion)
+                        Text("Commits big or multi-line suggestions via paste instead of synthetic keystrokes \u{2014} steadier in some apps. Briefly uses the clipboard, then restores it.")
+                            .font(.caption).foregroundStyle(.secondary)
                         LabeledContent("Pause before suggesting") {
                             Text("\(app.settings.cotypingDebounceMs) ms").foregroundStyle(.secondary)
                         }

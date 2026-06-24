@@ -1060,3 +1060,89 @@ final class CotypingStatsStoreTests: XCTestCase {
         suite.removePersistentDomain(forName: name)
     }
 }
+
+// MARK: - Clipboard context
+
+final class CotypingClipboardContextTests: XCTestCase {
+    func testSanitizeCollapsesAndTrims() {
+        XCTAssertEqual(CotypingClipboardContext.sanitize("  hello   world  "), "hello world")
+        XCTAssertEqual(CotypingClipboardContext.sanitize("a\n\nb\tc"), "a b c")
+        XCTAssertEqual(CotypingClipboardContext.sanitize("hello"), "hello")
+    }
+
+    func testSanitizeDropsEmpty() {
+        XCTAssertNil(CotypingClipboardContext.sanitize(nil))
+        XCTAssertNil(CotypingClipboardContext.sanitize(""))
+        XCTAssertNil(CotypingClipboardContext.sanitize("   \n\t  "))
+    }
+
+    func testSanitizeCapsLength() {
+        let long = String(repeating: "x", count: 2000)
+        let capped = CotypingClipboardContext.sanitize(long)
+        XCTAssertEqual(capped?.count, CotypingClipboardContext.maxSnippetCharacters)
+    }
+
+    func testShouldIncludeGuardsAlreadyInField() {
+        XCTAssertFalse(CotypingClipboardContext.shouldInclude(snippet: "abc", precedingText: "x abc y"))
+        XCTAssertTrue(CotypingClipboardContext.shouldInclude(snippet: "abc", precedingText: "hello"))
+        XCTAssertTrue(CotypingClipboardContext.shouldInclude(snippet: "abc", precedingText: ""))
+        XCTAssertFalse(CotypingClipboardContext.shouldInclude(snippet: nil, precedingText: "hi"))
+        XCTAssertFalse(CotypingClipboardContext.shouldInclude(snippet: "", precedingText: "hi"))
+    }
+
+    func testResolveCombinesSanitizeAndGuard() {
+        XCTAssertEqual(CotypingClipboardContext.resolve(rawClipboard: "plans", precedingText: "meeting about"), "plans")
+        XCTAssertNil(CotypingClipboardContext.resolve(rawClipboard: "plans", precedingText: "the plans are set"))  // already there
+        XCTAssertNil(CotypingClipboardContext.resolve(rawClipboard: "   ", precedingText: "x"))                    // empty after sanitize
+    }
+
+    func testPromptIncludesClipboardLine() {
+        let prompt = CotypingPromptRenderer.prompt(prefixText: "hello", clipboardContext: "secret plans")
+        XCTAssertTrue(prompt.contains("On the clipboard: secret plans"))
+        XCTAssertTrue(prompt.contains("hello"))  // prefix still present
+    }
+
+    func testPromptOmitsClipboardWhenAbsent() {
+        let prompt = CotypingPromptRenderer.prompt(prefixText: "hello")
+        XCTAssertFalse(prompt.contains("On the clipboard"))
+    }
+
+    func testPromptCapsClipboardLine() {
+        let huge = String(repeating: "z", count: 600)
+        let prompt = CotypingPromptRenderer.prompt(prefixText: "hi", clipboardContext: huge)
+        // The clipboard line itself is capped at maxClipboardLineCharacters.
+        let line = prompt.components(separatedBy: "\n").first(where: { $0.contains("On the clipboard") }) ?? ""
+        XCTAssertLessThanOrEqual(line.count, "On the clipboard: ".count + CotypingPromptRenderer.maxClipboardLineCharacters)
+    }
+
+    func testUseClipboardDefaultsOff() {
+        XCTAssertFalse(AppSettings().cotypingUseClipboard)
+    }
+}
+
+// MARK: - Insertion strategy (keystroke vs paste)
+
+final class CotypingInsertionStrategyTests: XCTestCase {
+    func testDisabledAlwaysKeystroke() {
+        XCTAssertEqual(CotypingInsertionStrategySelector.select(forChunk: "line one\nline two", pasteEnabled: false), .keystroke)
+        XCTAssertEqual(CotypingInsertionStrategySelector.select(forChunk: String(repeating: "x", count: 200), pasteEnabled: false), .keystroke)
+    }
+
+    func testMultilinePastes() {
+        XCTAssertEqual(CotypingInsertionStrategySelector.select(forChunk: "a\nb", pasteEnabled: true), .paste)
+    }
+
+    func testLongPastes() {
+        XCTAssertEqual(CotypingInsertionStrategySelector.select(forChunk: String(repeating: "x", count: 80), pasteEnabled: true), .paste)
+        XCTAssertEqual(CotypingInsertionStrategySelector.select(forChunk: String(repeating: "x", count: 200), pasteEnabled: true), .paste)
+    }
+
+    func testShortSingleLineKeystrokes() {
+        XCTAssertEqual(CotypingInsertionStrategySelector.select(forChunk: "hello world", pasteEnabled: true), .keystroke)
+        XCTAssertEqual(CotypingInsertionStrategySelector.select(forChunk: String(repeating: "x", count: 79), pasteEnabled: true), .keystroke)
+    }
+
+    func testPasteInsertionDefaultsOn() {
+        XCTAssertTrue(AppSettings().cotypingPasteInsertion)
+    }
+}

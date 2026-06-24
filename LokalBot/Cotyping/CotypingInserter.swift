@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -22,6 +23,10 @@ enum CotypingSyntheticMarker {
 /// and others). Each event is marked synthetic so the input monitor skips it.
 @MainActor
 final class CotypingInserter {
+    /// Pending restore of the user's clipboard after a paste insert, so overlapping
+    /// pastes coalesce onto the single saved clipboard rather than re-snapshotting
+    /// our own completion back into it.
+    private var pendingPasteboardRestore: DispatchWorkItem?
     @discardableResult
     func insert(_ text: String) -> Bool {
         let scrubbed = text.replacingOccurrences(of: "\r", with: "")
@@ -72,5 +77,76 @@ final class CotypingInserter {
         for event in events { CotypingSyntheticMarker.mark(event) }
         for event in events { event.post(tap: .cghidEventTap) }
         return true
+    }
+
+    /// Inserts `text` by placing it on the pasteboard and synthesizing a synthetic
+    /// Cmd-V, then restoring the user's clipboard shortly after. A trimmed port of
+    /// Cotabby's `insertViaPaste`. Used for large / multi-line accepts that some
+    /// hosts mishandle as synthetic keystrokes. Returns false on any setup failure
+    /// (after restoring the clipboard) so the caller can fall back to keystrokes.
+    @discardableResult
+    func insertViaPaste(_ text: String) -> Bool {
+        let scrubbed = text.replacingOccurrences(of: "\r", with: "")
+        guard !scrubbed.isEmpty else { return false }
+        let pasteboard = NSPasteboard.general
+        let saved = Self.snapshotPasteboard(pasteboard)
+        pasteboard.clearContents()
+        guard pasteboard.setString(scrubbed, forType: .string) else {
+            Self.restorePasteboard(saved, to: pasteboard)
+            return false
+        }
+        let expectedChangeCount = pasteboard.changeCount
+        guard let vDown = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: true),
+              let vUp = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: false) else {
+            Self.restorePasteboard(saved, to: pasteboard)
+            return false
+        }
+        // Cmd via flags (no separate modifier key event). Marked synthetic so the
+        // consuming input tap ignores it.
+        vDown.flags = .maskCommand
+        vUp.flags = .maskCommand
+        CotypingSyntheticMarker.mark(vDown)
+        CotypingSyntheticMarker.mark(vUp)
+        vDown.post(tap: .cghidEventTap)
+        vUp.post(tap: .cghidEventTap)
+
+        let restore = DispatchWorkItem { [weak self] in
+            if NSPasteboard.general.changeCount == expectedChangeCount {
+                Self.restorePasteboard(saved, to: NSPasteboard.general)
+            }
+            self?.pendingPasteboardRestore = nil
+        }
+        pendingPasteboardRestore?.cancel()
+        pendingPasteboardRestore = restore
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pasteboardRestoreDelay, execute: restore)
+        return true
+    }
+
+    /// How long the completion stays on the pasteboard before the user's clipboard
+    /// is restored — long enough for the host to service Cmd-V, short enough that
+    /// the user's clipboard is theirs again almost immediately.
+    private static let pasteboardRestoreDelay: TimeInterval = 0.3
+
+    /// Captures every representation of every pasteboard item so the user's
+    /// clipboard can be restored exactly, not just its plain-text form.
+    private static func snapshotPasteboard(_ pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
+        (pasteboard.pasteboardItems ?? []).map { item in
+            var reps: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types {
+                if let data = item.data(forType: type) { reps[type] = data }
+            }
+            return reps
+        }
+    }
+
+    private static func restorePasteboard(_ saved: [[NSPasteboard.PasteboardType: Data]], to pasteboard: NSPasteboard) {
+        pasteboard.clearContents()
+        guard !saved.isEmpty else { return }
+        let items = saved.map { dict -> NSPasteboardItem in
+            let item = NSPasteboardItem()
+            for (type, data) in dict { item.setData(data, forType: type) }
+            return item
+        }
+        pasteboard.writeObjects(items)
     }
 }

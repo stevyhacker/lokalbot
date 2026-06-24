@@ -34,6 +34,7 @@ final class CotypingCoordinator: ObservableObject {
     private var wired = false
     private var lastLatencyMilliseconds: Int?
     private let spellChecker = CotypingSpellChecker()
+    private let clipboardProvider = CotypingClipboardProvider()
 
     init(
         engine: CotypingCompleting,
@@ -223,9 +224,17 @@ final class CotypingCoordinator: ObservableObject {
 
         var cfg = config
         cfg.maxResponseTokens = settings.cotypingMaxResponseTokens
+        // Clipboard context (off by default; read fresh at generation time,
+        // never cached or persisted — clipboard contents are sensitive).
+        let clipboardSnippet = settings.cotypingUseClipboard
+            ? CotypingClipboardContext.resolve(
+                rawClipboard: clipboardProvider.currentText,
+                precedingText: field.precedingText)
+            : nil
         guard let request = CotypingRequestBuilder.build(
             field: field, config: cfg,
-            personalization: settings.cotypingPersonalization, generation: work) else {
+            personalization: settings.cotypingPersonalization, generation: work,
+            clipboardContext: clipboardSnippet) else {
             state = .idle
             return
         }
@@ -363,7 +372,15 @@ final class CotypingCoordinator: ObservableObject {
             case .phrase: chunk = Self.nextPhrase(in: remaining)
             }
         }
-        guard !chunk.isEmpty, inserter.insert(chunk) else { return false }
+        guard !chunk.isEmpty else { return false }
+        let strategy = CotypingInsertionStrategySelector.select(
+            forChunk: chunk, pasteEnabled: settingsProvider().cotypingPasteInsertion)
+        let inserted: Bool
+        switch strategy {
+        case .keystroke: inserted = inserter.insert(chunk)
+        case .paste: inserted = inserter.insertViaPaste(chunk)
+        }
+        guard inserted else { return false }
         CotypingStatsStore.shared.recordAccept(charsAccepted: chunk.count)
 
         acceptedWordCount += chunk.split(whereSeparator: { $0.isWhitespace }).count
