@@ -2,9 +2,11 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-/// M4 timeline (design doc §4.2): one day at a time — colored blocks on a
-/// time axis, per-app totals, and an on-demand LLM day digest saved to
-/// journal/<date>.md.
+/// M4 timeline (design doc §4.2): one day at a time. Restructured as a
+/// two-pane split — a pinned day header + summary rail over a scrollable,
+/// hour-indexed activity track on the left, and a tabbed inspector
+/// (per-app totals · screenshots · ask-your-day · LLM digest) on the right.
+/// Selecting a block in the track scopes the screenshot tab to that window.
 struct TimelineView: View {
     @EnvironmentObject var app: AppState
 
@@ -17,29 +19,52 @@ struct TimelineView: View {
     @State private var question = ""
     @State private var answer: String?
     @State private var asking = false
+    @State private var selection: ActivityBlock.ID?
+    @State private var inspectorTab: InspectorTab = .totals
+    /// Inspector (digest/totals/ask) width — the pane the user resizes. Track
+    /// fills the rest, so widening the digest narrows the track. Persisted.
+    @AppStorage("timeline.inspectorWidth") private var inspectorWidth = 560.0
+    @State private var inspectorDragStart: Double?
+
+    private enum InspectorTab: String, CaseIterable, Identifiable {
+        case totals, screenshots, ask, digest
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .totals: "Totals"
+            case .screenshots: "Screens"
+            case .ask: "Ask"
+            case .digest: "Digest"
+            }
+        }
+    }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                header
-                if blocks.isEmpty {
+        Group {
+            if blocks.isEmpty {
+                VStack(alignment: .leading, spacing: 16) {
+                    header
                     ContentUnavailableView(
                         "No activity recorded",
                         systemImage: "clock",
                         description: Text(app.settings.trackingEnabled
                             ? "Blocks appear as you use your Mac (sampled every 5 s, idle-aware)."
                             : "Day tracking is off — enable it in Settings."))
-                        .frame(minHeight: 240)
-                } else {
-                    timelineBar
-                    totals
-                    if !shots.isEmpty { filmstrip }
-                    askSection
-                    digestSection
+                        .frame(maxHeight: .infinity)
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                GeometryReader { geo in
+                    let maxInspector = max(360, geo.size.width - 260)
+                    let width = min(CGFloat(inspectorWidth), maxInspector)
+                    HStack(spacing: 0) {
+                        mainPane
+                        inspectorDivider(maxInspector: maxInspector)
+                        inspectorPane.frame(width: width)
+                    }
                 }
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .task(id: day.formatted(date: .numeric, time: .omitted)) { reload() }
         .navigationTitle("Timeline")
@@ -60,6 +85,47 @@ struct TimelineView: View {
         }
     }
 
+    /// Draggable handle between track and inspector. The inspector width is
+    /// what the user controls (persisted via `@AppStorage`); `maxInspector`
+    /// (from the live container width) keeps the track usably wide.
+    private func inspectorDivider(maxInspector: CGFloat) -> some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor))
+            .frame(width: 1)
+            .overlay {
+                Color.clear
+                    .frame(width: 11)
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                    }
+                    .gesture(
+                        DragGesture(minimumDistance: 1)
+                            .onChanged { value in
+                                if inspectorDragStart == nil { inspectorDragStart = inspectorWidth }
+                                let base = inspectorDragStart ?? inspectorWidth
+                                inspectorWidth = min(Double(maxInspector),
+                                                     max(360, base - Double(value.translation.width)))
+                            }
+                            .onEnded { _ in inspectorDragStart = nil }
+                    )
+            }
+    }
+
+    // MARK: Main pane — day header, summary rail, hour track
+
+    private var mainPane: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            header
+            summaryRail
+            Divider()
+            DayTrackView(blocks: blocks, selection: $selection)
+                .accessibilityIdentifier("timeline.track")
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
     private var header: some View {
         HStack(spacing: 8) {
             Button { day = day.addingTimeInterval(-86_400) } label: {
@@ -77,32 +143,79 @@ struct TimelineView: View {
         }
     }
 
-    // One horizontal bar spanning the active part of the day.
-    private var timelineBar: some View {
-        let span = activeSpan
-        return VStack(alignment: .leading, spacing: 4) {
-            GeometryReader { geo in
-                ZStack(alignment: .topLeading) {
-                    RoundedRectangle(cornerRadius: 5).fill(.quaternary.opacity(0.4))
-                    ForEach(blocks) { block in
-                        let x = offset(block.start, in: span, width: geo.size.width)
-                        let w = max(2, offset(block.end, in: span, width: geo.size.width) - x)
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(Self.color(for: block.app))
-                            .frame(width: w, height: 36)
-                            .offset(x: x)
-                            .help("\(block.app)\(block.title.isEmpty ? "" : " — \(block.title)")\n\(block.start.formatted(date: .omitted, time: .shortened))–\(block.end.formatted(date: .omitted, time: .shortened))")
+    private var summaryRail: some View {
+        let total = blocks.reduce(0) { $0 + $1.duration }
+        let apps = Set(blocks.map(\.app)).count
+        let meetings = app.meetings.filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }.count
+        return HStack(spacing: 8) {
+            stat("clock", Self.hm(total), "tracked")
+            stat("square.grid.2x2", "\(apps)", apps == 1 ? "app" : "apps")
+            stat("camera.viewfinder", "\(shots.count)", "screens")
+            if meetings > 0 { stat("waveform", "\(meetings)", meetings == 1 ? "meeting" : "meetings") }
+            Spacer()
+        }
+    }
+
+    private func stat(_ icon: String, _ value: String, _ label: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.callout.weight(.semibold).monospacedDigit())
+            Text(label).font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 9).padding(.vertical, 5)
+        .background(.quaternary.opacity(0.3), in: Capsule())
+    }
+
+    // MARK: Inspector pane — selected block + tabbed detail
+
+    private var inspectorPane: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let block = selectedBlock { selectedBlockCard(block) }
+            Picker("Inspector", selection: $inspectorTab) {
+                ForEach(InspectorTab.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented).labelsHidden()
+            .accessibilityIdentifier("timeline.inspector")
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    switch inspectorTab {
+                    case .totals: totals
+                    case .screenshots: screenshots
+                    case .ask: askSection
+                    case .digest: digestSection
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(height: 36)
-            HStack {
-                Text(span.lowerBound.formatted(date: .omitted, time: .shortened))
-                Spacer()
-                Text(span.upperBound.formatted(date: .omitted, time: .shortened))
-            }
-            .font(.caption2).foregroundStyle(.tertiary)
         }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var selectedBlock: ActivityBlock? {
+        guard let selection else { return nil }
+        return blocks.first { $0.id == selection }
+    }
+
+    private func selectedBlockCard(_ block: ActivityBlock) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Circle().fill(Self.color(for: block.app)).frame(width: 10, height: 10).padding(.top, 3)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(block.app).font(.subheadline.weight(.semibold))
+                if !block.title.isEmpty {
+                    Text(block.title).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+                Text("\(block.start.formatted(date: .omitted, time: .shortened))–\(block.end.formatted(date: .omitted, time: .shortened)) · \(Self.hm(block.duration))")
+                    .font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
+            }
+            Spacer()
+            Button { selection = nil } label: { Image(systemName: "xmark.circle.fill") }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .help("Clear selection")
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var totals: some View {
@@ -110,37 +223,58 @@ struct TimelineView: View {
             .mapValues { $0.reduce(0) { $0 + $1.duration } }
             .sorted { $0.value > $1.value }
         let total = perApp.reduce(0) { $0 + $1.value }
+        let top = perApp.prefix(12)
+        let rest = perApp.dropFirst(12)
+        let restSeconds = rest.reduce(0) { $0 + $1.value }
         return VStack(alignment: .leading, spacing: 6) {
             Text("Time by app — \(Self.hm(total)) tracked").font(.headline)
-            ForEach(perApp.prefix(12), id: \.key) { appName, seconds in
-                HStack(spacing: 8) {
-                    Circle().fill(Self.color(for: appName)).frame(width: 9, height: 9)
-                    Text(appName).font(.body)
-                    Spacer()
-                    Text(Self.hm(seconds)).font(.callout.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                    Text(String(format: "%2.0f%%", seconds / max(total, 1) * 100))
-                        .font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
-                        .frame(width: 38, alignment: .trailing)
-                }
+            ForEach(top, id: \.key) { appName, seconds in
+                totalsRow(Self.color(for: appName), appName, seconds, of: total)
+            }
+            if !rest.isEmpty {
+                totalsRow(Color(nsColor: .tertiaryLabelColor),
+                          "Other (\(rest.count) app\(rest.count == 1 ? "" : "s"))",
+                          restSeconds, of: total)
             }
         }
     }
 
-    /// M5: hourly-ish strip of decrypted thumbnails.
-    private var filmstrip: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Screenshots (\(shots.count))").font(.headline)
-            ScrollView(.horizontal) {
-                HStack(spacing: 6) {
-                    ForEach(shots) { shot in
-                        if let image = ScreenshotService.decrypt(path: shot.path) {
-                            Image(nsImage: image)
-                                .resizable().aspectRatio(contentMode: .fill)
-                                .frame(width: 148, height: 92)
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
-                                .help("\(shot.app) — \(shot.ts.formatted(date: .omitted, time: .shortened))")
-                        }
+    private func totalsRow(_ swatch: Color, _ label: String, _ seconds: TimeInterval,
+                           of total: TimeInterval) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(swatch).frame(width: 9, height: 9)
+            Text(label).font(.body).lineLimit(1)
+            Spacer()
+            Text(Self.hm(seconds)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+            Text(String(format: "%2.0f%%", seconds / max(total, 1) * 100))
+                .font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
+                .frame(width: 38, alignment: .trailing)
+        }
+    }
+
+    /// Decrypted thumbnails, wrapped to the inspector width and scoped to the
+    /// selected block's time window when one is picked. Lazy + cached decode
+    /// (see `ThumbnailView`) so a full day of shots no longer decrypts eagerly.
+    private var screenshots: some View {
+        let scoped: [ActivityStore.Screenshot]
+        let heading: String
+        if let block = selectedBlock {
+            scoped = shots.filter { $0.ts >= block.start && $0.ts <= block.end }
+            heading = "Screenshots · \(block.app) (\(scoped.count))"
+        } else {
+            scoped = shots
+            heading = "Screenshots (\(scoped.count))"
+        }
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(heading).font(.headline)
+            if scoped.isEmpty {
+                Text(selectedBlock == nil ? "None captured today." : "None during this block.")
+                    .font(.callout).foregroundStyle(.secondary)
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 8)], spacing: 8) {
+                    ForEach(scoped) { shot in
+                        ThumbnailView(path: shot.path)
+                            .help("\(shot.app) — \(shot.ts.formatted(date: .omitted, time: .shortened))")
                     }
                 }
             }
@@ -160,7 +294,7 @@ struct TimelineView: View {
             }
             if let answer {
                 MarkdownText(answer)
-                    .frame(maxWidth: 720, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
             }
         }
@@ -192,27 +326,23 @@ struct TimelineView: View {
                 if generating { ProgressView().controlSize(.small) }
                 Spacer()
                 if let digest {
-                    Button { copyDigest(digest) } label: {
-                        Label("Copy", systemImage: "doc.on.doc")
-                    }
-                    .help("Copy the digest to the clipboard")
-                    Button { exportDigest(digest) } label: {
-                        Label("Export…", systemImage: "square.and.arrow.up")
-                    }
-                    .help("Save the digest as a Markdown file")
+                    Button { copyDigest(digest) } label: { Image(systemName: "doc.on.doc") }
+                        .help("Copy the digest to the clipboard")
+                    Button { exportDigest(digest) } label: { Image(systemName: "square.and.arrow.up") }
+                        .help("Save the digest as a Markdown file")
                 }
-                Button(digest == nil ? "Generate digest" : "Regenerate") {
-                    Task { await generateDigest() }
-                }
-                .disabled(generating)
             }
+            Button(digest == nil ? "Generate digest" : "Regenerate") {
+                Task { await generateDigest() }
+            }
+            .disabled(generating)
             if let digestError {
                 Label(digestError, systemImage: "exclamationmark.triangle")
                     .font(.callout).foregroundStyle(.orange)
             }
             if let digest {
                 MarkdownText(digest)
-                    .frame(maxWidth: 720, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
             }
         }
@@ -225,6 +355,7 @@ struct TimelineView: View {
         shots = app.activityStore.screenshots(on: day)
         digest = try? String(contentsOf: journalURL, encoding: .utf8)
         digestError = nil
+        selection = nil
     }
 
     private var journalURL: URL {
@@ -271,18 +402,6 @@ struct TimelineView: View {
         }
     }
 
-    private var activeSpan: ClosedRange<Date> {
-        let first = blocks.first?.start ?? Calendar.current.startOfDay(for: day)
-        let last = blocks.last?.end ?? first.addingTimeInterval(3600)
-        return first...max(last, first.addingTimeInterval(1800))
-    }
-
-    private func offset(_ date: Date, in span: ClosedRange<Date>, width: CGFloat) -> CGFloat {
-        let total = span.upperBound.timeIntervalSince(span.lowerBound)
-        let position = date.timeIntervalSince(span.lowerBound)
-        return CGFloat(max(0, min(1, position / max(total, 1)))) * width
-    }
-
     /// Stable per-app color from the name hash.
     static func color(for app: String) -> Color {
         var hash: UInt64 = 5381
@@ -293,5 +412,130 @@ struct TimelineView: View {
     static func hm(_ seconds: TimeInterval) -> String {
         let minutes = Int(seconds) / 60
         return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
+    }
+}
+
+/// Vertical, hour-indexed activity track (calendar day-view metaphor). Time
+/// runs top→bottom at a fixed scale, so a busy day simply grows taller and
+/// scrolls instead of being crushed into one screen-width bar; every block
+/// keeps the full lane width for its label and a real, tappable height.
+private struct DayTrackView: View {
+    let blocks: [ActivityBlock]
+    @Binding var selection: ActivityBlock.ID?
+
+    private let pointsPerHour: CGFloat = 100
+    private let gutter: CGFloat = 56
+
+    var body: some View {
+        let start = trackStart
+        let hours = hourCount(from: start)
+        let height = CGFloat(hours) * pointsPerHour
+        ScrollView {
+            GeometryReader { geo in
+                let laneWidth = max(40, geo.size.width - gutter)
+                ZStack(alignment: .topLeading) {
+                    ForEach(Array(0..<hours), id: \.self) { i in
+                        let y = CGFloat(i) * pointsPerHour
+                        Rectangle().fill(.quaternary.opacity(0.4))
+                            .frame(width: laneWidth, height: 1)
+                            .offset(x: gutter, y: y)
+                        Text(hourLabel(start, i))
+                            .font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                            .frame(width: gutter - 8, alignment: .trailing)
+                            .offset(y: y - 6)
+                    }
+                    ForEach(blocks) { block in
+                        blockView(block, start: start, laneWidth: laneWidth)
+                    }
+                }
+                .frame(width: geo.size.width, height: height, alignment: .topLeading)
+            }
+            .frame(height: height)
+        }
+    }
+
+    @ViewBuilder
+    private func blockView(_ block: ActivityBlock, start: Date, laneWidth: CGFloat) -> some View {
+        let y = CGFloat(block.start.timeIntervalSince(start) / 3600) * pointsPerHour
+        let h = max(5, CGFloat(block.duration / 3600) * pointsPerHour)
+        let isSelected = selection == block.id
+        RoundedRectangle(cornerRadius: 4)
+            .fill(TimelineView.color(for: block.app).opacity(isSelected ? 1 : 0.85))
+            .overlay(alignment: .topLeading) {
+                if h >= 20 {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(block.app).font(.caption.weight(.medium)).lineLimit(1)
+                        if !block.title.isEmpty && h >= 38 {
+                            Text(block.title).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                    .padding(.horizontal, 6).padding(.top, 3)
+                }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 4)
+                .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2))
+            .frame(width: laneWidth, height: h, alignment: .topLeading)
+            .offset(x: gutter, y: y)
+            .help("\(block.app)\(block.title.isEmpty ? "" : " — \(block.title)")\n\(block.start.formatted(date: .omitted, time: .shortened))–\(block.end.formatted(date: .omitted, time: .shortened)) · \(TimelineView.hm(block.duration))")
+            .onTapGesture { selection = isSelected ? nil : block.id }
+    }
+
+    private var trackStart: Date {
+        let first = blocks.first?.start ?? Calendar.current.startOfDay(for: Date())
+        return Calendar.current.dateInterval(of: .hour, for: first)?.start ?? first
+    }
+
+    private func hourCount(from start: Date) -> Int {
+        let last = blocks.map(\.end).max() ?? start.addingTimeInterval(3600)
+        return max(1, Int(ceil(last.timeIntervalSince(start) / 3600)))
+    }
+
+    private func hourLabel(_ start: Date, _ i: Int) -> String {
+        start.addingTimeInterval(Double(i) * 3600).formatted(date: .omitted, time: .shortened)
+    }
+}
+
+/// Decoded-thumbnail cache, keyed by encrypted-file path. Decoding a HEIC and
+/// AES-opening it is not free; caching means each screenshot is decrypted once
+/// per session no matter how often the grid is rebuilt or scrolled.
+private enum ThumbnailCache {
+    static let shared = NSCache<NSString, NSImage>()
+}
+
+/// One screenshot thumbnail: decrypts off the main actor on first appearance,
+/// caches the result, and shows a placeholder until it's ready. Combined with
+/// `LazyVGrid`, only on-screen thumbnails are ever decoded.
+private struct ThumbnailView: View {
+    let path: String
+    @State private var image: NSImage?
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.4))
+            if let image {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 84)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .task(id: path) { await load() }
+    }
+
+    private func load() async {
+        if let cached = ThumbnailCache.shared.object(forKey: path as NSString) {
+            image = cached
+            return
+        }
+        guard let key = try? ScreenshotService.encryptionKey() else { return }
+        let filePath = path
+        let data = await Task.detached(priority: .utility) {
+            ScreenshotService.decryptedData(path: filePath, key: key)
+        }.value
+        guard let data, let decoded = NSImage(data: data) else { return }
+        ThumbnailCache.shared.setObject(decoded, forKey: path as NSString)
+        image = decoded
     }
 }

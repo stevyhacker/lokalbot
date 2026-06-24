@@ -72,6 +72,31 @@ final class MainWindowUITests: XCTestCase {
                       "meeting list did not come back")
     }
 
+    // MARK: - Timeline
+
+    /// The restructured Timeline renders its two-pane split — pinned summary +
+    /// hour track on the left, tabbed inspector on the right — from the seeded
+    /// `activity_blocks`. Asserts the *populated* path (not the empty state):
+    /// the inspector's default Totals tab shows the per-app breakdown headline,
+    /// a seeded app surfaces, and the "no activity" placeholder is absent.
+    func testTimelineRendersActivityTrackAndInspector() {
+        clickSidebar("sidebar.timeline")
+        XCTAssertTrue(textWithContent("Time by app").firstMatch.waitForExistence(timeout: 6),
+                      "inspector totals headline missing — seeded activity did not load")
+        XCTAssertTrue(textWithContent("Xcode").firstMatch.exists,
+                      "seeded activity app 'Xcode' missing from the timeline")
+        XCTAssertFalse(textWithContent("No activity recorded").firstMatch.exists,
+                       "empty state shown despite seeded activity blocks")
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.inspector"].exists,
+                      "inspector segmented control identifier missing")
+        // The block *title* renders only inside the hour track (totals rows
+        // show app names, never titles), so this pins down the track itself.
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"].exists,
+                      "hour track identifier missing")
+        XCTAssertTrue(textWithContent("TimelineView.swift").firstMatch.exists,
+                      "seeded block title missing from the hour track")
+    }
+
     // MARK: - Detail tabs
 
     /// Selecting a meeting → detail pane shows title + summary; flipping the

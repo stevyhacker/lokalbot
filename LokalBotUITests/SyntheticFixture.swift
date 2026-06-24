@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 /// Plants a self-contained LokalBotV3 storage root on disk for one UI test run.
 /// Mirrors `StorageManager`'s on-disk layout
@@ -146,8 +147,48 @@ enum SyntheticFixture {
         for meeting in [designReview, standup, planning] {
             try write(meeting, under: root)
         }
+        seedActivity(under: root)
         return Library(root: root, designReview: designReview,
                        standup: standup, planning: planning)
+    }
+
+    /// Seed a few `activity_blocks` for *today* straight into the shared
+    /// SQLite db so the Timeline screen has real data to render. The app
+    /// creates this table `IF NOT EXISTS` at launch, so a pre-created one is
+    /// compatible. Uses the SQLite C API directly — the bundle stays
+    /// decoupled from the app target, mirroring how the rest of the fixture
+    /// writes raw on-disk shape.
+    private static func seedActivity(under root: URL) {
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        let dbPath = root.appendingPathComponent("lokalbotv3.sqlite").path
+        var db: OpaquePointer?
+        guard sqlite3_open(dbPath, &db) == SQLITE_OK else { return }
+        defer { sqlite3_close(db) }
+        sqlite3_exec(db, """
+            CREATE TABLE IF NOT EXISTS activity_blocks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                app TEXT NOT NULL, title TEXT NOT NULL,
+                start REAL NOT NULL, end REAL NOT NULL);
+            """, nil, nil, nil)
+        let dayStart = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
+        // (app, title, startMinuteOfDay, endMinuteOfDay) — anchored to today.
+        let rows: [(String, String, Double, Double)] = [
+            ("Xcode", "TimelineView.swift", 9 * 60, 10 * 60 + 30),
+            ("Safari", "Pull request #42", 10 * 60 + 30, 11 * 60 + 15),
+            ("Slack", "#engineering", 11 * 60 + 15, 11 * 60 + 25),
+        ]
+        for (appName, title, startMin, endMin) in rows {
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db,
+                "INSERT INTO activity_blocks (app, title, start, end) VALUES (?,?,?,?);",
+                -1, &stmt, nil) == SQLITE_OK else { continue }
+            sqlite3_bind_text(stmt, 1, appName, -1, transient)
+            sqlite3_bind_text(stmt, 2, title, -1, transient)
+            sqlite3_bind_double(stmt, 3, dayStart + startMin * 60)
+            sqlite3_bind_double(stmt, 4, dayStart + endMin * 60)
+            sqlite3_step(stmt)
+            sqlite3_finalize(stmt)
+        }
     }
 
     // MARK: - Helpers

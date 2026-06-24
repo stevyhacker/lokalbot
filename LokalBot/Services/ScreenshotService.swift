@@ -132,12 +132,15 @@ final class ScreenshotService: ObservableObject {
         }
     }
 
-    /// Decrypt a stored screenshot for viewing.
-    static func decrypt(path: String) -> NSImage? {
+    /// Decrypt a stored screenshot to its raw image bytes. `nonisolated` and
+    /// pure given the key, so callers can run the file read + AES open off the
+    /// main actor; the key is read on the caller's actor (cheap, cached) and
+    /// passed in. `Data` is `Sendable`, so the result crosses actors cleanly —
+    /// the (non-`Sendable`) `NSImage` is built on the consuming actor.
+    nonisolated static func decryptedData(path: String, key: SymmetricKey) -> Data? {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              let box = try? AES.GCM.SealedBox(combined: data),
-              let plain = try? AES.GCM.open(box, using: try encryptionKey()) else { return nil }
-        return NSImage(data: plain)
+              let box = try? AES.GCM.SealedBox(combined: data) else { return nil }
+        return try? AES.GCM.open(box, using: key)
     }
 
     /// Files older than the retention window are deleted; OCR text is kept
