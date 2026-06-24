@@ -138,6 +138,14 @@ final class ProcessingPipeline: ObservableObject {
             lokalbotv3Log("transcription track skipped track=\(name) reason=no-audio")
             return nil
         }
+        // Skip a track with no detected speech (e.g. your mic while muted the
+        // whole call) — feeding silence to the ASR model can hallucinate words.
+        // Conservative: only skip on a confident "nothing here"; VAD errors
+        // return nil and we transcribe anyway, never dropping real audio.
+        if let speech = await SpeechActivity.shared.speechSeconds(in: url), speech < 0.5 {
+            lokalbotv3Log("transcription track skipped track=\(name) reason=no-speech")
+            return nil
+        }
 
         let started = Date()
         lokalbotv3Log(

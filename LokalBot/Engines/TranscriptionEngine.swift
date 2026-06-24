@@ -70,6 +70,36 @@ protocol TranscriptionEngine {
     func transcribe(audio: URL, language: String?) async throws -> Transcript
 }
 
+/// Releases an idle, expensive resource (a loaded transcription model) after a
+/// quiet period — mirrors Handy's idle-unload so a long-running app doesn't pin
+/// hundreds of MB to >1 GB of CoreML weights between meetings. Call `bump()`
+/// after each use; `onIdle` runs only if nothing bumped during the interval.
+actor IdleTimer {
+    private let seconds: TimeInterval
+    private let onIdle: @Sendable () async -> Void
+    private var generation = 0
+
+    init(seconds: TimeInterval, onIdle: @escaping @Sendable () async -> Void) {
+        self.seconds = seconds
+        self.onIdle = onIdle
+    }
+
+    func bump() {
+        generation += 1
+        let scheduled = generation
+        let delay = seconds
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            await self?.fireIfIdle(scheduled)
+        }
+    }
+
+    private func fireIfIdle(_ scheduled: Int) async {
+        guard scheduled == generation else { return }   // a newer use bumped us
+        await onIdle()
+    }
+}
+
 
 /// Parakeet TDT 0.6B via FluidAudio — CoreML, in-process, runs on the
 /// Neural Engine (~190x realtime on M4). v3 = 25 European languages,
@@ -92,6 +122,7 @@ actor ParakeetEngine: TranscriptionEngine {
     private var manager: AsrManager?
     private var loadedVariant: Variant?
     private(set) var variant: Variant = .v3
+    private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.unload() }
 
     func setVariant(_ v: Variant) { variant = v }
 
@@ -112,14 +143,19 @@ actor ParakeetEngine: TranscriptionEngine {
         reportPreparationUpdate(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
+    /// Free the loaded model after an idle period (driven by `idle`).
+    private func unload() { manager = nil; loadedVariant = nil }
+
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
         try await prepare()
         guard let manager else { throw EngineError.notLoaded }
         var state = try TdtDecoderState()
         let hint = language.flatMap { Language(rawValue: $0) }
         let result = try await manager.transcribe(url, decoderState: &state, language: hint)
-        return Transcript(segments: Self.segments(from: result, speaker: "speaker"),
-                          engine: "\(loadedVariant == .v2 ? "parakeet-tdt-0.6b-v2" : "parakeet-tdt-0.6b-v3") (FluidAudio)")
+        let transcript = Transcript(segments: Self.segments(from: result, speaker: "speaker"),
+                                    engine: "\(loadedVariant == .v2 ? "parakeet-tdt-0.6b-v2" : "parakeet-tdt-0.6b-v3") (FluidAudio)")
+        await idle.bump()
+        return transcript
     }
 
     enum EngineError: LocalizedError {
@@ -195,6 +231,7 @@ actor WhisperEngine: TranscriptionEngine {
 
     private var pipe: WhisperKit?
     private let modelName = "large-v3-v20240930"
+    private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.unload() }
 
     func prepare(progress: ModelPreparationProgressHandler? = nil) async throws {
         guard pipe == nil else { return }
@@ -215,6 +252,8 @@ actor WhisperEngine: TranscriptionEngine {
         reportPreparationUpdate(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
+    private func unload() { pipe = nil }
+
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
         try await prepare()
         guard let pipe else { throw ParakeetEngine.EngineError.notLoaded }
@@ -226,13 +265,15 @@ actor WhisperEngine: TranscriptionEngine {
                                text: Transcript.normalizedText(seg.text),
                                confidence: nil)
         }.filter { !$0.text.isEmpty }
+        await idle.bump()
         return Transcript(segments: segments, engine: "whisper-large-v3-turbo (WhisperKit)")
     }
 }
 
-/// Cohere Transcribe (03-2026) via FluidAudio — CoreML int8, 23 languages
-/// incl. CJK/Arabic. The model has no token timestamps, so each track
-/// becomes one segment (Me/Them attribution still applies).
+/// Cohere Transcribe (03-2026) via FluidAudio — CoreML int8, 23 languages incl.
+/// CJK/Arabic. The model emits no timestamps, so each track is split into VAD
+/// speech regions and transcribed per region, giving real per-utterance timing
+/// (with a whole-track single-segment fallback when VAD is unavailable).
 actor CohereEngine: TranscriptionEngine {
     static let shared = CohereEngine()
     nonisolated let displayName = "Cohere Transcribe"
@@ -240,6 +281,7 @@ actor CohereEngine: TranscriptionEngine {
 
     private var models: CoherePipeline.LoadedModels?
     private let pipeline = CoherePipeline()
+    private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.unload() }
 
     func prepare(progress: ModelPreparationProgressHandler? = nil) async throws {
         guard models == nil else { return }
@@ -263,22 +305,58 @@ actor CohereEngine: TranscriptionEngine {
         reportPreparationUpdate(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
+    private func unload() { models = nil }
+
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
         try await prepare()
         guard let models else { throw ParakeetEngine.EngineError.notLoaded }
+        let lang = language.flatMap { CohereAsrConfig.Language(rawValue: $0) } ?? .english
+        let sampleRate = CohereAsrConfig.sampleRate
+
+        // Cohere returns no timestamps, so transcribe each VAD speech region
+        // (≤14 s) on its own and stamp it with the region's real start/end —
+        // real per-utterance timing without forced alignment. Falls back to one
+        // whole-track segment if VAD is unavailable or finds no regions.
+        if let analysis = await SpeechActivity.shared.speechRegions(in: url),
+           !analysis.segments.isEmpty {
+            let started = Date()
+            var segments: [Transcript.Segment] = []
+            for region in analysis.segments {
+                let lo = max(0, region.startSample(sampleRate: sampleRate))
+                let hi = min(analysis.samples.count, region.endSample(sampleRate: sampleRate))
+                guard hi > lo else { continue }
+                let chunk = Array(analysis.samples[lo..<hi])
+                let result = try await pipeline.transcribe(audio: chunk, models: models, language: lang)
+                let text = Transcript.normalizedText(result.text)
+                if !text.isEmpty {
+                    segments.append(.init(start: region.startTime, end: region.endTime,
+                                          speaker: "speaker", text: text, confidence: nil))
+                }
+            }
+            if !segments.isEmpty {
+                let total = Double(analysis.samples.count) / Double(sampleRate)
+                let elapsed = Date().timeIntervalSince(started)
+                lokalbotv3Log(
+                    "cohere profile mode=vad-segmented duration=\(Self.formatSeconds(total)) regions=\(analysis.segments.count) segments=\(segments.count) elapsed=\(Self.formatSeconds(elapsed)) rtfx=\(Self.formatMultiplier(elapsed > 0 ? total / elapsed : 0)) language=\(lang.rawValue)")
+                await idle.bump()
+                return Transcript(segments: segments,
+                                  engine: "cohere-transcribe-03-2026 (FluidAudio, vad-segmented)")
+            }
+        }
+
+        // Fallback: whole track as one segment (no timestamps).
         let conversionStarted = Date()
         let samples = try AudioConverter().resampleAudioFile(url)
         let conversionSeconds = Date().timeIntervalSince(conversionStarted)
-        let duration = Double(samples.count) / Double(CohereAsrConfig.sampleRate)
-        let lang = language.flatMap { CohereAsrConfig.Language(rawValue: $0) } ?? .english
+        let duration = Double(samples.count) / Double(sampleRate)
         let pipelineStarted = Date()
-        let result = try await pipeline.transcribeLong(audio: samples, models: models,
-                                                       language: lang)
+        let result = try await pipeline.transcribeLong(audio: samples, models: models, language: lang)
         let pipelineSeconds = Date().timeIntervalSince(pipelineStarted)
         let totalSeconds = conversionSeconds + pipelineSeconds
         let rtfx = totalSeconds > 0 ? duration / totalSeconds : 0
         lokalbotv3Log(
-            "cohere profile duration=\(Self.formatSeconds(duration)) convert=\(Self.formatSeconds(conversionSeconds)) pipeline=\(Self.formatSeconds(pipelineSeconds)) encoder=\(Self.formatSeconds(result.encoderSeconds)) decoder=\(Self.formatSeconds(result.decoderSeconds)) total=\(Self.formatSeconds(totalSeconds)) rtfx=\(Self.formatMultiplier(rtfx)) language=\(lang.rawValue)")
+            "cohere profile mode=whole-track duration=\(Self.formatSeconds(duration)) convert=\(Self.formatSeconds(conversionSeconds)) pipeline=\(Self.formatSeconds(pipelineSeconds)) encoder=\(Self.formatSeconds(result.encoderSeconds)) decoder=\(Self.formatSeconds(result.decoderSeconds)) total=\(Self.formatSeconds(totalSeconds)) rtfx=\(Self.formatMultiplier(rtfx)) language=\(lang.rawValue)")
+        await idle.bump()
         return Transcript(
             segments: ParakeetEngine.singleSegment(text: result.text, duration: duration,
                                                    speaker: "speaker"),
@@ -292,4 +370,48 @@ actor CohereEngine: TranscriptionEngine {
     private nonisolated static func formatMultiplier(_ value: Double) -> String {
         String(format: "%.2fx", value)
     }
+}
+
+/// Voice-activity gate over FluidAudio's Silero VAD. Lets the pipeline skip
+/// transcribing a track with no speech (e.g. your mic while muted for the whole
+/// call) rather than feeding silence to the ASR model, which can hallucinate
+/// text. Conservative: any error/uncertainty reports speech so a real track is
+/// never dropped. Idle-unloads the (small) VAD model like the ASR engines.
+actor SpeechActivity {
+    static let shared = SpeechActivity()
+
+    private var manager: VadManager?
+    private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.unload() }
+
+    /// Decode `url` to 16 kHz mono and split it into ≤14 s speech regions
+    /// (Silero VAD, ASR-tuned `.default` config). Returns the samples plus the
+    /// timed regions, or nil when VAD is unavailable. Each region carries a real
+    /// `startTime`/`endTime`, which lets timestamp-less engines (Cohere) emit
+    /// per-region segments instead of one block per track.
+    func speechRegions(in url: URL) async -> (samples: [Float], segments: [VadSegment])? {
+        do {
+            try await prepare()
+            guard let manager else { return nil }
+            let samples = try AudioConverter().resampleAudioFile(url)
+            let segments = try await manager.segmentSpeech(samples)
+            await idle.bump()
+            return (samples, segments)
+        } catch {
+            lokalbotv3Log("vad unavailable — transcribing without it: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Total seconds of detected speech in `url`, or nil when VAD is
+    /// unavailable — in which case the caller should transcribe anyway.
+    func speechSeconds(in url: URL) async -> Double? {
+        await speechRegions(in: url)?.segments.reduce(0.0) { $0 + $1.duration }
+    }
+
+    private func prepare() async throws {
+        guard manager == nil else { return }
+        manager = try await VadManager()
+    }
+
+    private func unload() { manager = nil }
 }
