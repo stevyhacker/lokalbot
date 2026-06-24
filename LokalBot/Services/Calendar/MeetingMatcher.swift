@@ -66,4 +66,27 @@ enum MeetingMatcher {
         }
         return AppState.meetingTitle(for: appName)
     }
+
+    /// Whether the detector should treat a meeting as in progress this tick.
+    ///
+    /// `appAudioActive` is the *meeting app's own* audio I/O (input or output).
+    /// It deliberately replaces the global "mic in use" flag for the *continue*
+    /// case: once we start recording, our own mic capture keeps the default
+    /// input device "running somewhere", so a global mic check would stay true
+    /// for the whole session and the meeting could never read as ended. The
+    /// app's per-process audio reflects only the app and falls quiet when the
+    /// call ends. `micInUse` is still used to *start* — before we record it is
+    /// the meeting app opening the mic, not us.
+    static func isMeetingOngoing(hasActiveSession: Bool,
+                                 hasRunningMeetingApp: Bool,
+                                 hasContinuingApp: Bool,
+                                 micInUse: Bool,
+                                 appAudioActive: Bool,
+                                 calendarBackedBrowserWithAudio: Bool) -> Bool {
+        let canStart = !hasActiveSession && hasRunningMeetingApp
+            && (micInUse || calendarBackedBrowserWithAudio)
+        let canContinue = hasActiveSession && (hasRunningMeetingApp || hasContinuingApp)
+            && appAudioActive
+        return canStart || canContinue
+    }
 }

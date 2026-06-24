@@ -160,15 +160,23 @@ final class MeetingDetector {
         let continuingApp = activeApp.flatMap { Self.continuingApp($0, in: running) }
         let app = runningMeetingApp ?? continuingApp
         let micInUse = Self.isMicInUse()
-        // A calendar-confirmed browser meeting may start on output audio alone —
-        // the Google Meet case where the mic is muted or the title is generic.
         let isBrowserApp = runningMeetingApp.map { Self.browsers.contains($0.bundleID) } ?? false
         let calendarBackedBrowser = isBrowserApp && calendarEnabled && calendarEvent?.meetingURL != nil
-        let canStart = activeApp == nil && runningMeetingApp != nil
-            && (micInUse || (calendarBackedBrowser && Self.hasOutputAudio(for: runningMeetingApp!)))
-        let canContinue = activeApp != nil && app != nil
-            && (micInUse || Self.hasOutputAudio(for: app!))
-        let inMeeting = canStart || canContinue
+        // Continuation hinges on the meeting app's OWN audio (input or output),
+        // not the global mic flag: once recording starts, our mic capture keeps
+        // the default input "running", which would otherwise pin the meeting
+        // open forever (the "never stops" bug). Start still uses the global mic
+        // — before recording it is the meeting app's mic, not ours.
+        let appAudioActive = app.map { Self.hasAudio(for: $0) } ?? false
+        let calendarBackedBrowserWithAudio = calendarBackedBrowser
+            && (runningMeetingApp.map { Self.hasOutputAudio(for: $0) } ?? false)
+        let inMeeting = MeetingMatcher.isMeetingOngoing(
+            hasActiveSession: activeApp != nil,
+            hasRunningMeetingApp: runningMeetingApp != nil,
+            hasContinuingApp: continuingApp != nil,
+            micInUse: micInUse,
+            appAudioActive: appAudioActive,
+            calendarBackedBrowserWithAudio: calendarBackedBrowserWithAudio)
 
         if inMeeting, let app {
             pendingStop?.cancel()
@@ -286,6 +294,21 @@ final class MeetingDetector {
             return bestBrowserAudioProcess(forBrowserBundleID: app.bundleID) != nil
         }
         return CoreAudioUtils.isProcessRunningOutput(pid: app.pid)
+    }
+
+    /// The meeting app's own audio activity — output, or (native apps only)
+    /// input. Used for the *continue* decision so it reflects the app rather
+    /// than our recorder's hold on the default input device.
+    private static func hasAudio(for app: DetectedApp) -> Bool {
+        hasOutputAudio(for: app) || hasInputAudio(for: app)
+    }
+
+    private static func hasInputAudio(for app: DetectedApp) -> Bool {
+        // Browser mic capture lives in helper processes we don't track here, so
+        // browsers rely on output audio. For native apps the per-process input
+        // flag is the app's own mic use — never our recorder's.
+        guard !browsers.contains(app.bundleID) else { return false }
+        return CoreAudioUtils.isProcessRunningInput(pid: app.pid)
     }
 
     // MARK: - Core Audio: is any process using the default input device?

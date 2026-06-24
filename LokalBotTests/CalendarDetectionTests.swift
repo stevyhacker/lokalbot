@@ -211,6 +211,55 @@ final class CalendarDetectionTests: XCTestCase {
         XCTAssertEqual(MeetingMatcher.confidence(hasApp: false, hasCalendar: true), .low)
     }
 
+    // MARK: - In-meeting policy (start / continue / stop)
+
+    /// Regression: once recording starts, our own mic recorder keeps the global
+    /// "mic in use" flag true. The continue decision must ignore it and key off
+    /// the meeting app's OWN audio — otherwise the meeting never reads as ended
+    /// and recording never stops.
+    func testRecordingMicDoesNotKeepMeetingAliveWhenAppAudioStops() {
+        XCTAssertFalse(MeetingMatcher.isMeetingOngoing(
+            hasActiveSession: true, hasRunningMeetingApp: true, hasContinuingApp: true,
+            micInUse: true, appAudioActive: false, calendarBackedBrowserWithAudio: false),
+            "global mic (our own recorder) must not keep an otherwise-silent meeting open")
+    }
+
+    func testContinuesWhileAppAudioActive() {
+        XCTAssertTrue(MeetingMatcher.isMeetingOngoing(
+            hasActiveSession: true, hasRunningMeetingApp: true, hasContinuingApp: true,
+            micInUse: false, appAudioActive: true, calendarBackedBrowserWithAudio: false))
+    }
+
+    func testEndsWhenAppGoneRegardlessOfMic() {
+        XCTAssertFalse(MeetingMatcher.isMeetingOngoing(
+            hasActiveSession: true, hasRunningMeetingApp: false, hasContinuingApp: false,
+            micInUse: true, appAudioActive: true, calendarBackedBrowserWithAudio: false))
+    }
+
+    func testStartsOnMeetingAppPlusMic() {
+        XCTAssertTrue(MeetingMatcher.isMeetingOngoing(
+            hasActiveSession: false, hasRunningMeetingApp: true, hasContinuingApp: false,
+            micInUse: true, appAudioActive: false, calendarBackedBrowserWithAudio: false))
+    }
+
+    func testDoesNotStartWithoutMicOrCalendarAudio() {
+        XCTAssertFalse(MeetingMatcher.isMeetingOngoing(
+            hasActiveSession: false, hasRunningMeetingApp: true, hasContinuingApp: false,
+            micInUse: false, appAudioActive: false, calendarBackedBrowserWithAudio: false))
+    }
+
+    func testStartsCalendarBackedBrowserOnOutputAudio() {
+        XCTAssertTrue(MeetingMatcher.isMeetingOngoing(
+            hasActiveSession: false, hasRunningMeetingApp: true, hasContinuingApp: false,
+            micInUse: false, appAudioActive: false, calendarBackedBrowserWithAudio: true))
+    }
+
+    func testContinuesViaContinuingAppAfterRunningAppDropsOut() {
+        XCTAssertTrue(MeetingMatcher.isMeetingOngoing(
+            hasActiveSession: true, hasRunningMeetingApp: false, hasContinuingApp: true,
+            micInUse: false, appAudioActive: true, calendarBackedBrowserWithAudio: false))
+    }
+
     // MARK: - Provider access gating (denied → no candidates)
 
     func testProviderYieldsNothingWhenAccessDenied() {

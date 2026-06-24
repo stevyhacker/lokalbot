@@ -97,6 +97,22 @@ enum CoreAudioUtils {
         return isProcessRunningOutput(objectID: processObject)
     }
 
+    static func isProcessRunningInput(objectID: AudioObjectID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioProcessPropertyIsRunningInput,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var isRunning: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        let err = AudioObjectGetPropertyData(objectID, &address, 0, nil, &size, &isRunning)
+        return err == noErr && isRunning == 1
+    }
+
+    static func isProcessRunningInput(pid: pid_t) -> Bool {
+        guard let processObject = translatePIDToProcessObject(pid: pid) else { return false }
+        return isProcessRunningInput(objectID: processObject)
+    }
+
     /// Core Audio returns the CFString +1 (Create Rule); take it as
     /// `Unmanaged` so ownership is explicit — passing `&CFString` is flagged
     /// unsafe because it forms a raw pointer to an ARC-managed reference.
