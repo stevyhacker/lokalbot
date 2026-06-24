@@ -21,9 +21,16 @@ struct TimelineView: View {
     @State private var asking = false
     @State private var selection: ActivityBlock.ID?
     @State private var inspectorTab: InspectorTab = .totals
-    /// Inspector (digest/totals/ask) width — the pane the user resizes. Track
-    /// fills the rest, so widening the digest narrows the track. Persisted.
-    @AppStorage("timeline.inspectorWidth") private var inspectorWidth = 560.0
+    /// Inspector (digest/totals/ask) width — the pane the user resizes; the
+    /// track fills the rest, so widening the digest narrows the track. Floored
+    /// at `minInspectorWidth` (it can grow, never shrink past it) and persisted.
+    private let minInspectorWidth: CGFloat = 710
+    private let trackFloorWidth: CGFloat = 160
+    @AppStorage("timeline.inspectorWidth") private var inspectorWidth = 710.0
+    /// Live width while the divider is dragged (nil otherwise). Driving the drag
+    /// through @State rather than @AppStorage keeps it fluid — UserDefaults is
+    /// written once on release, not on every drag tick.
+    @State private var dragInspectorWidth: Double?
     @State private var inspectorDragStart: Double?
 
     private enum InspectorTab: String, CaseIterable, Identifiable {
@@ -56,8 +63,9 @@ struct TimelineView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
                 GeometryReader { geo in
-                    let maxInspector = max(360, geo.size.width - 260)
-                    let width = min(CGFloat(inspectorWidth), maxInspector)
+                    let maxInspector = max(200, geo.size.width - trackFloorWidth)
+                    let base = dragInspectorWidth ?? inspectorWidth
+                    let width = min(maxInspector, max(minInspectorWidth, CGFloat(base)))
                     HStack(spacing: 0) {
                         mainPane
                         inspectorDivider(maxInspector: maxInspector)
@@ -85,9 +93,9 @@ struct TimelineView: View {
         }
     }
 
-    /// Draggable handle between track and inspector. The inspector width is
-    /// what the user controls (persisted via `@AppStorage`); `maxInspector`
-    /// (from the live container width) keeps the track usably wide.
+    /// Draggable handle between track and inspector. Dragging updates a
+    /// transient @State width (committed to @AppStorage on release, so the
+    /// resize stays fluid); `maxInspector` comes from the live container width.
     private func inspectorDivider(maxInspector: CGFloat) -> some View {
         Rectangle()
             .fill(Color(nsColor: .separatorColor))
@@ -104,10 +112,15 @@ struct TimelineView: View {
                             .onChanged { value in
                                 if inspectorDragStart == nil { inspectorDragStart = inspectorWidth }
                                 let base = inspectorDragStart ?? inspectorWidth
-                                inspectorWidth = min(Double(maxInspector),
-                                                     max(360, base - Double(value.translation.width)))
+                                let proposed = base - Double(value.translation.width)
+                                dragInspectorWidth = Double(min(maxInspector,
+                                                                max(minInspectorWidth, CGFloat(proposed))))
                             }
-                            .onEnded { _ in inspectorDragStart = nil }
+                            .onEnded { _ in
+                                if let dragInspectorWidth { inspectorWidth = dragInspectorWidth }
+                                dragInspectorWidth = nil
+                                inspectorDragStart = nil
+                            }
                     )
             }
     }

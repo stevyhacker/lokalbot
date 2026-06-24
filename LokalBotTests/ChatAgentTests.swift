@@ -301,6 +301,71 @@ final class ChatAgentTests: XCTestCase {
         XCTAssertTrue(miss.text.contains("No meeting matches"), "miss: \(miss.text)")
     }
 
+    // MARK: - FTS query relaxation
+
+    func testFtsQueryStrictAndsTermsButRelaxesOnRequest() {
+        // Default: quote + AND every term, prefix-match the last (search-as-you-type).
+        XCTAssertEqual(SearchIndex.ftsQuery(from: "what did we decide about caching"),
+                       #""what" "did" "we" "decide" "about" "caching" *"#)
+        // Relaxed: drop stop words, OR the content terms for recall.
+        XCTAssertEqual(
+            SearchIndex.ftsQuery(from: "what did we decide about caching",
+                                 matchAll: false, dropStopWords: true),
+            #""decide" OR "caching""#)
+        // All terms are stop words → keep them rather than emit an empty query.
+        XCTAssertEqual(
+            SearchIndex.ftsQuery(from: "what did we", matchAll: false, dropStopWords: true),
+            #""what" OR "did" OR "we""#)
+        XCTAssertNil(SearchIndex.ftsQuery(from: "   "))
+    }
+
+    func testSearchRescuesNaturalLanguageQuery() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lokalbot-nlsearch-\(UUID().uuidString)", isDirectory: true)
+        setenv("LOKALBOTV3_STORAGE_ROOT", root.path, 1)
+        defer {
+            unsetenv("LOKALBOTV3_STORAGE_ROOT")
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let storage = StorageManager()
+        let meeting = Meeting(
+            id: UUID(uuidString: "22222222-3333-4444-8555-666666666666")!,
+            title: "Caching strategy", appName: "Zoom",
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            endedAt: Date(timeIntervalSince1970: 1_700_001_800),
+            relativePath: "meetings/2026/06/nlsearch", hasSystemTrack: true)
+        let folder = meeting.folderURL(in: storage)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let transcript = Transcript(segments: [
+            .init(start: 10, end: 16, speaker: "me",
+                  text: "We will use Redis for caching going forward.", confidence: nil),
+        ], engine: "test")
+        try JSONEncoder().encode(transcript)
+            .write(to: folder.appendingPathComponent("transcript.json"))
+
+        let sqlite = storage.rootURL.appendingPathComponent("lokalbotv3.sqlite")
+        let searchIndex = SearchIndex(databaseURL: sqlite)
+        searchIndex.reindex(meeting, storage: storage)
+        let embeddingIndex = EmbeddingIndex(databaseURL: sqlite, storage: storage)
+
+        var settings = AppSettings()
+        settings.semanticSearchEnabled = false      // no embed server in tests
+
+        let tools = MeetingChatTools(
+            meetings: { [meeting] }, storage: storage,
+            searchIndex: searchIndex, embeddingIndex: embeddingIndex,
+            settings: { settings })
+
+        // Strict FTS ANDs every stop word and finds nothing on the raw question…
+        XCTAssertTrue(searchIndex.search("what did we decide about caching").isEmpty)
+        // …but the chat tool's keyword fallback rescues the content terms.
+        let search = await tools.run(ChatToolCall(name: "search_meetings",
+                                                  arguments: ["query": "what did we decide about caching"]))
+        XCTAssertFalse(search.text.contains("No matches"), "search: \(search.text)")
+        XCTAssertTrue(search.text.contains("Caching strategy"), "search: \(search.text)")
+    }
+
     // MARK: - Helpers
 
     private func sampleMeeting(title: String) -> Meeting {

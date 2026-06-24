@@ -180,7 +180,13 @@ final class MeetingChatTools: ChatToolRunner {
             return ChatToolResult(text: "Provide a 'query' argument.", summary: "missing query")
         }
         let meetings = meetingsProvider()
-        let keyword = searchIndex.search(query, limit: 8)
+        var keyword = searchIndex.search(query, limit: 8)
+        if keyword.isEmpty {
+            // A natural-language question ANDs every stop word against the index and
+            // misses; retry on content keywords with OR semantics (ranked by FTS)
+            // before reporting nothing.
+            keyword = searchIndex.search(query, limit: 8, matchAll: false, dropStopWords: true)
+        }
         var semantic: [EmbeddingIndex.Hit] = []
         if settingsProvider().semanticSearchEnabled, embeddingIndex.hasEmbeddings {
             // Drop semantic chunks already surfaced by keyword search.

@@ -87,10 +87,15 @@ final class SearchIndex {
 
     // MARK: - Query
 
-    /// FTS5 search; terms are AND-ed, the last gets prefix matching so
-    /// search-as-you-type works. `kind` nil = all kinds.
-    func search(_ query: String, kind: Kind? = nil, limit: Int = 60) -> [Hit] {
-        guard let match = Self.ftsQuery(from: query), let database else { return [] }
+    /// FTS5 search. By default terms are AND-ed and the last gets prefix matching
+    /// (search-as-you-type). `matchAll: false` ORs the terms for recall, and
+    /// `dropStopWords` strips function words first — both used by the chat tool to
+    /// rescue natural-language questions. `kind` nil = all kinds.
+    func search(_ query: String, kind: Kind? = nil, limit: Int = 60,
+                matchAll: Bool = true, dropStopWords: Bool = false) -> [Hit] {
+        guard let match = Self.ftsQuery(from: query, matchAll: matchAll,
+                                        dropStopWords: dropStopWords),
+              let database else { return [] }
         var sql = """
             SELECT meeting_id, kind, start, speaker,
                    snippet(docs, 0, '«', '»', '…', 14)
@@ -119,13 +124,38 @@ final class SearchIndex {
         }
     }
 
+    /// Common English function words that carry no retrieval signal. Stripped
+    /// from natural-language queries (`dropStopWords`) so a question like
+    /// "what did we decide about caching" doesn't AND `what/did/we/about`
+    /// against the index and return nothing.
+    static let stopWords: Set<String> = [
+        "a", "an", "the", "and", "or", "but", "if", "of", "to", "in", "on", "at",
+        "for", "with", "about", "as", "by", "from", "into", "is", "are", "was",
+        "were", "be", "been", "being", "do", "does", "did", "doing", "have", "has",
+        "had", "what", "when", "where", "who", "whom", "which", "why", "how",
+        "we", "i", "you", "he", "she", "it", "they", "me", "us", "them", "my",
+        "our", "your", "this", "that", "these", "those", "can", "could", "would",
+        "should", "will", "shall", "may", "might", "must", "any", "some", "there",
+    ]
+
     /// "fts5 syntax" is user-hostile; quote each term so punctuation can't
-    /// produce a syntax error, and prefix-match the final term.
-    static func ftsQuery(from raw: String) -> String? {
-        let terms = raw.split(whereSeparator: \.isWhitespace)
+    /// produce a syntax error. `matchAll` ANDs the terms and prefix-matches the
+    /// final one (search-as-you-type); pass `matchAll: false` to OR them for
+    /// recall. `dropStopWords` strips function words first, keeping the originals
+    /// only when every term was a stop word.
+    static func ftsQuery(from raw: String, matchAll: Bool = true,
+                         dropStopWords: Bool = false) -> String? {
+        var terms = raw.split(whereSeparator: \.isWhitespace)
             .map { $0.replacingOccurrences(of: "\"", with: "") }
             .filter { !$0.isEmpty }
+        if dropStopWords {
+            let content = terms.filter { !stopWords.contains($0.lowercased()) }
+            if !content.isEmpty { terms = content }
+        }
         guard !terms.isEmpty else { return nil }
+        guard matchAll else {
+            return terms.map { "\"\($0)\"" }.joined(separator: " OR ")
+        }
         return terms.enumerated()
             .map { index, term in
                 index == terms.count - 1 ? "\"\(term)\" *" : "\"\(term)\""

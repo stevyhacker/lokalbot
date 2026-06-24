@@ -266,14 +266,30 @@ actor CohereEngine: TranscriptionEngine {
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
         try await prepare()
         guard let models else { throw ParakeetEngine.EngineError.notLoaded }
+        let conversionStarted = Date()
         let samples = try AudioConverter().resampleAudioFile(url)
+        let conversionSeconds = Date().timeIntervalSince(conversionStarted)
         let duration = Double(samples.count) / Double(CohereAsrConfig.sampleRate)
         let lang = language.flatMap { CohereAsrConfig.Language(rawValue: $0) } ?? .english
+        let pipelineStarted = Date()
         let result = try await pipeline.transcribeLong(audio: samples, models: models,
                                                        language: lang)
+        let pipelineSeconds = Date().timeIntervalSince(pipelineStarted)
+        let totalSeconds = conversionSeconds + pipelineSeconds
+        let rtfx = totalSeconds > 0 ? duration / totalSeconds : 0
+        lokalbotv3Log(
+            "cohere profile duration=\(Self.formatSeconds(duration)) convert=\(Self.formatSeconds(conversionSeconds)) pipeline=\(Self.formatSeconds(pipelineSeconds)) encoder=\(Self.formatSeconds(result.encoderSeconds)) decoder=\(Self.formatSeconds(result.decoderSeconds)) total=\(Self.formatSeconds(totalSeconds)) rtfx=\(Self.formatMultiplier(rtfx)) language=\(lang.rawValue)")
         return Transcript(
             segments: ParakeetEngine.singleSegment(text: result.text, duration: duration,
                                                    speaker: "speaker"),
             engine: "cohere-transcribe-03-2026 (FluidAudio)")
+    }
+
+    private nonisolated static func formatSeconds(_ seconds: TimeInterval) -> String {
+        String(format: "%.2fs", seconds)
+    }
+
+    private nonisolated static func formatMultiplier(_ value: Double) -> String {
+        String(format: "%.2fx", value)
     }
 }

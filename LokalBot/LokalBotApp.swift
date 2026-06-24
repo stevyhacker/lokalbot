@@ -313,6 +313,7 @@ final class AppState: ObservableObject {
     private var audioMonitorObserver: AnyCancellable?
     private var audioMonitorChangeForwarder: AnyCancellable?
     private var calendarObserver: AnyCancellable?
+    private var transcriptionPrewarmTask: Task<Void, Never>?
     /// Calendar event id + stop time of the last calendar-backed recording, so
     /// the same scheduled meeting can't immediately re-record (helper-PID churn,
     /// brief audio drops). See `MeetingMatcher.shouldSuppressRepeat`.
@@ -515,6 +516,7 @@ final class AppState: ObservableObject {
                 startRecordingTick()
                 if interactive {
                     RecordingNotifier.shared.recordingStarted(title: meeting.title)
+                    prewarmSelectedTranscriptionModel(reason: source)
                 }
             } catch {
                 lastError = "Could not start recording: \(error.localizedDescription)"
@@ -522,6 +524,35 @@ final class AppState: ObservableObject {
                 // Don't leave a 0-minute husk in the library.
                 if let husk = created { storage.deleteMeeting(husk) }
             }
+        }
+    }
+
+    private func prewarmSelectedTranscriptionModel(reason: String) {
+        guard settings.autoTranscribe else { return }
+        guard transcriptionPrewarmTask == nil else { return }
+        let choice = settings.transcriptionModel
+        transcriptionPrewarmTask = Task { [weak self, choice, reason] in
+            let started = Date()
+            lokalbotv3Log("transcription prewarm start model=\(choice.rawValue) reason=\(reason)")
+            do {
+                switch choice {
+                case .parakeetV3:
+                    await ParakeetEngine.shared.setVariant(.v3)
+                    try await ParakeetEngine.shared.prepare()
+                case .parakeetV2:
+                    await ParakeetEngine.shared.setVariant(.v2)
+                    try await ParakeetEngine.shared.prepare()
+                case .whisperLarge:
+                    try await WhisperEngine.shared.prepare()
+                case .cohere:
+                    try await CohereEngine.shared.prepare()
+                }
+                let elapsed = Date().timeIntervalSince(started)
+                lokalbotv3Log("transcription prewarm ready model=\(choice.rawValue) elapsed=\(String(format: "%.2fs", elapsed))")
+            } catch {
+                lokalbotv3Log("transcription prewarm FAILED model=\(choice.rawValue): \(error.localizedDescription)")
+            }
+            await MainActor.run { self?.transcriptionPrewarmTask = nil }
         }
     }
 
@@ -771,10 +802,12 @@ final class AppState: ObservableObject {
                 }
                 print("LokalBotV3 --chat: \(answer)")
                 await LlamaServer.shared.stop()
+                await LlamaServer.embedder.stop()
                 exit(0)
             } catch {
                 print("LokalBotV3 --chat: FAILED — \(error.localizedDescription)")
                 await LlamaServer.shared.stop()
+                await LlamaServer.embedder.stop()
                 exit(1)
             }
         }

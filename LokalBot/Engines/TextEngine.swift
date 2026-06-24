@@ -320,6 +320,13 @@ struct OpenAICompatibleEngine: TextEngine {
 private func send(_ request: URLRequest, base: URL) async throws -> (Data, URLResponse) {
     do {
         return try await llmSession.data(for: request)
+    } catch is CancellationError {
+        throw CancellationError()
+    } catch let error as URLError where error.code == .cancelled {
+        // Task cancelled mid-request (e.g. the user pressed Stop): surface it as
+        // cancellation, not an unreachable-server error, so callers can tell the
+        // difference.
+        throw CancellationError()
     } catch {
         throw TextEngineError.serverUnreachable(base.absoluteString)
     }

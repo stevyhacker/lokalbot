@@ -113,21 +113,51 @@ final class ProcessingPipeline: ObservableObject {
         var tracks: [Transcript] = []
 
         let micURL = folder.appendingPathComponent("mic.m4a")
-        if AudioFileInspector.isTranscribableAudio(at: micURL) {
-            var t = try await engine.transcribe(audio: micURL, language: language)
-            for i in t.segments.indices { t.segments[i].speaker = "me" }
-            tracks.append(t)
+        if let transcript = try await transcribeTrack(name: "mic", url: micURL,
+                                                      speaker: "me", engine: engine,
+                                                      language: language) {
+            tracks.append(transcript)
         }
         let systemURL = folder.appendingPathComponent("system.m4a")
-        if AudioFileInspector.isTranscribableAudio(at: systemURL) {
-            var t = try await engine.transcribe(audio: systemURL, language: language)
-            for i in t.segments.indices { t.segments[i].speaker = "them" }
-            tracks.append(t)
+        if let transcript = try await transcribeTrack(name: "system", url: systemURL,
+                                                      speaker: "them", engine: engine,
+                                                      language: language) {
+            tracks.append(transcript)
         }
         guard !tracks.isEmpty else {
             throw PipelineError.noAudio
         }
         return Transcript.merged(tracks)
+    }
+
+    private func transcribeTrack(name: String, url: URL, speaker: String,
+                                 engine: TranscriptionEngine,
+                                 language: String?) async throws -> Transcript? {
+        guard let duration = AudioFileInspector.duration(at: url),
+              duration >= AudioFileInspector.minimumTranscribableDuration else {
+            lokalbotv3Log("transcription track skipped track=\(name) reason=no-audio")
+            return nil
+        }
+
+        let started = Date()
+        lokalbotv3Log(
+            "transcription track start track=\(name) engine=\(engine.displayName) duration=\(Self.formatSeconds(duration)) language=\(language ?? "auto")")
+        var transcript = try await engine.transcribe(audio: url, language: language)
+        for i in transcript.segments.indices { transcript.segments[i].speaker = speaker }
+
+        let elapsed = Date().timeIntervalSince(started)
+        let rtfx = elapsed > 0 ? duration / elapsed : 0
+        lokalbotv3Log(
+            "transcription track done track=\(name) engine=\(engine.displayName) duration=\(Self.formatSeconds(duration)) elapsed=\(Self.formatSeconds(elapsed)) rtfx=\(Self.formatMultiplier(rtfx)) segments=\(transcript.segments.count)")
+        return transcript
+    }
+
+    private static func formatSeconds(_ seconds: TimeInterval) -> String {
+        String(format: "%.2fs", seconds)
+    }
+
+    private static func formatMultiplier(_ value: Double) -> String {
+        String(format: "%.2fx", value)
     }
 
     /// Optionally split the catch-all "them" speaker into "Them 1" / "Them 2"
