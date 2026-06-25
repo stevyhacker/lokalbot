@@ -38,7 +38,7 @@ struct LokalBotV3App: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        WindowGroup("LokalBotV3", id: "main") {
+        Window("LokalBotV3", id: "main") {
             MainWindowView()
                 .environmentObject(app)
         }
