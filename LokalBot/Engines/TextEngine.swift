@@ -292,6 +292,7 @@ struct OpenAICompatibleEngine: TextEngine {
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         var accumulated = ""
+        var tokenLikeChunks = 0
         do {
             let (bytes, response) = try await completionSession.bytes(for: urlRequest)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
@@ -300,7 +301,14 @@ struct OpenAICompatibleEngine: TextEngine {
             for try await line in bytes.lines {
                 if let delta = cotypingParseSSEDelta(line) {
                     accumulated += delta
+                    tokenLikeChunks += 1
                     onPartial(accumulated)
+                    if CotypingDecodeStopPolicy.verdict(
+                        accumulated: accumulated,
+                        tokensGenerated: tokenLikeChunks
+                    ) != nil {
+                        break
+                    }
                 }
             }
         } catch let error as URLError where error.code == .cancelled {

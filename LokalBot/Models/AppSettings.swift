@@ -108,13 +108,17 @@ struct AppSettings: Codable {
     /// keystrokes in some hosts). On by default; briefly uses the clipboard and
     /// restores it.
     var cotypingPasteInsertion: Bool = true
-    /// Soft length target; drives the per-request token budget. Kept short (a
-    /// few words) so suggestions are quick to read and accept.
-    var cotypingMaxWords: Int = 4
+    /// Soft length target; drives the per-request token budget. The default
+    /// mirrors Cotypist/Cotabby's longest shipped preset (12-20 words).
+    var cotypingMaxWords: Int = 20
     /// Idle time after the last keystroke before asking the model. Low so the
-    /// suggestion feels near-instant (Cotypist-style); the floor is the HTTP
-    /// round-trip, not in-process decode like Cotabby/Cotypist.
-    var cotypingDebounceMs: Int = 150
+    /// suggestion feels near-instant and matches Cotypist/Cotabby's shipped
+    /// debounce window.
+    var cotypingDebounceMs: Int = 20
+    /// Paint partial suggestions token-by-token while the model is decoding.
+    /// Off by default to match Cotypist/Cotabby's shipped behavior: suggestions
+    /// appear once, fully formed, after normalization.
+    var cotypingStreamSuggestionsWhileGenerating: Bool = false
     /// How much the primary accept key takes (the full-accept key always takes all).
     var cotypingAcceptGranularity: CotypingAcceptGranularity = .word
     /// Primary accept key (next word/phrase) and the full-accept key (whole tail).
@@ -194,9 +198,12 @@ struct AppSettings: Codable {
             extendedContext: notes.isEmpty ? nil : notes)
     }
 
-    /// Token ceiling for one completion (≈3 tokens/word, with a small floor).
+    /// Token ceiling for one completion. Matches Cotypist/Cotabby's English
+    /// default: ceil(words * 1.3), floor 5, doubled for multi-line up to 120.
     var cotypingMaxResponseTokens: Int {
-        max(8, min(120, cotypingMaxWords * 3))
+        let languageAware = (cotypingMaxWords * 13 + 9) / 10
+        let base = max(5, languageAware)
+        return cotypingMultiLine ? min(base * 2, 120) : min(base, 120)
     }
 
     /// Settings the cotyping engine builds its `TextEngine` from. With a
@@ -250,6 +257,7 @@ struct AppSettings: Codable {
         case cotypingPasteInsertion
         case cotypingMaxWords
         case cotypingDebounceMs
+        case cotypingStreamSuggestionsWhileGenerating
         case cotypingAcceptGranularity
         case cotypingAcceptKey
         case cotypingFullAcceptKey
@@ -323,6 +331,7 @@ struct AppSettings: Codable {
         try c.encode(cotypingPasteInsertion, forKey: .cotypingPasteInsertion)
         try c.encode(cotypingMaxWords, forKey: .cotypingMaxWords)
         try c.encode(cotypingDebounceMs, forKey: .cotypingDebounceMs)
+        try c.encode(cotypingStreamSuggestionsWhileGenerating, forKey: .cotypingStreamSuggestionsWhileGenerating)
         try c.encode(cotypingAcceptGranularity, forKey: .cotypingAcceptGranularity)
         try c.encode(cotypingAcceptKey, forKey: .cotypingAcceptKey)
         try c.encode(cotypingFullAcceptKey, forKey: .cotypingFullAcceptKey)
@@ -385,6 +394,7 @@ struct AppSettings: Codable {
         cotypingPasteInsertion = (try? c.decode(Bool.self, forKey: .cotypingPasteInsertion)) ?? defaults.cotypingPasteInsertion
         cotypingMaxWords = (try? c.decode(Int.self, forKey: .cotypingMaxWords)) ?? defaults.cotypingMaxWords
         cotypingDebounceMs = (try? c.decode(Int.self, forKey: .cotypingDebounceMs)) ?? defaults.cotypingDebounceMs
+        cotypingStreamSuggestionsWhileGenerating = (try? c.decode(Bool.self, forKey: .cotypingStreamSuggestionsWhileGenerating)) ?? defaults.cotypingStreamSuggestionsWhileGenerating
         cotypingAcceptGranularity = (try? c.decode(CotypingAcceptGranularity.self, forKey: .cotypingAcceptGranularity)) ?? defaults.cotypingAcceptGranularity
         cotypingAcceptKey = (try? c.decode(CotypingAcceptKey.self, forKey: .cotypingAcceptKey)) ?? defaults.cotypingAcceptKey
         cotypingFullAcceptKey = (try? c.decode(CotypingFullAcceptKey.self, forKey: .cotypingFullAcceptKey)) ?? defaults.cotypingFullAcceptKey

@@ -99,8 +99,8 @@ struct CotypingConfiguration: Sendable, Equatable {
     static let standard = CotypingConfiguration(
         maxPrefixCharacters: 2500,
         maxPrefixWords: 150,
-        maxResponseTokens: 24,
-        maxResponseWords: 4,
+        maxResponseTokens: 26,
+        maxResponseWords: 20,
         temperature: 0.1,
         topP: 0.7,
         topK: 20,

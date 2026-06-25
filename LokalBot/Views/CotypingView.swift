@@ -324,6 +324,19 @@ private struct CotypingContent: View {
 private struct CotypingBenchmarkResultRow: View {
     let result: CotypingBenchmarkCaseResult
 
+    private var detailText: String {
+        if let error = result.error { return error }
+        if let suppression = result.suppression { return "Suppressed: \(suppression.rawValue)" }
+        return result.text
+    }
+
+    private var latencyText: String {
+        if let first = result.firstVisibleLatencyMs {
+            return "\(first) ms first / \(result.latencyMs) ms final"
+        }
+        return "\(result.latencyMs) ms final"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
@@ -331,11 +344,11 @@ private struct CotypingBenchmarkResultRow: View {
                     .foregroundStyle(result.passed ? .green : .orange)
                 Text(result.name).font(.caption)
                 Spacer()
-                Text("\(result.latencyMs) ms")
+                Text(latencyText)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            Text(result.error ?? result.text)
+            Text(detailText)
                 .font(.caption2)
                 .foregroundStyle(result.error == nil ? Color.secondary : Color.orange)
                 .lineLimit(2)

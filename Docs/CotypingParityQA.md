@@ -2,6 +2,15 @@
 
 This checklist keeps LokalBot's cotyping work aligned with the quality bar observed in Cotypist: a dedicated local model, prompt context, accepted-completion learning, streaming feedback, and measurable latency.
 
+Parity defaults:
+
+- Gemma 4 E4B Q5 XL is the recommended cotyping model.
+- Suggestion length defaults to 20 words, matching Cotypist/Cotabby's 12-20 word preset upper bound.
+- Debounce defaults to 20 ms.
+- Streaming partial suggestions default off, matching Cotypist/Cotabby.
+- Completion token budget follows Cotypist/Cotabby's English baseline: `ceil(words * 1.3)`, floor 5, doubled for multi-line up to 120.
+- The dedicated cotyping `llama-server` launches with a 2048-token context window, matching Cotypist/Cotabby's local llama runtime configuration.
+
 ## Automated Check
 
 Run the in-app Cotyping tab's "Run cotyping check" action after selecting the intended model. It exercises the default benchmark scenarios in `CotypingBenchmarkScenario.defaults`:
@@ -9,14 +18,20 @@ Run the in-app Cotyping tab's "Run cotyping check" action after selecting the in
 - Email follow-up
 - Chat ownership
 - Browser prose
-- Mid-word continuation
+- Mid-word safety
 
 Passing target:
 
-- Every scenario returns non-empty safe text.
-- No scenario is suppressed by duplication, echo, or insertion-safety gates.
+- Normal scenarios return non-empty safe text.
+- Safety scenarios may suppress when the model proposes an unsafe mid-word join
+  or trailing-text duplication.
 - p95 latency is at or below 2000 ms.
 - Expected-term hits are reviewed as a quality signal, not a hard pass/fail.
+
+Exact runtime parity is not complete while LokalBot runs suggestions through its
+dedicated HTTP `llama-server` process and Cotypist/Cotabby use an in-process
+llama.cpp runtime with prefix-state reuse. Treat the benchmark as a product
+quality check until the runtime path is shared or ported.
 
 ## Manual Side-by-Side
 
@@ -48,6 +63,18 @@ region as one PNG per prompt. It requires
 Accessibility for the shell and Screen Recording for `screencapture`.
 Set `COTYPING_COMPARE_FIRST_WAIT_SECONDS` or `COTYPING_COMPARE_WAIT_SECONDS` if
 the first Q5 XL model load needs more time on a cold run.
+
+For repeatable backend latency/output checks against LokalBot's dedicated
+Gemma Q5 XL `llama-server`:
+
+```bash
+Benchmarks/Cotyping/run_llama_server_benchmark.py --surface-context --repetitions 3
+```
+
+This records first streamed chunk latency, final latency, stop reason and raw
+model text for the same prompts. It is a backend microbenchmark, not a UI
+parity test; use it to verify prompt/sampling/server changes before doing the
+side-by-side screenshot pass.
 
 ## Local Learning Check
 

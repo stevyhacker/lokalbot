@@ -8,7 +8,8 @@ import Foundation
 /// whitespace. LokalBot talks to an HTTP `llama-server`, so it can't mask a
 /// token mid-generation; instead `CotypingTextNormalizer` reproduces the same
 /// outcome at the output layer using these pure helpers: never re-type the
-/// current partial word, and (strictly inside) never begin with whitespace.
+/// current partial word, and (strictly inside) never begin with whitespace or an
+/// incompatible word tail.
 enum CotypingMidWord {
     /// True only when the caret is strictly inside a word — a letter/digit
     /// immediately before AND after it. At a word end (nothing or punctuation

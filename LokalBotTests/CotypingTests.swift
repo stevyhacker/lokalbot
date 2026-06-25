@@ -198,13 +198,23 @@ final class CotypingModelPreparationTests: XCTestCase {
 @MainActor
 private final class StaticCotypingEngine: CotypingCompleting {
     var output: String
+    var partial: String?
 
-    init(output: String) {
+    init(output: String, partial: String? = nil) {
         self.output = output
+        self.partial = partial
     }
 
     func generate(_ request: CotypingRequest) async throws -> CotypingNormalizationResult {
         CotypingNormalizationResult(text: output, suppression: nil)
+    }
+
+    func generateStreaming(_ request: CotypingRequest,
+                           onPartial: @escaping @Sendable (CotypingNormalizationResult) -> Void) async throws -> CotypingNormalizationResult {
+        if let partial {
+            onPartial(CotypingNormalizationResult(text: partial, suppression: nil))
+        }
+        return CotypingNormalizationResult(text: output, suppression: nil)
     }
 }
 
@@ -216,25 +226,95 @@ final class CotypingBenchmarkTests: XCTestCase {
             scenario: scenario,
             text: " up with the final numbers today",
             suppression: nil,
-            latencyMs: 120)
+            latencyMs: 220,
+            firstVisibleLatencyMs: 120)
 
         XCTAssertTrue(result.passedSafety)
         XCTAssertTrue(result.metLatencyTarget)
         XCTAssertTrue(result.passed)
+        XCTAssertEqual(result.latencyForTargetMs, 120)
         XCTAssertGreaterThan(result.expectedTermHits, 0)
     }
 
     @MainActor
-    func testRunnerProducesSummary() async {
+    func testEvaluatorAllowsExpectedSuppressionForSafetyScenario() {
+        let scenario = CotypingBenchmarkScenario.defaults.first { $0.id == "mid-word" }!
+        let result = CotypingBenchmarkRunner.evaluate(
+            scenario: scenario,
+            text: "",
+            suppression: .unsafeToInsert,
+            latencyMs: 90)
+
+        XCTAssertTrue(result.passedSafety)
+        XCTAssertTrue(result.metLatencyTarget)
+        XCTAssertTrue(result.passed)
+        XCTAssertFalse(result.expectedVisibleSuggestion)
+        XCTAssertTrue(result.allowedSuppression)
+    }
+
+    @MainActor
+    func testRunnerMatchesCotypistDefaultByNotRecordingPartialLatency() async {
         let summary = await CotypingBenchmarkRunner.run(
-            engine: StaticCotypingEngine(output: " up today"),
+            scenarios: Array(CotypingBenchmarkScenario.defaults.prefix(3)),
+            engine: StaticCotypingEngine(output: " up today", partial: " up"),
             config: .standard,
             personalization: .none)
 
-        XCTAssertEqual(summary.total, CotypingBenchmarkScenario.defaults.count)
+        XCTAssertEqual(summary.total, 3)
         XCTAssertEqual(summary.safetyPassed, summary.total)
         XCTAssertNotNil(summary.averageLatencyMs)
+        XCTAssertNil(summary.averageFirstVisibleLatencyMs)
         XCTAssertNotNil(summary.p95LatencyMs)
+        XCTAssertNil(summary.p95FirstVisibleLatencyMs)
+    }
+
+    @MainActor
+    func testRunnerRecordsFirstVisibleLatencyWhenStreamingEnabled() async {
+        let summary = await CotypingBenchmarkRunner.run(
+            scenarios: Array(CotypingBenchmarkScenario.defaults.prefix(3)),
+            engine: StaticCotypingEngine(output: " up today", partial: " up"),
+            config: .standard,
+            personalization: .none,
+            streamPartials: true)
+
+        XCTAssertEqual(summary.total, 3)
+        XCTAssertEqual(summary.safetyPassed, summary.total)
+        XCTAssertNotNil(summary.averageLatencyMs)
+        XCTAssertNotNil(summary.averageFirstVisibleLatencyMs)
+        XCTAssertNotNil(summary.p95LatencyMs)
+        XCTAssertNotNil(summary.p95FirstVisibleLatencyMs)
+    }
+}
+
+// MARK: - Decode stop policy
+
+final class CotypingDecodeStopPolicyTests: XCTestCase {
+    func testStopsAfterSentenceBoundaryOnceEnoughChunksArrive() {
+        XCTAssertEqual(
+            CotypingDecodeStopPolicy.verdict(
+                accumulated: " up with the final numbers today.",
+                tokensGenerated: 4),
+            .sentenceBoundary)
+    }
+
+    func testDoesNotStopOnCommonAbbreviation() {
+        XCTAssertNil(CotypingDecodeStopPolicy.verdict(
+            accumulated: " to review e.g.",
+            tokensGenerated: 4))
+    }
+
+    func testDoesNotStopOnDecimal() {
+        XCTAssertNil(CotypingDecodeStopPolicy.verdict(
+            accumulated: " by version 1.2",
+            tokensGenerated: 4))
+    }
+
+    func testStopsOnScaffoldingMarkerWithoutMinimumTokenDelay() {
+        XCTAssertEqual(
+            CotypingDecodeStopPolicy.verdict(
+                accumulated: "<end_of_turn>",
+                tokensGenerated: 1),
+            .scaffoldingMarker)
     }
 }
 
@@ -500,6 +580,7 @@ final class CotypingSettingsTests: XCTestCase {
         settings.cotypingMaxWords = 12
         settings.cotypingMultiLine = true
         settings.cotypingDebounceMs = 500
+        settings.cotypingStreamSuggestionsWhileGenerating = true
         settings.cotypingAcceptGranularity = .phrase
         settings.cotypingFullAcceptKey = .rightArrow
         settings.cotypingExcludedApps = "Terminal, 1Password"
@@ -516,6 +597,7 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertEqual(decoded.cotypingMaxWords, 12)
         XCTAssertTrue(decoded.cotypingMultiLine)
         XCTAssertEqual(decoded.cotypingDebounceMs, 500)
+        XCTAssertTrue(decoded.cotypingStreamSuggestionsWhileGenerating)
         XCTAssertEqual(decoded.cotypingAcceptGranularity, .phrase)
         XCTAssertEqual(decoded.cotypingFullAcceptKey, .rightArrow)
         XCTAssertEqual(decoded.cotypingExcludedAppList, ["Terminal", "1Password"])
@@ -530,17 +612,33 @@ final class CotypingSettingsTests: XCTestCase {
         let settings = try JSONDecoder().decode(AppSettings.self, from: data)
         XCTAssertTrue(settings.cotypingEnabled)
         XCTAssertEqual(settings.cotypingMaxWords, AppSettings().cotypingMaxWords)
+        XCTAssertEqual(settings.cotypingDebounceMs, AppSettings().cotypingDebounceMs)
+        XCTAssertEqual(
+            settings.cotypingStreamSuggestionsWhileGenerating,
+            AppSettings().cotypingStreamSuggestionsWhileGenerating)
         XCTAssertTrue(settings.cotypingUseLocalLearning)
         XCTAssertEqual(settings.cotypingBuiltInModelID, ModelCatalog.recommendedCotypingID)
         XCTAssertTrue(settings.menuBarOnly)
     }
 
-    func testMaxResponseTokensFloorAndCap() {
+    func testDefaultsMirrorCotypistLengthAndDebounce() {
+        let settings = AppSettings()
+        XCTAssertEqual(settings.cotypingMaxWords, 20)
+        XCTAssertEqual(settings.cotypingDebounceMs, 20)
+        XCTAssertFalse(settings.cotypingStreamSuggestionsWhileGenerating)
+        XCTAssertEqual(settings.cotypingMaxResponseTokens, 26)
+    }
+
+    func testMaxResponseTokensMirrorCotypistBudget() {
         var settings = AppSettings()
         settings.cotypingMaxWords = 2
-        XCTAssertEqual(settings.cotypingMaxResponseTokens, 8)   // floor
+        XCTAssertEqual(settings.cotypingMaxResponseTokens, 5)   // floor
         settings.cotypingMaxWords = 8
-        XCTAssertEqual(settings.cotypingMaxResponseTokens, 24)  // 8 * 3
+        XCTAssertEqual(settings.cotypingMaxResponseTokens, 11)  // ceil(8 * 1.3)
+        settings.cotypingMaxWords = 20
+        XCTAssertEqual(settings.cotypingMaxResponseTokens, 26)  // ceil(20 * 1.3)
+        settings.cotypingMultiLine = true
+        XCTAssertEqual(settings.cotypingMaxResponseTokens, 52)  // doubled for multiline
         settings.cotypingMaxWords = 100
         XCTAssertEqual(settings.cotypingMaxResponseTokens, 120) // cap
     }
@@ -713,8 +811,16 @@ final class CotypingMidWordTests: XCTestCase {
 
     func testForceContinuationStripsLeadingSpace() {
         let forced = CotypingTextNormalizer.normalize(
-            " ord", for: request(prefix: "rec", trailing: "x", force: true))
+            " ord", for: request(prefix: "rec", trailing: "ord", force: true))
         XCTAssertEqual(forced, "ord")
+    }
+
+    func testForceContinuationSuppressesIncompatibleWordTail() {
+        let detailed = CotypingTextNormalizer.normalizeDetailed(
+            "ode the following code in C++:",
+            for: request(prefix: "Please rec", trailing: "eive the files when ready.", force: true))
+        XCTAssertEqual(detailed.text, "")
+        XCTAssertEqual(detailed.suppression, .unsafeToInsert)
     }
 
     func testNoForceKeepsModelSpacingAtWordEnd() {
@@ -925,7 +1031,67 @@ final class CotypingEmojiTests: XCTestCase {
     }
 }
 
+final class CotypingSeamGuardTests: XCTestCase {
+    func testAllowsNormalCompletion() {
+        let verdict = CotypingSeamGuard.verdict(
+            precedingText: "I wanted to follow",
+            completion: " up tomorrow",
+            isKnownWord: { _ in true })
+        XCTAssertEqual(verdict, .allow)
+    }
+
+    func testRejectsFreshJunkPunctuationRun() {
+        let verdict = CotypingSeamGuard.verdict(
+            precedingText: "Thanks",
+            completion: " !!!!",
+            isKnownWord: { _ in true })
+        XCTAssertEqual(verdict, .junkPunctuationRun)
+    }
+
+    func testAllowsExistingDividerContinuation() {
+        let verdict = CotypingSeamGuard.verdict(
+            precedingText: "--",
+            completion: "----",
+            isKnownWord: { _ in true })
+        XCTAssertEqual(verdict, .allow)
+    }
+
+    func testRejectsMidWordMisspelling() {
+        let verdict = CotypingSeamGuard.verdict(
+            precedingText: "I am gre",
+            completion: "atful",
+            isKnownWord: { $0 == "grateful" })
+        XCTAssertEqual(verdict, .seamMisspelling(word: "greatful"))
+    }
+
+    func testAllowsKnownMidWordJoin() {
+        let verdict = CotypingSeamGuard.verdict(
+            precedingText: "after",
+            completion: "noon",
+            isKnownWord: { $0 == "afternoon" })
+        XCTAssertEqual(verdict, .allow)
+    }
+
+    func testStreamedPartialUsesPunctuationOnlyGuard() {
+        XCTAssertFalse(CotypingSeamGuard.allowsStreamedPartial(
+            precedingText: "Thanks",
+            completion: " !!!!"))
+        XCTAssertTrue(CotypingSeamGuard.allowsStreamedPartial(
+            precedingText: "I am gre",
+            completion: "atful"))
+    }
+}
+
 final class CotypingDebounceTests: XCTestCase {
+    func testCotypistParityFloorIsTwentyMilliseconds() {
+        XCTAssertEqual(CotypingDebouncePolicy.minimumMilliseconds, 20)
+        XCTAssertEqual(CotypingDebouncePolicy.milliseconds(lastLatencyMilliseconds: nil, configured: 20), 20)
+    }
+
+    func testConfiguredBelowFloorIsClamped() {
+        XCTAssertEqual(CotypingDebouncePolicy.milliseconds(lastLatencyMilliseconds: nil, configured: 5), 20)
+    }
+
     func testNoLatencyUsesConfigured() {
         XCTAssertEqual(CotypingDebouncePolicy.milliseconds(lastLatencyMilliseconds: nil, configured: 150), 150)
     }

@@ -6,6 +6,8 @@ struct CotypingBenchmarkScenario: Identifiable, Equatable, Sendable {
     var field: CotypingField
     var expectedTerms: [String]
     var latencyTargetMs: Int
+    var expectsVisibleSuggestion: Bool = true
+    var allowedSuppressions: [CotypingSuppressionReason] = []
 
     static let defaults: [CotypingBenchmarkScenario] = [
         CotypingBenchmarkScenario(
@@ -40,14 +42,16 @@ struct CotypingBenchmarkScenario: Identifiable, Equatable, Sendable {
             latencyTargetMs: 1_500),
         CotypingBenchmarkScenario(
             id: "mid-word",
-            name: "Mid-word continuation",
+            name: "Mid-word safety",
             field: CotypingField(
                 appName: "Notes", bundleID: "com.apple.Notes", processID: 0, role: "AXTextArea",
                 precedingText: "Please rec",
                 trailingText: "eive the files when ready.", selectionLength: 0, caretRect: .zero,
                 isSecure: false, caretIsExact: true, windowTitle: "Project notes", fieldPlaceholder: nil),
-            expectedTerms: ["eive"],
-            latencyTargetMs: 1_200),
+            expectedTerms: [],
+            latencyTargetMs: 1_200,
+            expectsVisibleSuggestion: false,
+            allowedSuppressions: [.duplicatesTrailingText, .unsafeToInsert]),
     ]
 }
 
@@ -57,16 +61,25 @@ struct CotypingBenchmarkCaseResult: Identifiable, Equatable, Sendable {
     var name: String
     var text: String
     var latencyMs: Int
+    var firstVisibleLatencyMs: Int?
     var expectedTermHits: Int
     var expectedTermCount: Int
     var suppression: CotypingSuppressionReason?
     var error: String?
+    var expectedVisibleSuggestion: Bool
+    var allowedSuppression: Bool
 
     var passedSafety: Bool {
-        error == nil && suppression == nil && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard error == nil else { return false }
+        if expectedVisibleSuggestion {
+            return suppression == nil && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && allowedSuppression
     }
 
-    var metLatencyTarget: Bool
+    var latencyForTargetMs: Int { firstVisibleLatencyMs ?? latencyMs }
+    var metLatencyTarget: Bool { latencyForTargetMs <= latencyTargetMs }
+    var latencyTargetMs: Int
     var passed: Bool { passedSafety && metLatencyTarget }
 }
 
@@ -84,19 +97,49 @@ struct CotypingBenchmarkSummary: Equatable, Sendable {
         return results.map(\.latencyMs).reduce(0, +) / results.count
     }
 
+    var averageFirstVisibleLatencyMs: Int? {
+        let values = results.compactMap(\.firstVisibleLatencyMs)
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / values.count
+    }
+
     var p95LatencyMs: Int? {
-        percentile(0.95)
+        percentile(results.map(\.latencyMs), 0.95)
+    }
+
+    var p95FirstVisibleLatencyMs: Int? {
+        let values = results.compactMap(\.firstVisibleLatencyMs)
+        return percentile(values, 0.95)
     }
 
     var meetsTarget: Bool {
-        total > 0 && safetyPassed == total && (p95LatencyMs ?? Int.max) <= 2_000
+        total > 0 && results.allSatisfy(\.passed)
     }
 
-    private func percentile(_ p: Double) -> Int? {
-        guard !results.isEmpty else { return nil }
-        let sorted = results.map(\.latencyMs).sorted()
+    private func percentile(_ values: [Int], _ p: Double) -> Int? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
         let idx = max(0, min(sorted.count - 1, Int((Double(sorted.count - 1) * p).rounded())))
         return sorted[idx]
+    }
+}
+
+private final class CotypingBenchmarkLatencyProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var firstVisibleLatencyMs: Int?
+
+    func recordFirstVisible(start: Date, text: String) {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        guard firstVisibleLatencyMs == nil else { return }
+        firstVisibleLatencyMs = Int(Date().timeIntervalSince(start) * 1000)
+    }
+
+    var value: Int? {
+        lock.lock()
+        defer { lock.unlock() }
+        return firstVisibleLatencyMs
     }
 }
 
@@ -107,6 +150,7 @@ enum CotypingBenchmarkRunner {
         engine: CotypingCompleting,
         config: CotypingConfiguration,
         personalization: CotypingPersonalization,
+        streamPartials: Bool = false,
         learnedExamples: (CotypingField) -> [String] = { _ in [] }
     ) async -> CotypingBenchmarkSummary {
         var results: [CotypingBenchmarkCaseResult] = []
@@ -116,6 +160,7 @@ enum CotypingBenchmarkRunner {
                 engine: engine,
                 config: config,
                 personalization: personalization,
+                streamPartials: streamPartials,
                 learnedExamples: learnedExamples(scenario.field)))
         }
         return CotypingBenchmarkSummary(results: results)
@@ -126,6 +171,7 @@ enum CotypingBenchmarkRunner {
         text: String,
         suppression: CotypingSuppressionReason?,
         latencyMs: Int,
+        firstVisibleLatencyMs: Int? = nil,
         error: String? = nil
     ) -> CotypingBenchmarkCaseResult {
         let folded = text.lowercased()
@@ -135,11 +181,14 @@ enum CotypingBenchmarkRunner {
             name: scenario.name,
             text: text,
             latencyMs: max(0, latencyMs),
+            firstVisibleLatencyMs: firstVisibleLatencyMs.map { max(0, $0) },
             expectedTermHits: hits,
             expectedTermCount: scenario.expectedTerms.count,
             suppression: suppression,
             error: error,
-            metLatencyTarget: latencyMs <= scenario.latencyTargetMs)
+            expectedVisibleSuggestion: scenario.expectsVisibleSuggestion,
+            allowedSuppression: suppression.map { scenario.allowedSuppressions.contains($0) } ?? false,
+            latencyTargetMs: scenario.latencyTargetMs)
     }
 
     private static func runOne(
@@ -147,6 +196,7 @@ enum CotypingBenchmarkRunner {
         engine: CotypingCompleting,
         config: CotypingConfiguration,
         personalization: CotypingPersonalization,
+        streamPartials: Bool,
         learnedExamples: [String]
     ) async -> CotypingBenchmarkCaseResult {
         guard let request = CotypingRequestBuilder.build(
@@ -165,14 +215,19 @@ enum CotypingBenchmarkRunner {
         }
 
         let start = Date()
+        let latencyProbe = CotypingBenchmarkLatencyProbe()
         do {
-            let result = try await engine.generate(request)
+            let result = try await engine.generateStreaming(request) { partial in
+                guard streamPartials else { return }
+                latencyProbe.recordFirstVisible(start: start, text: partial.text)
+            }
             let latency = Int(Date().timeIntervalSince(start) * 1000)
             return evaluate(
                 scenario: scenario,
                 text: result.text,
                 suppression: result.suppression,
-                latencyMs: latency)
+                latencyMs: latency,
+                firstVisibleLatencyMs: latencyProbe.value)
         } catch {
             let latency = Int(Date().timeIntervalSince(start) * 1000)
             return evaluate(

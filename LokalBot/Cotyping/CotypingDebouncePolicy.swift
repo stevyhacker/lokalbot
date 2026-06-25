@@ -5,11 +5,13 @@ import Foundation
 /// the floor (snappy on fast machines), but back off when generations run slow
 /// so keystrokes don't pile doomed requests onto a model that can't keep up.
 enum CotypingDebouncePolicy {
+    static let minimumMilliseconds = 20
     /// Largest backoff we'll add regardless of how slow the model is.
     static let maxBackoffMilliseconds = 600
 
     static func milliseconds(lastLatencyMilliseconds: Int?, configured: Int) -> Int {
-        guard let last = lastLatencyMilliseconds, last > 0 else { return configured }
-        return max(configured, min(last / 2, maxBackoffMilliseconds))
+        let floor = max(minimumMilliseconds, configured)
+        guard let last = lastLatencyMilliseconds, last > 0 else { return floor }
+        return max(floor, min(last / 2, maxBackoffMilliseconds))
     }
 }

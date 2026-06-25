@@ -160,9 +160,9 @@ final class CotypingCoordinator: ObservableObject {
         let work = generation
         clearSuggestion()
         state = .debouncing
-        let delay = max(50, CotypingDebouncePolicy.milliseconds(
+        let delay = CotypingDebouncePolicy.milliseconds(
             lastLatencyMilliseconds: lastLatencyMilliseconds,
-            configured: settingsProvider().cotypingDebounceMs))
+            configured: settingsProvider().cotypingDebounceMs)
         debounceTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(delay))
             guard !Task.isCancelled else { return }
@@ -253,8 +253,12 @@ final class CotypingCoordinator: ObservableObject {
         let start = Date()
         do {
             // Stream: paint ghost text as tokens arrive instead of waiting for the
-            // whole completion. The final result is authoritative.
+            // whole completion only when the user enabled streamed suggestions.
+            // Even when partial painting is off, keep the streaming transport so
+            // the HTTP client can stop at the same decode boundary as Cotabby.
+            let streamPartials = settings.cotypingStreamSuggestionsWhileGenerating
             let result = try await engine.generateStreaming(request) { [weak self] partial in
+                guard streamPartials else { return }
                 Task { @MainActor in self?.renderStreamPartial(partial, work: work, field: field) }
             }
             guard work == generation, isRunning else { return }
@@ -262,6 +266,11 @@ final class CotypingCoordinator: ObservableObject {
             CotypingStatsStore.shared.recordGeneration(latencyMs: lastLatencyMilliseconds ?? 0)
             let text = result.text
             guard !text.isEmpty else {
+                clearSuggestion()
+                state = .idle
+                return
+            }
+            guard seamVerdict(precedingText: field.precedingText, completion: text) == .allow else {
                 clearSuggestion()
                 state = .idle
                 return
@@ -286,6 +295,10 @@ final class CotypingCoordinator: ObservableObject {
     /// actor). Monotonic: ignores reordered/shorter partials so the ghost only grows.
     private func renderStreamPartial(_ result: CotypingNormalizationResult, work: UInt64, field: CotypingField) {
         guard work == generation, isRunning, !result.text.isEmpty else { return }
+        guard CotypingSeamGuard.allowsStreamedPartial(
+            precedingText: field.precedingText,
+            completion: result.text
+        ) else { return }
         if let session, session.field.contentSignature == field.contentSignature,
            session.fullText.count >= result.text.count { return }
         session = CotypingSession(field: field, fullText: result.text, kind: .continuation)
@@ -293,6 +306,13 @@ final class CotypingCoordinator: ObservableObject {
         inputMonitor.setAcceptActive(overlay.isVisible)
         lastSuggestion = result.text
         state = .ready(text: result.text)
+    }
+
+    private func seamVerdict(precedingText: String, completion: String) -> CotypingSeamGuard.Verdict {
+        CotypingSeamGuard.verdict(
+            precedingText: precedingText,
+            completion: completion,
+            isKnownWord: { !spellChecker.isTypo($0) })
     }
 
     /// Resolves the typo gate for the trailing word using the native spell checker.
@@ -462,6 +482,7 @@ final class CotypingCoordinator: ObservableObject {
             engine: engine,
             config: cfg,
             personalization: settings.cotypingPersonalization,
+            streamPartials: settings.cotypingStreamSuggestionsWhileGenerating,
             learnedExamples: { [weak self] field in
                 guard let self, settings.cotypingUseLocalLearning else { return [] }
                 return self.learningStore.examples(

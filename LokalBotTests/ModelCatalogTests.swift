@@ -56,6 +56,10 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertTrue(names.contains("gemma-4-E4B-UD-Q5_K_XL.gguf"))
     }
 
+    func testCotypingServerUsesCotabbyContextWindow() {
+        XCTAssertEqual(LlamaServer.cotyping.contextTokens, 2_048)
+    }
+
     func testCotypistModelReuseRequiresGGUFAtExpectedPath() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("cotypist-model-\(UUID().uuidString)", isDirectory: true)

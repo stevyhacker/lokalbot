@@ -14,10 +14,10 @@ actor LlamaServer {
     /// Cotyping instance — an optional separate (typically smaller/faster)
     /// model on a third port, so inline suggestions never contend with the
     /// summarizer for the shared server (no model-reload thrash).
-    static let cotyping = LlamaServer(port: 17874, contextTokens: 4_096, extraArgs: [])
+    static let cotyping = LlamaServer(port: 17874, contextTokens: 2_048, extraArgs: [])
 
     nonisolated let port: Int
-    private let contextTokens: Int
+    nonisolated let contextTokens: Int
     private let extraArgs: [String]
     nonisolated var baseURL: URL { URL(string: "http://127.0.0.1:\(port)/v1")! }
 
@@ -45,8 +45,10 @@ actor LlamaServer {
 
     func ensureRunning(modelAt url: URL) async throws {
         if let process, process.isRunning, loadedModelPath == url.path,
-           await healthy() { return }
-        if await healthyServing(modelAt: url) {
+           await healthy(), await healthyServingExpectedConfiguration(modelAt: url) {
+            return
+        }
+        if await healthyServingExpectedConfiguration(modelAt: url) {
             loadedModelPath = url.path
             return
         }
@@ -55,14 +57,14 @@ actor LlamaServer {
 
     private func start(modelAt url: URL) async throws {
         await stop()
-        if await healthyServing(modelAt: url) {
+        let binary = try installedBinary()
+        if await healthyServingExpectedConfiguration(modelAt: url) {
             loadedModelPath = url.path
             return
         }
-        let binary = try installedBinary()
         if await healthy() {
             await stopRecordedServerIfOwned(expectedBinary: binary)
-            if await healthyServing(modelAt: url) {
+            if await healthyServingExpectedConfiguration(modelAt: url) {
                 loadedModelPath = url.path
                 return
             }
@@ -90,7 +92,9 @@ actor LlamaServer {
             pid: process.processIdentifier,
             port: port,
             binaryPath: binary.path,
-            modelPath: url.path))
+            modelPath: url.path,
+            contextTokens: contextTokens,
+            extraArgs: extraArgs))
 
         // Model load can take a while for the big ones; poll /health.
         for _ in 0..<240 {
@@ -190,6 +194,19 @@ actor LlamaServer {
         return Self.servedModelNames(from: data).contains(Self.modelMatchKey(for: url))
     }
 
+    private func healthyServingExpectedConfiguration(modelAt url: URL) async -> Bool {
+        guard await healthyServing(modelAt: url),
+              let marker = readPidMarker(),
+              marker.port == port,
+              marker.modelPath == url.path,
+              marker.contextTokens == Optional(contextTokens),
+              marker.extraArgs == Optional(extraArgs),
+              kill(marker.pid, 0) == 0,
+              Self.processPath(for: marker.pid) == marker.binaryPath
+        else { return false }
+        return true
+    }
+
     nonisolated static func modelMatchKey(for url: URL) -> String {
         url.lastPathComponent
     }
@@ -222,6 +239,8 @@ actor LlamaServer {
         var port: Int
         var binaryPath: String
         var modelPath: String
+        var contextTokens: Int?
+        var extraArgs: [String]?
     }
 
     private struct ModelListPayload: Decodable {

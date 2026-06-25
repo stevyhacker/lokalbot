@@ -146,8 +146,11 @@ struct SettingsView: View {
                             CotypingLearningControls(store: app.cotypingLearning)
                         }
                         Stepper("Suggestion length: up to \(app.settings.cotypingMaxWords) words",
-                                value: $app.settings.cotypingMaxWords, in: 2...30)
+                                value: $app.settings.cotypingMaxWords, in: 2...50)
                         Toggle("Allow multi-line suggestions", isOn: $app.settings.cotypingMultiLine)
+                        Toggle("Stream suggestions while generating", isOn: $app.settings.cotypingStreamSuggestionsWhileGenerating)
+                        Text("When off, suggestions appear once fully formed, matching Cotypist's default. Turn on to show token-by-token partials sooner.")
+                            .font(.caption).foregroundStyle(.secondary)
                         Toggle("Use app & window context", isOn: $app.settings.cotypingUseAppContext)
                         Text("Conditions suggestions on the focused app and its window title (email subject, chat channel, page title) for sharper, on-topic completions. Read locally via Accessibility; skipped in code editors and terminals.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -187,7 +190,7 @@ struct SettingsView: View {
                         Slider(value: Binding(
                             get: { Double(app.settings.cotypingDebounceMs) },
                             set: { app.settings.cotypingDebounceMs = Int($0) }),
-                            in: 100...1000, step: 50)
+                            in: 20...1000, step: 20)
                         TextField("Never suggest in (app names, comma-separated)",
                                   text: $app.settings.cotypingExcludedApps)
                         Text("Cotyping never runs in password fields. Add apps (or terminals) here to exclude them too.")
