@@ -25,13 +25,20 @@ struct Meeting: Identifiable, Codable, Equatable {
     var scheduledEndAt: Date?
     var meetingURL: URL?
 
+    /// Length of the actual recorded audio (longest track), measured at
+    /// finalize. The wall-clock span (`duration`) can exceed what was captured
+    /// — an audio-device disruption can truncate the tracks while a
+    /// calendar-backed session stays live — so this is the playable length and
+    /// what `durationLabel` reports. Optional so older `meta.json` still decodes.
+    var recordedDuration: TimeInterval?
+
     var duration: TimeInterval? {
         endedAt.map { $0.timeIntervalSince(startedAt) }
     }
 
 
     var durationLabel: String {
-        guard let d = duration else { return "in progress" }
+        guard let d = recordedDuration ?? duration else { return "in progress" }
         let m = Int(d) / 60
         return m >= 60 ? "\(m / 60)h \(m % 60)m" : "\(m) min"
     }

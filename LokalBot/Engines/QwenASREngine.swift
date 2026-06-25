@@ -24,13 +24,6 @@ actor QwenASREngine: TranscriptionEngine {
             case .compact: "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"
             }
         }
-
-        var cacheName: String {
-            switch self {
-            case .accuracy: "qwen3-asr-1.7b-mlx-8bit"
-            case .compact: "qwen3-asr-0.6b-mlx-4bit"
-            }
-        }
     }
 
     static let accuracy = QwenASREngine(variant: .accuracy)
@@ -53,8 +46,7 @@ actor QwenASREngine: TranscriptionEngine {
     func prepare(progress: ModelPreparationProgressHandler? = nil) async throws {
         if model != nil { return }
         report(.init(fractionCompleted: 0, status: "Checking..."), to: progress)
-        let cacheDir = try Self.cacheRoot()
-            .appendingPathComponent(variant.cacheName, isDirectory: true)
+        let cacheDir = try Self.cacheDir(for: variant)
         try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
 
         model = try await Qwen3ASRModel.fromPretrained(
@@ -115,6 +107,27 @@ actor QwenASREngine: TranscriptionEngine {
             .appendingPathComponent("qwen3-asr-models", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
+    }
+
+    /// The directory `Qwen3ASRModel.fromPretrained` both downloads into and
+    /// loads from. The Qwen3ASR package's HuggingFace downloader only writes
+    /// into a directory shaped like the Hub layout `…/models/<org>/<model>`;
+    /// given a flat path its `makeHubApi` fallback silently downloads to
+    /// `~/Library/Caches/<root>/models/<org>/<model>` instead, leaving the path
+    /// we load from empty ("No safetensors files found"). Building the Hub-style
+    /// path under our own root keeps download and load pointed at one directory.
+    private static func cacheDir(for variant: Variant) throws -> URL {
+        hubStyleCacheDir(base: try cacheRoot(), modelID: variant.modelID)
+    }
+
+    /// Pure path arithmetic (no I/O) — `base/models/<org>/<model>` — so the
+    /// layout that must match the package's downloader is unit-testable.
+    nonisolated static func hubStyleCacheDir(base: URL, modelID: String) -> URL {
+        var dir = base.appendingPathComponent("models", isDirectory: true)
+        for component in modelID.split(separator: "/") {
+            dir = dir.appendingPathComponent(String(component), isDirectory: true)
+        }
+        return dir
     }
 
     private struct AudioSpan: Sendable {

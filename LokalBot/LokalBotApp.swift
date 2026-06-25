@@ -363,7 +363,20 @@ final class AppState: ObservableObject {
 
     init() {
         AppLog.bootstrap()
-        meetings = storage.loadMeetings()
+        var loaded = storage.loadMeetings()
+        // One-time backfill: meetings recorded before `recordedDuration` existed
+        // would otherwise show the wall-clock span (which can exceed the captured
+        // audio). Measure the actual playable length once and persist it.
+        for i in loaded.indices where loaded[i].recordedDuration == nil && loaded[i].endedAt != nil {
+            let folder = loaded[i].folderURL(in: storage)
+            if let recorded = ["mic.m4a", "system.m4a"]
+                .compactMap({ AudioFileInspector.duration(at: folder.appendingPathComponent($0)) })
+                .max() {
+                loaded[i].recordedDuration = recorded
+                try? storage.saveMeta(loaded[i])
+            }
+        }
+        meetings = loaded
         // Views observe AppState only; forward pipeline / audio-monitor /
         // update-checker change notifications so MainWindowView refreshes
         // when those sub-ObservableObjects publish.
@@ -636,8 +649,15 @@ final class AppState: ObservableObject {
         stopRecordingTick()
         let endedAt = Date()
         meeting.endedAt = endedAt
+        let folder = meeting.folderURL(in: storage)
         meeting.hasSystemTrack = AudioFileInspector.isTranscribableAudio(
-            at: meeting.folderURL(in: storage).appendingPathComponent("system.m4a"))
+            at: folder.appendingPathComponent("system.m4a"))
+        // The wall-clock span can outlast the captured audio (e.g. a device
+        // disruption truncates the tracks while the session stays live), so
+        // store the actual playable length — the longest track — for the UI.
+        meeting.recordedDuration = ["mic.m4a", "system.m4a"]
+            .compactMap { AudioFileInspector.duration(at: folder.appendingPathComponent($0)) }
+            .max()
         try? storage.saveMeta(meeting)
         lastCalendarEventID = meeting.calendarEventID
         lastCalendarEventEndedAt = endedAt
@@ -648,7 +668,7 @@ final class AppState: ObservableObject {
         if interactive {
             RecordingNotifier.shared.recordingStopped(
                 title: meeting.title,
-                duration: endedAt.timeIntervalSince(meeting.startedAt),
+                duration: meeting.recordedDuration ?? endedAt.timeIntervalSince(meeting.startedAt),
                 willTranscribe: willTranscribe)
         }
         if willTranscribe {
