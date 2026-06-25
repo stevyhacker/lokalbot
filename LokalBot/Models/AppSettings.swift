@@ -152,6 +152,14 @@ struct AppSettings: Codable {
     var cotypingLanguages: String = ""
     /// Free-form notes / glossary / jargon folded into the prompt as context.
     var cotypingExtendedContext: String = ""
+    /// Use a model for cotyping that differs from the summarization model. Off
+    /// by default — cotyping reuses the summarization engine. When on, a
+    /// dedicated built-in (llama.cpp) model runs on its own server instance, so
+    /// a smaller/faster model can power inline suggestions without contending
+    /// with summarization for the shared server.
+    var cotypingUseSeparateModel: Bool = false
+    /// Built-in catalog model id used for cotyping when the toggle is on.
+    var cotypingBuiltInModelID: String = ModelCatalog.bundledID
 
     var cotypingExcludedAppList: [String] {
         cotypingExcludedApps
@@ -183,6 +191,18 @@ struct AppSettings: Codable {
     /// Token ceiling for one completion (≈3 tokens/word, with a small floor).
     var cotypingMaxResponseTokens: Int {
         max(8, min(120, cotypingMaxWords * 3))
+    }
+
+    /// Settings the cotyping engine builds its `TextEngine` from. With a
+    /// separate cotyping model enabled, this is a copy pinned to the built-in
+    /// backend with `cotypingBuiltInModelID`; otherwise it is `self` (cotyping
+    /// reuses whatever the summarizer uses).
+    var cotypingTextEngineSettings: AppSettings {
+        guard cotypingUseSeparateModel else { return self }
+        var s = self
+        s.summarizerBackend = .builtIn
+        s.builtInModelID = cotypingBuiltInModelID
+        return s
     }
 
     /// UserDefaults key for the encoded settings blob. Internal (not private)
@@ -238,6 +258,8 @@ struct AppSettings: Codable {
         case cotypingMacros
         case cotypingLanguages
         case cotypingExtendedContext
+        case cotypingUseSeparateModel
+        case cotypingBuiltInModelID
     }
 
     static func load() -> AppSettings {
@@ -307,6 +329,8 @@ struct AppSettings: Codable {
         try c.encode(cotypingMacros, forKey: .cotypingMacros)
         try c.encode(cotypingLanguages, forKey: .cotypingLanguages)
         try c.encode(cotypingExtendedContext, forKey: .cotypingExtendedContext)
+        try c.encode(cotypingUseSeparateModel, forKey: .cotypingUseSeparateModel)
+        try c.encode(cotypingBuiltInModelID, forKey: .cotypingBuiltInModelID)
     }
 
     init(from decoder: Decoder) throws {
@@ -365,5 +389,7 @@ struct AppSettings: Codable {
         cotypingMacros = (try? c.decode(Bool.self, forKey: .cotypingMacros)) ?? defaults.cotypingMacros
         cotypingLanguages = (try? c.decode(String.self, forKey: .cotypingLanguages)) ?? defaults.cotypingLanguages
         cotypingExtendedContext = (try? c.decode(String.self, forKey: .cotypingExtendedContext)) ?? defaults.cotypingExtendedContext
+        cotypingUseSeparateModel = (try? c.decode(Bool.self, forKey: .cotypingUseSeparateModel)) ?? defaults.cotypingUseSeparateModel
+        cotypingBuiltInModelID = (try? c.decode(String.self, forKey: .cotypingBuiltInModelID)) ?? defaults.cotypingBuiltInModelID
     }
 }

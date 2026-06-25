@@ -221,7 +221,7 @@ final class AppState: ObservableObject {
     }
 
     enum NavSection: Hashable {
-        case meetings, timeline, cotyping, chat, search, settings
+        case meetings, timeline, cotyping, chat, search, models, settings
     }
 
     /// True when launched by an XCUITest harness — gates the side-effectful
@@ -282,11 +282,15 @@ final class AppState: ObservableObject {
     private(set) lazy var pipeline = ProcessingPipeline(storage: storage) { [weak self] in
         self?.settings ?? AppSettings()
     }
-    /// Cotyping (inline AI autocomplete) reuses the same `TextEngine` the
-    /// summarizer uses — the bundled llama-server by default.
+    /// Cotyping (inline AI autocomplete). By default it reuses the summarizer's
+    /// `TextEngine`; when a separate cotyping model is enabled it runs on the
+    /// dedicated `LlamaServer.cotyping` instance so it never thrashes the
+    /// shared server. Resolved per-completion, so changes apply live.
     private(set) lazy var cotypingEngine = CotypingEngine(makeEngine: { [weak self] in
         guard let self else { throw TextEngineError.unavailable("LokalBot is shutting down.") }
-        return try await self.pipeline.makeTextEngine(self.settings)
+        return try await self.pipeline.makeTextEngine(
+            self.settings.cotypingTextEngineSettings,
+            server: self.settings.cotypingUseSeparateModel ? .cotyping : .shared)
     })
     private(set) lazy var cotyping = CotypingCoordinator(
         engine: cotypingEngine,
@@ -374,6 +378,7 @@ final class AppState: ObservableObject {
             Task {
                 await LlamaServer.shared.stop()
                 await LlamaServer.embedder.stop()
+                await LlamaServer.cotyping.stop()
             }
         }
         if handleHeadlessProcessing()

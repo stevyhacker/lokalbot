@@ -11,6 +11,10 @@ actor LlamaServer {
     /// Embeddings instance (semantic search) — small model, second port.
     static let embedder = LlamaServer(port: 17873,
                                       extraArgs: ["--embeddings", "--pooling", "mean"])
+    /// Cotyping instance — an optional separate (typically smaller/faster)
+    /// model on a third port, so inline suggestions never contend with the
+    /// summarizer for the shared server (no model-reload thrash).
+    static let cotyping = LlamaServer(port: 17874, extraArgs: [])
 
     nonisolated let port: Int
     private let extraArgs: [String]

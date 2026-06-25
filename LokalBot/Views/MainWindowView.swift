@@ -16,6 +16,7 @@ struct MainWindowView: View {
             case .timeline: return nil
             case .cotyping: return nil
             case .chat: return nil
+            case .models: return nil
             }
         }
     }
@@ -110,6 +111,12 @@ struct MainWindowView: View {
             } detail: {
                 ChatView()
             }
+        } else if app.navSection == .models {
+            NavigationSplitView {
+                sidebar
+            } detail: {
+                ModelsView()
+            }
         } else {
             NavigationSplitView {
                 sidebar
@@ -125,24 +132,31 @@ struct MainWindowView: View {
 
     private var sidebar: some View {
         List(selection: sidebarSelection) {
-            Label("Meetings", systemImage: "waveform.circle")
-                .tag(AppState.NavSection.meetings)
-                .accessibilityIdentifier("sidebar.meetings")
-            Label("Chat", systemImage: "bubble.left.and.bubble.right")
-                .tag(AppState.NavSection.chat)
-                .accessibilityIdentifier("sidebar.chat")
-            Label("Timeline", systemImage: "calendar.day.timeline.left")
-                .tag(AppState.NavSection.timeline)
-                .accessibilityIdentifier("sidebar.timeline")
-            Label("Cotyping", systemImage: "text.cursor")
-                .tag(AppState.NavSection.cotyping)
-                .accessibilityIdentifier("sidebar.cotyping")
-            Label("Search", systemImage: "magnifyingglass")
-                .tag(AppState.NavSection.search)
-                .accessibilityIdentifier("sidebar.search")
-            Label("Settings", systemImage: "gearshape")
-                .tag(AppState.NavSection.settings)
-                .accessibilityIdentifier("sidebar.settings")
+            Section("Library") {
+                Label("Meetings", systemImage: "waveform.circle")
+                    .tag(AppState.NavSection.meetings)
+                    .accessibilityIdentifier("sidebar.meetings")
+                Label("Chat", systemImage: "bubble.left.and.bubble.right")
+                    .tag(AppState.NavSection.chat)
+                    .accessibilityIdentifier("sidebar.chat")
+                Label("Timeline", systemImage: "calendar.day.timeline.left")
+                    .tag(AppState.NavSection.timeline)
+                    .accessibilityIdentifier("sidebar.timeline")
+                Label("Cotyping", systemImage: "text.cursor")
+                    .tag(AppState.NavSection.cotyping)
+                    .accessibilityIdentifier("sidebar.cotyping")
+                Label("Search", systemImage: "magnifyingglass")
+                    .tag(AppState.NavSection.search)
+                    .accessibilityIdentifier("sidebar.search")
+            }
+            Section("Engine") {
+                Label("Models", systemImage: "brain")
+                    .tag(AppState.NavSection.models)
+                    .accessibilityIdentifier("sidebar.models")
+                Label("Settings", systemImage: "gearshape")
+                    .tag(AppState.NavSection.settings)
+                    .accessibilityIdentifier("sidebar.settings")
+            }
         }
         .navigationSplitViewColumnWidth(min: 180, ideal: 210)
     }

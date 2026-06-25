@@ -329,7 +329,7 @@ final class ProcessingPipeline: ObservableObject {
         return context
     }
 
-    func makeTextEngine(_ config: AppSettings) async throws -> TextEngine {
+    func makeTextEngine(_ config: AppSettings, server: LlamaServer = .shared) async throws -> TextEngine {
         switch config.summarizerBackend {
         case .builtIn:
             guard let entry = ModelCatalog.entry(id: config.builtInModelID,
@@ -340,9 +340,9 @@ final class ProcessingPipeline: ObservableObject {
             guard let modelURL = ModelCatalog.localURL(for: entry, storage: storage) else {
                 throw LlamaServer.ServerError.modelMissing(entry.displayName)
             }
-            try await LlamaServer.shared.ensureRunning(modelAt: modelURL)
+            try await server.ensureRunning(modelAt: modelURL)
             return OpenAICompatibleEngine(
-                baseURL: LlamaServer.shared.baseURL,
+                baseURL: server.baseURL,
                 model: entry.id,
                 apiKey: nil,
                 extraBody: entry.disablesThinking

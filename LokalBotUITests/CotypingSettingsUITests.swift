@@ -29,7 +29,7 @@ final class CotypingSettingsUITests: XCTestCase {
         XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 10),
                       "main window never rendered")
         clickSidebar("sidebar.settings")
-        XCTAssertTrue(staticText(containing: "transcription").waitForExistence(timeout: 8),
+        XCTAssertTrue(staticText(containing: "general").waitForExistence(timeout: 8),
                       "settings pane did not render")
     }
 

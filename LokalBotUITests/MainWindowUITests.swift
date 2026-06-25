@@ -59,17 +59,28 @@ final class MainWindowUITests: XCTestCase {
     /// `AppState.navSection` round-trips through the bound selection.
     func testSidebarNavigationSwitchesSections() {
         clickSidebar("sidebar.settings")
-        // Settings ships a "Transcription" / "Summarization" section header;
-        // SwiftUI `Text` exposes content via the accessibility `value`, not
-        // `label`. Scope the predicate to `staticTexts` — searching every
-        // element type is prohibitively slow under XCUI.
-        XCTAssertTrue(textWithContent("Transcription").firstMatch
+        // Settings keeps a "General" section header — model selection moved to
+        // the Models pane. SwiftUI `Text` exposes content via the accessibility
+        // `value`, not `label`; scope the predicate to `staticTexts` since
+        // searching every element type is prohibitively slow under XCUI.
+        XCTAssertTrue(textWithContent("General").firstMatch
             .waitForExistence(timeout: 6),
                       "settings pane did not render")
 
         clickSidebar("sidebar.meetings")
         XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 4),
                       "meeting list did not come back")
+    }
+
+    /// The new Models pane (sidebar → Engine → Models) renders its role cards,
+    /// proving model selection moved out of Settings into its own section.
+    func testModelsSectionRendersRoleCards() {
+        clickSidebar("sidebar.models")
+        XCTAssertTrue(textWithContent("Transcription").firstMatch
+            .waitForExistence(timeout: 6),
+                      "Models pane did not render the Transcription card")
+        XCTAssertTrue(textWithContent("Summarization").firstMatch.exists,
+                      "Models pane missing the Summarization card")
     }
 
     // MARK: - Timeline
