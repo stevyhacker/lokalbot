@@ -22,6 +22,8 @@ private struct CotypingContent: View {
     @State private var previewError: String?
     @State private var previewing = false
     @State private var previewTask: Task<Void, Never>?
+    @State private var benchmarkSummary: CotypingBenchmarkSummary?
+    @State private var benchmarkRunning = false
 
     var body: some View {
         Form {
@@ -29,6 +31,7 @@ private struct CotypingContent: View {
             if app.settings.cotypingEnabled { permissionsSection }
             modelSection
             previewSection
+            benchmarkSection
             tipsSection
         }
         .formStyle(.grouped)
@@ -51,7 +54,7 @@ private struct CotypingContent: View {
                     .frame(width: 34)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Inline AI autocomplete").font(.headline)
-                    Text("As you type in almost any app, a gray suggestion appears next to your cursor. Press Tab to accept it, or keep typing to ignore it. Runs on the same on-device model as your summaries — nothing leaves this Mac.")
+                    Text("As you type in almost any app, a gray suggestion appears next to your cursor. Press Tab to accept it, or keep typing to ignore it. Runs on your selected on-device model — nothing leaves this Mac.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
             }
@@ -127,12 +130,19 @@ private struct CotypingContent: View {
             LabeledContent("Engine") {
                 Text(engineDescription).foregroundStyle(.secondary)
             }
-            Text("Cotyping reuses your Summarization backend and model (change it in Settings → Summarization). A small, fast model gives the snappiest suggestions.")
+            Text(modelDetail)
                 .font(.caption).foregroundStyle(.secondary)
+            CotypingModelPreparationView(compact: true)
         }
     }
 
     private var engineDescription: String {
+        if app.settings.cotypingUseSeparateModel {
+            let entry = ModelCatalog.entry(
+                id: app.settings.cotypingBuiltInModelID,
+                custom: app.settings.customBuiltInModels)
+            return "Dedicated — \(entry?.displayName ?? "built-in model")"
+        }
         switch app.settings.summarizerBackend {
         case .builtIn:
             return ModelCatalog.entry(id: app.settings.builtInModelID,
@@ -144,6 +154,13 @@ private struct CotypingContent: View {
         case .openAICompatible:
             return "OpenAI-compatible — " + (app.settings.openAIModel.isEmpty ? "no model selected" : app.settings.openAIModel)
         }
+    }
+
+    private var modelDetail: String {
+        if app.settings.cotypingUseSeparateModel {
+            return "Cotyping runs on its own llama.cpp server, separate from summarization. Gemma 4 E4B is the recommended quality target when downloaded."
+        }
+        return "Cotyping reuses your Summarization backend and model. Turn on the dedicated model in Settings → Cotyping or Models for higher-quality inline suggestions."
     }
 
     // MARK: Preview
@@ -234,6 +251,56 @@ private struct CotypingContent: View {
         schedulePreview()
     }
 
+    // MARK: Quality check
+
+    private var benchmarkSection: some View {
+        Section("Quality check") {
+            Text("Runs a small email/chat/browser/mid-word scenario set through the active cotyping engine and reports safety plus latency.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Button(benchmarkRunning ? "Running…" : "Run cotyping check") {
+                    runBenchmark()
+                }
+                .disabled(benchmarkRunning)
+                if benchmarkRunning {
+                    ProgressView().controlSize(.small)
+                }
+                Spacer()
+            }
+            if let benchmarkSummary {
+                LabeledContent("Result") {
+                    Text("\(benchmarkSummary.passed)/\(benchmarkSummary.total) scenarios passed")
+                        .foregroundStyle(benchmarkSummary.meetsTarget ? .green : .orange)
+                }
+                if let avg = benchmarkSummary.averageLatencyMs,
+                   let p95 = benchmarkSummary.p95LatencyMs {
+                    LabeledContent("Latency") {
+                        Text("avg \(avg) ms · p95 \(p95) ms")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                LabeledContent("Expected-term hints") {
+                    Text("\(benchmarkSummary.keywordHits)/\(benchmarkSummary.keywordTotal)")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(benchmarkSummary.results.indices, id: \.self) { index in
+                    CotypingBenchmarkResultRow(result: benchmarkSummary.results[index])
+                }
+            }
+        }
+    }
+
+    private func runBenchmark() {
+        benchmarkRunning = true
+        benchmarkSummary = nil
+        Task {
+            let summary = await app.cotyping.runQualityBenchmark()
+            benchmarkSummary = summary
+            benchmarkRunning = false
+        }
+    }
+
     // MARK: Tips
 
     private var tipsSection: some View {
@@ -250,6 +317,28 @@ private struct CotypingContent: View {
             Text(text).font(.callout).foregroundStyle(.secondary)
         } icon: {
             Image(systemName: icon).foregroundStyle(.tint)
+        }
+    }
+}
+
+private struct CotypingBenchmarkResultRow: View {
+    let result: CotypingBenchmarkCaseResult
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Image(systemName: result.passed ? "checkmark.circle.fill" : "exclamationmark.circle")
+                    .foregroundStyle(result.passed ? .green : .orange)
+                Text(result.name).font(.caption)
+                Spacer()
+                Text("\(result.latencyMs) ms")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Text(result.error ?? result.text)
+                .font(.caption2)
+                .foregroundStyle(result.error == nil ? Color.secondary : Color.orange)
+                .lineLimit(2)
         }
     }
 }

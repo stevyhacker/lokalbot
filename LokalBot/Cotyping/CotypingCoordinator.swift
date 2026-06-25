@@ -24,6 +24,7 @@ final class CotypingCoordinator: ObservableObject {
     private let overlay: CotypingOverlayController
     private let inserter: CotypingInserter
     private let engine: CotypingCompleting
+    private let learningStore: CotypingLearningStore
     private let settingsProvider: () -> AppSettings
     private let selfBundleID: String?
 
@@ -39,9 +40,11 @@ final class CotypingCoordinator: ObservableObject {
     init(
         engine: CotypingCompleting,
         settingsProvider: @escaping () -> AppSettings,
+        learningStore: CotypingLearningStore,
         selfBundleID: String? = Bundle.main.bundleIdentifier
     ) {
         self.engine = engine
+        self.learningStore = learningStore
         self.settingsProvider = settingsProvider
         self.selfBundleID = selfBundleID
         self.focusTracker = CotypingFocusTracker()
@@ -224,6 +227,7 @@ final class CotypingCoordinator: ObservableObject {
 
         var cfg = config
         cfg.maxResponseTokens = settings.cotypingMaxResponseTokens
+        cfg.maxResponseWords = settings.cotypingMaxWords
         // Clipboard context (off by default; read fresh at generation time,
         // never cached or persisted — clipboard contents are sensitive).
         let clipboardSnippet = settings.cotypingUseClipboard
@@ -231,10 +235,16 @@ final class CotypingCoordinator: ObservableObject {
                 rawClipboard: clipboardProvider.currentText,
                 precedingText: field.precedingText)
             : nil
+        let learnedExamples = settings.cotypingUseLocalLearning
+            ? learningStore.examples(
+                for: field,
+                limit: settings.cotypingLearningExamplesInPrompt)
+            : []
         guard let request = CotypingRequestBuilder.build(
             field: field, config: cfg,
             personalization: settings.cotypingPersonalization, generation: work,
-            clipboardContext: clipboardSnippet) else {
+            clipboardContext: clipboardSnippet,
+            learnedExamples: learnedExamples) else {
             state = .idle
             return
         }
@@ -382,6 +392,9 @@ final class CotypingCoordinator: ObservableObject {
         }
         guard inserted else { return false }
         CotypingStatsStore.shared.recordAccept(charsAccepted: chunk.count)
+        if settingsProvider().cotypingUseLocalLearning {
+            learningStore.recordAccepted(field: live.field ?? current.field, acceptedText: chunk)
+        }
 
         acceptedWordCount += chunk.split(whereSeparator: { $0.isWhitespace }).count
         current = current.advanced(by: chunk.count)
@@ -421,16 +434,40 @@ final class CotypingCoordinator: ObservableObject {
         let settings = settingsProvider()
         var cfg = config
         cfg.maxResponseTokens = settings.cotypingMaxResponseTokens
+        cfg.maxResponseWords = settings.cotypingMaxWords
         let field = CotypingField(
             appName: "LokalBot", bundleID: selfBundleID, processID: 0, role: "AXTextArea",
             precedingText: precedingText, trailingText: trailingText, selectionLength: 0,
             caretRect: .zero, isSecure: false, caretIsExact: false)
+        let learnedExamples = settings.cotypingUseLocalLearning
+            ? learningStore.examples(
+                for: field,
+                limit: settings.cotypingLearningExamplesInPrompt)
+            : []
         guard let request = CotypingRequestBuilder.build(
             field: field, config: cfg,
-            personalization: settings.cotypingPersonalization, generation: 0) else {
+            personalization: settings.cotypingPersonalization, generation: 0,
+            learnedExamples: learnedExamples) else {
             return ""
         }
         return try await engine.generate(request).text
+    }
+
+    func runQualityBenchmark() async -> CotypingBenchmarkSummary {
+        let settings = settingsProvider()
+        var cfg = config
+        cfg.maxResponseTokens = settings.cotypingMaxResponseTokens
+        cfg.maxResponseWords = settings.cotypingMaxWords
+        return await CotypingBenchmarkRunner.run(
+            engine: engine,
+            config: cfg,
+            personalization: settings.cotypingPersonalization,
+            learnedExamples: { [weak self] field in
+                guard let self, settings.cotypingUseLocalLearning else { return [] }
+                return self.learningStore.examples(
+                    for: field,
+                    limit: settings.cotypingLearningExamplesInPrompt)
+            })
     }
 
     // MARK: - Helpers

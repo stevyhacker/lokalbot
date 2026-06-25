@@ -25,12 +25,15 @@ final class CotypingOverlayController {
         }
         let panel = ensurePanel()
         guard let hosting else { return }
-        hosting.rootView = CotypingGhostView(text: text, style: style)
+        let mode = placement.mode
+        hosting.rootView = CotypingGhostView(text: text, style: style, showsChrome: mode.isMirror)
         hosting.layoutSubtreeIfNeeded()
 
         let fitting = hosting.fittingSize
-        let height = max(fitting.height, caretRect.height > 1 ? caretRect.height : 18)
-        let width = max(fitting.width, 8)
+        let measured = CotypingGhostStyle.measuredTextSize(text, style: style)
+        let chromePadding = mode.isMirror ? CGSize(width: 16, height: 8) : .zero
+        let height = max(fitting.height, measured.height + chromePadding.height, caretRect.height > 1 ? caretRect.height : 18)
+        let width = max(fitting.width, measured.width + chromePadding.width, 8)
         let visible = screenVisibleFrame(containing: caretRect)
 
         // Inline: anchor to the caret's right edge, vertically centered. Clamp X
@@ -40,13 +43,17 @@ final class CotypingOverlayController {
         // no inline home — render the popup one line below the caret (flipped
         // above if there is no room below).
         let frame: CGRect
-        switch placement.mode {
+        switch mode {
         case .inline:
             var x = caretRect.maxX + 2
             if let visible, x + width > visible.maxX {
                 x = max(visible.minX + 2, visible.maxX - width - 2)
             }
-            var y = caretRect.midY - height / 2
+            // AX caret rects are line boxes, while bare SwiftUI text paints near
+            // the top of its panel. Shift inline text down toward the host
+            // baseline; popup mode has its own chrome and line-below placement.
+            let baselineOffset = min(max(caretRect.height * 0.75, 5), 12)
+            var y = caretRect.midY - height / 2 - baselineOffset
             if let visible, y < visible.minY { y = visible.minY + 2 }
             frame = CGRect(x: x, y: y, width: width, height: height)
         case .mirror:
@@ -59,6 +66,7 @@ final class CotypingOverlayController {
         guard frame.origin.x.isFinite, frame.origin.y.isFinite else { hide(); return }
 
         panel.setFrame(frame.integral, display: true)
+        panel.hasShadow = mode.isMirror
         panel.orderFrontRegardless()
         isVisible = true
     }
@@ -83,7 +91,7 @@ final class CotypingOverlayController {
         panel.isReleasedWhenClosed = false
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.ignoresMouseEvents = true
         panel.animationBehavior = .none
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
@@ -103,13 +111,13 @@ final class CotypingOverlayPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-/// The inline ghost text. Renders on an opaque, theme-aware pill (not a
-/// translucent material) so it stays legible over any host app's background —
-/// the earlier `.regularMaterial.opacity(0.6)` washed the text out. Uses system
-/// label/background colors so contrast is correct in both light and dark mode.
+/// The inline ghost text. Keep this visually close to host text instead of a
+/// separate popup pill; CotypingRenderMode controls when popup placement is
+/// necessary.
 struct CotypingGhostView: View {
     let text: String
     var style: CotypingFieldStyle? = nil
+    var showsChrome = false
 
     /// Matches the host field's font family at a clamped size; falls back to the
     /// system font at the field's (clamped) size — never a fixed 13 pt.
@@ -124,22 +132,31 @@ struct CotypingGhostView: View {
         return Color(nsColor: .secondaryLabelColor)
     }
 
+    @ViewBuilder
     var body: some View {
+        if showsChrome {
+            textView
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color(nsColor: .windowBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+                )
+        } else {
+            textView
+        }
+    }
+
+    private var textView: some View {
         Text(text)
             .font(font)
             .foregroundStyle(color)
             .lineLimit(1)
             .truncationMode(.tail)
             .fixedSize()
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color(nsColor: .windowBackgroundColor))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
-            )
     }
 }

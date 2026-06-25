@@ -15,9 +15,11 @@ enum CotypingPromptRenderer {
     /// Upper bound on the conditioning preface so a long style note can never
     /// crowd the prompt; the caret prefix arrives pre-windowed by
     /// `CotypingPrefixWindow`.
-    static let maxPrefaceCharacters = 800
+    static let maxPrefaceCharacters = 900
     /// Cap on the single clipboard line (distinct from the upstream clip budget).
-    static let maxClipboardLineCharacters = 400
+    static let maxClipboardLineCharacters = 180
+    /// Cap on each accepted-completion memory line.
+    static let maxLearnedExampleCharacters = 120
 
     /// - Parameters:
     ///   - prefixText: the windowed text immediately before the caret.
@@ -31,7 +33,8 @@ enum CotypingPromptRenderer {
         styleNote: String? = nil,
         languageHint: String? = nil,
         extendedContext: String? = nil,
-        clipboardContext: String? = nil
+        clipboardContext: String? = nil,
+        learnedExamples: [String] = []
     ) -> String {
         let prefix = trimmingTrailingWhitespace(prefixText)
 
@@ -41,6 +44,11 @@ enum CotypingPromptRenderer {
         if let language = nonEmpty(languageHint) { preface.append(language) }
         if let notes = nonEmpty(extendedContext) {
             preface.append("Notes the writer keeps in mind: \(String(notes.prefix(300)))")
+        }
+        for example in learnedExamples.prefix(3) {
+            if let example = nonEmpty(example) {
+                preface.append("Previously accepted completion: \(String(example.prefix(maxLearnedExampleCharacters)))")
+            }
         }
         if let clip = nonEmpty(clipboardContext) {
             preface.append("On the clipboard: \(String(clip.prefix(maxClipboardLineCharacters)))")

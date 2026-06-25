@@ -75,7 +75,8 @@ enum CotypingSurfaceComposer {
         }
         let cleanedApp = collapseWhitespace(appName)
         guard !cleanedApp.isEmpty else { return nil }
-        let title = sanitizedTitle(windowTitle, applicationName: cleanedApp)
+        let rawTitle = sanitizedTitle(windowTitle, applicationName: cleanedApp)
+        let title = rawTitle.flatMap { isGenericDocumentTitle($0) ? nil : $0 }
         let placeholder = sanitizedPlaceholder(fieldPlaceholder)
         // A generic app with no title or placeholder has nothing useful to add.
         if surfaceClass == .other, title == nil, placeholder == nil { return nil }
@@ -117,6 +118,15 @@ enum CotypingSurfaceComposer {
         title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return nil }
         return String(title.prefix(maxTitleLength))
+    }
+
+    private static func isGenericDocumentTitle(_ title: String) -> Bool {
+        let folded = title
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if folded == "untitled" || folded == "new document" { return true }
+        if folded.hasPrefix("untitled.") || folded.hasPrefix("untitled ") { return true }
+        return false
     }
 
     private static func sanitizedPlaceholder(_ raw: String?) -> String? {

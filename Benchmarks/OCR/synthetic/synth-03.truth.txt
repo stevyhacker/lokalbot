@@ -1,0 +1,16 @@
+Terminal - ocr-benchmark
+$ ./scripts/run_ocr_benchmark --limit 5 --engine ppocr-v6-medium
+Loaded 5 synthetic screenshots from Benchmarks/OCR/synthetic/manifest.tsv
+synth-01 CodeEditor infer_ms=21877 chars=1342 token_f1=0.812
+synth-02 BrowserDashboard infer_ms=19433 chars=1038 token_f1=0.846
+synth-03 Terminal infer_ms=17722 chars=1197 token_f1=0.927
+synth-04 ChatNotes infer_ms=22491 chars=902 token_f1=0.781
+synth-05 Preferences infer_ms=20814 chars=998 token_f1=0.833
+SUMMARY engine=ppocr-v6-medium mean_latency_ms=20467 mean_token_f1=0.840
+$ curl -s http://127.0.0.1:8097/health
+{"status":"ok"}
+$ ./scripts/run_vlm_ocr --engine paddleocr-vl-gguf --max-tokens 1024
+synth-01 generated 892 characters in 2850 ms
+synth-02 generated 764 characters in 2714 ms
+WARN output truncated before footer
+$

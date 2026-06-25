@@ -1,0 +1,25 @@
+LokalBot Preferences
+Profile: Local Mac
+General
+Capture
+Transcription
+OCR
+Storage
+Privacy
+OCR pipeline
+Default engine
+Apple Vision
+Recognition level
+Accurate
+Language correction
+Off
+Screenshot interval
+30 seconds
+Minimum confidence
+0.55
+Fallback engine
+None
+Reliability guardrail
+Do not promote a new OCR engine unless p95 latency stays below 750 ms.
+Quality must improve on real screenshots, not only synthetic fixtures.
+Run a battery test before enabling continuous capture on battery power.

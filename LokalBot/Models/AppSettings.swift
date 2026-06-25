@@ -159,7 +159,13 @@ struct AppSettings: Codable {
     /// with summarization for the shared server.
     var cotypingUseSeparateModel: Bool = false
     /// Built-in catalog model id used for cotyping when the toggle is on.
-    var cotypingBuiltInModelID: String = ModelCatalog.bundledID
+    var cotypingBuiltInModelID: String = ModelCatalog.recommendedCotypingID
+    /// Learn from accepted continuation text, encrypted locally. Stores accepted
+    /// text plus a short sanitized prefix/context hint for ranking — never full
+    /// raw typing streams — and skips secure fields, terminals, and code editors.
+    var cotypingUseLocalLearning: Bool = true
+    /// Number of similar accepted completions folded into the next prompt.
+    var cotypingLearningExamplesInPrompt: Int = 3
 
     var cotypingExcludedAppList: [String] {
         cotypingExcludedApps
@@ -260,6 +266,8 @@ struct AppSettings: Codable {
         case cotypingExtendedContext
         case cotypingUseSeparateModel
         case cotypingBuiltInModelID
+        case cotypingUseLocalLearning
+        case cotypingLearningExamplesInPrompt
     }
 
     static func load() -> AppSettings {
@@ -331,6 +339,8 @@ struct AppSettings: Codable {
         try c.encode(cotypingExtendedContext, forKey: .cotypingExtendedContext)
         try c.encode(cotypingUseSeparateModel, forKey: .cotypingUseSeparateModel)
         try c.encode(cotypingBuiltInModelID, forKey: .cotypingBuiltInModelID)
+        try c.encode(cotypingUseLocalLearning, forKey: .cotypingUseLocalLearning)
+        try c.encode(cotypingLearningExamplesInPrompt, forKey: .cotypingLearningExamplesInPrompt)
     }
 
     init(from decoder: Decoder) throws {
@@ -391,5 +401,8 @@ struct AppSettings: Codable {
         cotypingExtendedContext = (try? c.decode(String.self, forKey: .cotypingExtendedContext)) ?? defaults.cotypingExtendedContext
         cotypingUseSeparateModel = (try? c.decode(Bool.self, forKey: .cotypingUseSeparateModel)) ?? defaults.cotypingUseSeparateModel
         cotypingBuiltInModelID = (try? c.decode(String.self, forKey: .cotypingBuiltInModelID)) ?? defaults.cotypingBuiltInModelID
+        cotypingUseLocalLearning = (try? c.decode(Bool.self, forKey: .cotypingUseLocalLearning)) ?? defaults.cotypingUseLocalLearning
+        let learnedCount = (try? c.decode(Int.self, forKey: .cotypingLearningExamplesInPrompt)) ?? defaults.cotypingLearningExamplesInPrompt
+        cotypingLearningExamplesInPrompt = min(5, max(1, learnedCount))
     }
 }

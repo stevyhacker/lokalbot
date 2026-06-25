@@ -63,16 +63,13 @@ nonisolated struct CotypingRenderModePolicy: Equatable, Sendable {
     }
 
     func mode(caretIsExact: Bool, isCaretAtEndOfLine: Bool) -> CotypingRenderMode {
-        let base = preferenceMode(caretIsExact: caretIsExact)
         // A mid-line caret has no inline home: ghost text would paint over the
-        // trailing characters. Promote any inline result to the popup. This
-        // overrides an explicit `.alwaysInline` pin too, because inline cannot
-        // render mid-line at all. A result already routed to the popup keeps its
-        // original, more specific reason.
-        if case .inline = base, !isCaretAtEndOfLine {
+        // trailing characters. This overrides an explicit `.alwaysInline` pin
+        // too, because inline cannot render mid-line at all.
+        if !isCaretAtEndOfLine {
             return .mirror(reason: .caretMidLine)
         }
-        return base
+        return preferenceMode(caretIsExact: caretIsExact)
     }
 
     private func preferenceMode(caretIsExact: Bool) -> CotypingRenderMode {
@@ -83,8 +80,8 @@ nonisolated struct CotypingRenderModePolicy: Equatable, Sendable {
             return .mirror(reason: .userPreference)
         case .auto:
             // Exact (boundsForRange / text-marker) geometry lands close enough to
-            // the real caret to render inline; an estimated caret drifts as the
-            // user types, so route it to the popup.
+            // the real caret to render inline; an estimated caret can drift as
+            // the user types, so route it to the popup.
             return caretIsExact ? .inline : .mirror(reason: .caretGeometryEstimated)
         }
     }

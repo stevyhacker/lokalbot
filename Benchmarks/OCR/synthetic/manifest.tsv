@@ -1,0 +1,6 @@
+id	app	png_path	truth_path
+synth-01	CodeEditor	/Users/0xmithrandir/Documents/GitHub/lokalbotfable/LokalBot/Benchmarks/OCR/synthetic/synth-01.png	/Users/0xmithrandir/Documents/GitHub/lokalbotfable/LokalBot/Benchmarks/OCR/synthetic/synth-01.truth.txt
+synth-02	BrowserDashboard	/Users/0xmithrandir/Documents/GitHub/lokalbotfable/LokalBot/Benchmarks/OCR/synthetic/synth-02.png	/Users/0xmithrandir/Documents/GitHub/lokalbotfable/LokalBot/Benchmarks/OCR/synthetic/synth-02.truth.txt
+synth-03	Terminal	/Users/0xmithrandir/Documents/GitHub/lokalbotfable/LokalBot/Benchmarks/OCR/synthetic/synth-03.png	/Users/0xmithrandir/Documents/GitHub/lokalbotfable/LokalBot/Benchmarks/OCR/synthetic/synth-03.truth.txt
+synth-04	ChatNotes	/Users/0xmithrandir/Documents/GitHub/lokalbotfable/LokalBot/Benchmarks/OCR/synthetic/synth-04.png	/Users/0xmithrandir/Documents/GitHub/lokalbotfable/LokalBot/Benchmarks/OCR/synthetic/synth-04.truth.txt
+synth-05	Preferences	/Users/0xmithrandir/Documents/GitHub/lokalbotfable/LokalBot/Benchmarks/OCR/synthetic/synth-05.png	/Users/0xmithrandir/Documents/GitHub/lokalbotfable/LokalBot/Benchmarks/OCR/synthetic/synth-05.truth.txt

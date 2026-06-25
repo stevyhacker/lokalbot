@@ -26,7 +26,8 @@ enum CotypingRequestBuilder {
         config: CotypingConfiguration,
         personalization: CotypingPersonalization,
         generation: UInt64,
-        clipboardContext: String? = nil
+        clipboardContext: String? = nil,
+        learnedExamples: [String] = []
     ) -> CotypingRequest? {
         guard CotypingPrefixWindow.shouldGenerate(for: field.precedingText) else { return nil }
         let prefix = CotypingPrefixWindow.truncatedPrefix(
@@ -49,13 +50,15 @@ enum CotypingRequestBuilder {
             styleNote: personalization.styleNote,
             languageHint: personalization.languageHint,
             extendedContext: personalization.extendedContext,
-            clipboardContext: clipboardContext)
+            clipboardContext: clipboardContext,
+            learnedExamples: learnedExamples)
         return CotypingRequest(
             prompt: prompt,
             prefixText: prefix,
             trailingText: field.trailingText,
             isMultiLine: personalization.isMultiLine,
             maxTokens: config.maxResponseTokens,
+            maxWords: config.maxResponseWords,
             temperature: config.temperature,
             topP: config.topP,
             topK: config.topK,

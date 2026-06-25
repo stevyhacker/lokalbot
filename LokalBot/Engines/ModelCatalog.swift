@@ -23,8 +23,9 @@ struct ModelCatalog {
     }
 
     static let bundledID = "qwen3.5-0.8b"
+    static let recommendedCotypingID = "gemma4-e4b-q5-xl"
 
-    /// Five recommended models, smallest first. Current generations
+    /// Recommended models, smallest first. Current generations
     /// (Qwen3.5, Gemma 4) verified June 2026 — same families Cotabby ships.
     static let entries: [Entry] = [
         Entry(id: bundledID, displayName: "Qwen3.5 0.8B (built-in)",
@@ -41,6 +42,11 @@ struct ModelCatalog {
               fileName: "gemma-4-E4B-it-Q4_K_M.gguf",
               url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf",
               sizeGB: 4.98, blurb: "Edge-optimized (MatFormer). 16 GB Macs.",
+              disablesThinking: false),
+        Entry(id: recommendedCotypingID, displayName: "Gemma 4 E4B Q5 XL",
+              fileName: "gemma-4-E4B-it-UD-Q5_K_XL.gguf",
+              url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-UD-Q5_K_XL.gguf",
+              sizeGB: 6.66, blurb: "Cotypist-parity cotyping quality target. 16 GB+ Macs.",
               disablesThinking: false),
         Entry(id: "lfm2.5-8b-a1b", displayName: "LFM2.5 8B (MoE)",
               fileName: "LFM2.5-8B-A1B-Q4_K_M.gguf",
@@ -75,8 +81,41 @@ struct ModelCatalog {
             return bundled
         }
         let downloaded = storage.rootURL.appendingPathComponent("models/\(entry.fileName)")
-        return ModelFileValidator.looksLikeGGUF(downloaded) ? downloaded : nil
+        if ModelFileValidator.looksLikeGGUF(downloaded) { return downloaded }
+        if entry.id == recommendedCotypingID, let cotypist = cotypistModelURL() {
+            return cotypist
+        }
+        return nil
     }
+
+    /// Cotypist stores the same Q5 XL GGUF under Application Support. When it is
+    /// already present, use it read-only instead of forcing another 6+ GB fetch.
+    /// This is best-effort cross-app reuse: if Cotypist changes its bundle id or
+    /// model layout, validation fails closed and LokalBot falls back to its own
+    /// download path.
+    static func cotypistModelURL(fileManager: FileManager = .default) -> URL? {
+        guard let appSupport = fileManager.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else { return nil }
+        return cotypistModelURL(appSupport: appSupport)
+    }
+
+    static func cotypistModelURL(appSupport: URL) -> URL? {
+        let models = appSupport
+            .appendingPathComponent("app.cotypist.Cotypist", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+        for fileName in cotypistParityFileNames {
+            let url = models.appendingPathComponent(fileName)
+            if ModelFileValidator.looksLikeGGUF(url) { return url }
+        }
+        return nil
+    }
+
+    private static let cotypistParityFileNames = [
+        "gemma-4-E4B-it-UD-Q5_K_XL.gguf",
+        "gemma-4-E4B-UD-Q5_K_XL.gguf",
+    ]
 }
 
 enum ModelFileValidator {

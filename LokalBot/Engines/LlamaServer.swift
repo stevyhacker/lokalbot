@@ -7,21 +7,23 @@ import Darwin
 actor LlamaServer {
 
     /// Chat/completions instance (summaries, digests, Q&A).
-    static let shared = LlamaServer(port: 17872, extraArgs: [])
+    static let shared = LlamaServer(port: 17872, contextTokens: 16_384, extraArgs: [])
     /// Embeddings instance (semantic search) — small model, second port.
-    static let embedder = LlamaServer(port: 17873,
+    static let embedder = LlamaServer(port: 17873, contextTokens: 2_048,
                                       extraArgs: ["--embeddings", "--pooling", "mean"])
     /// Cotyping instance — an optional separate (typically smaller/faster)
     /// model on a third port, so inline suggestions never contend with the
     /// summarizer for the shared server (no model-reload thrash).
-    static let cotyping = LlamaServer(port: 17874, extraArgs: [])
+    static let cotyping = LlamaServer(port: 17874, contextTokens: 4_096, extraArgs: [])
 
     nonisolated let port: Int
+    private let contextTokens: Int
     private let extraArgs: [String]
     nonisolated var baseURL: URL { URL(string: "http://127.0.0.1:\(port)/v1")! }
 
-    init(port: Int, extraArgs: [String]) {
+    init(port: Int, contextTokens: Int, extraArgs: [String]) {
         self.port = port
+        self.contextTokens = contextTokens
         self.extraArgs = extraArgs
     }
 
@@ -44,18 +46,37 @@ actor LlamaServer {
     func ensureRunning(modelAt url: URL) async throws {
         if let process, process.isRunning, loadedModelPath == url.path,
            await healthy() { return }
+        if await healthyServing(modelAt: url) {
+            loadedModelPath = url.path
+            return
+        }
         try await start(modelAt: url)
     }
 
     private func start(modelAt url: URL) async throws {
         await stop()
+        if await healthyServing(modelAt: url) {
+            loadedModelPath = url.path
+            return
+        }
         let binary = try installedBinary()
+        if await healthy() {
+            await stopRecordedServerIfOwned(expectedBinary: binary)
+            if await healthyServing(modelAt: url) {
+                loadedModelPath = url.path
+                return
+            }
+        }
+        guard !(await healthy()) else {
+            throw ServerError.failedToStart(
+                "port \(port) is already serving another process; stop the stale llama-server and try again")
+        }
         let process = Process()
         process.executableURL = binary
         process.arguments = [
             "-m", url.path,
             "--host", "127.0.0.1", "--port", String(port),
-            "-c", extraArgs.contains("--embeddings") ? "2048" : "16384",
+            "-c", String(contextTokens),
             "-ngl", "99",           // full Metal offload
             "--jinja",              // correct chat templates (qwen3, gpt-oss)
             "--no-webui",
@@ -65,14 +86,19 @@ actor LlamaServer {
         try process.run()
         self.process = process
         loadedModelPath = url.path
+        writePidMarker(ServerPidMarker(
+            pid: process.processIdentifier,
+            port: port,
+            binaryPath: binary.path,
+            modelPath: url.path))
 
         // Model load can take a while for the big ones; poll /health.
         for _ in 0..<240 {
             try await Task.sleep(for: .milliseconds(500))
-            if await healthy() { return }
             if !process.isRunning {
                 throw ServerError.failedToStart("llama-server exited during startup")
             }
+            if await healthy() { return }
         }
         await stop()
         throw ServerError.failedToStart("server did not become healthy in time")
@@ -82,7 +108,9 @@ actor LlamaServer {
         let old = process
         process = nil
         loadedModelPath = nil
-        guard let old, old.isRunning else { return }
+        guard let old else { return }
+        removePidMarker()
+        guard old.isRunning else { return }
         old.terminate()
         for _ in 0..<40 {
             if !old.isRunning { return }
@@ -93,11 +121,118 @@ actor LlamaServer {
         }
     }
 
+    private func stopRecordedServerIfOwned(expectedBinary: URL) async {
+        guard let marker = readPidMarker(), marker.port == port else {
+            removePidMarker()
+            return
+        }
+        let pid = marker.pid
+        guard kill(pid, 0) == 0 else {
+            removePidMarker()
+            return
+        }
+        guard marker.binaryPath == expectedBinary.path,
+              Self.processPath(for: pid) == expectedBinary.path else {
+            removePidMarker()
+            return
+        }
+        kill(pid, SIGTERM)
+        for _ in 0..<40 {
+            if kill(pid, 0) != 0 {
+                removePidMarker()
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+        removePidMarker()
+    }
+
+    private func readPidMarker() -> ServerPidMarker? {
+        guard let data = try? Data(contentsOf: pidMarkerURL) else { return nil }
+        return try? JSONDecoder().decode(ServerPidMarker.self, from: data)
+    }
+
+    private func writePidMarker(_ marker: ServerPidMarker) {
+        do {
+            try FileManager.default.createDirectory(
+                at: pidMarkerURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            let data = try JSONEncoder().encode(marker)
+            try data.write(to: pidMarkerURL, options: .atomic)
+        } catch {
+            // Best-effort orphan recovery only; startup must not depend on it.
+        }
+    }
+
+    private func removePidMarker() {
+        try? FileManager.default.removeItem(at: pidMarkerURL)
+    }
+
+    private var pidMarkerURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent(AppIdentifiers.bundleID, isDirectory: true)
+        return appSupport.appendingPathComponent("llama-server-\(port).pid.json")
+    }
+
     private func healthy() async -> Bool {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/health")!)
         request.timeoutInterval = 2
         guard let (_, response) = try? await URLSession.shared.data(for: request) else { return false }
         return (response as? HTTPURLResponse)?.statusCode == 200
+    }
+
+    private func healthyServing(modelAt url: URL) async -> Bool {
+        var request = URLRequest(url: baseURL.appendingPathComponent("models"))
+        request.timeoutInterval = 2
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return false }
+        return Self.servedModelNames(from: data).contains(Self.modelMatchKey(for: url))
+    }
+
+    nonisolated static func modelMatchKey(for url: URL) -> String {
+        url.lastPathComponent
+    }
+
+    nonisolated static func servedModelNames(from data: Data) -> Set<String> {
+        guard let payload = try? JSONDecoder().decode(ModelListPayload.self, from: data) else { return [] }
+        var names = Set<String>()
+        for model in payload.models ?? [] {
+            if let name = model.name, !name.isEmpty { names.insert(name) }
+            if let model = model.model, !model.isEmpty { names.insert(model) }
+        }
+        for model in payload.data ?? [] {
+            if let id = model.id, !id.isEmpty { names.insert(id) }
+        }
+        return names
+    }
+
+    nonisolated static func processPath(for pid: pid_t) -> String? {
+        let bufferSize = 4096
+        var buffer = [CChar](repeating: 0, count: bufferSize)
+        let result = buffer.withUnsafeMutableBufferPointer { pointer in
+            proc_pidpath(pid, pointer.baseAddress, UInt32(bufferSize))
+        }
+        guard result > 0 else { return nil }
+        return String(cString: buffer)
+    }
+
+    private struct ServerPidMarker: Codable {
+        var pid: pid_t
+        var port: Int
+        var binaryPath: String
+        var modelPath: String
+    }
+
+    private struct ModelListPayload: Decodable {
+        var models: [ListedModel]?
+        var data: [ListedModel]?
+    }
+
+    private struct ListedModel: Decodable {
+        var id: String?
+        var name: String?
+        var model: String?
     }
 
     /// llama-server + dylibs are copied out of the bundle into Application

@@ -261,6 +261,7 @@ final class AppState: ObservableObject {
     }
 
     let storage = StorageManager()
+    private(set) lazy var cotypingLearning = CotypingLearningStore(storageRoot: storage.rootURL)
     let detector = MeetingDetector()
     let audioMonitor = AudioSourceMonitor()
     /// Read-only calendar access (EventKit): confirms meetings and titles
@@ -294,7 +295,17 @@ final class AppState: ObservableObject {
     })
     private(set) lazy var cotyping = CotypingCoordinator(
         engine: cotypingEngine,
-        settingsProvider: { [weak self] in self?.settings ?? AppSettings() })
+        settingsProvider: { [weak self] in self?.settings ?? AppSettings() },
+        learningStore: cotypingLearning)
+
+    @MainActor
+    func prepareRecommendedCotypingModel() {
+        CotypingModelPreparer.prepareRecommended(
+            settings: &settings,
+            storage: storage,
+            downloads: ModelDownloadManager.shared)
+    }
+
     /// Chat assistant (the "Chat" section). Reuses the summariser's `TextEngine`
     /// and a tool-calling agent over the live meeting list + search indexes.
     private(set) lazy var chat = ChatViewModel(

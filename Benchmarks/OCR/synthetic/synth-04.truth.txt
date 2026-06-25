@@ -1,0 +1,18 @@
+LokalBot Notes
+OCR benchmark
+Pipeline review
+Release checklist
+Meeting follow-up
+OCR benchmark
+Updated 10:42 AM
+Stevan
+Can we switch away from Vision if the model is better?
+Codex
+Not yet. PP-OCRv6 found more snippets but was about 90x slower.
+Stevan
+What about PaddleOCR-VL on llama.cpp?
+Codex
+It ran quickly enough for manual use, but missed too much screenshot text.
+Decision
+Default OCR remains Apple Vision. Keep VLM parsing as an optional experiment.
+Action item: test five synthetic screenshots with ground truth labels.

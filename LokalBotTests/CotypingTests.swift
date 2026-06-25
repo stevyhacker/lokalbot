@@ -28,16 +28,229 @@ final class CotypingPromptRendererTests: XCTestCase {
     func testBlankPersonaIgnored() {
         XCTAssertEqual(CotypingPromptRenderer.prompt(prefixText: "x", userName: "   "), "x")
     }
+
+    func testLearnedExamplesEnterPrefaceBeforePrefix() {
+        let prompt = CotypingPromptRenderer.prompt(
+            prefixText: "Thanks for",
+            learnedExamples: ["following up with the final numbers"])
+        XCTAssertEqual(
+            prompt,
+            "Previously accepted completion: following up with the final numbers\n\nThanks for")
+    }
+}
+
+// MARK: - Local learning
+
+final class CotypingLearningRankerTests: XCTestCase {
+    private func field(
+        preceding: String,
+        appName: String = "Mail",
+        bundleID: String? = "com.apple.mail",
+        windowTitle: String? = nil
+    ) -> CotypingField {
+        CotypingField(
+            appName: appName, bundleID: bundleID, processID: 1, role: "AXTextArea",
+            precedingText: preceding, trailingText: "", selectionLength: 0,
+            caretRect: .zero, isSecure: false, caretIsExact: true,
+            windowTitle: windowTitle)
+    }
+
+    func testSanitizesAcceptedText() {
+        XCTAssertEqual(
+            CotypingLearningRanker.acceptedText("  thanks\u{0000}\nagain  "),
+            "thanks again")
+        XCTAssertNil(CotypingLearningRanker.acceptedText("ok"))
+    }
+
+    func testDoesNotLearnInSecureFieldsOrTerminals() {
+        var secure = field(preceding: "password")
+        secure.isSecure = true
+        XCTAssertFalse(CotypingLearningRanker.canLearn(from: secure))
+        XCTAssertFalse(CotypingLearningRanker.canLearn(from: field(
+            preceding: "ls",
+            appName: "Terminal",
+            bundleID: "com.apple.Terminal")))
+    }
+
+    func testRankingPrefersSameBundleAndPrefixOverlap() {
+        let now = Date()
+        let examples = [
+            CotypingLearningExample(
+                id: UUID(), createdAt: now.addingTimeInterval(-30),
+                appName: "Slack", bundleID: "com.tinyspeck.slackmacgap",
+                surfaceClass: "chat", contextHint: nil,
+                prefixTail: "quick follow up from yesterday",
+                acceptedText: "sounds good to me"),
+            CotypingLearningExample(
+                id: UUID(), createdAt: now.addingTimeInterval(-60),
+                appName: "Mail", bundleID: "com.apple.mail",
+                surfaceClass: "email", contextHint: nil,
+                prefixTail: "quick follow up on the contract",
+                acceptedText: "I can send the final version today"),
+        ]
+
+        let ranked = CotypingLearningRanker.rankedExamples(
+            examples,
+            for: field(preceding: "quick follow up"),
+            limit: 1)
+
+        XCTAssertEqual(ranked, ["I can send the final version today"])
+    }
+
+    func testRankingDropsWeaklyRelatedExamples() {
+        let examples = [
+            CotypingLearningExample(
+                id: UUID(), createdAt: Date(),
+                appName: "Slack", bundleID: "com.tinyspeck.slackmacgap",
+                surfaceClass: "chat", contextHint: nil,
+                prefixTail: "unrelated thread about dinner",
+                acceptedText: "sounds good to me"),
+        ]
+
+        let ranked = CotypingLearningRanker.rankedExamples(
+            examples,
+            for: field(preceding: "quick follow up"),
+            limit: 1)
+
+        XCTAssertEqual(ranked, [])
+    }
+
+    func testRankingUsesContextAndDeduplicates() {
+        let now = Date()
+        let examples = [
+            CotypingLearningExample(
+                id: UUID(), createdAt: now.addingTimeInterval(-10),
+                appName: "Mail", bundleID: "com.apple.mail",
+                surfaceClass: "email", contextHint: nil,
+                prefixTail: "quick follow up",
+                acceptedText: "I can send the final version today"),
+            CotypingLearningExample(
+                id: UUID(), createdAt: now.addingTimeInterval(-20),
+                appName: "Mail", bundleID: "com.apple.mail",
+                surfaceClass: "email",
+                contextHint: "An email being written in Mail. The window is titled \"Q3 planning\".",
+                prefixTail: "quick follow up",
+                acceptedText: "I can send the final version today"),
+            CotypingLearningExample(
+                id: UUID(), createdAt: now.addingTimeInterval(-30),
+                appName: "Mail", bundleID: "com.apple.mail",
+                surfaceClass: "email",
+                contextHint: "An email being written in Mail. The window is titled \"Q3 planning\".",
+                prefixTail: "quick follow up",
+                acceptedText: "I will follow up on the Q3 planning notes"),
+        ]
+
+        let ranked = CotypingLearningRanker.rankedExamples(
+            examples,
+            for: field(preceding: "quick follow up", windowTitle: "Q3 planning"),
+            limit: 3)
+
+        XCTAssertEqual(ranked.first, "I can send the final version today")
+        XCTAssertEqual(ranked.count, 2)
+    }
+}
+
+// MARK: - Recommended cotyping model preparation
+
+final class CotypingModelPreparationTests: XCTestCase {
+    func testStatusPrefersDownloadProgressOverMissing() throws {
+        let entry = ModelCatalog.entry(id: ModelCatalog.recommendedCotypingID)
+        let status = CotypingModelPreparer.status(
+            for: entry,
+            localURL: nil,
+            progress: 0.42,
+            error: nil)
+
+        XCTAssertEqual(status, .downloading(try XCTUnwrap(entry), 0.42))
+        XCTAssertTrue(status.isDownloading)
+    }
+
+    func testReadyWhenLocalURLExists() throws {
+        let entry = try XCTUnwrap(ModelCatalog.entry(id: ModelCatalog.recommendedCotypingID))
+        let status = CotypingModelPreparer.status(
+            for: entry,
+            localURL: URL(fileURLWithPath: "/tmp/model.gguf"),
+            progress: nil,
+            error: nil)
+
+        XCTAssertEqual(status, .ready(entry))
+    }
+
+    func testRecommendedActiveRequiresToggleAndModelID() {
+        var settings = AppSettings()
+        XCTAssertFalse(CotypingModelPreparer.recommendedIsActive(settings: settings))
+        settings.cotypingUseSeparateModel = true
+        settings.cotypingBuiltInModelID = ModelCatalog.recommendedCotypingID
+        XCTAssertTrue(CotypingModelPreparer.recommendedIsActive(settings: settings))
+    }
+
+    func testPrepareActionDownloadsBeforeActivatingMissingModel() {
+        XCTAssertEqual(CotypingModelPreparer.action(localURL: nil, isDownloading: false), .download)
+        XCTAssertEqual(CotypingModelPreparer.action(localURL: nil, isDownloading: true), .wait)
+        XCTAssertEqual(
+            CotypingModelPreparer.action(localURL: URL(fileURLWithPath: "/tmp/model.gguf"), isDownloading: false),
+            .activate)
+    }
+}
+
+// MARK: - Quality benchmark
+
+@MainActor
+private final class StaticCotypingEngine: CotypingCompleting {
+    var output: String
+
+    init(output: String) {
+        self.output = output
+    }
+
+    func generate(_ request: CotypingRequest) async throws -> CotypingNormalizationResult {
+        CotypingNormalizationResult(text: output, suppression: nil)
+    }
+}
+
+final class CotypingBenchmarkTests: XCTestCase {
+    @MainActor
+    func testEvaluatorTracksSafetyLatencyAndKeywordHints() {
+        let scenario = CotypingBenchmarkScenario.defaults[0]
+        let result = CotypingBenchmarkRunner.evaluate(
+            scenario: scenario,
+            text: " up with the final numbers today",
+            suppression: nil,
+            latencyMs: 120)
+
+        XCTAssertTrue(result.passedSafety)
+        XCTAssertTrue(result.metLatencyTarget)
+        XCTAssertTrue(result.passed)
+        XCTAssertGreaterThan(result.expectedTermHits, 0)
+    }
+
+    @MainActor
+    func testRunnerProducesSummary() async {
+        let summary = await CotypingBenchmarkRunner.run(
+            engine: StaticCotypingEngine(output: " up today"),
+            config: .standard,
+            personalization: .none)
+
+        XCTAssertEqual(summary.total, CotypingBenchmarkScenario.defaults.count)
+        XCTAssertEqual(summary.safetyPassed, summary.total)
+        XCTAssertNotNil(summary.averageLatencyMs)
+        XCTAssertNotNil(summary.p95LatencyMs)
+    }
 }
 
 // MARK: - Text normalizer
 
 final class CotypingTextNormalizerTests: XCTestCase {
-    private func request(prefix: String, trailing: String = "", multiLine: Bool = false) -> CotypingRequest {
+    private func request(
+        prefix: String,
+        trailing: String = "",
+        multiLine: Bool = false,
+        maxWords: Int = 6
+    ) -> CotypingRequest {
         CotypingRequest(
             prompt: CotypingPromptRenderer.prompt(prefixText: prefix),
             prefixText: prefix, trailingText: trailing, isMultiLine: multiLine,
-            maxTokens: 24, temperature: 0.1, topP: 0.7, topK: 20, minP: 0.08,
+            maxTokens: 24, maxWords: maxWords, temperature: 0.1, topP: 0.7, topK: 20, minP: 0.08,
             repeatPenalty: 1.05, seed: 0, generation: 0)
     }
 
@@ -78,6 +291,13 @@ final class CotypingTextNormalizerTests: XCTestCase {
         XCTAssertEqual(result, "hello there")
     }
 
+    func testStripsBenignInlineMarkupInsteadOfSuppressingSuggestion() {
+        let result = CotypingTextNormalizer.normalize(
+            "that you can't use the same <code>.env</code> file for both development and production",
+            for: request(prefix: "The main tradeoff is "))
+        XCTAssertEqual(result, "that you can't use the same")
+    }
+
     func testRejectsWhitespaceOnly() {
         let detailed = CotypingTextNormalizer.normalizeDetailed("   \n  ", for: request(prefix: "Hello "))
         XCTAssertEqual(detailed.text, "")
@@ -88,6 +308,58 @@ final class CotypingTextNormalizerTests: XCTestCase {
         let result = CotypingTextNormalizer.normalize(
             "line one\nline two\n\nignored", for: request(prefix: "Start ", multiLine: true))
         XCTAssertEqual(result, "line one\nline two")
+    }
+
+    func testSuppressesBracketPlaceholderSuggestions() {
+        let detailed = CotypingTextNormalizer.normalizeDetailed(
+            "up on [the project/your email]",
+            for: request(prefix: "I wanted to follow "))
+        XCTAssertEqual(detailed.text, "")
+        XCTAssertEqual(detailed.suppression, .placeholderText)
+    }
+
+    func testSuppressesUnicodePlaceholderSuggestions() {
+        let detailed = CotypingTextNormalizer.normalizeDetailed(
+            "up on [пројекат]",
+            for: request(prefix: "I wanted to follow "))
+        XCTAssertEqual(detailed.text, "")
+        XCTAssertEqual(detailed.suppression, .placeholderText)
+    }
+
+    func testTruncatesBeforeSecondSentenceQuestion() {
+        let result = CotypingTextNormalizer.normalize(
+            "care of that. What would you like me to do next?",
+            for: request(prefix: "I can take "))
+        XCTAssertEqual(result, "care of that.")
+    }
+
+    func testSuppressesNewQuestionContinuation() {
+        let detailed = CotypingTextNormalizer.normalizeDetailed(
+            "What would you like me to do next?",
+            for: request(prefix: "I can take "))
+        XCTAssertEqual(detailed.text, "")
+        XCTAssertEqual(detailed.suppression, .questionContinuation)
+    }
+
+    func testAllowsHowToContinuationWithoutQuestionMark() {
+        let result = CotypingTextNormalizer.normalize(
+            "how to fix it",
+            for: request(prefix: "I'll show you "))
+        XCTAssertEqual(result, "how to fix it")
+    }
+
+    func testCapsSingleLineSuggestionsToShortPhrase() {
+        let result = CotypingTextNormalizer.normalize(
+            "one two three four five six seven eight",
+            for: request(prefix: "Let's "))
+        XCTAssertEqual(result, "one two three four five six")
+    }
+
+    func testSingleLineWordCapUsesRequestMaxWords() {
+        let result = CotypingTextNormalizer.normalize(
+            "one two three four five six seven eight",
+            for: request(prefix: "Let's ", maxWords: 8))
+        XCTAssertEqual(result, "one two three four five six seven eight")
     }
 }
 
@@ -150,13 +422,16 @@ final class CotypingRequestBuilderTests: XCTestCase {
     }
 
     func testBuildsRequestWithPrefixAndGeneration() throws {
+        var config = CotypingConfiguration.standard
+        config.maxResponseWords = 12
         let request = try XCTUnwrap(CotypingRequestBuilder.build(
-            field: field(preceding: "Hello there"), config: .standard,
+            field: field(preceding: "Hello there"), config: config,
             personalization: .none, generation: 7))
         XCTAssertEqual(request.prefixText, "Hello there")
         XCTAssertEqual(request.prompt, "Hello there")
         XCTAssertEqual(request.generation, 7)
         XCTAssertEqual(request.maxTokens, CotypingConfiguration.standard.maxResponseTokens)
+        XCTAssertEqual(request.maxWords, 12)
         XCTAssertFalse(request.isMultiLine)
     }
 
@@ -228,6 +503,10 @@ final class CotypingSettingsTests: XCTestCase {
         settings.cotypingAcceptGranularity = .phrase
         settings.cotypingFullAcceptKey = .rightArrow
         settings.cotypingExcludedApps = "Terminal, 1Password"
+        settings.cotypingUseSeparateModel = true
+        settings.cotypingBuiltInModelID = ModelCatalog.recommendedCotypingID
+        settings.cotypingUseLocalLearning = false
+        settings.cotypingLearningExamplesInPrompt = 5
 
         let data = try JSONEncoder().encode(settings)
         let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
@@ -240,6 +519,10 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertEqual(decoded.cotypingAcceptGranularity, .phrase)
         XCTAssertEqual(decoded.cotypingFullAcceptKey, .rightArrow)
         XCTAssertEqual(decoded.cotypingExcludedAppList, ["Terminal", "1Password"])
+        XCTAssertTrue(decoded.cotypingUseSeparateModel)
+        XCTAssertEqual(decoded.cotypingBuiltInModelID, ModelCatalog.recommendedCotypingID)
+        XCTAssertFalse(decoded.cotypingUseLocalLearning)
+        XCTAssertEqual(decoded.cotypingLearningExamplesInPrompt, 5)
     }
 
     func testTolerantDecodeKeepsOtherDefaults() throws {
@@ -247,6 +530,8 @@ final class CotypingSettingsTests: XCTestCase {
         let settings = try JSONDecoder().decode(AppSettings.self, from: data)
         XCTAssertTrue(settings.cotypingEnabled)
         XCTAssertEqual(settings.cotypingMaxWords, AppSettings().cotypingMaxWords)
+        XCTAssertTrue(settings.cotypingUseLocalLearning)
+        XCTAssertEqual(settings.cotypingBuiltInModelID, ModelCatalog.recommendedCotypingID)
         XCTAssertTrue(settings.menuBarOnly)
     }
 
@@ -321,6 +606,14 @@ final class CotypingSurfaceContextTests: XCTestCase {
     func testGenericAppWithNoCuesIsNil() {
         XCTAssertNil(CotypingSurfaceComposer.compose(
             appName: "SomeApp", bundleID: "com.acme.app", windowTitle: nil, fieldPlaceholder: nil))
+    }
+
+    func testGenericUntitledDocumentDoesNotBecomeContext() {
+        XCTAssertNil(CotypingSurfaceComposer.compose(
+            appName: "TextEdit",
+            bundleID: "com.apple.TextEdit",
+            windowTitle: "Untitled - TextEdit",
+            fieldPlaceholder: nil))
     }
 
     func testEmailPrefaceLines() throws {
@@ -891,6 +1184,15 @@ final class CotypingFieldStyleTests: XCTestCase {
         XCTAssertNil(CotypingGhostStyle.font(from: CotypingFieldStyle(fontName: "Definitely-Not-A-Font")))
     }
 
+    func testMeasuredTextSizeCoversLeadingSpaceSuggestion() {
+        let size = CotypingGhostStyle.measuredTextSize(
+            " up on this",
+            style: CotypingFieldStyle(fontName: "Helvetica", fontPointSize: 12))
+
+        XCTAssertGreaterThan(size.width, 20)
+        XCTAssertGreaterThan(size.height, 8)
+    }
+
     func testGhostColorDimsHostColor() {
         let color = CotypingGhostStyle.ghostColor(from: CotypingFieldStyle(colorHex: "336699"))
         XCTAssertEqual(color?.alphaComponent ?? 0, CotypingGhostStyle.ghostOpacity, accuracy: 0.001)
@@ -927,11 +1229,11 @@ final class CotypingRenderModeTests: XCTestCase {
         XCTAssertEqual(mode, .mirror(reason: .caretMidLine))
     }
 
-    func testAutoEstimatedGoesToMirror() {
+    func testAutoEstimatedEndOfLineUsesMirror() {
         let endOfLine = CotypingRenderModePolicy(userPreference: .auto).mode(caretIsExact: false, isCaretAtEndOfLine: true)
         let midLine = CotypingRenderModePolicy(userPreference: .auto).mode(caretIsExact: false, isCaretAtEndOfLine: false)
         XCTAssertEqual(endOfLine, .mirror(reason: .caretGeometryEstimated))
-        XCTAssertEqual(midLine, .mirror(reason: .caretGeometryEstimated))  // base already mirror; mid-line override is a no-op
+        XCTAssertEqual(midLine, .mirror(reason: .caretMidLine))
     }
 
     func testAlwaysInlineMidLineStillOverrides() {
@@ -952,9 +1254,9 @@ final class CotypingRenderModeTests: XCTestCase {
 
     func testPlacementComposesIntoMode() {
         let inline = CotypingOverlayPlacement(caretIsExact: true, isCaretAtEndOfLine: true, preference: .auto)
-        let popup = CotypingOverlayPlacement(caretIsExact: false, isCaretAtEndOfLine: true, preference: .auto)
+        let estimatedEnd = CotypingOverlayPlacement(caretIsExact: false, isCaretAtEndOfLine: true, preference: .auto)
         XCTAssertEqual(inline.mode, .inline)
-        XCTAssertEqual(popup.mode, .mirror(reason: .caretGeometryEstimated))
+        XCTAssertEqual(estimatedEnd.mode, .mirror(reason: .caretGeometryEstimated))
     }
 
     func testPreferenceDefaultsToAuto() {

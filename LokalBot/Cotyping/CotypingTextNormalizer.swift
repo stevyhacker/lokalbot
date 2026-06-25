@@ -14,6 +14,8 @@ enum CotypingSuppressionReason: String, Sendable, Equatable {
     case normalizedToEmpty
     case duplicatesTrailingText
     case echoesPrecedingText
+    case placeholderText
+    case questionContinuation
     case unsafeToInsert
 }
 
@@ -52,6 +54,7 @@ enum CotypingTextNormalizer {
         // "\ndelicious" is not misread as an empty first line.
         normalized = normalized.trimmingCharacters(in: .newlines)
         normalized = stripLeadingScaffoldingLabels(normalized)
+        normalized = stripBenignInlineMarkup(normalized)
         normalized = normalized.trimmingCharacters(in: .newlines)
 
         if request.isMultiLine {
@@ -91,6 +94,14 @@ enum CotypingTextNormalizer {
             normalized = String(normalized.drop(while: { $0.isWhitespace }))
         }
 
+        if beginsNewQuestion(normalized, prefixText: request.prefixText) {
+            return CotypingNormalizationResult(text: "", suppression: .questionContinuation)
+        }
+        normalized = conservativeSingleLineContinuation(normalized, request: request)
+        if containsPlaceholderText(normalized) {
+            return CotypingNormalizationResult(text: "", suppression: .placeholderText)
+        }
+
         guard CotypingInsertionSafety.isSafeToInsert(normalized) else {
             return CotypingNormalizationResult(
                 text: "",
@@ -100,6 +111,131 @@ enum CotypingTextNormalizer {
                     normalized: normalized))
         }
         return CotypingNormalizationResult(text: normalized, suppression: nil)
+    }
+
+    private static func conservativeSingleLineContinuation(
+        _ text: String,
+        request: CotypingRequest
+    ) -> String {
+        guard !request.isMultiLine else { return text }
+        var working = text
+        if let sentenceEnd = firstSentenceBoundaryBeforeNewThought(in: working) {
+            working = String(working[...sentenceEnd])
+        }
+        return limitWords(working, maxWords: max(1, min(30, request.maxWords)))
+    }
+
+    private static func firstSentenceBoundaryBeforeNewThought(in text: String) -> String.Index? {
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            if character == "." || character == "!" || character == "?" {
+                let next = text.index(after: index)
+                if next < text.endIndex, text[next].isWhitespace {
+                    return index
+                }
+            }
+            index = text.index(after: index)
+        }
+        return nil
+    }
+
+    private static func limitWords(_ text: String, maxWords: Int) -> String {
+        guard maxWords > 0 else { return "" }
+        var words = 0
+        var inWord = false
+        var end = text.endIndex
+        var truncated = false
+        var index = text.startIndex
+        while index < text.endIndex {
+            let isWord = isSuggestionWordCharacter(text[index])
+            if isWord, !inWord {
+                words += 1
+                if words > maxWords {
+                    end = index
+                    truncated = true
+                    break
+                }
+                inWord = true
+            } else if !isWord {
+                inWord = false
+            }
+            index = text.index(after: index)
+        }
+        let result = String(text[..<end])
+        return truncated
+            ? trimmingTrailingLimitBoundary(result)
+            : trimmingTrailingWhitespace(result)
+    }
+
+    private static func isSuggestionWordCharacter(_ character: Character) -> Bool {
+        character.isLetter || character.isNumber || character == "'" || character == "’"
+    }
+
+    private static func trimmingTrailingLimitBoundary(_ text: String) -> String {
+        var result = trimmingTrailingWhitespace(text)
+        while result.last == "." {
+            result.removeLast()
+            result = trimmingTrailingWhitespace(result)
+        }
+        return result
+    }
+
+    private static func trimmingTrailingWhitespace(_ text: String) -> String {
+        var end = text.endIndex
+        while end > text.startIndex {
+            let previous = text.index(before: end)
+            if text[previous].isWhitespace {
+                end = previous
+            } else {
+                break
+            }
+        }
+        return String(text[..<end])
+    }
+
+    private static func containsPlaceholderText(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return containsDelimitedPlaceholder(trimmed, open: "[", close: "]")
+            || containsDelimitedPlaceholder(trimmed, open: "<", close: ">")
+    }
+
+    private static func containsDelimitedPlaceholder(_ text: String, open: Character, close: Character) -> Bool {
+        var searchStart = text.startIndex
+        while let openIndex = text[searchStart...].firstIndex(of: open),
+              let closeIndex = text[text.index(after: openIndex)...].firstIndex(of: close) {
+            let contentStart = text.index(after: openIndex)
+            let content = text[contentStart..<closeIndex]
+            if content.count <= 60, content.contains(where: { $0.isLetter }) {
+                return true
+            }
+            searchStart = text.index(after: closeIndex)
+        }
+        return false
+    }
+
+    private static func stripBenignInlineMarkup(_ text: String) -> String {
+        text.replacingOccurrences(
+            of: #"</?(?:b|br|code|em|i|kbd|samp|span|strong|u|var)(?:\s+[^>]*)?>"#,
+            with: "",
+            options: .regularExpression)
+    }
+
+    private static func beginsNewQuestion(_ text: String, prefixText: String) -> Bool {
+        let trimmedPrefix = prefixText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedPrefix.hasSuffix("?") { return false }
+        let lowered = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”‘’"))
+            .lowercased()
+        guard !lowered.isEmpty else { return false }
+        let questionPrefixes = [
+            "what ", "why ", "how ", "when ", "where ", "who ",
+            "would you ", "could you ", "can you ", "do you ", "are you ", "is there ",
+        ]
+        guard questionPrefixes.contains(where: { lowered.hasPrefix($0) }) else { return false }
+        return lowered.contains("?")
     }
 
     private static func suppressionForEmptyResult(

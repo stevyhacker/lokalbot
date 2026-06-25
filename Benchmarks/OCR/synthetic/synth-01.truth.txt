@@ -1,0 +1,24 @@
+LokalBot - ReviewOCR.swift
+ReviewOCR.swift
+Search files
+Sources
+Engines
+OCRBenchmark.swift
+ProcessingPipeline.swift
+Tests
+ScreenshotOCRTests.swift
+// OCR comparison fixture
+let candidate = "PP-OCRv6 medium"
+let baseline = "Apple Vision"
+let latencyBudgetMs = 750
+func shouldPromote(candidate: OCRResult) -> Bool {
+    return candidate.f1 > 0.92 && candidate.latencyMs < latencyBudgetMs
+}
+XCTAssertGreaterThan(candidate.tokenF1, baseline.tokenF1)
+XCTAssertLessThan(candidate.meanLatencyMs, 750)
+Review note
+Keep Vision as default unless the model is
+both faster and more accurate.
+Failed checks: latency budget exceeded
+Decision: do not switch yet
+main  2026-06-24  UTF-8  Swift

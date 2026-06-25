@@ -88,6 +88,7 @@ struct CotypingConfiguration: Sendable, Equatable {
     var maxPrefixCharacters: Int
     var maxPrefixWords: Int
     var maxResponseTokens: Int
+    var maxResponseWords: Int
     var temperature: Double
     var topP: Double
     var topK: Int
@@ -99,6 +100,7 @@ struct CotypingConfiguration: Sendable, Equatable {
         maxPrefixCharacters: 2500,
         maxPrefixWords: 150,
         maxResponseTokens: 24,
+        maxResponseWords: 4,
         temperature: 0.1,
         topP: 0.7,
         topK: 20,
@@ -122,6 +124,9 @@ struct CotypingRequest: Sendable, Equatable {
     /// When `false`, the normalizer keeps only the first line of the completion.
     let isMultiLine: Bool
     let maxTokens: Int
+    /// User-facing word ceiling for one suggestion. The normalizer enforces this
+    /// after model output so token-budget drift cannot make the setting lie.
+    var maxWords: Int = CotypingConfiguration.standard.maxResponseWords
     let temperature: Double
     let topP: Double
     let topK: Int

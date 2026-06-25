@@ -74,6 +74,20 @@ enum CotypingGhostStyle {
         return NSFont(name: name, size: clampedPointSize(style.fontPointSize))
     }
 
+    /// Concrete AppKit font used for measuring and rendering fallback sizing.
+    /// `NSHostingView.fittingSize` can briefly report a near-zero width after a
+    /// SwiftUI root view swap; measuring the text directly keeps the panel wide
+    /// enough even when the completion begins with a leading space.
+    static func resolvedFont(from style: CotypingFieldStyle?) -> NSFont {
+        font(from: style) ?? .systemFont(ofSize: clampedPointSize(style?.fontPointSize))
+    }
+
+    static func measuredTextSize(_ text: String, style: CotypingFieldStyle?) -> CGSize {
+        guard !text.isEmpty else { return .zero }
+        let size = (text as NSString).size(withAttributes: [.font: resolvedFont(from: style)])
+        return CGSize(width: ceil(size.width), height: ceil(size.height))
+    }
+
     /// Dimmed host text color so the suggestion reads as a hint, or nil (caller
     /// falls back to the secondary label color).
     static func ghostColor(from style: CotypingFieldStyle?) -> NSColor? {

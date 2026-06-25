@@ -128,6 +128,23 @@ struct SettingsView: View {
                         TextField("Notes / glossary (optional — names, jargon, style)",
                                   text: $app.settings.cotypingExtendedContext, axis: .vertical)
                             .lineLimit(1...3)
+                        Toggle("Use a dedicated high-quality cotyping model", isOn: $app.settings.cotypingUseSeparateModel)
+                        CotypingModelPreparationView(compact: true)
+                        if app.settings.cotypingUseSeparateModel {
+                            Picker("Cotyping model", selection: $app.settings.cotypingBuiltInModelID) {
+                                ForEach(ModelCatalog.selectableEntries(custom: app.settings.customBuiltInModels)) { entry in
+                                    Text(entry.displayName).tag(entry.id)
+                                }
+                            }
+                            Text("Gemma 4 E4B is the recommended quality target; pick a smaller model only when latency matters more than continuation quality.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Toggle("Learn from accepted completions", isOn: $app.settings.cotypingUseLocalLearning)
+                        if app.settings.cotypingUseLocalLearning {
+                            Stepper("Use \(app.settings.cotypingLearningExamplesInPrompt) learned examples",
+                                    value: $app.settings.cotypingLearningExamplesInPrompt, in: 1...5)
+                            CotypingLearningControls(store: app.cotypingLearning)
+                        }
                         Stepper("Suggestion length: up to \(app.settings.cotypingMaxWords) words",
                                 value: $app.settings.cotypingMaxWords, in: 2...30)
                         Toggle("Allow multi-line suggestions", isOn: $app.settings.cotypingMultiLine)
@@ -402,4 +419,20 @@ struct SettingsView: View {
         SettingsSearchRanker.matches(query: settingsQuery, haystack: [title] + keywords)
     }
 
+}
+
+private struct CotypingLearningControls: View {
+    @ObservedObject var store: CotypingLearningStore
+
+    var body: some View {
+        LabeledContent("Learned examples") {
+            Text("\(store.exampleCount)").foregroundStyle(.secondary)
+        }
+        if store.exampleCount > 0 {
+            Button("Delete learned writing data", role: .destructive) {
+                store.clear()
+            }
+            .font(.caption)
+        }
+    }
 }

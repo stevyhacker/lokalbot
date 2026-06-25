@@ -1,0 +1,42 @@
+localhost:3000/reports/ocr-latency
+OCR Benchmark Dashboard
+Window: Last 7 days
+Mean latency
+243 ms
+Baseline: Apple Vision
+Token F1
+0.96
+Candidate target: 0.92
+Queue depth
+12
+Pending screenshots
+Errors
+0
+Last run clean
+Model comparison
+Engine
+Images
+Mean latency
+Token F1
+Decision
+Apple Vision
+15
+243 ms
+0.96
+Current default
+PP-OCRv6 medium
+5
+22.43 s
+0.21
+Too slow
+PaddleOCR-VL GGUF
+3
+2.74 s
+0.10
+Partial output
+DeepSeek-OCR GGUF
+3
+1.64 s
+0.00
+Hallucinated
+Recommendation: keep Apple Vision as default OCR pipeline.
