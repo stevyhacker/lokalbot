@@ -20,11 +20,27 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertNotNil(ModelCatalog.entry(id: ModelCatalog.recommendedCotypingID))
     }
 
-    func testRecommendedCotypingModelUsesQ5XLQuant() throws {
+    func testRecommendedCotypingModelUsesGemmaQ5XLQuant() throws {
         let entry = try XCTUnwrap(ModelCatalog.entry(id: ModelCatalog.recommendedCotypingID))
         XCTAssertEqual(entry.id, "gemma4-e4b-q5-xl")
         XCTAssertEqual(entry.fileName, "gemma-4-E4B-it-UD-Q5_K_XL.gguf")
         XCTAssertTrue(entry.url.contains("gemma-4-E4B-it-UD-Q5_K_XL.gguf"))
+    }
+
+    func testRecommendedSummarizationAndMaximumQualityModelsExist() {
+        XCTAssertNotNil(ModelCatalog.entry(id: ModelCatalog.recommendedSummarizationID))
+        XCTAssertNotNil(ModelCatalog.entry(id: "qwen3.6-27b"))
+        XCTAssertNotNil(ModelCatalog.entry(id: "gemma4-12b"))
+        XCTAssertNotNil(ModelCatalog.entry(id: "qwen3.5-4b"))
+        XCTAssertNotNil(ModelCatalog.entry(id: "lfm2.5-1.2b-instruct"))
+    }
+
+    func testQwenASRModelsAreRunnableChoices() {
+        XCTAssertTrue(TranscriptionModelChoice.allCases.contains(.qwenASR17B))
+        XCTAssertTrue(TranscriptionModelChoice.allCases.contains(.qwenASR06B))
+        XCTAssertFalse(TranscriptionModelCandidate.integrationTargets.contains(where: { candidate in
+            candidate.displayName.contains("Qwen3-ASR")
+        }))
     }
 
     func testLlamaServerParsesServedModelNames() {

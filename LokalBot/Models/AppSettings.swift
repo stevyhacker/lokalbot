@@ -48,7 +48,7 @@ struct AppSettings: Codable {
     /// M4: app/window activity sampling.
     var trackingEnabled: Bool = true
 
-    /// M6: embedding-based semantic search (nomic-embed, downloaded when enabled).
+    /// M6: embedding-based semantic search (Qwen3-Embedding, downloaded when enabled).
     var semanticSearchEnabled: Bool = false
 
     // M5: screenshots + OCR

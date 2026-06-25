@@ -2,7 +2,7 @@ name: LokalBot
 options:
   bundleIdPrefix: com.dotenv
   deploymentTarget:
-    macOS: "14.4"   # Core Audio process taps require 14.4+
+    macOS: "15.0"   # Qwen3-ASR's MLX Swift package requires macOS 15+
   minimumXcodeGenVersion: "2.40"
   createIntermediateGroups: true
   generateEmptyDirectories: true
@@ -15,6 +15,9 @@ packages:
   WhisperKit:
     url: https://github.com/argmaxinc/WhisperKit
     exactVersion: 1.0.0
+  Qwen3Speech:
+    url: https://github.com/soniqo/speech-swift
+    exactVersion: 0.0.21
   ArgumentParser:
     url: https://github.com/apple/swift-argument-parser
     from: "1.3.0"
@@ -61,6 +64,8 @@ targetTemplates:
     dependencies:
       - package: FluidAudio
       - package: WhisperKit
+      - package: Qwen3Speech
+        product: Qwen3ASR
       - package: Sparkle
         product: Sparkle
       - package: swift-log
@@ -119,7 +124,7 @@ targetTemplates:
     settings:
       base:
         SWIFT_VERSION: "5.10"
-        MACOSX_DEPLOYMENT_TARGET: "14.4"
+        MACOSX_DEPLOYMENT_TARGET: "15.0"
         ENABLE_HARDENED_RUNTIME: NO   # turn ON (+ audio-input exception) for notarized release builds
         CODE_SIGN_STYLE: Automatic
         # Stable signature so TCC grants (Accessibility, Screen Recording)
@@ -203,7 +208,7 @@ targets:
     settings:
       base:
         SWIFT_VERSION: "5.10"
-        MACOSX_DEPLOYMENT_TARGET: "14.4"
+        MACOSX_DEPLOYMENT_TARGET: "15.0"
         PRODUCT_NAME: lokalbot-cli
         PRODUCT_MODULE_NAME: lokalbot_cli
         CODE_SIGN_IDENTITY: "-"

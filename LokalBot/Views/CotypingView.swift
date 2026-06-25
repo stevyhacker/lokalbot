@@ -158,7 +158,7 @@ private struct CotypingContent: View {
 
     private var modelDetail: String {
         if app.settings.cotypingUseSeparateModel {
-            return "Cotyping runs on its own llama.cpp server, separate from summarization. Gemma 4 E4B is the recommended quality target when downloaded."
+            return "Cotyping runs on its own llama.cpp server, separate from summarization. Gemma 4 E4B Q5 XL is the recommended quality target."
         }
         return "Cotyping reuses your Summarization backend and model. Turn on the dedicated model in Settings → Cotyping or Models for higher-quality inline suggestions."
     }

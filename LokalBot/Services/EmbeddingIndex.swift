@@ -2,9 +2,9 @@ import Foundation
 import SQLite3
 
 /// M6 semantic layer (design §4.1): transcript/summary chunks embedded with
-/// nomic-embed-text v1.5 (146 MB GGUF, auto-downloaded) served by the second
-/// llama-server instance. Vectors live in SQLite; query = brute-force cosine
-/// (normalized dot) — instant at personal-library scale, no extra dependency.
+/// Qwen3-Embedding 0.6B GGUF, served by the second llama-server instance.
+/// Vectors live in SQLite; query = brute-force cosine (normalized dot) —
+/// instant at personal-library scale, no extra dependency.
 @MainActor
 final class EmbeddingIndex {
 
@@ -16,9 +16,15 @@ final class EmbeddingIndex {
         let score: Float
     }
 
-    private static let modelFile = "nomic-embed-text-v1.5.Q8_0.gguf"
+    private static let modelID = "qwen3-embedding-0.6b-q8"
+    private static let modelFile = "Qwen3-Embedding-0.6B-Q8_0.gguf"
     private static let modelURL =
-        "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf"
+        "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf"
+    private static let documentPrefix = "Document for meeting search: "
+    private static let queryPrefix = """
+        Instruct: Retrieve relevant meeting transcript and summary chunks for the user's query.
+        Query:
+        """
 
     private let database: SQLiteDatabase?
     private let storage: StorageManager
@@ -31,8 +37,17 @@ final class EmbeddingIndex {
                 meeting_id TEXT NOT NULL, start REAL NOT NULL,
                 text TEXT NOT NULL, vec BLOB NOT NULL);
             CREATE TABLE IF NOT EXISTS embedded_meetings (
-                meeting_id TEXT PRIMARY KEY, source_mtime REAL NOT NULL);
+                meeting_id TEXT PRIMARY KEY, source_mtime REAL NOT NULL,
+                model_id TEXT NOT NULL DEFAULT '');
             """)
+        database?.exec("ALTER TABLE embedded_meetings ADD COLUMN model_id TEXT NOT NULL DEFAULT '';")
+        database?.run("""
+            DELETE FROM embeddings
+            WHERE meeting_id IN (
+                SELECT meeting_id FROM embedded_meetings WHERE model_id != ?1
+            )
+            """, bind: [Self.modelID])
+        database?.run("DELETE FROM embedded_meetings WHERE model_id != ?1", bind: [Self.modelID])
     }
 
     // MARK: - Indexing
@@ -74,7 +89,7 @@ final class EmbeddingIndex {
         }
         guard !chunks.isEmpty else { return }
 
-        let vectors = try await Self.embed(chunks.map(\.text), prefix: "search_document: ",
+        let vectors = try await Self.embed(chunks.map(\.text), prefix: Self.documentPrefix,
                                            storage: storage)
         database?.run("DELETE FROM embeddings WHERE meeting_id = ?1", bind: [meeting.id.uuidString])
         for (chunk, vector) in zip(chunks, vectors) {
@@ -87,8 +102,8 @@ final class EmbeddingIndex {
                 bind: [meeting.id.uuidString, chunk.start, String(chunk.text.prefix(300)), vectorData])
         }
         database?.run(
-            "INSERT OR REPLACE INTO embedded_meetings (meeting_id, source_mtime) VALUES (?1, ?2)",
-            bind: [meeting.id.uuidString, mtime])
+            "INSERT OR REPLACE INTO embedded_meetings (meeting_id, source_mtime, model_id) VALUES (?1, ?2, ?3)",
+            bind: [meeting.id.uuidString, mtime, Self.modelID])
     }
 
     func remove(_ meetingID: UUID) {
@@ -104,7 +119,7 @@ final class EmbeddingIndex {
 
     func search(_ query: String, limit: Int = 10) async -> [Hit] {
         guard let database, hasEmbeddings else { return [] }
-        guard let queryVector = try? await Self.embed([query], prefix: "search_query: ",
+        guard let queryVector = try? await Self.embed([query], prefix: Self.queryPrefix,
                                                       storage: storage).first else { return [] }
         let hits: [Hit] = database.query("SELECT meeting_id, start, text, vec FROM embeddings") { statement in
             guard let idText = sqlite3_column_text(statement, 0),
@@ -139,7 +154,7 @@ final class EmbeddingIndex {
         request.timeoutInterval = 120
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "input": texts.map { prefix + $0 },
-            "model": "nomic-embed-text-v1.5",
+            "model": Self.modelID,
         ])
         let (data, _) = try await URLSession.shared.data(for: request)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -174,7 +189,8 @@ final class EmbeddingIndex {
     // MARK: - Plumbing
 
     private func indexedMtime(_ id: UUID) -> TimeInterval? {
-        database?.firstDouble("SELECT source_mtime FROM embedded_meetings WHERE meeting_id = ?1",
-                              bind: [id.uuidString])
+        database?.firstDouble(
+            "SELECT source_mtime FROM embedded_meetings WHERE meeting_id = ?1 AND model_id = ?2",
+            bind: [id.uuidString, Self.modelID])
     }
 }

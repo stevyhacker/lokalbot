@@ -34,7 +34,7 @@ struct CotypingModelPreparationView: View {
                 .disabled(status.isDownloading || status == .unavailable || isReadyAndActive(status))
             }
             if !CotypingModelPreparer.recommendedIsActive(settings: app.settings) {
-                Text("This switches cotyping to its own llama.cpp server and selects the Gemma 4 E4B Q5 XL parity model used for Cotypist-quality suggestions.")
+                Text("This switches cotyping to its own llama.cpp server and selects Gemma 4 E4B Q5 XL for Cotypist-parity suggestions.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

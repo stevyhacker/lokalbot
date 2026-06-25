@@ -1448,3 +1448,58 @@ final class CotypingInsertionStrategyTests: XCTestCase {
         XCTAssertTrue(AppSettings().cotypingPasteInsertion)
     }
 }
+
+// MARK: - Overlay geometry
+
+final class CotypingOverlayGeometryTests: XCTestCase {
+    private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+
+    /// The core consistency property: two AX providers reporting the same line
+    /// center with different caret heights (AppKit line box vs WebKit marker
+    /// bounds) must place the ghost at the identical vertical center and height.
+    func testInlineCentersOnCaretRegardlessOfCaretHeight() {
+        let shortCaret = CotypingOverlayGeometry.inlineFrame(
+            caret: CGRect(x: 100, y: 500, width: 0, height: 14),   // midY 507
+            textSize: CGSize(width: 60, height: 16), lineHeight: 16, visible: screen)
+        let tallCaret = CotypingOverlayGeometry.inlineFrame(
+            caret: CGRect(x: 100, y: 497, width: 0, height: 20),   // midY 507
+            textSize: CGSize(width: 60, height: 16), lineHeight: 16, visible: screen)
+        XCTAssertEqual(shortCaret.midY, 507, accuracy: 0.5)
+        XCTAssertEqual(tallCaret.midY, 507, accuracy: 0.5)
+        XCTAssertEqual(shortCaret.height, tallCaret.height)
+    }
+
+    func testInlineAnchorsRightOfCaretWithGap() {
+        let frame = CotypingOverlayGeometry.inlineFrame(
+            caret: CGRect(x: 100, y: 500, width: 0, height: 16),
+            textSize: CGSize(width: 60, height: 16), lineHeight: 16, visible: screen)
+        XCTAssertEqual(frame.minX, 102)
+        XCTAssertEqual(frame.width, 60)
+    }
+
+    func testInlineClampsToRightEdgeInsteadOfOverflowing() {
+        let frame = CotypingOverlayGeometry.inlineFrame(
+            caret: CGRect(x: 1400, y: 500, width: 0, height: 16),
+            textSize: CGSize(width: 200, height: 16), lineHeight: 16, visible: screen)
+        XCTAssertLessThanOrEqual(frame.maxX, screen.maxX)
+    }
+
+    func testInlineUsesLineHeightFloorWhenTextHeightUnreliable() {
+        let frame = CotypingOverlayGeometry.inlineFrame(
+            caret: CGRect(x: 10, y: 500, width: 0, height: 40),
+            textSize: CGSize(width: 60, height: 0), lineHeight: 18, visible: nil)
+        XCTAssertEqual(frame.height, 18)
+    }
+
+    func testMirrorSitsBelowCaretAndFlipsAboveWhenNoRoom() {
+        let below = CotypingOverlayGeometry.mirrorFrame(
+            caret: CGRect(x: 100, y: 500, width: 0, height: 16),
+            content: CGSize(width: 120, height: 24), visible: screen)
+        XCTAssertEqual(below.maxY, 498, accuracy: 0.5)
+
+        let nearBottom = CotypingOverlayGeometry.mirrorFrame(
+            caret: CGRect(x: 100, y: 5, width: 0, height: 16),
+            content: CGSize(width: 120, height: 24), visible: screen)
+        XCTAssertGreaterThanOrEqual(nearBottom.minY, screen.minY)
+    }
+}

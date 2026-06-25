@@ -136,7 +136,7 @@ struct SettingsView: View {
                                     Text(entry.displayName).tag(entry.id)
                                 }
                             }
-                            Text("Gemma 4 E4B is the recommended quality target; pick a smaller model only when latency matters more than continuation quality.")
+                            Text("Gemma 4 E4B Q5 XL is the recommended quality target; Qwen3.5 2B and LFM2.5 1.2B are smaller latency options.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Toggle("Learn from accepted completions", isOn: $app.settings.cotypingUseLocalLearning)

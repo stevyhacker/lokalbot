@@ -35,12 +35,15 @@ private func downloadProgressHandler(
     }
 }
 
-/// User-facing transcription model list (Settings). CoreML families (Parakeet,
-/// Whisper, Cohere) plus ONNX-runtime models for languages those cover poorly —
-/// SenseVoice (CJK) and GigaAM (Russian) — via the bundled sherpa-onnx engine.
+/// User-facing transcription model list (Settings). CoreML/MLX families
+/// (Parakeet, Qwen3-ASR, Whisper, Cohere) plus ONNX-runtime models for languages
+/// those cover poorly — SenseVoice (CJK) and GigaAM (Russian) — via the bundled
+/// sherpa-onnx engine.
 enum TranscriptionModelChoice: String, Codable, CaseIterable, Identifiable {
     case parakeetV3 = "Parakeet TDT 0.6B v3 (multilingual)"
     case parakeetV2 = "Parakeet TDT 0.6B v2 (English)"
+    case qwenASR17B = "Qwen3-ASR 1.7B"
+    case qwenASR06B = "Qwen3-ASR 0.6B"
     case whisperLarge = "Whisper large-v3 turbo"
     case cohere = "Cohere Transcribe (multilingual)"
     case senseVoice = "SenseVoice (Chinese/Japanese/Korean)"
@@ -51,8 +54,10 @@ enum TranscriptionModelChoice: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .parakeetV3: "0.6 GB · 25 European languages, ~190× realtime — recommended"
         case .parakeetV2: "0.6 GB · English only, slightly higher recall"
-        case .whisperLarge: "1.6 GB · 99 languages, word timestamps, the accuracy benchmark"
-        case .cohere: "1.7 GB · 23 languages incl. CJK/Arabic. No per-sentence timestamps yet"
+        case .qwenASR17B: "3.2 GB · MLX, 52 languages/dialects, best Qwen accuracy tier"
+        case .qwenASR06B: "0.7 GB · MLX, 52 languages/dialects, compact global tier"
+        case .whisperLarge: "1.6 GB · 99 languages, word timestamps, wide-language legacy fallback"
+        case .cohere: "2B params · 14 languages, no auto language detection, timestamps, or diarization"
         case .senseVoice: "Chinese · Japanese · Korean · Cantonese · English (ONNX, downloaded on first use)"
         case .gigaamRussian: "Russian — high accuracy (ONNX, downloaded on first use)"
         }
@@ -61,12 +66,32 @@ enum TranscriptionModelChoice: String, Codable, CaseIterable, Identifiable {
     var engine: TranscriptionEngine {
         switch self {
         case .parakeetV3, .parakeetV2: ParakeetEngine.shared
+        case .qwenASR17B: QwenASREngine.accuracy
+        case .qwenASR06B: QwenASREngine.compact
         case .whisperLarge: WhisperEngine.shared
         case .cohere: CohereEngine.shared
         case .senseVoice: OnnxTranscriptionEngine.senseVoice
         case .gigaamRussian: OnnxTranscriptionEngine.gigaamRussian
         }
     }
+}
+
+struct TranscriptionModelCandidate: Identifiable, Hashable {
+    let id: String
+    let displayName: String
+    let badge: String
+    let blurb: String
+
+    static let integrationTargets: [TranscriptionModelCandidate] = [
+        .init(id: "voxtral-mini-4b-realtime",
+              displayName: "Voxtral Mini 4B Realtime",
+              badge: "LIVE",
+              blurb: "Add next for low-latency subtitles and live partial results."),
+        .init(id: "nemotron-3.5-asr-0.6b",
+              displayName: "Nemotron 3.5 ASR 0.6B",
+              badge: "WATCHLIST",
+              blurb: "Streaming architecture looks useful, but official path is not Mac-native yet."),
+    ]
 }
 
 /// M2 contract (design doc §5). The app talks only to these protocols;
@@ -277,10 +302,10 @@ actor WhisperEngine: TranscriptionEngine {
     }
 }
 
-/// Cohere Transcribe (03-2026) via FluidAudio — CoreML int8, 23 languages incl.
-/// CJK/Arabic. The model emits no timestamps, so each track is split into VAD
-/// speech regions and transcribed per region, giving real per-utterance timing
-/// (with a whole-track single-segment fallback when VAD is unavailable).
+/// Cohere Transcribe (03-2026) via FluidAudio — CoreML int8, 14 languages.
+/// The model emits no timestamps, so each track is split into VAD speech regions
+/// and transcribed per region, giving real per-utterance timing (with a
+/// whole-track single-segment fallback when VAD is unavailable).
 actor CohereEngine: TranscriptionEngine {
     static let shared = CohereEngine()
     nonisolated let displayName = "Cohere Transcribe"

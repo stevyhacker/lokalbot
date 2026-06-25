@@ -1,12 +1,12 @@
 # LokalBot
 
-Strictly-local meeting recorder, transcriber, day tracker, and inline AI autocomplete for macOS. It records meetings, transcribes and summarizes them, indexes everything for search, tracks how you spend your day, and — with **cotyping** — suggests text inline as you type in any app, with **no external service in the loop**. Transcription (Parakeet / Whisper / Cohere via CoreML) and summarization + cotyping (a bundled llama.cpp server with a built-in model) run entirely on-device. Ollama, an OpenAI-compatible localhost server, and Apple Intelligence are optional alternative backends.
+Strictly-local meeting recorder, transcriber, day tracker, and inline AI autocomplete for macOS. It records meetings, transcribes and summarizes them, indexes everything for search, tracks how you spend your day, and — with **cotyping** — suggests text inline as you type in any app, with **no external service in the loop**. Transcription (Parakeet / Qwen3-ASR / Whisper / Cohere via CoreML or MLX plus specialist ONNX models) and summarization + cotyping (a bundled llama.cpp server with a built-in model) run entirely on-device. Ollama, an OpenAI-compatible localhost server, and Apple Intelligence are optional alternative backends.
 
 The shipped app is **LokalBotV3** (`com.dotenv.LokalBotV3`); the Xcode project and scheme are named `LokalBot`.
 
 ## Requirements
 
-- macOS **14.4+** (Core Audio process taps); Apple Silicon required — CoreML/Metal models and the arm64 llama.cpp build.
+- macOS **15.0+**; Apple Silicon required — CoreML/MLX/Metal models and the arm64 llama.cpp build.
 - Xcode 16+ with a signing team.
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`.
 
@@ -23,7 +23,7 @@ Set your team under **Signing & Capabilities**, pick a scheme, and Run:
 - **LokalBot** — production (`com.dotenv.LokalBotV3`), Sparkle auto-update compiled in.
 - **LokalBot Dev** — `com.dotenv.LokalBotV3.dev`, `LOKALBOTV3_DEV` flag, Sparkle compiled out. A distinct bundle id means its own Mic / Screen Recording / Accessibility TCC grants, so running from Xcode never disturbs the released app.
 
-The first build runs `Scripts/fetch-llama.sh` (a pre-build phase) which vendors the pinned llama.cpp server (`b9587` — server + dylibs, ~10 MB) and the built-in model (Qwen3.5 0.8B Q4_K_M, ~0.5 GB) into `Vendor/`, copied into the app bundle. On first recording macOS prompts for **Microphone** and **System Audio Recording**; transcription and screenshot models download from Hugging Face on first use.
+The first build runs `Scripts/fetch-llama.sh` (a pre-build phase) which vendors the pinned llama.cpp server (`b9789` — server + dylibs, ~10 MB) and the built-in model (Qwen3.5 0.8B Q4_K_M, ~0.5 GB) into `Vendor/`, copied into the app bundle. On first recording macOS prompts for **Microphone** and **System Audio Recording**; transcription and screenshot models download from Hugging Face on first use.
 
 ## Features
 
@@ -33,18 +33,22 @@ The first build runs `Scripts/fetch-llama.sh` (a pre-build phase) which vendors 
 - **UI:** menu-bar item (record state, start/stop, recent meetings, pause/resume) plus a main window (meeting list, Show in Finder, in-app playback).
 
 ### Transcription & speakers
-- **Engines** (Settings → Transcription; CoreML, in-process, Neural Engine):
+- **Engines** (Settings → Transcription; CoreML/MLX, in-process, Neural Engine/Metal):
   - **Parakeet TDT 0.6B v3** — 25 languages, ~190× realtime — *default*
   - **Parakeet TDT 0.6B v2** — English only, slightly higher recall
-  - **Whisper large-v3 turbo** (WhisperKit, ~1.6 GB) — 99 languages, word timestamps
-  - **Cohere Transcribe** (~1.7 GB) — 23 languages incl. CJK/Arabic (one segment per track, no per-sentence timestamps yet)
+  - **Qwen3-ASR 1.7B** (MLX, ~3.2 GB) — 52 languages/dialects, best Qwen accuracy tier for harder recordings
+  - **Qwen3-ASR 0.6B** (MLX, ~0.7 GB) — compact global coverage tier
+  - **Whisper large-v3 turbo** (WhisperKit, ~1.6 GB) — 99 languages, word timestamps; wide-language legacy fallback
+  - **Cohere Transcribe** (2B params) — 14 languages, no automatic language detection, timestamps, or diarization
+  - **SenseVoice / GigaAM** (ONNX) — specialist CJK/Cantonese/English and Russian coverage
 
-  Models auto-download from Hugging Face on first use (~600 MB for Parakeet) and are cached.
+  Models auto-download from Hugging Face on first use and are cached under Application Support.
+  Integration targets listed in the app, but not yet runnable, are **Voxtral Mini 4B Realtime** for live subtitles and **Nemotron 3.5 ASR 0.6B** as a watchlist item.
 - **Speaker attribution:** mic track = **Me**, system track = **Them**, merged by timestamp into `transcript.json` + `transcript.md`.
 - **Neural diarization (opt-in):** Settings → "Split Them by speaker" runs FluidAudio's offline pyannote-community-1 pipeline on `system.m4a` after transcription and relabels segments "Them 1 / Them 2 / …" (tuned: threshold 0.70, step ratio 0.15, min segment 0.3 s). First run downloads ~100 MB of CoreML models.
 
 ### Summarization & notes
-- **Backends** (Settings → Summarization, all HTTP-to-localhost only): **Built-in** (bundled llama.cpp — no setup, *default*) · **Apple Intelligence** (FoundationModels, macOS 26+, gated so the app still builds/launches on 14.4) · **Ollama** · **any OpenAI-compatible server** (LM Studio, vllm-mlx, …).
+- **Backends** (Settings → Summarization, all HTTP-to-localhost only): **Built-in** (bundled llama.cpp — no setup, *default*) · **Apple Intelligence** (FoundationModels, macOS 26+, gated so the app still builds/launches on 15.0) · **Ollama** · **any OpenAI-compatible server** (LM Studio, vllm-mlx, …).
 - **Output:** `summary.md` with TL;DR / Key points / Decisions / Action items / Open questions. Map-reduce for long meetings; `<think>` reasoning blocks are stripped.
 - **Templates & language:** pick a notes template (Meeting / Lecture / Study guide / Podcast / Free-form) and a summary language (auto-detected via `NLLanguageRecognizer`, with Simplified / Traditional / Cantonese handling). Prompt budgeting (`TokenCountEstimator`, `PromptContextSanitizer`, `PromptSectionBudget`) keeps prompts within the model's context.
 - **Pipeline:** runs automatically when a recording stops (configurable); serial queue with per-meeting status in the UI, plus a Process menu for manual / re-runs.
@@ -52,12 +56,12 @@ The first build runs `Scripts/fetch-llama.sh` (a pre-build phase) which vendors 
 ### Built-in LLM runtime
 - `LlamaServer` copies the vendored `llama-server` out of Resources into Application Support on first run (never executes from inside the bundle), spawns it (`-ngl 99 --jinja`, port 17872), health-checks `/health`, restarts on model switch, and terminates on quit.
 - **Model catalog** (Settings → Summarization) — download / cancel / delete with progress, radio-select the active model:
-  Qwen3.5 0.8B (built-in, ~0.5 GB) · Qwen3.5 2B (1.3 GB) · Gemma 4 E4B (5.0 GB) · LFM2.5 8B MoE (5.2 GB) · Qwen3.6 35B MoE (17.7 GB). Qwen "thinking" is disabled for summaries via `chat_template_kwargs`.
+  Qwen3.5 0.8B (built-in, ~0.5 GB) · LFM2.5 1.2B Instruct (fast cotyping, ~0.9 GB) · Qwen3.5 2B (lightweight cotyping, 1.3 GB) · Qwen3.5 4B (balanced summaries, ~2.8 GB) · Gemma 4 E4B Q5 XL (recommended cotyping, ~6.7 GB) · LFM2.5 8B MoE (fast summaries, 5.2 GB) · Qwen3.6 35B-A3B MoE (recommended summaries, 17.7 GB) · Qwen3.6 27B (maximum-quality dense summaries, ~16.8 GB) · Gemma 4 12B (multimodal-family summaries, ~7.5 GB). Qwen "thinking" is disabled for summaries via `chat_template_kwargs`.
 - **Browse Hugging Face** in-app: search GGUF repos, list `.gguf` files, download — resilient (synchronous temp-file rescue, outcome classification, GGUF magic-byte validation). `HardwareCapabilityProbe` surfaces a per-model fit advisory under Settings → System.
 
 ### Search & player
 - **Index:** SQLite + FTS5 (`lokalbotv3.sqlite` — system SQLite, no dependency) over titles, transcript segments, summaries, and OCR'd screen text. Segment rows carry their audio timestamp; incremental re-index by file mtime on launch and after each pipeline run.
-- **Semantic search:** transcript/summary chunks embedded with nomic-embed-text v1.5 (~146 MB GGUF, auto-downloaded) on a second llama-server instance (port 17873, `--embeddings --pooling mean`); vectors live in SQLite and queries are brute-force cosine — instant at personal scale, zero extra dependency. Search → All adds a "Related (semantic)" section for meaning-matches keywords miss; toggle in Settings.
+- **Semantic search:** transcript/summary chunks embedded with Qwen3-Embedding 0.6B GGUF on a second llama-server instance (port 17873, `--embeddings --pooling mean`); vectors live in SQLite with a model-version marker and queries are brute-force cosine — instant at personal scale, zero extra dependency. Search → All adds a "Related (semantic)" section for meaning-matches keywords miss; toggle in Settings. Qwen3-VL-Embedding 2B is tracked as the next screenshot/slide retrieval upgrade once image-vector indexing is added.
 - **UI:** sidebar Meetings | Chat | Timeline | Cotyping | Search; debounced search-as-you-type (last term prefix-matched), All / Transcripts / Summaries / Screen scopes, «highlighted» snippets; clicking a transcript hit opens the meeting and plays from that timestamp.
 - **Player:** mic + system tracks play in sync (shared device-time anchor); seek bar; click any transcript line to jump the audio there; the currently-playing segment is highlighted.
 
@@ -117,6 +121,7 @@ The app binary doubles as a test harness; flows that need ungranted TCC permissi
 ├── journal/YYYY-MM-DD.md       # day digests
 ├── activity/YYYY-MM-DD/shots/  # <epoch>.heic.enc  (AES-GCM sealed)
 ├── models/                     # downloaded GGUFs
+├── qwen3-asr-models/           # downloaded Qwen3-ASR MLX weights
 └── lokalbotv3.sqlite           # FTS5 (docs) + embeddings + activity_blocks + ocr_fts + screenshots
 ```
 

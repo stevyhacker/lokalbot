@@ -559,6 +559,10 @@ final class AppState: ObservableObject {
                 case .parakeetV2:
                     await ParakeetEngine.shared.setVariant(.v2)
                     try await ParakeetEngine.shared.prepare()
+                case .qwenASR17B:
+                    try await QwenASREngine.accuracy.prepare()
+                case .qwenASR06B:
+                    try await QwenASREngine.compact.prepare()
                 case .whisperLarge:
                     try await WhisperEngine.shared.prepare()
                 case .cohere:

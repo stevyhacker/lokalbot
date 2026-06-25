@@ -8,7 +8,7 @@ import FoundationModels
 /// reason, so views and engines never touch FoundationModels symbols directly.
 ///
 /// FoundationModels ships only in the macOS 26 SDK, but LokalBot deploys to
-/// macOS 14.4 — every framework reference therefore lives behind
+/// macOS 15.0 — every framework reference therefore lives behind
 /// `#if canImport(FoundationModels)` and `if #available(macOS 26.0, *)`. On
 /// anything older the framework is simply unavailable and `current()` reports
 /// the supported-OS requirement.

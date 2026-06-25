@@ -6,18 +6,27 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-TAG=b9587   # pinned llama.cpp release (macOS arm64 tar.gz)
+TAG=b9789   # pinned llama.cpp release (macOS arm64 tar.gz)
 SERVER_DIR=Vendor/llama-cpp
 MODEL_DIR=Vendor/llama-models
 DEFAULT_MODEL=Qwen3.5-0.8B-Q4_K_M.gguf
 DEFAULT_MODEL_URL="https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/$DEFAULT_MODEL"
 
-if [ ! -x "$SERVER_DIR/llama-server" ]; then
-  echo "fetch-llama: downloading llama.cpp $TAG…"
+installed_tag=""
+if [ -x "$SERVER_DIR/llama-server" ]; then
+  installed_version=$("$SERVER_DIR/llama-server" --version 2>&1 | sed -n 's/^version: \([0-9][0-9]*\).*/\1/p' | head -n 1)
+  if [ -n "$installed_version" ]; then
+    installed_tag="b$installed_version"
+  fi
+fi
+
+if [ "$installed_tag" != "$TAG" ]; then
+  echo "fetch-llama: downloading llama.cpp ${TAG}..."
   tmp=$(mktemp -d)
   curl -fsSL -o "$tmp/llama.tar.gz" \
     "https://github.com/ggml-org/llama.cpp/releases/download/$TAG/llama-$TAG-bin-macos-arm64.tar.gz"
   tar -xzf "$tmp/llama.tar.gz" -C "$tmp"
+  rm -rf "$SERVER_DIR"
   mkdir -p "$SERVER_DIR"
   # Only the server + its dylibs — the rest of the toolkit isn't needed.
   cp "$tmp/llama-$TAG/llama-server" "$SERVER_DIR/"
@@ -27,7 +36,7 @@ if [ ! -x "$SERVER_DIR/llama-server" ]; then
 fi
 
 if [ ! -f "$MODEL_DIR/$DEFAULT_MODEL" ]; then
-  echo "fetch-llama: downloading default model $DEFAULT_MODEL (~0.64 GB)…"
+  echo "fetch-llama: downloading default model $DEFAULT_MODEL (~0.64 GB)..."
   mkdir -p "$MODEL_DIR"
   curl -fSL -o "$MODEL_DIR/$DEFAULT_MODEL.partial" "$DEFAULT_MODEL_URL"
   mv "$MODEL_DIR/$DEFAULT_MODEL.partial" "$MODEL_DIR/$DEFAULT_MODEL"

@@ -31,37 +31,29 @@ final class CotypingOverlayController {
 
         let fitting = hosting.fittingSize
         let measured = CotypingGhostStyle.measuredTextSize(text, style: style)
-        let chromePadding = mode.isMirror ? CGSize(width: 16, height: 8) : .zero
-        let height = max(fitting.height, measured.height + chromePadding.height, caretRect.height > 1 ? caretRect.height : 18)
-        let width = max(fitting.width, measured.width + chromePadding.width, 8)
         let visible = screenVisibleFrame(containing: caretRect)
 
-        // Inline: anchor to the caret's right edge, vertically centered. Clamp X
-        // so a long suggestion never renders past the screen's right edge (it
-        // shifts left rather than overflowing), and keep Y on-screen.
-        // Mirror: the caret is mid-line or its geometry is unreliable, so there is
-        // no inline home — render the popup one line below the caret (flipped
-        // above if there is no room below).
+        // Inline placement tracks the ghost text's own line box centered on the
+        // caret's vertical center — never the host caret height, which differs
+        // between AppKit (AXBoundsForRange) and WebKit/Chromium
+        // (AXBoundsForTextMarkerRange) providers — so vertical alignment stays
+        // consistent across apps. Mirror keeps its chrome pill one line below.
         let frame: CGRect
         switch mode {
         case .inline:
-            var x = caretRect.maxX + 2
-            if let visible, x + width > visible.maxX {
-                x = max(visible.minX + 2, visible.maxX - width - 2)
-            }
-            // AX caret rects are line boxes, while bare SwiftUI text paints near
-            // the top of its panel. Shift inline text down toward the host
-            // baseline; popup mode has its own chrome and line-below placement.
-            let baselineOffset = min(max(caretRect.height * 0.75, 5), 12)
-            var y = caretRect.midY - height / 2 - baselineOffset
-            if let visible, y < visible.minY { y = visible.minY + 2 }
-            frame = CGRect(x: x, y: y, width: width, height: height)
+            let font = CotypingGhostStyle.resolvedFont(from: style)
+            let textSize = CGSize(
+                width: max(fitting.width, measured.width),
+                height: max(fitting.height, measured.height))
+            frame = CotypingOverlayGeometry.inlineFrame(
+                caret: caretRect, textSize: textSize,
+                lineHeight: ceil(font.ascender - font.descender), visible: visible)
         case .mirror:
-            var x = min(caretRect.minX, (visible?.maxX ?? caretRect.minX) - width)
-            if let visible { x = max(visible.minX + 2, x) }
-            var y = caretRect.minY - height - 2
-            if let visible, y < visible.minY { y = caretRect.maxY + 2 }
-            frame = CGRect(x: x, y: y, width: width, height: height)
+            let content = CGSize(
+                width: max(fitting.width, measured.width + 16),
+                height: max(fitting.height, measured.height + 8))
+            frame = CotypingOverlayGeometry.mirrorFrame(
+                caret: caretRect, content: content, visible: visible)
         }
         guard frame.origin.x.isFinite, frame.origin.y.isFinite else { hide(); return }
 
@@ -158,5 +150,48 @@ struct CotypingGhostView: View {
             .lineLimit(1)
             .truncationMode(.tail)
             .fixedSize()
+    }
+}
+
+/// Pure placement math for the ghost overlay, split out from `show()` so the
+/// frame geometry is deterministic and unit-testable. All rects are in global
+/// Cocoa (bottom-left origin) coordinates.
+nonisolated enum CotypingOverlayGeometry {
+    /// Gap between the caret and the suggestion / screen edges.
+    static let gap: CGFloat = 2
+
+    /// Inline ghost frame: the suggestion sits just right of the caret with its
+    /// line box centered on the caret's vertical center. The panel height tracks
+    /// the ghost text's own line height — never the host caret height, which
+    /// varies between AppKit (`AXBoundsForRange`) and WebKit/Chromium
+    /// (`AXBoundsForTextMarkerRange`) providers — so vertical placement is
+    /// consistent across apps. Clamps to the visible frame's right/bottom edges.
+    static func inlineFrame(
+        caret: CGRect, textSize: CGSize, lineHeight: CGFloat, visible: CGRect?
+    ) -> CGRect {
+        let height = max(textSize.height, lineHeight, 1)
+        let width = max(textSize.width, 8)
+        var x = caret.maxX + gap
+        if let visible, x + width > visible.maxX {
+            x = max(visible.minX + gap, visible.maxX - width - gap)
+        }
+        var y = caret.midY - height / 2
+        if let visible, y < visible.minY { y = visible.minY + gap }
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    /// Mirror (popup) frame: a chrome pill one line below the caret, flipped
+    /// above when there is no room below. Used for mid-line carets where inline
+    /// text would paint over the host's trailing characters.
+    static func mirrorFrame(
+        caret: CGRect, content: CGSize, visible: CGRect?
+    ) -> CGRect {
+        let width = max(content.width, 8)
+        let height = max(content.height, 18)
+        var x = min(caret.minX, (visible?.maxX ?? caret.minX) - width)
+        if let visible { x = max(visible.minX + gap, x) }
+        var y = caret.minY - height - gap
+        if let visible, y < visible.minY { y = caret.maxY + gap }
+        return CGRect(x: x, y: y, width: width, height: height)
     }
 }

@@ -20,7 +20,7 @@ Passing target:
 
 ## Manual Side-by-Side
 
-Use the same prompts in Cotypist and LokalBot with Gemma 4 E4B Q5 XL active in LokalBot:
+Use the same prompts in Cotypist and LokalBot with Gemma 4 E4B Q5 XL active in LokalBot. Qwen3.5 2B and LFM2.5 1.2B remain useful latency comparison points:
 
 1. Mail: `Hi Sarah,\nThanks for sending this over. I wanted to follow`
 2. Slack: `Sounds good, I can take`
@@ -65,7 +65,9 @@ Expected behavior:
 
 - Dedicated cotyping is enabled.
 - Gemma 4 E4B Q5 XL is selected.
-- If Cotypist already has the parity GGUF in its Application Support folder,
-  LokalBot uses that file read-only instead of redownloading it.
-- Otherwise, the Hugging Face download starts if the model is missing.
+- The Hugging Face download starts if the model is missing.
 - Once downloaded, the status shows ready and cotyping uses the dedicated server.
+
+Gemma 4 E4B Q5 XL reuse is still supported: if Cotypist already has the parity
+GGUF in its Application Support folder, LokalBot uses that file read-only
+instead of redownloading it.

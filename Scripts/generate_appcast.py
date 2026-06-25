@@ -42,7 +42,7 @@ DEFAULT_REPO = "OWNER/REPO"
 #   sparkle:edSignature="<base64>" length="<bytes>"
 SIGNATURE_PATTERN = re.compile(r'sparkle:edSignature="([^"]+)"\s+length="([^"]+)"')
 # Deployment target floor; Sparkle refuses to offer the update below this.
-DEFAULT_MINIMUM_SYSTEM_VERSION = "14.4"
+DEFAULT_MINIMUM_SYSTEM_VERSION = "15.0"
 
 
 def repo_root() -> Path:

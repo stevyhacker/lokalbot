@@ -23,41 +23,62 @@ struct ModelCatalog {
     }
 
     static let bundledID = "qwen3.5-0.8b"
+    static let recommendedSummarizationID = "qwen3.6-35b-a3b"
     static let recommendedCotypingID = "gemma4-e4b-q5-xl"
 
-    /// Recommended models, smallest first. Current generations
-    /// (Qwen3.5, Gemma 4) verified June 2026 — same families Cotabby ships.
+    /// Local GGUF catalog, roughly ordered from tiny fallbacks to higher-quality
+    /// meeting-summary and cotyping options.
     static let entries: [Entry] = [
         Entry(id: bundledID, displayName: "Qwen3.5 0.8B (built-in)",
               fileName: "Qwen3.5-0.8B-Q4_K_M.gguf",
               url: "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf",
-              sizeGB: 0.53, blurb: "Ships with the app. Fast, fine for short meetings.",
+              sizeGB: 0.53, blurb: "Ships with the app. Tiny fallback for short meetings and cotyping.",
               disablesThinking: true),
+        Entry(id: "lfm2.5-1.2b-instruct", displayName: "LFM2.5 1.2B Instruct",
+              fileName: "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+              url: "https://huggingface.co/unsloth/LFM2.5-1.2B-Instruct-GGUF/resolve/main/LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+              sizeGB: 0.85, blurb: "Fast English-first cotyping mode. Under 1 GB.",
+              disablesThinking: false),
         Entry(id: "qwen3.5-2b", displayName: "Qwen3.5 2B",
               fileName: "Qwen3.5-2B-Q4_K_M.gguf",
               url: "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf",
-              sizeGB: 1.28, blurb: "Best quality under 1.5 GB. Any Apple Silicon Mac.",
+              sizeGB: 1.28, blurb: "Lightweight multilingual cotyping option. Any Apple Silicon Mac.",
+              disablesThinking: true),
+        Entry(id: "qwen3.5-4b", displayName: "Qwen3.5 4B",
+              fileName: "Qwen3.5-4B-Q4_K_M.gguf",
+              url: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf",
+              sizeGB: 2.8, blurb: "Balanced local summaries with long context. 16 GB Macs.",
               disablesThinking: true),
         Entry(id: "gemma4-e4b", displayName: "Gemma 4 E4B",
               fileName: "gemma-4-E4B-it-Q4_K_M.gguf",
               url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf",
-              sizeGB: 4.98, blurb: "Edge-optimized (MatFormer). 16 GB Macs.",
+              sizeGB: 4.98, blurb: "Legacy edge-optimized option. 16 GB Macs.",
               disablesThinking: false),
         Entry(id: recommendedCotypingID, displayName: "Gemma 4 E4B Q5 XL",
               fileName: "gemma-4-E4B-it-UD-Q5_K_XL.gguf",
               url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-UD-Q5_K_XL.gguf",
-              sizeGB: 6.66, blurb: "Cotypist-parity cotyping quality target. 16 GB+ Macs.",
+              sizeGB: 6.66, blurb: "Recommended Cotypist-parity cotyping quality target. 16 GB+ Macs.",
               disablesThinking: false),
         Entry(id: "lfm2.5-8b-a1b", displayName: "LFM2.5 8B (MoE)",
               fileName: "LFM2.5-8B-A1B-Q4_K_M.gguf",
               url: "https://huggingface.co/LiquidAI/LFM2.5-8B-A1B-GGUF/resolve/main/LFM2.5-8B-A1B-Q4_K_M.gguf",
-              sizeGB: 5.16, blurb: "Liquid AI MoE — ~1B active, extremely fast. 16 GB Macs.",
+              sizeGB: 5.16, blurb: "Fast meeting summaries; ~1B active. 16 GB Macs.",
               disablesThinking: false),
-        Entry(id: "qwen3.6-35b-a3b", displayName: "Qwen3.6 35B (MoE)",
+        Entry(id: recommendedSummarizationID, displayName: "Qwen3.6 35B-A3B (MoE)",
               fileName: "Qwen3.6-35B-A3B-UD-IQ4_XS.gguf",
               url: "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf",
-              sizeGB: 17.73, blurb: "Newest generation; 35B quality, ~3B active. 32 GB+ Macs.",
+              sizeGB: 17.73, blurb: "Recommended long-meeting default; ~3B active. 32 GB+ Macs.",
               disablesThinking: true),
+        Entry(id: "qwen3.6-27b", displayName: "Qwen3.6 27B",
+              fileName: "Qwen3.6-27B-Q4_K_M.gguf",
+              url: "https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/Qwen3.6-27B-Q4_K_M.gguf",
+              sizeGB: 16.8, blurb: "Maximum-quality dense summaries. Best on 32 GB+ Macs.",
+              disablesThinking: true),
+        Entry(id: "gemma4-12b", displayName: "Gemma 4 12B",
+              fileName: "gemma-4-12b-it-Q4_K_M.gguf",
+              url: "https://huggingface.co/unsloth/gemma-4-12B-it-GGUF/resolve/main/gemma-4-12b-it-Q4_K_M.gguf",
+              sizeGB: 7.5, blurb: "Multimodal-family summary option for screenshot/slide workflows.",
+              disablesThinking: false),
     ]
 
     static func entry(id: String) -> Entry? { entries.first { $0.id == id } }

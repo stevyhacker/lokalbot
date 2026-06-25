@@ -8,9 +8,9 @@ import FoundationModels
 /// Intelligence in-process — no localhost server, no model download.
 ///
 /// FoundationModels exists only in the macOS 26 SDK while LokalBot deploys to
-/// 14.4, so every framework symbol stays behind `#if canImport` plus
+/// 15.0, so every framework symbol stays behind `#if canImport` plus
 /// `if #available(macOS 26.0, *)`. On older systems `generate` throws instead,
-/// which keeps the file compiling on the 14.4 target and lets the pipeline fall
+/// which keeps the file compiling on the 15.0 target and lets the pipeline fall
 /// back to another `TextEngine`.
 struct AppleIntelligenceEngine: TextEngine {
     var displayName: String { "Apple Intelligence" }
@@ -37,7 +37,7 @@ struct AppleIntelligenceEngine: TextEngine {
         }
         #endif
         // Unreachable once `current()` reported `.available` (only macOS 26+ with
-        // the framework can), but required so the 14.4 build throws on every path
+        // the framework can), but required so the 15.0 build throws on every path
         // instead of relying solely on the guard above.
         throw TextEngineError.unavailable(FoundationModelAvailability.unsupportedMessage)
     }

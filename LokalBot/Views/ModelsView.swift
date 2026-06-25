@@ -58,6 +58,15 @@ struct ModelsView: View {
                 }
             }
             Divider()
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Integration targets")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ForEach(TranscriptionModelCandidate.integrationTargets) { candidate in
+                    TranscriptionCandidateRow(candidate: candidate)
+                }
+            }
+            Divider()
             Picker("Language", selection: $app.settings.transcriptionLanguage) {
                 ForEach(TranscriptionLanguage.allCases) { language in
                     Text(language.displayName).tag(language)
@@ -154,7 +163,7 @@ struct ModelsView: View {
                     }
                 }
                 .frame(maxWidth: 360)
-                Text("Runs on a dedicated built-in llama.cpp server, separate from summarization. Gemma 4 E4B Q5 XL is the Cotypist-parity quality target; pick a smaller model only if latency is too high.")
+                Text("Runs on a dedicated built-in llama.cpp server, separate from summarization. Gemma 4 E4B Q5 XL is the recommended quality target; Qwen3.5 2B and LFM2.5 1.2B are smaller latency options.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 Text("Cotyping uses your summarization model. Turn this on to run a separate model tuned for inline suggestion quality.")
@@ -175,7 +184,9 @@ struct ModelsView: View {
                         Task { await app.embeddingIndex.reindexAll(app.meetings) }
                     }
                 }))
-            Text("Finds meetings by meaning, not just keywords. Uses nomic-embed-text (146 MB), downloaded when you enable semantic search.")
+            Text("Finds meetings by meaning, not just keywords. Uses Qwen3-Embedding 0.6B, downloaded when you enable semantic search.")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("Text search now uses Qwen3-Embedding 0.6B. Screenshot/slide embeddings with Qwen3-VL-Embedding 2B are listed as a future pipeline because image vectors need separate indexing and ranking.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .accessibilityIdentifier("models.embeddings")
@@ -418,6 +429,33 @@ struct ModelsView: View {
         }
     }
 
+    private struct TranscriptionCandidateRow: View {
+        let candidate: TranscriptionModelCandidate
+
+        var body: some View {
+            HStack(spacing: 8) {
+                Image(systemName: "circle.dashed")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(candidate.displayName)
+                            .font(.system(size: 12.5, weight: .medium))
+                        Text(candidate.badge)
+                            .font(.system(size: 8.5, weight: .bold))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(.orange.opacity(0.18), in: Capsule())
+                    }
+                    Text(candidate.blurb)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .opacity(0.75)
+        }
+    }
+
     private func prepareTranscriptionModel(_ choice: TranscriptionModelChoice) async {
         guard preparingTranscriptionModelID == nil else { return }
         let id = choice.id
@@ -443,6 +481,10 @@ struct ModelsView: View {
             case .parakeetV2:
                 await ParakeetEngine.shared.setVariant(.v2)
                 try await ParakeetEngine.shared.prepare(progress: progressHandler)
+            case .qwenASR17B:
+                try await QwenASREngine.accuracy.prepare(progress: progressHandler)
+            case .qwenASR06B:
+                try await QwenASREngine.compact.prepare(progress: progressHandler)
             case .whisperLarge:
                 try await WhisperEngine.shared.prepare(progress: progressHandler)
             case .cohere:
