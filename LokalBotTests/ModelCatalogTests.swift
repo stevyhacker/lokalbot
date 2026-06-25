@@ -38,9 +38,6 @@ final class ModelCatalogTests: XCTestCase {
     func testQwenASRModelsAreRunnableChoices() {
         XCTAssertTrue(TranscriptionModelChoice.allCases.contains(.qwenASR17B))
         XCTAssertTrue(TranscriptionModelChoice.allCases.contains(.qwenASR06B))
-        XCTAssertFalse(TranscriptionModelCandidate.integrationTargets.contains(where: { candidate in
-            candidate.displayName.contains("Qwen3-ASR")
-        }))
     }
 
     func testLlamaServerParsesServedModelNames() {

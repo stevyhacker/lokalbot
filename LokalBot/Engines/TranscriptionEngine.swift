@@ -76,24 +76,6 @@ enum TranscriptionModelChoice: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-struct TranscriptionModelCandidate: Identifiable, Hashable {
-    let id: String
-    let displayName: String
-    let badge: String
-    let blurb: String
-
-    static let integrationTargets: [TranscriptionModelCandidate] = [
-        .init(id: "voxtral-mini-4b-realtime",
-              displayName: "Voxtral Mini 4B Realtime",
-              badge: "LIVE",
-              blurb: "Add next for low-latency subtitles and live partial results."),
-        .init(id: "nemotron-3.5-asr-0.6b",
-              displayName: "Nemotron 3.5 ASR 0.6B",
-              badge: "WATCHLIST",
-              blurb: "Streaming architecture looks useful, but official path is not Mac-native yet."),
-    ]
-}
-
 /// M2 contract (design doc §5). The app talks only to these protocols;
 /// engines (Parakeet, WhisperKit, whisper.cpp, VibeVoice) plug in behind.
 protocol TranscriptionEngine {

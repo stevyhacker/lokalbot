@@ -58,15 +58,6 @@ struct ModelsView: View {
                 }
             }
             Divider()
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Integration targets")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                ForEach(TranscriptionModelCandidate.integrationTargets) { candidate in
-                    TranscriptionCandidateRow(candidate: candidate)
-                }
-            }
-            Divider()
             Picker("Language", selection: $app.settings.transcriptionLanguage) {
                 ForEach(TranscriptionLanguage.allCases) { language in
                     Text(language.displayName).tag(language)
@@ -426,33 +417,6 @@ struct ModelsView: View {
                 }
             }
             .opacity(selected || ready || preparing ? 1 : 0.75)
-        }
-    }
-
-    private struct TranscriptionCandidateRow: View {
-        let candidate: TranscriptionModelCandidate
-
-        var body: some View {
-            HStack(spacing: 8) {
-                Image(systemName: "circle.dashed")
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Text(candidate.displayName)
-                            .font(.system(size: 12.5, weight: .medium))
-                        Text(candidate.badge)
-                            .font(.system(size: 8.5, weight: .bold))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(.orange.opacity(0.18), in: Capsule())
-                    }
-                    Text(candidate.blurb)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-            .opacity(0.75)
         }
     }
 
