@@ -547,6 +547,10 @@ final class AppState: ObservableObject {
                     try await WhisperEngine.shared.prepare()
                 case .cohere:
                     try await CohereEngine.shared.prepare()
+                case .senseVoice:
+                    try await OnnxTranscriptionEngine.senseVoice.prepare()
+                case .gigaamRussian:
+                    try await OnnxTranscriptionEngine.gigaamRussian.prepare()
                 }
                 let elapsed = Date().timeIntervalSince(started)
                 lokalbotv3Log("transcription prewarm ready model=\(choice.rawValue) elapsed=\(String(format: "%.2fs", elapsed))")

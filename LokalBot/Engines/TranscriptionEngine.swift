@@ -35,13 +35,16 @@ private func downloadProgressHandler(
     }
 }
 
-/// User-facing transcription model list (Settings). Same families Handy
-/// ships: Parakeet (CoreML), Whisper (WhisperKit/CoreML), Cohere (CoreML).
+/// User-facing transcription model list (Settings). CoreML families (Parakeet,
+/// Whisper, Cohere) plus ONNX-runtime models for languages those cover poorly —
+/// SenseVoice (CJK) and GigaAM (Russian) — via the bundled sherpa-onnx engine.
 enum TranscriptionModelChoice: String, Codable, CaseIterable, Identifiable {
     case parakeetV3 = "Parakeet TDT 0.6B v3 (multilingual)"
     case parakeetV2 = "Parakeet TDT 0.6B v2 (English)"
     case whisperLarge = "Whisper large-v3 turbo"
     case cohere = "Cohere Transcribe (multilingual)"
+    case senseVoice = "SenseVoice (Chinese/Japanese/Korean)"
+    case gigaamRussian = "GigaAM (Russian)"
     var id: String { rawValue }
 
     var blurb: String {
@@ -50,6 +53,8 @@ enum TranscriptionModelChoice: String, Codable, CaseIterable, Identifiable {
         case .parakeetV2: "0.6 GB · English only, slightly higher recall"
         case .whisperLarge: "1.6 GB · 99 languages, word timestamps, the accuracy benchmark"
         case .cohere: "1.7 GB · 23 languages incl. CJK/Arabic. No per-sentence timestamps yet"
+        case .senseVoice: "Chinese · Japanese · Korean · Cantonese · English (ONNX, downloaded on first use)"
+        case .gigaamRussian: "Russian — high accuracy (ONNX, downloaded on first use)"
         }
     }
 
@@ -58,6 +63,8 @@ enum TranscriptionModelChoice: String, Codable, CaseIterable, Identifiable {
         case .parakeetV3, .parakeetV2: ParakeetEngine.shared
         case .whisperLarge: WhisperEngine.shared
         case .cohere: CohereEngine.shared
+        case .senseVoice: OnnxTranscriptionEngine.senseVoice
+        case .gigaamRussian: OnnxTranscriptionEngine.gigaamRussian
         }
     }
 }

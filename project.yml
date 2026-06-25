@@ -47,6 +47,9 @@ targetTemplates:
       - path: Vendor/llama-models
         type: folder
         buildPhase: resources
+      - path: Vendor/sherpa-onnx
+        type: folder
+        buildPhase: resources
       # Bundle SKILL.md inside the app at Contents/Resources/lokalbot-cli/
       # so the installer can symlink it onto the user's PATH-adjacent skill
       # dirs without needing the source repo.
@@ -78,6 +81,9 @@ targetTemplates:
     preBuildScripts:
       - name: Fetch llama.cpp vendor
         script: "\"$PROJECT_DIR/Scripts/fetch-llama.sh\""
+        basedOnDependencyAnalysis: false
+      - name: Fetch sherpa-onnx vendor
+        script: "\"$PROJECT_DIR/Scripts/fetch-sherpa.sh\""
         basedOnDependencyAnalysis: false
     entitlements:
       path: LokalBot/LokalBot.entitlements

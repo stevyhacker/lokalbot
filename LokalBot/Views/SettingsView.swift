@@ -751,6 +751,10 @@ struct SettingsView: View {
                 try await WhisperEngine.shared.prepare(progress: progressHandler)
             case .cohere:
                 try await CohereEngine.shared.prepare(progress: progressHandler)
+            case .senseVoice:
+                try await OnnxTranscriptionEngine.senseVoice.prepare(progress: progressHandler)
+            case .gigaamRussian:
+                try await OnnxTranscriptionEngine.gigaamRussian.prepare(progress: progressHandler)
             }
             readyTranscriptionModelIDs.insert(choice.id)
         } catch {
