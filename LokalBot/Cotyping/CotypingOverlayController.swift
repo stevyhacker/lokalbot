@@ -117,11 +117,21 @@ struct CotypingGhostView: View {
         if let nsFont = CotypingGhostStyle.font(from: style) { return Font(nsFont) }
         return .system(size: CotypingGhostStyle.clampedPointSize(style?.fontPointSize))
     }
-    /// Dimmed host text color so the ghost reads as a suggestion; falls back to
-    /// the secondary label color.
+    /// The ghost color as a concrete sRGB color, so it paints identically no
+    /// matter what appearance the borderless overlay panel resolves to (an
+    /// agent-app panel does not reliably inherit dark mode). Derived from the
+    /// host field's own colors, falling back to the system appearance only when
+    /// the field reports none.
     private var color: Color {
-        if let nsColor = CotypingGhostStyle.ghostColor(from: style) { return Color(nsColor: nsColor) }
-        return Color(nsColor: .secondaryLabelColor)
+        Color(nsColor: CotypingGhostStyle.resolvedGhostColor(
+            from: style, isDarkEnvironment: Self.prefersDarkEnvironment))
+    }
+
+    /// Whether the system is in dark mode, read from the global setting rather
+    /// than the panel's own (unreliable) appearance. Only consulted when the host
+    /// field reports no colors to derive from.
+    private static var prefersDarkEnvironment: Bool {
+        UserDefaults.standard.string(forKey: "AppleInterfaceStyle")?.lowercased() == "dark"
     }
 
     @ViewBuilder

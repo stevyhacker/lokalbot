@@ -92,17 +92,18 @@ final class CalendarDetectionTests: XCTestCase {
         let now = Date(timeIntervalSince1970: 10_000)
         // In progress.
         XCTAssertTrue(candidate(start: 9_700, end: 10_600).isActive(at: now))
-        // Within the 5-minute early-join window before start.
-        XCTAssertTrue(candidate(start: 10_200, end: 10_900).isActive(at: now))
-        // Starts too far out (>5 min).
-        XCTAssertFalse(candidate(start: 10_600, end: 11_000).isActive(at: now))
+        // Within the 1-minute early-join grace before start (a beat early).
+        XCTAssertTrue(candidate(start: 10_030, end: 10_900).isActive(at: now))
+        // Beyond the grace — must NOT auto-record minutes ahead of the start.
+        XCTAssertFalse(candidate(start: 10_120, end: 11_000).isActive(at: now))  // 2 min out
+        XCTAssertFalse(candidate(start: 10_600, end: 11_000).isActive(at: now))  // 10 min out
         // Already ended.
         XCTAssertFalse(candidate(start: 9_000, end: 9_900).isActive(at: now))
     }
 
     func testActiveCandidatePrefersInProgress() {
         let now = Date(timeIntervalSince1970: 10_000)
-        let upcoming = candidate(id: "soon", start: 10_200, end: 10_800)   // early-join window
+        let upcoming = candidate(id: "soon", start: 10_030, end: 10_800)   // within early-join grace
         let live = candidate(id: "live", start: 9_800, end: 10_500)        // in progress
         let result = [upcoming, live].activeCandidate(at: now)
         XCTAssertEqual(result?.externalID, "live")

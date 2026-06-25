@@ -1311,6 +1311,7 @@ final class CotypingFieldStyleTests: XCTestCase {
         XCTAssertTrue(CotypingFieldStyle().isEmpty)
         XCTAssertFalse(CotypingFieldStyle(fontName: "Helvetica").isEmpty)
         XCTAssertFalse(CotypingFieldStyle(colorHex: "336699").isEmpty)
+        XCTAssertFalse(CotypingFieldStyle(backgroundColorHex: "000000").isEmpty)
     }
 
     func testHexRoundTrip() {
@@ -1372,6 +1373,46 @@ final class CotypingFieldStyleTests: XCTestCase {
 
     func testMatchHostStyleDefaultsOn() {
         XCTAssertTrue(AppSettings().cotypingMatchHostStyle)
+    }
+
+    func testResolvedGhostColorDimsReadableForeground() {
+        let style = CotypingFieldStyle(colorHex: "FFFFFF", backgroundColorHex: "000000")
+        let color = CotypingGhostStyle.resolvedGhostColor(from: style, isDarkEnvironment: false)
+        XCTAssertEqual(color.alphaComponent, CotypingGhostStyle.ghostOpacity, accuracy: 0.001)
+        XCTAssertGreaterThan(CotypingGhostStyle.relativeLuminance(of: color), 0.9) // stays white
+    }
+
+    func testResolvedGhostColorUsesBackgroundWhenNoForeground() {
+        let onDark = CotypingGhostStyle.resolvedGhostColor(
+            from: CotypingFieldStyle(backgroundColorHex: "1E1E1E"), isDarkEnvironment: false)
+        XCTAssertGreaterThan(CotypingGhostStyle.relativeLuminance(of: onDark), 0.9)  // light hint
+        let onLight = CotypingGhostStyle.resolvedGhostColor(
+            from: CotypingFieldStyle(backgroundColorHex: "FFFFFF"), isDarkEnvironment: true)
+        XCTAssertLessThan(CotypingGhostStyle.relativeLuminance(of: onLight), 0.1)    // dark hint
+    }
+
+    func testResolvedGhostColorFallsBackToEnvironmentWithoutHostColors() {
+        let dark = CotypingGhostStyle.resolvedGhostColor(from: nil, isDarkEnvironment: true)
+        let light = CotypingGhostStyle.resolvedGhostColor(from: nil, isDarkEnvironment: false)
+        XCTAssertGreaterThan(CotypingGhostStyle.relativeLuminance(of: dark), 0.9)
+        XCTAssertLessThan(CotypingGhostStyle.relativeLuminance(of: light), 0.1)
+    }
+
+    func testResolvedGhostColorOverridesForegroundIndistinguishableFromBackground() {
+        // A host fg flattened to the background color (wrong-appearance capture)
+        // must not paint invisible text — synthesize a legible hint instead.
+        let style = CotypingFieldStyle(colorHex: "000000", backgroundColorHex: "000000")
+        let color = CotypingGhostStyle.resolvedGhostColor(from: style, isDarkEnvironment: false)
+        XCTAssertGreaterThan(CotypingGhostStyle.relativeLuminance(of: color), 0.9) // light, not black
+    }
+
+    func testLuminanceAndContrastExtremes() {
+        let white = NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
+        let black = NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
+        XCTAssertEqual(CotypingGhostStyle.relativeLuminance(of: white), 1, accuracy: 0.001)
+        XCTAssertEqual(CotypingGhostStyle.relativeLuminance(of: black), 0, accuracy: 0.001)
+        XCTAssertGreaterThan(CotypingGhostStyle.contrastRatio(white, black), 20)
+        XCTAssertEqual(CotypingGhostStyle.contrastRatio(white, white), 1, accuracy: 0.001)
     }
 }
 

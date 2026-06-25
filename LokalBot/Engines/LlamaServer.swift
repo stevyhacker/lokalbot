@@ -69,9 +69,15 @@ actor LlamaServer {
                 return
             }
         }
+        // A llama-server orphaned by a prior run (children outlive a hard quit)
+        // or an older app generation sharing these private ports may still hold
+        // this one without a marker we own. Reclaim it, then re-check.
+        if await healthy() {
+            await Self.reclaimStaleLlamaServer(onPort: port)
+        }
         guard !(await healthy()) else {
             throw ServerError.failedToStart(
-                "port \(port) is already serving another process; stop the stale llama-server and try again")
+                "port \(port) is held by another process that is not a llama-server; free it and try again")
         }
         let process = Process()
         process.executableURL = binary
@@ -232,6 +238,39 @@ actor LlamaServer {
         }
         guard result > 0 else { return nil }
         return String(cString: buffer)
+    }
+
+    /// Frees `port` when a stale `llama-server` is squatting on it — our own
+    /// orphan after a hard quit, or an older app generation that shares these
+    /// private ports. Only processes whose executable is a `llama-server` are
+    /// killed, so an unrelated listener still surfaces as a startup error.
+    nonisolated static func reclaimStaleLlamaServer(onPort port: Int) async {
+        let pids = listeningPIDs(onPort: port).filter {
+            processPath(for: $0)?.hasSuffix("/llama-server") == true
+        }
+        guard !pids.isEmpty else { return }
+        for pid in pids { kill(pid, SIGTERM) }
+        for _ in 0..<40 {
+            if pids.allSatisfy({ kill($0, 0) != 0 }) { return }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        for pid in pids where kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+    }
+
+    /// PIDs listening on `port`, via `lsof` (best-effort; empty if unavailable).
+    nonisolated static func listeningPIDs(onPort port: Int) -> [pid_t] {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        task.arguments = ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-t"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        guard (try? task.run()) != nil else { return [] }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+            .split(whereSeparator: { $0.isWhitespace })
+            .compactMap { pid_t($0) }
     }
 
     private struct ServerPidMarker: Codable {

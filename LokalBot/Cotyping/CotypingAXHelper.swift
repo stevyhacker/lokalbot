@@ -161,20 +161,32 @@ enum CotypingAXHelper {
             fontName = fontInfo["AXFontName"] as? String
             if let size = fontInfo["AXFontSize"] as? NSNumber { fontPointSize = CGFloat(size.doubleValue) }
         }
-        var colorHex: String?
-        if let nsColor = attributes[.foregroundColor] as? NSColor {
-            colorHex = CotypingTextColorCodec.hexString(from: nsColor)
-        } else if let foreground = attributes[.foregroundColor],
-                  CFGetTypeID(foreground as CFTypeRef) == CGColor.typeID {
-            // AX often reports the foreground as a CGColor; a conditional `as?` does
-            // not compile against `Any`, so verify the CF type id and force-cast.
-            let cgColor = foreground as! CGColor
-            if let nsColor = NSColor(cgColor: cgColor) {
-                colorHex = CotypingTextColorCodec.hexString(from: nsColor)
-            }
-        }
-        let style = CotypingFieldStyle(fontName: fontName, fontPointSize: fontPointSize, colorHex: colorHex)
+        let foregroundHex = colorAttribute(in: attributes, forKey: .foregroundColor)
+        // Web/AX content sometimes reports the fill under an `AXBackgroundColor`
+        // run attribute rather than the AppKit `.backgroundColor` key.
+        let backgroundHex = colorAttribute(in: attributes, forKey: .backgroundColor)
+            ?? colorAttribute(in: attributes, forKey: NSAttributedString.Key("AXBackgroundColor"))
+        let style = CotypingFieldStyle(
+            fontName: fontName, fontPointSize: fontPointSize,
+            colorHex: foregroundHex, backgroundColorHex: backgroundHex)
         return style.isEmpty ? nil : style
+    }
+
+    /// Extracts a 6-digit hex color from a run attribute, handling both the
+    /// AppKit `NSColor` shape and the `CGColor` shape AX returns from web content
+    /// (a conditional `as?` to `CGColor` does not compile against `Any`, so the CF
+    /// type id is verified before the force-cast).
+    private static func colorAttribute(in attributes: [NSAttributedString.Key: Any],
+                                       forKey key: NSAttributedString.Key) -> String? {
+        guard let value = attributes[key] else { return nil }
+        if let nsColor = value as? NSColor {
+            return CotypingTextColorCodec.hexString(from: nsColor)
+        }
+        if CFGetTypeID(value as CFTypeRef) == CGColor.typeID,
+           let nsColor = NSColor(cgColor: value as! CGColor) {
+            return CotypingTextColorCodec.hexString(from: nsColor)
+        }
+        return nil
     }
 
     /// Best-effort title of the window containing `element`: `kAXWindowAttribute`

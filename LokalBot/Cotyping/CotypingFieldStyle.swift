@@ -12,13 +12,19 @@ nonisolated struct CotypingFieldStyle: Equatable, Sendable {
     let fontPointSize: CGFloat?
     /// Foreground text color as a 6-digit hex string.
     let colorHex: String?
+    /// Background (fill) color of the field as a 6-digit hex string, when the
+    /// host exposes it. Lets the ghost pick a legible hint on dark fields even
+    /// when no foreground color is reported.
+    let backgroundColorHex: String?
 
-    var isEmpty: Bool { fontName == nil && colorHex == nil }
+    var isEmpty: Bool { fontName == nil && colorHex == nil && backgroundColorHex == nil }
 
-    init(fontName: String? = nil, fontPointSize: CGFloat? = nil, colorHex: String? = nil) {
+    init(fontName: String? = nil, fontPointSize: CGFloat? = nil,
+         colorHex: String? = nil, backgroundColorHex: String? = nil) {
         self.fontName = fontName
         self.fontPointSize = fontPointSize
         self.colorHex = colorHex
+        self.backgroundColorHex = backgroundColorHex
     }
 }
 
@@ -94,5 +100,52 @@ enum CotypingGhostStyle {
         guard let style, let hex = style.colorHex,
               let host = CotypingTextColorCodec.nsColor(fromHex: hex) else { return nil }
         return host.withAlphaComponent(ghostOpacity)
+    }
+
+    /// Perceived luminance (0…1) of a color in sRGB, for bucketing a field as
+    /// light or dark. Rec. 601 weights; alpha is ignored.
+    static func relativeLuminance(of color: NSColor) -> CGFloat {
+        guard let srgb = color.usingColorSpace(.sRGB) else { return 0.5 }
+        return 0.299 * srgb.redComponent + 0.587 * srgb.greenComponent + 0.114 * srgb.blueComponent
+    }
+
+    /// WCAG-style contrast ratio (1…21) between two colors (alpha ignored).
+    static func contrastRatio(_ first: NSColor, _ second: NSColor) -> CGFloat {
+        let a = relativeLuminance(of: first), b = relativeLuminance(of: second)
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    }
+
+    /// Below this fg/bg contrast the host text color is almost always a dynamic
+    /// color flattened against the wrong appearance, so we synthesize a hint.
+    static let unreliableContrast: CGFloat = 2.0
+
+    /// A concrete dim hint — light on a dark field, dark on a light one — never a
+    /// dynamic catalog color, so it stays legible regardless of the overlay
+    /// panel's resolved appearance.
+    static func dimHint(onDarkBackground dark: Bool) -> NSColor {
+        let channel: CGFloat = dark ? 1 : 0
+        return NSColor(srgbRed: channel, green: channel, blue: channel, alpha: ghostOpacity)
+    }
+
+    /// The color actually painted for the ghost: the dimmed host text color when
+    /// it is reported and readable against the field, otherwise a concrete hint
+    /// derived from the field background, falling back to the system appearance.
+    /// Pure and independent of the overlay panel's resolved appearance.
+    static func resolvedGhostColor(from style: CotypingFieldStyle?, isDarkEnvironment: Bool) -> NSColor {
+        let background = style.flatMap { CotypingTextColorCodec.nsColor(fromHex: $0.backgroundColorHex) }
+        if let dimmedHost = ghostColor(from: style) {
+            // Trust the host color unless it barely contrasts with the field's own
+            // background — that is almost always a dynamic color flattened against
+            // the wrong appearance (e.g. `labelColor` captured as near-black while
+            // the field actually paints light in a dark theme).
+            if let background, contrastRatio(dimmedHost, background) < unreliableContrast {
+                return dimHint(onDarkBackground: relativeLuminance(of: background) < 0.5)
+            }
+            return dimmedHost
+        }
+        if let background {
+            return dimHint(onDarkBackground: relativeLuminance(of: background) < 0.5)
+        }
+        return dimHint(onDarkBackground: isDarkEnvironment)
     }
 }

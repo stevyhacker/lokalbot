@@ -18,10 +18,16 @@ struct CalendarMeetingCandidate: Equatable {
     let meetingURL: URL?
     let sourceCalendarTitle: String?
 
+    /// Grace before an event's scheduled start during which it already counts
+    /// as active — a *beat* early (people click Join ~a minute ahead), not a
+    /// long pre-roll. A generous value here is what made auto-record fire whole
+    /// minutes before a meeting actually began.
+    static let earlyJoinGrace: TimeInterval = 60
+
     /// Is this event happening at `now`? In progress, or within `earlyJoin`
-    /// before its start (people join a beat early). Calendar end never *stops*
-    /// a recording — only audio does — so this is deliberately start-biased.
-    func isActive(at now: Date, earlyJoin: TimeInterval = 5 * 60) -> Bool {
+    /// before its start. Calendar end never *stops* a recording — only audio
+    /// does — so this is deliberately start-biased.
+    func isActive(at now: Date, earlyJoin: TimeInterval = CalendarMeetingCandidate.earlyJoinGrace) -> Bool {
         now >= startDate.addingTimeInterval(-earlyJoin) && now <= endDate
     }
 }
@@ -30,7 +36,7 @@ extension Array where Element == CalendarMeetingCandidate {
     /// The single event that best represents "what is happening now": an
     /// in-progress event (most recently started) beats one about to start; with
     /// none in progress, the soonest upcoming wins. Nil when none is active.
-    func activeCandidate(at now: Date, earlyJoin: TimeInterval = 5 * 60) -> CalendarMeetingCandidate? {
+    func activeCandidate(at now: Date, earlyJoin: TimeInterval = CalendarMeetingCandidate.earlyJoinGrace) -> CalendarMeetingCandidate? {
         let active = filter { $0.isActive(at: now, earlyJoin: earlyJoin) }
         let inProgress = active.filter { $0.startDate <= now }
         if let started = inProgress.max(by: { $0.startDate < $1.startDate }) { return started }
