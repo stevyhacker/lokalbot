@@ -11,6 +11,8 @@ final class MeetingPlayer: NSObject, ObservableObject {
     @Published private(set) var currentTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
     @Published private(set) var isLoaded = false
+    /// Playback rate (1.0 = normal). AVAudioPlayer honors `enableRate` + `rate`.
+    @Published var speed: Float = 1.0 { didSet { applySpeed() } }
 
     private var players: [AVAudioPlayer] = []
     private var ticker: Timer?
@@ -24,8 +26,10 @@ final class MeetingPlayer: NSObject, ObservableObject {
             .compactMap { try? AVAudioPlayer(contentsOf: $0) }
         for player in players {
             player.delegate = self
+            player.enableRate = true
             player.prepareToPlay()
         }
+        applySpeed()
         duration = players.map(\.duration).max() ?? 0
         currentTime = 0
         isLoaded = !players.isEmpty
@@ -43,9 +47,18 @@ final class MeetingPlayer: NSObject, ObservableObject {
         }
         // Schedule against a shared device-time anchor so both tracks stay in sync.
         let anchor = (players.first?.deviceCurrentTime ?? 0) + 0.05
-        for player in players { player.play(atTime: anchor) }
+        for player in players {
+            player.enableRate = true
+            player.rate = speed
+            player.play(atTime: anchor)
+        }
         isPlaying = true
         startTicker()
+    }
+
+    /// Push the current `speed` to every player (live rate change).
+    private func applySpeed() {
+        for player in players where player.enableRate { player.rate = speed }
     }
 
     func pause() {

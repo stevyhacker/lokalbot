@@ -100,16 +100,16 @@ targetTemplates:
     info:
       path: LokalBot/Info.plist
       properties:
-        CFBundleDisplayName: LokalBotV3
+        CFBundleDisplayName: LokalBot
         CFBundleIconFile: AppIcon
         NSMicrophoneUsageDescription: >-
-          LokalBotV3 records your side of meetings from the microphone.
+          LokalBot records your side of meetings from the microphone.
           Audio never leaves this Mac.
         NSAudioCaptureUsageDescription: >-
-          LokalBotV3 records the meeting app's audio output so the other
+          LokalBot records the meeting app's audio output so the other
           participants are captured. Audio never leaves this Mac.
         NSCalendarsFullAccessUsageDescription: >-
-          LokalBotV3 reads your calendar to confirm meetings and title
+          LokalBot reads your calendar to confirm meetings and title
           recordings. Calendar data never leaves this Mac.
         LSApplicationCategoryType: public.app-category.productivity
         # Sparkle auto-update. SUFeedURL points at the appcast published with

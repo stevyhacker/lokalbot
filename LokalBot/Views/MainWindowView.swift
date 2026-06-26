@@ -142,14 +142,16 @@ struct MainWindowView: View {
                 Label("Timeline", systemImage: "calendar.day.timeline.left")
                     .tag(AppState.NavSection.timeline)
                     .accessibilityIdentifier("sidebar.timeline")
-                Label("Cotyping", systemImage: "text.cursor")
-                    .tag(AppState.NavSection.cotyping)
-                    .accessibilityIdentifier("sidebar.cotyping")
                 Label("Search", systemImage: "magnifyingglass")
                     .tag(AppState.NavSection.search)
                     .accessibilityIdentifier("sidebar.search")
             }
-            Section("Engine") {
+            Section("Automation") {
+                Label("Cotyping", systemImage: "text.cursor")
+                    .tag(AppState.NavSection.cotyping)
+                    .accessibilityIdentifier("sidebar.cotyping")
+            }
+            Section("Configure") {
                 Label("Models", systemImage: "brain")
                     .tag(AppState.NavSection.models)
                     .accessibilityIdentifier("sidebar.models")
@@ -174,8 +176,8 @@ struct MainWindowView: View {
     @ViewBuilder private var detailPane: some View {
         if app.navSection == .settings {
             // Settings selected → the detail pane shows live permission
-            // status (same panel as onboarding).
-            ScrollView { OnboardingView() }
+            // status (permission-repair surface, not the first-run value walk).
+            ScrollView { OnboardingView(mode: .permissions) }
         } else if let meeting = app.selectedMeeting {
             MeetingDetailView(meeting: meeting)
                 .id(meeting.id)
@@ -190,10 +192,7 @@ struct MainWindowView: View {
                 }
             }
         } else {
-            ContentUnavailableView(
-                "No meeting selected",
-                systemImage: "waveform.circle",
-                description: Text("Recordings appear here automatically and are transcribed & summarized after the meeting ends."))
+            GettingStartedCard()
         }
     }
 
@@ -368,25 +367,71 @@ struct MeetingDetailView: View {
     // MARK: Player
 
     private var playerBar: some View {
-        HStack(spacing: 12) {
-            Button {
-                player.playPause()
-            } label: {
-                Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 28))
-            }
-            .buttonStyle(.plain)
+        let progress = player.duration > 0 ? player.currentTime / player.duration : 0
+        return VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                Button {
+                    player.playPause()
+                } label: {
+                    Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 28)).foregroundStyle(.tint)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.space, modifiers: [])
+                .help("Play / pause (Space)")
 
-            Text(Transcript.stamp(player.currentTime))
-                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            Slider(value: Binding(get: { player.currentTime },
-                                  set: { player.seek(to: $0) }),
-                   in: 0...max(player.duration, 1))
-            Text(Transcript.stamp(player.duration))
-                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                WaveformView(url: folder.appendingPathComponent("mic.m4a"),
+                             progress: progress) { p in
+                    player.seek(to: p * player.duration)
+                }
+                .help("Drag to scrub")
+
+                speedMenu
+            }
+            HStack(spacing: 6) {
+                Text(Transcript.stamp(player.currentTime))
+                Spacer()
+                Text(Transcript.stamp(player.duration))
+            }
+            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            .padding(.horizontal, 4)
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
+        .padding(.horizontal, 12).padding(.vertical, 10)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 9))
+    }
+
+    /// Playback-speed cycler (1× → 1.25× → 1.5× → 2× → back to 1×). A compact
+    /// Menu rather than a stepper so it reads as a label and fits the bar.
+    private var speedMenu: some View {
+        Menu {
+            ForEach([1.0, 1.25, 1.5, 1.75, 2.0], id: \.self) { rate in
+                Button {
+                    player.speed = Float(rate)
+                } label: {
+                    if abs(Double(player.speed) - rate) < 0.01 {
+                        Label("\(formattedSpeed(rate))×", systemImage: "checkmark")
+                    } else {
+                        Text("\(formattedSpeed(rate))×")
+                    }
+                }
+            }
+            Divider()
+            Button("Reset to 1×") { player.speed = 1.0 }
+        } label: {
+            Text(formattedSpeed(Double(player.speed)) + "×")
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(player.speed == 1.0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+                .frame(minWidth: 38)
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(.quaternary.opacity(0.6), in: Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .accessibilityIdentifier("player.speed")
+    }
+
+    private func formattedSpeed(_ rate: Double) -> String {
+        rate.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(rate)) : String(rate)
     }
 
     @ViewBuilder private var statusRow: some View {
@@ -487,7 +532,8 @@ struct MeetingDetailView: View {
 }
 
 /// Minimal line-based Markdown renderer — headings, bullets, checkboxes,
-/// and inline bold/italic/code via AttributedString. Enough for summary.md.
+/// ordered lists, blockquotes, and horizontal rules, with inline
+/// bold/italic/code via AttributedString. Enough for summary.md.
 struct MarkdownText: View {
     let text: String
     init(_ text: String) { self.text = text }
@@ -504,6 +550,8 @@ struct MarkdownText: View {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty {
             Spacer().frame(height: 2)
+        } else if trimmed == "---" || trimmed == "***" || trimmed == "___" {
+            Divider().padding(.vertical, 4)
         } else if trimmed.hasPrefix("### ") {
             inline(String(trimmed.dropFirst(4))).font(.headline).padding(.top, 4)
         } else if trimmed.hasPrefix("## ") {
@@ -521,9 +569,31 @@ struct MarkdownText: View {
                 Text("•")
                 inline(String(trimmed.dropFirst(2)))
             }
+        } else if let ordered = Self.orderedListItem(trimmed) {
+            HStack(alignment: .top, spacing: 6) {
+                Text("\(ordered.number).").font(.body.monospacedDigit())
+                inline(ordered.rest)
+            }
+        } else if trimmed.hasPrefix("> ") {
+            HStack(alignment: .top, spacing: 8) {
+                // A thin accent rule reads as a quote bar without a custom shape.
+                Rectangle().fill(.tint.opacity(0.6)).frame(width: 2)
+                inline(String(trimmed.dropFirst(2)))
+                    .italic().foregroundStyle(.secondary)
+            }
         } else {
             inline(trimmed)
         }
+    }
+
+    /// Matches "1. text", "12. text" — returns the number and the remainder.
+    private static func orderedListItem(_ trimmed: String) -> (number: Int, rest: String)? {
+        guard let dot = trimmed.firstIndex(of: "."), trimmed[..<dot].allSatisfy(\.isNumber),
+              let number = Int(trimmed[..<dot]),
+              trimmed.index(after: dot) < trimmed.endIndex,
+              trimmed[trimmed.index(after: dot)] == " " else { return nil }
+        let rest = String(trimmed[trimmed.index(dot, offsetBy: 2)...])
+        return (number, rest)
     }
 
     private func inline(_ s: String) -> Text {
@@ -532,6 +602,106 @@ struct MarkdownText: View {
             Text(attributed)
         } else {
             Text(s)
+        }
+    }
+}
+
+/// The empty-state card shown when no meeting is selected. Orients across the
+/// three pillars (record → recap → search/ask) and a couple of one-tap setup
+/// steps, so a brand-new user lands somewhere useful instead of a blank pane.
+/// Dismissed once and remembered via `@AppStorage`.
+struct GettingStartedCard: View {
+    @EnvironmentObject var app: AppState
+    @AppStorage("lokalbotv3.gettingStartedDismissed") private var dismissed = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 14) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 14).fill(Brand.gradient)
+                            .frame(width: 48, height: 48)
+                        Image(systemName: "waveform.badge.magnifyingglass")
+                            .font(.system(size: 22)).foregroundStyle(.white)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Welcome to LokalBot").font(.title2.bold())
+                        Text("Record meetings, get the recap, and search everything — all on-device.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button { dismissed = true } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title3).foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Dismiss")
+                    .accessibilityIdentifier("welcome.dismiss")
+                }
+
+                HStack(spacing: 12) {
+                    pillar("waveform", "Record",
+                           app.isRecording ? "Recording now…" : "LokalBot auto-detects meetings, or start one here.",
+                           isRecording: app.isRecording)
+                    pillar("doc.text.magnifyingglass", "Recap",
+                           "A transcript and structured summary land the moment a call ends.", isRecording: nil)
+                    pillar("magnifyingglass", "Search & ask",
+                           "Full-text, meaning, and screen-text search — plus chat over your library.", isRecording: nil)
+                }
+
+                Text("Get started").font(.headline)
+                VStack(alignment: .leading, spacing: 10) {
+                    stepRow(done: app.isRecording || !app.meetings.isEmpty) {
+                        Text("Record a meeting — it appears in the list automatically.")
+                    }
+                    stepRow(done: nil) {
+                        HStack(spacing: 8) {
+                            Button("Turn on day tracking") { app.navSection = .timeline }
+                                .buttonStyle(.bordered).controlSize(.small)
+                            Text("to see where your time goes.")
+                        }
+                    }
+                    stepRow(done: app.settings.cotypingEnabled ? true : nil) {
+                        HStack(spacing: 8) {
+                            Button("Try cotyping") { app.navSection = .cotyping }
+                                .buttonStyle(.bordered).controlSize(.small)
+                            Text("— inline AI autocomplete that stays on your Mac.")
+                        }
+                    }
+                }
+                .padding(14)
+                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
+
+                Text("Tip: press ⌘K anywhere to record, navigate, or jump to a meeting.")
+                    .font(.caption).foregroundStyle(.tertiary)
+            }
+            .padding(24)
+            .frame(maxWidth: 560, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private func pillar(_ icon: String, _ title: String, _ body: String,
+                        isRecording: Bool?) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundStyle(isRecording == true ? AnyShapeStyle(Brand.amber) : AnyShapeStyle(.tint))
+            Text(title).font(.headline)
+            Text(body).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// `done`: nil = actionable (hollow circle), true/false = checkmark/number.
+    private func stepRow<S: View>(done: Bool?, @ViewBuilder _ content: () -> S) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: done == true ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(done == true ? Color.green : Brand.teal)
+                .padding(.top, 2)
+            content().font(.callout)
         }
     }
 }

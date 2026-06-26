@@ -106,7 +106,7 @@ struct LokalBotCLIInstaller {
             case .bundleNotShipped:
                 return "This build doesn't ship the lokalbot-cli — install the latest release."
             case .bundleNotStable:
-                return "The app is running from a translocated or read-only location. Move LokalBotV3.app to /Applications and relaunch."
+                return "The app is running from a translocated or read-only location. Move LokalBot.app to /Applications and relaunch."
             case .fileSystem(let message):
                 return message
             }

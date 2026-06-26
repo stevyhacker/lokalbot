@@ -24,9 +24,9 @@ struct TimelineView: View {
     /// Inspector (digest/totals/ask) width — the pane the user resizes; the
     /// track fills the rest, so widening the digest narrows the track. Floored
     /// at `minInspectorWidth` (it can grow, never shrink past it) and persisted.
-    private let minInspectorWidth: CGFloat = 710
+    private let minInspectorWidth: CGFloat = 480
     private let trackFloorWidth: CGFloat = 160
-    @AppStorage("timeline.inspectorWidth") private var inspectorWidth = 710.0
+    @AppStorage("timeline.inspectorWidth") private var inspectorWidth = 480.0
     /// Live width while the divider is dragged (nil otherwise). Driving the drag
     /// through @State rather than @AppStorage keeps it fluid — UserDefaults is
     /// written once on release, not on every drag tick.

@@ -34,8 +34,8 @@ struct SettingsView: View {
             if shows("General", ["launch", "login", "startup", "open at login", "auto start",
                                  "menu bar", "menubar", "dock", "window", "background", "tray"]) {
                 Section("General") {
-                    LaunchAtLogin.Toggle("Launch LokalBotV3 at login")
-                    Text("Start LokalBotV3 automatically so it's ready to catch meetings.")
+                    LaunchAtLogin.Toggle("Launch LokalBot at login")
+                    Text("Start LokalBot automatically so it's ready to catch meetings.")
                         .font(.caption).foregroundStyle(.secondary)
 
                     Toggle("Menu bar only (hide Dock icon)", isOn: $app.settings.menuBarOnly)
@@ -115,19 +115,16 @@ struct SettingsView: View {
                 }
             }
 
-            if shows("Cotyping", ["cotyping", "autocomplete", "inline", "ghost", "suggestion", "typing", "complete", "tab", "autocorrect"]) {
+            if shows("Cotyping", ["cotyping", "autocomplete", "inline", "ghost", "suggestion", "typing", "complete", "tab", "autocorrect", "emoji", "macro", "privacy", "exclude", "exclusion", "clipboard", "learn"]) {
                 Section("Cotyping") {
                     Toggle("Inline AI autocomplete (cotyping)", isOn: $app.settings.cotypingEnabled)
                     Text("Suggests text inline as you type in other apps. Choose its model under Models (it can differ from summarization). Needs Accessibility + Input Monitoring; open the Cotyping tab for setup and a live preview.")
                         .font(.caption).foregroundStyle(.secondary)
-                    if app.settings.cotypingEnabled {
-                        TextField("Your name (optional — tunes the voice)", text: $app.settings.cotypingUserName)
-                        TextField("Writing style (optional, e.g. \u{201c}concise, British spelling\u{201d})", text: $app.settings.cotypingStyleNote)
-                        TextField("Languages you write in (optional, e.g. \u{201c}English, German\u{201d})",
-                                  text: $app.settings.cotypingLanguages)
-                        TextField("Notes / glossary (optional — names, jargon, style)",
-                                  text: $app.settings.cotypingExtendedContext, axis: .vertical)
-                            .lineLimit(1...3)
+                }
+                // Model + live stats sit highest: the "is it on, and is it working?"
+                // answers a user wants first, before any behavior tuning.
+                if app.settings.cotypingEnabled, shows("Cotyping", ["model", "stats", "generated", "accepted", "latency"]) {
+                    Section("Model & activity") {
                         Toggle("Use a dedicated high-quality cotyping model", isOn: $app.settings.cotypingUseSeparateModel)
                         CotypingModelPreparationView(compact: true)
                         if app.settings.cotypingUseSeparateModel {
@@ -139,67 +136,6 @@ struct SettingsView: View {
                             Text("Gemma 4 E4B Q5 XL is the recommended quality target; Qwen3.5 2B and LFM2.5 1.2B are smaller latency options.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        Toggle("Learn from accepted completions", isOn: $app.settings.cotypingUseLocalLearning)
-                        if app.settings.cotypingUseLocalLearning {
-                            Stepper("Use \(app.settings.cotypingLearningExamplesInPrompt) learned examples",
-                                    value: $app.settings.cotypingLearningExamplesInPrompt, in: 1...5)
-                            CotypingLearningControls(store: app.cotypingLearning)
-                        }
-                        Stepper("Suggestion length: up to \(app.settings.cotypingMaxWords) words",
-                                value: $app.settings.cotypingMaxWords, in: 2...50)
-                        Toggle("Allow multi-line suggestions", isOn: $app.settings.cotypingMultiLine)
-                        Toggle("Stream suggestions while generating", isOn: $app.settings.cotypingStreamSuggestionsWhileGenerating)
-                        Text("When off, suggestions appear once fully formed, matching Cotypist's default. Turn on to show token-by-token partials sooner.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Toggle("Use app & window context", isOn: $app.settings.cotypingUseAppContext)
-                        Text("Conditions suggestions on the focused app and its window title (email subject, chat channel, page title) for sharper, on-topic completions. Read locally via Accessibility; skipped in code editors and terminals.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Toggle("Use the clipboard as context", isOn: $app.settings.cotypingUseClipboard)
-                        Text("Folds what you just copied into the prompt so suggestions can build on it. Read fresh each time and never stored. Off by default — turn on only if you want the model to see your clipboard.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Toggle("Match the app\u{2019}s font and text color", isOn: $app.settings.cotypingMatchHostStyle)
-                        Text("Ghost text mimics the field you\u{2019}re typing in (font family and a dimmed version of its text color) instead of a fixed style. Read locally via Accessibility; cached per field.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Picker("Show suggestions", selection: $app.settings.cotypingMirrorPreference) {
-                            ForEach(CotypingMirrorPreference.allCases) { Text($0.label).tag($0) }
-                        }
-                        Text("\u{201c}Automatic\u{201d} draws ghost text inline at the caret, but falls back to a popup below the caret when its geometry is unreliable or the caret is mid-line.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Toggle("Autocorrect the word you're typing", isOn: $app.settings.cotypingAutocorrect)
-                        Text("Spots a misspelled word and offers the fix inline — Tab swaps it. Uses the macOS spell checker (on-device); never touches code, URLs, or numbers.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Toggle("Emoji autocomplete (\u{201c}:rocket:\u{201d} \u{2192} \u{1f680})", isOn: $app.settings.cotypingEmoji)
-                        Toggle("Macros (\u{201c}/5+5\u{201d}, \u{201c}/today\u{201d}, \u{201c}/10km->mi\u{201d})", isOn: $app.settings.cotypingMacros)
-                        Text("Type \u{201c}/\u{201d} then an expression — math, dates, unit/currency conversion, or random — and the result shows inline. Accept to swap it in.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Picker("Accept next", selection: $app.settings.cotypingAcceptKey) {
-                            ForEach(CotypingAcceptKey.allCases) { Text($0.label).tag($0) }
-                        }
-                        Picker("Each accept takes", selection: $app.settings.cotypingAcceptGranularity) {
-                            ForEach(CotypingAcceptGranularity.allCases) { Text($0.label).tag($0) }
-                        }
-                        Picker("Accept whole suggestion", selection: $app.settings.cotypingFullAcceptKey) {
-                            ForEach(CotypingFullAcceptKey.allCases) { Text($0.label).tag($0) }
-                        }
-                        Toggle("Paste large / multi-line accepts", isOn: $app.settings.cotypingPasteInsertion)
-                        Text("Commits big or multi-line suggestions via paste instead of synthetic keystrokes \u{2014} steadier in some apps. Briefly uses the clipboard, then restores it.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        LabeledContent("Pause before suggesting") {
-                            Text("\(app.settings.cotypingDebounceMs) ms").foregroundStyle(.secondary)
-                        }
-                        Slider(value: Binding(
-                            get: { Double(app.settings.cotypingDebounceMs) },
-                            set: { app.settings.cotypingDebounceMs = Int($0) }),
-                            in: 20...1000, step: 20)
-                        TextField("Never suggest in (app names, comma-separated)",
-                                  text: $app.settings.cotypingExcludedApps)
-                        Text("Cotyping never runs in password fields. Add apps (or terminals) here to exclude them too.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        TextField("Never suggest on (websites, comma-separated)",
-                                  text: $app.settings.cotypingExcludedDomains)
-                        Text("Block cotyping on specific sites (e.g. \u{201c}bank.com\u{201d}). Subdomains included; read locally via Accessibility in browsers.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Divider().padding(.vertical, 2)
                         LabeledContent("Suggestions generated") {
                             Text("\(cotypingStats.stats.generations)").foregroundStyle(.secondary)
                         }
@@ -223,6 +159,93 @@ struct SettingsView: View {
                             Button("Reset cotyping stats", role: .destructive) { cotypingStats.clear() }
                                 .font(.caption)
                         }
+                    }
+                }
+                if app.settings.cotypingEnabled, shows("Cotyping", ["voice", "name", "style", "language", "length", "multiline", "stream", "learn", "glossary"]) {
+                    Section("Voice & behavior") {
+                        TextField("Your name (optional — tunes the voice)", text: $app.settings.cotypingUserName)
+                        TextField("Writing style (optional, e.g. \u{201c}concise, British spelling\u{201d})", text: $app.settings.cotypingStyleNote)
+                        TextField("Languages you write in (optional, e.g. \u{201c}English, German\u{201d})",
+                                  text: $app.settings.cotypingLanguages)
+                        TextField("Notes / glossary (optional — names, jargon, style)",
+                                  text: $app.settings.cotypingExtendedContext, axis: .vertical)
+                            .lineLimit(1...3)
+                        Stepper("Suggestion length: up to \(app.settings.cotypingMaxWords) words",
+                                value: $app.settings.cotypingMaxWords, in: 2...50)
+                        Toggle("Allow multi-line suggestions", isOn: $app.settings.cotypingMultiLine)
+                        Toggle("Stream suggestions while generating", isOn: $app.settings.cotypingStreamSuggestionsWhileGenerating)
+                        Text("When off, suggestions appear once fully formed, matching Cotypist's default. Turn on to show token-by-token partials sooner.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        LabeledContent("Pause before suggesting") {
+                            Text("\(app.settings.cotypingDebounceMs) ms").foregroundStyle(.secondary)
+                        }
+                        Slider(value: Binding(
+                            get: { Double(app.settings.cotypingDebounceMs) },
+                            set: { app.settings.cotypingDebounceMs = Int($0) }),
+                            in: 20...1000, step: 20)
+                        Toggle("Learn from accepted completions", isOn: $app.settings.cotypingUseLocalLearning)
+                        if app.settings.cotypingUseLocalLearning {
+                            Stepper("Use \(app.settings.cotypingLearningExamplesInPrompt) learned examples",
+                                    value: $app.settings.cotypingLearningExamplesInPrompt, in: 1...5)
+                            CotypingLearningControls(store: app.cotypingLearning)
+                        }
+                    }
+                }
+                if app.settings.cotypingEnabled, shows("Cotyping", ["context", "app", "window", "clipboard", "font", "color", "match", "render", "popup", "automatic"]) {
+                    Section("Context & rendering") {
+                        Toggle("Use app & window context", isOn: $app.settings.cotypingUseAppContext)
+                        Text("Conditions suggestions on the focused app and its window title (email subject, chat channel, page title) for sharper, on-topic completions. Read locally via Accessibility; skipped in code editors and terminals.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Toggle("Use the clipboard as context", isOn: $app.settings.cotypingUseClipboard)
+                        Text("Folds what you just copied into the prompt so suggestions can build on it. Read fresh each time and never stored. Off by default — turn on only if you want the model to see your clipboard.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Toggle("Match the app\u{2019}s font and text color", isOn: $app.settings.cotypingMatchHostStyle)
+                        Text("Ghost text mimics the field you\u{2019}re typing in (font family and a dimmed version of its text color) instead of a fixed style. Read locally via Accessibility; cached per field.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Picker("Show suggestions", selection: $app.settings.cotypingMirrorPreference) {
+                            ForEach(CotypingMirrorPreference.allCases) { Text($0.label).tag($0) }
+                        }
+                        Text("\u{201c}Automatic\u{201d} draws ghost text inline at the caret, but falls back to a popup below the caret when its geometry is unreliable or the caret is mid-line.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if app.settings.cotypingEnabled, shows("Cotyping", ["autocorrect", "spell", "emoji", "macro", "convert", "expression"]) {
+                    Section("Shortcuts") {
+                        Toggle("Autocorrect the word you're typing", isOn: $app.settings.cotypingAutocorrect)
+                        Text("Spots a misspelled word and offers the fix inline — Tab swaps it. Uses the macOS spell checker (on-device); never touches code, URLs, or numbers.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Toggle("Emoji autocomplete (\u{201c}:rocket:\u{201d} \u{2192} \u{1f680})", isOn: $app.settings.cotypingEmoji)
+                        Toggle("Macros (\u{201c}/5+5\u{201d}, \u{201c}/today\u{201d}, \u{201c}/10km->mi\u{201d})", isOn: $app.settings.cotypingMacros)
+                        Text("Type \u{201c}/\u{201d} then an expression — math, dates, unit/currency conversion, or random — and the result shows inline. Accept to swap it in.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if app.settings.cotypingEnabled, shows("Cotyping", ["accept", "key", "granularity", "paste", "insertion", "advanced"]) {
+                    Section("Accept & insert") {
+                        Picker("Accept next", selection: $app.settings.cotypingAcceptKey) {
+                            ForEach(CotypingAcceptKey.allCases) { Text($0.label).tag($0) }
+                        }
+                        Picker("Each accept takes", selection: $app.settings.cotypingAcceptGranularity) {
+                            ForEach(CotypingAcceptGranularity.allCases) { Text($0.label).tag($0) }
+                        }
+                        Picker("Accept whole suggestion", selection: $app.settings.cotypingFullAcceptKey) {
+                            ForEach(CotypingFullAcceptKey.allCases) { Text($0.label).tag($0) }
+                        }
+                        Toggle("Paste large / multi-line accepts", isOn: $app.settings.cotypingPasteInsertion)
+                        Text("Commits big or multi-line suggestions via paste instead of synthetic keystrokes \u{2014} steadier in some apps. Briefly uses the clipboard, then restores it.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if app.settings.cotypingEnabled, shows("Cotyping", ["exclude", "exclusion", "never", "app", "website", "domain", "password", "privacy", "block"]) {
+                    Section("Privacy & exclusions") {
+                        TextField("Never suggest in (app names, comma-separated)",
+                                  text: $app.settings.cotypingExcludedApps)
+                        Text("Cotyping never runs in password fields. Add apps (or terminals) here to exclude them too.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        TextField("Never suggest on (websites, comma-separated)",
+                                  text: $app.settings.cotypingExcludedDomains)
+                        Text("Block cotyping on specific sites (e.g. \u{201c}bank.com\u{201d}). Subdomains included; read locally via Accessibility in browsers.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -333,7 +356,7 @@ struct SettingsView: View {
                                 Label("Installed", systemImage: "checkmark.circle.fill")
                                     .foregroundStyle(.green)
                             } else if !installer.isBundleLocationStable {
-                                Label("Move LokalBotV3.app to /Applications first",
+                                Label("Move LokalBot.app to /Applications first",
                                       systemImage: "exclamationmark.triangle.fill")
                                     .foregroundStyle(.orange)
                             } else {

@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>LokalBotV3</string>
+	<string>LokalBot</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIconFile</key>
@@ -25,11 +25,11 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>LokalBotV3 records the meeting app's audio output so the other participants are captured. Audio never leaves this Mac.</string>
+	<string>LokalBot records the meeting app's audio output so the other participants are captured. Audio never leaves this Mac.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>LokalBotV3 records your side of meetings from the microphone. Audio never leaves this Mac.</string>
+	<string>LokalBot records your side of meetings from the microphone. Audio never leaves this Mac.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>LokalBotV3 reads your calendar to confirm meetings and title recordings. Calendar data never leaves this Mac.</string>
+	<string>LokalBot reads your calendar to confirm meetings and title recordings. Calendar data never leaves this Mac.</string>
 	<key>SUEnableAutomaticChecks</key>
 	<false/>
 	<key>SUFeedURL</key>
