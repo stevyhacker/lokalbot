@@ -109,15 +109,23 @@ enum CotypingGhostStyle {
         return 0.299 * srgb.redComponent + 0.587 * srgb.greenComponent + 0.114 * srgb.blueComponent
     }
 
-    /// WCAG-style contrast ratio (1…21) between two colors (alpha ignored).
+    /// WCAG-style contrast ratio (1…21) between two relative luminances.
+    static func contrastRatio(_ a: CGFloat, _ b: CGFloat) -> CGFloat {
+        (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    }
+
+    /// Contrast ratio between two colors (alpha ignored).
     static func contrastRatio(_ first: NSColor, _ second: NSColor) -> CGFloat {
-        let a = relativeLuminance(of: first), b = relativeLuminance(of: second)
-        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+        contrastRatio(relativeLuminance(of: first), relativeLuminance(of: second))
     }
 
     /// Below this fg/bg contrast the host text color is almost always a dynamic
     /// color flattened against the wrong appearance, so we synthesize a hint.
     static let unreliableContrast: CGFloat = 2.0
+
+    /// With a real (sampled) background luminance we hold the host color to a
+    /// genuinely-legible contrast (WCAG ~AA, large text) before trusting it.
+    static let minLegibleContrast: CGFloat = 3.0
 
     /// A concrete dim hint — light on a dark field, dark on a light one — never a
     /// dynamic catalog color, so it stays legible regardless of the overlay
@@ -127,17 +135,24 @@ enum CotypingGhostStyle {
         return NSColor(srgbRed: channel, green: channel, blue: channel, alpha: ghostOpacity)
     }
 
-    /// The color actually painted for the ghost: the dimmed host text color when
-    /// it is reported and readable against the field, otherwise a concrete hint
-    /// derived from the field background, falling back to the system appearance.
-    /// Pure and independent of the overlay panel's resolved appearance.
-    static func resolvedGhostColor(from style: CotypingFieldStyle?, isDarkEnvironment: Bool) -> NSColor {
+    /// The color actually painted for the ghost, as a concrete sRGB color
+    /// (independent of the overlay panel's resolved appearance). `measuredLuminance`
+    /// (real pixels sampled behind the ghost) is authoritative when present; the
+    /// host color is kept only when legible against the background, otherwise a
+    /// contrasting hint is synthesized.
+    static func resolvedGhostColor(from style: CotypingFieldStyle?, isDarkEnvironment: Bool,
+                                   measuredLuminance: CGFloat? = nil) -> NSColor {
+        if let measuredLuminance {
+            // Real pixels behind the ghost beat any AX/appearance guess: keep the
+            // host color only if it's legible against them, else synthesize.
+            if let dimmedHost = ghostColor(from: style),
+               contrastRatio(relativeLuminance(of: dimmedHost), measuredLuminance) >= minLegibleContrast {
+                return dimmedHost
+            }
+            return dimHint(onDarkBackground: measuredLuminance < 0.5)
+        }
         let background = style.flatMap { CotypingTextColorCodec.nsColor(fromHex: $0.backgroundColorHex) }
         if let dimmedHost = ghostColor(from: style) {
-            // Trust the host color unless it barely contrasts with the field's own
-            // background — that is almost always a dynamic color flattened against
-            // the wrong appearance (e.g. `labelColor` captured as near-black while
-            // the field actually paints light in a dark theme).
             if let background, contrastRatio(dimmedHost, background) < unreliableContrast {
                 return dimHint(onDarkBackground: relativeLuminance(of: background) < 0.5)
             }

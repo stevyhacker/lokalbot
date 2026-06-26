@@ -10,6 +10,9 @@ final class CotypingOverlayController {
     private var panel: CotypingOverlayPanel?
     private var hosting: NSHostingView<CotypingGhostView>?
     private(set) var isVisible = false
+    private let sampler = CotypingBackgroundSampler()
+    private var sampleGeneration = 0
+    private var samplingInFlight = false
 
     func show(
         text: String,
@@ -26,7 +29,14 @@ final class CotypingOverlayController {
         let panel = ensurePanel()
         guard let hosting else { return }
         let mode = placement.mode
-        hosting.rootView = CotypingGhostView(text: text, style: style, showsChrome: mode.isMirror)
+        sampleGeneration += 1
+        let generation = sampleGeneration
+        let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        // Inline ghosts contrast against the real host pixels (sampled below);
+        // mirror sits on its own pill, so it keeps the appearance-based color.
+        let cachedLuminance = mode.isMirror ? nil : sampler.cachedLuminance(forApp: bundleID)
+        hosting.rootView = CotypingGhostView(
+            text: text, style: style, showsChrome: mode.isMirror, backgroundLuminance: cachedLuminance)
         hosting.layoutSubtreeIfNeeded()
 
         let fitting = hosting.fittingSize
@@ -61,6 +71,21 @@ final class CotypingOverlayController {
         panel.hasShadow = mode.isMirror
         panel.orderFrontRegardless()
         isVisible = true
+        // First suggestion in this app (no cached luminance): sample the real
+        // background asynchronously and refine the color. The generation token
+        // drops stale captures; the in-flight guard avoids a capture storm.
+        if !mode.isMirror, cachedLuminance == nil, !samplingInFlight {
+            samplingInFlight = true
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { self.samplingInFlight = false }
+                let luminance = await self.sampler.sampleLuminance(at: caretRect, forApp: bundleID)
+                guard generation == self.sampleGeneration, self.isVisible,
+                      let hosting = self.hosting, let luminance else { return }
+                hosting.rootView = CotypingGhostView(
+                    text: text, style: style, showsChrome: false, backgroundLuminance: luminance)
+            }
+        }
     }
 
     func hide() {
@@ -88,6 +113,9 @@ final class CotypingOverlayController {
         panel.animationBehavior = .none
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        // Keep our ephemeral ghost out of screenshots, recordings, and our own
+        // background sampling.
+        panel.sharingType = .none
 
         let hosting = NSHostingView(rootView: CotypingGhostView(text: ""))
         panel.contentView = hosting
@@ -110,6 +138,10 @@ struct CotypingGhostView: View {
     let text: String
     var style: CotypingFieldStyle? = nil
     var showsChrome = false
+    /// Average luminance (0…1) of the host pixels behind the ghost, sampled from
+    /// the screen when available; lets the color contrast with the real
+    /// background instead of guessing from AX/appearance.
+    var backgroundLuminance: CGFloat? = nil
 
     /// Matches the host field's font family at a clamped size; falls back to the
     /// system font at the field's (clamped) size — never a fixed 13 pt.
@@ -118,13 +150,13 @@ struct CotypingGhostView: View {
         return .system(size: CotypingGhostStyle.clampedPointSize(style?.fontPointSize))
     }
     /// The ghost color as a concrete sRGB color, so it paints identically no
-    /// matter what appearance the borderless overlay panel resolves to (an
-    /// agent-app panel does not reliably inherit dark mode). Derived from the
-    /// host field's own colors, falling back to the system appearance only when
-    /// the field reports none.
+    /// matter what appearance the borderless overlay panel resolves to. Contrasts
+    /// against the real background sampled from the screen (`backgroundLuminance`)
+    /// when available, else the host field's colors / system appearance.
     private var color: Color {
         Color(nsColor: CotypingGhostStyle.resolvedGhostColor(
-            from: style, isDarkEnvironment: Self.prefersDarkEnvironment))
+            from: style, isDarkEnvironment: Self.prefersDarkEnvironment,
+            measuredLuminance: backgroundLuminance))
     }
 
     /// Whether the system is in dark mode, read from the global setting rather

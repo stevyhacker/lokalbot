@@ -1414,6 +1414,34 @@ final class CotypingFieldStyleTests: XCTestCase {
         XCTAssertGreaterThan(CotypingGhostStyle.contrastRatio(white, black), 20)
         XCTAssertEqual(CotypingGhostStyle.contrastRatio(white, white), 1, accuracy: 0.001)
     }
+
+    func testMeasuredLuminanceDrivesGhostContrast() {
+        let style = CotypingFieldStyle(colorHex: "111111")  // near-black host fg, no bg reported
+        // Measured-dark background → flip to a light hint (the reported bug).
+        let onDark = CotypingGhostStyle.resolvedGhostColor(
+            from: style, isDarkEnvironment: false, measuredLuminance: 0.03)
+        XCTAssertGreaterThan(CotypingGhostStyle.relativeLuminance(of: onDark), 0.9)
+        // Measured-light background → keep the legible dark host color.
+        let onLight = CotypingGhostStyle.resolvedGhostColor(
+            from: style, isDarkEnvironment: true, measuredLuminance: 0.97)
+        XCTAssertLessThan(CotypingGhostStyle.relativeLuminance(of: onLight), 0.2)
+    }
+
+    func testAverageLuminanceOfSolidImages() {
+        XCTAssertGreaterThan(
+            CotypingBackgroundSampler.averageLuminance(of: solidImage(white: 1)) ?? 0, 0.95)
+        XCTAssertLessThan(
+            CotypingBackgroundSampler.averageLuminance(of: solidImage(white: 0)) ?? 1, 0.05)
+    }
+
+    private func solidImage(white: CGFloat) -> CGImage {
+        let ctx = CGContext(data: nil, width: 4, height: 4, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        ctx.setFillColor(red: white, green: white, blue: white, alpha: 1)
+        ctx.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+        return ctx.makeImage()!
+    }
 }
 
 // MARK: - Mirror render mode
