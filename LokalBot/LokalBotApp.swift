@@ -38,9 +38,10 @@ struct LokalBotV3App: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        Window("LokalBotV3", id: "main") {
+        Window("LokalBot", id: "main") {
             MainWindowView()
                 .environmentObject(app)
+                .brandTinted()
         }
         .defaultSize(width: 1180, height: 740)
         .commands {
@@ -52,13 +53,32 @@ struct LokalBotV3App: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
             }
+            // ⌘K opens the command palette. Registered at the app level so it
+            // works from anywhere; the palette window is opened via openWindow.
+            CommandGroup(after: .toolbar) {
+                Button("Command Palette…") {
+                    WindowAccess.shared.open("palette")
+                }
+                .keyboardShortcut("k", modifiers: [.command])
+            }
         }
 
-        Window("Welcome to LokalBotV3", id: "onboarding") {
+        Window("Welcome to LokalBot", id: "onboarding") {
             OnboardingView()
                 .environmentObject(app)
         }
         .windowResizability(.contentSize)
+
+        // The ⌘K command palette. A lightweight, keyboard-first launcher that
+        // records, navigates, and opens recent meetings without the sidebar.
+        Window("Command Palette", id: "palette") {
+            CommandPaletteView()
+                .environmentObject(app)
+                .brandTinted()
+        }
+        .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
+        .defaultPosition(.center)
 
         MenuBarExtra {
             MenuBarView()

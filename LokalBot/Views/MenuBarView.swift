@@ -187,7 +187,7 @@ struct MenuBarView: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Button("Open LokalBotV3") { WindowAccess.shared.open("main") }
+            Button("Open LokalBot") { WindowAccess.shared.open("main") }
                 .buttonStyle(.plain).foregroundStyle(.tint)
             Button("Settings") {
                 app.navSection = .settings

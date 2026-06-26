@@ -291,6 +291,36 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .track--me { color: var(--teal-bright); border-color: rgba(35, 196, 174, 0.4); background: var(--teal-soft); }
 .track--them { color: var(--text-dim); }
 
+/* Hero transcript snippet — shows the Me/Them transcript + a search match,
+   so the abstract app card also hints at the product's core artifact. */
+.appcard__lines {
+  margin: 18px 0 0;
+  padding: 12px 14px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.appcard__lines li { display: flex; gap: 9px; align-items: baseline; }
+.appcard__lines .spk {
+  flex: 0 0 auto;
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 7px; border-radius: var(--pill);
+}
+.appcard__lines .spk--me { color: var(--teal-bright); background: var(--teal-soft); }
+.appcard__lines .spk--them { color: var(--text-dim); background: rgba(150, 180, 200, 0.1); }
+.appcard__lines .t { font-size: 0.8rem; color: var(--text-dim); line-height: 1.35; }
+.appcard__lines mark {
+  color: var(--teal-ink);
+  background: var(--teal-bright);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
 @keyframes wave { to { transform: scaleY(1); } }
 @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }
 @keyframes pulse {
