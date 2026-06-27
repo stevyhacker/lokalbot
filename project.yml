@@ -138,7 +138,7 @@ targets:
       - LokalBotV3App
     settings:
       base:
-        PRODUCT_NAME: LokalBotV3
+        PRODUCT_NAME: LokalBot
         PRODUCT_MODULE_NAME: LokalBotV3
         PRODUCT_BUNDLE_IDENTIFIER: me.dotenv.LokalBot
 
@@ -153,7 +153,7 @@ targets:
       - LokalBotV3App
     settings:
       base:
-        PRODUCT_NAME: "LokalBotV3 Dev"
+        PRODUCT_NAME: "LokalBot Dev"
         PRODUCT_MODULE_NAME: LokalBotV3Dev
         PRODUCT_BUNDLE_IDENTIFIER: me.dotenv.LokalBot.dev
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: LOKALBOTV3_DEV $(inherited)
@@ -166,7 +166,7 @@ targets:
       - LokalBotV3App
     settings:
       base:
-        PRODUCT_NAME: "LokalBotV3 UI Test Host"
+        PRODUCT_NAME: "LokalBot UI Test Host"
         PRODUCT_MODULE_NAME: LokalBotV3UITestHost
         PRODUCT_BUNDLE_IDENTIFIER: me.dotenv.LokalBot.uitesthost
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: LOKALBOTV3_DEV LOKALBOTV3_UI_TEST_HOST $(inherited)
@@ -181,7 +181,7 @@ targets:
     settings:
       base:
         BUNDLE_LOADER: "$(TEST_HOST)"
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LokalBotV3.app/Contents/MacOS/LokalBotV3"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LokalBot.app/Contents/MacOS/LokalBot"
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_MODULE_NAME: LokalBotV3Tests
         PRODUCT_BUNDLE_IDENTIFIER: me.dotenv.LokalBotTests
@@ -229,7 +229,7 @@ targets:
         DEVELOPMENT_TEAM: K96P3M3997
         ENABLE_HARDENED_RUNTIME: NO  # flip ON in notarised release builds
         GENERATE_INFOPLIST_FILE: YES
-        # Embedded into LokalBotV3.app/Contents/Helpers rather than installed
+        # Embedded into LokalBot.app/Contents/Helpers rather than installed
         # as a standalone product, so keep it out of the archive's
         # install location.
         SKIP_INSTALL: YES

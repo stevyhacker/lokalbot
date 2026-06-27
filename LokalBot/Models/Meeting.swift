@@ -8,7 +8,7 @@ struct Meeting: Identifiable, Codable, Equatable {
     var appName: String
     var startedAt: Date
     var endedAt: Date?
-    /// Path relative to the LokalBotV3 storage root, e.g. "meetings/2026/06/10-zoom-meeting".
+    /// Path relative to the LokalBot storage root, e.g. "meetings/2026/06/10-zoom-meeting".
     var relativePath: String
     var hasSystemTrack: Bool = false
 

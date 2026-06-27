@@ -190,7 +190,7 @@ flowchart LR
 > [!NOTE]
 > Releases are published on GitHub. The download is a signed, notarized `.dmg`; models download on first run, then the app works fully offline.
 
-- **[Download the latest `.dmg`](https://github.com/stevyhacker/lokalbot/releases/latest/download/LokalBotV3.dmg)** · [all releases and notes](https://github.com/stevyhacker/lokalbot/releases)
+- **[Download the latest `.dmg`](https://github.com/stevyhacker/lokalbot/releases/latest/download/LokalBot.dmg)** · [all releases and notes](https://github.com/stevyhacker/lokalbot/releases)
 
 **Requirements**
 
@@ -218,7 +218,7 @@ Set your team under **Signing & Capabilities**, pick a scheme, and Run:
 
 The first build runs `Scripts/fetch-llama.sh` (a pre-build phase) which vendors the pinned llama.cpp server (`b9789` — server + dylibs, ~10 MB) and the built-in model (Qwen3.5 0.8B Q4_K_M, ~0.5 GB) into `Vendor/`, copied into the app bundle. On first recording, macOS prompts for **Microphone** and **System Audio Recording**; transcription and screenshot models download from Hugging Face on first use.
 
-> The shipped app is **LokalBotV3** (`me.dotenv.LokalBot`); the Xcode project and scheme are named `LokalBot`.
+> The shipped app is **LokalBot** (`me.dotenv.LokalBot`); the Xcode project and scheme are named `LokalBot`.
 
 ## Configuration
 
@@ -315,7 +315,7 @@ The app binary doubles as a test harness; flows that need ungranted permissions 
 └── lokalbotv3.sqlite           # FTS5 (docs) + embeddings + activity_blocks + ocr_fts + screenshots
 ```
 
-Rooted at the bundle id (not "LokalBotV3") so it never collides with another app's `Application Support/LokalBotV3` on the default case-insensitive filesystem.
+Rooted at the bundle id (not "LokalBot") so it never collides with another app's `Application Support/LokalBot` on the default case-insensitive filesystem.
 
 <details>
 <summary><strong>Project layout</strong></summary>

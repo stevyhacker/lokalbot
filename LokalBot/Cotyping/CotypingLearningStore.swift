@@ -195,7 +195,7 @@ final class CotypingLearningStore: ObservableObject {
         let sealed = try AES.GCM.seal(data, using: key)
         guard let combined = sealed.combined else {
             throw NSError(
-                domain: "LokalBotV3",
+                domain: "LokalBot",
                 code: 22,
                 userInfo: [NSLocalizedDescriptionKey: "Could not seal cotyping learning data."])
         }

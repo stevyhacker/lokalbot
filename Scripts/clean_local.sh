@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Remove this project's local build/derived/DMG artifacts so the next build
-# starts from a clean slate. Scoped to LokalBotV3/LokalBot artifacts only — it
+# starts from a clean slate. Scoped to LokalBot artifacts only — it
 # never touches installed apps, other projects' DerivedData, or TCC grants.
 # Usage: bash Scripts/clean_local.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-echo "=== LokalBotV3 local build cleanup ==="
+echo "=== LokalBot local build cleanup ==="
 
 # Remove a path (file, dir, or symlink) if it exists, announcing what went.
 remove() {
@@ -17,22 +17,23 @@ remove() {
   fi
 }
 
-# Eject mounted LokalBotV3 volumes first so nothing holds a file open while we
+# Eject mounted LokalBot volumes first so nothing holds a file open while we
 # delete the images that back them.
 while IFS= read -r vol; do
   [ -z "$vol" ] && continue
   hdiutil detach "$vol" -quiet 2>/dev/null && echo "  ejected: $vol" || true
-done < <(ls /Volumes/ 2>/dev/null | grep -i "^LokalBotV3" | sed 's|^|/Volumes/|' || true)
+done < <(ls /Volumes/ 2>/dev/null | grep -Ei "^LokalBot(V3)?$" | sed 's|^|/Volumes/|' || true)
 
 # Repo-local build outputs.
 remove ".build"                 # custom derivedDataPath used by local/e2e builds
 remove "build"                  # archive + export + DMG + appcast staging
 remove "default.profraw"        # stray code-coverage profile data
-remove "/tmp/LokalBotV3-dmg-venv" # throwaway dmgbuild venv from build_test_dmg.sh
+remove "/tmp/LokalBot-dmg-venv" # throwaway dmgbuild venv from build_test_dmg.sh
+remove "/tmp/LokalBotV3-dmg-venv" # legacy throwaway dmgbuild venv
 
 # DMG images at the repo root and the test-DMG temp location.
 shopt -s nullglob
-for dmg in ./*.dmg /tmp/LokalBotV3*.dmg; do
+for dmg in ./*.dmg /tmp/LokalBot*.dmg; do
   remove "$dmg"
 done
 

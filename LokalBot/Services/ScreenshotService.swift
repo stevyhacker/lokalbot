@@ -182,7 +182,7 @@ final class ScreenshotService: ObservableObject {
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
             data, "public.heic" as CFString, 1, nil) else {
-            throw NSError(domain: "LokalBotV3", code: 5,
+            throw NSError(domain: "LokalBot", code: 5,
                           userInfo: [NSLocalizedDescriptionKey: "HEIC encoder unavailable"])
         }
         CGImageDestinationAddImage(destination, image,

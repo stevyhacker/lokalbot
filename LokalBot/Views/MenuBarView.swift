@@ -28,7 +28,7 @@ struct MenuBarLabel: View {
 }
 
 /// The dropdown shown when the menu bar item is clicked. The primary surface for
-/// running LokalBotV3 without ever opening the main window: live recording state,
+/// running LokalBot without ever opening the main window: live recording state,
 /// the record/stop control, recent meetings, and app actions (Settings, Quit).
 struct MenuBarView: View {
     @EnvironmentObject var app: AppState

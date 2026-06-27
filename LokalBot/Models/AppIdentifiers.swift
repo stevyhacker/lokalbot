@@ -3,7 +3,7 @@ import Security
 import CryptoKit
 
 enum AppIdentifiers {
-    /// The host LokalBotV3 app's bundle id, used to resolve its Application
+    /// The host LokalBot app's bundle id, used to resolve its Application
     /// Support directory and Keychain consistently from any binary that
     /// belongs to the app (the app itself, the embedded `lokalbot-cli`, …).
     /// Hard-coded so the CLI process — whose own bundle id differs from
@@ -135,7 +135,7 @@ enum KeychainSecrets {
         let key = SymmetricKey(size: .bits256)
         set(key.withUnsafeBytes { Data($0) }, account: account)
         guard data(account: account) != nil else {
-            throw NSError(domain: "LokalBotV3", code: 6,
+            throw NSError(domain: "LokalBot", code: 6,
                           userInfo: [NSLocalizedDescriptionKey: "Could not save encryption key (\(account))"])
         }
         symmetricKeyCache[account] = key

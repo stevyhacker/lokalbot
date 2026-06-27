@@ -130,7 +130,7 @@ enum UITestHarness {
     ) throws -> XCUIApplication {
         let appURL = try hostAppURL(file: file, line: line)
         let executableURL = appURL
-            .appendingPathComponent("Contents/MacOS/LokalBotV3 UI Test Host")
+            .appendingPathComponent("Contents/MacOS/LokalBot UI Test Host")
         XCTAssertTrue(
             FileManager.default.isExecutableFile(atPath: executableURL.path),
             "LokalBot UI Test Host executable missing at \(executableURL.path)",
@@ -168,7 +168,7 @@ enum UITestHarness {
 
     private static func hostAppURL(file: StaticString, line: UInt) throws -> URL {
         let productsDirectory = Bundle.main.bundleURL.deletingLastPathComponent()
-        let appURL = productsDirectory.appendingPathComponent("LokalBotV3 UI Test Host.app")
+        let appURL = productsDirectory.appendingPathComponent("LokalBot UI Test Host.app")
         XCTAssertTrue(
             FileManager.default.fileExists(atPath: appURL.path),
             "LokalBot UI Test Host app missing at \(appURL.path)",

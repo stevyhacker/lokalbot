@@ -217,6 +217,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if env["LOKALBOTV3_SELECT_FIRST"] == "1", let first = app.meetings.first {
             app.selectedMeetingIDs = [first.id]
         }
+        if let raw = env["LOKALBOTV3_SELECT_INDEX"], let idx = Int(raw) {
+            let ordered = app.meetings.sorted { $0.startedAt > $1.startedAt }
+            if ordered.indices.contains(idx) { app.selectedMeetingIDs = [ordered[idx].id] }
+        }
         if env["LOKALBOTV3_DISMISS_ONBOARDING"] == "1" {
             UserDefaults.standard.set(true, forKey: "lokalbotv3.gettingStartedDismissed")
         }
@@ -888,7 +892,7 @@ final class AppState: ObservableObject {
         selectedMeetingIDs.subtract(ids)
     }
 
-    /// `LokalBotV3 --process <meeting folder>`: run the pipeline headless and
+    /// `LokalBot --process <meeting folder>`: run the pipeline headless and
     /// exit. Lets the pipeline be exercised (and CI-tested) without the UI.
     private func handleHeadlessProcessing() -> Bool {
         let args = CommandLine.arguments
@@ -898,7 +902,7 @@ final class AppState: ObservableObject {
         decoder.dateDecodingStrategy = .iso8601
         guard let data = try? Data(contentsOf: folder.appendingPathComponent("meta.json")),
               let decoded = try? decoder.decode(Meeting.self, from: data) else {
-            print("LokalBotV3 --process: no readable meta.json in \(folder.path)")
+            print("LokalBot --process: no readable meta.json in \(folder.path)")
             exit(2)
         }
         let summarize = !args.contains("--no-summary")
@@ -909,11 +913,11 @@ final class AppState: ObservableObject {
                 try? await Task.sleep(for: .milliseconds(500))
                 switch pipeline.stages[decoded.id] {
                 case .none:
-                    print("LokalBotV3 --process: done → \(folder.path)")
+                    print("LokalBot --process: done → \(folder.path)")
                     await LlamaServer.shared.stop()
                     exit(0)
                 case .failed(let message):
-                    print("LokalBotV3 --process: FAILED — \(message)")
+                    print("LokalBot --process: FAILED — \(message)")
                     await LlamaServer.shared.stop()
                     exit(1)
                 default:
@@ -924,52 +928,52 @@ final class AppState: ObservableObject {
         return true
     }
 
-    /// `LokalBotV3 --record <seconds>`: manual mic recording, no pipeline.
+    /// `LokalBot --record <seconds>`: manual mic recording, no pipeline.
     private func handleHeadlessRecord() -> Bool {
         let args = CommandLine.arguments
         guard let flag = args.firstIndex(of: "--record"), args.count > flag + 1,
               let seconds = Int(args[flag + 1]) else { return false }
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
-            print("LokalBotV3 --record: SKIP (microphone not granted)")
+            print("LokalBot --record: SKIP (microphone not granted)")
             exit(3)
         }
         startRecording(context: nil, source: "headless")
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(seconds))
             guard isRecording else {
-                print("LokalBotV3 --record: FAILED to start — \(lastError ?? "no error recorded")")
+                print("LokalBot --record: FAILED to start — \(lastError ?? "no error recorded")")
                 exit(1)
             }
             stopRecording(process: false)
-            guard let meeting = meetings.first else { print("LokalBotV3 --record: no meeting"); exit(1) }
-            print("LokalBotV3 --record: done → \(meeting.folderURL(in: storage).path)")
+            guard let meeting = meetings.first else { print("LokalBot --record: no meeting"); exit(1) }
+            print("LokalBot --record: done → \(meeting.folderURL(in: storage).path)")
             exit(0)
         }
         return true
     }
 
-    /// `LokalBotV3 --shot-test`: one screenshot capture, exit 0 ok / 3 skip / 1 fail.
+    /// `LokalBot --shot-test`: one screenshot capture, exit 0 ok / 3 skip / 1 fail.
     private func handleHeadlessShotTest() -> Bool {
         guard CommandLine.arguments.contains("--shot-test") else { return false }
         Task { @MainActor in
             guard CGPreflightScreenCaptureAccess() else {
-                print("LokalBotV3 --shot-test: SKIP (screen recording not granted)")
+                print("LokalBot --shot-test: SKIP (screen recording not granted)")
                 exit(3)
             }
             let before = Date()
             screenshots.captureNow()
             try? await Task.sleep(for: .seconds(8))
             if let shot = activityStore.screenshots(on: Date()).last(where: { $0.ts >= before }) {
-                print("LokalBotV3 --shot-test: ok (app: \(shot.app))")
+                print("LokalBot --shot-test: ok (app: \(shot.app))")
                 exit(0)
             }
-            print("LokalBotV3 --shot-test: FAILED (no screenshot row — see debug.log)")
+            print("LokalBot --shot-test: FAILED (no screenshot row — see debug.log)")
             exit(1)
         }
         return true
     }
 
-    /// `LokalBotV3 --digest today`: generate today's journal digest and exit.
+    /// `LokalBot --digest today`: generate today's journal digest and exit.
     private func handleHeadlessDigest() -> Bool {
         guard CommandLine.arguments.contains("--digest") else { return false }
         Task { @MainActor in
@@ -979,11 +983,11 @@ final class AppState: ObservableObject {
                 let (text, url) = try await pipeline.generateDayDigest(
                     for: day, blocks: activityStore.blocks(on: day),
                     meetings: todays, ocr: activityStore.ocrText(on: day), config: settings)
-                print("LokalBotV3 --digest: \(url.path) (\(text.count) chars)")
+                print("LokalBot --digest: \(url.path) (\(text.count) chars)")
                 await LlamaServer.shared.stop()
                 exit(0)
             } catch {
-                print("LokalBotV3 --digest: FAILED — \(error.localizedDescription)")
+                print("LokalBot --digest: FAILED — \(error.localizedDescription)")
                 await LlamaServer.shared.stop()
                 exit(1)
             }
@@ -991,7 +995,7 @@ final class AppState: ObservableObject {
         return true
     }
 
-    /// `LokalBotV3 --chat "<question>"`: run the meeting chat agent once against
+    /// `LokalBot --chat "<question>"`: run the meeting chat agent once against
     /// the real engine + tools and print the answer. Test hook for the chat
     /// assistant, same spirit as --search / --digest.
     private func handleHeadlessChat() -> Bool {
@@ -1010,17 +1014,17 @@ final class AppState: ObservableObject {
                 let answer = try await agent.respond(history: [], latest: question) { event in
                     switch event {
                     case .toolStarted(let call):
-                        print("LokalBotV3 --chat: tool \(call.name)(\(call.arguments))")
+                        print("LokalBot --chat: tool \(call.name)(\(call.arguments))")
                     case .toolFinished(let name, let summary):
-                        print("LokalBotV3 --chat: done \(name) — \(summary)")
+                        print("LokalBot --chat: done \(name) — \(summary)")
                     }
                 }
-                print("LokalBotV3 --chat: \(answer)")
+                print("LokalBot --chat: \(answer)")
                 await LlamaServer.shared.stop()
                 await LlamaServer.embedder.stop()
                 exit(0)
             } catch {
-                print("LokalBotV3 --chat: FAILED — \(error.localizedDescription)")
+                print("LokalBot --chat: FAILED — \(error.localizedDescription)")
                 await LlamaServer.shared.stop()
                 await LlamaServer.embedder.stop()
                 exit(1)
@@ -1029,14 +1033,14 @@ final class AppState: ObservableObject {
         return true
     }
 
-    /// `LokalBotV3 --search <query>`: print index hits and exit. Test hook
+    /// `LokalBot --search <query>`: print index hits and exit. Test hook
     /// for the FTS5 index, same spirit as --process.
     private func handleHeadlessSearch() -> Bool {
         let args = CommandLine.arguments
         guard let flag = args.firstIndex(of: "--search"), args.count > flag + 1 else { return false }
         let query = args[flag + 1]
         let hits = searchIndex.search(query)
-        print("LokalBotV3 --search: \(hits.count) keyword hit(s)")
+        print("LokalBot --search: \(hits.count) keyword hit(s)")
         for hit in hits {
             let meeting = meetings.first { $0.id == hit.meetingID }
             print("[\(hit.kind.rawValue)] \(meeting?.title ?? hit.meetingID.uuidString) @ \(Transcript.stamp(hit.start)): \(hit.snippet)")
@@ -1045,7 +1049,7 @@ final class AppState: ObservableObject {
             if settings.semanticSearchEnabled {
                 await embeddingIndex.reindexAll(meetings)
                 let semantic = await embeddingIndex.search(query)
-                print("LokalBotV3 --search: \(semantic.count) semantic hit(s)")
+                print("LokalBot --search: \(semantic.count) semantic hit(s)")
                 for hit in semantic {
                     let meeting = meetings.first { $0.id == hit.meetingID }
                     print(String(format: "[≈%.2f] %@ @ %@: %@", hit.score,

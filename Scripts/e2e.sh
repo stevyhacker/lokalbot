@@ -1,5 +1,5 @@
 #!/bin/bash
-# LokalBotV3 end-to-end test suite. Drives the REAL app binary headlessly:
+# LokalBot end-to-end test suite. Drives the REAL app binary headlessly:
 # real audio (synthesized with `say`), real CoreML transcription, the real
 # bundled llama.cpp server, real SQLite. Run on a Mac with the app built:
 #   Scripts/install-app.sh && Scripts/e2e.sh
@@ -7,7 +7,7 @@
 # the permission is missing, so the suite is useful pre- and post-grant.
 set -uo pipefail
 
-BIN="${LOKALBOTV3_APP:-/Applications/LokalBotV3.app}/Contents/MacOS/LokalBotV3"
+BIN="${LOKALBOT_APP:-/Applications/LokalBot.app}/Contents/MacOS/LokalBot"
 ROOT="$HOME/Library/Application Support/me.dotenv.LokalBot"
 [ -x "$BIN" ] || { echo "no binary at $BIN — run Scripts/install-app.sh first"; exit 2; }
 

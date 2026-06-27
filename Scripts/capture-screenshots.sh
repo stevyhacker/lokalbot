@@ -29,7 +29,7 @@ xcodebuild -project LokalBot.xcodeproj -scheme "$SCHEME" \
 PRODUCTS=$(xcodebuild -project LokalBot.xcodeproj -scheme "$SCHEME" \
   -configuration Debug -destination 'platform=macOS' -showBuildSettings 2>/dev/null \
   | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $2; exit}')
-APP="$PRODUCTS/LokalBotV3 UI Test Host.app/Contents/MacOS/LokalBotV3 UI Test Host"
+APP="$PRODUCTS/LokalBot UI Test Host.app/Contents/MacOS/LokalBot UI Test Host"
 
 echo "==> Seeding demo library"
 python3 Scripts/seed_demo_library.py "$LIB"
@@ -52,7 +52,7 @@ SWIFT
 
 capture() {
   name="$1"; shift
-  pkill -f "LokalBotV3 UI Test Host" >/dev/null 2>&1 || true
+  pkill -f "LokalBot UI Test Host" >/dev/null 2>&1 || true
   sleep 1
   env LOKALBOTV3_UI_TEST=1 LOKALBOTV3_STORAGE_ROOT="$LIB" LOKALBOTV3_DEFAULTS_SUITE="$SUITE" "$@" \
     "$APP" -ApplePersistenceIgnoreState YES \
@@ -78,7 +78,7 @@ capture models              LOKALBOTV3_INITIAL_SECTION=models
 capture cotyping            LOKALBOTV3_INITIAL_SECTION=cotyping
 capture settings            LOKALBOTV3_INITIAL_SECTION=settings
 capture chat                LOKALBOTV3_INITIAL_SECTION=chat
-pkill -f "LokalBotV3 UI Test Host" >/dev/null 2>&1 || true
+pkill -f "LokalBot UI Test Host" >/dev/null 2>&1 || true
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
   echo "==> ffmpeg not found; PNGs written, skipping hero.gif"

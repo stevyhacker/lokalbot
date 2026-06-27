@@ -1,6 +1,6 @@
 import XCTest
 
-/// End-to-end UI tests that drive the dedicated `LokalBotV3 UI Test Host`
+/// End-to-end UI tests that drive the dedicated `LokalBot UI Test Host`
 /// against a synthetic meetings library planted on disk before launch.
 ///
 /// The app sees `LOKALBOTV3_UI_TEST=1` and skips every side-effectful

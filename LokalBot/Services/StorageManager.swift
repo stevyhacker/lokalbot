@@ -4,8 +4,8 @@ import Foundation
 /// ~/Library/Application Support/me.dotenv.LokalBot/
 ///   meetings/YYYY/MM/dd-slug/{mic.m4a, system.m4a, meta.json}
 ///
-/// Rooted at the bundle id, NOT "LokalBotV3": an unrelated app may own
-/// ~/Library/Application Support/LokalBotV3/ on some machines, and its
+/// Rooted at the bundle id, NOT "LokalBot": an unrelated app may own
+/// ~/Library/Application Support/LokalBot/ on some machines, and its
 /// "Meetings" folder would collide with our "meetings" on the default
 /// case-insensitive filesystem.
 final class StorageManager {

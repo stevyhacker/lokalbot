@@ -1,7 +1,7 @@
 #!/bin/bash
-# LokalBotV3 UI test runner.
+# LokalBot UI test runner.
 #
-# Drives the dedicated LokalBotV3 UI Test Host via XCUITest against a
+# Drives the dedicated LokalBot UI Test Host via XCUITest against a
 # synthetic meetings library — no microphone/screen-recording permissions,
 # no real audio, no network. The host is compiled with LOKALBOTV3_UI_TEST=1
 # and skips every side-effectful subsystem (Core Audio polling,

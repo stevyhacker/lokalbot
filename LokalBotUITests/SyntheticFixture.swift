@@ -1,7 +1,7 @@
 import Foundation
 import SQLite3
 
-/// Plants a self-contained LokalBotV3 storage root on disk for one UI test run.
+/// Plants a self-contained LokalBot storage root on disk for one UI test run.
 /// Mirrors `StorageManager`'s on-disk layout
 /// (`meetings/YYYY/MM/dd-slug/{meta.json, transcript.json, transcript.md, summary.md}`)
 /// without `@testable`-importing the app — the UI test bundle runs out-of-process,
@@ -61,7 +61,7 @@ enum SyntheticFixture {
     /// Caller passes the resulting `root` to the app as `LOKALBOTV3_STORAGE_ROOT`.
     static func plant(includeActivity: Bool = true) throws -> Library {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LokalBotV3UITests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("LokalBotUITests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(
             at: root.appendingPathComponent("meetings"), withIntermediateDirectories: true)
 

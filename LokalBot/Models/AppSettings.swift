@@ -35,7 +35,7 @@ struct AppSettings: Codable {
     /// Run as a menu-bar-only app: no Dock icon, no window at launch. The
     /// recording state lives in the menu bar (live timer + indicator) so the
     /// main window is never required to know a meeting is being captured.
-    /// When off, LokalBotV3 behaves like a normal windowed app with a Dock icon.
+    /// When off, LokalBot behaves like a normal windowed app with a Dock icon.
     var menuBarOnly: Bool = true
 
     // MARK: Models (M2)
