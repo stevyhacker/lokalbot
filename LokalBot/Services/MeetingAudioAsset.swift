@@ -115,6 +115,14 @@ enum MeetingAudioAsset {
         }
     }
 
+    /// The meeting's source files paired with the gain each should play at.
+    /// Shared by the live `MeetingPlayer` (which renders them as independent
+    /// players) and the offline export (which folds the same set into one
+    /// composition), so what you hear matches what you export.
+    static func playbackSources(folder: URL, hasSystemTrack: Bool) -> [(url: URL, gain: Float)] {
+        existingSources(folder: folder, hasSystemTrack: hasSystemTrack).map { ($0.url, $0.gain) }
+    }
+
     private static func existingSources(folder: URL, hasSystemTrack: Bool) -> [Source] {
         let mic = folder.appendingPathComponent("mic.m4a")
         let system = folder.appendingPathComponent("system.m4a")

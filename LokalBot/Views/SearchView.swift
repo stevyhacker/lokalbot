@@ -126,6 +126,7 @@ struct SearchView: View {
                             .onTapGesture {
                                 app.selectedMeetingIDs = [hit.meetingID]
                                 if hit.start > 0 { app.pendingSeek = hit.start }
+                                app.navSection = .meetings
                             }
                             .accessibilityIdentifier("search.hit.semantic.\(hit.meetingID.uuidString)")
                     }

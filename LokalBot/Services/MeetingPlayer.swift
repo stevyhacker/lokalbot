@@ -1,10 +1,17 @@
 import Foundation
 import AVFoundation
 
-/// Plays a meeting's tracks as one gain-staged composition. The two source
-/// files were recorded simultaneously; `MeetingAudioAsset` mixes them with
-/// enough headroom to avoid clipped/phasey voices, while `AVPlayerItem` keeps
-/// faster playback pitch-correct.
+/// Plays a meeting's two source files (mic.m4a + system.m4a) together. They
+/// were recorded simultaneously, so playing both from the same offset
+/// reproduces the meeting; click-to-seek from the transcript lands here.
+///
+/// Each track gets its own `AVAudioPlayer` and the OS mixes them at the output
+/// device. This is deliberate: the mic and system files routinely differ in
+/// sample rate (device-native vs. the 48 kHz tap) and channel count (mono vs.
+/// stereo mixdown). Folding both into one `AVMutableComposition` + `AVAudioMix`
+/// and rendering through `AVPlayer` garbles the mismatched track during
+/// real-time playback — independent players resample each cleanly. (Offline
+/// export can still use the composition; see `MeetingAudioAsset`.)
 @MainActor
 final class MeetingPlayer: NSObject, ObservableObject {
 
@@ -12,36 +19,30 @@ final class MeetingPlayer: NSObject, ObservableObject {
     @Published private(set) var currentTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
     @Published private(set) var isLoaded = false
-    /// Playback rate (1.0 = normal). `AVPlayerItem.audioTimePitchAlgorithm`
-    /// preserves speech pitch while the rate changes.
+    /// Playback rate (1.0 = normal). `AVAudioPlayer` honors `enableRate` + `rate`
+    /// and preserves pitch while the rate changes.
     @Published var speed: Float = 1.0 { didSet { applySpeed() } }
 
-    private var player: AVPlayer?
-    private var timeObserver: Any?
-    private var finishObserver: NSObjectProtocol?
+    private var players: [AVAudioPlayer] = []
+    private var ticker: Timer?
 
     func load(folder: URL, hasSystemTrack: Bool) {
         stop()
-        do {
-            let prepared = try MeetingAudioAsset.prepare(folder: folder, hasSystemTrack: hasSystemTrack)
-            let item = AVPlayerItem(asset: prepared.composition)
-            item.audioMix = prepared.audioMix
-            item.audioTimePitchAlgorithm = .spectral
-
-            let player = AVPlayer(playerItem: item)
-            player.actionAtItemEnd = .pause
-            self.player = player
-
-            duration = prepared.duration
-            currentTime = 0
-            isLoaded = duration > 0
-
-            addObservers(player: player, item: item)
-        } catch {
-            duration = 0
-            currentTime = 0
-            isLoaded = false
-        }
+        // Share the file + gain policy with the offline export so what you hear
+        // matches what you export.
+        players = MeetingAudioAsset.playbackSources(folder: folder, hasSystemTrack: hasSystemTrack)
+            .compactMap { source -> AVAudioPlayer? in
+                guard let player = try? AVAudioPlayer(contentsOf: source.url) else { return nil }
+                player.delegate = self
+                player.enableRate = true
+                player.volume = source.gain
+                player.prepareToPlay()
+                return player
+            }
+        applySpeed()
+        duration = players.map(\.duration).max() ?? 0
+        currentTime = 0
+        isLoaded = !players.isEmpty
     }
 
     func playPause() {
@@ -49,94 +50,86 @@ final class MeetingPlayer: NSObject, ObservableObject {
     }
 
     func play(at time: TimeInterval? = nil) {
-        guard let player, isLoaded else { return }
+        guard !players.isEmpty else { return }
         if let time {
-            seek(to: time, resumePlayback: true)
-            return
+            setPlayheads(to: time)
+            currentTime = min(max(0, time), duration)
+        } else if duration > 0, currentTime >= duration {
+            // Replaying after reaching the end: rewind both tracks first.
+            setPlayheads(to: 0)
+            currentTime = 0
         }
-        if duration > 0, currentTime >= duration {
-            seek(to: 0, resumePlayback: true)
-            return
+        // Schedule against a shared device-time anchor so both tracks stay in sync.
+        let anchor = (players.first?.deviceCurrentTime ?? 0) + 0.05
+        for player in players {
+            player.enableRate = true
+            player.rate = speed
+            player.play(atTime: anchor)
         }
-        player.playImmediately(atRate: speed)
         isPlaying = true
+        startTicker()
     }
 
     /// Push the current `speed` to every player (live rate change).
     private func applySpeed() {
-        guard isPlaying else { return }
-        player?.rate = speed
+        for player in players where player.enableRate { player.rate = speed }
     }
 
     func pause() {
-        guard let player else { return }
-        currentTime = CMTimeGetSeconds(player.currentTime())
-        player.pause()
+        for player in players { player.pause() }
         isPlaying = false
+        stopTicker()
     }
 
     func seek(to time: TimeInterval) {
         let wasPlaying = isPlaying
-        player?.pause()
-        isPlaying = false
-        seek(to: time, resumePlayback: wasPlaying)
+        pause()
+        let clamped = max(0, min(time, duration))
+        setPlayheads(to: clamped)
+        currentTime = clamped
+        if wasPlaying { play() }
     }
 
     func stop() {
-        if let timeObserver, let player {
-            player.removeTimeObserver(timeObserver)
-        }
-        if let finishObserver {
-            NotificationCenter.default.removeObserver(finishObserver)
-        }
-        player?.pause()
-        player = nil
-        timeObserver = nil
-        finishObserver = nil
+        for player in players { player.stop() }
+        players = []
         isPlaying = false
         isLoaded = false
         currentTime = 0
         duration = 0
+        stopTicker()
     }
 
-    private func seek(to time: TimeInterval, resumePlayback: Bool) {
-        guard let player else { return }
-        let clamped = max(0, min(time, duration))
-        currentTime = clamped
-        player.seek(to: CMTime(seconds: clamped, preferredTimescale: 600),
-                    toleranceBefore: .zero,
-                    toleranceAfter: .zero) { [weak self] _ in
+    /// Position every track at `time`, clamped to that track's own length so a
+    /// shorter track doesn't reject the seek.
+    private func setPlayheads(to time: TimeInterval) {
+        for player in players { player.currentTime = min(max(0, time), player.duration) }
+    }
+
+    private func startTicker() {
+        stopTicker()
+        ticker = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.currentTime = clamped
-                if resumePlayback {
-                    self.player?.playImmediately(atRate: self.speed)
-                    self.isPlaying = true
-                }
+                guard let self, let first = self.players.first else { return }
+                self.currentTime = first.currentTime
             }
         }
     }
 
-    private func addObservers(player: AVPlayer, item: AVPlayerItem) {
-        timeObserver = player.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
-            queue: .main
-        ) { [weak self] time in
-            Task { @MainActor [weak self] in
-                guard let self, self.isPlaying else { return }
-                self.currentTime = min(CMTimeGetSeconds(time), self.duration)
-            }
-        }
+    private func stopTicker() {
+        ticker?.invalidate()
+        ticker = nil
+    }
+}
 
-        finishObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
-            object: item,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.isPlaying = false
-                self.currentTime = self.duration
+extension MeetingPlayer: AVAudioPlayerDelegate {
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in
+            // The longest track decides when the meeting is over.
+            if players.allSatisfy({ !$0.isPlaying }) {
+                isPlaying = false
+                currentTime = duration
+                stopTicker()
             }
         }
     }

@@ -879,6 +879,7 @@ final class AppState: ObservableObject {
         if hit.kind == .segment {
             pendingSeek = hit.start
         }
+        navSection = .meetings
     }
 
     /// Permanently removes meetings: audio folder, list entry, both indexes.
