@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 struct MainWindowView: View {
     @EnvironmentObject var app: AppState
@@ -306,6 +308,8 @@ struct MeetingDetailView: View {
     @State private var tab: Tab = .summary
     @State private var summary: String?
     @State private var transcript: Transcript?
+    @State private var isExportingAudio = false
+    @State private var exportError: String?
     @StateObject private var player = MeetingPlayer()
 
     private var stage: ProcessingPipeline.Stage? { app.pipeline.stages[meeting.id] }
@@ -353,6 +357,13 @@ struct MeetingDetailView: View {
         .onDisappear { player.stop() }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    exportAudioRecording()
+                } label: {
+                    Label(isExportingAudio ? "Exporting Audio" : "Export Audio",
+                          systemImage: "square.and.arrow.up")
+                }
+                .disabled(isExportingAudio || !player.isLoaded)
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([folder])
                 } label: {
@@ -451,6 +462,18 @@ struct MeetingDetailView: View {
     }
 
     @ViewBuilder private var statusRow: some View {
+        if isExportingAudio {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Exporting audio…").font(.callout).foregroundStyle(.secondary)
+            }
+        }
+        if let exportError {
+            Label(exportError, systemImage: "exclamationmark.triangle")
+                .font(.callout)
+                .foregroundStyle(.orange)
+                .textSelection(.enabled)
+        }
         if let stage {
             switch stage {
             case .failed:
@@ -535,6 +558,34 @@ struct MeetingDetailView: View {
     private func loadFiles() {
         summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8)
         transcript = try? app.pipeline.loadTranscript(from: folder)
+    }
+
+    private func exportAudioRecording() {
+        exportError = nil
+
+        let panel = NSSavePanel()
+        panel.title = "Export Audio Recording"
+        panel.nameFieldStringValue = "\(StorageManager.slugify(meeting.title))-audio.m4a"
+        panel.canCreateDirectories = true
+        if let m4a = UTType(filenameExtension: "m4a") {
+            panel.allowedContentTypes = [m4a]
+        }
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        isExportingAudio = true
+        Task {
+            defer { isExportingAudio = false }
+            do {
+                try await MeetingAudioAsset.exportMixedRecording(
+                    folder: folder,
+                    hasSystemTrack: meeting.hasSystemTrack,
+                    to: url
+                )
+            } catch {
+                exportError = error.localizedDescription
+            }
+        }
     }
 
     private func metaBadge(_ systemImage: String, _ text: String) -> some View {
