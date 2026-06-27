@@ -68,7 +68,7 @@ final class SearchIndex {
            let transcript = try? JSONDecoder().decode(Transcript.self, from: data) {
             for segment in transcript.segments {
                 insert(text: segment.text, meeting: meeting.id, kind: .segment,
-                       start: segment.start, speaker: segment.speaker)
+                       start: segment.start, speaker: transcript.displaySpeaker(for: segment.speaker))
             }
         }
         if let summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"),

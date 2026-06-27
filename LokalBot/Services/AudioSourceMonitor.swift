@@ -49,7 +49,7 @@ final class AudioSourceMonitor: ObservableObject {
     /// Bundle IDs whose audio is uninteresting — our own app and a few system
     /// processes that emit short blips Core Audio still reports as "running".
     private static let ignoredBundleIDs: Set<String> = [
-        "com.dotenv.LokalBotV3",
+        "me.dotenv.LokalBot",
         "com.apple.controlcenter",
         "com.apple.SystemSounds",
         "com.apple.finder",

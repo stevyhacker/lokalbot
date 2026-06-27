@@ -17,6 +17,7 @@ struct CalendarMeetingCandidate: Equatable {
     /// title match.
     let meetingURL: URL?
     let sourceCalendarTitle: String?
+    var participantNames: [String] = []
 
     /// Grace before an event's scheduled start during which it already counts
     /// as active — a *beat* early (people click Join ~a minute ahead), not a

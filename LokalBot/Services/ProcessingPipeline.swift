@@ -222,6 +222,10 @@ final class ProcessingPipeline: ObservableObject {
         return try JSONDecoder().decode(Transcript.self, from: data)
     }
 
+    func saveTranscript(_ transcript: Transcript, for meeting: Meeting) throws {
+        try write(transcript, to: meeting.folderURL(in: storage))
+    }
+
     // MARK: - Summarization
 
     private func summarize(_ transcript: Transcript, meeting: Meeting,
@@ -376,7 +380,7 @@ final class ProcessingPipeline: ObservableObject {
         for segment in transcript.segments {
             let text = segment.displayText
             guard !text.isEmpty else { continue }
-            let line = "**[\(Transcript.stamp(segment.start))] \(segment.speaker.capitalized):** \(text)"
+            let line = "**[\(Transcript.stamp(segment.start))] \(transcript.displaySpeaker(for: segment.speaker)):** \(text)"
             if length + line.count > 12_000, !current.isEmpty {
                 chunks.append(current.joined(separator: "\n\n"))
                 current = []

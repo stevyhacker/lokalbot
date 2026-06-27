@@ -73,7 +73,7 @@ final class EmbeddingIndex {
             var start: TimeInterval = 0
             for segment in transcript.segments {
                 if current.isEmpty { start = segment.start }
-                current += "\(segment.speaker.capitalized): \(segment.text)\n"
+                current += "\(transcript.displaySpeaker(for: segment.speaker)): \(segment.text)\n"
                 if current.count > 500 {
                     chunks.append((start, current))
                     current = ""

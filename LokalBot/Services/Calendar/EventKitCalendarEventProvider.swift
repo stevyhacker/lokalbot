@@ -88,7 +88,8 @@ final class EventKitCalendarEventProvider: ObservableObject, CalendarEventProvid
             startDate: start,
             endDate: end,
             meetingURL: meetingURL,
-            sourceCalendarTitle: event.calendar?.title)
+            sourceCalendarTitle: event.calendar?.title,
+            participantNames: participantNames(from: event))
     }
 
     /// Per-occurrence id: the event id alone is shared across a recurring
@@ -100,6 +101,16 @@ final class EventKitCalendarEventProvider: ObservableObject, CalendarEventProvid
 
     private static func declinedByCurrentUser(_ event: EKEvent) -> Bool {
         event.attendees?.contains { $0.isCurrentUser && $0.participantStatus == .declined } ?? false
+    }
+
+    private static func participantNames(from event: EKEvent) -> [String] {
+        let names = event.attendees?.compactMap { participant -> String? in
+            guard !participant.isCurrentUser,
+                  participant.participantStatus != .declined,
+                  let name = participant.name else { return nil }
+            return SpeakerNameHintExtractor.normalizedName(name)
+        } ?? []
+        return SpeakerNameHintExtractor.hints(calendarNames: names)
     }
 
     private static func map(_ status: EKAuthorizationStatus) -> CalendarAuthorizationStatus {

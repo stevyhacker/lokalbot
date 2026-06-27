@@ -313,6 +313,7 @@ final class CalendarDetectionTests: XCTestCase {
         XCTAssertNil(meeting.calendarEventID)
         XCTAssertNil(meeting.scheduledStartAt)
         XCTAssertNil(meeting.meetingURL)
+        XCTAssertNil(meeting.participantNameHints)
     }
 
     /// Calendar provenance round-trips through the same ISO-8601 codec
@@ -329,6 +330,7 @@ final class CalendarDetectionTests: XCTestCase {
         meeting.scheduledStartAt = Date(timeIntervalSince1970: 1_700_000_000)
         meeting.scheduledEndAt = Date(timeIntervalSince1970: 1_700_003_600)
         meeting.meetingURL = URL(string: "https://meet.google.com/abc-defg-hij")
+        meeting.participantNameHints = ["Ana", "Stevan"]
 
         let (encoder, decoder) = iso()
         let decoded = try decoder.decode(Meeting.self, from: encoder.encode(meeting))
@@ -348,6 +350,7 @@ final class CalendarDetectionTests: XCTestCase {
         XCTAssertNil(object["calendarProvider"])
         XCTAssertNil(object["calendarEventID"])
         XCTAssertNil(object["meetingURL"])
+        XCTAssertNil(object["participantNameHints"])
     }
 }
 

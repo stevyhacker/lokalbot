@@ -15,7 +15,7 @@ USAGE
 target="${1:-}"
 case "$target" in
   cotypist) target_app="Cotypist"; target_bundle="app.cotypist.Cotypist" ;;
-  lokalbot) target_app="LokalBotV3"; target_bundle="com.dotenv.LokalBotV3" ;;
+  lokalbot) target_app="LokalBotV3"; target_bundle="me.dotenv.LokalBot" ;;
   -h|--help|"") usage; exit 64 ;;
   *) usage; exit 64 ;;
 esac

@@ -24,6 +24,9 @@ struct Meeting: Identifiable, Codable, Equatable {
     var scheduledStartAt: Date?
     var scheduledEndAt: Date?
     var meetingURL: URL?
+    /// Calendar attendee / roster names that can seed speaker rename
+    /// suggestions. Optional so older `meta.json` files still decode.
+    var participantNameHints: [String]?
 
     /// Length of the actual recorded audio (longest track), measured at
     /// finalize. The wall-clock span (`duration`) can exceed what was captured

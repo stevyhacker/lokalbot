@@ -308,8 +308,11 @@ struct MeetingDetailView: View {
     @State private var tab: Tab = .summary
     @State private var summary: String?
     @State private var transcript: Transcript?
+    @State private var speakerNameHints: [String] = []
+    @State private var speakerRenameDraft: SpeakerRenameDraft?
     @State private var isExportingAudio = false
     @State private var exportError: String?
+    @State private var transcriptError: String?
     @StateObject private var player = MeetingPlayer()
 
     private var stage: ProcessingPipeline.Stage? { app.pipeline.stages[meeting.id] }
@@ -354,6 +357,22 @@ struct MeetingDetailView: View {
             consumePendingSeek()
         }
         .onChange(of: app.pendingSeek) { consumePendingSeek() }
+        .sheet(item: $speakerRenameDraft) { draft in
+            SpeakerRenameSheet(
+                draft: draft,
+                hints: speakerNameHints,
+                onSave: { saveSpeakerAlias($0, for: draft.speaker) },
+                onReset: { saveSpeakerAlias(nil, for: draft.speaker) },
+                onCancel: { speakerRenameDraft = nil })
+        }
+#if LOKALBOTV3_UI_TEST_HOST
+        .onAppear {
+            if let raw = ProcessInfo.processInfo.environment["LOKALBOTV3_DETAIL_TAB"],
+               let t = Tab(rawValue: raw.capitalized) {
+                tab = t
+            }
+        }
+#endif
         .onDisappear { player.stop() }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -474,6 +493,12 @@ struct MeetingDetailView: View {
                 .foregroundStyle(.orange)
                 .textSelection(.enabled)
         }
+        if let transcriptError {
+            Label(transcriptError, systemImage: "exclamationmark.triangle")
+                .font(.callout)
+                .foregroundStyle(.orange)
+                .textSelection(.enabled)
+        }
         if let stage {
             switch stage {
             case .failed:
@@ -537,12 +562,7 @@ struct MeetingDetailView: View {
             Text(Transcript.stamp(segment.start))
                 .font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
                 .frame(width: 62, alignment: .trailing)
-            Text(segment.speaker.capitalized)
-                .font(.caption.bold())
-                .padding(.horizontal, 7).padding(.vertical, 2)
-                .background(segment.speaker == "me" ? Color.accentColor.opacity(0.18)
-                                                    : Color.secondary.opacity(0.15),
-                            in: Capsule())
+            speakerChip(for: segment.speaker)
             Text(segment.displayText).font(.body)
                 .textSelection(.enabled)
         }
@@ -553,11 +573,62 @@ struct MeetingDetailView: View {
         .onTapGesture { player.play(at: segment.start) }   // click a sentence → jump audio
     }
 
+    private func speakerChip(for speaker: String) -> some View {
+        let label = transcript?.displaySpeaker(for: speaker)
+            ?? Transcript.defaultSpeakerName(for: speaker)
+        let hasAlias = transcript?.speakerAlias(for: speaker) != nil
+        return Text(label)
+            .font(.caption.bold())
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .background(Transcript.canonicalSpeakerKey(speaker) == "me"
+                        ? Color.accentColor.opacity(0.18)
+                        : Color.secondary.opacity(0.15),
+                        in: Capsule())
+            .contentShape(Capsule())
+            .onTapGesture { beginRenameSpeaker(speaker) }
+            .contextMenu {
+                Button("Rename Speaker...") { beginRenameSpeaker(speaker) }
+                if hasAlias {
+                    Button("Reset Speaker Name") { saveSpeakerAlias(nil, for: speaker) }
+                }
+                if !speakerNameHints.isEmpty {
+                    Divider()
+                    ForEach(speakerNameHints.prefix(8), id: \.self) { hint in
+                        Button(hint) { saveSpeakerAlias(hint, for: speaker) }
+                    }
+                }
+            }
+            .help("Rename speaker")
+            .accessibilityIdentifier("speaker.chip.\(Transcript.canonicalSpeakerKey(speaker))")
+    }
+
     private var folder: URL { meeting.folderURL(in: app.storage) }
 
     private func loadFiles() {
         summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8)
         transcript = try? app.pipeline.loadTranscript(from: folder)
+        speakerNameHints = app.speakerNameHints(for: meeting)
+    }
+
+    private func beginRenameSpeaker(_ speaker: String) {
+        guard let transcript else { return }
+        speakerRenameDraft = SpeakerRenameDraft(
+            speaker: speaker,
+            defaultName: Transcript.defaultSpeakerName(for: speaker),
+            currentName: transcript.displaySpeaker(for: speaker))
+    }
+
+    private func saveSpeakerAlias(_ alias: String?, for speaker: String) {
+        guard var updated = transcript else { return }
+        updated.setSpeakerAlias(alias, for: speaker)
+        do {
+            try app.saveTranscript(updated, for: meeting)
+            transcript = updated
+            transcriptError = nil
+            speakerRenameDraft = nil
+        } catch {
+            transcriptError = "Could not save speaker name: \(error.localizedDescription)"
+        }
     }
 
     private func exportAudioRecording() {
@@ -595,6 +666,67 @@ struct MeetingDetailView: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal, 9).padding(.vertical, 4)
             .background(.quaternary, in: Capsule())
+    }
+
+    struct SpeakerRenameDraft: Identifiable {
+        let speaker: String
+        let defaultName: String
+        let currentName: String
+
+        var id: String { speaker }
+    }
+}
+
+private struct SpeakerRenameSheet: View {
+    let draft: MeetingDetailView.SpeakerRenameDraft
+    let hints: [String]
+    let onSave: (String) -> Void
+    let onReset: () -> Void
+    let onCancel: () -> Void
+
+    @State private var name: String
+
+    init(draft: MeetingDetailView.SpeakerRenameDraft,
+         hints: [String],
+         onSave: @escaping (String) -> Void,
+         onReset: @escaping () -> Void,
+         onCancel: @escaping () -> Void) {
+        self.draft = draft
+        self.hints = hints
+        self.onSave = onSave
+        self.onReset = onReset
+        self.onCancel = onCancel
+        _name = State(initialValue: draft.currentName)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Rename Speaker").font(.headline)
+            TextField("Speaker name", text: $name)
+                .textFieldStyle(.roundedBorder)
+
+            if !hints.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(hints, id: \.self) { hint in
+                            Button(hint) { name = hint }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        }
+                    }
+                }
+            }
+
+            HStack {
+                Button("Reset") { onReset() }
+                Spacer()
+                Button("Cancel") { onCancel() }
+                Button("Save") { onSave(name) }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(18)
+        .frame(width: 380)
     }
 }
 

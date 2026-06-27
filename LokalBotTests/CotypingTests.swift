@@ -556,8 +556,8 @@ final class CotypingAvailabilityTests: XCTestCase {
 
     func testOffInsideSelf() {
         let reason = CotypingAvailability.disabledReason(
-            enabled: true, excludedApps: [], selfBundleID: "com.dotenv.LokalBotV3",
-            focus: focus(app: "LokalBotV3", bundle: "com.dotenv.LokalBotV3"))
+            enabled: true, excludedApps: [], selfBundleID: "me.dotenv.LokalBot",
+            focus: focus(app: "LokalBotV3", bundle: "me.dotenv.LokalBot"))
         XCTAssertEqual(reason, "Off in LokalBot.")
     }
 
@@ -570,7 +570,7 @@ final class CotypingAvailabilityTests: XCTestCase {
 
     func testSupportedNotExcludedAllows() {
         XCTAssertNil(CotypingAvailability.disabledReason(
-            enabled: true, excludedApps: ["Terminal"], selfBundleID: "com.dotenv.LokalBotV3", focus: focus()))
+            enabled: true, excludedApps: ["Terminal"], selfBundleID: "me.dotenv.LokalBot", focus: focus()))
     }
 }
 

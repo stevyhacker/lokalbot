@@ -138,7 +138,7 @@ struct FileLogHandler: LogHandler {
         sink.write("\(timestamp) \(level.rawValue.uppercased()) [\(category)] \(message)\(suffix)\n")
     }
 
-    /// `com.dotenv.LokalBotV3.networking` → `networking`. The trailing dot-segment
+    /// `me.dotenv.LokalBot.networking` → `networking`. The trailing dot-segment
     /// keeps each line short while still identifying the source category.
     private static func shortCategory(from label: String) -> String {
         label.split(separator: ".").last.map(String.init) ?? label

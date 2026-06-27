@@ -102,14 +102,25 @@ final class ActivityStore {
     /// OCR text for a day, for the "ask your day" LLM context.
     func ocrText(on day: Date, maxChars: Int = 9_000) -> String {
         let interval = Self.dayInterval(containing: day)
+        return ocrText(from: interval.start, to: interval.end, maxChars: maxChars, includeAppNames: true)
+    }
+
+    /// OCR text for a precise interval. Used for meeting-local participant
+    /// hints, where the current day's whole screen history would be too broad.
+    func ocrText(from start: Date, to end: Date, maxChars: Int = 9_000,
+                 includeAppNames: Bool = false) -> String {
         return database?.withStatement("""
             SELECT app, text FROM ocr_fts WHERE ts >= ?1 AND ts < ?2 ORDER BY ts
-            """, bind: [interval.start.timeIntervalSince1970, interval.end.timeIntervalSince1970]) { statement in
+            """, bind: [start.timeIntervalSince1970, end.timeIntervalSince1970]) { statement in
             var out = ""
             while sqlite3_step(statement) == SQLITE_ROW, out.count < maxChars {
                 let app = String(cString: sqlite3_column_text(statement, 0))
                 let text = String(cString: sqlite3_column_text(statement, 1))
-                out += "[\(app)] \(text.prefix(600))\n"
+                if includeAppNames {
+                    out += "[\(app)] \(text.prefix(600))\n"
+                } else {
+                    out += "\(text.prefix(600))\n"
+                }
             }
             return out
         } ?? ""

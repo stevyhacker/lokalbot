@@ -1,6 +1,6 @@
 name: LokalBot
 options:
-  bundleIdPrefix: com.dotenv
+  bundleIdPrefix: me.dotenv
   deploymentTarget:
     macOS: "15.0"   # Qwen3-ASR's MLX Swift package requires macOS 15+
   minimumXcodeGenVersion: "2.40"
@@ -140,7 +140,7 @@ targets:
       base:
         PRODUCT_NAME: LokalBotV3
         PRODUCT_MODULE_NAME: LokalBotV3
-        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV3
+        PRODUCT_BUNDLE_IDENTIFIER: me.dotenv.LokalBot
 
   # Local development build. Distinct bundle id + product name means a separate,
   # stable TCC identity (Mic, Screen Recording, Accessibility survive rebuilds),
@@ -155,7 +155,7 @@ targets:
       base:
         PRODUCT_NAME: "LokalBotV3 Dev"
         PRODUCT_MODULE_NAME: LokalBotV3Dev
-        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV3.dev
+        PRODUCT_BUNDLE_IDENTIFIER: me.dotenv.LokalBot.dev
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: LOKALBOTV3_DEV $(inherited)
 
   # UI-test host. Same app sources and dev-only Sparkle behavior, but compiled
@@ -168,7 +168,7 @@ targets:
       base:
         PRODUCT_NAME: "LokalBotV3 UI Test Host"
         PRODUCT_MODULE_NAME: LokalBotV3UITestHost
-        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV3.uitesthost
+        PRODUCT_BUNDLE_IDENTIFIER: me.dotenv.LokalBot.uitesthost
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: LOKALBOTV3_DEV LOKALBOTV3_UI_TEST_HOST $(inherited)
 
   LokalBotTests:
@@ -184,7 +184,7 @@ targets:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LokalBotV3.app/Contents/MacOS/LokalBotV3"
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_MODULE_NAME: LokalBotV3Tests
-        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV3Tests
+        PRODUCT_BUNDLE_IDENTIFIER: me.dotenv.LokalBotTests
 
   # Synthetic-data UI tests. Drives the UI-test host app via
   # XCUITest with `LOKALBOTV3_UI_TEST=1` so the app skips Core Audio polling,
@@ -205,7 +205,7 @@ targets:
         TEST_TARGET_NAME: "LokalBot UI Test Host"
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_MODULE_NAME: LokalBotV3UITests
-        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV3UITests
+        PRODUCT_BUNDLE_IDENTIFIER: me.dotenv.LokalBotUITests
 
   lokalbot-cli:
     type: tool

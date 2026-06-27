@@ -1,7 +1,7 @@
 import Foundation
 
 /// Owns the on-disk layout (design doc §6):
-/// ~/Library/Application Support/com.dotenv.LokalBotV3/
+/// ~/Library/Application Support/me.dotenv.LokalBot/
 ///   meetings/YYYY/MM/dd-slug/{mic.m4a, system.m4a, meta.json}
 ///
 /// Rooted at the bundle id, NOT "LokalBotV3": an unrelated app may own

@@ -5,7 +5,7 @@ import XCTest
 
 enum UITestHarness {
     private static let defaultsKey = "lokalbotv3.settings"
-    private static let appBundleIdentifier = "com.dotenv.LokalBotV3.uitesthost"
+    private static let appBundleIdentifier = "me.dotenv.LokalBot.uitesthost"
     private static let uiTestEnabledKey = "lokalbotv3.uiTest.enabled"
     private static let uiTestStorageRootKey = "lokalbotv3.uiTest.storageRoot"
     private static let uiTestDefaultsSuiteKey = "lokalbotv3.uiTest.defaultsSuite"
@@ -22,7 +22,7 @@ enum UITestHarness {
         file: StaticString = #filePath,
         line: UInt = #line
     ) throws -> Launch {
-        let suiteName = "com.dotenv.LokalBotV3UITests.\(suitePrefix).\(UUID().uuidString)"
+        let suiteName = "me.dotenv.LokalBotUITests.\(suitePrefix).\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName), file: file, line: line)
         defaults.removePersistentDomain(forName: suiteName)
         defaults.set(Data(settingsJSON.utf8), forKey: defaultsKey)

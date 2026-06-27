@@ -25,6 +25,19 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(AppSettings().menuBarOnly)
     }
 
+    func testMultiSpeakerDiarizationDefaultsTrue() {
+        XCTAssertTrue(AppSettings().multiSpeakerDiarization)
+    }
+
+    func testDecodesSettingsWithoutMultiSpeakerDiarizationKeyAsDefault() throws {
+        let data = #"{"autoTranscribe":false}"#.data(using: .utf8)!
+
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertTrue(settings.multiSpeakerDiarization)
+        XCTAssertFalse(settings.autoTranscribe)
+    }
+
     func testMenuBarOnlyRoundTrips() throws {
         for value in [true, false] {
             var settings = AppSettings()

@@ -99,6 +99,14 @@ struct SearchView: View {
         }
         .onChange(of: query) { runSearch() }
         .onChange(of: scope) { runSearch() }
+        #if LOKALBOTV3_UI_TEST_HOST
+        .onAppear {
+            if query.isEmpty,
+               let q = ProcessInfo.processInfo.environment["LOKALBOTV3_INITIAL_SEARCH"], !q.isEmpty {
+                query = q
+            }
+        }
+        #endif
     }
 
     private var resultsList: some View {
@@ -202,7 +210,7 @@ private struct SearchHitRow: View {
         let label = switch hit.kind {
         case .title: "Title"
         case .summary: "Summary"
-        case .segment: "▶ \(Transcript.stamp(hit.start))\(hit.speaker.isEmpty ? "" : " · \(hit.speaker.capitalized)")"
+        case .segment: "▶ \(Transcript.stamp(hit.start))\(hit.speaker.isEmpty ? "" : " · \(hit.speaker)")"
         }
         Text(label)
             .font(.caption2.monospacedDigit())

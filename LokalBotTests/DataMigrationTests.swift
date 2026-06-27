@@ -1,9 +1,9 @@
 import XCTest
 @testable import LokalBotV3
 
-/// Migration from the LokalBotV2 identity to V3. Exercises the two data-loss-prone
-/// halves with injected dirs/suites (the Keychain half talks to the real login
-/// keychain, so it's verified on install, not here).
+/// Migration from old LokalBot identities. Exercises the data-loss-prone
+/// filesystem/settings halves with injected dirs/suites (the Keychain half talks
+/// to the real login keychain, so it's verified on install, not here).
 final class DataMigrationTests: XCTestCase {
 
     private var tmp: URL!
@@ -27,12 +27,49 @@ final class DataMigrationTests: XCTestCase {
         return UserDefaults(suiteName: name)!
     }
 
+    private func makeDatabase(at url: URL, rows: Int = 0,
+                              activityRows: Int = 0,
+                              indexedMeetings: Int = 0,
+                              payloadBytes: Int = 0) throws {
+        let database = try XCTUnwrap(SQLiteDatabase(url: url))
+        database.exec("""
+            CREATE TABLE IF NOT EXISTS screenshots (
+                id INTEGER PRIMARY KEY, ts REAL NOT NULL, path TEXT NOT NULL, app TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS activity_blocks (
+                app TEXT NOT NULL, title TEXT NOT NULL, start REAL NOT NULL, end REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS indexed_meetings (
+                meeting_id TEXT PRIMARY KEY, source_mtime REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS docs (text TEXT NOT NULL);
+            """)
+        for index in 0..<rows {
+            database.run("INSERT INTO screenshots (ts, path, app) VALUES (?1, ?2, ?3)",
+                         bind: [Double(index), "shot-\(index).jpg", "Tests"])
+        }
+        for index in 0..<activityRows {
+            database.run("INSERT INTO activity_blocks (app, title, start, end) VALUES (?1, ?2, ?3, ?4)",
+                         bind: ["Tests", "Window \(index)", Double(index), Double(index + 1)])
+        }
+        for index in 0..<indexedMeetings {
+            database.run("INSERT INTO indexed_meetings (meeting_id, source_mtime) VALUES (?1, ?2)",
+                         bind: [UUID().uuidString, Double(index)])
+            database.run("INSERT INTO docs (text) VALUES (?1)", bind: ["Indexed meeting \(index)"])
+        }
+        if payloadBytes > 0 {
+            database.exec("CREATE TABLE IF NOT EXISTS payload (data BLOB NOT NULL);")
+            database.run("INSERT INTO payload (data) VALUES (?1)",
+                         bind: [Data(repeating: 7, count: payloadBytes)])
+        }
+    }
+
     // MARK: - Data directory
 
     func testMigrateDataDirMovesLibraryAndVersionRenamesDatabase() throws {
         let fm = FileManager.default
         let oldDir = tmp.appendingPathComponent("com.dotenv.LokalBotV2", isDirectory: true)
-        let newDir = tmp.appendingPathComponent("com.dotenv.LokalBotV3", isDirectory: true)
+        let newDir = tmp.appendingPathComponent("me.dotenv.LokalBot", isDirectory: true)
         let meetings = oldDir.appendingPathComponent("meetings/2026/06", isDirectory: true)
         try fm.createDirectory(at: meetings, withIntermediateDirectories: true)
         try Data("meta".utf8).write(to: meetings.appendingPathComponent("meta.json"))
@@ -54,10 +91,91 @@ final class DataMigrationTests: XCTestCase {
         XCTAssertFalse(fm.fileExists(atPath: newDir.appendingPathComponent("lokalbotv2.sqlite").path))
     }
 
+    func testMigrateDataDirMovesV3LibraryWithoutRenamingDatabase() throws {
+        let fm = FileManager.default
+        let oldDir = tmp.appendingPathComponent(["com", "dotenv", "LokalBotV3"].joined(separator: "."),
+                                                isDirectory: true)
+        let newDir = tmp.appendingPathComponent("me.dotenv.LokalBot", isDirectory: true)
+        try fm.createDirectory(at: oldDir, withIntermediateDirectories: true)
+        try Data("db".utf8).write(to: oldDir.appendingPathComponent("lokalbotv3.sqlite"))
+
+        XCTAssertTrue(DataMigration.migrateDataDir(from: oldDir, to: newDir, renamesDatabase: false))
+
+        XCTAssertFalse(fm.fileExists(atPath: oldDir.path))
+        XCTAssertTrue(fm.fileExists(atPath: newDir.appendingPathComponent("lokalbotv3.sqlite").path))
+    }
+
+    func testMigrateDataDirMergesV3LibraryIntoExistingPlaceholder() throws {
+        let fm = FileManager.default
+        let oldDir = tmp.appendingPathComponent(["com", "dotenv", "LokalBotV3"].joined(separator: "."),
+                                                isDirectory: true)
+        let newDir = tmp.appendingPathComponent("me.dotenv.LokalBot", isDirectory: true)
+        try fm.createDirectory(at: oldDir.appendingPathComponent("models"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: newDir.appendingPathComponent("meetings"), withIntermediateDirectories: true)
+        try makeDatabase(at: oldDir.appendingPathComponent("lokalbotv3.sqlite"), rows: 1)
+        try makeDatabase(at: newDir.appendingPathComponent("lokalbotv3.sqlite"))
+        try Data("model".utf8).write(to: oldDir.appendingPathComponent("models/local.gguf"))
+
+        XCTAssertTrue(DataMigration.migrateDataDir(from: oldDir, to: newDir,
+                                                   renamesDatabase: false,
+                                                   mergeIfDestinationExists: true,
+                                                   replacePlaceholderDatabase: true))
+
+        XCTAssertTrue(fm.fileExists(atPath: newDir.appendingPathComponent("models/local.gguf").path))
+        XCTAssertEqual(SQLiteDatabase(url: newDir.appendingPathComponent("lokalbotv3.sqlite"))?
+            .firstDouble("SELECT COUNT(*) FROM screenshots"), 1)
+    }
+
+    func testMigrateDataDirDoesNotReplaceUsefulExistingV3Database() throws {
+        let fm = FileManager.default
+        let oldDir = tmp.appendingPathComponent(["com", "dotenv", "LokalBotV3"].joined(separator: "."),
+                                                isDirectory: true)
+        let newDir = tmp.appendingPathComponent("me.dotenv.LokalBot", isDirectory: true)
+        try fm.createDirectory(at: oldDir.appendingPathComponent("models"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: newDir, withIntermediateDirectories: true)
+        try makeDatabase(at: oldDir.appendingPathComponent("lokalbotv3.sqlite"), rows: 2)
+        try makeDatabase(at: newDir.appendingPathComponent("lokalbotv3.sqlite"), rows: 1)
+        try Data("model".utf8).write(to: oldDir.appendingPathComponent("models/local.gguf"))
+
+        XCTAssertTrue(DataMigration.migrateDataDir(from: oldDir, to: newDir,
+                                                   renamesDatabase: false,
+                                                   mergeIfDestinationExists: true,
+                                                   replacePlaceholderDatabase: true))
+
+        XCTAssertTrue(fm.fileExists(atPath: newDir.appendingPathComponent("models/local.gguf").path))
+        XCTAssertEqual(SQLiteDatabase(url: newDir.appendingPathComponent("lokalbotv3.sqlite"))?
+            .firstDouble("SELECT COUNT(*) FROM screenshots"), 1)
+    }
+
+    func testMigrateDataDirReplacesSmallRegeneratedV3DatabaseWhenOldHasCaptureHistory() throws {
+        let fm = FileManager.default
+        let oldDir = tmp.appendingPathComponent(["com", "dotenv", "LokalBotV3"].joined(separator: "."),
+                                                isDirectory: true)
+        let newDir = tmp.appendingPathComponent("me.dotenv.LokalBot", isDirectory: true)
+        try fm.createDirectory(at: oldDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: newDir, withIntermediateDirectories: true)
+        try makeDatabase(at: oldDir.appendingPathComponent("lokalbotv3.sqlite"),
+                         rows: 2,
+                         activityRows: 150,
+                         payloadBytes: 600 * 1024)
+        try makeDatabase(at: newDir.appendingPathComponent("lokalbotv3.sqlite"),
+                         activityRows: 2,
+                         indexedMeetings: 5)
+
+        XCTAssertTrue(DataMigration.migrateDataDir(from: oldDir, to: newDir,
+                                                   renamesDatabase: false,
+                                                   mergeIfDestinationExists: true,
+                                                   replacePlaceholderDatabase: true))
+
+        let migratedDB = SQLiteDatabase(url: newDir.appendingPathComponent("lokalbotv3.sqlite"))
+        XCTAssertEqual(migratedDB?.firstDouble("SELECT COUNT(*) FROM screenshots"), 2)
+        XCTAssertEqual(migratedDB?.firstDouble("SELECT COUNT(*) FROM activity_blocks"), 150)
+    }
+
     func testMigrateDataDirIsNoOpWhenV3AlreadyExists() throws {
         let fm = FileManager.default
         let oldDir = tmp.appendingPathComponent("com.dotenv.LokalBotV2", isDirectory: true)
-        let newDir = tmp.appendingPathComponent("com.dotenv.LokalBotV3", isDirectory: true)
+        let newDir = tmp.appendingPathComponent("me.dotenv.LokalBot", isDirectory: true)
         try fm.createDirectory(at: oldDir, withIntermediateDirectories: true)
         try Data("old".utf8).write(to: oldDir.appendingPathComponent("marker"))
         try fm.createDirectory(at: newDir, withIntermediateDirectories: true)
@@ -71,7 +189,7 @@ final class DataMigrationTests: XCTestCase {
 
     func testMigrateDataDirIsNoOpWithoutV2Library() {
         let oldDir = tmp.appendingPathComponent("com.dotenv.LokalBotV2", isDirectory: true)
-        let newDir = tmp.appendingPathComponent("com.dotenv.LokalBotV3", isDirectory: true)
+        let newDir = tmp.appendingPathComponent("me.dotenv.LokalBot", isDirectory: true)
         XCTAssertFalse(DataMigration.migrateDataDir(from: oldDir, to: newDir))
         XCTAssertFalse(FileManager.default.fileExists(atPath: newDir.path))
     }
@@ -107,6 +225,22 @@ final class DataMigrationTests: XCTestCase {
         let data = try XCTUnwrap(new.data(forKey: AppSettings.key))
         XCTAssertEqual(try JSONDecoder().decode(AppSettings.self, from: data).retentionDays, 7,
                        "existing V3 settings must win over a stale V2 copy")
+    }
+
+    func testMigrateSettingsCopiesCurrentIdentityKeys() throws {
+        let old = freshSuite(), new = freshSuite()
+        var settings = AppSettings()
+        settings.retentionDays = 42
+        old.set(try JSONEncoder().encode(settings), forKey: AppSettings.key)
+        old.set(true, forKey: AppState.onboardingShownKey)
+
+        DataMigration.migrateSettings(from: old, to: new,
+                                      settingsKey: AppSettings.key,
+                                      onboardingKey: AppState.onboardingShownKey)
+
+        let data = try XCTUnwrap(new.data(forKey: AppSettings.key))
+        XCTAssertEqual(try JSONDecoder().decode(AppSettings.self, from: data).retentionDays, 42)
+        XCTAssertTrue(new.bool(forKey: AppState.onboardingShownKey))
     }
 
     // MARK: - Test-host guard (regression: `xcodebuild test` must not move real data)

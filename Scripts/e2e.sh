@@ -8,7 +8,7 @@
 set -uo pipefail
 
 BIN="${LOKALBOTV3_APP:-/Applications/LokalBotV3.app}/Contents/MacOS/LokalBotV3"
-ROOT="$HOME/Library/Application Support/com.dotenv.LokalBotV3"
+ROOT="$HOME/Library/Application Support/me.dotenv.LokalBot"
 [ -x "$BIN" ] || { echo "no binary at $BIN — run Scripts/install-app.sh first"; exit 2; }
 
 P=0; F=0; S=0

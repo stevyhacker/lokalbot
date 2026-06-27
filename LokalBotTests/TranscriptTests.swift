@@ -19,6 +19,49 @@ final class TranscriptTests: XCTestCase {
         XCTAssertEqual(transcript.markdown, "**[00:01:05] Me:** Ship it.")
     }
 
+    func testDecodesLegacyTranscriptWithoutSpeakerAliases() throws {
+        let json = #"""
+        {
+          "engine" : "test",
+          "segments" : [
+            { "start" : 1, "end" : 2, "speaker" : "them 1", "text" : "Hello" }
+          ]
+        }
+        """#
+
+        let transcript = try JSONDecoder().decode(Transcript.self, from: Data(json.utf8))
+
+        XCTAssertTrue(transcript.speakerAliases.isEmpty)
+        XCTAssertEqual(transcript.displaySpeaker(for: "them 1"), "Them 1")
+    }
+
+    func testMarkdownRenderingUsesSpeakerAliases() {
+        let transcript = Transcript(
+            segments: [
+                .init(start: 65, end: 70, speaker: "them 1", text: "Ship it.", confidence: 0.9),
+            ],
+            engine: "test",
+            speakerAliases: ["them 1": "Ana"]
+        )
+
+        XCTAssertEqual(transcript.markdown, "**[00:01:05] Ana:** Ship it.")
+    }
+
+    func testSpeakerAliasCanBeSetAndReset() {
+        var transcript = Transcript(
+            segments: [
+                .init(start: 65, end: 70, speaker: "them 1", text: "Ship it.", confidence: 0.9),
+            ],
+            engine: "test"
+        )
+
+        transcript.setSpeakerAlias("  Ana   Maria  ", for: "Them 1")
+        XCTAssertEqual(transcript.displaySpeaker(for: "them 1"), "Ana Maria")
+
+        transcript.setSpeakerAlias("Them 1", for: "them 1")
+        XCTAssertNil(transcript.speakerAlias(for: "them 1"))
+    }
+
     func testNormalizedTextStripsWhisperControlTokens() {
         let raw = "<|startoftranscript|><|en|><|transcribe|><|0.00|> Ship it.<|2.00|><|endoftext|>"
 

@@ -40,7 +40,7 @@ enum MeetingChatFormat {
             lines.append("Keyword matches:")
             for hit in keyword.prefix(8) {
                 let stamp = hit.kind == .segment ? " @ \(Transcript.stamp(hit.start))" : ""
-                let who = hit.speaker.isEmpty ? "" : " (\(hit.speaker.capitalized))"
+                let who = hit.speaker.isEmpty ? "" : " (\(hit.speaker))"
                 lines.append("- [\(SessionLookup.shortID(hit.meetingID))] \(title(hit.meetingID))"
                     + "\(stamp) [\(hit.kind.rawValue)]\(who): \(clean(hit.snippet))")
             }

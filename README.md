@@ -22,8 +22,13 @@ No cloud. No account. Nothing ever leaves the device.
 
 LokalBot is a strictly-local meeting recorder for macOS. It records both sides of a call, transcribes and summarizes it, indexes everything for search, tracks how you spend your day, and — with **Cotyping** — suggests text inline as you type in any app. Every model runs **on-device** on Apple Silicon, so your audio, transcripts, and notes never touch a server.
 
-> **Tip:** add a screenshot or short demo GIF here — it's the single biggest thing a new visitor wants to see.
-<!-- e.g. ![LokalBot screenshot](docs/screenshot.png) -->
+<div align="center">
+
+<img src="Assets/screenshots/hero.gif" alt="LokalBot tour: meeting recap, speaker-labeled transcript, search, day timeline, and inline autocomplete" width="880" />
+
+<sub>A quick tour — meeting recap → speaker-labeled transcript → search → day timeline → inline autocomplete.</sub>
+
+</div>
 
 ## Why LokalBot
 
@@ -32,6 +37,13 @@ LokalBot is a strictly-local meeting recorder for macOS. It records both sides o
 | **100% on-device** | Audio, transcripts, summaries, and models stay on your Mac. The only network calls are optional (downloading a model once). |
 | **Free, no account** | No sign-up, no subscription, no telemetry. |
 | **Open source** | Read every line, or build it yourself. |
+
+## Screenshots
+
+|  |  |
+| :--: | :--: |
+| <img src="Assets/screenshots/meetings-summary.png" alt="Auto-written meeting recap" width="420"><br>**Auto-written recap** — TL;DR, decisions, action items | <img src="Assets/screenshots/meetings-transcript.png" alt="Speaker-labeled transcript" width="420"><br>**Speaker-labeled transcript** — Me vs. Them |
+| <img src="Assets/screenshots/search.png" alt="Full-text and semantic search" width="420"><br>**Search everything** — jump to the exact second | <img src="Assets/screenshots/timeline.png" alt="Private day timeline" width="420"><br>**Day timeline** — see where your time went |
 
 ## Features
 
@@ -73,7 +85,7 @@ Engines (Settings → Transcription; CoreML/MLX, in-process, Neural Engine/Metal
 Models auto-download from Hugging Face on first use and are cached under Application Support. Listed but not yet runnable: **Voxtral Mini 4B Realtime** (live subtitles) and **Nemotron 3.5 ASR 0.6B** (watchlist).
 
 - **Speaker attribution:** mic track = **Me**, system track = **Them**, merged by timestamp into `transcript.json` + `transcript.md`.
-- **Neural diarization (opt-in):** Settings → "Split Them by speaker" runs FluidAudio's offline pyannote-community-1 pipeline on `system.m4a` after transcription and relabels segments "Them 1 / Them 2 / …" (threshold 0.70, step ratio 0.15, min segment 0.3 s). First run downloads ~100 MB of CoreML models.
+- **Neural diarization:** Settings → "Split Them by speaker" runs FluidAudio's offline pyannote-community-1 pipeline on `system.m4a` after transcription and relabels segments "Them 1 / Them 2 / …" (threshold 0.70, step ratio 0.15, min segment 0.3 s). Enabled by default; first run downloads ~100 MB of CoreML models.
 
 </details>
 
@@ -201,12 +213,12 @@ Set your team under **Signing & Capabilities**, pick a scheme, and Run:
 
 | Scheme | Bundle id | Notes |
 | --- | --- | --- |
-| **LokalBot** | `com.dotenv.LokalBotV3` | production; Sparkle auto-update compiled in |
-| **LokalBot Dev** | `com.dotenv.LokalBotV3.dev` | `LOKALBOTV3_DEV` flag; Sparkle compiled out. A distinct bundle id keeps its own Mic / Screen Recording / Accessibility grants, so running from Xcode never disturbs the released app |
+| **LokalBot** | `me.dotenv.LokalBot` | production; Sparkle auto-update compiled in |
+| **LokalBot Dev** | `me.dotenv.LokalBot.dev` | `LOKALBOTV3_DEV` flag; Sparkle compiled out. A distinct bundle id keeps its own Mic / Screen Recording / Accessibility grants, so running from Xcode never disturbs the released app |
 
 The first build runs `Scripts/fetch-llama.sh` (a pre-build phase) which vendors the pinned llama.cpp server (`b9789` — server + dylibs, ~10 MB) and the built-in model (Qwen3.5 0.8B Q4_K_M, ~0.5 GB) into `Vendor/`, copied into the app bundle. On first recording, macOS prompts for **Microphone** and **System Audio Recording**; transcription and screenshot models download from Hugging Face on first use.
 
-> The shipped app is **LokalBotV3** (`com.dotenv.LokalBotV3`); the Xcode project and scheme are named `LokalBot`.
+> The shipped app is **LokalBotV3** (`me.dotenv.LokalBot`); the Xcode project and scheme are named `LokalBot`.
 
 ## Configuration
 
@@ -294,7 +306,7 @@ The app binary doubles as a test harness; flows that need ungranted permissions 
 ### On-disk layout
 
 ```
-~/Library/Application Support/com.dotenv.LokalBotV3/
+~/Library/Application Support/me.dotenv.LokalBot/
 ├── meetings/YYYY/MM/dd-slug/   # mic.m4a, system.m4a, meta.json, transcript.{json,md}, summary.md
 ├── journal/YYYY-MM-DD.md       # day digests
 ├── activity/YYYY-MM-DD/shots/  # <epoch>.heic.enc  (AES-GCM sealed)
@@ -337,7 +349,7 @@ In-place signed updates ship via [Sparkle](https://github.com/sparkle-project/Sp
 
 ## Status
 
-**Done:** recording with robust device/PID handling · transcription (8 models across 5 engines) + opt-in neural diarization · summarization (4 backends) + templates/languages · FTS5 + semantic search · synced player · day tracking + digests · screenshots/OCR/privacy · Ask-your-day · chat assistant · agent CLI · Sparkle updates · dev/prod split · in-app model manager + Hugging Face browse · Cotyping (opt-in).
+**Done:** recording with robust device/PID handling · transcription (8 models across 5 engines) + neural diarization · summarization (4 backends) + templates/languages · FTS5 + semantic search · synced player · day tracking + digests · screenshots/OCR/privacy · Ask-your-day · chat assistant · agent CLI · Sparkle updates · dev/prod split · in-app model manager + Hugging Face browse · Cotyping (opt-in).
 
 **Not yet built:** VLM screenshot captions (needs a multimodal model + an mmproj slot in `LlamaServer`).
 

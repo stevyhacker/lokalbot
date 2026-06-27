@@ -28,7 +28,7 @@ notarization and stapling, with no further edits to the DMG.
 
 ## Current config
 
-- Product: **LokalBotV3** · bundle id `com.dotenv.LokalBotV3` · team `K96P3M3997`
+- Product: **LokalBotV3** · bundle id `me.dotenv.LokalBot` · team `K96P3M3997`
 - Xcode project `LokalBot.xcodeproj` · schemes `LokalBot` (prod), `LokalBot Dev` (dev)
 - Sparkle feed (`SUFeedURL`):
   `https://github.com/OWNER/REPO/releases/latest/download/appcast.xml`

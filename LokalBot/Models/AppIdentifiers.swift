@@ -8,7 +8,7 @@ enum AppIdentifiers {
     /// belongs to the app (the app itself, the embedded `lokalbot-cli`, …).
     /// Hard-coded so the CLI process — whose own bundle id differs from
     /// the app's — still reads/writes the same paths.
-    static let appBundleID = "com.dotenv.LokalBotV3"
+    static let appBundleID = "me.dotenv.LokalBot"
 
     static var bundleID: String { appBundleID }
 }

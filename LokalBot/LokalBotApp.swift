@@ -139,6 +139,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.setActivationPolicy(.regular)
             let app = Self.appState ?? AppState()
             Self.appState = app
+#if LOKALBOTV3_UI_TEST_HOST
+            applyCaptureEnvironment(to: app)
+#endif
             openUITestWindow(app: app)
             forceActivateForUITests()
             return
@@ -197,6 +200,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeMain()
         window.orderFrontRegardless()
     }
+
+#if LOKALBOTV3_UI_TEST_HOST
+    /// Screenshot/scripting hook for the UI-test host: a few env vars let an
+    /// external capture script land the window on a specific section with a
+    /// meeting preselected, without synthetic input (no Accessibility needed).
+    /// A no-op unless the vars are set, so the XCUITest suite is unaffected, and
+    /// compiled out of every non-host build.
+    @MainActor
+    private func applyCaptureEnvironment(to app: AppState) {
+        let env = ProcessInfo.processInfo.environment
+        if let raw = env["LOKALBOTV3_INITIAL_SECTION"],
+           let section = AppState.NavSection(captureName: raw) {
+            app.navSection = section
+        }
+        if env["LOKALBOTV3_SELECT_FIRST"] == "1", let first = app.meetings.first {
+            app.selectedMeetingIDs = [first.id]
+        }
+        if env["LOKALBOTV3_DISMISS_ONBOARDING"] == "1" {
+            UserDefaults.standard.set(true, forKey: "lokalbotv3.gettingStartedDismissed")
+        }
+    }
+#endif
 
     private func forceActivateForUITests() {
         for delay: Double in [0, 0.15, 0.5, 1.5] {
@@ -291,10 +316,14 @@ final class WindowAccess {
         // gets standard chrome and the app menu. `willClose` drops back to
         // accessory afterwards when menu-bar-only.
         DockPolicy.evictRestoredWindows = false
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        guard let application = NSApp else {
+            pending.append(id)
+            return
+        }
+        application.setActivationPolicy(.regular)
+        application.activate(ignoringOtherApps: true)
         if id == "main",
-           let existing = NSApp.windows.first(where: { $0.isVisible && $0.title == "LokalBot" }) {
+           let existing = application.windows.first(where: { $0.isVisible && $0.title == "LokalBot" }) {
             existing.makeKeyAndOrderFront(nil)
             return
         }
@@ -317,6 +346,20 @@ final class AppState: ObservableObject {
 
     enum NavSection: Hashable {
         case meetings, timeline, cotyping, chat, search, models, settings
+#if LOKALBOTV3_UI_TEST_HOST
+        init?(captureName: String) {
+            switch captureName.lowercased() {
+            case "meetings": self = .meetings
+            case "timeline": self = .timeline
+            case "cotyping": self = .cotyping
+            case "chat": self = .chat
+            case "search": self = .search
+            case "models": self = .models
+            case "settings": self = .settings
+            default: return nil
+            }
+        }
+#endif
     }
 
     /// True when launched by an XCUITest harness — gates the side-effectful
@@ -622,6 +665,9 @@ final class AppState: ObservableObject {
                     meeting.scheduledStartAt = calendarEvent.startDate
                     meeting.scheduledEndAt = calendarEvent.endDate
                     meeting.meetingURL = calendarEvent.meetingURL
+                    meeting.participantNameHints = calendarEvent.participantNames.isEmpty
+                        ? nil
+                        : calendarEvent.participantNames
                     try? storage.saveMeta(meeting)
                 }
                 created = meeting
@@ -795,6 +841,26 @@ final class AppState: ObservableObject {
 
     func reprocess(_ meeting: Meeting, transcribe: Bool, summarize: Bool) {
         pipeline.enqueue(meeting, transcribe: transcribe, summarize: summarize)
+    }
+
+    func saveTranscript(_ transcript: Transcript, for meeting: Meeting) throws {
+        try pipeline.saveTranscript(transcript, for: meeting)
+        searchIndex.reindex(meeting, storage: storage)
+        if settings.semanticSearchEnabled {
+            Task { try? await embeddingIndex.index(meeting) }
+        }
+        objectWillChange.send()
+    }
+
+    func speakerNameHints(for meeting: Meeting) -> [String] {
+        let fallbackDuration = max(meeting.recordedDuration ?? 60, 60)
+        let fallbackEnd = meeting.startedAt.addingTimeInterval(fallbackDuration)
+        var end = meeting.endedAt.map { max($0, meeting.startedAt) } ?? fallbackEnd
+        if end <= meeting.startedAt { end = fallbackEnd }
+        let ocr = activityStore.ocrText(from: meeting.startedAt, to: end, maxChars: 12_000)
+        return SpeakerNameHintExtractor.hints(
+            calendarNames: meeting.participantNameHints ?? [],
+            ocrText: ocr)
     }
 
     func applyTrackingSetting() {

@@ -89,9 +89,9 @@ struct AppSettings: Codable {
     var summaryLanguage: SummaryLanguage = .matchTranscript
     /// Run FluidAudio's neural diarizer on `system.m4a` and split the
     /// catch-all "Them" speaker into "Them 1" / "Them 2" / … by acoustic
-    /// similarity. Off by default — the model is ~100 MB and adds 30-60 s
-    /// of post-processing per meeting; most users record 1:1 calls.
-    var multiSpeakerDiarization: Bool = false
+    /// similarity. On by default — the model is ~100 MB and adds 30-60 s
+    /// of post-processing per meeting.
+    var multiSpeakerDiarization: Bool = true
 
     // MARK: - Cotyping (inline AI autocomplete)
 

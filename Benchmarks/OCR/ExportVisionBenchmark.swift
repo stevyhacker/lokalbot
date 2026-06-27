@@ -38,7 +38,7 @@ func keychainData(service: String, account: String) -> Data? {
     return existing as? Data
 }
 
-guard let keyData = keychainData(service: "com.dotenv.LokalBotV3", account: "screenshot-key") else {
+guard let keyData = keychainData(service: "me.dotenv.LokalBot", account: "screenshot-key") else {
     fputs("Could not read screenshot key from Keychain.\n", stderr)
     exit(1)
 }

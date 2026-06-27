@@ -53,7 +53,7 @@ enum AppLog {
         category("app").info("\(message)")
     }
 
-    /// `<App Support>/com.dotenv.LokalBotV3/debug.log` — the same file the app has
+    /// `<App Support>/me.dotenv.LokalBot/debug.log` — the same file the app has
     /// always appended diagnostics to, so existing tooling keeps working. The
     /// temp-directory fallback avoids a force-unwrap on the (in practice always
     /// present) Application Support URL.
