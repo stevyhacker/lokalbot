@@ -158,6 +158,19 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV3.dev
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: LOKALBOTV3_DEV $(inherited)
 
+  # UI-test host. Same app sources and dev-only Sparkle behavior, but compiled
+  # without the menu-bar extra so XCUITest can launch and snapshot a normal
+  # foreground window reliably.
+  "LokalBot UI Test Host":
+    templates:
+      - LokalBotV3App
+    settings:
+      base:
+        PRODUCT_NAME: "LokalBotV3 UI Test Host"
+        PRODUCT_MODULE_NAME: LokalBotV3UITestHost
+        PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV3.uitesthost
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: LOKALBOTV3_DEV LOKALBOTV3_UI_TEST_HOST $(inherited)
+
   LokalBotTests:
     type: bundle.unit-test
     platform: macOS
@@ -173,22 +186,23 @@ targets:
         PRODUCT_MODULE_NAME: LokalBotV3Tests
         PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV3Tests
 
-  # Synthetic-data UI tests. Drives the LokalBotV3.app binary headlessly via
+  # Synthetic-data UI tests. Drives the UI-test host app via
   # XCUITest with `LOKALBOTV3_UI_TEST=1` so the app skips Core Audio polling,
   # the accessibility-trusted meeting detector, Sparkle and screenshots —
   # the suite renders the SwiftUI surfaces against a synthetic meetings
   # library planted under `LOKALBOTV3_STORAGE_ROOT` (a per-test tmp dir).
-  # No TCC permissions required.
+  # No TCC permissions required. The host bundle id avoids collisions with a
+  # user's installed/running production or development LokalBot app.
   LokalBotUITests:
     type: bundle.ui-testing
     platform: macOS
     sources:
       - LokalBotUITests
     dependencies:
-      - target: LokalBot
+      - target: "LokalBot UI Test Host"
     settings:
       base:
-        TEST_TARGET_NAME: LokalBot
+        TEST_TARGET_NAME: "LokalBot UI Test Host"
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_MODULE_NAME: LokalBotV3UITests
         PRODUCT_BUNDLE_IDENTIFIER: com.dotenv.LokalBotV3UITests

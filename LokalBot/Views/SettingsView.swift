@@ -22,6 +22,8 @@ struct SettingsView: View {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     TextField("Search settings…", text: $settingsQuery)
                         .textFieldStyle(.plain)
+                        .frame(minWidth: 220, maxWidth: .infinity)
+                        .accessibilityIdentifier("settings.search")
                     if !settingsQuery.isEmpty {
                         Button { settingsQuery = "" } label: {
                             Image(systemName: "xmark.circle.fill")
@@ -417,6 +419,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(minWidth: 460)
+        .accessibilityIdentifier("settings.form")
         .navigationTitle("Settings")
         .onAppear { power.start(); app.calendar.refreshAuthorizationStatus() }
         .onDisappear { power.stop() }

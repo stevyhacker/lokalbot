@@ -36,6 +36,7 @@ final class CotypingCoordinator: ObservableObject {
     private var lastLatencyMilliseconds: Int?
     private let spellChecker = CotypingSpellChecker()
     private let clipboardProvider = CotypingClipboardProvider()
+    private nonisolated static let axPrecedingWindowLimit = 4096
 
     init(
         engine: CotypingCompleting,
@@ -403,12 +404,24 @@ final class CotypingCoordinator: ObservableObject {
             }
         }
         guard !chunk.isEmpty else { return false }
+        let liveField = live.field ?? current.field
+        let forwardDeleteCount = CotypingMidWord.shouldForceContinuation(
+            precedingText: liveField.precedingText,
+            trailingText: liveField.trailingText)
+            ? CotypingMidWord.acceptedTrailingOverlapCount(
+                acceptedText: chunk,
+                trailingText: liveField.trailingText)
+            : 0
         let strategy = CotypingInsertionStrategySelector.select(
             forChunk: chunk, pasteEnabled: settingsProvider().cotypingPasteInsertion)
         let inserted: Bool
-        switch strategy {
-        case .keystroke: inserted = inserter.insert(chunk)
-        case .paste: inserted = inserter.insertViaPaste(chunk)
+        if forwardDeleteCount > 0 {
+            inserted = inserter.replaceForward(deletingCharacters: forwardDeleteCount, with: chunk)
+        } else {
+            switch strategy {
+            case .keystroke: inserted = inserter.insert(chunk)
+            case .paste: inserted = inserter.insertViaPaste(chunk)
+            }
         }
         guard inserted else { return false }
         CotypingStatsStore.shared.recordAccept(charsAccepted: chunk.count)
@@ -529,7 +542,26 @@ final class CotypingCoordinator: ObservableObject {
     /// app, where the PID alone would still match.
     nonisolated static func isContinuation(of session: CotypingSession, liveField: CotypingField?) -> Bool {
         guard let liveField, liveField.processID == session.field.processID else { return false }
-        return liveField.precedingText.hasPrefix(session.field.precedingText)
+        guard liveField.bundleID == session.field.bundleID, liveField.role == session.field.role else { return false }
+        let previous = session.field.precedingText
+        let live = liveField.precedingText
+        if live.hasPrefix(previous) { return true }
+        guard previous.count >= axPrecedingWindowLimit || live.count >= axPrecedingWindowLimit else {
+            return false
+        }
+        return hasCappedPrefixWindowOverlap(previous: previous, live: live)
+    }
+
+    private nonisolated static func hasCappedPrefixWindowOverlap(previous: String, live: String) -> Bool {
+        let maxLength = min(min(previous.count, live.count), axPrecedingWindowLimit)
+        let minimumOverlap = min(1024, maxLength)
+        guard minimumOverlap > 0 else { return false }
+        var length = maxLength
+        while length >= minimumOverlap {
+            if previous.suffix(length) == live.prefix(length) { return true }
+            length -= 1
+        }
+        return false
     }
 
     private func shortError(_ error: Error) -> String {

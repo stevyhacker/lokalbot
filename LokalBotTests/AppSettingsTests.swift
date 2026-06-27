@@ -45,4 +45,20 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(settings.menuBarOnly)
         XCTAssertFalse(settings.autoTranscribe)
     }
+
+    func testLoadAndSaveCanUseInjectedDefaultsSuite() throws {
+        let suiteName = "AppSettingsTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var saved = AppSettings()
+        saved.menuBarOnly = false
+        saved.cotypingEnabled = true
+        saved.save(to: defaults)
+
+        let loaded = AppSettings.load(from: defaults)
+
+        XCTAssertFalse(loaded.menuBarOnly)
+        XCTAssertTrue(loaded.cotypingEnabled)
+    }
 }

@@ -222,6 +222,17 @@ struct AppSettings: Codable {
     /// so `DataMigration` can copy a prior install's settings under it.
     static let key = "lokalbotv3.settings"
 
+    /// UI tests launch the app out-of-process. Let them point settings at a
+    /// disposable suite so test runs do not inherit or mutate the user's real
+    /// app preferences.
+    private static var defaults: UserDefaults {
+        if let suite = UITestRuntime.defaultsSuiteName,
+           let defaults = UserDefaults(suiteName: suite) {
+            return defaults
+        }
+        return .standard
+    }
+
     private enum CodingKeys: String, CodingKey {
         case autoRecordMode
         case stopDebounceSeconds
@@ -278,17 +289,17 @@ struct AppSettings: Codable {
         case cotypingLearningExamplesInPrompt
     }
 
-    static func load() -> AppSettings {
-        guard let data = UserDefaults.standard.data(forKey: key),
+    static func load(from defaults: UserDefaults = Self.defaults) -> AppSettings {
+        guard let data = defaults.data(forKey: key),
               let s = try? JSONDecoder().decode(AppSettings.self, from: data) else {
             return AppSettings()
         }
         return s
     }
 
-    func save() {
+    func save(to defaults: UserDefaults = Self.defaults) {
         if let data = try? JSONEncoder().encode(self) {
-            UserDefaults.standard.set(data, forKey: Self.key)
+            defaults.set(data, forKey: Self.key)
         }
     }
 

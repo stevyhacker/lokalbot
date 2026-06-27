@@ -79,6 +79,37 @@ final class CotypingInserter {
         return true
     }
 
+    /// Deletes `deletingCharacters` graphemes to the right of the caret (Forward
+    /// Delete, virtual key 117) and then types `text`. Used for mid-word accepts
+    /// where the model's first characters are already present after the caret.
+    @discardableResult
+    func replaceForward(deletingCharacters count: Int, with text: String) -> Bool {
+        let scrubbed = text.replacingOccurrences(of: "\r", with: "")
+        guard count > 0 || !scrubbed.isEmpty else { return false }
+        var events: [CGEvent] = []
+        for _ in 0..<max(0, count) {
+            guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 117, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: nil, virtualKey: 117, keyDown: false) else { return false }
+            events.append(down)
+            events.append(up)
+        }
+        if !scrubbed.isEmpty {
+            guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else { return false }
+            let utf16 = Array(scrubbed.utf16)
+            utf16.withUnsafeBufferPointer { buffer in
+                guard let base = buffer.baseAddress else { return }
+                down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: base)
+                up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: base)
+            }
+            events.append(down)
+            events.append(up)
+        }
+        for event in events { CotypingSyntheticMarker.mark(event) }
+        for event in events { event.post(tap: .cghidEventTap) }
+        return true
+    }
+
     /// Inserts `text` by placing it on the pasteboard and synthesizing a synthetic
     /// Cmd-V, then restoring the user's clipboard shortly after. A trimmed port of
     /// Cotabby's `insertViaPaste`. Used for large / multi-line accepts that some

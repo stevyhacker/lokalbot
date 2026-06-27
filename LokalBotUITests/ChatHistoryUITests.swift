@@ -12,6 +12,7 @@ final class ChatHistoryUITests: XCTestCase {
 
     private var root: URL!
     private var app: XCUIApplication!
+    private var defaultsSuiteName: String?
 
     private let conversationTitle = "Pricing decision"
     private let assistantLine = "You chose tiered pricing."
@@ -25,15 +26,15 @@ final class ChatHistoryUITests: XCTestCase {
             at: root.appendingPathComponent("meetings"), withIntermediateDirectories: true)
         try seedConversation()
 
-        app = XCUIApplication()
-        app.launchEnvironment["LOKALBOTV3_UI_TEST"] = "1"
-        app.launchEnvironment["LOKALBOTV3_STORAGE_ROOT"] = root.path
-        app.launch()
+        let launch = try UITestHarness.launch(storageRoot: root, suitePrefix: "ChatHistory")
+        app = launch.app
+        defaultsSuiteName = launch.defaultsSuiteName
     }
 
     override func tearDownWithError() throws {
         app?.terminate()
         try? FileManager.default.removeItem(at: root)
+        UITestHarness.cleanUp(defaultsSuiteName: defaultsSuiteName)
     }
 
     func testPersistedConversationLoadsIntoChat() {

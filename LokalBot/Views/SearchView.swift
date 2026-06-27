@@ -36,6 +36,7 @@ struct SearchView: View {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     TextField("Search transcripts, summaries, titles…", text: $query)
                         .textFieldStyle(.plain)
+                        .frame(minWidth: 280, maxWidth: .infinity)
                         .accessibilityIdentifier("search.field")
                     if !query.isEmpty {
                         Button { query = "" } label: {
@@ -47,6 +48,7 @@ struct SearchView: View {
                     }
                 }
                 .padding(.horizontal, 8).padding(.vertical, 6)
+                .frame(maxWidth: .infinity)
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
                 Picker("", selection: $scope) {
                     ForEach(Scope.allCases) {

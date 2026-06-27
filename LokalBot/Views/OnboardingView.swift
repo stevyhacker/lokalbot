@@ -196,8 +196,6 @@ struct OnboardingView: View {
                 }
             }
         }
-        .padding(24)
-        .frame(width: 560)
     }
 
     private func row(_ permission: AppPermission, icon: String, title: String, why: String) -> some View {

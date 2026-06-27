@@ -4,9 +4,9 @@ import XCTest
 /// feature batches (emoji, macros, per-domain disable, host font/color match,
 /// mirror render mode, clipboard context, paste insertion, quality metrics).
 ///
-/// Like `MainWindowUITests`, this drives `LokalBotV3.app` out-of-process against
-/// a synthetic library with `LOKALBOTV3_UI_TEST=1`, so it needs no TCC
-/// permissions and never touches the real library.
+/// Like `MainWindowUITests`, this drives the dedicated UI-test host
+/// out-of-process against a synthetic library with `LOKALBOTV3_UI_TEST=1`, so
+/// it needs no app TCC permissions and never touches the real library.
 ///
 /// macOS SwiftUI Form `Toggle`/`TextField` elements expose EMPTY accessibility
 /// labels — the visible text is a sibling `staticText`. So controls are matched
@@ -18,24 +18,25 @@ final class CotypingSettingsUITests: XCTestCase {
 
     private var app: XCUIApplication!
     private var fixture: SyntheticFixture.Library!
+    private var defaultsSuiteName: String?
 
     override func setUpWithError() throws {
         continueAfterFailure = false
         fixture = try SyntheticFixture.plant()
-        app = XCUIApplication()
-        app.launchEnvironment["LOKALBOTV3_UI_TEST"] = "1"
-        app.launchEnvironment["LOKALBOTV3_STORAGE_ROOT"] = fixture.root.path
-        app.launch()
+        let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "CotypingSettings")
+        app = launch.app
+        defaultsSuiteName = launch.defaultsSuiteName
         XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 10),
                       "main window never rendered")
         clickSidebar("sidebar.settings")
-        XCTAssertTrue(staticText(containing: "general").waitForExistence(timeout: 8),
+        XCTAssertTrue(app.descendants(matching: .any)["settings.form"].waitForExistence(timeout: 8),
                       "settings pane did not render")
     }
 
     override func tearDownWithError() throws {
         app?.terminate()
         fixture?.cleanUp()
+        UITestHarness.cleanUp(defaultsSuiteName: defaultsSuiteName)
     }
 
     // MARK: - Helpers
@@ -65,11 +66,13 @@ final class CotypingSettingsUITests: XCTestCase {
     /// filtering the form down to the Cotyping section so its controls land
     /// on-screen and the master toggle is the only `switch` left.
     private func isolateCotyping() {
-        let search = app.textFields.firstMatch
+        let search = app.textFields["settings.search"]
         XCTAssertTrue(search.waitForExistence(timeout: 6), "settings search field missing")
+        let layoutDeadline = Date().addingTimeInterval(4)
+        while search.frame.width < 40, Date() < layoutDeadline { usleep(150_000) }
         search.click()
         search.typeText("cotyping")
-        XCTAssertTrue(app.staticTexts["Cotyping"].waitForExistence(timeout: 4),
+        XCTAssertTrue(staticText(containing: "Cotyping").waitForExistence(timeout: 4),
                       "Cotyping section did not isolate")
     }
 

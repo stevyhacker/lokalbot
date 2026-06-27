@@ -59,7 +59,7 @@ enum SyntheticFixture {
 
     /// Build a fresh tmp library and write every fixture file to disk.
     /// Caller passes the resulting `root` to the app as `LOKALBOTV3_STORAGE_ROOT`.
-    static func plant() throws -> Library {
+    static func plant(includeActivity: Bool = true) throws -> Library {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("LokalBotV3UITests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(
@@ -147,7 +147,9 @@ enum SyntheticFixture {
         for meeting in [designReview, standup, planning] {
             try write(meeting, under: root)
         }
-        seedActivity(under: root)
+        if includeActivity {
+            seedActivity(under: root)
+        }
         return Library(root: root, designReview: designReview,
                        standup: standup, planning: planning)
     }

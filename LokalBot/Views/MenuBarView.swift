@@ -33,6 +33,7 @@ struct MenuBarLabel: View {
 struct MenuBarView: View {
     @EnvironmentObject var app: AppState
     @Environment(\.openWindow) private var openWindow
+    @ObservedObject private var permissions = PermissionManager.shared
     @State private var pulse = false
 
     var body: some View {
@@ -44,7 +45,7 @@ struct MenuBarView: View {
                     .font(.caption).foregroundStyle(.orange).lineLimit(2)
             }
 
-            if !PermissionManager.shared.allGranted {
+            if !permissions.allGranted {
                 Button { WindowAccess.shared.open("onboarding") } label: {
                     Label("Grant permissions to record", systemImage: "exclamationmark.shield.fill")
                         .font(.caption)
@@ -65,8 +66,10 @@ struct MenuBarView: View {
             // Register so non-View code (AppDelegate reopen, AppState first-run
             // onboarding) can open windows even when none are on screen.
             WindowAccess.shared.register { openWindow(id: $0) }
+            permissions.startPolling()
             pulse = app.isRecording
         }
+        .onDisappear { permissions.stopPolling() }
         .onChange(of: app.isRecording) { _, recording in pulse = recording }
     }
 

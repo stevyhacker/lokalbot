@@ -34,14 +34,18 @@ enum LokalBotMain {
 }
 
 struct LokalBotV3App: App {
-    @StateObject private var app = AppState()
+    @StateObject private var app: AppState
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
+    init() {
+        let appState = AppState()
+        _app = StateObject(wrappedValue: appState)
+        AppDelegate.appState = appState
+    }
 
     var body: some Scene {
         Window("LokalBot", id: "main") {
-            MainWindowView()
-                .environmentObject(app)
-                .brandTinted()
+            mainWindow
         }
         .defaultSize(width: 1180, height: 740)
         .commands {
@@ -80,6 +84,7 @@ struct LokalBotV3App: App {
         .windowStyle(.hiddenTitleBar)
         .defaultPosition(.center)
 
+#if !LOKALBOTV3_UI_TEST_HOST
         MenuBarExtra {
             MenuBarView()
                 .environmentObject(app)
@@ -87,11 +92,18 @@ struct LokalBotV3App: App {
             MenuBarLabel(app: app)
         }
         .menuBarExtraStyle(.window)
+#endif
 
         Settings {
             SettingsView()
                 .environmentObject(app)
         }
+    }
+
+    private var mainWindow: some View {
+        MainWindowView()
+            .environmentObject(app)
+            .brandTinted()
     }
 }
 
@@ -101,12 +113,19 @@ struct LokalBotV3App: App {
 /// SwiftUI alone can't suppress the launch window on macOS 14, so the Dock /
 /// activation policy is driven from here.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    @MainActor static var appState: AppState?
+
+    private var uiTestWindow: NSWindow?
 
     /// Hides the Dock icon for a menu-bar-only start. Setting `.accessory` this
     /// early also stops SwiftUI from auto-opening the launch window; restoration
     /// was already disabled in `LokalBotMain`. UI tests and not-yet-onboarded
     /// users stay windowed — see `lokalbotLaunchesMenuBarOnly()`.
     func applicationWillFinishLaunching(_ notification: Notification) {
+        if AppState.isUITesting {
+            NSApp.setActivationPolicy(.regular)
+            return
+        }
         if lokalbotLaunchesMenuBarOnly() {
             NSApp.setActivationPolicy(.accessory)
         }
@@ -116,7 +135,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// → show the Dock icon + app menu for full window UX; nothing open → fall
     /// back to a pure menu-bar accessory.
     func applicationDidFinishLaunching(_ notification: Notification) {
-        guard !AppState.isUITesting else { return }
+        if AppState.isUITesting {
+            NSApp.setActivationPolicy(.regular)
+            let app = Self.appState ?? AppState()
+            Self.appState = app
+            openUITestWindow(app: app)
+            forceActivateForUITests()
+            return
+        }
         // macOS may still restore/auto-open the main window at launch despite
         // `.accessory`; for a menu-bar-only start, evict any window that appears
         // in the first moments (the user can't have opened one yet).
@@ -141,6 +167,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         if !hasVisibleWindows { WindowAccess.shared.open("main") }
         return true
+    }
+
+    @MainActor
+    private func openUITestWindow(app: AppState) {
+        if let uiTestWindow {
+            uiTestWindow.makeKeyAndOrderFront(nil)
+            uiTestWindow.orderFrontRegardless()
+            return
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1180, height: 740),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false)
+        window.title = "LokalBot"
+        window.identifier = NSUserInterfaceItemIdentifier("main.window")
+        let hostingView = NSHostingView(
+            rootView: MainWindowView()
+                .environmentObject(app)
+                .brandTinted())
+        hostingView.identifier = NSUserInterfaceItemIdentifier("main.window.host")
+        window.contentView = hostingView
+        window.center()
+        window.isReleasedWhenClosed = false
+        uiTestWindow = window
+        window.makeKeyAndOrderFront(nil)
+        window.makeMain()
+        window.orderFrontRegardless()
+    }
+
+    private func forceActivateForUITests() {
+        for delay: Double in [0, 0.15, 0.5, 1.5] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                NSApp.setActivationPolicy(.regular)
+                NSApp.unhide(nil)
+                if let window = self?.uiTestWindow {
+                    window.makeKeyAndOrderFront(nil)
+                    window.makeMain()
+                    window.orderFrontRegardless()
+                }
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        }
     }
 }
 
@@ -221,8 +291,13 @@ final class WindowAccess {
         // gets standard chrome and the app menu. `willClose` drops back to
         // accessory afterwards when menu-bar-only.
         DockPolicy.evictRestoredWindows = false
-        if !AppState.isUITesting { NSApp.setActivationPolicy(.regular) }
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        if id == "main",
+           let existing = NSApp.windows.first(where: { $0.isVisible && $0.title == "LokalBot" }) {
+            existing.makeKeyAndOrderFront(nil)
+            return
+        }
         if let opener {
             opener(id)
         } else {
@@ -247,13 +322,12 @@ final class AppState: ObservableObject {
     /// True when launched by an XCUITest harness — gates the side-effectful
     /// startup paths (Core Audio polling, accessibility-trusted detector,
     /// Sparkle, periodic screenshots) so the UI renders against synthetic
-    /// data without touching real audio, TCC, or the network. The env var
-    /// is set by `LokalBotUITests` only; production launches never see it.
-    static let isUITesting: Bool = ProcessInfo.processInfo.environment["LOKALBOTV3_UI_TEST"] == "1"
+    /// data without touching real audio, TCC, or the network.
+    nonisolated static var isUITesting: Bool { UITestRuntime.isEnabled }
 
     /// UserDefaults flag: the permission onboarding has been shown once. Also
     /// read by `AppDelegate` to keep the first run windowed.
-    static let onboardingShownKey = "lokalbotv3.onboarding.shown"
+    nonisolated static let onboardingShownKey = "lokalbotv3.onboarding.shown"
 
     @Published private(set) var status: Status = .idle
     @Published private(set) var meetings: [Meeting] = []
@@ -529,6 +603,8 @@ final class AppState: ObservableObject {
             defer { isStartingRecording = false }
             guard await MicRecorder.requestPermission() else {
                 lastError = "Microphone permission denied."
+                audioMonitor.isRecordingActive = false
+                audioMonitor.reseed()
                 return
             }
             var created: Meeting?
@@ -571,6 +647,8 @@ final class AppState: ObservableObject {
             } catch {
                 lastError = "Could not start recording: \(error.localizedDescription)"
                 lokalbotv3Log("startRecording FAILED: \(error.localizedDescription)")
+                audioMonitor.isRecordingActive = false
+                audioMonitor.reseed()
                 // Don't leave a 0-minute husk in the library.
                 if let husk = created { storage.deleteMeeting(husk) }
             }
@@ -615,14 +693,20 @@ final class AppState: ObservableObject {
     }
 
     /// `AudioSourceMonitor` saw an app newly start producing output. Auto-record
-    /// in automatic mode when the bundle is one we know how to record, fall
-    /// back to the lastError banner otherwise so the user can choose.
+    /// in automatic mode only for high-confidence native meeting output or a
+    /// calendar-backed native app; leave broader chat apps as banner/detector
+    /// candidates so notification sounds cannot start recordings.
     private func audioMonitorDetected(_ process: AudioProcess) {
         guard !isRecording, !isStartingRecording else { return }
         guard settings.autoRecordMode == .automatic, let bundleID = process.bundleID else { return }
         let calendarEvent = (settings.calendarDetectionEnabled && calendar.hasAccess)
             ? calendar.activeCandidate(now: Date()) : nil
         if let name = MeetingDetector.knownApps[bundleID] {
+            guard MeetingDetector.shouldAutoRecordNativeAudioMonitor(
+                bundleID: bundleID,
+                calendarBacked: calendarEvent != nil) else {
+                return
+            }
             let detected = MeetingDetector.DetectedApp(name: name, bundleID: bundleID, pid: process.id)
             startRecording(context: detectionContext(detected, calendarEvent), source: "audio-monitor")
             return

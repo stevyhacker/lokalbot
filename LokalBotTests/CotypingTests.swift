@@ -37,6 +37,14 @@ final class CotypingPromptRendererTests: XCTestCase {
             prompt,
             "Previously accepted completion: following up with the final numbers\n\nThanks for")
     }
+
+    func testRendererHonorsAllProvidedLearnedExamples() {
+        let examples = (1...5).map { "example \($0)" }
+        let prompt = CotypingPromptRenderer.prompt(prefixText: "Thanks", learnedExamples: examples)
+        for example in examples {
+            XCTAssertTrue(prompt.contains("Previously accepted completion: \(example)"))
+        }
+    }
 }
 
 // MARK: - Local learning
@@ -672,6 +680,12 @@ final class CotypingContinuationTests: XCTestCase {
         XCTAssertFalse(CotypingCoordinator.isContinuation(of: session("I wanted to follow"), liveField: field("Reply to the thread")))
     }
 
+    func testCappedLongFieldShiftAfterAcceptedWordIsContinuation() {
+        let previous = String(repeating: "a", count: 4096)
+        let live = String(previous.dropFirst(3)) + " up"
+        XCTAssertTrue(CotypingCoordinator.isContinuation(of: session(previous), liveField: field(live)))
+    }
+
     func testDifferentProcessIsNotContinuation() {
         XCTAssertFalse(CotypingCoordinator.isContinuation(of: session("I wanted to follow", pid: 5), liveField: field("I wanted to follow", pid: 99)))
     }
@@ -813,6 +827,16 @@ final class CotypingMidWordTests: XCTestCase {
         let forced = CotypingTextNormalizer.normalize(
             " ord", for: request(prefix: "rec", trailing: "ord", force: true))
         XCTAssertEqual(forced, "ord")
+    }
+
+    func testAcceptedMidWordOverlapDeletesExistingTrailingFragment() {
+        XCTAssertEqual(CotypingMidWord.acceptedTrailingOverlapCount(acceptedText: "ord", trailingText: "ord"), 3)
+        XCTAssertEqual(CotypingMidWord.acceptedTrailingOverlapCount(acceptedText: "ording", trailingText: "ord"), 3)
+        XCTAssertEqual(CotypingMidWord.acceptedTrailingOverlapCount(acceptedText: "or", trailingText: "ord"), 2)
+    }
+
+    func testAcceptedMidWordOverlapIgnoresWeakSharedPrefix() {
+        XCTAssertEqual(CotypingMidWord.acceptedTrailingOverlapCount(acceptedText: "operate", trailingText: "ord"), 0)
     }
 
     func testForceContinuationSuppressesIncompatibleWordTail() {
@@ -1736,5 +1760,17 @@ final class CotypingOverlayGeometryTests: XCTestCase {
             caret: CGRect(x: 100, y: 5, width: 0, height: 16),
             content: CGSize(width: 120, height: 24), visible: screen)
         XCTAssertGreaterThanOrEqual(nearBottom.minY, screen.minY)
+    }
+
+    func testAXRectConversionUsesContainingScreenFrame() {
+        let converted = CotypingAXHelper.cocoaRect(
+            fromAX: CGRect(x: 1500, y: -100, width: 2, height: 20),
+            displayBounds: CGRect(x: 1440, y: -200, width: 1920, height: 1080),
+            screenFrame: CGRect(x: 1440, y: 0, width: 1920, height: 1080))
+
+        XCTAssertEqual(converted.origin.x, 1500)
+        XCTAssertEqual(converted.origin.y, 960)
+        XCTAssertEqual(converted.width, 2)
+        XCTAssertEqual(converted.height, 20)
     }
 }

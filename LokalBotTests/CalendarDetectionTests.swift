@@ -221,44 +221,62 @@ final class CalendarDetectionTests: XCTestCase {
     func testRecordingMicDoesNotKeepMeetingAliveWhenAppAudioStops() {
         XCTAssertFalse(MeetingMatcher.isMeetingOngoing(
             hasActiveSession: true, hasRunningMeetingApp: true, hasContinuingApp: true,
-            micInUse: true, appAudioActive: false, calendarBackedBrowserWithAudio: false),
+            startAudioActive: true, appAudioActive: false, calendarBackedBrowserWithAudio: false),
             "global mic (our own recorder) must not keep an otherwise-silent meeting open")
     }
 
     func testContinuesWhileAppAudioActive() {
         XCTAssertTrue(MeetingMatcher.isMeetingOngoing(
             hasActiveSession: true, hasRunningMeetingApp: true, hasContinuingApp: true,
-            micInUse: false, appAudioActive: true, calendarBackedBrowserWithAudio: false))
+            startAudioActive: false, appAudioActive: true, calendarBackedBrowserWithAudio: false))
     }
 
     func testEndsWhenAppGoneRegardlessOfMic() {
         XCTAssertFalse(MeetingMatcher.isMeetingOngoing(
             hasActiveSession: true, hasRunningMeetingApp: false, hasContinuingApp: false,
-            micInUse: true, appAudioActive: true, calendarBackedBrowserWithAudio: false))
+            startAudioActive: true, appAudioActive: true, calendarBackedBrowserWithAudio: false))
     }
 
-    func testStartsOnMeetingAppPlusMic() {
+    func testStartsOnMeetingAppOwnAudio() {
         XCTAssertTrue(MeetingMatcher.isMeetingOngoing(
             hasActiveSession: false, hasRunningMeetingApp: true, hasContinuingApp: false,
-            micInUse: true, appAudioActive: false, calendarBackedBrowserWithAudio: false))
+            startAudioActive: true, appAudioActive: false, calendarBackedBrowserWithAudio: false))
+    }
+
+    func testDoesNotStartOnIdleMeetingAppWithOnlyGlobalMicSignal() {
+        XCTAssertFalse(MeetingMatcher.isMeetingOngoing(
+            hasActiveSession: false, hasRunningMeetingApp: true, hasContinuingApp: false,
+            startAudioActive: false, appAudioActive: false, calendarBackedBrowserWithAudio: false))
+    }
+
+    func testAudioMonitorAutoRecordsDedicatedNativeAppsWithoutCalendar() {
+        XCTAssertTrue(MeetingDetector.shouldAutoRecordNativeAudioMonitor(
+            bundleID: "us.zoom.xos", calendarBacked: false))
+    }
+
+    func testAudioMonitorRequiresCalendarForBroadCommunicationApps() {
+        XCTAssertFalse(MeetingDetector.shouldAutoRecordNativeAudioMonitor(
+            bundleID: "com.tinyspeck.slackmacgap", calendarBacked: false))
+        XCTAssertTrue(MeetingDetector.shouldAutoRecordNativeAudioMonitor(
+            bundleID: "com.tinyspeck.slackmacgap", calendarBacked: true))
     }
 
     func testDoesNotStartWithoutMicOrCalendarAudio() {
         XCTAssertFalse(MeetingMatcher.isMeetingOngoing(
             hasActiveSession: false, hasRunningMeetingApp: true, hasContinuingApp: false,
-            micInUse: false, appAudioActive: false, calendarBackedBrowserWithAudio: false))
+            startAudioActive: false, appAudioActive: false, calendarBackedBrowserWithAudio: false))
     }
 
     func testStartsCalendarBackedBrowserOnOutputAudio() {
         XCTAssertTrue(MeetingMatcher.isMeetingOngoing(
             hasActiveSession: false, hasRunningMeetingApp: true, hasContinuingApp: false,
-            micInUse: false, appAudioActive: false, calendarBackedBrowserWithAudio: true))
+            startAudioActive: false, appAudioActive: false, calendarBackedBrowserWithAudio: true))
     }
 
     func testContinuesViaContinuingAppAfterRunningAppDropsOut() {
         XCTAssertTrue(MeetingMatcher.isMeetingOngoing(
             hasActiveSession: true, hasRunningMeetingApp: false, hasContinuingApp: true,
-            micInUse: false, appAudioActive: true, calendarBackedBrowserWithAudio: false))
+            startAudioActive: false, appAudioActive: true, calendarBackedBrowserWithAudio: false))
     }
 
     // MARK: - Provider access gating (denied → no candidates)

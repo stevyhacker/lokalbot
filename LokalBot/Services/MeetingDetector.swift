@@ -29,6 +29,21 @@ final class MeetingDetector {
         "com.apple.FaceTime": "FaceTime",
     ]
 
+    /// Native bundles whose newly-started output is a strong meeting signal on
+    /// its own. Broader communication apps (Slack/Teams/FaceTime) can make short
+    /// non-meeting sounds, so the audio monitor only auto-records those when an
+    /// active calendar meeting backs the signal; otherwise the slower detector
+    /// poll or the banner can handle them.
+    private static let highConfidenceNativeAudioBundles: Set<String> = [
+        "us.zoom.xos",
+        "com.webex.meetingmanager",
+        "Cisco-Systems.Spark",
+    ]
+
+    static func shouldAutoRecordNativeAudioMonitor(bundleID: String, calendarBacked: Bool) -> Bool {
+        highConfidenceNativeAudioBundles.contains(bundleID) || calendarBacked
+    }
+
     /// Browsers whose focused-window title we inspect for web meetings
     /// (needs Accessibility; silently skipped without it).
     static let browsers: Set<String> = [
@@ -153,20 +168,19 @@ final class MeetingDetector {
         let now = Date()
         let running = NSWorkspace.shared.runningApplications
         let calendarEvent = calendarEnabled ? calendar?.activeCandidate(now: now) : nil
-        let runningMeetingApp = Self.nativeMeetingApp(in: running)
+        let runningMeetingApp = Self.nativeMeetingApp(in: running, requireAudio: true)
             ?? Self.browserMeeting(in: running, calendarEvent: calendarEvent,
                                    calendarEnabled: calendarEnabled,
                                    requireCalendarForBrowser: requireCalendarForBrowser)
         let continuingApp = activeApp.flatMap { Self.continuingApp($0, in: running) }
         let app = runningMeetingApp ?? continuingApp
-        let micInUse = Self.isMicInUse()
         let isBrowserApp = runningMeetingApp.map { Self.browsers.contains($0.bundleID) } ?? false
         let calendarBackedBrowser = isBrowserApp && calendarEnabled && calendarEvent?.meetingURL != nil
-        // Continuation hinges on the meeting app's OWN audio (input or output),
-        // not the global mic flag: once recording starts, our mic capture keeps
-        // the default input "running", which would otherwise pin the meeting
-        // open forever (the "never stops" bug). Start still uses the global mic
-        // — before recording it is the meeting app's mic, not ours.
+        // Both start and continuation hinge on the selected app's OWN audio
+        // (input or output), not the global mic flag. A global mic check can
+        // belong to Dictation/QuickTime/another meeting app while a known meeting
+        // app is merely idle in the background.
+        let startAudioActive = runningMeetingApp.map { Self.hasAudio(for: $0) } ?? false
         let appAudioActive = app.map { Self.hasAudio(for: $0) } ?? false
         let calendarBackedBrowserWithAudio = calendarBackedBrowser
             && (runningMeetingApp.map { Self.hasOutputAudio(for: $0) } ?? false)
@@ -174,7 +188,7 @@ final class MeetingDetector {
             hasActiveSession: activeApp != nil,
             hasRunningMeetingApp: runningMeetingApp != nil,
             hasContinuingApp: continuingApp != nil,
-            micInUse: micInUse,
+            startAudioActive: startAudioActive,
             appAudioActive: appAudioActive,
             calendarBackedBrowserWithAudio: calendarBackedBrowserWithAudio)
 
@@ -211,11 +225,20 @@ final class MeetingDetector {
         }
     }
 
-    private static func nativeMeetingApp(in running: [NSRunningApplication]) -> DetectedApp? {
-        running.compactMap { app -> DetectedApp? in
+    private static func nativeMeetingApp(in running: [NSRunningApplication],
+                                         requireAudio: Bool = false) -> DetectedApp? {
+        let candidates = running.compactMap { app -> DetectedApp? in
             guard let bid = app.bundleIdentifier, let name = knownApps[bid] else { return nil }
             return DetectedApp(name: name, bundleID: bid, pid: app.processIdentifier)
-        }.first
+        }
+        guard requireAudio else { return candidates.first }
+        let active = candidates.filter { hasAudio(for: $0) }
+        guard !active.isEmpty else { return nil }
+        if let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+           let frontmost = active.first(where: { $0.pid == frontmostPID }) {
+            return frontmost
+        }
+        return active.first
     }
 
     /// Web meetings by window title only (no calendar) — used by the audio

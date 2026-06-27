@@ -6,13 +6,13 @@ struct MainWindowView: View {
     @State private var pendingDelete: Set<Meeting.ID>?
 
     private enum ThreeColumnSection {
-        case meetings, search, settings
+        case meetings, search
 
         init?(_ section: AppState.NavSection) {
             switch section {
             case .meetings: self = .meetings
             case .search: self = .search
-            case .settings: self = .settings
+            case .settings: return nil
             case .timeline: return nil
             case .cotyping: return nil
             case .chat: return nil
@@ -117,6 +117,12 @@ struct MainWindowView: View {
             } detail: {
                 ModelsView()
             }
+        } else if app.navSection == .settings {
+            NavigationSplitView {
+                sidebar
+            } detail: {
+                SettingsAndPermissionsView()
+            }
         } else {
             NavigationSplitView {
                 sidebar
@@ -167,18 +173,11 @@ struct MainWindowView: View {
         switch section {
         case .meetings: meetingList
         case .search: SearchView().navigationTitle("Search")
-        case .settings:
-            SettingsView()
-                .navigationSplitViewColumnWidth(min: 470, ideal: 560)
         }
     }
 
     @ViewBuilder private var detailPane: some View {
-        if app.navSection == .settings {
-            // Settings selected → the detail pane shows live permission
-            // status (permission-repair surface, not the first-run value walk).
-            ScrollView { OnboardingView(mode: .permissions) }
-        } else if let meeting = app.selectedMeeting {
+        if let meeting = app.selectedMeeting {
             MeetingDetailView(meeting: meeting)
                 .id(meeting.id)
         } else if app.selectedMeetingIDs.count > 1 {
@@ -274,6 +273,23 @@ struct MainWindowView: View {
         }
         .navigationSplitViewColumnWidth(min: 240, ideal: 280)
         .navigationTitle("Meetings")
+    }
+}
+
+private struct SettingsAndPermissionsView: View {
+    var body: some View {
+        HSplitView {
+            SettingsView()
+                .frame(minWidth: 460, idealWidth: 560, maxWidth: .infinity)
+
+            ScrollView {
+                OnboardingView(mode: .permissions)
+                    .padding(.vertical, 12)
+            }
+            .frame(minWidth: 360, idealWidth: 430, maxWidth: .infinity)
+            .accessibilityIdentifier("settings.permissions")
+        }
+        .navigationTitle("Settings")
     }
 }
 

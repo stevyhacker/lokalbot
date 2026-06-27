@@ -1,7 +1,7 @@
 import XCTest
 
-/// End-to-end UI tests that drive `LokalBotV3.app` against a synthetic
-/// meetings library planted on disk before launch.
+/// End-to-end UI tests that drive the dedicated `LokalBotV3 UI Test Host`
+/// against a synthetic meetings library planted on disk before launch.
 ///
 /// The app sees `LOKALBOTV3_UI_TEST=1` and skips every side-effectful
 /// startup path (Core Audio polling, accessibility-trusted detector,
@@ -11,14 +11,14 @@ final class MainWindowUITests: XCTestCase {
 
     private var fixture: SyntheticFixture.Library!
     private var app: XCUIApplication!
+    private var defaultsSuiteName: String?
 
     override func setUpWithError() throws {
         continueAfterFailure = false
         fixture = try SyntheticFixture.plant()
-        app = XCUIApplication()
-        app.launchEnvironment["LOKALBOTV3_UI_TEST"] = "1"
-        app.launchEnvironment["LOKALBOTV3_STORAGE_ROOT"] = fixture.root.path
-        app.launch()
+        let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "MainWindow")
+        app = launch.app
+        defaultsSuiteName = launch.defaultsSuiteName
         // Wait until the main window has rendered the meeting list — every
         // test starts from a known surface, otherwise XCUITest races the
         // initial `loadMeetings()` + reindex sweep.
@@ -29,6 +29,7 @@ final class MainWindowUITests: XCTestCase {
     override func tearDownWithError() throws {
         app?.terminate()
         fixture?.cleanUp()
+        UITestHarness.cleanUp(defaultsSuiteName: defaultsSuiteName)
     }
 
     // MARK: - Library
@@ -59,13 +60,11 @@ final class MainWindowUITests: XCTestCase {
     /// `AppState.navSection` round-trips through the bound selection.
     func testSidebarNavigationSwitchesSections() {
         clickSidebar("sidebar.settings")
-        // Settings keeps a "General" section header — model selection moved to
-        // the Models pane. SwiftUI `Text` exposes content via the accessibility
-        // `value`, not `label`; scope the predicate to `staticTexts` since
-        // searching every element type is prohibitively slow under XCUI.
-        XCTAssertTrue(textWithContent("General").firstMatch
+        XCTAssertTrue(app.descendants(matching: .any)["settings.form"]
             .waitForExistence(timeout: 6),
                       "settings pane did not render")
+        XCTAssertTrue(app.descendants(matching: .any)["settings.permissions"].exists,
+                      "permission repair pane missing from Settings")
 
         clickSidebar("sidebar.meetings")
         XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 4),
@@ -81,6 +80,14 @@ final class MainWindowUITests: XCTestCase {
                       "Models pane did not render the Transcription card")
         XCTAssertTrue(textWithContent("Summarization").firstMatch.exists,
                       "Models pane missing the Summarization card")
+        XCTAssertTrue(app.descendants(matching: .any)["models.transcription"].exists,
+                      "transcription model card identifier missing")
+        XCTAssertTrue(app.descendants(matching: .any)["models.summarization"].exists,
+                      "summarization model card identifier missing")
+        XCTAssertTrue(app.descendants(matching: .any)["models.cotyping"].exists,
+                      "cotyping model card identifier missing")
+        XCTAssertTrue(app.descendants(matching: .any)["models.embeddings"].exists,
+                      "embeddings model card identifier missing")
     }
 
     // MARK: - Timeline
@@ -154,21 +161,11 @@ final class MainWindowUITests: XCTestCase {
     func testSearchFindsTranscriptHitAndDeepLinks() {
         clickSidebar("sidebar.search")
 
-        // SwiftUI exposes an empty AX identifier for `TextField` on current
-        // macOS, so the `["search.field"]` id match no longer resolves — the
-        // search view has a single text field, so take the first match.
-        let field = app.textFields.firstMatch
+        let field = app.textFields["search.field"]
         XCTAssertTrue(field.waitForExistence(timeout: 8), "search field missing")
-        // The field can momentarily report a ~2pt frame right after the search
-        // view appears; wait for it to lay out before clicking, otherwise the
-        // click lands on a sliver and never takes keyboard focus.
         let layoutDeadline = Date().addingTimeInterval(4)
         while field.frame.width < 40, Date() < layoutDeadline { usleep(150_000) }
-        // XCUI reports the empty field as a ~2pt caret sliver at its trailing
-        // edge; a plain click there misses the editable body. Click a point
-        // offset left into the field body so it takes keyboard focus.
-        field.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
-            .withOffset(CGVector(dx: -120, dy: 0)).click()
+        field.click()
         field.typeText("failover")
 
         // The row's accessibility identifier propagates to every StaticText
@@ -291,10 +288,7 @@ final class MainWindowUITests: XCTestCase {
     /// lives on the inner `Label`; descend-by-id is unambiguous because
     /// each sidebar item carries a unique identifier (`sidebar.<section>`).
     private func clickSidebar(_ identifier: String) {
-        let item = app.descendants(matching: .any)[identifier]
-        XCTAssertTrue(item.waitForExistence(timeout: 4),
-                      "sidebar item \(identifier) not found")
-        item.click()
+        UITestHarness.clickSidebar(identifier, in: app)
     }
 
     private func selectMeeting(_ meeting: SyntheticFixture.Meeting) {

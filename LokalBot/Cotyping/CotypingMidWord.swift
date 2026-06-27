@@ -32,6 +32,38 @@ enum CotypingMidWord {
         return String(reversed.reversed())
     }
 
+    static func leadingWordRun(in text: String) -> String {
+        var result = ""
+        for character in text {
+            guard isWordCharacter(character) else { break }
+            result.append(character)
+        }
+        return result
+    }
+
+    /// How much already-present text to the right of the caret should be removed
+    /// before accepting a forced mid-word suggestion. This only treats a prefix as
+    /// an overlap when it completes either the accepted word fragment or the
+    /// existing right-side word fragment, so a weak one-character common prefix
+    /// like "operate" vs "ord" is left alone.
+    static func acceptedTrailingOverlapCount(acceptedText: String, trailingText: String) -> Int {
+        let acceptedWord = leadingWordRun(in: acceptedText)
+        let trailingWord = leadingWordRun(in: trailingText)
+        guard !acceptedWord.isEmpty, !trailingWord.isEmpty else { return 0 }
+
+        var acceptedIndex = acceptedWord.startIndex
+        var trailingIndex = trailingWord.startIndex
+        var count = 0
+        while acceptedIndex < acceptedWord.endIndex,
+              trailingIndex < trailingWord.endIndex,
+              acceptedWord[acceptedIndex] == trailingWord[trailingIndex] {
+            count += 1
+            acceptedIndex = acceptedWord.index(after: acceptedIndex)
+            trailingIndex = trailingWord.index(after: trailingIndex)
+        }
+        return count == min(acceptedWord.count, trailingWord.count) ? count : 0
+    }
+
     static func isWordCharacter(_ character: Character) -> Bool {
         character.isLetter || character.isNumber
     }

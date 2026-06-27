@@ -350,12 +350,44 @@ enum CotypingAXHelper {
         return CGRect(origin: origin, size: size)
     }
 
-    /// Accessibility rects are top-left origin against the primary display.
-    /// Flip to bottom-left-origin global Cocoa coordinates the overlay panel uses.
+    /// Accessibility rects are top-left-origin display coordinates. Flip through
+    /// the actual display/screen pair containing the caret so external displays do
+    /// not inherit the primary display's height.
     static func cocoaRect(fromAX axRect: CGRect) -> CGRect {
-        let primaryHeight = CGDisplayBounds(CGMainDisplayID()).height
-        return CGRect(x: axRect.origin.x,
-                      y: primaryHeight - axRect.origin.y - axRect.height,
+        let midpoint = CGPoint(x: axRect.midX, y: axRect.midY)
+        if let displayID = displayID(containingAXPoint: midpoint),
+           let screen = screen(forDisplayID: displayID) {
+            return cocoaRect(fromAX: axRect,
+                             displayBounds: CGDisplayBounds(displayID),
+                             screenFrame: screen.frame)
+        }
+        let primaryBounds = CGDisplayBounds(CGMainDisplayID())
+        let primaryFrame = NSScreen.main?.frame ?? CGRect(origin: .zero, size: primaryBounds.size)
+        return cocoaRect(fromAX: axRect, displayBounds: primaryBounds, screenFrame: primaryFrame)
+    }
+
+    static func cocoaRect(fromAX axRect: CGRect,
+                          displayBounds: CGRect,
+                          screenFrame: CGRect) -> CGRect {
+        let localX = axRect.origin.x - displayBounds.origin.x
+        let localYFromTop = axRect.origin.y - displayBounds.origin.y
+        return CGRect(x: screenFrame.origin.x + localX,
+                      y: screenFrame.maxY - localYFromTop - axRect.height,
                       width: axRect.width, height: axRect.height)
+    }
+
+    private static func displayID(containingAXPoint point: CGPoint) -> CGDirectDisplayID? {
+        var count: UInt32 = 0
+        guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return nil }
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetOnlineDisplayList(count, &displays, &count) == .success else { return nil }
+        return displays.prefix(Int(count)).first { CGDisplayBounds($0).contains(point) }
+    }
+
+    private static func screen(forDisplayID displayID: CGDirectDisplayID) -> NSScreen? {
+        NSScreen.screens.first { screen in
+            let key = NSDeviceDescriptionKey("NSScreenNumber")
+            return (screen.deviceDescription[key] as? NSNumber)?.uint32Value == displayID
+        }
     }
 }

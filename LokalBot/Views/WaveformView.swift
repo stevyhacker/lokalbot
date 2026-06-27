@@ -62,8 +62,8 @@ struct WaveformView: View {
         }
     }
 
-    /// Downsample the file to `bins` peak values, off the main actor. Uses the
-    /// PCM float buffer directly — fast enough for an hour-long AAC file.
+    /// Downsample the file to `bins` peak values, off the main actor. Reads in
+    /// bounded chunks so long meetings do not allocate a full decoded PCM file.
     private func load() async {
         guard let url, FileManager.default.fileExists(atPath: url.path) else { return }
         if let cached = WaveformCache.shared.object(forKey: url.path as NSString) {
@@ -71,23 +71,39 @@ struct WaveformView: View {
             return
         }
         let path = url.path
+        let binCount = bins
         let computed = await Task.detached(priority: .utility) { () -> [Float]? in
             guard let file = try? AVAudioFile(forReading: URL(fileURLWithPath: path)) else { return nil }
-            guard let format = AVAudioFormat(standardFormatWithSampleRate: file.fileFormat.sampleRate,
-                                             channels: 1) else { return nil }
-            guard let buffer = AVAudioPCMBuffer(pcmFormat: format,
-                                                frameCapacity: AVAudioFrameCount(file.length)) else { return nil }
-            try? file.read(into: buffer)
-            guard let data = buffer.floatChannelData?[0] else { return nil }
-            let total = Int(buffer.frameLength)
-            let bin = max(1, total / bins)
-            var out: [Float] = []
-            out.reserveCapacity(bins)
-            for start in stride(from: 0, to: total, by: bin) {
-                let end = min(start + bin, total)
-                var peak: Float = 0
-                for i in start..<end { peak = max(peak, abs(data[i])) }
-                out.append(peak)
+            let totalFrames = max(Int64(file.length), 1)
+            let format = file.processingFormat
+            let channelCount = max(1, Int(format.channelCount))
+            let chunkFrames: AVAudioFrameCount = 32_768
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames) else { return nil }
+            var out = [Float](repeating: 0, count: binCount)
+            var absoluteFrame: Int64 = 0
+
+            while absoluteFrame < totalFrames {
+                if Task.isCancelled { return nil }
+                buffer.frameLength = 0
+                let remaining = AVAudioFrameCount(min(Int64(chunkFrames), totalFrames - absoluteFrame))
+                do {
+                    try file.read(into: buffer, frameCount: remaining)
+                } catch {
+                    return nil
+                }
+                let frameLength = Int(buffer.frameLength)
+                guard frameLength > 0 else { break }
+                guard let channels = buffer.floatChannelData else { return nil }
+
+                for frame in 0..<frameLength {
+                    var peak: Float = 0
+                    for channel in 0..<channelCount {
+                        peak = max(peak, abs(channels[channel][frame]))
+                    }
+                    let bin = min(binCount - 1, Int((absoluteFrame + Int64(frame)) * Int64(binCount) / totalFrames))
+                    out[bin] = max(out[bin], peak)
+                }
+                absoluteFrame += Int64(frameLength)
             }
             // Normalize so the quietest-recorded file still fills the bar height.
             let maxPeak = out.max() ?? 1

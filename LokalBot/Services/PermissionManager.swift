@@ -117,6 +117,7 @@ final class PermissionManager: ObservableObject {
     @Published private(set) var granted: [AppPermission: Bool] = [:]
 
     private var pollTimer: Timer?
+    private var pollConsumers = 0
 
     private init() {
         refresh()
@@ -155,18 +156,22 @@ final class PermissionManager: ObservableObject {
         AppPermission.coreCases.allSatisfy { granted[$0] == true }
     }
 
-    /// Arms a ~1.5s catch-up poll so the UI reflects grants made over in System
-    /// Settings. Idempotent: a second call while already polling is a no-op.
+    /// Adds one permission-surface consumer and arms a ~1.5s catch-up poll so the
+    /// UI reflects grants made over in System Settings.
     func startPolling() {
+        pollConsumers += 1
+        refresh()
         guard pollTimer == nil else { return }
         pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
     }
 
-    /// Tears down the poll. Callers invoke this when the permissions UI
-    /// disappears so no idle timer survives the flow that needed it.
+    /// Releases one polling consumer. The timer survives while another permission
+    /// surface is still visible, then tears down once the last one disappears.
     func stopPolling() {
+        pollConsumers = max(0, pollConsumers - 1)
+        guard pollConsumers == 0 else { return }
         pollTimer?.invalidate()
         pollTimer = nil
     }

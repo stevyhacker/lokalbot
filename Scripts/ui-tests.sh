@@ -1,11 +1,11 @@
 #!/bin/bash
 # LokalBotV3 UI test runner.
 #
-# Drives LokalBotV3.app headlessly via XCUITest against a synthetic meetings
-# library — no microphone/screen-recording permissions, no real audio,
-# no network. The app sees LOKALBOTV3_UI_TEST=1 and skips every
-# side-effectful subsystem (Core Audio polling, accessibility-trusted
-# detector, Sparkle, screenshots).
+# Drives the dedicated LokalBotV3 UI Test Host via XCUITest against a
+# synthetic meetings library — no microphone/screen-recording permissions,
+# no real audio, no network. The host is compiled with LOKALBOTV3_UI_TEST=1
+# and skips every side-effectful subsystem (Core Audio polling,
+# accessibility-trusted detector, Sparkle, screenshots).
 #
 # Prereq (macOS TCC): the controlling terminal (Terminal.app, iTerm, Zed,
 # CI runner agent…) MUST hold:
@@ -17,21 +17,23 @@
 #
 # Usage:
 #   Scripts/ui-tests.sh                # all UI tests
-#   Scripts/ui-tests.sh testSearch     # filter by method name substring
+#   Scripts/ui-tests.sh MainWindowUITests/testSearchFindsTranscriptHitAndDeepLinks
 set -euo pipefail
 
 PROJECT="$(cd "$(dirname "$0")/.." && pwd)/LokalBot.xcodeproj"
 DERIVED=".build/dd"
+SCHEME="LokalBot UI Test Host"
 
 ARGS=(
   -project "$PROJECT"
-  -scheme LokalBot
+  -scheme "$SCHEME"
   -destination 'platform=macOS'
   -derivedDataPath "$DERIVED"
 )
 
 if [ "${1:-}" != "" ]; then
-  ARGS+=(-only-testing:"LokalBotUITests/MainWindowUITests/$1")
+  FILTER="${1#LokalBotUITests/}"
+  ARGS+=(-only-testing:"LokalBotUITests/$FILTER")
 else
   ARGS+=(-only-testing:LokalBotUITests)
 fi

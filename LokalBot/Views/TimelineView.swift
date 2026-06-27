@@ -141,19 +141,24 @@ struct TimelineView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Button { day = day.addingTimeInterval(-86_400) } label: {
+            Button { moveDay(by: -1) } label: {
                 Image(systemName: "chevron.left")
             }
             .accessibilityLabel("Previous day")
             DatePicker("", selection: $day, displayedComponents: .date)
                 .labelsHidden().fixedSize()
-            Button { day = day.addingTimeInterval(86_400) } label: {
+            Button { moveDay(by: 1) } label: {
                 Image(systemName: "chevron.right")
             }
             .accessibilityLabel("Next day")
             .disabled(Calendar.current.isDateInToday(day))
             Spacer()
         }
+    }
+
+    private func moveDay(by value: Int) {
+        day = Calendar.current.date(byAdding: .day, value: value, to: day)
+            ?? day.addingTimeInterval(TimeInterval(value) * 86_400)
     }
 
     private var summaryRail: some View {

@@ -83,7 +83,7 @@ enum CotypingTextNormalizer {
             }
         }
 
-        if CotypingTrailingDuplicationFilter.duplicatesTrailingText(
+        if !request.forceWordContinuation, CotypingTrailingDuplicationFilter.duplicatesTrailingText(
             normalized, trailingText: request.trailingText) {
             return CotypingNormalizationResult(text: "", suppression: .duplicatesTrailingText)
         }
@@ -172,22 +172,13 @@ enum CotypingTextNormalizer {
     }
 
     private static func isPlausibleMidWordContinuation(_ text: String, trailingText: String) -> Bool {
-        let trailingWord = leadingWordRun(in: trailingText)
+        let trailingWord = CotypingMidWord.leadingWordRun(in: trailingText)
         guard !trailingWord.isEmpty else { return true }
-        let candidate = leadingWordRun(in: text)
+        let candidate = CotypingMidWord.leadingWordRun(in: text)
         guard !candidate.isEmpty else { return false }
         let foldedCandidate = candidate.lowercased()
         let foldedTrailing = trailingWord.lowercased()
         return foldedTrailing.hasPrefix(foldedCandidate) || foldedCandidate.hasPrefix(foldedTrailing)
-    }
-
-    private static func leadingWordRun(in text: String) -> String {
-        var result = ""
-        for character in text {
-            guard CotypingMidWord.isWordCharacter(character) else { break }
-            result.append(character)
-        }
-        return result
     }
 
     private static func isSuggestionWordCharacter(_ character: Character) -> Bool {

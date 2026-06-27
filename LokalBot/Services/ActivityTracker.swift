@@ -38,6 +38,11 @@ final class ActivityStore {
             """)
     }
 
+    nonisolated static func dayInterval(containing day: Date, calendar: Calendar = .current) -> DateInterval {
+        calendar.dateInterval(of: .day, for: day)
+            ?? DateInterval(start: calendar.startOfDay(for: day), duration: 86_400)
+    }
+
     func insert(_ block: ActivityBlock) {
         database?.run(
             "INSERT INTO activity_blocks (app, title, start, end) VALUES (?1, ?2, ?3, ?4)",
@@ -70,11 +75,11 @@ final class ActivityStore {
     }
 
     func screenshots(on day: Date) -> [Screenshot] {
-        let dayStart = Calendar.current.startOfDay(for: day).timeIntervalSince1970
+        let interval = Self.dayInterval(containing: day)
         return database?.query("""
             SELECT id, ts, path, app FROM screenshots
             WHERE ts >= ?1 AND ts < ?2 AND path != '' ORDER BY ts
-            """, bind: [dayStart, dayStart + 86_400]) { statement in
+            """, bind: [interval.start.timeIntervalSince1970, interval.end.timeIntervalSince1970]) { statement in
             Screenshot(id: sqlite3_column_int64(statement, 0),
                        ts: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
                        path: String(cString: sqlite3_column_text(statement, 2)),
@@ -96,10 +101,10 @@ final class ActivityStore {
 
     /// OCR text for a day, for the "ask your day" LLM context.
     func ocrText(on day: Date, maxChars: Int = 9_000) -> String {
-        let dayStart = Calendar.current.startOfDay(for: day).timeIntervalSince1970
+        let interval = Self.dayInterval(containing: day)
         return database?.withStatement("""
             SELECT app, text FROM ocr_fts WHERE ts >= ?1 AND ts < ?2 ORDER BY ts
-            """, bind: [dayStart, dayStart + 86_400]) { statement in
+            """, bind: [interval.start.timeIntervalSince1970, interval.end.timeIntervalSince1970]) { statement in
             var out = ""
             while sqlite3_step(statement) == SQLITE_ROW, out.count < maxChars {
                 let app = String(cString: sqlite3_column_text(statement, 0))
@@ -124,12 +129,11 @@ final class ActivityStore {
 
     /// All blocks overlapping the given day, oldest first.
     func blocks(on day: Date) -> [ActivityBlock] {
-        let dayStart = Calendar.current.startOfDay(for: day)
-        let dayEnd = dayStart.addingTimeInterval(86_400)
+        let interval = Self.dayInterval(containing: day)
         return database?.query("""
             SELECT id, app, title, start, end FROM activity_blocks
             WHERE end > ?1 AND start < ?2 ORDER BY start
-            """, bind: [dayStart.timeIntervalSince1970, dayEnd.timeIntervalSince1970]) { statement in
+            """, bind: [interval.start.timeIntervalSince1970, interval.end.timeIntervalSince1970]) { statement in
             ActivityBlock(
                 id: sqlite3_column_int64(statement, 0),
                 app: String(cString: sqlite3_column_text(statement, 1)),

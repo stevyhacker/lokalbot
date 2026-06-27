@@ -45,7 +45,7 @@ enum CotypingPromptRenderer {
         if let notes = nonEmpty(extendedContext) {
             preface.append("Notes the writer keeps in mind: \(String(notes.prefix(300)))")
         }
-        for example in learnedExamples.prefix(3) {
+        for example in learnedExamples {
             if let example = nonEmpty(example) {
                 preface.append("Previously accepted completion: \(String(example.prefix(maxLearnedExampleCharacters)))")
             }

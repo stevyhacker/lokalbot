@@ -13,6 +13,51 @@ enum AppIdentifiers {
     static var bundleID: String { appBundleID }
 }
 
+enum UITestRuntime {
+    static let enabledKey = "lokalbotv3.uiTest.enabled"
+    static let storageRootKey = "lokalbotv3.uiTest.storageRoot"
+    static let defaultsSuiteKey = "lokalbotv3.uiTest.defaultsSuite"
+    private static let enabledArgument = "--lokalbot-ui-test"
+    private static let storageRootArgument = "--lokalbot-storage-root"
+    private static let defaultsSuiteArgument = "--lokalbot-defaults-suite"
+
+    static var isEnabled: Bool {
+#if LOKALBOTV3_UI_TEST_HOST
+        true
+#else
+        ProcessInfo.processInfo.environment["LOKALBOTV3_UI_TEST"] == "1"
+            || ProcessInfo.processInfo.arguments.contains(enabledArgument)
+            || UserDefaults.standard.bool(forKey: enabledKey)
+#endif
+    }
+
+    static var storageRoot: String? {
+        nonEmpty(ProcessInfo.processInfo.environment["LOKALBOTV3_STORAGE_ROOT"])
+            ?? argumentValue(after: storageRootArgument)
+            ?? nonEmpty(UserDefaults.standard.string(forKey: storageRootKey))
+    }
+
+    static var defaultsSuiteName: String? {
+        nonEmpty(ProcessInfo.processInfo.environment["LOKALBOTV3_DEFAULTS_SUITE"])
+            ?? argumentValue(after: defaultsSuiteArgument)
+            ?? nonEmpty(UserDefaults.standard.string(forKey: defaultsSuiteKey))
+    }
+
+    private static func argumentValue(after option: String) -> String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: option),
+              arguments.indices.contains(arguments.index(after: index)) else {
+            return nil
+        }
+        return nonEmpty(arguments[arguments.index(after: index)])
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        return value
+    }
+}
+
 enum KeychainSecrets {
     static func string(account: String) -> String? {
         guard let data = data(account: account) else { return nil }
@@ -74,6 +119,14 @@ enum KeychainSecrets {
     @MainActor private static var symmetricKeyCache: [String: SymmetricKey] = [:]
     @MainActor static func symmetricKey(account: String) throws -> SymmetricKey {
         if let cached = symmetricKeyCache[account] { return cached }
+#if LOKALBOTV3_UI_TEST_HOST
+        if UITestRuntime.isEnabled {
+            let digest = SHA256.hash(data: Data("lokalbot-ui-test-\(account)".utf8))
+            let key = SymmetricKey(data: Data(digest))
+            symmetricKeyCache[account] = key
+            return key
+        }
+#endif
         if let data = data(account: account) {
             let key = SymmetricKey(data: data)
             symmetricKeyCache[account] = key
