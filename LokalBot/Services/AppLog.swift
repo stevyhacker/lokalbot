@@ -4,8 +4,8 @@ import Logging
 /// LokalBot's logging front door. Wraps swift-log so the whole app logs through
 /// one bootstrap that fans every event out to both stdout (visible in Console
 /// and when launched from a terminal) and the on-disk `debug.log` the app has
-/// always written. The legacy `lokalbotLog(_:)` shim is rerouted to ``line(_:)``
-/// so existing call sites keep working unchanged.
+/// always written. The `lokalbotLog(_:)` shim is rerouted to ``line(_:)`` so
+/// call sites can keep using one plain-line diagnostics function.
 ///
 /// Deliberately NOT main-actor isolated: `lokalbotLog` is a free function
 /// called from any thread/actor, swift-log's `Logger` is a thread-safe value
@@ -43,7 +43,7 @@ enum AppLog {
     }
 
     /// Logs `message` at `.info` on the default category. This is the single
-    /// entry point the rerouted `lokalbotLog(_:)` calls, preserving the old
+    /// entry point the rerouted `lokalbotLog(_:)` calls, preserving the
     /// "one plain line of diagnostics" behavior on top of swift-log.
     ///
     /// `bootstrap()` is expected to have run at launch before the first call;

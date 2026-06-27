@@ -17,7 +17,7 @@ final class AppUpdateManager: ObservableObject {
     /// ed25519 public key replaces it, `hasUsableConfiguration` is false and the
     /// updater never starts — a fresh clone can't accidentally self-update.
     static let publicKeyPlaceholder = "REPLACE_WITH_GENERATED_SPARKLE_PUBLIC_ED_KEY"
-    private static let debugCheckOnLaunchArgument = "-lokalbotv3-check-for-updates-on-launch"
+    private static let debugCheckOnLaunchArgument = "-lokalbot-check-for-updates-on-launch"
 
     /// Retained for the process lifetime — Sparkle expects its controller alive.
     private let updaterController: SPUStandardUpdaterController

@@ -14,9 +14,9 @@ enum AppIdentifiers {
 }
 
 enum UITestRuntime {
-    static let enabledKey = "lokalbotv3.uiTest.enabled"
-    static let storageRootKey = "lokalbotv3.uiTest.storageRoot"
-    static let defaultsSuiteKey = "lokalbotv3.uiTest.defaultsSuite"
+    static let enabledKey = "lokalbot.uiTest.enabled"
+    static let storageRootKey = "lokalbot.uiTest.storageRoot"
+    static let defaultsSuiteKey = "lokalbot.uiTest.defaultsSuite"
     private static let enabledArgument = "--lokalbot-ui-test"
     private static let storageRootArgument = "--lokalbot-storage-root"
     private static let defaultsSuiteArgument = "--lokalbot-defaults-suite"

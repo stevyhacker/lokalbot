@@ -6,9 +6,9 @@ import XCTest
 enum UITestHarness {
     private static let defaultsKey = "lokalbotv3.settings"
     private static let appBundleIdentifier = "me.dotenv.LokalBot.uitesthost"
-    private static let uiTestEnabledKey = "lokalbotv3.uiTest.enabled"
-    private static let uiTestStorageRootKey = "lokalbotv3.uiTest.storageRoot"
-    private static let uiTestDefaultsSuiteKey = "lokalbotv3.uiTest.defaultsSuite"
+    private static let uiTestEnabledKey = "lokalbot.uiTest.enabled"
+    private static let uiTestStorageRootKey = "lokalbot.uiTest.storageRoot"
+    private static let uiTestDefaultsSuiteKey = "lokalbot.uiTest.defaultsSuite"
 
     struct Launch {
         let app: XCUIApplication

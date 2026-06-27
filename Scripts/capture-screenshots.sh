@@ -3,8 +3,8 @@
 # Regenerate the README screenshots and GIFs from the real app UI.
 #
 # Builds the UI-test host, seeds a synthetic meeting library, then lands the
-# host on each section via the LOKALBOTV3_* capture env vars (handled in the
-# app only under the LOKALBOT_UI_TEST_HOST build flag) and screenshots each
+# host on each section via the LOKALBOT_* capture env vars (handled in the app
+# only under the LOKALBOT_UI_TEST_HOST build flag) and screenshots each
 # window by its own PID -- so a running production LokalBot is never touched.
 # No TCC permissions beyond Screen Recording for the controlling terminal.
 #
@@ -35,7 +35,7 @@ xcodebuild -project LokalBot.xcodeproj -scheme "$SCHEME" \
 PRODUCTS=$(xcodebuild -project LokalBot.xcodeproj -scheme "$SCHEME" \
   -configuration Debug -destination 'platform=macOS' -showBuildSettings 2>/dev/null \
   | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $2; exit}')
-APP="$PRODUCTS/LokalBotV3 UI Test Host.app/Contents/MacOS/LokalBotV3 UI Test Host"
+APP="$PRODUCTS/LokalBot UI Test Host.app/Contents/MacOS/LokalBot UI Test Host"
 
 echo "==> Seeding demo library"
 python3 Scripts/seed_demo_library.py "$LIB"
@@ -57,7 +57,7 @@ SWIFT
 # capture <dest-dir> <name> [ENV=val ...]
 capture() {
   dest="$1"; name="$2"; shift 2
-  pkill -f "LokalBotV3 UI Test Host" >/dev/null 2>&1 || true
+  pkill -f "LokalBot UI Test Host" >/dev/null 2>&1 || true
   sleep 1
   env LOKALBOT_UI_TEST=1 LOKALBOT_STORAGE_ROOT="$LIB" LOKALBOT_DEFAULTS_SUITE="$SUITE" "$@" \
     "$APP" -ApplePersistenceIgnoreState YES \
@@ -89,7 +89,7 @@ capture "$FRAMES" recap-northwind  LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SE
 capture "$FRAMES" recap-q3         LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=2 LOKALBOT_DETAIL_TAB=summary LOKALBOT_DISMISS_ONBOARDING=1
 capture "$FRAMES" search-sso       LOKALBOT_INITIAL_SECTION=search LOKALBOT_INITIAL_SEARCH=SSO
 capture "$FRAMES" search-postgres  LOKALBOT_INITIAL_SECTION=search LOKALBOT_INITIAL_SEARCH=Postgres
-pkill -f "LokalBotV3 UI Test Host" >/dev/null 2>&1 || true
+pkill -f "LokalBot UI Test Host" >/dev/null 2>&1 || true
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
   echo "==> ffmpeg not found; PNGs written, skipping GIFs"
