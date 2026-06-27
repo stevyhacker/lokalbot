@@ -36,10 +36,10 @@ packages:
 # (product name, bundle id, dev compilation flag). The dev build therefore
 # holds its OWN Accessibility/Screen-Recording/Mic TCC grant under a distinct
 # bundle id, so running from Xcode never disturbs the released app's grants —
-# and Sparkle is compiled out of dev (LOKALBOTV3_DEV) so the prod appcast can never
+# and Sparkle is compiled out of dev (LOKALBOT_DEV) so the prod appcast can never
 # replace the dev bundle with the shipped app.
 targetTemplates:
-  LokalBotV3App:
+  LokalBotApp:
     type: application
     platform: macOS
     sources:
@@ -135,41 +135,41 @@ targetTemplates:
 targets:
   LokalBot:
     templates:
-      - LokalBotV3App
+      - LokalBotApp
     settings:
       base:
         PRODUCT_NAME: LokalBot
-        PRODUCT_MODULE_NAME: LokalBotV3
+        PRODUCT_MODULE_NAME: LokalBot
         PRODUCT_BUNDLE_IDENTIFIER: me.dotenv.LokalBot
 
   # Local development build. Distinct bundle id + product name means a separate,
   # stable TCC identity (Mic, Screen Recording, Accessibility survive rebuilds),
-  # and LOKALBOTV3_DEV compiles Sparkle's launch path out so the prod appcast never
-  # swaps this bundle for the released app. Keep LOKALBOTV3_DEV under `base:` so it
+  # and LOKALBOT_DEV compiles Sparkle's launch path out so the prod appcast never
+  # swaps this bundle for the released app. Keep LOKALBOT_DEV under `base:` so it
   # is defined in EVERY configuration (Release included) — a Release-config dev
   # build (Profile/Archive) must still keep Sparkle inert.
   "LokalBot Dev":
     templates:
-      - LokalBotV3App
+      - LokalBotApp
     settings:
       base:
         PRODUCT_NAME: "LokalBot Dev"
-        PRODUCT_MODULE_NAME: LokalBotV3Dev
+        PRODUCT_MODULE_NAME: LokalBotDev
         PRODUCT_BUNDLE_IDENTIFIER: me.dotenv.LokalBot.dev
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: LOKALBOTV3_DEV $(inherited)
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: LOKALBOT_DEV $(inherited)
 
   # UI-test host. Same app sources and dev-only Sparkle behavior, but compiled
   # without the menu-bar extra so XCUITest can launch and snapshot a normal
   # foreground window reliably.
   "LokalBot UI Test Host":
     templates:
-      - LokalBotV3App
+      - LokalBotApp
     settings:
       base:
         PRODUCT_NAME: "LokalBot UI Test Host"
-        PRODUCT_MODULE_NAME: LokalBotV3UITestHost
+        PRODUCT_MODULE_NAME: LokalBotUITestHost
         PRODUCT_BUNDLE_IDENTIFIER: me.dotenv.LokalBot.uitesthost
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: LOKALBOTV3_DEV LOKALBOTV3_UI_TEST_HOST $(inherited)
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: LOKALBOT_DEV LOKALBOT_UI_TEST_HOST $(inherited)
 
   LokalBotTests:
     type: bundle.unit-test
@@ -183,14 +183,14 @@ targets:
         BUNDLE_LOADER: "$(TEST_HOST)"
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LokalBot.app/Contents/MacOS/LokalBot"
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_MODULE_NAME: LokalBotV3Tests
+        PRODUCT_MODULE_NAME: LokalBotTests
         PRODUCT_BUNDLE_IDENTIFIER: me.dotenv.LokalBotTests
 
   # Synthetic-data UI tests. Drives the UI-test host app via
-  # XCUITest with `LOKALBOTV3_UI_TEST=1` so the app skips Core Audio polling,
+  # XCUITest with `LOKALBOT_UI_TEST=1` so the app skips Core Audio polling,
   # the accessibility-trusted meeting detector, Sparkle and screenshots —
   # the suite renders the SwiftUI surfaces against a synthetic meetings
-  # library planted under `LOKALBOTV3_STORAGE_ROOT` (a per-test tmp dir).
+  # library planted under `LOKALBOT_STORAGE_ROOT` (a per-test tmp dir).
   # No TCC permissions required. The host bundle id avoids collisions with a
   # user's installed/running production or development LokalBot app.
   LokalBotUITests:
@@ -204,7 +204,7 @@ targets:
       base:
         TEST_TARGET_NAME: "LokalBot UI Test Host"
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_MODULE_NAME: LokalBotV3UITests
+        PRODUCT_MODULE_NAME: LokalBotUITests
         PRODUCT_BUNDLE_IDENTIFIER: me.dotenv.LokalBotUITests
 
   lokalbot-cli:

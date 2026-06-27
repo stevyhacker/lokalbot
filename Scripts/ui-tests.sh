@@ -3,7 +3,7 @@
 #
 # Drives the dedicated LokalBot UI Test Host via XCUITest against a
 # synthetic meetings library — no microphone/screen-recording permissions,
-# no real audio, no network. The host is compiled with LOKALBOTV3_UI_TEST=1
+# no real audio, no network. The host is compiled with LOKALBOT_UI_TEST=1
 # and skips every side-effectful subsystem (Core Audio polling,
 # accessibility-trusted detector, Sparkle, screenshots).
 #

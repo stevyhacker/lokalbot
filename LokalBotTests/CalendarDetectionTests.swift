@@ -1,5 +1,5 @@
 import XCTest
-@testable import LokalBotV3
+@testable import LokalBot
 
 /// Calendar-assisted meeting detection: the conferencing-URL parser, event
 /// filtering, active-event selection, the browser-meeting decision (the Google

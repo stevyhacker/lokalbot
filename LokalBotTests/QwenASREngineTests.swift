@@ -1,5 +1,5 @@
 import XCTest
-@testable import LokalBotV3
+@testable import LokalBot
 
 final class QwenASREngineTests: XCTestCase {
     /// The cache dir handed to the Qwen3ASR package must be the Hub layout

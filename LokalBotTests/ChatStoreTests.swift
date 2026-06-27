@@ -1,5 +1,5 @@
 import XCTest
-@testable import LokalBotV3
+@testable import LokalBot
 
 /// Persistence for the Chat section's conversation history: the on-disk
 /// round-trip through `ChatStore`, that the transient `isPending` flag is never

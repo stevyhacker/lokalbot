@@ -1,5 +1,5 @@
 import XCTest
-@testable import LokalBotV3
+@testable import LokalBot
 
 /// Behavioral tests for the pure logic added with the Cotabby-derived subsystems.
 /// Everything here is deterministic and runs off the main actor.

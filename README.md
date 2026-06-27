@@ -38,12 +38,25 @@ LokalBot is a strictly-local meeting recorder for macOS. It records both sides o
 | **Free, no account** | No sign-up, no subscription, no telemetry. |
 | **Open source** | Read every line, or build it yourself. |
 
-## Screenshots
+## See it in action
+
+**Records the call, writes the recap.** Pick any meeting and get a structured summary plus a speaker-labeled (Me / Them) transcript.
+
+<div align="center"><img src="Assets/screenshots/recap.gif" alt="Browsing meeting recaps and speaker-labeled transcripts" width="860"></div>
+
+**Search everything you've heard.** Full-text and semantic search across transcripts and summaries — click a hit to play from that exact second.
+
+<div align="center"><img src="Assets/screenshots/search.gif" alt="Searching across meetings, results highlighted" width="860"></div>
+
+<details>
+<summary><strong>More screens</strong> — day timeline, cotyping, models, chat</summary>
 
 |  |  |
 | :--: | :--: |
-| <img src="Assets/screenshots/meetings-summary.png" alt="Auto-written meeting recap" width="420"><br>**Auto-written recap** — TL;DR, decisions, action items | <img src="Assets/screenshots/meetings-transcript.png" alt="Speaker-labeled transcript" width="420"><br>**Speaker-labeled transcript** — Me vs. Them |
-| <img src="Assets/screenshots/search.png" alt="Full-text and semantic search" width="420"><br>**Search everything** — jump to the exact second | <img src="Assets/screenshots/timeline.png" alt="Private day timeline" width="420"><br>**Day timeline** — see where your time went |
+| <img src="Assets/screenshots/timeline.png" alt="Day timeline" width="420"><br>**Day timeline** — see where your time went | <img src="Assets/screenshots/cotyping.png" alt="Cotyping inline autocomplete" width="420"><br>**Cotyping** — inline AI autocomplete |
+| <img src="Assets/screenshots/models.png" alt="Model catalog" width="420"><br>**Models** — pick or download any model | <img src="Assets/screenshots/chat.png" alt="Chat with your meetings" width="420"><br>**Chat** — ask across your library |
+
+</details>
 
 ## Features
 
@@ -214,7 +227,7 @@ Set your team under **Signing & Capabilities**, pick a scheme, and Run:
 | Scheme | Bundle id | Notes |
 | --- | --- | --- |
 | **LokalBot** | `me.dotenv.LokalBot` | production; Sparkle auto-update compiled in |
-| **LokalBot Dev** | `me.dotenv.LokalBot.dev` | `LOKALBOTV3_DEV` flag; Sparkle compiled out. A distinct bundle id keeps its own Mic / Screen Recording / Accessibility grants, so running from Xcode never disturbs the released app |
+| **LokalBot Dev** | `me.dotenv.LokalBot.dev` | `LOKALBOT_DEV` flag; Sparkle compiled out. A distinct bundle id keeps its own Mic / Screen Recording / Accessibility grants, so running from Xcode never disturbs the released app |
 
 The first build runs `Scripts/fetch-llama.sh` (a pre-build phase) which vendors the pinned llama.cpp server (`b9789` — server + dylibs, ~10 MB) and the built-in model (Qwen3.5 0.8B Q4_K_M, ~0.5 GB) into `Vendor/`, copied into the app bundle. On first recording, macOS prompts for **Microphone** and **System Audio Recording**; transcription and screenshot models download from Hugging Face on first use.
 
@@ -300,7 +313,7 @@ The app binary doubles as a test harness; flows that need ungranted permissions 
   xcodebuild -project LokalBot.xcodeproj -scheme LokalBot -destination 'platform=macOS' test
   ```
   Pure-logic coverage — prompt sanitizers, search ranker, model fit, transcript merging, settings codecs, data migration, and the chat agent (tool-call parsing for JSON **and** native function-call forms, the ReAct loop, observation formatters).
-- **UI** (`LokalBotUITests`, XCUITest): `Scripts/ui-tests.sh`. Drives a dedicated UI Test Host against a synthetic library under a tmp `LOKALBOTV3_STORAGE_ROOT`; `LOKALBOTV3_UI_TEST=1` skips every side-effectful subsystem (Core Audio polling, the trusted detector, Sparkle, screenshots), so no app permissions are needed and the suite never touches the installed production app. Eighteen tests cover meeting-list grouping, sidebar navigation, Models, Settings + permission repair, calendar gating, Chat + persisted history, detail tabs, FTS5 search → deep-link, timeline states, cotyping gating, multi-select, and both branches of the delete dialog. The first run needs the controlling terminal/IDE to hold **Automation → Xcode** and **Accessibility** grants.
+- **UI** (`LokalBotUITests`, XCUITest): `Scripts/ui-tests.sh`. Drives a dedicated UI Test Host against a synthetic library under a tmp `LOKALBOT_STORAGE_ROOT`; `LOKALBOT_UI_TEST=1` skips every side-effectful subsystem (Core Audio polling, the trusted detector, Sparkle, screenshots), so no app permissions are needed and the suite never touches the installed production app. Eighteen tests cover meeting-list grouping, sidebar navigation, Models, Settings + permission repair, calendar gating, Chat + persisted history, detail tabs, FTS5 search → deep-link, timeline states, cotyping gating, multi-select, and both branches of the delete dialog. The first run needs the controlling terminal/IDE to hold **Automation → Xcode** and **Accessibility** grants.
 - **End-to-end** (`Scripts/e2e.sh`): exercises real audio, CoreML transcription, the bundled llama-server, and SQLite via the headless flags; skips flows needing ungranted permissions.
 
 ### On-disk layout
@@ -345,7 +358,7 @@ LokalBot/
 
 ### Releasing
 
-In-place signed updates ship via [Sparkle](https://github.com/sparkle-project/Sparkle). The release runbook (notarization, appcast signing, DMG tooling) lives in [`RELEASING.md`](RELEASING.md). `AppUpdateManager` stays inert on dev builds (`LOKALBOTV3_DEV`) and until `SUFeedURL` + `SUPublicEDKey` are real, so a fresh clone never self-updates.
+In-place signed updates ship via [Sparkle](https://github.com/sparkle-project/Sparkle). The release runbook (notarization, appcast signing, DMG tooling) lives in [`RELEASING.md`](RELEASING.md). `AppUpdateManager` stays inert on dev builds (`LOKALBOT_DEV`) and until `SUFeedURL` + `SUPublicEDKey` are real, so a fresh clone never self-updates.
 
 ## Status
 

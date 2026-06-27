@@ -146,9 +146,9 @@ enum UITestHarness {
             "--lokalbot-defaults-suite", defaultsSuiteName,
         ]
         process.environment = appHostEnvironment().merging([
-            "LOKALBOTV3_UI_TEST": "1",
-            "LOKALBOTV3_STORAGE_ROOT": storageRoot.path,
-            "LOKALBOTV3_DEFAULTS_SUITE": defaultsSuiteName,
+            "LOKALBOT_UI_TEST": "1",
+            "LOKALBOT_STORAGE_ROOT": storageRoot.path,
+            "LOKALBOT_DEFAULTS_SUITE": defaultsSuiteName,
         ]) { _, new in new }
         try process.run()
 

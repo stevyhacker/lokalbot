@@ -29,11 +29,11 @@ enum LokalBotMain {
         DataMigration.runIfNeeded()
         UserDefaults.standard.set(lokalbotLaunchesMenuBarOnly(),
                                   forKey: "ApplePersistenceIgnoreState")
-        LokalBotV3App.main()
+        LokalBotApp.main()
     }
 }
 
-struct LokalBotV3App: App {
+struct LokalBotApp: App {
     @StateObject private var app: AppState
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
@@ -84,7 +84,7 @@ struct LokalBotV3App: App {
         .windowStyle(.hiddenTitleBar)
         .defaultPosition(.center)
 
-#if !LOKALBOTV3_UI_TEST_HOST
+#if !LOKALBOT_UI_TEST_HOST
         MenuBarExtra {
             MenuBarView()
                 .environmentObject(app)
@@ -139,7 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.setActivationPolicy(.regular)
             let app = Self.appState ?? AppState()
             Self.appState = app
-#if LOKALBOTV3_UI_TEST_HOST
+#if LOKALBOT_UI_TEST_HOST
             applyCaptureEnvironment(to: app)
 #endif
             openUITestWindow(app: app)
@@ -201,7 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.orderFrontRegardless()
     }
 
-#if LOKALBOTV3_UI_TEST_HOST
+#if LOKALBOT_UI_TEST_HOST
     /// Screenshot/scripting hook for the UI-test host: a few env vars let an
     /// external capture script land the window on a specific section with a
     /// meeting preselected, without synthetic input (no Accessibility needed).
@@ -210,18 +210,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private func applyCaptureEnvironment(to app: AppState) {
         let env = ProcessInfo.processInfo.environment
-        if let raw = env["LOKALBOTV3_INITIAL_SECTION"],
+        if let raw = env["LOKALBOT_INITIAL_SECTION"],
            let section = AppState.NavSection(captureName: raw) {
             app.navSection = section
         }
-        if env["LOKALBOTV3_SELECT_FIRST"] == "1", let first = app.meetings.first {
+        if env["LOKALBOT_SELECT_FIRST"] == "1", let first = app.meetings.first {
             app.selectedMeetingIDs = [first.id]
         }
-        if let raw = env["LOKALBOTV3_SELECT_INDEX"], let idx = Int(raw) {
+        if let raw = env["LOKALBOT_SELECT_INDEX"], let idx = Int(raw) {
             let ordered = app.meetings.sorted { $0.startedAt > $1.startedAt }
             if ordered.indices.contains(idx) { app.selectedMeetingIDs = [ordered[idx].id] }
         }
-        if env["LOKALBOTV3_DISMISS_ONBOARDING"] == "1" {
+        if env["LOKALBOT_DISMISS_ONBOARDING"] == "1" {
             UserDefaults.standard.set(true, forKey: "lokalbotv3.gettingStartedDismissed")
         }
     }
@@ -350,7 +350,7 @@ final class AppState: ObservableObject {
 
     enum NavSection: Hashable {
         case meetings, timeline, cotyping, chat, search, models, settings
-#if LOKALBOTV3_UI_TEST_HOST
+#if LOKALBOT_UI_TEST_HOST
         init?(captureName: String) {
             switch captureName.lowercased() {
             case "meetings": self = .meetings
@@ -639,13 +639,13 @@ final class AppState: ObservableObject {
             eventID: calendarEvent?.externalID, lastEventID: lastCalendarEventID,
             lastEndedAt: lastCalendarEventEndedAt, now: Date(),
             cooldown: Self.calendarRepeatCooldown) {
-            lokalbotv3Log("startRecording suppressed: calendar event \(calendarEvent?.externalID ?? "?") within cooldown")
+            lokalbotLog("startRecording suppressed: calendar event \(calendarEvent?.externalID ?? "?") within cooldown")
             return
         }
         isStartingRecording = true
         audioMonitor.isRecordingActive = true
         audioMonitor.accept()
-        lokalbotv3Log("startRecording source=\(source) app=\(detectedApp?.name ?? "manual") calendar=\(calendarEvent?.title ?? "none")")
+        lokalbotLog("startRecording source=\(source) app=\(detectedApp?.name ?? "manual") calendar=\(calendarEvent?.title ?? "none")")
         Task {
             defer { isStartingRecording = false }
             guard await MicRecorder.requestPermission() else {
@@ -696,7 +696,7 @@ final class AppState: ObservableObject {
                 }
             } catch {
                 lastError = "Could not start recording: \(error.localizedDescription)"
-                lokalbotv3Log("startRecording FAILED: \(error.localizedDescription)")
+                lokalbotLog("startRecording FAILED: \(error.localizedDescription)")
                 audioMonitor.isRecordingActive = false
                 audioMonitor.reseed()
                 // Don't leave a 0-minute husk in the library.
@@ -711,7 +711,7 @@ final class AppState: ObservableObject {
         let choice = settings.transcriptionModel
         transcriptionPrewarmTask = Task { [weak self, choice, reason] in
             let started = Date()
-            lokalbotv3Log("transcription prewarm start model=\(choice.rawValue) reason=\(reason)")
+            lokalbotLog("transcription prewarm start model=\(choice.rawValue) reason=\(reason)")
             do {
                 switch choice {
                 case .parakeetV3:
@@ -734,9 +734,9 @@ final class AppState: ObservableObject {
                     try await OnnxTranscriptionEngine.gigaamRussian.prepare()
                 }
                 let elapsed = Date().timeIntervalSince(started)
-                lokalbotv3Log("transcription prewarm ready model=\(choice.rawValue) elapsed=\(String(format: "%.2fs", elapsed))")
+                lokalbotLog("transcription prewarm ready model=\(choice.rawValue) elapsed=\(String(format: "%.2fs", elapsed))")
             } catch {
-                lokalbotv3Log("transcription prewarm FAILED model=\(choice.rawValue): \(error.localizedDescription)")
+                lokalbotLog("transcription prewarm FAILED model=\(choice.rawValue): \(error.localizedDescription)")
             }
             await MainActor.run { self?.transcriptionPrewarmTask = nil }
         }

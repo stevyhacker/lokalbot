@@ -99,10 +99,10 @@ struct SearchView: View {
         }
         .onChange(of: query) { runSearch() }
         .onChange(of: scope) { runSearch() }
-        #if LOKALBOTV3_UI_TEST_HOST
+        #if LOKALBOT_UI_TEST_HOST
         .onAppear {
             if query.isEmpty,
-               let q = ProcessInfo.processInfo.environment["LOKALBOTV3_INITIAL_SEARCH"], !q.isEmpty {
+               let q = ProcessInfo.processInfo.environment["LOKALBOT_INITIAL_SEARCH"], !q.isEmpty {
                 query = q
             }
         }

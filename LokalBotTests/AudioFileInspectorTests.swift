@@ -1,6 +1,6 @@
 import AVFoundation
 import XCTest
-@testable import LokalBotV3
+@testable import LokalBot
 
 final class AudioFileInspectorTests: XCTestCase {
     func testRejectsHeaderOnlyAudioFile() throws {

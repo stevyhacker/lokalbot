@@ -90,7 +90,7 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
             model: model, language: language, wavs: regions.map(\.wav))
         let elapsed = Date().timeIntervalSince(started)
         let total = regions.last?.end ?? 0
-        lokalbotv3Log(
+        lokalbotLog(
             "onnx profile model=\(model.folderName) regions=\(regions.count) results=\(texts.count) elapsed=\(String(format: "%.2fs", elapsed)) rtfx=\(String(format: "%.1fx", elapsed > 0 ? total / elapsed : 0))")
 
         var segments: [Transcript.Segment] = []

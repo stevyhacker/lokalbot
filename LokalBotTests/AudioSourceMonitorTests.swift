@@ -1,5 +1,5 @@
 import XCTest
-@testable import LokalBotV3
+@testable import LokalBot
 
 /// `AudioSourceMonitor` surfaces a "Record …?" suggestion when an app newly
 /// starts producing audio. Pure media/music players (Spotify, Apple Music, …)

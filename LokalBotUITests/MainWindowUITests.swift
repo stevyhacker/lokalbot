@@ -3,7 +3,7 @@ import XCTest
 /// End-to-end UI tests that drive the dedicated `LokalBot UI Test Host`
 /// against a synthetic meetings library planted on disk before launch.
 ///
-/// The app sees `LOKALBOTV3_UI_TEST=1` and skips every side-effectful
+/// The app sees `LOKALBOT_UI_TEST=1` and skips every side-effectful
 /// startup path (Core Audio polling, accessibility-trusted detector,
 /// Sparkle, screenshots), so the suite needs no TCC permissions and
 /// never touches the user's real library.

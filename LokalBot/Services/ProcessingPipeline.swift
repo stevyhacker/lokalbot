@@ -135,7 +135,7 @@ final class ProcessingPipeline: ObservableObject {
                                  language: String?) async throws -> Transcript? {
         guard let duration = AudioFileInspector.duration(at: url),
               duration >= AudioFileInspector.minimumTranscribableDuration else {
-            lokalbotv3Log("transcription track skipped track=\(name) reason=no-audio")
+            lokalbotLog("transcription track skipped track=\(name) reason=no-audio")
             return nil
         }
         // Skip a track with no detected speech (e.g. your mic while muted the
@@ -143,19 +143,19 @@ final class ProcessingPipeline: ObservableObject {
         // Conservative: only skip on a confident "nothing here"; VAD errors
         // return nil and we transcribe anyway, never dropping real audio.
         if let speech = await SpeechActivity.shared.speechSeconds(in: url), speech < 0.5 {
-            lokalbotv3Log("transcription track skipped track=\(name) reason=no-speech")
+            lokalbotLog("transcription track skipped track=\(name) reason=no-speech")
             return nil
         }
 
         let started = Date()
-        lokalbotv3Log(
+        lokalbotLog(
             "transcription track start track=\(name) engine=\(engine.displayName) duration=\(Self.formatSeconds(duration)) language=\(language ?? "auto")")
         var transcript = try await engine.transcribe(audio: url, language: language)
         for i in transcript.segments.indices { transcript.segments[i].speaker = speaker }
 
         let elapsed = Date().timeIntervalSince(started)
         let rtfx = elapsed > 0 ? duration / elapsed : 0
-        lokalbotv3Log(
+        lokalbotLog(
             "transcription track done track=\(name) engine=\(engine.displayName) duration=\(Self.formatSeconds(duration)) elapsed=\(Self.formatSeconds(elapsed)) rtfx=\(Self.formatMultiplier(rtfx)) segments=\(transcript.segments.count)")
         return transcript
     }

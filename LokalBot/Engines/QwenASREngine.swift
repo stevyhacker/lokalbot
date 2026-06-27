@@ -85,7 +85,7 @@ actor QwenASREngine: TranscriptionEngine {
         }
         let elapsed = Date().timeIntervalSince(started)
         let duration = spans.last?.end ?? 0
-        lokalbotv3Log(
+        lokalbotLog(
             "qwen-asr profile model=\(variant.modelID) spans=\(spans.count) elapsed=\(String(format: "%.2fs", elapsed)) rtfx=\(String(format: "%.1fx", elapsed > 0 ? duration / elapsed : 0))")
         await idle.bump()
         return Transcript(segments: segments, engine: "\(variant.modelID) (Qwen3ASR MLX)")

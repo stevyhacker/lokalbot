@@ -180,7 +180,7 @@ final class ActivitySampler: ObservableObject {
 
     func start() {
         guard timer == nil else { return }
-        lokalbotv3Log("sampler start — AX trusted: \(Self.hasAccessibility ? "yes" : "no")")
+        lokalbotLog("sampler start — AX trusted: \(Self.hasAccessibility ? "yes" : "no")")
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.sample() }
         }

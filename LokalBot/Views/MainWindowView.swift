@@ -365,9 +365,9 @@ struct MeetingDetailView: View {
                 onReset: { saveSpeakerAlias(nil, for: draft.speaker) },
                 onCancel: { speakerRenameDraft = nil })
         }
-#if LOKALBOTV3_UI_TEST_HOST
+#if LOKALBOT_UI_TEST_HOST
         .onAppear {
-            if let raw = ProcessInfo.processInfo.environment["LOKALBOTV3_DETAIL_TAB"],
+            if let raw = ProcessInfo.processInfo.environment["LOKALBOT_DETAIL_TAB"],
                let t = Tab(rawValue: raw.capitalized) {
                 tab = t
             }

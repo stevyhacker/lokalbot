@@ -1,5 +1,5 @@
 import XCTest
-@testable import LokalBotV3
+@testable import LokalBot
 
 final class TranscriptTests: XCTestCase {
     func testTimestampFormattingUsesHourMinuteSecondFormat() {

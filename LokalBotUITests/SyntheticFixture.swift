@@ -12,7 +12,7 @@ import SQLite3
 enum SyntheticFixture {
 
     /// Static handle on one planted fixture: the tmp `root` to point
-    /// `LOKALBOTV3_STORAGE_ROOT` at, plus the three meetings the tests assert on.
+    /// `LOKALBOT_STORAGE_ROOT` at, plus the three meetings the tests assert on.
     struct Library {
         let root: URL
         let designReview: Meeting
@@ -58,7 +58,7 @@ enum SyntheticFixture {
     }
 
     /// Build a fresh tmp library and write every fixture file to disk.
-    /// Caller passes the resulting `root` to the app as `LOKALBOTV3_STORAGE_ROOT`.
+    /// Caller passes the resulting `root` to the app as `LOKALBOT_STORAGE_ROOT`.
     static func plant(includeActivity: Bool = true) throws -> Library {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("LokalBotUITests-\(UUID().uuidString)", isDirectory: true)

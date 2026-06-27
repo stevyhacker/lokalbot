@@ -8,7 +8,7 @@ so the meeting list always reads TODAY / YESTERDAY.
 Usage:
     python3 Scripts/seed_demo_library.py <storage-root>
 
-Point the app at <storage-root> via LOKALBOTV3_STORAGE_ROOT. See
+Point the app at <storage-root> via LOKALBOT_STORAGE_ROOT. See
 Scripts/capture-screenshots.sh for the full capture flow.
 """
 import json, os, shutil, sqlite3, sys, time

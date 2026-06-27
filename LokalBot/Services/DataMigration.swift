@@ -51,9 +51,9 @@ enum DataMigration {
         if environment["XCTestConfigurationFilePath"] != nil { return }
         // Never migrate under a UI-test / storage-isolation launch either: those
         // point storage at a throwaway dir, so there's no real library to move.
-        if let root = environment["LOKALBOTV3_STORAGE_ROOT"], !root.isEmpty { return }
+        if let root = environment["LOKALBOT_STORAGE_ROOT"], !root.isEmpty { return }
         if let root = defaults.string(forKey: UITestRuntime.storageRootKey), !root.isEmpty { return }
-        if environment["LOKALBOTV3_UI_TEST"] == "1"
+        if environment["LOKALBOT_UI_TEST"] == "1"
             || defaults.bool(forKey: UITestRuntime.enabledKey)
             || UITestRuntime.isEnabled {
             return

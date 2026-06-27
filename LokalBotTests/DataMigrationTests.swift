@@ -1,5 +1,5 @@
 import XCTest
-@testable import LokalBotV3
+@testable import LokalBot
 
 /// Migration from old LokalBot identities. Exercises the data-loss-prone
 /// filesystem/settings halves with injected dirs/suites (the Keychain half talks

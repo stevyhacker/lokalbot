@@ -350,7 +350,7 @@ actor CohereEngine: TranscriptionEngine {
             if !segments.isEmpty {
                 let total = Double(analysis.samples.count) / Double(sampleRate)
                 let elapsed = Date().timeIntervalSince(started)
-                lokalbotv3Log(
+                lokalbotLog(
                     "cohere profile mode=vad-segmented duration=\(Self.formatSeconds(total)) regions=\(analysis.segments.count) segments=\(segments.count) elapsed=\(Self.formatSeconds(elapsed)) rtfx=\(Self.formatMultiplier(elapsed > 0 ? total / elapsed : 0)) language=\(lang.rawValue)")
                 await idle.bump()
                 return Transcript(segments: segments,
@@ -368,7 +368,7 @@ actor CohereEngine: TranscriptionEngine {
         let pipelineSeconds = Date().timeIntervalSince(pipelineStarted)
         let totalSeconds = conversionSeconds + pipelineSeconds
         let rtfx = totalSeconds > 0 ? duration / totalSeconds : 0
-        lokalbotv3Log(
+        lokalbotLog(
             "cohere profile mode=whole-track duration=\(Self.formatSeconds(duration)) convert=\(Self.formatSeconds(conversionSeconds)) pipeline=\(Self.formatSeconds(pipelineSeconds)) encoder=\(Self.formatSeconds(result.encoderSeconds)) decoder=\(Self.formatSeconds(result.decoderSeconds)) total=\(Self.formatSeconds(totalSeconds)) rtfx=\(Self.formatMultiplier(rtfx)) language=\(lang.rawValue)")
         await idle.bump()
         return Transcript(
@@ -411,7 +411,7 @@ actor SpeechActivity {
             await idle.bump()
             return (samples, segments)
         } catch {
-            lokalbotv3Log("vad unavailable — transcribing without it: \(error.localizedDescription)")
+            lokalbotLog("vad unavailable — transcribing without it: \(error.localizedDescription)")
             return nil
         }
     }

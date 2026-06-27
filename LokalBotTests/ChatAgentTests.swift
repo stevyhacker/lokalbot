@@ -1,5 +1,5 @@
 import XCTest
-@testable import LokalBotV3
+@testable import LokalBot
 
 /// Tests for the in-app meeting chat assistant: the tolerant tool-call protocol,
 /// the system-prompt builder, the ReAct loop (driven by a scripted engine and a
@@ -238,9 +238,9 @@ final class ChatAgentTests: XCTestCase {
     func testToolsListSearchAndGetAgainstPlantedLibrary() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("lokalbot-chat-\(UUID().uuidString)", isDirectory: true)
-        setenv("LOKALBOTV3_STORAGE_ROOT", root.path, 1)
+        setenv("LOKALBOT_STORAGE_ROOT", root.path, 1)
         defer {
-            unsetenv("LOKALBOTV3_STORAGE_ROOT")
+            unsetenv("LOKALBOT_STORAGE_ROOT")
             try? FileManager.default.removeItem(at: root)
         }
 
@@ -322,9 +322,9 @@ final class ChatAgentTests: XCTestCase {
     func testSearchRescuesNaturalLanguageQuery() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("lokalbot-nlsearch-\(UUID().uuidString)", isDirectory: true)
-        setenv("LOKALBOTV3_STORAGE_ROOT", root.path, 1)
+        setenv("LOKALBOT_STORAGE_ROOT", root.path, 1)
         defer {
-            unsetenv("LOKALBOTV3_STORAGE_ROOT")
+            unsetenv("LOKALBOT_STORAGE_ROOT")
             try? FileManager.default.removeItem(at: root)
         }
 

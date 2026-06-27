@@ -22,23 +22,23 @@ enum UITestRuntime {
     private static let defaultsSuiteArgument = "--lokalbot-defaults-suite"
 
     static var isEnabled: Bool {
-#if LOKALBOTV3_UI_TEST_HOST
+#if LOKALBOT_UI_TEST_HOST
         true
 #else
-        ProcessInfo.processInfo.environment["LOKALBOTV3_UI_TEST"] == "1"
+        ProcessInfo.processInfo.environment["LOKALBOT_UI_TEST"] == "1"
             || ProcessInfo.processInfo.arguments.contains(enabledArgument)
             || UserDefaults.standard.bool(forKey: enabledKey)
 #endif
     }
 
     static var storageRoot: String? {
-        nonEmpty(ProcessInfo.processInfo.environment["LOKALBOTV3_STORAGE_ROOT"])
+        nonEmpty(ProcessInfo.processInfo.environment["LOKALBOT_STORAGE_ROOT"])
             ?? argumentValue(after: storageRootArgument)
             ?? nonEmpty(UserDefaults.standard.string(forKey: storageRootKey))
     }
 
     static var defaultsSuiteName: String? {
-        nonEmpty(ProcessInfo.processInfo.environment["LOKALBOTV3_DEFAULTS_SUITE"])
+        nonEmpty(ProcessInfo.processInfo.environment["LOKALBOT_DEFAULTS_SUITE"])
             ?? argumentValue(after: defaultsSuiteArgument)
             ?? nonEmpty(UserDefaults.standard.string(forKey: defaultsSuiteKey))
     }
@@ -119,7 +119,7 @@ enum KeychainSecrets {
     @MainActor private static var symmetricKeyCache: [String: SymmetricKey] = [:]
     @MainActor static func symmetricKey(account: String) throws -> SymmetricKey {
         if let cached = symmetricKeyCache[account] { return cached }
-#if LOKALBOTV3_UI_TEST_HOST
+#if LOKALBOT_UI_TEST_HOST
         if UITestRuntime.isEnabled {
             let digest = SHA256.hash(data: Data("lokalbot-ui-test-\(account)".utf8))
             let key = SymmetricKey(data: Data(digest))

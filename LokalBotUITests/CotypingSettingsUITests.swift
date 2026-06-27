@@ -5,7 +5,7 @@ import XCTest
 /// mirror render mode, clipboard context, paste insertion, quality metrics).
 ///
 /// Like `MainWindowUITests`, this drives the dedicated UI-test host
-/// out-of-process against a synthetic library with `LOKALBOTV3_UI_TEST=1`, so
+/// out-of-process against a synthetic library with `LOKALBOT_UI_TEST=1`, so
 /// it needs no app TCC permissions and never touches the real library.
 ///
 /// macOS SwiftUI Form `Toggle`/`TextField` elements expose EMPTY accessibility
