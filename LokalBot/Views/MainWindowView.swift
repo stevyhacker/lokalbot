@@ -517,13 +517,18 @@ struct MeetingDetailView: View {
     @ViewBuilder private var transcriptTab: some View {
         let visibleSegments = transcript?.segments.filter { !$0.displayText.isEmpty } ?? []
         if !visibleSegments.isEmpty {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(visibleSegments.enumerated()), id: \.offset) { _, segment in
-                        segmentRow(segment)
-                    }
+            VStack(alignment: .leading, spacing: 0) {
+                if let engine = transcript?.engine, !engine.isEmpty {
+                    transcriptModelBadge(engine)
                 }
-                .frame(maxWidth: 760, alignment: .leading)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(visibleSegments.enumerated()), id: \.offset) { _, segment in
+                            segmentRow(segment)
+                        }
+                    }
+                    .frame(maxWidth: 760, alignment: .leading)
+                }
             }
         } else {
             ContentUnavailableView(
@@ -533,6 +538,25 @@ struct MeetingDetailView: View {
                     ? "Use Process → Transcribe & summarize. The first run downloads the Parakeet model (~600 MB) from Hugging Face."
                     : "Working on it…"))
         }
+    }
+
+    /// Provenance line atop the transcript: the exact model (and backend) that
+    /// produced it, read from `transcript.json` — so it reflects the model used
+    /// for *this* transcript, not whatever is currently selected in Settings.
+    private func transcriptModelBadge(_ engine: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "waveform.badge.magnifyingglass")
+                .foregroundStyle(.tint)
+            Text("Transcribed with ") + Text(engine).fontWeight(.medium)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .textSelection(.enabled)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+        .padding(.bottom, 8)
+        .accessibilityIdentifier("transcript.model")
     }
 
     private func segmentRow(_ segment: Transcript.Segment) -> some View {
