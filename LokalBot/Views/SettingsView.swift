@@ -175,6 +175,10 @@ struct SettingsView: View {
                         Toggle("Stream suggestions while generating", isOn: $app.settings.cotypingStreamSuggestionsWhileGenerating)
                         Text("When off, suggestions appear once fully formed, matching Cotypist's default. Turn on to show token-by-token partials sooner.")
                             .font(.caption).foregroundStyle(.secondary)
+                        Toggle("Use the fast in-process runtime (recommended)", isOn: $app.settings.cotypingInProcessRuntime)
+                        Text("Decodes the built-in model in-process for lower latency. Turn off to use the background llama-server. Non-built-in backends always use the server.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         LabeledContent("Pause before suggesting") {
                             Text("\(app.settings.cotypingDebounceMs) ms").foregroundStyle(.secondary)
                         }
