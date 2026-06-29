@@ -13,6 +13,10 @@ final class LlamaCoreSmokeTests: XCTestCase {
         XCTAssertEqual(model.n_gpu_layers, -1)
         let ctx = llama_context_default_params()
         XCTAssertGreaterThan(ctx.n_ctx, 0)
-        llama_backend_free()
+        // Intentionally NOT calling llama_backend_free(): this runs in the shared
+        // test process, and freeing the global backend here would be a footgun for
+        // any test class that loads a model (LlamaCotypingRuntime's once-let init).
+        // The smoke test's purpose — LlamaCore imports, dylib links, default-params
+        // structs resolve — needs no teardown.
     }
 }

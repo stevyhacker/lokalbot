@@ -81,6 +81,16 @@ protocol CotypingCompleting: AnyObject {
     /// arrive. Default (below) is non-streaming.
     func generateStreaming(_ request: CotypingRequest,
                            onPartial: @escaping @Sendable (CotypingNormalizationResult) -> Void) async throws -> CotypingNormalizationResult
+    /// Loads + primes any in-process model so the first completion isn't cold.
+    /// Default is a no-op: only the in-process `LocalLlamaCotypingEngine` has a
+    /// model to prewarm; the HTTP engine boots its server lazily.
+    func prewarm() async throws
+    /// Frees any in-process resources the engine holds. Default is a no-op:
+    /// only the in-process `LocalLlamaCotypingEngine` holds a loaded model; the
+    /// HTTP engine has nothing to free. The `CotypingEngineSelector` calls this
+    /// when it routes away from the local engine so the model's weights don't
+    /// stay resident while completions go to HTTP.
+    func unload() async
 }
 
 extension CotypingCompleting {
@@ -90,6 +100,10 @@ extension CotypingCompleting {
         onPartial(result)
         return result
     }
+
+    func prewarm() async throws {}
+
+    func unload() async {}
 }
 
 /// Production engine: resolves LokalBot's configured `TextEngine` (the very same

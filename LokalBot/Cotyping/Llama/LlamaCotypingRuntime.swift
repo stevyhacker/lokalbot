@@ -179,7 +179,7 @@ actor LlamaCotypingRuntime {
         maxTokens: Int,
         samplerSpecs: [LlamaSamplerSpec],
         onToken: @Sendable (String) -> Bool
-    ) -> String {
+    ) throws -> String {
         guard let ctx, let vocab, !promptTokens.isEmpty else { return "" }
         guard let sampler = makeSampler(samplerSpecs) else { return "" }
         defer { llama_sampler_free(sampler) }
@@ -209,14 +209,14 @@ actor LlamaCotypingRuntime {
             // `else` branch. DO NOT remove that fallback — partial reuse is only
             // safe when seq_rm confirms the kept prefix is still resident.
             guard decode(Array(promptTokens[reuse...]), startPos: Int32(reuse),
-                         logitsLastOnly: true) else { return "" }
+                         logitsLastOnly: true) else { throw LlamaRuntimeError.decodeFailed }
         } else {
             // Recurrent/hybrid model (SSM/Mamba) cannot partially rewind its rolling
             // state, or a partial seq_rm above was not honored. Reset and prefill the
             // whole prompt from position 0. `reuse` above is still the meaningful
             // KV-reuse *signal* callers read via lastPrefillTokenCount.
             llama_memory_seq_rm(mem, 0, 0, -1)
-            guard decode(promptTokens, startPos: 0, logitsLastOnly: true) else { return "" }
+            guard decode(promptTokens, startPos: 0, logitsLastOnly: true) else { throw LlamaRuntimeError.decodeFailed }
         }
         lastPrefillTokenCount = promptTokens.count - reuse
         cachedTokens = promptTokens
@@ -230,7 +230,10 @@ actor LlamaCotypingRuntime {
             let text = piece(for: tok)
             output += text
             if !onToken(text) { break }
-            guard decode([tok], startPos: pos, logitsLastOnly: true) else { break }
+            // A mid-generation decode failure discards the partial output and
+            // propagates so the selector falls back to HTTP, rather than
+            // surfacing a truncated ghost as if it were a complete suggestion.
+            guard decode([tok], startPos: pos, logitsLastOnly: true) else { throw LlamaRuntimeError.decodeFailed }
             pos += 1
         }
         return output

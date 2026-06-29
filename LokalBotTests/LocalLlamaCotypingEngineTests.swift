@@ -36,4 +36,18 @@ final class LocalLlamaCotypingEngineTests: XCTestCase {
         _ = try await engine.generateStreaming(makeRequest()) { _ in partials += 1 }
         XCTAssertGreaterThan(partials, 0)
     }
+
+    /// `unload()` is callable on the engine seam and is a safe no-op when nothing
+    /// is loaded (mirrors LlamaCotypingRuntimeTests.testMemoryPressureUnloadsWhenNotLoaded).
+    /// No GGUF needed: the runtime is never loaded, so unload just confirms the
+    /// route-away teardown path the selector uses can't crash on an idle engine.
+    func testUnloadIsCallableAndLeavesUnloadedRuntimeUnloaded() async {
+        let runtime = LlamaCotypingRuntime()
+        let engine = LocalLlamaCotypingEngine(runtime: runtime, modelPath: "/nonexistent.gguf")
+        let before = await runtime.isLoaded
+        XCTAssertFalse(before)
+        await engine.unload()
+        let after = await runtime.isLoaded
+        XCTAssertFalse(after)
+    }
 }

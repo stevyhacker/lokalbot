@@ -7,10 +7,10 @@ import Foundation
 @MainActor
 final class CotypingEngineSelector: CotypingCompleting {
     private let http: CotypingCompleting
-    private let makeLocal: (String) -> LocalLlamaCotypingEngine
+    private let makeLocal: (String) -> CotypingCompleting
     private let settings: () -> AppSettings
     private let storage: StorageManager
-    private var local: LocalLlamaCotypingEngine?
+    private var local: CotypingCompleting?
     private var localModelPath: String?
     /// Set after the first in-process failure so the HTTP fallback is logged
     /// once per failure episode (spec §13), not on every keystroke. Reset on a
@@ -19,7 +19,7 @@ final class CotypingEngineSelector: CotypingCompleting {
 
     init(
         http: CotypingCompleting,
-        makeLocal: @escaping (String) -> LocalLlamaCotypingEngine,
+        makeLocal: @escaping (String) -> CotypingCompleting,
         settings: @escaping () -> AppSettings,
         storage: StorageManager
     ) {
@@ -50,23 +50,38 @@ final class CotypingEngineSelector: CotypingCompleting {
 
     /// Returns the local engine if eligible, lazily (re)building it when the
     /// resolved model path changes; nil → use HTTP.
-    private func localIfEligible() -> LocalLlamaCotypingEngine? {
+    private func localIfEligible() -> CotypingCompleting? {
         let s = settings()
         // Short-circuit the cheap gating conditions before the synchronous GGUF
         // disk read in `resolvedModelURL`: a built-in-backend user with the runtime
         // toggle off (or on Intel) would otherwise pay that read for nothing. This
         // is behavior-identical to gating in `shouldUseLocal` — which still returns
         // false in exactly these cases — we just avoid resolving the path first.
-        guard s.cotypingInProcessRuntime, Self.isAppleSilicon else { return nil }
+        guard s.cotypingInProcessRuntime, Self.isAppleSilicon else { dropLocalEngine(); return nil }
         guard let url = resolvedModelURL(s),
               Self.shouldUseLocal(settings: s, modelURL: url, isAppleSilicon: Self.isAppleSilicon)
-        else { return nil }
+        else { dropLocalEngine(); return nil }
         if local == nil || localModelPath != url.path {
             local = makeLocal(url.path)
             localModelPath = url.path
             didLogLocalFailure = false
         }
         return local
+    }
+
+    /// Drops the cached in-process engine and frees its loaded model when the
+    /// selector routes away from local (flag toggled off, Intel, or the model
+    /// stops resolving). Self-limiting: a no-op once already dropped, so it's
+    /// safe to call on every ineligible `localIfEligible()` pass. Setting
+    /// `local = nil` alone is NOT enough — the runtime actor's deinit is async
+    /// and may not run promptly, so we explicitly unload. When the flag flips
+    /// back on and the model resolves, `localIfEligible()` rebuilds a fresh
+    /// engine via `makeLocal` (cold reload on the next generate).
+    private func dropLocalEngine() {
+        guard let engine = local else { return }
+        local = nil
+        localModelPath = nil
+        Task { await engine.unload() }
     }
 
     func prewarm() async {

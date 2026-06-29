@@ -31,6 +31,11 @@ final class LocalLlamaCotypingEngine: CotypingCompleting {
         try await runtime.prewarm(modelPath: modelPath)
     }
 
+    /// Frees the in-process model + context. Called when the selector routes
+    /// away from local (flag toggled off, or the model stops resolving) so the
+    /// ~6.66 GB of weights don't stay resident while completions go to HTTP.
+    func unload() async { await runtime.unload() }
+
     func generate(_ request: CotypingRequest) async throws -> CotypingNormalizationResult {
         try await run(request) { _ in }
     }
@@ -62,7 +67,11 @@ final class LocalLlamaCotypingEngine: CotypingCompleting {
             seed: UInt32(truncatingIfNeeded: request.seed))
 
         let accumulator = TokenAccumulator()
-        let raw = await runtime.generate(
+        // `try` (not silent `await`): a thrown LlamaRuntimeError.decodeFailed
+        // propagates out of run() → the selector's `catch let error as
+        // LlamaRuntimeError`, so a decode failure reaches the HTTP fallback
+        // instead of surfacing a silent empty/truncated ghost.
+        let raw = try await runtime.generate(
             promptTokens: promptTokens,
             maxTokens: request.maxTokens,
             samplerSpecs: specs

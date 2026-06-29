@@ -25,13 +25,13 @@ final class LlamaCotypingRuntimeTests: XCTestCase {
         let prompt = await runtime.tokenize("The capital of France is", addBOS: true)
         XCTAssertFalse(prompt.isEmpty)
 
-        let first = await runtime.generate(
+        let first = try await runtime.generate(
             promptTokens: prompt, maxTokens: 8, samplerSpecs: standardSpecs) { _ in true }
         XCTAssertFalse(first.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
         // Same prompt + fixed seed (0x00C0FFEE in standardSpecs) → identical output.
         try await runtime.loadIfNeeded(modelPath: path) // no-op reload
-        let second = await runtime.generate(
+        let second = try await runtime.generate(
             promptTokens: prompt, maxTokens: 8, samplerSpecs: standardSpecs) { _ in true }
         XCTAssertEqual(first, second, "fixed seed must produce deterministic output")
     }
@@ -59,13 +59,13 @@ final class LlamaCotypingRuntimeTests: XCTestCase {
         try await runtime.loadIfNeeded(modelPath: path)
 
         let base = await runtime.tokenize("Hi Sarah, thanks for sending this over. I wanted to follow", addBOS: true)
-        _ = await runtime.generate(promptTokens: base, maxTokens: 2, samplerSpecs: standardSpecs) { _ in true }
+        _ = try await runtime.generate(promptTokens: base, maxTokens: 2, samplerSpecs: standardSpecs) { _ in true }
         let firstPrefill = await runtime.lastPrefillTokenCount
         XCTAssertEqual(firstPrefill, base.count, "cold prompt prefills every token")
 
         // Extend the prompt: the reuse signal must subtract the shared prefix.
         let extended = base + (await runtime.tokenize(" up tomorrow", addBOS: false))
-        _ = await runtime.generate(promptTokens: extended, maxTokens: 2, samplerSpecs: standardSpecs) { _ in true }
+        _ = try await runtime.generate(promptTokens: extended, maxTokens: 2, samplerSpecs: standardSpecs) { _ in true }
         let secondPrefill = await runtime.lastPrefillTokenCount
         XCTAssertLessThan(secondPrefill, extended.count, "reuse signal must discount the shared prefix")
         XCTAssertEqual(secondPrefill, extended.count - base.count,
@@ -78,7 +78,7 @@ final class LlamaCotypingRuntimeTests: XCTestCase {
         try await runtime.loadIfNeeded(modelPath: path)
         let prompt = await runtime.tokenize("Once upon a time", addBOS: true)
         let counter = TokenCounter()
-        let out = await runtime.generate(
+        let out = try await runtime.generate(
             promptTokens: prompt, maxTokens: 20, samplerSpecs: standardSpecs
         ) { _ in counter.increment() < 3 }   // stop after 3 tokens
         XCTAssertLessThanOrEqual(counter.value, 3)
