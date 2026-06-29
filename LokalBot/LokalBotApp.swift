@@ -385,7 +385,10 @@ final class AppState: ObservableObject {
             detector.stopDebounce = settings.stopDebounceSeconds
             detector.calendarEnabled = settings.calendarDetectionEnabled
             detector.requireCalendarForBrowser = settings.requireCalendarForBrowser
-            if interactive { cotyping.applySettings() }
+            if interactive {
+                cotyping.applySettings()
+                if settings.cotypingEnabled { Task { await cotypingEngine.prewarm() } }
+            }
         }
     }
 
@@ -427,12 +430,18 @@ final class AppState: ObservableObject {
     /// Cotyping (inline AI autocomplete). Always runs its own model on the
     /// dedicated `LlamaServer.cotyping` instance so it never thrashes the
     /// shared summarizer server. Resolved per-completion, so changes apply live.
-    private(set) lazy var cotypingEngine = CotypingEngine(makeEngine: { [weak self] in
-        guard let self else { throw TextEngineError.unavailable("LokalBot is shutting down.") }
-        return try await self.pipeline.makeTextEngine(
-            self.settings.cotypingTextEngineSettings,
-            server: .cotyping)
-    })
+    private(set) lazy var cotypingEngine = CotypingEngineSelector(
+        http: CotypingEngine(makeEngine: { [weak self] in
+            guard let self else { throw TextEngineError.unavailable("LokalBot is shutting down.") }
+            return try await self.pipeline.makeTextEngine(
+                self.settings.cotypingTextEngineSettings,
+                server: .cotyping)
+        }),
+        makeLocal: { modelPath in
+            LocalLlamaCotypingEngine(runtime: LlamaCotypingRuntime(), modelPath: modelPath)
+        },
+        settings: { [weak self] in self?.settings ?? AppSettings() },
+        storage: storage)
     private(set) lazy var cotyping = CotypingCoordinator(
         engine: cotypingEngine,
         settingsProvider: { [weak self] in self?.settings ?? AppSettings() },
@@ -618,6 +627,7 @@ final class AppState: ObservableObject {
         // Bring cotyping up if the user left it enabled and the grants are in
         // place; otherwise it parks itself (no taps installed).
         cotyping.applySettings()
+        if settings.cotypingEnabled { Task { await cotypingEngine.prewarm() } }
     }
 
     // MARK: - Recording control
