@@ -9,11 +9,22 @@ import Foundation
 final class LocalLlamaCotypingEngine: CotypingCompleting {
     private let runtime: LlamaCotypingRuntime
     private let modelPath: String
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
 
     init(runtime: LlamaCotypingRuntime, modelPath: String) {
         self.runtime = runtime
         self.modelPath = modelPath
+
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.warning, .critical], queue: .global(qos: .utility))
+        source.setEventHandler { [runtime] in
+            Task { await runtime.handleMemoryPressure() }
+        }
+        source.resume()
+        self.memoryPressureSource = source
     }
+
+    deinit { memoryPressureSource?.cancel() }
 
     /// Loads + primes the model so the first keystroke isn't cold.
     func prewarm() async throws {

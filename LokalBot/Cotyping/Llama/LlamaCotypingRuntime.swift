@@ -104,6 +104,13 @@ actor LlamaCotypingRuntime {
         supportsPartialReuse = false
     }
 
+    /// Frees the model + context under memory pressure. The next `generate`
+    /// call lazily reloads via `loadIfNeeded` (or the engine routes to HTTP if
+    /// reload fails). Keeps cotyping from OOMing the app under a large model.
+    func handleMemoryPressure() {
+        unload()
+    }
+
     /// Runs one priming decode so Metal pipelines are hot before the first real
     /// keystroke, then clears the KV so generation starts from a clean cache.
     private func warmup() {

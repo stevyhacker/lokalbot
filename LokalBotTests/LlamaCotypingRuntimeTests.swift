@@ -36,6 +36,15 @@ final class LlamaCotypingRuntimeTests: XCTestCase {
         XCTAssertEqual(first, second, "fixed seed must produce deterministic output")
     }
 
+    func testMemoryPressureUnloadsWhenNotLoaded() async {
+        let runtime = LlamaCotypingRuntime()
+        let before = await runtime.isLoaded
+        XCTAssertFalse(before)
+        await runtime.handleMemoryPressure()   // safe no-op when nothing is loaded
+        let after = await runtime.isLoaded
+        XCTAssertFalse(after)
+    }
+
     func testKVReuseDecodesOnlySuffix() async throws {
         let path = try bundledModelPath()
         let runtime = LlamaCotypingRuntime()
