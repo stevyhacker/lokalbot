@@ -24,6 +24,18 @@ LokalBot is a strictly-local meeting recorder for macOS. It records both sides o
 
 <div align="center">
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="Assets/superapp-diagram.svg">
+  <source media="(prefers-color-scheme: light)" srcset="Assets/superapp-diagram-light.svg">
+  <img alt="LokalBot — one on-device model powering meetings, Cotyping, chat, search, day timeline, agent CLI, and bring-your-own models. Nothing leaves the device." src="Assets/superapp-diagram-light.svg" width="620">
+</picture>
+
+<sub>One local model, your whole workday — nothing leaves the Mac.</sub>
+
+</div>
+
+<div align="center">
+
 <img src="Assets/screenshots/hero.gif" alt="LokalBot tour: meeting recap, speaker-labeled transcript, search, day timeline, and inline autocomplete" width="880" />
 
 <sub>A quick tour — meeting recap → speaker-labeled transcript → search → day timeline → inline autocomplete.</sub>

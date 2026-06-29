@@ -52,11 +52,11 @@
 
   <main>
     <!-- ───────────────────────── HERO ───────────────────────── -->
-    <section class="hero">
+    <section class="hero hero--centered">
       <div class="hero__copy reveal">
         <p class="eyebrow">Strictly local. Built for macOS.</p>
-        <h1 class="hero__title">Record and summarize meetings on your Mac.</h1>
-        <p class="hero__sub">Records both sides of every call, transcribes it, and writes the recap. All on-device. No cloud, no account.</p>
+        <h1 class="hero__title">The local-LLM super-app for your Mac.</h1>
+        <p class="hero__sub">Records and recaps your meetings, autocompletes your typing, and tracks where your day went — all on one on-device model. No cloud, no account.</p>
         <div class="hero__cta">
           <a class="btn btn--primary" href="#download">
             <i class="ph ph-apple-logo" aria-hidden="true"></i>
@@ -67,29 +67,10 @@
         <p class="hero__meta">Free, for macOS 15.0 and later on Apple Silicon.</p>
       </div>
 
-      <div class="hero__stage reveal" aria-hidden="true">
-        <div class="appcard">
-          <div class="appcard__glow"></div>
-          <img class="appcard__icon" src="assets/lokalbot-icon.svg" alt="" width="132" height="132" />
-          <div class="appcard__title">LokalBot</div>
-          <div class="recorder">
-            <span class="recorder__dot"></span>
-            <span class="recorder__label">Recording</span>
-            <div class="wave" data-wave>
-              <span></span><span></span><span></span><span></span><span></span>
-              <span></span><span></span><span></span><span></span><span></span>
-              <span></span><span></span><span></span><span></span><span></span>
-            </div>
-          </div>
-          <div class="tracks">
-            <span class="track track--me">Me</span>
-            <span class="track track--them">Them</span>
-          </div>
-          <ul class="appcard__lines" aria-hidden="true">
-            <li><span class="spk spk--me">Me</span><span class="t">Let’s ship the <mark>on-device</mark> build Friday.</span></li>
-            <li><span class="spk spk--them">Them</span><span class="t">Agreed — I’ll send the recap with action items.</span></li>
-          </ul>
-        </div>
+      <div class="hero__stage reveal">
+        <figure class="hero__diagram">
+          <img class="hero__diagram-img" src="assets/superapp-hero.svg" width="680" height="536" alt="One on-device model at the center, connected to seven capabilities: meetings, Cotyping autocomplete, chat, search, day timeline, agent CLI, and bring-your-own models. Nothing leaves the device." />
+        </figure>
       </div>
     </section>
 

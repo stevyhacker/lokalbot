@@ -203,6 +203,20 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .section__title { font-size: clamp(1.7rem, 3.4vw, 2.55rem); }
 .section__lead { color: var(--text-dim); font-size: 1.08rem; max-width: 56ch; margin-top: 18px; }
 
+/* ───────────────────────── hero diagram ───────────────────────── */
+.hero__diagram { position: relative; margin: 0; width: min(860px, 100%); }
+.hero__diagram::before {
+  content: "";
+  position: absolute;
+  inset: 8% 4% 12%;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(58% 58% at 50% 46%, rgba(35, 196, 174, 0.32), transparent 70%);
+  filter: blur(46px);
+  opacity: 0.85;
+}
+.hero__diagram-img { display: block; width: 100%; height: auto; animation: float 7s ease-in-out infinite; }
+
 /* ───────────────────────── hero ───────────────────────── */
 .hero {
   max-width: var(--maxw);
@@ -228,6 +242,23 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 }
 .hero__cta { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 34px; }
 .hero__meta { margin-top: 20px; color: var(--text-faint); font-size: 0.9rem; }
+
+/* centered hero: headline on top, large diagram below */
+.hero--centered {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  text-align: center;
+  align-items: start;
+  min-height: 0;
+  gap: 30px;
+  padding-top: 60px;
+  padding-bottom: 68px;
+}
+.hero--centered .hero__copy { max-width: 820px; }
+.hero--centered .hero__title { max-width: 20ch; margin-inline: auto; }
+.hero--centered .hero__sub { max-width: 60ch; margin-inline: auto; }
+.hero--centered .hero__cta { justify-content: center; }
+.hero--centered .hero__stage { width: 100%; }
 
 /* hero stage: the real app icon presented as an "app glamour" tile */
 .hero__stage { display: flex; justify-content: center; }
@@ -598,7 +629,7 @@ kbd {
   .hero { grid-template-columns: 1fr; gap: 40px; min-height: 0; padding-top: 48px; text-align: center; }
   .hero__title, .hero__sub { max-width: none; }
   .hero__cta { justify-content: center; }
-  .hero__stage { order: -1; }
+  .hero__stage { order: 0; margin-top: 8px; }
   .spotlight { grid-template-columns: 1fr; gap: 36px; }
 }
 
@@ -627,6 +658,7 @@ kbd {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
   .reveal { opacity: 1; transform: none; }
   .appcard { animation: none; }
+  .hero__diagram-img { animation: none; }
   .wave span { transform: scaleY(0.6); }
   .wave span:nth-child(odd) { transform: scaleY(0.85); }
   .ct-caret { animation: none; }
