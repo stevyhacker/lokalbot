@@ -35,7 +35,13 @@ actor LlamaCotypingRuntime {
     /// models cannot rewind their rolling state to a prefix, so they full-reprefill.
     private var supportsPartialReuse = false
 
-    private static var backendReady = false
+    /// Initializes the llama backend exactly once across ALL instances. Swift
+    /// guarantees a static `let` initializer runs once and is thread-safe, which
+    /// removes the cross-instance check-then-set race a `static var` flag would have
+    /// (actor isolation does not protect static storage).
+    private static let backendReady: Void = {
+        llama_backend_init()
+    }()
 
     var isLoaded: Bool { model != nil && ctx != nil }
 
@@ -45,10 +51,7 @@ actor LlamaCotypingRuntime {
         if isLoaded, loadedModelPath == modelPath { return }
         unload()
 
-        if !Self.backendReady {
-            llama_backend_init()
-            Self.backendReady = true
-        }
+        _ = Self.backendReady   // forces the run-once backend init (idempotent)
 
         var mparams = llama_model_default_params()
         mparams.n_gpu_layers = 99   // full Metal offload (matches LlamaServer's -ngl 99)
@@ -183,16 +186,22 @@ actor LlamaCotypingRuntime {
         let shared = IncrementalPrefill.commonPrefixLength(cachedTokens, promptTokens)
         let reuse = min(shared, promptTokens.count - 1)
 
-        if supportsPartialReuse, reuse > 0 {
-            // Attention model: keep the shared prefix KV, re-decode only the suffix.
-            // seq_rm drops [reuse, end) — the diverged tail plus any stale tokens the
-            // previous generation appended past the prompt.
-            llama_memory_seq_rm(mem, 0, Int32(reuse), -1)
+        if supportsPartialReuse, reuse > 0,
+           llama_memory_seq_rm(mem, 0, Int32(reuse), -1) {
+            // Attention model: the shared prefix KV is kept and only the diverged
+            // suffix is re-decoded. seq_rm dropped [reuse, end) — the diverged tail
+            // plus any stale tokens the previous generation appended past the prompt.
+            //
+            // Safe because cotyping prompts are capped (~150 words, well under the
+            // production Gemma4 model's 512-token sliding window), so the kept prefix
+            // [0, reuse) is still resident. seq_rm returns false if the partial removal
+            // can't be honored (e.g. positions aged out of the SWA window on a longer
+            // prompt); we then fall through to the full re-prefill below.
             guard decode(Array(promptTokens[reuse...]), startPos: Int32(reuse),
                          logitsLastOnly: true) else { return "" }
         } else {
             // Recurrent/hybrid model (SSM/Mamba) cannot partially rewind its rolling
-            // state, so a non-zero-p0 seq_rm is unsupported — reset and prefill the
+            // state, or a partial seq_rm above was not honored. Reset and prefill the
             // whole prompt from position 0. `reuse` above is still the meaningful
             // KV-reuse *signal* callers read via lastPrefillTokenCount.
             llama_memory_seq_rm(mem, 0, 0, -1)
