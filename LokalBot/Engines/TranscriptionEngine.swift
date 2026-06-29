@@ -44,6 +44,7 @@ enum TranscriptionModelChoice: String, Codable, CaseIterable, Identifiable {
     case parakeetV2 = "Parakeet TDT 0.6B v2 (English)"
     case qwenASR17B = "Qwen3-ASR 1.7B"
     case qwenASR06B = "Qwen3-ASR 0.6B"
+    case graniteSpeech = "Granite Speech 4.1 2B"
     case whisperLarge = "Whisper large-v3 turbo"
     case cohere = "Cohere Transcribe (multilingual)"
     case senseVoice = "SenseVoice (Chinese/Japanese/Korean)"
@@ -56,6 +57,7 @@ enum TranscriptionModelChoice: String, Codable, CaseIterable, Identifiable {
         case .parakeetV2: "0.6 GB · English only, slightly higher recall"
         case .qwenASR17B: "3.2 GB · MLX, 52 languages/dialects, best Qwen accuracy tier"
         case .qwenASR06B: "0.7 GB · MLX, 52 languages/dialects, compact global tier"
+        case .graniteSpeech: "2B params · Apache-2.0, high-accuracy local ASR via llama.cpp"
         case .whisperLarge: "1.6 GB · 99 languages, word timestamps, wide-language legacy fallback"
         case .cohere: "2B params · 14 languages, no auto language detection, timestamps, or diarization"
         case .senseVoice: "Chinese · Japanese · Korean · Cantonese · English (ONNX, downloaded on first use)"
@@ -68,6 +70,7 @@ enum TranscriptionModelChoice: String, Codable, CaseIterable, Identifiable {
         case .parakeetV3, .parakeetV2: ParakeetEngine.shared
         case .qwenASR17B: QwenASREngine.accuracy
         case .qwenASR06B: QwenASREngine.compact
+        case .graniteSpeech: GraniteSpeechEngine.shared
         case .whisperLarge: WhisperEngine.shared
         case .cohere: CohereEngine.shared
         case .senseVoice: OnnxTranscriptionEngine.senseVoice

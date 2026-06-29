@@ -449,6 +449,8 @@ struct ModelsView: View {
                 try await QwenASREngine.accuracy.prepare(progress: progressHandler)
             case .qwenASR06B:
                 try await QwenASREngine.compact.prepare(progress: progressHandler)
+            case .graniteSpeech:
+                try await GraniteSpeechEngine.shared.prepare(progress: progressHandler)
             case .whisperLarge:
                 try await WhisperEngine.shared.prepare(progress: progressHandler)
             case .cohere:

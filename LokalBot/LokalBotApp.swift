@@ -745,6 +745,8 @@ final class AppState: ObservableObject {
                     try await QwenASREngine.accuracy.prepare()
                 case .qwenASR06B:
                     try await QwenASREngine.compact.prepare()
+                case .graniteSpeech:
+                    try await GraniteSpeechEngine.shared.prepare()
                 case .whisperLarge:
                     try await WhisperEngine.shared.prepare()
                 case .cohere:

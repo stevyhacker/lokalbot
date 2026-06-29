@@ -40,6 +40,21 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertTrue(TranscriptionModelChoice.allCases.contains(.qwenASR06B))
     }
 
+    func testGraniteSpeechModelIsRunnableChoice() {
+        XCTAssertTrue(TranscriptionModelChoice.allCases.contains(.graniteSpeech))
+        XCTAssertEqual(TranscriptionModelChoice.graniteSpeech.engine.displayName, "Granite Speech 4.1 2B")
+    }
+
+    func testGraniteSpeechFilesUseDedicatedSupportFolder() {
+        let root = URL(fileURLWithPath: "/tmp/lokalbot", isDirectory: true)
+        XCTAssertEqual(
+            GraniteSpeechEngine.modelURL(appSupport: root).path,
+            "/tmp/lokalbot/granite-speech/4.1-2b/granite-speech-4.1-2b-Q4_K_M.gguf")
+        XCTAssertEqual(
+            GraniteSpeechEngine.projectorURL(appSupport: root).path,
+            "/tmp/lokalbot/granite-speech/4.1-2b/mmproj-model-f16.gguf")
+    }
+
     func testLlamaServerParsesServedModelNames() {
         let payload = """
         {
