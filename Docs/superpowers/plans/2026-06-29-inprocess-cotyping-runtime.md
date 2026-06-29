@@ -162,7 +162,9 @@ settings:
       - $(SRCROOT)/Vendor/llama-cpp/include
 ```
 
-**(b)** Add the link flags to the **`LokalBotApp` template's** existing `settings.base` (around line 124, alongside `SWIFT_VERSION`/`DEVELOPMENT_TEAM`), so all three app targets link the dylib and get the runtime search path — but the test bundle does not (it resolves libllama symbols through its `TEST_HOST` app at runtime):
+**(b)** Add the link flags to the **`LokalBotApp` template's** existing `settings.base` (around line 124, alongside `SWIFT_VERSION`/`DEVELOPMENT_TEAM`), so all three app targets link the dylib and get the runtime search path:
+
+> **Build-spike correction (Task 1, applied):** the `LokalBotTests` target ALSO needs these link flags. `-bundle_loader`/`TEST_HOST` only resolves symbols *defined in* the host executable, and the `llama_*` symbols live in `libllama.dylib` (which the host merely *loads*), so the test bundle must link `-lllama` itself with its own rpath (`@executable_path/../Resources/llama-cpp` and `@loader_path/../../../../Resources/llama-cpp`, both reaching the host app's `Contents/Resources/llama-cpp`). Task 1 wired this on the `LokalBotTests` target. **Consequence for later tasks:** every subsequent `import LlamaCore` test file (`LlamaCotypingRuntimeTests`, `LocalLlamaCotypingEngineTests`, `CotypingABBenchmarkTests`) inherits this target-level wiring automatically — do NOT re-edit `project.yml` to link them.
 
 ```yaml
         LIBRARY_SEARCH_PATHS:
