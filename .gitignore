@@ -9,3 +9,6 @@ Vendor/
 
 # Vercel CLI local link
 .vercel/
+
+# SDD progress ledger (scratch)
+.superpowers/
