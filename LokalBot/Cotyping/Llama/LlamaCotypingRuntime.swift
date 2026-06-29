@@ -12,11 +12,13 @@ enum LlamaRuntimeError: Error, Equatable {
 /// (off the main actor).
 ///
 /// The KV-reuse probe (`IncrementalPrefill`) reports how much of each prompt
-/// overlaps the previous one. The bundled Qwen3.5 is a hybrid SSM/attention
-/// model whose recurrent state cannot be partially rewound to a prefix, so the
-/// prompt is re-prefilled in full on every call; `lastPrefillTokenCount` still
-/// surfaces the diverged-suffix length as the meaningful reuse signal. On a
-/// pure-attention model the same probe would drive true partial-prefix reuse.
+/// overlaps the previous one. On a pure-attention model this drives true
+/// partial-prefix reuse: the shared prefix KV is kept and only the diverged
+/// suffix is re-decoded. The bundled Qwen3.5 is a hybrid SSM/attention model
+/// whose recurrent state cannot be partially rewound to a prefix, so it falls
+/// back to a full re-prefill on every call; `lastPrefillTokenCount` still
+/// surfaces the diverged-suffix length as the meaningful reuse signal either
+/// way. The capability is cached once at load (`supportsPartialReuse`).
 ///
 /// Pinned to llama.cpp `b9789`; symbols verified against the vendored dylib.
 actor LlamaCotypingRuntime {
@@ -28,6 +30,10 @@ actor LlamaCotypingRuntime {
     /// incremental KV-reuse probe against the next prompt).
     private var cachedTokens: [Int32] = []
     private(set) var lastPrefillTokenCount: Int = 0
+    /// True only for pure-attention models, whose per-position KV cells can be
+    /// partially evicted (`seq_rm` at a non-zero p0). Recurrent/hybrid (SSM/Mamba)
+    /// models cannot rewind their rolling state to a prefix, so they full-reprefill.
+    private var supportsPartialReuse = false
 
     private static var backendReady = false
 
@@ -67,6 +73,9 @@ actor LlamaCotypingRuntime {
         loadedModelPath = modelPath
         cachedTokens = []
         lastPrefillTokenCount = 0
+        // Cache the architecture capability once, at load: probing inside generate
+        // would emit a dylib stderr warning on every call for recurrent models.
+        supportsPartialReuse = !llama_model_is_recurrent(m) && !llama_model_is_hybrid(m)
         warmup()
     }
 
@@ -89,6 +98,7 @@ actor LlamaCotypingRuntime {
         vocab = nil
         loadedModelPath = nil
         cachedTokens = []
+        supportsPartialReuse = false
     }
 
     /// Runs one priming decode so Metal pipelines are hot before the first real
@@ -165,19 +175,30 @@ actor LlamaCotypingRuntime {
         defer { llama_sampler_free(sampler) }
 
         let mem = llama_get_memory(ctx)
-        // KV-reuse probe: how many leading tokens this prompt shares with the one
-        // resident in the cache. The bundled Qwen3.5 is a hybrid SSM/attention
-        // model whose recurrent state cannot be partially rewound, so we cannot
-        // physically keep only the shared prefix; we rebuild the full prompt each
-        // call. `lastPrefillTokenCount` still reports the *new* (diverged-suffix)
-        // tokens, which is the meaningful KV-reuse signal for callers.
-        let reuse = IncrementalPrefill.commonPrefixLength(cachedTokens, promptTokens)
-        lastPrefillTokenCount = promptTokens.count - reuse
 
-        // Recurrent state has no per-position cells to evict, so reset and
-        // prefill the whole prompt from position 0 for a clean, contiguous state.
-        llama_memory_seq_rm(mem, 0, 0, -1)
-        guard decode(promptTokens, startPos: 0, logitsLastOnly: true) else { return "" }
+        // KV-reuse probe: how many leading tokens this prompt shares with the cache.
+        // Clamp to count-1 so we ALWAYS decode >=1 token and get fresh logits for the
+        // next-token sample — required when the new prompt equals/prefixes the cached
+        // one (e.g. an identical re-generation), else we'd sample from stale logits.
+        let shared = IncrementalPrefill.commonPrefixLength(cachedTokens, promptTokens)
+        let reuse = min(shared, promptTokens.count - 1)
+
+        if supportsPartialReuse, reuse > 0 {
+            // Attention model: keep the shared prefix KV, re-decode only the suffix.
+            // seq_rm drops [reuse, end) — the diverged tail plus any stale tokens the
+            // previous generation appended past the prompt.
+            llama_memory_seq_rm(mem, 0, Int32(reuse), -1)
+            guard decode(Array(promptTokens[reuse...]), startPos: Int32(reuse),
+                         logitsLastOnly: true) else { return "" }
+        } else {
+            // Recurrent/hybrid model (SSM/Mamba) cannot partially rewind its rolling
+            // state, so a non-zero-p0 seq_rm is unsupported — reset and prefill the
+            // whole prompt from position 0. `reuse` above is still the meaningful
+            // KV-reuse *signal* callers read via lastPrefillTokenCount.
+            llama_memory_seq_rm(mem, 0, 0, -1)
+            guard decode(promptTokens, startPos: 0, logitsLastOnly: true) else { return "" }
+        }
+        lastPrefillTokenCount = promptTokens.count - reuse
         cachedTokens = promptTokens
 
         var output = ""
