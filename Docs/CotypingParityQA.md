@@ -30,10 +30,14 @@ Passing target:
 - p95 latency is at or below 2000 ms.
 - Expected-term hits are reviewed as a quality signal, not a hard pass/fail.
 
-Exact runtime parity is not complete while LokalBot runs suggestions through its
-dedicated HTTP `llama-server` process and Cotypist/Cotabby use an in-process
-llama.cpp runtime with prefix-state reuse. Treat the benchmark as a product
-quality check until the runtime path is shared or ported.
+- **Generation runtime — DONE.** Cotyping now decodes the built-in GGUF model
+  in-process via `libllama` (`b9789`), holding a persistent KV cache and
+  re-prefilling only the typed suffix (`LocalLlamaCotypingEngine` →
+  `LlamaCotypingRuntime`). The HTTP `llama-server` path remains as the fallback
+  for non-GGUF backends, when the in-process runtime is toggled off
+  (`cotypingInProcessRuntime`), or on load failure. A/B latency is measured by
+  `CotypingBenchmarkRunner.runAB(local:http:...)` over the default scenarios
+  (TTFT + p95 deltas).
 
 ## Manual Side-by-Side
 
