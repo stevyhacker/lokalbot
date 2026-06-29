@@ -199,11 +199,15 @@ actor LlamaCotypingRuntime {
             // suffix is re-decoded. seq_rm dropped [reuse, end) — the diverged tail
             // plus any stale tokens the previous generation appended past the prompt.
             //
-            // Safe because cotyping prompts are capped (~150 words, well under the
-            // production Gemma4 model's 512-token sliding window), so the kept prefix
-            // [0, reuse) is still resident. seq_rm returns false if the partial removal
-            // can't be honored (e.g. positions aged out of the SWA window on a longer
-            // prompt); we then fall through to the full re-prefill below.
+            // Cotyping prompts are NOT guaranteed to stay inside the production
+            // Gemma4 model's 512-token sliding window: worst case is ~850–1100
+            // tokens (a 150-word prefix + the ~900-char preface + up to 2500 prefix
+            // chars). The load-bearing guard is the `llama_memory_seq_rm` return
+            // value below: it returns false when the partial removal can't be
+            // honored (e.g. the kept prefix [0, reuse) aged out of the SWA window on
+            // a long prompt), and we then fall through to the full re-prefill in the
+            // `else` branch. DO NOT remove that fallback — partial reuse is only
+            // safe when seq_rm confirms the kept prefix is still resident.
             guard decode(Array(promptTokens[reuse...]), startPos: Int32(reuse),
                          logitsLastOnly: true) else { return "" }
         } else {

@@ -45,7 +45,15 @@ final class LlamaCotypingRuntimeTests: XCTestCase {
         XCTAssertFalse(after)
     }
 
-    func testKVReuseDecodesOnlySuffix() async throws {
+    func testReusedPrefixIsReflectedInPrefillTokenCount() async throws {
+        // Validates the IncrementalPrefill reuse SIGNAL — the logical
+        // `lastPrefillTokenCount` (prompt.count - sharedPrefix) — not the physical
+        // reuse branch. The bundled CI model is hybrid SSM, so it always takes the
+        // full-reprefill fallback; the arithmetic below holds on BOTH that fallback
+        // and the production attention model's partial-reuse branch, so it cannot
+        // observe physical suffix-only prefill on this fixture. The pure-attention
+        // partial-reuse branch is exercised only on the production Gemma-4 model /
+        // a manual run.
         let path = try bundledModelPath()
         let runtime = LlamaCotypingRuntime()
         try await runtime.loadIfNeeded(modelPath: path)
@@ -55,13 +63,13 @@ final class LlamaCotypingRuntimeTests: XCTestCase {
         let firstPrefill = await runtime.lastPrefillTokenCount
         XCTAssertEqual(firstPrefill, base.count, "cold prompt prefills every token")
 
-        // Extend the prompt: the shared prefix must be reused, only the suffix decoded.
+        // Extend the prompt: the reuse signal must subtract the shared prefix.
         let extended = base + (await runtime.tokenize(" up tomorrow", addBOS: false))
         _ = await runtime.generate(promptTokens: extended, maxTokens: 2, samplerSpecs: standardSpecs) { _ in true }
         let secondPrefill = await runtime.lastPrefillTokenCount
-        XCTAssertLessThan(secondPrefill, extended.count, "KV reuse must skip the shared prefix")
+        XCTAssertLessThan(secondPrefill, extended.count, "reuse signal must discount the shared prefix")
         XCTAssertEqual(secondPrefill, extended.count - base.count,
-                       "only the appended suffix should be prefilled")
+                       "logical prefill count should equal only the appended suffix")
     }
 
     func testOnTokenReturningFalseStopsDecode() async throws {

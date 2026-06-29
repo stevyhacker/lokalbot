@@ -52,6 +52,12 @@ final class CotypingEngineSelector: CotypingCompleting {
     /// resolved model path changes; nil → use HTTP.
     private func localIfEligible() -> LocalLlamaCotypingEngine? {
         let s = settings()
+        // Short-circuit the cheap gating conditions before the synchronous GGUF
+        // disk read in `resolvedModelURL`: a built-in-backend user with the runtime
+        // toggle off (or on Intel) would otherwise pay that read for nothing. This
+        // is behavior-identical to gating in `shouldUseLocal` — which still returns
+        // false in exactly these cases — we just avoid resolving the path first.
+        guard s.cotypingInProcessRuntime, Self.isAppleSilicon else { return nil }
         guard let url = resolvedModelURL(s),
               Self.shouldUseLocal(settings: s, modelURL: url, isAppleSilicon: Self.isAppleSilicon)
         else { return nil }

@@ -77,7 +77,7 @@ LokalBot is a strictly-local meeting recorder for macOS. It records both sides o
 - **Writes the recap automatically.** A TL;DR with decisions and action items the moment the call ends. Pick a notes template, summary language, and re-run anytime.
 - **Search every word you've heard.** Full-text *and* meaning-based search across transcripts, summaries, and on-screen text. Click a hit to play from that exact second.
 - **Chat with your meetings.** Ask "what did we decide?" or "find the action items" in plain language — answers are grounded in your library.
-- **Cotyping — inline AI autocomplete.** Ghost text as you type in almost any app; press **Tab** to accept. Runs on the same local model. Opt-in.
+- **Cotyping — inline AI autocomplete.** Ghost text as you type in almost any app; press **Tab** to accept. Runs its own dedicated on-device model (in-process Gemma-4 by default). Opt-in.
 - **See where your day went.** A private timeline of apps and meetings, a generated daily digest, and an "ask your day" box.
 - **Private by construction.** Optional screenshots are AES-GCM encrypted and auto-delete after 14 days. Password fields and excluded apps are never read.
 - **Bring your own model.** Built-in llama.cpp model (zero setup), or point at Ollama, any OpenAI-compatible server, or Apple Intelligence.
@@ -179,7 +179,7 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 <summary><strong>Cotyping</strong> — inline AI autocomplete</summary>
 
 - **Ghost text everywhere:** as you type in almost any macOS text field, a gray suggestion appears next to the cursor; press **Tab** to accept (a word at a time, or the whole thing — Settings → Cotyping), or keep typing / press **Esc** to dismiss. Built on the same loop as [Cotabby](https://cotabby.app): an Accessibility poll resolves the focused field + caret, a `CGEventTap` watches keystrokes (and swallows the accept key only while a suggestion shows), a borderless click-through `NSPanel` renders the ghost at the caret, and accepted text is inserted as synthetic Unicode keystrokes.
-- **Reuses the local LLM:** suggestions come from the **same** backend as summaries through a low-latency raw `/v1/completions` call. The prompt treats the model as a pure text-continuer; raw output is cleaned by a shared normalizer (strips chat/`<think>` scaffolding, prompt echoes, and trailing-text duplication; collapses to one line). Nothing leaves the Mac.
+- **Its own dedicated on-device model:** cotyping decodes a dedicated model (default **Gemma 4 E4B Q5 XL**) **in-process via libllama** for low latency, with the localhost `llama-server` as the fallback (non-GGUF backends, the in-process runtime toggled off, or on model load failure). The prompt treats the model as a pure text-continuer; raw output is cleaned by a shared normalizer (strips chat/`<think>` scaffolding, prompt echoes, and trailing-text duplication; collapses to one line). Nothing leaves the Mac.
 - **Opt-in & private:** off by default; needs **Accessibility** + **Input Monitoring**. Never reads password/secure fields; honors a per-user app exclusion list (preseeded with password managers and terminals).
 - **In-app preview:** the **Cotyping** tab has a live playground that runs the real pipeline on text typed *inside LokalBot* — try it with zero system permissions. Quick-toggle from the menu bar.
 
