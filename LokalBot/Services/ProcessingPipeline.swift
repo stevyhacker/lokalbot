@@ -234,12 +234,12 @@ final class ProcessingPipeline: ObservableObject {
         let engine = try await makeTextEngine(config)
         let text = transcript.markdown
         let wordCount = text.split(whereSeparator: { $0.isWhitespace }).count
-        // Resolve `.matchTranscript` against the transcript text now so both
-        // the chunk extractions and the final synthesis share the same
-        // language directive (otherwise the chunker can default to English
-        // and the reducer flips back).
+        // Resolve `.matchTranscript` against raw spoken text now so both the
+        // chunk extractions and the final synthesis share the same language
+        // directive. Do not use rendered Markdown here: timestamps and speaker
+        // labels can skew NaturalLanguage on short transcripts.
         let language = SummaryLanguage.resolvedForTranscript(config.summaryLanguage,
-                                                             transcript: text)
+                                                             transcript: transcript)
         let systemPrompt = PromptTemplates.systemPrompt(for: config.noteTemplate,
                                                         summaryLanguage: language)
         let body: String

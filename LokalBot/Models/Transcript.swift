@@ -56,6 +56,16 @@ struct Transcript: Codable {
         }.joined(separator: "\n\n")
     }
 
+    /// Plain spoken text used for language detection and similar NLP passes.
+    /// Keep timestamps, speaker labels, and Markdown out of the sample: Apple's
+    /// language recognizer can over-weight that short formatting noise.
+    var languageDetectionText: String {
+        segments.compactMap { seg in
+            let text = seg.displayText
+            return text.isEmpty ? nil : text
+        }.joined(separator: " ")
+    }
+
     /// Merge per-track transcripts (mic = "me", system = "them") by timestamp.
     static func merged(_ tracks: [Transcript]) -> Transcript {
         Transcript(

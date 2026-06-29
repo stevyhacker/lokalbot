@@ -47,6 +47,27 @@ final class TranscriptTests: XCTestCase {
         XCTAssertEqual(transcript.markdown, "**[00:01:05] Ana:** Ship it.")
     }
 
+    func testLanguageDetectionTextExcludesMarkdownAndSpeakerLabels() {
+        let transcript = Transcript(
+            segments: [
+                .init(start: 65, end: 66, speaker: "me",
+                      text: " We should ship the analytics summary. ",
+                      confidence: nil),
+                .init(start: 67, end: 68, speaker: "them 1",
+                      text: "<|en|> Then follow up tomorrow.",
+                      confidence: nil),
+            ],
+            engine: "test",
+            speakerAliases: ["them 1": "Ana"]
+        )
+
+        XCTAssertEqual(transcript.languageDetectionText,
+                       "We should ship the analytics summary. Then follow up tomorrow.")
+        XCTAssertFalse(transcript.languageDetectionText.contains("[00:"))
+        XCTAssertFalse(transcript.languageDetectionText.contains("Ana"))
+        XCTAssertFalse(transcript.languageDetectionText.contains("**"))
+    }
+
     func testSpeakerAliasCanBeSetAndReset() {
         var transcript = Transcript(
             segments: [

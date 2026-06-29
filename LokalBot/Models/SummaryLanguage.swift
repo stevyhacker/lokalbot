@@ -69,6 +69,11 @@ enum SummaryLanguage: Equatable, Hashable, Sendable {
         return detectTranscriptLanguage(transcript)
     }
 
+    static func resolvedForTranscript(_ language: SummaryLanguage, transcript: Transcript) -> SummaryLanguage {
+        guard language == .matchTranscript else { return language }
+        return detectTranscriptLanguage(transcript.languageDetectionText)
+    }
+
     static func detectTranscriptLanguage(_ text: String) -> SummaryLanguage {
         let sample = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4_000))
         guard !sample.isEmpty else { return .en }
