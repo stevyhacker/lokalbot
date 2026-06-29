@@ -13,6 +13,7 @@ struct ModelsView: View {
     @State private var testResult: String?
     @State private var testing = false
     @State private var preparingTranscriptionModelID: String?
+    @State private var downloadedTranscriptionModelIDs: Set<String> = []
     @State private var readyTranscriptionModelIDs: Set<String> = []
     @State private var transcriptionModelErrors: [String: String] = [:]
     @State private var transcriptionModelProgress: [String: Double] = [:]
@@ -35,7 +36,11 @@ struct ModelsView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .navigationTitle("Models")
-        .task { await refreshOllama() }
+        .task {
+            refreshTranscriptionDownloads()
+            await refreshOllama()
+        }
+        .onAppear { refreshTranscriptionDownloads() }
         .sheet(isPresented: $showingHFBrowse) { huggingFaceBrowser }
     }
 
@@ -49,12 +54,15 @@ struct ModelsView: View {
                     choice: choice,
                     preparing: preparingTranscriptionModelID == choice.id,
                     prepareDisabled: preparingTranscriptionModelID != nil,
+                    downloaded: downloadedTranscriptionModelIDs.contains(choice.id),
                     ready: readyTranscriptionModelIDs.contains(choice.id),
                     error: transcriptionModelErrors[choice.id],
                     progress: transcriptionModelProgress[choice.id],
                     status: transcriptionModelStatus[choice.id]
                 ) {
                     Task { await prepareTranscriptionModel(choice) }
+                } delete: {
+                    deleteTranscriptionModel(choice)
                 }
             }
             Divider()
@@ -371,11 +379,13 @@ struct ModelsView: View {
         let choice: TranscriptionModelChoice
         let preparing: Bool
         let prepareDisabled: Bool
+        let downloaded: Bool
         let ready: Bool
         let error: String?
         let progress: Double?
         let status: String?
         let prepare: () -> Void
+        let delete: () -> Void
 
         var body: some View {
             let selected = app.settings.transcriptionModel == choice
@@ -410,14 +420,21 @@ struct ModelsView: View {
                         Text(status ?? "Preparing...")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
-                } else if !ready {
+                } else if downloaded {
+                    Button("Delete") { delete() }
+                        .controlSize(.mini)
+                } else {
                     Button("Download") { prepare() }
                         .controlSize(.small)
                         .disabled(prepareDisabled)
                 }
             }
-            .opacity(selected || ready || preparing ? 1 : 0.75)
+            .opacity(selected || downloaded || ready || preparing ? 1 : 0.75)
         }
+    }
+
+    private func refreshTranscriptionDownloads() {
+        downloadedTranscriptionModelIDs = TranscriptionModelStore.downloadedChoices()
     }
 
     private func prepareTranscriptionModel(_ choice: TranscriptionModelChoice) async {
@@ -460,7 +477,20 @@ struct ModelsView: View {
             case .gigaamRussian:
                 try await OnnxTranscriptionEngine.gigaamRussian.prepare(progress: progressHandler)
             }
+            downloadedTranscriptionModelIDs.insert(choice.id)
             readyTranscriptionModelIDs.insert(choice.id)
+        } catch {
+            transcriptionModelErrors[choice.id] = error.localizedDescription
+        }
+    }
+
+    private func deleteTranscriptionModel(_ choice: TranscriptionModelChoice) {
+        do {
+            try TranscriptionModelStore.delete(choice)
+            downloadedTranscriptionModelIDs.remove(choice.id)
+            readyTranscriptionModelIDs.remove(choice.id)
+            transcriptionModelProgress[choice.id] = nil
+            transcriptionModelStatus[choice.id] = nil
         } catch {
             transcriptionModelErrors[choice.id] = error.localizedDescription
         }
