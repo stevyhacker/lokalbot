@@ -34,6 +34,7 @@ struct MainWindowView: View {
                 .accessibilityIdentifier("toolbar.record")
             }
         }
+        .background(WindowToolbarStyle())
         .overlay(alignment: .bottom) {
             if let error = app.lastError {
                 HStack(spacing: 8) {
@@ -906,6 +907,40 @@ struct GettingStartedCard: View {
                 .foregroundStyle(done == true ? Color.green : Brand.teal)
                 .padding(.top, 2)
             content().font(.callout)
+        }
+    }
+}
+
+/// Forces the host window's toolbar to show icons *and* their labels — macOS
+/// otherwise renders SwiftUI toolbar items icon-only. Attached as a hidden
+/// background view so it configures whichever `NSWindow` ends up hosting the UI
+/// (the production scene or the UI-test host) once its toolbar exists, then
+/// stays out of the way so a user's later "Icon Only" choice sticks.
+private struct WindowToolbarStyle: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        context.coordinator.apply(to: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        private var applied = false
+
+        func apply(to view: NSView, attemptsLeft: Int = 12) {
+            guard !applied else { return }
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self, let view else { return }
+                if let toolbar = view.window?.toolbar {
+                    toolbar.displayMode = .iconAndLabel
+                    self.applied = true
+                } else if attemptsLeft > 0 {
+                    self.apply(to: view, attemptsLeft: attemptsLeft - 1)
+                }
+            }
         }
     }
 }
