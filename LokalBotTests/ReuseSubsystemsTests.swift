@@ -76,6 +76,21 @@ final class ReuseSubsystemsTests: XCTestCase {
         }
     }
 
+    func testParallelRangeDownloaderSplitsContiguousRanges() {
+        let ranges = ParallelRangeDownloader.ranges(totalBytes: 10, partSize: 4)
+        XCTAssertEqual(ranges, [
+            .init(index: 0, start: 0, end: 3),
+            .init(index: 1, start: 4, end: 7),
+            .init(index: 2, start: 8, end: 9),
+        ])
+        XCTAssertEqual(ranges.map(\.length), [4, 4, 2])
+    }
+
+    func testParallelRangeDownloaderRejectsInvalidRangeInputs() {
+        XCTAssertTrue(ParallelRangeDownloader.ranges(totalBytes: 0, partSize: 4).isEmpty)
+        XCTAssertTrue(ParallelRangeDownloader.ranges(totalBytes: 10, partSize: 0).isEmpty)
+    }
+
     // MARK: - TokenCountEstimator / WordCountFormatter
 
     func testTokenEstimateZeroForEmptyAndMonotonic() {
