@@ -471,6 +471,19 @@ final class AppState: ObservableObject {
     private var audioMonitorChangeForwarder: AnyCancellable?
     private var calendarObserver: AnyCancellable?
     private var transcriptionPrewarmTask: Task<Void, Never>?
+    private struct SystemAudioTarget {
+        var bundleID: String
+        var pid: pid_t
+    }
+    private var systemAudioTarget: SystemAudioTarget?
+    private var systemAudioWatchdog: AnyCancellable?
+    private var lastSystemAudioReattachAt: Date?
+    private var didWarnAboutSilentSystemAudio = false
+    private var samePIDSystemAudioRetryCount = 0
+    private static let systemAudioWatchdogInterval: TimeInterval = 5
+    private static let systemAudioInitialGrace: TimeInterval = 8
+    private static let systemAudioSilentGrace: TimeInterval = 8
+    private static let systemAudioReattachCooldown: TimeInterval = 10
     /// Calendar event id + stop time of the last calendar-backed recording, so
     /// the same scheduled meeting can't immediately re-record (helper-PID churn,
     /// brief audio drops). See `MeetingMatcher.shouldSuppressRepeat`.
@@ -682,9 +695,15 @@ final class AppState: ObservableObject {
                         try systemRecorder.start(capturingPID: pid,
                                                  writingTo: meeting.folderURL(in: storage).appendingPathComponent("system.m4a"))
                         meeting.hasSystemTrack = true
+                        systemAudioTarget = SystemAudioTarget(
+                            bundleID: detectedApp?.bundleID ?? "",
+                            pid: pid)
+                        startSystemAudioWatchdog()
+                        lokalbotLog("system audio tap started pid=\(pid) bundle=\(detectedApp?.bundleID ?? "unknown")")
                     } catch {
                         // Degrade gracefully: mic-only recording.
                         lastError = "System audio tap failed (\(error.localizedDescription)) — recording mic only."
+                        lokalbotLog("system audio tap FAILED: \(error.localizedDescription)")
                     }
                 }
                 currentMeeting = meeting
@@ -697,6 +716,8 @@ final class AppState: ObservableObject {
             } catch {
                 lastError = "Could not start recording: \(error.localizedDescription)"
                 lokalbotLog("startRecording FAILED: \(error.localizedDescription)")
+                stopSystemAudioWatchdog()
+                systemAudioTarget = nil
                 audioMonitor.isRecordingActive = false
                 audioMonitor.reseed()
                 // Don't leave a 0-minute husk in the library.
@@ -796,22 +817,32 @@ final class AppState: ObservableObject {
 
     func stopRecording(process: Bool = true) {
         guard isRecording, var meeting = currentMeeting else { return }
+        stopSystemAudioWatchdog()
         micRecorder.stop()
         systemRecorder.stop()
+        systemAudioTarget = nil
         audioMonitor.isRecordingActive = false
         audioMonitor.reseed()
         stopRecordingTick()
         let endedAt = Date()
         meeting.endedAt = endedAt
         let folder = meeting.folderURL(in: storage)
+        let micDuration = AudioFileInspector.duration(at: folder.appendingPathComponent("mic.m4a"))
+        let systemDuration = AudioFileInspector.duration(at: folder.appendingPathComponent("system.m4a"))
         meeting.hasSystemTrack = AudioFileInspector.isTranscribableAudio(
             at: folder.appendingPathComponent("system.m4a"))
         // The wall-clock span can outlast the captured audio (e.g. a device
         // disruption truncates the tracks while the session stays live), so
         // store the actual playable length — the longest track — for the UI.
-        meeting.recordedDuration = ["mic.m4a", "system.m4a"]
-            .compactMap { AudioFileInspector.duration(at: folder.appendingPathComponent($0)) }
-            .max()
+        meeting.recordedDuration = [micDuration, systemDuration].compactMap { $0 }.max()
+        let wallDuration = endedAt.timeIntervalSince(meeting.startedAt)
+        lokalbotLog(
+            "recording stopped wall=\(String(format: "%.2fs", wallDuration)) recorded=\(String(format: "%.2fs", meeting.recordedDuration ?? 0)) mic=\(Self.formatAudioDuration(micDuration)) system=\(Self.formatAudioDuration(systemDuration)) hasSystem=\(meeting.hasSystemTrack)")
+        if let recordedDuration = meeting.recordedDuration,
+           wallDuration - recordedDuration > 60,
+           recordedDuration < wallDuration * 0.8 {
+            lastError = "Recording saved, but only \(meeting.durationLabel) of audio was captured from a \(Self.formatMinutes(wallDuration)) session."
+        }
         try? storage.saveMeta(meeting)
         lastCalendarEventID = meeting.calendarEventID
         lastCalendarEventEndedAt = endedAt
@@ -841,6 +872,110 @@ final class AppState: ObservableObject {
     private func stopRecordingTick() {
         recordingTick?.cancel()
         recordingTick = nil
+    }
+
+    private func startSystemAudioWatchdog() {
+        stopSystemAudioWatchdog()
+        lastSystemAudioReattachAt = nil
+        didWarnAboutSilentSystemAudio = false
+        samePIDSystemAudioRetryCount = 0
+        systemAudioWatchdog = Timer.publish(
+            every: Self.systemAudioWatchdogInterval,
+            on: .main,
+            in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in self?.checkSystemAudioCapture() }
+    }
+
+    private func stopSystemAudioWatchdog() {
+        systemAudioWatchdog?.cancel()
+        systemAudioWatchdog = nil
+        lastSystemAudioReattachAt = nil
+        didWarnAboutSilentSystemAudio = false
+        samePIDSystemAudioRetryCount = 0
+    }
+
+    private func checkSystemAudioCapture() {
+        guard isRecording, var target = systemAudioTarget, let meeting = currentMeeting else { return }
+        let now = Date()
+        let elapsed = now.timeIntervalSince(meeting.startedAt)
+        guard elapsed >= Self.systemAudioInitialGrace else { return }
+
+        let health = systemRecorder.captureHealth()
+        let silentFor = health.lastAudioWriteAt.map { now.timeIntervalSince($0) } ?? elapsed
+        guard silentFor >= Self.systemAudioSilentGrace else { return }
+
+        if let lastSystemAudioReattachAt,
+           now.timeIntervalSince(lastSystemAudioReattachAt) < Self.systemAudioReattachCooldown {
+            return
+        }
+
+        guard let candidate = currentSystemAudioCandidate(for: target) else {
+            warnOnceAboutSilentSystemAudio(elapsed: elapsed, captured: health.duration)
+            return
+        }
+
+        // If the tap has never delivered audio, retry even on the same PID.
+        // Once samples exist, reattach only when Core Audio reports a different
+        // active process for the same meeting app/browser family.
+        let shouldRetrySamePID = health.duration < AudioFileInspector.minimumTranscribableDuration
+        let isSamePIDRetry = candidate.id == target.pid && shouldRetrySamePID
+        guard candidate.id != target.pid || shouldRetrySamePID else {
+            warnOnceAboutSilentSystemAudio(elapsed: elapsed, captured: health.duration)
+            return
+        }
+        guard !isSamePIDRetry || samePIDSystemAudioRetryCount < 2 else {
+            warnOnceAboutSilentSystemAudio(elapsed: elapsed, captured: health.duration)
+            return
+        }
+
+        do {
+            try systemRecorder.reattach(capturingPID: candidate.id)
+            let previousPID = target.pid
+            target.pid = candidate.id
+            systemAudioTarget = target
+            lastSystemAudioReattachAt = now
+            samePIDSystemAudioRetryCount = isSamePIDRetry ? samePIDSystemAudioRetryCount + 1 : 0
+            didWarnAboutSilentSystemAudio = false
+            lokalbotLog(
+                "system audio reattached oldPID=\(previousPID) newPID=\(candidate.id) bundle=\(candidate.bundleID ?? "unknown") captured=\(String(format: "%.2fs", health.duration)) silentFor=\(String(format: "%.2fs", silentFor))")
+        } catch {
+            lastSystemAudioReattachAt = now
+            lastError = "System audio capture was interrupted (\(error.localizedDescription)); still recording microphone."
+            lokalbotLog("system audio reattach FAILED: \(error.localizedDescription)")
+        }
+    }
+
+    private func currentSystemAudioCandidate(for target: SystemAudioTarget) -> AudioProcess? {
+        let processes = (try? CoreAudioUtils.listAudioProcesses()) ?? []
+        if MeetingDetector.browsers.contains(target.bundleID) {
+            return processes.first { process in
+                guard process.isRunningOutput, let bundleID = process.bundleID else { return false }
+                return MeetingDetector.browserAudioBundleID(bundleID, belongsTo: target.bundleID)
+            }
+        }
+        return processes.first { $0.id == target.pid && $0.isRunningOutput }
+            ?? processes.first { $0.isRunningOutput && $0.bundleID == target.bundleID }
+    }
+
+    private func warnOnceAboutSilentSystemAudio(elapsed: TimeInterval, captured: TimeInterval) {
+        guard !didWarnAboutSilentSystemAudio, elapsed >= 30 else { return }
+        didWarnAboutSilentSystemAudio = true
+        lokalbotLog(
+            "system audio silent elapsed=\(String(format: "%.2fs", elapsed)) captured=\(String(format: "%.2fs", captured))")
+        if captured < AudioFileInspector.minimumTranscribableDuration {
+            lastError = "System audio capture is silent; LokalBot is keeping the microphone recording and will reattach if the meeting audio process changes."
+        }
+    }
+
+    private static func formatAudioDuration(_ duration: TimeInterval?) -> String {
+        guard let duration else { return "missing" }
+        return String(format: "%.2fs", duration)
+    }
+
+    private static func formatMinutes(_ duration: TimeInterval) -> String {
+        let minutes = max(1, Int(duration / 60))
+        return "\(minutes) min"
     }
 
     func reprocess(_ meeting: Meeting, transcribe: Bool, summarize: Bool) {

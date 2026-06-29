@@ -11,6 +11,8 @@ final class MicRecorder {
     private var file: AVAudioFile?
     private var converter: AVAudioConverter?
     private var recordingFormat: AVAudioFormat?
+    private var isRecording = false
+    private var reconfigurationTask: Task<Void, Never>?
     /// Observes `AVAudioEngineConfigurationChange` so we can rebuild the
     /// tap graph in place when the audio device changes mid-recording
     /// (AirPods plug/unplug, default-input switch, sample-rate renegotiation).
@@ -43,6 +45,9 @@ final class MicRecorder {
     }
 
     func start(writingTo url: URL) throws {
+        reconfigurationTask?.cancel()
+        reconfigurationTask = nil
+        isRecording = false
         engine = AVAudioEngine()
         let inputFormat = engine.inputNode.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
@@ -77,6 +82,7 @@ final class MicRecorder {
             converter = nil
             throw error
         }
+        isRecording = true
 
         // The engine stops itself on device changes; restart it on the new
         // graph so the same `mic.m4a` continues uninterrupted across swaps.
@@ -88,6 +94,9 @@ final class MicRecorder {
     }
 
     func stop() {
+        isRecording = false
+        reconfigurationTask?.cancel()
+        reconfigurationTask = nil
         if let configChangeObserver {
             NotificationCenter.default.removeObserver(configChangeObserver)
             self.configChangeObserver = nil
@@ -140,18 +149,55 @@ final class MicRecorder {
     /// format (keeping the original on-disk format) and restart, so the same
     /// `mic.m4a` continues across the swap instead of truncating.
     private func handleConfigurationChange() {
+        guard isRecording else { return }
         guard let recordingFormat else { return }
         engine.inputNode.removeTap(onBus: 0)
         let newInputFormat = engine.inputNode.outputFormat(forBus: 0)
         guard newInputFormat.sampleRate > 0, newInputFormat.channelCount > 0 else {
             NSLog("MicRecorder reconfig: no usable input device after change")
+            scheduleReconfigurationRetry()
             return
         }
         do {
             try installTapAndStart(inputFormat: newInputFormat,
                                    recordingFormat: recordingFormat)
+            reconfigurationTask?.cancel()
+            reconfigurationTask = nil
         } catch {
             NSLog("MicRecorder reconfig failed: \(error.localizedDescription)")
+            scheduleReconfigurationRetry()
+        }
+    }
+
+    private func scheduleReconfigurationRetry() {
+        guard isRecording else { return }
+        guard reconfigurationTask == nil else { return }
+        reconfigurationTask = Task { [weak self] in
+            var attempt = 1
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(min(Double(attempt), 5.0)))
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard let self, self.isRecording else { return }
+                    self.engine.inputNode.removeTap(onBus: 0)
+                    guard let recordingFormat = self.recordingFormat else { return }
+                    let inputFormat = self.engine.inputNode.outputFormat(forBus: 0)
+                    guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+                        NSLog("MicRecorder reconfig retry: no usable input device")
+                        return
+                    }
+                    do {
+                        try self.installTapAndStart(inputFormat: inputFormat,
+                                                    recordingFormat: recordingFormat)
+                        NSLog("MicRecorder reconfig retry succeeded")
+                        self.reconfigurationTask?.cancel()
+                        self.reconfigurationTask = nil
+                    } catch {
+                        NSLog("MicRecorder reconfig retry failed: \(error.localizedDescription)")
+                    }
+                }
+                attempt += 1
+            }
         }
     }
 

@@ -35,6 +35,10 @@ final class SystemAudioRecorder {
     private var ioProcID: AudioDeviceIOProcID?
     private var file: AVAudioFile?
     private var tapFormat: AVAudioFormat?
+    private var outputURL: URL?
+    private var framesWritten: AVAudioFramePosition = 0
+    private var recordingSampleRate: Double = 0
+    private var lastAudioWriteAt: Date?
 
     /// IOProc writes hop here so the Core Audio real-time thread never
     /// blocks on AAC encoding or filesystem I/O. Serial → ordered writes.
@@ -50,6 +54,12 @@ final class SystemAudioRecorder {
     /// `stop()` was called (crash, user-quit, browser tab close).
     var onCapturedProcessTerminated: (() -> Void)?
 
+    struct CaptureHealth {
+        let duration: TimeInterval
+        let lastAudioWriteAt: Date?
+        let capturedPID: pid_t
+    }
+
     func start(capturingPID pid: pid_t, writingTo url: URL) throws {
         // 1. Translate the PID to its Core Audio process object.
         guard let processObject = CoreAudioUtils.translatePIDToProcessObject(pid: pid) else {
@@ -57,30 +67,54 @@ final class SystemAudioRecorder {
         }
 
         do {
-            try buildPipeline(processObject: processObject, writingTo: url)
+            outputURL = url
+            ioQueue.sync {
+                framesWritten = 0
+                recordingSampleRate = 0
+                lastAudioWriteAt = nil
+            }
+            try attachTap(processObject: processObject, writingTo: url)
         } catch {
-            cleanup()
+            cleanup(closeFile: true)
             throw error
         }
 
         // Latch the PID only after a successful build so cleanup() on a
         // partial start doesn't leave a stale watcher running.
-        capturedPID = pid
+        installTerminationObserver(for: pid)
+    }
 
-        // Watch the captured process: if it dies mid-meeting, the tap goes
-        // silent. Notify upstream so the meeting can end cleanly instead of
-        // producing a `system.m4a` that's half audio, half blank.
-        terminationObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didTerminateApplicationNotification,
-            object: nil, queue: .main) { [weak self] note in
-            guard let self,
-                  let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                  app.processIdentifier == self.capturedPID else { return }
-            self.onCapturedProcessTerminated?()
+    /// Switches the Core Audio process tap to a new PID while keeping the
+    /// existing `system.m4a` writer open. Browser meetings often move output
+    /// between helper processes; closing/reopening the file would discard the
+    /// audio already captured before that handoff.
+    func reattach(capturingPID pid: pid_t) throws {
+        guard let outputURL else { throw RecorderError.processNotFound }
+        guard let processObject = CoreAudioUtils.translatePIDToProcessObject(pid: pid) else {
+            throw RecorderError.processNotFound
+        }
+        teardownTap()
+        do {
+            try attachTap(processObject: processObject, writingTo: outputURL)
+            installTerminationObserver(for: pid)
+        } catch {
+            teardownTap()
+            throw error
         }
     }
 
-    private func buildPipeline(processObject: AudioObjectID, writingTo url: URL) throws {
+    func captureHealth() -> CaptureHealth {
+        ioQueue.sync {
+            let duration = recordingSampleRate > 0
+                ? Double(framesWritten) / recordingSampleRate
+                : 0
+            return CaptureHealth(duration: duration,
+                                 lastAudioWriteAt: lastAudioWriteAt,
+                                 capturedPID: capturedPID)
+        }
+    }
+
+    private func attachTap(processObject: AudioObjectID, writingTo url: URL) throws {
         // 2. Create a stereo-mixdown tap on that process only.
         let tapDescription = CATapDescription(stereoMixdownOfProcesses: [processObject])
         tapDescription.uuid = UUID()
@@ -100,6 +134,10 @@ final class SystemAudioRecorder {
         guard err == noErr, let format = AVAudioFormat(streamDescription: &asbd) else {
             throw RecorderError.badTapFormat
         }
+
+        if let existingFormat = tapFormat, !Self.formatsCompatible(existingFormat, format) {
+            throw RecorderError.badTapFormat
+        }
         tapFormat = format
 
         // 4. Private aggregate device that contains (auto-starts) the tap.
@@ -116,17 +154,23 @@ final class SystemAudioRecorder {
         err = AudioHardwareCreateAggregateDevice(aggDescription as CFDictionary, &aggregateID)
         guard err == noErr else { throw RecorderError.coreAudio("CreateAggregateDevice", err) }
 
-        // 5. Output file (PCM → AAC handled by AVAudioFile).
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: format.sampleRate,
-            AVNumberOfChannelsKey: format.channelCount,
-            AVEncoderBitRateKey: 96_000,
-        ]
-        file = try AVAudioFile(forWriting: url,
-                               settings: settings,
-                               commonFormat: format.commonFormat,
-                               interleaved: format.isInterleaved)
+        // 5. Output file (PCM → AAC handled by AVAudioFile). Reattaches keep
+        // this writer open so samples already captured remain in the same M4A.
+        if file == nil {
+            let settings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: format.sampleRate,
+                AVNumberOfChannelsKey: format.channelCount,
+                AVEncoderBitRateKey: 96_000,
+            ]
+            file = try AVAudioFile(forWriting: url,
+                                   settings: settings,
+                                   commonFormat: format.commonFormat,
+                                   interleaved: format.isInterleaved)
+            ioQueue.sync {
+                recordingSampleRate = format.sampleRate
+            }
+        }
 
         // 6. IOProc: tap buffers arrive as the aggregate device's input.
         //    The Core Audio buffer list is only valid for the duration of
@@ -154,8 +198,13 @@ final class SystemAudioRecorder {
             let fileRef = self.file
             self.ioQueue.async {
                 guard let fileRef else { return }
-                do { try fileRef.write(from: copy) }
-                catch { NSLog("SystemAudioRecorder write failed: \(error.localizedDescription)") }
+                do {
+                    try fileRef.write(from: copy)
+                    self.framesWritten += AVAudioFramePosition(copy.frameLength)
+                    self.lastAudioWriteAt = Date()
+                } catch {
+                    NSLog("SystemAudioRecorder write failed: \(error.localizedDescription)")
+                }
             }
         }
         guard err == noErr else { throw RecorderError.coreAudio("CreateIOProc", err) }
@@ -169,15 +218,31 @@ final class SystemAudioRecorder {
             NSWorkspace.shared.notificationCenter.removeObserver(terminationObserver)
             self.terminationObserver = nil
         }
-        cleanup()
+        cleanup(closeFile: true)
     }
 
-    /// One canonical teardown path, used by both `stop()` and any error path
-    /// inside `start()`. Order matters: stop the IOProc (so no new buffers
-    /// are dispatched), drain the write queue (so in-flight writes finish),
-    /// release the file ref (flushes the AAC encoder), then dismantle the
-    /// Core Audio objects.
-    private func cleanup() {
+    private func installTerminationObserver(for pid: pid_t) {
+        if let terminationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(terminationObserver)
+            self.terminationObserver = nil
+        }
+        capturedPID = pid
+        // Watch the captured process: if it dies mid-meeting, the tap goes
+        // silent. Notify upstream so the meeting can end cleanly instead of
+        // producing a `system.m4a` that's half audio, half blank.
+        terminationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification,
+            object: nil, queue: .main) { [weak self] note in
+            guard let self,
+                  let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  app.processIdentifier == self.capturedPID else { return }
+            self.onCapturedProcessTerminated?()
+        }
+    }
+
+    /// Stop the tap/aggregate without closing the file. Used for browser
+    /// helper handoffs where the M4A should keep accumulating samples.
+    private func teardownTap() {
         if let ioProcID, aggregateID != kAudioObjectUnknown {
             AudioDeviceStop(aggregateID, ioProcID)
             AudioDeviceDestroyIOProcID(aggregateID, ioProcID)
@@ -185,10 +250,8 @@ final class SystemAudioRecorder {
         ioProcID = nil
 
         // Drain any IOProc writes that were already dispatched before we
-        // stopped, then release the file so the AAC encoder flushes.
+        // stopped, preserving sample order before a reattach or file close.
         ioQueue.sync {}
-        file = nil
-        tapFormat = nil
 
         if aggregateID != kAudioObjectUnknown {
             AudioHardwareDestroyAggregateDevice(aggregateID)
@@ -198,6 +261,30 @@ final class SystemAudioRecorder {
             AudioHardwareDestroyProcessTap(tapID)
             tapID = AudioObjectID(kAudioObjectUnknown)
         }
+    }
+
+    /// One canonical close path, used by both `stop()` and startup failures.
+    /// Order matters: stop the IOProc (so no new buffers are dispatched), drain
+    /// the write queue (so in-flight writes finish), release the file ref
+    /// (flushes the AAC encoder), then dismantle Core Audio objects.
+    private func cleanup(closeFile: Bool) {
+        teardownTap()
+        guard closeFile else { return }
+        file = nil
+        tapFormat = nil
+        outputURL = nil
         capturedPID = 0
+        ioQueue.sync {
+            framesWritten = 0
+            recordingSampleRate = 0
+            lastAudioWriteAt = nil
+        }
+    }
+
+    private static func formatsCompatible(_ lhs: AVAudioFormat, _ rhs: AVAudioFormat) -> Bool {
+        lhs.commonFormat == rhs.commonFormat
+            && lhs.sampleRate == rhs.sampleRate
+            && lhs.channelCount == rhs.channelCount
+            && lhs.isInterleaved == rhs.isInterleaved
     }
 }
