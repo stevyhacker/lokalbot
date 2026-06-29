@@ -137,30 +137,14 @@ private struct CotypingContent: View {
     }
 
     private var engineDescription: String {
-        if app.settings.cotypingUseSeparateModel {
-            let entry = ModelCatalog.entry(
-                id: app.settings.cotypingBuiltInModelID,
-                custom: app.settings.customBuiltInModels)
-            return "Dedicated — \(entry?.displayName ?? "built-in model")"
-        }
-        switch app.settings.summarizerBackend {
-        case .builtIn:
-            return ModelCatalog.entry(id: app.settings.builtInModelID,
-                                      custom: app.settings.customBuiltInModels)?.displayName
-                ?? "Built-in model"
-        case .appleIntelligence: return "Apple Intelligence"
-        case .ollama:
-            return "Ollama — " + (app.settings.ollamaModel.isEmpty ? "no model selected" : app.settings.ollamaModel)
-        case .openAICompatible:
-            return "OpenAI-compatible — " + (app.settings.openAIModel.isEmpty ? "no model selected" : app.settings.openAIModel)
-        }
+        let entry = ModelCatalog.entry(
+            id: app.settings.cotypingBuiltInModelID,
+            custom: app.settings.customBuiltInModels)
+        return "Dedicated — \(entry?.displayName ?? "built-in model")"
     }
 
     private var modelDetail: String {
-        if app.settings.cotypingUseSeparateModel {
-            return "Cotyping runs on its own llama.cpp server, separate from summarization. Gemma 4 E4B Q5 XL is the recommended quality target."
-        }
-        return "Cotyping reuses your Summarization backend and model. Turn on the dedicated model in Settings → Cotyping or Models for higher-quality inline suggestions."
+        "Cotyping runs on its own llama.cpp server, separate from summarization. Gemma 4 E4B Q5 XL is the recommended quality target."
     }
 
     // MARK: Preview

@@ -424,15 +424,14 @@ final class AppState: ObservableObject {
     private(set) lazy var pipeline = ProcessingPipeline(storage: storage) { [weak self] in
         self?.settings ?? AppSettings()
     }
-    /// Cotyping (inline AI autocomplete). By default it reuses the summarizer's
-    /// `TextEngine`; when a separate cotyping model is enabled it runs on the
+    /// Cotyping (inline AI autocomplete). Always runs its own model on the
     /// dedicated `LlamaServer.cotyping` instance so it never thrashes the
-    /// shared server. Resolved per-completion, so changes apply live.
+    /// shared summarizer server. Resolved per-completion, so changes apply live.
     private(set) lazy var cotypingEngine = CotypingEngine(makeEngine: { [weak self] in
         guard let self else { throw TextEngineError.unavailable("LokalBot is shutting down.") }
         return try await self.pipeline.makeTextEngine(
             self.settings.cotypingTextEngineSettings,
-            server: self.settings.cotypingUseSeparateModel ? .cotyping : .shared)
+            server: .cotyping)
     })
     private(set) lazy var cotyping = CotypingCoordinator(
         engine: cotypingEngine,

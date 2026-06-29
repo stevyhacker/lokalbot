@@ -127,17 +127,14 @@ struct SettingsView: View {
                 // answers a user wants first, before any behavior tuning.
                 if app.settings.cotypingEnabled, shows("Cotyping", ["model", "stats", "generated", "accepted", "latency"]) {
                     Section("Model & activity") {
-                        Toggle("Use a dedicated high-quality cotyping model", isOn: $app.settings.cotypingUseSeparateModel)
                         CotypingModelPreparationView(compact: true)
-                        if app.settings.cotypingUseSeparateModel {
-                            Picker("Cotyping model", selection: $app.settings.cotypingBuiltInModelID) {
-                                ForEach(ModelCatalog.selectableEntries(custom: app.settings.customBuiltInModels)) { entry in
-                                    Text(entry.displayName).tag(entry.id)
-                                }
+                        Picker("Cotyping model", selection: $app.settings.cotypingBuiltInModelID) {
+                            ForEach(ModelCatalog.selectableEntries(custom: app.settings.customBuiltInModels)) { entry in
+                                Text(entry.displayName).tag(entry.id)
                             }
-                            Text("Gemma 4 E4B Q5 XL is the recommended quality target; Qwen3.5 2B and LFM2.5 1.2B are smaller latency options.")
-                                .font(.caption).foregroundStyle(.secondary)
                         }
+                        Text("Cotyping runs its own dedicated model. Gemma 4 E4B Q5 XL is the recommended quality target; Qwen3.5 2B and LFM2.5 1.2B are smaller latency options.")
+                            .font(.caption).foregroundStyle(.secondary)
                         LabeledContent("Suggestions generated") {
                             Text("\(cotypingStats.stats.generations)").foregroundStyle(.secondary)
                         }

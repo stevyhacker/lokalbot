@@ -182,7 +182,7 @@ Each unit below states *what it does*, *its interface*, and *what it depends on*
   otherwise the existing HTTP `CotypingEngine`. Resolved per-completion (mirrors
   today's `makeEngine` closure) so a settings change applies live.
 - **Depends on:** `AppSettings` (`cotypingTextEngineSettings`,
-  `cotypingUseSeparateModel`), `ModelCatalog`.
+  `cotypingBuiltInModelID`), `ModelCatalog`.
 
 ## 9. Data flow (per keystroke)
 
