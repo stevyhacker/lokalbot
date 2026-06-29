@@ -161,6 +161,11 @@ struct AppSettings: Codable {
     /// inline suggestions never contend with summarization for the shared
     /// server. Defaults to the recommended Cotypist-parity model.
     var cotypingBuiltInModelID: String = ModelCatalog.recommendedCotypingID
+    /// When true (default), cotyping uses the in-process `libllama` runtime for
+    /// the built-in GGUF backend on Apple Silicon; false forces the HTTP
+    /// `llama-server` path. The HTTP fallback also covers non-GGUF backends and
+    /// any in-process load failure regardless of this flag.
+    var cotypingInProcessRuntime: Bool = true
     /// Learn from accepted continuation text, encrypted locally. Stores accepted
     /// text plus a short sanitized prefix/context hint for ranking — never full
     /// raw typing streams — and skips secure fields, terminals, and code editors.
@@ -279,6 +284,7 @@ struct AppSettings: Codable {
         case cotypingLanguages
         case cotypingExtendedContext
         case cotypingBuiltInModelID
+        case cotypingInProcessRuntime
         case cotypingUseLocalLearning
         case cotypingLearningExamplesInPrompt
     }
@@ -352,6 +358,7 @@ struct AppSettings: Codable {
         try c.encode(cotypingLanguages, forKey: .cotypingLanguages)
         try c.encode(cotypingExtendedContext, forKey: .cotypingExtendedContext)
         try c.encode(cotypingBuiltInModelID, forKey: .cotypingBuiltInModelID)
+        try c.encode(cotypingInProcessRuntime, forKey: .cotypingInProcessRuntime)
         try c.encode(cotypingUseLocalLearning, forKey: .cotypingUseLocalLearning)
         try c.encode(cotypingLearningExamplesInPrompt, forKey: .cotypingLearningExamplesInPrompt)
     }
@@ -414,6 +421,7 @@ struct AppSettings: Codable {
         cotypingLanguages = (try? c.decode(String.self, forKey: .cotypingLanguages)) ?? defaults.cotypingLanguages
         cotypingExtendedContext = (try? c.decode(String.self, forKey: .cotypingExtendedContext)) ?? defaults.cotypingExtendedContext
         cotypingBuiltInModelID = (try? c.decode(String.self, forKey: .cotypingBuiltInModelID)) ?? defaults.cotypingBuiltInModelID
+        cotypingInProcessRuntime = (try? c.decode(Bool.self, forKey: .cotypingInProcessRuntime)) ?? defaults.cotypingInProcessRuntime
         cotypingUseLocalLearning = (try? c.decode(Bool.self, forKey: .cotypingUseLocalLearning)) ?? defaults.cotypingUseLocalLearning
         let learnedCount = (try? c.decode(Int.self, forKey: .cotypingLearningExamplesInPrompt)) ?? defaults.cotypingLearningExamplesInPrompt
         cotypingLearningExamplesInPrompt = min(5, max(1, learnedCount))

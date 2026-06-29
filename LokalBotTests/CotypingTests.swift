@@ -627,6 +627,25 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertTrue(settings.menuBarOnly)
     }
 
+    func testInProcessRuntimeDefaultsOn() {
+        XCTAssertTrue(AppSettings().cotypingInProcessRuntime)
+    }
+
+    func testInProcessRuntimeRoundTrips() throws {
+        var settings = AppSettings()
+        settings.cotypingInProcessRuntime = false
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+        XCTAssertFalse(decoded.cotypingInProcessRuntime)
+    }
+
+    func testTolerantDecodeDefaultsInProcessRuntimeOn() throws {
+        // A saved blob predating the flag must decode with the default (true).
+        let json = "{}".data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: json)
+        XCTAssertTrue(decoded.cotypingInProcessRuntime)
+    }
+
     func testDefaultsMirrorCotypistLengthAndDebounce() {
         let settings = AppSettings()
         XCTAssertEqual(settings.cotypingMaxWords, 20)
