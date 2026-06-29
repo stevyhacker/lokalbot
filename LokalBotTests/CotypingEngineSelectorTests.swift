@@ -76,11 +76,16 @@ final class CotypingEngineSelectorTests: XCTestCase {
                        "re-enabling after route-away must rebuild a fresh local engine")
     }
 
-    /// FIX 2: a thrown `LlamaRuntimeError.decodeFailed` from the local engine must
-    /// reach the selector's `catch let error as LlamaRuntimeError` and fall back to
-    /// HTTP. Enabled by the `CotypingCompleting` seam on `makeLocal` (a throwing
-    /// fake can now be injected as the local engine).
-    func testDecodeFailureFallsBackToHTTP() throws {
+    /// FIX 2 (selector half): a `LlamaRuntimeError` thrown by the local engine must
+    /// reach the selector's `catch let error as LlamaRuntimeError` and route the
+    /// completion to HTTP. This injects a `ThrowingLocalEngine` fake (enabled by the
+    /// `CotypingCompleting` seam on `makeLocal`), so it proves the selector's
+    /// fallback wiring — NOT that `LlamaCotypingRuntime.generate` actually throws on
+    /// a failed `llama_decode`. That runtime half is locked by compilation (the
+    /// `try await` propagation in `LlamaCotypingRuntimeTests`); a genuine
+    /// `llama_decode == 0` fault (KV exhaustion / OOM) can't be provoked
+    /// deterministically in a unit test.
+    func testLocalRuntimeErrorRoutesToHTTPFallback() throws {
         try XCTSkipUnless(CotypingEngineSelector.isAppleSilicon,
                           "Selector routes to local only on Apple Silicon.")
         let env = try GGUFFixture()
