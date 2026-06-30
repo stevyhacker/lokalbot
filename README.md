@@ -4,9 +4,9 @@
 
 # LokalBot
 
-**Record, transcribe, and summarize meetings — entirely on your Mac.**
+**A private AI workspace for your Mac.**
 
-No cloud. No account. Nothing ever leaves the device.
+Record your meetings, autocomplete your writing, and see where your day went — all on-device. No account, no setup, no cloud.
 
 ![macOS 15.0+](https://img.shields.io/badge/macOS-15.0%2B-000000?logo=apple&logoColor=white)
 ![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-required-1f6feb)
@@ -20,7 +20,7 @@ No cloud. No account. Nothing ever leaves the device.
 
 ---
 
-LokalBot is a strictly-local meeting recorder for macOS. It records both sides of a call, transcribes and summarizes it, indexes everything for search, tracks how you spend your day, and — with **Cotyping** — suggests text inline as you type in any app. Every model runs **on-device** on Apple Silicon, so your audio, transcripts, and notes never touch a server.
+LokalBot is a strictly-local AI workspace for macOS. It records both sides of a call, transcribes and summarizes it, indexes everything for search, tracks how you spend your day, and — with **Cotyping** — suggests text inline as you type in any app. Every model runs **on-device** on Apple Silicon, so your audio, transcripts, and notes never touch a server.
 
 <div align="center">
 

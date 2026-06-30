@@ -516,11 +516,16 @@ final class AppState: ObservableObject {
         var pid: pid_t
     }
     private var systemAudioTarget: SystemAudioTarget?
-    private var systemAudioWatchdog: AnyCancellable?
+    private var recordingHealthWatchdog: AnyCancellable?
+    private var lastMicRestartAt: Date?
+    private var didWarnAboutMicCaptureStall = false
     private var lastSystemAudioReattachAt: Date?
     private var didWarnAboutSilentSystemAudio = false
     private var samePIDSystemAudioRetryCount = 0
-    private static let systemAudioWatchdogInterval: TimeInterval = 5
+    private static let recordingHealthWatchdogInterval: TimeInterval = 5
+    private static let micCaptureInitialGrace: TimeInterval = 8
+    private static let micCaptureStallGrace: TimeInterval = 15
+    private static let micCaptureRestartCooldown: TimeInterval = 10
     private static let systemAudioInitialGrace: TimeInterval = 8
     private static let systemAudioSilentGrace: TimeInterval = 8
     private static let systemAudioReattachCooldown: TimeInterval = 10
@@ -748,17 +753,23 @@ final class AppState: ObservableObject {
                 }
                 created = meeting
                 try micRecorder.start(writingTo: meeting.folderURL(in: storage).appendingPathComponent("mic.m4a"))
+                startRecordingHealthWatchdog()
 
-                if let pid = detectedApp?.pid {
+                if let detectedApp {
+                    let captureProcess = MeetingDetector.currentOutputAudioProcess(for: detectedApp)
+                    let pid = captureProcess?.id ?? detectedApp.pid
                     do {
                         try systemRecorder.start(capturingPID: pid,
                                                  writingTo: meeting.folderURL(in: storage).appendingPathComponent("system.m4a"))
                         meeting.hasSystemTrack = true
                         systemAudioTarget = SystemAudioTarget(
-                            bundleID: detectedApp?.bundleID ?? "",
+                            bundleID: detectedApp.bundleID,
                             pid: pid)
-                        startSystemAudioWatchdog()
-                        lokalbotLog("system audio tap started pid=\(pid) bundle=\(detectedApp?.bundleID ?? "unknown")")
+                        if pid != detectedApp.pid || captureProcess?.bundleID != detectedApp.bundleID {
+                            lokalbotLog(
+                                "system audio capture resolved detectedPID=\(detectedApp.pid) capturePID=\(pid) captureBundle=\(captureProcess?.bundleID ?? "unknown") hostBundle=\(detectedApp.bundleID)")
+                        }
+                        lokalbotLog("system audio tap started pid=\(pid) bundle=\(detectedApp.bundleID)")
                     } catch {
                         // Degrade gracefully: mic-only recording.
                         lastError = "System audio tap failed (\(error.localizedDescription)) — recording mic only."
@@ -775,7 +786,7 @@ final class AppState: ObservableObject {
             } catch {
                 lastError = "Could not start recording: \(error.localizedDescription)"
                 lokalbotLog("startRecording FAILED: \(error.localizedDescription)")
-                stopSystemAudioWatchdog()
+                stopRecordingHealthWatchdog()
                 systemAudioTarget = nil
                 audioMonitor.isRecordingActive = false
                 audioMonitor.reseed()
@@ -878,7 +889,7 @@ final class AppState: ObservableObject {
 
     func stopRecording(process: Bool = true) {
         guard isRecording, var meeting = currentMeeting else { return }
-        stopSystemAudioWatchdog()
+        stopRecordingHealthWatchdog()
         micRecorder.stop()
         systemRecorder.stop()
         systemAudioTarget = nil
@@ -935,25 +946,64 @@ final class AppState: ObservableObject {
         recordingTick = nil
     }
 
-    private func startSystemAudioWatchdog() {
-        stopSystemAudioWatchdog()
+    private func startRecordingHealthWatchdog() {
+        stopRecordingHealthWatchdog()
+        lastMicRestartAt = nil
+        didWarnAboutMicCaptureStall = false
         lastSystemAudioReattachAt = nil
         didWarnAboutSilentSystemAudio = false
         samePIDSystemAudioRetryCount = 0
-        systemAudioWatchdog = Timer.publish(
-            every: Self.systemAudioWatchdogInterval,
+        recordingHealthWatchdog = Timer.publish(
+            every: Self.recordingHealthWatchdogInterval,
             on: .main,
             in: .common)
             .autoconnect()
-            .sink { [weak self] _ in self?.checkSystemAudioCapture() }
+            .sink { [weak self] _ in
+                self?.checkMicCapture()
+                self?.checkSystemAudioCapture()
+            }
     }
 
-    private func stopSystemAudioWatchdog() {
-        systemAudioWatchdog?.cancel()
-        systemAudioWatchdog = nil
+    private func stopRecordingHealthWatchdog() {
+        recordingHealthWatchdog?.cancel()
+        recordingHealthWatchdog = nil
+        lastMicRestartAt = nil
+        didWarnAboutMicCaptureStall = false
         lastSystemAudioReattachAt = nil
         didWarnAboutSilentSystemAudio = false
         samePIDSystemAudioRetryCount = 0
+    }
+
+    private func checkMicCapture() {
+        guard isRecording, let meeting = currentMeeting else { return }
+        let now = Date()
+        let elapsed = now.timeIntervalSince(meeting.startedAt)
+        guard elapsed >= Self.micCaptureInitialGrace else { return }
+
+        let health = micRecorder.captureHealth()
+        let captureLag = elapsed - health.duration
+        guard captureLag >= Self.micCaptureStallGrace else { return }
+
+        if let lastMicRestartAt,
+           now.timeIntervalSince(lastMicRestartAt) < Self.micCaptureRestartCooldown {
+            return
+        }
+
+        do {
+            try micRecorder.restartCapture()
+            lastMicRestartAt = now
+            didWarnAboutMicCaptureStall = false
+            lokalbotLog(
+                "mic recorder restarted elapsed=\(String(format: "%.2fs", elapsed)) captured=\(String(format: "%.2fs", health.duration)) lag=\(String(format: "%.2fs", captureLag)) engineRunning=\(health.isEngineRunning)")
+        } catch {
+            lastMicRestartAt = now
+            if !didWarnAboutMicCaptureStall {
+                didWarnAboutMicCaptureStall = true
+                lastError = "Microphone capture stalled (\(error.localizedDescription)); LokalBot is still trying to recover system audio."
+            }
+            lokalbotLog(
+                "mic recorder restart FAILED elapsed=\(String(format: "%.2fs", elapsed)) captured=\(String(format: "%.2fs", health.duration)) lag=\(String(format: "%.2fs", captureLag)): \(error.localizedDescription)")
+        }
     }
 
     private func checkSystemAudioCapture() {
@@ -963,7 +1013,7 @@ final class AppState: ObservableObject {
         guard elapsed >= Self.systemAudioInitialGrace else { return }
 
         let health = systemRecorder.captureHealth()
-        let silentFor = health.lastAudioWriteAt.map { now.timeIntervalSince($0) } ?? elapsed
+        let silentFor = health.lastAudibleWriteAt.map { now.timeIntervalSince($0) } ?? elapsed
         guard silentFor >= Self.systemAudioSilentGrace else { return }
 
         if let lastSystemAudioReattachAt,
@@ -972,21 +1022,30 @@ final class AppState: ObservableObject {
         }
 
         guard let candidate = currentSystemAudioCandidate(for: target) else {
-            warnOnceAboutSilentSystemAudio(elapsed: elapsed, captured: health.duration)
+            warnOnceAboutSilentSystemAudio(elapsed: elapsed, captured: health.duration,
+                                           audible: health.audibleDuration,
+                                           rms: health.lastRMSLevel,
+                                           peakRMS: health.peakRMSLevel)
             return
         }
 
         // If the tap has never delivered audio, retry even on the same PID.
         // Once samples exist, reattach only when Core Audio reports a different
         // active process for the same meeting app/browser family.
-        let shouldRetrySamePID = health.duration < AudioFileInspector.minimumTranscribableDuration
+        let shouldRetrySamePID = health.audibleDuration < AudioFileInspector.minimumTranscribableDuration
         let isSamePIDRetry = candidate.id == target.pid && shouldRetrySamePID
         guard candidate.id != target.pid || shouldRetrySamePID else {
-            warnOnceAboutSilentSystemAudio(elapsed: elapsed, captured: health.duration)
+            warnOnceAboutSilentSystemAudio(elapsed: elapsed, captured: health.duration,
+                                           audible: health.audibleDuration,
+                                           rms: health.lastRMSLevel,
+                                           peakRMS: health.peakRMSLevel)
             return
         }
         guard !isSamePIDRetry || samePIDSystemAudioRetryCount < 2 else {
-            warnOnceAboutSilentSystemAudio(elapsed: elapsed, captured: health.duration)
+            warnOnceAboutSilentSystemAudio(elapsed: elapsed, captured: health.duration,
+                                           audible: health.audibleDuration,
+                                           rms: health.lastRMSLevel,
+                                           peakRMS: health.peakRMSLevel)
             return
         }
 
@@ -999,7 +1058,7 @@ final class AppState: ObservableObject {
             samePIDSystemAudioRetryCount = isSamePIDRetry ? samePIDSystemAudioRetryCount + 1 : 0
             didWarnAboutSilentSystemAudio = false
             lokalbotLog(
-                "system audio reattached oldPID=\(previousPID) newPID=\(candidate.id) bundle=\(candidate.bundleID ?? "unknown") captured=\(String(format: "%.2fs", health.duration)) silentFor=\(String(format: "%.2fs", silentFor))")
+                "system audio reattached oldPID=\(previousPID) newPID=\(candidate.id) bundle=\(candidate.bundleID ?? "unknown") captured=\(String(format: "%.2fs", health.duration)) audible=\(String(format: "%.2fs", health.audibleDuration)) silentFor=\(String(format: "%.2fs", silentFor)) rms=\(String(format: "%.6f", health.lastRMSLevel)) peakRMS=\(String(format: "%.6f", health.peakRMSLevel))")
         } catch {
             lastSystemAudioReattachAt = now
             lastError = "System audio capture was interrupted (\(error.localizedDescription)); still recording microphone."
@@ -1008,23 +1067,19 @@ final class AppState: ObservableObject {
     }
 
     private func currentSystemAudioCandidate(for target: SystemAudioTarget) -> AudioProcess? {
-        let processes = (try? CoreAudioUtils.listAudioProcesses()) ?? []
-        if MeetingDetector.browsers.contains(target.bundleID) {
-            return processes.first { process in
-                guard process.isRunningOutput, let bundleID = process.bundleID else { return false }
-                return MeetingDetector.browserAudioBundleID(bundleID, belongsTo: target.bundleID)
-            }
-        }
-        return processes.first { $0.id == target.pid && $0.isRunningOutput }
-            ?? processes.first { $0.isRunningOutput && $0.bundleID == target.bundleID }
+        MeetingDetector.currentOutputAudioProcess(for: MeetingDetector.DetectedApp(
+            name: target.bundleID,
+            bundleID: target.bundleID,
+            pid: target.pid))
     }
 
-    private func warnOnceAboutSilentSystemAudio(elapsed: TimeInterval, captured: TimeInterval) {
+    private func warnOnceAboutSilentSystemAudio(elapsed: TimeInterval, captured: TimeInterval,
+                                                audible: TimeInterval, rms: Float, peakRMS: Float) {
         guard !didWarnAboutSilentSystemAudio, elapsed >= 30 else { return }
         didWarnAboutSilentSystemAudio = true
         lokalbotLog(
-            "system audio silent elapsed=\(String(format: "%.2fs", elapsed)) captured=\(String(format: "%.2fs", captured))")
-        if captured < AudioFileInspector.minimumTranscribableDuration {
+            "system audio silent elapsed=\(String(format: "%.2fs", elapsed)) captured=\(String(format: "%.2fs", captured)) audible=\(String(format: "%.2fs", audible)) rms=\(String(format: "%.6f", rms)) peakRMS=\(String(format: "%.6f", peakRMS))")
+        if audible < AudioFileInspector.minimumTranscribableDuration {
             lastError = "System audio capture is silent; LokalBot is keeping the microphone recording and will reattach if the meeting audio process changes."
         }
     }

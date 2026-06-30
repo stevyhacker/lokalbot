@@ -269,7 +269,10 @@ final class MeetingDetector {
             } else if !titleMatches && !calendarBacked {
                 continue
             }
-            let audioProcess = bestBrowserAudioProcess(forBrowserBundleID: bid)
+            let audioProcess = currentOutputAudioProcess(for: DetectedApp(
+                name: app.localizedName ?? "Browser",
+                bundleID: bid,
+                pid: app.processIdentifier))
             guard MeetingMatcher.browserCountsAsMeeting(
                     titleMatchesMarker: titleMatches,
                     hasOutputAudio: audioProcess != nil,
@@ -294,12 +297,28 @@ final class MeetingDetector {
         return bundle == browser || bundle.hasPrefix("\(browser).helper")
     }
 
-    private static func bestBrowserAudioProcess(forBrowserBundleID browserBundleID: String) -> AudioProcess? {
-        let processes = (try? CoreAudioUtils.listAudioProcesses()) ?? []
-        return processes.first { process in
-            guard process.isRunningOutput, let bundleID = process.bundleID else { return false }
-            return browserAudioBundleID(bundleID, belongsTo: browserBundleID)
+    static func bestOutputAudioProcess(for app: DetectedApp,
+                                       in processes: [AudioProcess]) -> AudioProcess? {
+        if browsers.contains(app.bundleID) {
+            let matches = processes.filter { process in
+                guard process.isRunningOutput, let bundleID = process.bundleID else { return false }
+                return browserAudioBundleID(bundleID, belongsTo: app.bundleID)
+            }
+            // Chrome/Edge/Safari often emit meeting audio from helper processes,
+            // while the browser host can still expose a tap that only delivers
+            // silence. Prefer a helper unless the detected PID is already one.
+            return matches.first { $0.id == app.pid && $0.bundleID != app.bundleID }
+                ?? matches.first { $0.bundleID != app.bundleID }
+                ?? matches.first { $0.id == app.pid }
+                ?? matches.first
         }
+        return processes.first { $0.id == app.pid && $0.isRunningOutput }
+            ?? processes.first { $0.isRunningOutput && $0.bundleID == app.bundleID }
+    }
+
+    static func currentOutputAudioProcess(for app: DetectedApp) -> AudioProcess? {
+        let processes = (try? CoreAudioUtils.listAudioProcesses()) ?? []
+        return bestOutputAudioProcess(for: app, in: processes)
     }
 
     private static func continuingApp(_ app: DetectedApp, in running: [NSRunningApplication]) -> DetectedApp? {
@@ -313,10 +332,7 @@ final class MeetingDetector {
     }
 
     private static func hasOutputAudio(for app: DetectedApp) -> Bool {
-        if browsers.contains(app.bundleID) {
-            return bestBrowserAudioProcess(forBrowserBundleID: app.bundleID) != nil
-        }
-        return CoreAudioUtils.isProcessRunningOutput(pid: app.pid)
+        currentOutputAudioProcess(for: app) != nil
     }
 
     /// The meeting app's own audio activity — output, or (native apps only)

@@ -13,6 +13,10 @@ final class MicRecorder {
     private var recordingFormat: AVAudioFormat?
     private var isRecording = false
     private var reconfigurationTask: Task<Void, Never>?
+    private let healthLock = NSLock()
+    private var framesWritten: AVAudioFramePosition = 0
+    private var recordingSampleRate: Double = 0
+    private var lastAudioWriteAt: Date?
     /// Observes `AVAudioEngineConfigurationChange` so we can rebuild the
     /// tap graph in place when the audio device changes mid-recording
     /// (AirPods plug/unplug, default-input switch, sample-rate renegotiation).
@@ -34,6 +38,12 @@ final class MicRecorder {
                 "Microphone audio conversion failed: \(message)"
             }
         }
+    }
+
+    struct CaptureHealth {
+        let duration: TimeInterval
+        let lastAudioWriteAt: Date?
+        let isEngineRunning: Bool
     }
 
     static func requestPermission() async -> Bool {
@@ -73,6 +83,7 @@ final class MicRecorder {
                                commonFormat: recordingFormat.commonFormat,
                                interleaved: recordingFormat.isInterleaved)
         self.recordingFormat = recordingFormat
+        resetCaptureHealth(sampleRate: recordingFormat.sampleRate)
 
         do {
             try installTapAndStart(inputFormat: inputFormat, recordingFormat: recordingFormat)
@@ -80,6 +91,7 @@ final class MicRecorder {
             file = nil
             self.recordingFormat = nil
             converter = nil
+            resetCaptureHealth(sampleRate: 0)
             throw error
         }
         isRecording = true
@@ -109,6 +121,38 @@ final class MicRecorder {
         converter = nil
         recordingFormat = nil
         file = nil   // closes the file
+    }
+
+    func captureHealth() -> CaptureHealth {
+        healthLock.lock()
+        let duration = recordingSampleRate > 0
+            ? Double(framesWritten) / recordingSampleRate
+            : 0
+        let lastAudioWriteAt = self.lastAudioWriteAt
+        healthLock.unlock()
+        return CaptureHealth(duration: duration,
+                             lastAudioWriteAt: lastAudioWriteAt,
+                             isEngineRunning: engine.isRunning)
+    }
+
+    func restartCapture() throws {
+        guard isRecording, let recordingFormat else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        let inputFormat = engine.inputNode.outputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            scheduleReconfigurationRetry()
+            throw RecorderError.inputUnavailable
+        }
+        do {
+            try installTapAndStart(inputFormat: inputFormat,
+                                   recordingFormat: recordingFormat)
+            reconfigurationTask?.cancel()
+            reconfigurationTask = nil
+        } catch {
+            scheduleReconfigurationRetry()
+            throw error
+        }
     }
 
     // MARK: - Engine setup
@@ -233,6 +277,7 @@ final class MicRecorder {
         guard let file else { return }
         guard let converter, let recordingFormat else {
             try file.write(from: buffer)
+            noteWrittenAudio(buffer)
             return
         }
         let sampleRateRatio = recordingFormat.sampleRate / buffer.format.sampleRate
@@ -259,6 +304,26 @@ final class MicRecorder {
         }
         if output.frameLength > 0 {
             try file.write(from: output)
+            noteWrittenAudio(output)
         }
+    }
+
+    private func resetCaptureHealth(sampleRate: Double) {
+        healthLock.lock()
+        framesWritten = 0
+        recordingSampleRate = sampleRate
+        lastAudioWriteAt = nil
+        healthLock.unlock()
+    }
+
+    private func noteWrittenAudio(_ buffer: AVAudioPCMBuffer) {
+        guard buffer.frameLength > 0 else { return }
+        healthLock.lock()
+        if recordingSampleRate <= 0 {
+            recordingSampleRate = buffer.format.sampleRate
+        }
+        framesWritten += AVAudioFramePosition(buffer.frameLength)
+        lastAudioWriteAt = Date()
+        healthLock.unlock()
     }
 }

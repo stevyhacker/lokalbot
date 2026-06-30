@@ -37,8 +37,13 @@ final class SystemAudioRecorder {
     private var tapFormat: AVAudioFormat?
     private var outputURL: URL?
     private var framesWritten: AVAudioFramePosition = 0
+    private var audibleFramesWritten: AVAudioFramePosition = 0
     private var recordingSampleRate: Double = 0
     private var lastAudioWriteAt: Date?
+    private var lastAudibleWriteAt: Date?
+    private var lastRMSLevel: Float = 0
+    private var peakRMSLevel: Float = 0
+    private static let audibleRMSThreshold: Float = 0.0005
 
     /// IOProc writes hop here so the Core Audio real-time thread never
     /// blocks on AAC encoding or filesystem I/O. Serial → ordered writes.
@@ -56,8 +61,12 @@ final class SystemAudioRecorder {
 
     struct CaptureHealth {
         let duration: TimeInterval
+        let audibleDuration: TimeInterval
         let lastAudioWriteAt: Date?
+        let lastAudibleWriteAt: Date?
         let capturedPID: pid_t
+        let lastRMSLevel: Float
+        let peakRMSLevel: Float
     }
 
     func start(capturingPID pid: pid_t, writingTo url: URL) throws {
@@ -70,8 +79,12 @@ final class SystemAudioRecorder {
             outputURL = url
             ioQueue.sync {
                 framesWritten = 0
+                audibleFramesWritten = 0
                 recordingSampleRate = 0
                 lastAudioWriteAt = nil
+                lastAudibleWriteAt = nil
+                lastRMSLevel = 0
+                peakRMSLevel = 0
             }
             try attachTap(processObject: processObject, writingTo: url)
         } catch {
@@ -108,9 +121,16 @@ final class SystemAudioRecorder {
             let duration = recordingSampleRate > 0
                 ? Double(framesWritten) / recordingSampleRate
                 : 0
+            let audibleDuration = recordingSampleRate > 0
+                ? Double(audibleFramesWritten) / recordingSampleRate
+                : 0
             return CaptureHealth(duration: duration,
+                                 audibleDuration: audibleDuration,
                                  lastAudioWriteAt: lastAudioWriteAt,
-                                 capturedPID: capturedPID)
+                                 lastAudibleWriteAt: lastAudibleWriteAt,
+                                 capturedPID: capturedPID,
+                                 lastRMSLevel: lastRMSLevel,
+                                 peakRMSLevel: peakRMSLevel)
         }
     }
 
@@ -189,10 +209,10 @@ final class SystemAudioRecorder {
                   let dstChannels = copy.floatChannelData
             else { return }
             copy.frameLength = src.frameLength
-            let bytes = Int(src.frameLength) * MemoryLayout<Float>.size
-            for ch in 0..<Int(fmt.channelCount) {
-                memcpy(dstChannels[ch], srcChannels[ch], bytes)
-            }
+            let rmsLevel = Self.copyAndMeasureRMS(source: srcChannels,
+                                                  destination: dstChannels,
+                                                  channelCount: Int(fmt.channelCount),
+                                                  frameLength: Int(src.frameLength))
             // Snapshot the file ref on the audio thread (atomic class read);
             // strongly retained by the dispatched block until the write returns.
             let fileRef = self.file
@@ -200,8 +220,15 @@ final class SystemAudioRecorder {
                 guard let fileRef else { return }
                 do {
                     try fileRef.write(from: copy)
+                    let now = Date()
                     self.framesWritten += AVAudioFramePosition(copy.frameLength)
-                    self.lastAudioWriteAt = Date()
+                    self.lastAudioWriteAt = now
+                    self.lastRMSLevel = rmsLevel
+                    self.peakRMSLevel = max(self.peakRMSLevel, rmsLevel)
+                    if rmsLevel >= Self.audibleRMSThreshold {
+                        self.audibleFramesWritten += AVAudioFramePosition(copy.frameLength)
+                        self.lastAudibleWriteAt = now
+                    }
                 } catch {
                     NSLog("SystemAudioRecorder write failed: \(error.localizedDescription)")
                 }
@@ -276,8 +303,12 @@ final class SystemAudioRecorder {
         capturedPID = 0
         ioQueue.sync {
             framesWritten = 0
+            audibleFramesWritten = 0
             recordingSampleRate = 0
             lastAudioWriteAt = nil
+            lastAudibleWriteAt = nil
+            lastRMSLevel = 0
+            peakRMSLevel = 0
         }
     }
 
@@ -286,5 +317,25 @@ final class SystemAudioRecorder {
             && lhs.sampleRate == rhs.sampleRate
             && lhs.channelCount == rhs.channelCount
             && lhs.isInterleaved == rhs.isInterleaved
+    }
+
+    private static func copyAndMeasureRMS(source: UnsafePointer<UnsafeMutablePointer<Float>>,
+                                          destination: UnsafePointer<UnsafeMutablePointer<Float>>,
+                                          channelCount: Int,
+                                          frameLength: Int) -> Float {
+        guard channelCount > 0, frameLength > 0 else { return 0 }
+        let bytes = frameLength * MemoryLayout<Float>.size
+        var sumSquares = 0.0
+        for channel in 0..<channelCount {
+            let sourceChannel = source[channel]
+            let destinationChannel = destination[channel]
+            memcpy(destinationChannel, sourceChannel, bytes)
+            for frame in 0..<frameLength {
+                let sample = Double(sourceChannel[frame])
+                sumSquares += sample * sample
+            }
+        }
+        let sampleCount = channelCount * frameLength
+        return Float(sqrt(sumSquares / Double(sampleCount)))
     }
 }

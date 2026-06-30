@@ -1,3 +1,4 @@
+import CoreAudio
 import XCTest
 @testable import LokalBot
 
@@ -43,6 +44,44 @@ final class AudioSourceMonitorTests: XCTestCase {
         XCTAssertEqual(MeetingDetector.hostBrowserBundleID(forAudioBundleID: "com.google.Chrome"),
                        "com.google.Chrome")
         XCTAssertNil(MeetingDetector.hostBrowserBundleID(forAudioBundleID: "com.spotify.client"))
+    }
+
+    func testBrowserCapturePrefersRunningHelperOverHostProcess() {
+        let host = AudioProcess(id: 100,
+                                name: "Google Chrome",
+                                bundleID: "com.google.Chrome",
+                                objectID: AudioObjectID(100),
+                                isRunningOutput: true)
+        let helper = AudioProcess(id: 200,
+                                  name: "Google Chrome Helper",
+                                  bundleID: "com.google.Chrome.helper",
+                                  objectID: AudioObjectID(200),
+                                  isRunningOutput: true)
+        let app = MeetingDetector.DetectedApp(name: "Google Chrome",
+                                              bundleID: "com.google.Chrome",
+                                              pid: host.id)
+
+        XCTAssertEqual(MeetingDetector.bestOutputAudioProcess(for: app, in: [host, helper])?.id,
+                       helper.id)
+    }
+
+    func testBrowserCaptureKeepsDetectedPidWhenItIsAlreadyHelper() {
+        let helper = AudioProcess(id: 200,
+                                  name: "Google Chrome Helper",
+                                  bundleID: "com.google.Chrome.helper",
+                                  objectID: AudioObjectID(200),
+                                  isRunningOutput: true)
+        let otherHelper = AudioProcess(id: 300,
+                                       name: "Google Chrome Helper",
+                                       bundleID: "com.google.Chrome.helper",
+                                       objectID: AudioObjectID(300),
+                                       isRunningOutput: true)
+        let app = MeetingDetector.DetectedApp(name: "Google Chrome",
+                                              bundleID: "com.google.Chrome",
+                                              pid: helper.id)
+
+        XCTAssertEqual(MeetingDetector.bestOutputAudioProcess(for: app, in: [otherHelper, helper])?.id,
+                       helper.id)
     }
 
     /// Unknown apps stay eligible so a genuinely-new meeting tool is still
