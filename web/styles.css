@@ -1,14 +1,18 @@
 /* =========================================================================
-   LokalBot landing page
-   Theme: locked dark (matches the dark app icon). One accent: teal.
-   Amber (#fbbf24) is used once, only for the live "recording" indicator.
-   Radius system: pill for interactive (buttons/chips), 18px containers,
-   12px code/inputs. Type: native SF system stack (Apple-native on macOS).
+   LokalBot landing page — "Glass for the web"
+   Aesthetic: frosted, translucent glass panels over a dark, glowing field,
+   in the spirit of aave.com/design/building-glass-for-the-web. Every surface
+   is real glass: backdrop blur + saturate, a masked specular rim that catches
+   light on the top-left and breaks into a teal fringe, layered float shadows,
+   and a feTurbulence/feDisplacementMap refraction running in the background.
+   Identity stays teal; a faint violet appears only in glass refraction/glow.
+   Radius system: pill for interactive, 18px containers, 12px code/inputs.
+   Type: native SF system stack (Apple-native on macOS).
    ========================================================================= */
 
 :root {
-  --bg: #0b1119;
-  --bg-2: #0e141c;
+  --bg: #080d14;
+  --bg-2: #0b1119;
   --surface: #121a25;
   --surface-2: #16212e;
   --line: rgba(150, 180, 200, 0.13);
@@ -23,6 +27,29 @@
   --teal-soft: rgba(35, 196, 174, 0.14);
   --teal-ink: #04141a;
   --amber: #fbbf24;
+  --violet: #8b7bf0;          /* prismatic accent — glows & glass fringe only */
+
+  /* ── glass system ─────────────────────────────────────────────────── */
+  --glass-tint: rgba(18, 28, 40, 0.52);        /* default panel fill        */
+  --glass-tint-strong: rgba(20, 31, 44, 0.64); /* hero / download / cotype  */
+  --glass-tint-chip: rgba(22, 33, 46, 0.45);   /* small controls            */
+  --glass-blur: 22px;
+  --glass-blur-chip: 14px;
+  --glass-sat: 165%;
+  --glass-border: rgba(255, 255, 255, 0.1);
+  /* top gloss baked into the fill so it paints above the blurred backdrop */
+  --glass-gloss: linear-gradient(
+    180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.012) 42%, rgba(255, 255, 255, 0) 70%);
+  /* specular rim: bright top-left light catch → teal chromatic fringe */
+  --glass-rim: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.62) 0%,
+    rgba(255, 255, 255, 0.1) 24%,
+    rgba(255, 255, 255, 0) 50%,
+    rgba(110, 242, 220, 0.16) 82%,
+    rgba(139, 123, 240, 0.18) 100%);
+  --glass-shadow: 0 26px 60px -18px rgba(0, 0, 0, 0.62), 0 10px 26px -12px rgba(0, 0, 0, 0.5);
+  --glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.14), inset 0 -1px 0 rgba(0, 0, 0, 0.22);
 
   --radius: 18px;
   --radius-lg: 26px;
@@ -62,6 +89,8 @@ p { margin: 0; }
 a { color: inherit; text-decoration: none; }
 ul, ol { margin: 0; padding: 0; list-style: none; }
 
+.glass-defs { position: absolute; width: 0; height: 0; pointer-events: none; }
+
 ::selection { background: var(--teal); color: var(--teal-ink); }
 
 :focus-visible {
@@ -84,32 +113,120 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 }
 .skip-link:focus { top: 16px; }
 
-/* ───────────────────────── ambient background ───────────────────────── */
+/* =========================================================================
+   GLASS — shared surface + masked specular rim
+   ========================================================================= */
+.glass,
+.nav,
+.proof,
+.tile,
+.cotype,
+.appcard,
+.download__panel,
+.hero__diagram,
+.faq__list {
+  position: relative;
+  background: var(--glass-gloss), var(--glass-tint);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-inset), var(--glass-shadow);
+}
+
+/* the rim: a 1px gradient ring masked to the border only, so the panel
+   interior shows the live (blurred) content straight through */
+.glass::after,
+.nav::after,
+.proof::after,
+.tile::after,
+.cotype::after,
+.appcard::after,
+.download__panel::after,
+.hero__diagram::after,
+.faq__list::after,
+.btn--ghost::after,
+.icon-link::after,
+.step__num::after,
+.recorder::after,
+.track::after,
+.tile__tags li::after,
+kbd::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: var(--glass-rim);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* small glass controls: lighter blur, lighter fill */
+.btn--ghost,
+.icon-link,
+.step__num,
+.recorder,
+.track,
+.tile__tags li,
+kbd {
+  position: relative;
+  -webkit-backdrop-filter: blur(var(--glass-blur-chip)) saturate(150%);
+  backdrop-filter: blur(var(--glass-blur-chip)) saturate(150%);
+}
+
+/* =========================================================================
+   ambient background — glowing field + liquid refraction + grain
+   ========================================================================= */
 .bg-field { position: fixed; inset: 0; z-index: -1; overflow: hidden; background: var(--bg); }
 .bg-glow {
   position: absolute;
   border-radius: 50%;
-  filter: blur(110px);
-  opacity: 0.5;
+  filter: blur(120px);
+  opacity: 0.55;
 }
 .bg-glow--a {
-  width: 60vw; height: 60vw;
-  top: -22vw; left: -16vw;
-  background: radial-gradient(circle, rgba(35, 196, 174, 0.30), transparent 62%);
+  width: 62vw; height: 62vw;
+  top: -24vw; left: -16vw;
+  background: radial-gradient(circle, rgba(35, 196, 174, 0.34), transparent 62%);
 }
 .bg-glow--b {
-  width: 55vw; height: 55vw;
-  bottom: -26vw; right: -14vw;
-  background: radial-gradient(circle, rgba(34, 46, 61, 0.85), transparent 60%);
+  width: 58vw; height: 58vw;
+  bottom: -28vw; right: -16vw;
+  background: radial-gradient(circle, rgba(70, 96, 168, 0.5), transparent 62%);
+}
+.bg-glow--c {
+  width: 38vw; height: 38vw;
+  top: 36%; left: 52%;
+  background: radial-gradient(circle, rgba(139, 123, 240, 0.22), transparent 64%);
+}
+/* feTurbulence + feDisplacementMap refracts these light streaks — the real
+   primitive from the Aave article, applied to a safe decorative layer */
+.bg-refract {
+  position: absolute;
+  inset: -12%;
+  pointer-events: none;
+  opacity: 0.7;
+  mix-blend-mode: screen;
+  background:
+    radial-gradient(42% 30% at 24% 28%, rgba(110, 242, 220, 0.12), transparent 70%),
+    radial-gradient(40% 28% at 78% 66%, rgba(139, 123, 240, 0.12), transparent 72%),
+    radial-gradient(30% 22% at 60% 12%, rgba(35, 196, 174, 0.1), transparent 70%);
+  filter: url(#liquidGlass);
 }
 .bg-grain {
   position: absolute; inset: 0;
   pointer-events: none;
-  opacity: 0.04;
+  opacity: 0.045;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-/* ───────────────────────── buttons & chips ───────────────────────── */
+/* =========================================================================
+   buttons & chips
+   ========================================================================= */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -127,20 +244,33 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 }
 .btn i { font-size: 1.15em; }
 .btn--primary {
-  background: linear-gradient(135deg, var(--teal-bright), var(--teal));
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 46%),
+    linear-gradient(135deg, var(--teal-bright), var(--teal));
   color: var(--teal-ink);
-  box-shadow: 0 8px 24px rgba(35, 196, 174, 0.22);
+  box-shadow: 0 8px 24px rgba(35, 196, 174, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45), inset 0 -1px 0 rgba(4, 20, 26, 0.25);
 }
 .btn--primary:hover {
   transform: translateY(-2px);
-  box-shadow: 0 14px 34px rgba(35, 196, 174, 0.34);
+  box-shadow: 0 16px 38px rgba(35, 196, 174, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -1px 0 rgba(4, 20, 26, 0.25);
 }
 .btn--ghost {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--glass-gloss), var(--glass-tint-chip);
   color: var(--text);
-  border-color: var(--line-strong);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-inset), 0 8px 22px -12px rgba(0, 0, 0, 0.5);
 }
-.btn--ghost:hover { border-color: var(--teal); background: var(--teal-soft); transform: translateY(-2px); }
+.btn--ghost:hover {
+  color: var(--teal-bright);
+  background:
+    linear-gradient(180deg, rgba(110, 242, 220, 0.12), rgba(255, 255, 255, 0) 60%),
+    var(--glass-tint-strong);
+  transform: translateY(-2px);
+  box-shadow: var(--glass-inset), 0 14px 30px -14px rgba(35, 196, 174, 0.4);
+}
 .btn:active { transform: translateY(0) scale(0.985); }
 .btn--sm { padding: 9px 16px; font-size: 0.9rem; }
 .btn--lg { padding: 16px 30px; font-size: 1.06rem; }
@@ -151,12 +281,14 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   justify-content: center;
   width: 40px; height: 40px;
   border-radius: var(--pill);
-  border: 1px solid var(--line);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-gloss), var(--glass-tint-chip);
+  box-shadow: var(--glass-inset);
   color: var(--text-dim);
   font-size: 1.3rem;
   transition: color 0.2s var(--ease), border-color 0.2s var(--ease), background 0.2s var(--ease);
 }
-.icon-link:hover { color: var(--teal-bright); border-color: var(--teal); background: var(--teal-soft); }
+.icon-link:hover { color: var(--teal-bright); border-color: rgba(110, 242, 220, 0.4); background: var(--teal-soft); }
 
 .eyebrow {
   display: inline-block;
@@ -168,22 +300,26 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   margin-bottom: 16px;
 }
 
-/* ───────────────────────── nav ───────────────────────── */
+/* =========================================================================
+   nav — floating glass pill
+   ========================================================================= */
 .nav {
   position: sticky;
-  top: 0;
+  top: 12px;
   z-index: 50;
   display: flex;
   align-items: center;
   gap: 20px;
-  height: 66px;
-  padding: 0 24px;
+  height: 64px;
+  padding: 0 14px 0 22px;
   max-width: var(--maxw);
-  margin: 0 auto;
-  background: rgba(11, 17, 25, 0.66);
-  backdrop-filter: blur(16px) saturate(150%);
-  -webkit-backdrop-filter: blur(16px) saturate(150%);
-  border-bottom: 1px solid var(--line);
+  margin: 12px auto 0;
+  width: calc(100% - 32px);
+  border-radius: var(--pill);
+  /* override: lighter, brighter glass for the floating bar */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 60%),
+    rgba(10, 16, 24, 0.55);
 }
 .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 640; letter-spacing: -0.01em; }
 .brand__mark { border-radius: 8px; display: block; }
@@ -193,7 +329,9 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .nav__links a:hover { color: var(--text); }
 .nav__actions { display: flex; align-items: center; gap: 12px; margin-left: 8px; }
 
-/* ───────────────────────── layout helpers ───────────────────────── */
+/* =========================================================================
+   layout helpers
+   ========================================================================= */
 .section {
   max-width: var(--maxw);
   margin: 0 auto;
@@ -203,21 +341,9 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .section__title { font-size: clamp(1.7rem, 3.4vw, 2.55rem); }
 .section__lead { color: var(--text-dim); font-size: 1.08rem; max-width: 56ch; margin-top: 18px; }
 
-/* ───────────────────────── hero diagram ───────────────────────── */
-.hero__diagram { position: relative; margin: 0; width: min(860px, 100%); }
-.hero__diagram::before {
-  content: "";
-  position: absolute;
-  inset: 8% 4% 12%;
-  z-index: -1;
-  border-radius: 50%;
-  background: radial-gradient(58% 58% at 50% 46%, rgba(35, 196, 174, 0.32), transparent 70%);
-  filter: blur(46px);
-  opacity: 0.85;
-}
-.hero__diagram-img { display: block; width: 100%; height: auto; animation: float 7s ease-in-out infinite; }
-
-/* ───────────────────────── hero ───────────────────────── */
+/* =========================================================================
+   hero
+   ========================================================================= */
 .hero {
   max-width: var(--maxw);
   margin: 0 auto;
@@ -250,7 +376,7 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   text-align: center;
   align-items: start;
   min-height: 0;
-  gap: 30px;
+  gap: 36px;
   padding-top: 60px;
   padding-bottom: 68px;
 }
@@ -260,19 +386,41 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .hero--centered .hero__cta { justify-content: center; }
 .hero--centered .hero__stage { width: 100%; }
 
-/* hero stage: the real app icon presented as an "app glamour" tile */
+/* hero diagram — the super-app SVG floats inside a frosted glass slab */
 .hero__stage { display: flex; justify-content: center; }
+.hero__diagram {
+  position: relative;
+  margin: 0;
+  width: min(760px, 100%);
+  padding: clamp(20px, 4vw, 40px);
+  border-radius: var(--radius-lg);
+  background: var(--glass-gloss), var(--glass-tint-strong);
+  animation: float 7s ease-in-out infinite;
+}
+/* soft teal aura blooming behind the glass slab */
+.hero__diagram::before {
+  content: "";
+  position: absolute;
+  inset: 4% 6% 8%;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(58% 58% at 50% 44%, rgba(35, 196, 174, 0.38), transparent 70%);
+  filter: blur(52px);
+  opacity: 0.9;
+}
+.hero__diagram-img { display: block; width: 100%; height: auto; position: relative; }
+
+/* hero "app glamour" card (kept for the alternate hero layout) */
 .appcard {
   position: relative;
   width: min(380px, 100%);
   padding: 38px 32px 30px;
   text-align: center;
-  background: linear-gradient(180deg, var(--surface-2), var(--surface));
-  border: 1px solid var(--line-strong);
   border-radius: var(--radius-lg);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  background: var(--glass-gloss), var(--glass-tint-strong);
   animation: float 7s ease-in-out infinite;
 }
+.appcard > * { position: relative; z-index: 2; }
 .appcard__glow {
   position: absolute;
   inset: -2px;
@@ -293,8 +441,8 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   margin: 22px auto 0;
   padding: 10px 16px;
   width: fit-content;
-  background: rgba(0, 0, 0, 0.28);
-  border: 1px solid var(--line);
+  background: rgba(8, 13, 20, 0.4);
+  border: 1px solid var(--glass-border);
   border-radius: var(--pill);
 }
 .recorder__dot {
@@ -317,13 +465,12 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .track {
   font-size: 0.78rem; font-weight: 560;
   padding: 5px 12px; border-radius: var(--pill);
-  border: 1px solid var(--line);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-tint-chip);
 }
 .track--me { color: var(--teal-bright); border-color: rgba(35, 196, 174, 0.4); background: var(--teal-soft); }
 .track--them { color: var(--text-dim); }
 
-/* Hero transcript snippet — shows the Me/Them transcript + a search match,
-   so the abstract app card also hints at the product's core artifact. */
 .appcard__lines {
   margin: 18px 0 0;
   padding: 12px 14px;
@@ -331,8 +478,8 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: rgba(0, 0, 0, 0.28);
-  border: 1px solid var(--line);
+  background: rgba(8, 13, 20, 0.4);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
 }
 .appcard__lines li { display: flex; gap: 9px; align-items: baseline; }
@@ -360,74 +507,85 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0); }
 }
 
-/* ───────────────────────── proof strip ───────────────────────── */
+/* =========================================================================
+   proof strip — one glass card, divided
+   ========================================================================= */
 .proof {
-  max-width: var(--maxw);
+  max-width: calc(var(--maxw) - 48px);
   margin: 0 auto;
-  padding: 8px 24px 8px;
+  padding: 4px;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+  gap: 0;
+  border-radius: var(--radius-lg);
 }
-.proof__item { display: flex; gap: 14px; align-items: center; padding: 26px 24px; }
-.proof__item + .proof__item { border-left: 1px solid var(--line); }
+.proof__item { display: flex; gap: 14px; align-items: center; padding: 26px 28px; }
+.proof__item + .proof__item { box-shadow: inset 1px 0 0 var(--glass-border); }
 .proof__item i { font-size: 1.7rem; color: var(--teal-bright); flex-shrink: 0; }
 .proof__item strong { display: block; font-size: 0.98rem; font-weight: 620; }
 .proof__item span { color: var(--text-dim); font-size: 0.9rem; }
 
-/* ───────────────────────── features bento ───────────────────────── */
+/* =========================================================================
+   features bento — glass tiles
+   ========================================================================= */
 .bento { display: grid; grid-template-columns: 1fr; gap: 16px; }
 .tile {
-  position: relative;
   padding: 28px;
-  background: var(--surface);
-  border: 1px solid var(--line);
   border-radius: var(--radius);
-  transition: transform 0.3s var(--ease), border-color 0.3s var(--ease), box-shadow 0.3s var(--ease);
+  transition: transform 0.3s var(--ease), box-shadow 0.3s var(--ease), background 0.3s var(--ease);
 }
+.tile > * { position: relative; z-index: 2; }
 .tile:hover {
   transform: translateY(-4px);
-  border-color: rgba(35, 196, 174, 0.4);
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--glass-inset), 0 30px 60px -20px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(110, 242, 220, 0.18), 0 18px 50px -24px rgba(35, 196, 174, 0.45);
 }
 .tile__icon { font-size: 2rem; color: var(--teal-bright); display: block; margin-bottom: 16px; }
 .tile h3 { font-size: 1.22rem; margin-bottom: 10px; }
 .tile p { color: var(--text-dim); font-size: 0.98rem; }
 .tile code { font-family: var(--mono); font-size: 0.86em; color: var(--teal-bright); }
-.tile--flag { background: linear-gradient(160deg, rgba(35, 196, 174, 0.10), var(--surface) 55%); }
+.tile--flag {
+  background:
+    linear-gradient(160deg, rgba(35, 196, 174, 0.16), rgba(255, 255, 255, 0) 52%),
+    var(--glass-gloss), var(--glass-tint-strong);
+}
 .tile--flag h3 { font-size: 1.5rem; }
 .tile__tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 .tile__tags li {
   font-size: 0.8rem; color: var(--text-dim);
   padding: 5px 12px; border-radius: var(--pill);
-  border: 1px solid var(--line); background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-tint-chip);
 }
 .tile--cli { display: grid; gap: 22px; align-content: center; }
 .tile--cli .tile__icon { margin-bottom: 12px; }
 
-/* code blocks */
+/* code blocks — dark glass slabs */
 .code {
   font-family: var(--mono);
   font-size: 0.86rem;
   line-height: 1.7;
   color: var(--text-dim);
-  background: rgba(0, 0, 0, 0.34);
-  border: 1px solid var(--line);
+  background: rgba(4, 8, 13, 0.5);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   padding: 18px 20px;
   margin: 0;
   overflow-x: auto;
   white-space: pre;
 }
-.code--inline { background: rgba(0, 0, 0, 0.28); }
+.code--inline { background: rgba(4, 8, 13, 0.42); }
 .c-prompt { color: var(--teal); user-select: none; margin-right: 4px; }
 .c-str { color: #f6c177; }
 .c-flag { color: var(--teal-bright); }
 .c-op { color: var(--text-faint); }
 
-/* ───────────────────────── how it works ───────────────────────── */
+/* =========================================================================
+   how it works — glass step pills
+   ========================================================================= */
 .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; position: relative; }
 .steps::before {
   content: "";
@@ -438,11 +596,13 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 }
 .step { position: relative; }
 .step__num {
+  position: relative;
   display: inline-flex; align-items: center; justify-content: center;
   width: 56px; height: 56px;
   border-radius: var(--pill);
-  background: var(--bg-2);
-  border: 1px solid var(--line-strong);
+  background: var(--glass-gloss), var(--glass-tint-strong);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-inset), 0 10px 24px -12px rgba(0, 0, 0, 0.6);
   color: var(--teal-bright);
   font-weight: 680; font-size: 1.15rem;
   font-variant-numeric: tabular-nums;
@@ -451,7 +611,9 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .step h3 { font-size: 1.22rem; margin-bottom: 10px; }
 .step p { color: var(--text-dim); }
 
-/* ───────────────────────── cotyping spotlight ───────────────────────── */
+/* =========================================================================
+   cotyping spotlight — glass mock window
+   ========================================================================= */
 .spotlight {
   display: grid;
   grid-template-columns: 1.05fr 0.95fr;
@@ -468,26 +630,29 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 }
 
 .cotype {
-  position: relative;
-  background: linear-gradient(180deg, var(--surface-2), var(--surface));
-  border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   padding: 0 0 22px;
-  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.4);
   overflow: hidden;
+  background: var(--glass-gloss), var(--glass-tint-strong);
 }
-.cotype.is-focused { border-color: rgba(35, 196, 174, 0.5); box-shadow: 0 0 0 3px var(--teal-soft), 0 26px 60px rgba(0, 0, 0, 0.4); }
+.cotype > *:not(.cotype__bar) { position: relative; z-index: 2; }
+.cotype.is-focused {
+  box-shadow: var(--glass-inset), var(--glass-shadow), 0 0 0 3px var(--teal-soft);
+}
 .cotype__bar {
+  position: relative;
+  z-index: 2;
   display: flex; align-items: center; gap: 7px;
   padding: 14px 18px;
-  border-bottom: 1px solid var(--line);
-  background: rgba(0, 0, 0, 0.18);
+  border-bottom: 1px solid var(--glass-border);
+  background: rgba(8, 13, 20, 0.32);
 }
 .cotype__chrome { width: 11px; height: 11px; border-radius: 50%; background: var(--line-strong); }
 .cotype__app { margin-left: 10px; font-size: 0.82rem; color: var(--text-faint); }
 .cotype__label { display: block; padding: 20px 22px 6px; font-size: 0.8rem; color: var(--text-faint); }
 .cotype__field {
   position: relative;
+  z-index: 2;
   padding: 4px 22px 8px;
   font-size: 1.1rem;
   line-height: 1.7;
@@ -515,35 +680,37 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   font: inherit;
   padding: 4px 22px;
   outline: none;
+  z-index: 3;
 }
 .cotype__hint { padding: 4px 22px 0; color: var(--text-faint); font-size: 0.85rem; }
 kbd {
+  position: relative;
   font-family: var(--mono);
   font-size: 0.78rem;
   padding: 2px 7px;
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid var(--line-strong);
+  background: rgba(8, 13, 20, 0.5);
+  border: 1px solid var(--glass-border);
   border-bottom-width: 2px;
   color: var(--text);
 }
 @keyframes blink { 50% { opacity: 0; } }
 
-/* ───────────────────────── download ───────────────────────── */
+/* =========================================================================
+   download — hero glass panel
+   ========================================================================= */
 .download { display: flex; justify-content: center; }
 .download__panel {
-  position: relative;
   max-width: 720px;
   width: 100%;
   text-align: center;
   padding: 56px 40px;
-  background: linear-gradient(180deg, var(--surface-2), var(--surface));
-  border: 1px solid var(--line-strong);
   border-radius: var(--radius-lg);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4);
+  background: var(--glass-gloss), var(--glass-tint-strong);
 }
+.download__panel > * { position: relative; z-index: 2; }
 .download__panel .eyebrow { margin-top: 6px; }
-.download__icon { width: 80px; height: 80px; border-radius: 20px; }
+.download__icon { width: 80px; height: 80px; border-radius: 20px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4); }
 .download__panel .btn--lg { margin-top: 30px; }
 .download__sub { margin-top: 16px; color: var(--text-faint); font-size: 0.9rem; }
 .download__sub a { color: var(--teal-bright); }
@@ -556,12 +723,20 @@ kbd {
 }
 .reqs li { display: inline-flex; align-items: center; gap: 8px; }
 .reqs i { color: var(--teal-bright); font-size: 1.1rem; }
-.build { margin-top: 34px; text-align: left; border-top: 1px solid var(--line); padding-top: 28px; }
+.build { margin-top: 34px; text-align: left; border-top: 1px solid var(--glass-border); padding-top: 28px; }
 .build__label { color: var(--text-dim); font-size: 0.92rem; margin-bottom: 12px; text-align: center; }
 
-/* ───────────────────────── faq ───────────────────────── */
-.faq__list { max-width: 820px; }
-.qa { border-bottom: 1px solid var(--line); }
+/* =========================================================================
+   faq — glass list container
+   ========================================================================= */
+.faq__list {
+  max-width: 820px;
+  padding: 6px 26px;
+  border-radius: var(--radius-lg);
+}
+.faq__list > * { position: relative; z-index: 2; }
+.qa { border-bottom: 1px solid var(--glass-border); }
+.qa:last-child { border-bottom: 0; }
 .qa summary {
   display: flex; align-items: center; justify-content: space-between;
   gap: 16px;
@@ -579,12 +754,14 @@ kbd {
 .qa[open] summary i { transform: rotate(45deg); }
 .qa p { color: var(--text-dim); padding: 0 4px 24px; max-width: 70ch; }
 
-/* ───────────────────────── footer ───────────────────────── */
+/* =========================================================================
+   footer
+   ========================================================================= */
 .footer {
   max-width: var(--maxw);
   margin: 0 auto;
   padding: 64px 24px 56px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--glass-border);
   display: grid;
   grid-template-columns: 2fr 1fr 1fr;
   gap: 40px;
@@ -595,9 +772,11 @@ kbd {
 .footer__col h4 { font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faint); margin-bottom: 16px; }
 .footer__col a { display: block; color: var(--text-dim); padding: 6px 0; font-size: 0.95rem; transition: color 0.2s var(--ease); }
 .footer__col a:hover { color: var(--teal-bright); }
-.footer__legal { grid-column: 1 / -1; border-top: 1px solid var(--line); padding-top: 26px; color: var(--text-faint); font-size: 0.88rem; }
+.footer__legal { grid-column: 1 / -1; border-top: 1px solid var(--glass-border); padding-top: 26px; color: var(--text-faint); font-size: 0.88rem; }
 
-/* ───────────────────────── reveal animation ───────────────────────── */
+/* =========================================================================
+   reveal animation
+   ========================================================================= */
 .reveal { opacity: 0; transform: translateY(20px); transition: opacity 0.7s var(--ease), transform 0.7s var(--ease); transition-delay: var(--rd, 0ms); }
 .reveal.in { opacity: 1; transform: none; }
 .bento .tile:nth-child(2) { --rd: 70ms; }
@@ -610,7 +789,9 @@ kbd {
 .proof__item:nth-child(2) { --rd: 90ms; }
 .proof__item:nth-child(3) { --rd: 180ms; }
 
-/* ───────────────────────── responsive ───────────────────────── */
+/* =========================================================================
+   responsive
+   ========================================================================= */
 @media (min-width: 600px) {
   .bento { grid-template-columns: repeat(2, 1fr); }
   .bento > :nth-child(1), .bento > :nth-child(6) { grid-column: span 2; }
@@ -638,7 +819,7 @@ kbd {
   .section { padding: 72px 20px; }
   .hero { padding: 36px 20px 64px; }
   .proof { grid-template-columns: 1fr; }
-  .proof__item + .proof__item { border-left: 0; border-top: 1px solid var(--line); }
+  .proof__item + .proof__item { box-shadow: inset 0 1px 0 var(--glass-border); }
   .steps { grid-template-columns: 1fr; gap: 28px; }
   .steps::before { display: none; }
   .footer { grid-template-columns: 1fr 1fr; }
@@ -652,14 +833,37 @@ kbd {
   .nav .btn { width: auto; }
 }
 
-/* ───────────────────────── reduced motion ───────────────────────── */
+/* =========================================================================
+   accessibility fallbacks
+   ========================================================================= */
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
   .reveal { opacity: 1; transform: none; }
-  .appcard { animation: none; }
-  .hero__diagram-img { animation: none; }
+  .appcard, .hero__diagram { animation: none; }
   .wave span { transform: scaleY(0.6); }
   .wave span:nth-child(odd) { transform: scaleY(0.85); }
   .ct-caret { animation: none; }
+}
+
+/* If the browser can't frost (or the user prefers less transparency),
+   fall back to solid surfaces so contrast and depth survive. */
+@media (prefers-reduced-transparency: reduce) {
+  .nav, .proof, .tile, .cotype, .appcard, .download__panel, .hero__diagram,
+  .faq__list, .btn--ghost, .icon-link, .step__num, .recorder, .track,
+  .tile__tags li, kbd {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--surface);
+  }
+  .bg-refract { display: none; }
+}
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .nav, .proof, .tile, .cotype, .appcard, .download__panel, .hero__diagram, .faq__list {
+    background: var(--surface);
+  }
+  .nav { background: rgba(11, 17, 25, 0.96); }
+  .btn--ghost, .icon-link, .step__num, .recorder, .track, .tile__tags li, kbd {
+    background: var(--surface-2);
+  }
 }
