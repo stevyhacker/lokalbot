@@ -4,7 +4,9 @@ This checklist keeps LokalBot's cotyping work aligned with the quality bar obser
 
 Parity defaults:
 
-- Gemma 4 E4B Q5 XL is the recommended cotyping model.
+- Gemma 4 E4B Q5 XL is the default cotyping model. Cotyping always runs its own
+  dedicated model on a separate `llama-server` instance — there is no option to
+  reuse the summarization model, and no fallback to the bundled tiny model.
 - Suggestion length defaults to 20 words, matching Cotypist/Cotabby's 12-20 word preset upper bound.
 - Debounce defaults to 20 ms.
 - Streaming partial suggestions default off, matching Cotypist/Cotabby.
@@ -28,10 +30,14 @@ Passing target:
 - p95 latency is at or below 2000 ms.
 - Expected-term hits are reviewed as a quality signal, not a hard pass/fail.
 
-Exact runtime parity is not complete while LokalBot runs suggestions through its
-dedicated HTTP `llama-server` process and Cotypist/Cotabby use an in-process
-llama.cpp runtime with prefix-state reuse. Treat the benchmark as a product
-quality check until the runtime path is shared or ported.
+- **Generation runtime — DONE.** Cotyping now decodes the built-in GGUF model
+  in-process via `libllama` (`b9789`), holding a persistent KV cache and
+  re-prefilling only the typed suffix (`LocalLlamaCotypingEngine` →
+  `LlamaCotypingRuntime`). The HTTP `llama-server` path remains as the fallback
+  for non-GGUF backends, when the in-process runtime is toggled off
+  (`cotypingInProcessRuntime`), or on load failure. A/B latency is measured by
+  `CotypingBenchmarkRunner.runAB(local:http:...)` over the default scenarios
+  (TTFT + p95 deltas).
 
 ## Manual Side-by-Side
 
@@ -86,15 +92,16 @@ side-by-side screenshot pass.
 
 ## Model Prep Check
 
-Use "Prepare high-quality cotyping" in Cotyping, Models, or Settings.
+Cotyping always runs its own dedicated model. Use "Prepare high-quality cotyping"
+in Cotyping, Models, or Settings to fetch it.
 
 Expected behavior:
 
-- Dedicated cotyping is enabled.
-- Gemma 4 E4B Q5 XL is selected.
-- The Hugging Face download starts if the model is missing.
+- Gemma 4 E4B Q5 XL is the selected cotyping model by default.
+- The Hugging Face download starts if the model is missing (~6.66 GB).
+- Until the model is present, cotyping reports that it needs the download — there
+  is no fallback to the bundled summarization model.
 - Once downloaded, the status shows ready and cotyping uses the dedicated server.
 
-Gemma 4 E4B Q5 XL reuse is still supported: if Cotypist already has the parity
-GGUF in its Application Support folder, LokalBot uses that file read-only
-instead of redownloading it.
+LokalBot always downloads and manages its own copy of the model under its storage
+folder. It does not reuse another app's model files.

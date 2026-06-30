@@ -74,8 +74,7 @@ enum CotypingModelPreparer {
     }
 
     static func recommendedIsActive(settings: AppSettings) -> Bool {
-        settings.cotypingUseSeparateModel
-            && settings.cotypingBuiltInModelID == ModelCatalog.recommendedCotypingID
+        settings.cotypingBuiltInModelID == ModelCatalog.recommendedCotypingID
     }
 
     static func action(localURL: URL?, isDownloading: Bool) -> CotypingModelPreparationAction {
@@ -93,7 +92,6 @@ enum CotypingModelPreparer {
         let localURL = ModelCatalog.localURL(for: entry, storage: storage)
         switch action(localURL: localURL, isDownloading: downloads.progress[entry.id] != nil) {
         case .activate:
-            settings.cotypingUseSeparateModel = true
             settings.cotypingBuiltInModelID = entry.id
         case .download:
             downloads.download(entry, storage: storage)

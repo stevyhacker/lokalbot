@@ -103,40 +103,8 @@ struct ModelCatalog {
         }
         let downloaded = storage.rootURL.appendingPathComponent("models/\(entry.fileName)")
         if ModelFileValidator.looksLikeGGUF(downloaded) { return downloaded }
-        if entry.id == recommendedCotypingID, let cotypist = cotypistModelURL() {
-            return cotypist
-        }
         return nil
     }
-
-    /// Cotypist stores the same Q5 XL GGUF under Application Support. When it is
-    /// already present, use it read-only instead of forcing another 6+ GB fetch.
-    /// This is best-effort cross-app reuse: if Cotypist changes its bundle id or
-    /// model layout, validation fails closed and LokalBot falls back to its own
-    /// download path.
-    static func cotypistModelURL(fileManager: FileManager = .default) -> URL? {
-        guard let appSupport = fileManager.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first else { return nil }
-        return cotypistModelURL(appSupport: appSupport)
-    }
-
-    static func cotypistModelURL(appSupport: URL) -> URL? {
-        let models = appSupport
-            .appendingPathComponent("app.cotypist.Cotypist", isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
-        for fileName in cotypistParityFileNames {
-            let url = models.appendingPathComponent(fileName)
-            if ModelFileValidator.looksLikeGGUF(url) { return url }
-        }
-        return nil
-    }
-
-    private static let cotypistParityFileNames = [
-        "gemma-4-E4B-it-UD-Q5_K_XL.gguf",
-        "gemma-4-E4B-UD-Q5_K_XL.gguf",
-    ]
 }
 
 enum ModelFileValidator {

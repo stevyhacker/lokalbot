@@ -35,6 +35,46 @@ if [ "$installed_tag" != "$TAG" ]; then
   rm -rf "$tmp"
 fi
 
+# --- Public C headers for in-process libllama (LlamaCore module) ---
+# Fetched from the pinned source tag so the Swift module compiles against the
+# exact b9789 API the vendored dylib exports. Idempotent: skip if present.
+INCLUDE_DIR="$SERVER_DIR/include"
+RAW_BASE="https://raw.githubusercontent.com/ggml-org/llama.cpp/$TAG"
+HEADERS=(
+  "include/llama.h"
+  "ggml/include/ggml.h"
+  "ggml/include/ggml-backend.h"
+  "ggml/include/ggml-alloc.h"
+  "ggml/include/ggml-cpu.h"
+  "ggml/include/ggml-metal.h"
+  "ggml/include/ggml-opt.h"
+  "ggml/include/gguf.h"
+)
+mkdir -p "$INCLUDE_DIR"
+for h in "${HEADERS[@]}"; do
+  dest="$INCLUDE_DIR/$(basename "$h")"
+  if [ ! -f "$dest" ]; then
+    echo "fetch-llama: downloading header $(basename "$h")"
+    curl -fsSL "$RAW_BASE/$h" -o "$dest"
+  fi
+done
+
+# Declare the LlamaCore Clang module over the fetched headers. Generated here
+# (not committed) so the whole Vendor/ tree stays reproducible and gitignored,
+# matching the dylibs/model. Rewritten every run so it tracks any HEADERS edit.
+cat > "$INCLUDE_DIR/module.modulemap" <<'EOF'
+module LlamaCore {
+    header "llama.h"
+    header "ggml.h"
+    header "ggml-backend.h"
+    header "ggml-alloc.h"
+    header "ggml-cpu.h"
+    header "ggml-opt.h"
+    header "gguf.h"
+    export *
+}
+EOF
+
 if [ ! -f "$MODEL_DIR/$DEFAULT_MODEL" ]; then
   echo "fetch-llama: downloading default model $DEFAULT_MODEL (~0.64 GB)..."
   mkdir -p "$MODEL_DIR"

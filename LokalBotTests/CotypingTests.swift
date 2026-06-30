@@ -184,12 +184,12 @@ final class CotypingModelPreparationTests: XCTestCase {
         XCTAssertEqual(status, .ready(entry))
     }
 
-    func testRecommendedActiveRequiresToggleAndModelID() {
+    func testRecommendedActiveTracksModelID() {
         var settings = AppSettings()
-        XCTAssertFalse(CotypingModelPreparer.recommendedIsActive(settings: settings))
-        settings.cotypingUseSeparateModel = true
-        settings.cotypingBuiltInModelID = ModelCatalog.recommendedCotypingID
+        // Cotyping always runs its own model; the recommended Gemma id is the default.
         XCTAssertTrue(CotypingModelPreparer.recommendedIsActive(settings: settings))
+        settings.cotypingBuiltInModelID = ModelCatalog.bundledID
+        XCTAssertFalse(CotypingModelPreparer.recommendedIsActive(settings: settings))
     }
 
     func testPrepareActionDownloadsBeforeActivatingMissingModel() {
@@ -592,8 +592,7 @@ final class CotypingSettingsTests: XCTestCase {
         settings.cotypingAcceptGranularity = .phrase
         settings.cotypingFullAcceptKey = .rightArrow
         settings.cotypingExcludedApps = "Terminal, 1Password"
-        settings.cotypingUseSeparateModel = true
-        settings.cotypingBuiltInModelID = ModelCatalog.recommendedCotypingID
+        settings.cotypingBuiltInModelID = ModelCatalog.bundledID
         settings.cotypingUseLocalLearning = false
         settings.cotypingLearningExamplesInPrompt = 5
 
@@ -609,8 +608,7 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertEqual(decoded.cotypingAcceptGranularity, .phrase)
         XCTAssertEqual(decoded.cotypingFullAcceptKey, .rightArrow)
         XCTAssertEqual(decoded.cotypingExcludedAppList, ["Terminal", "1Password"])
-        XCTAssertTrue(decoded.cotypingUseSeparateModel)
-        XCTAssertEqual(decoded.cotypingBuiltInModelID, ModelCatalog.recommendedCotypingID)
+        XCTAssertEqual(decoded.cotypingBuiltInModelID, ModelCatalog.bundledID)
         XCTAssertFalse(decoded.cotypingUseLocalLearning)
         XCTAssertEqual(decoded.cotypingLearningExamplesInPrompt, 5)
     }
@@ -627,6 +625,25 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertTrue(settings.cotypingUseLocalLearning)
         XCTAssertEqual(settings.cotypingBuiltInModelID, ModelCatalog.recommendedCotypingID)
         XCTAssertTrue(settings.menuBarOnly)
+    }
+
+    func testInProcessRuntimeDefaultsOn() {
+        XCTAssertTrue(AppSettings().cotypingInProcessRuntime)
+    }
+
+    func testInProcessRuntimeRoundTrips() throws {
+        var settings = AppSettings()
+        settings.cotypingInProcessRuntime = false
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+        XCTAssertFalse(decoded.cotypingInProcessRuntime)
+    }
+
+    func testTolerantDecodeDefaultsInProcessRuntimeOn() throws {
+        // A saved blob predating the flag must decode with the default (true).
+        let json = "{}".data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: json)
+        XCTAssertTrue(decoded.cotypingInProcessRuntime)
     }
 
     func testDefaultsMirrorCotypistLengthAndDebounce() {

@@ -127,17 +127,14 @@ struct SettingsView: View {
                 // answers a user wants first, before any behavior tuning.
                 if app.settings.cotypingEnabled, shows("Cotyping", ["model", "stats", "generated", "accepted", "latency"]) {
                     Section("Model & activity") {
-                        Toggle("Use a dedicated high-quality cotyping model", isOn: $app.settings.cotypingUseSeparateModel)
                         CotypingModelPreparationView(compact: true)
-                        if app.settings.cotypingUseSeparateModel {
-                            Picker("Cotyping model", selection: $app.settings.cotypingBuiltInModelID) {
-                                ForEach(ModelCatalog.selectableEntries(custom: app.settings.customBuiltInModels)) { entry in
-                                    Text(entry.displayName).tag(entry.id)
-                                }
+                        Picker("Cotyping model", selection: $app.settings.cotypingBuiltInModelID) {
+                            ForEach(ModelCatalog.selectableEntries(custom: app.settings.customBuiltInModels)) { entry in
+                                Text(entry.displayName).tag(entry.id)
                             }
-                            Text("Gemma 4 E4B Q5 XL is the recommended quality target; Qwen3.5 2B and LFM2.5 1.2B are smaller latency options.")
-                                .font(.caption).foregroundStyle(.secondary)
                         }
+                        Text("Cotyping runs its own dedicated model. Gemma 4 E4B Q5 XL is the recommended quality target; Qwen3.5 2B and LFM2.5 1.2B are smaller latency options.")
+                            .font(.caption).foregroundStyle(.secondary)
                         LabeledContent("Suggestions generated") {
                             Text("\(cotypingStats.stats.generations)").foregroundStyle(.secondary)
                         }
@@ -178,6 +175,11 @@ struct SettingsView: View {
                         Toggle("Stream suggestions while generating", isOn: $app.settings.cotypingStreamSuggestionsWhileGenerating)
                         Text("When off, suggestions appear once fully formed, matching Cotypist's default. Turn on to show token-by-token partials sooner.")
                             .font(.caption).foregroundStyle(.secondary)
+                        Toggle("Use the fast in-process runtime (recommended)", isOn: $app.settings.cotypingInProcessRuntime)
+                            .disabled(!CotypingEngineSelector.isAppleSilicon)
+                        Text("Decodes the built-in model in-process for lower latency. Turn off to use the background llama-server. Non-built-in backends always use the server. Requires Apple Silicon.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         LabeledContent("Pause before suggesting") {
                             Text("\(app.settings.cotypingDebounceMs) ms").foregroundStyle(.secondary)
                         }

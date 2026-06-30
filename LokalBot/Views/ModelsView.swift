@@ -153,21 +153,15 @@ struct ModelsView: View {
     private var cotypingCard: some View {
         ModelCard(icon: "text.cursor", title: "Cotyping",
                   subtitle: "Inline AI autocomplete as you type") {
-            Toggle("Use a separate model for cotyping", isOn: $app.settings.cotypingUseSeparateModel)
             CotypingModelPreparationView(compact: true)
-            if app.settings.cotypingUseSeparateModel {
-                Picker("Cotyping model", selection: $app.settings.cotypingBuiltInModelID) {
-                    ForEach(ModelCatalog.selectableEntries(custom: app.settings.customBuiltInModels)) { entry in
-                        Text(entry.displayName).tag(entry.id)
-                    }
+            Picker("Cotyping model", selection: $app.settings.cotypingBuiltInModelID) {
+                ForEach(ModelCatalog.selectableEntries(custom: app.settings.customBuiltInModels)) { entry in
+                    Text(entry.displayName).tag(entry.id)
                 }
-                .frame(maxWidth: 360)
-                Text("Runs on a dedicated built-in llama.cpp server, separate from summarization. Gemma 4 E4B Q5 XL is the recommended quality target; Qwen3.5 2B and LFM2.5 1.2B are smaller latency options.")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                Text("Cotyping uses your summarization model. Turn this on to run a separate model tuned for inline suggestion quality.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
+            .frame(maxWidth: 360)
+            Text("Cotyping runs on a dedicated built-in llama.cpp server, separate from summarization. Gemma 4 E4B Q5 XL is the recommended quality target; Qwen3.5 2B and LFM2.5 1.2B are smaller latency options.")
+                .font(.caption).foregroundStyle(.secondary)
         }
         .accessibilityIdentifier("models.cotyping")
     }

@@ -239,3 +239,43 @@ enum CotypingBenchmarkRunner {
         }
     }
 }
+
+/// Result of running both cotyping engines over the same scenarios. Deltas are
+/// `http − local`, so a positive value means the in-process engine is faster.
+struct CotypingABComparison: Equatable, Sendable {
+    let local: CotypingBenchmarkSummary
+    let http: CotypingBenchmarkSummary
+
+    /// p95 end-to-end latency improvement (ms), or nil if either side has no data.
+    var p95DeltaMs: Int? {
+        guard let l = local.p95LatencyMs, let h = http.p95LatencyMs else { return nil }
+        return h - l
+    }
+
+    /// Time-to-first-visible-token improvement (ms), or nil if either side lacks it.
+    var ttftDeltaMs: Int? {
+        guard let l = local.averageFirstVisibleLatencyMs,
+              let h = http.averageFirstVisibleLatencyMs else { return nil }
+        return h - l
+    }
+}
+
+extension CotypingBenchmarkRunner {
+    /// Runs the default scenarios through both engines (streaming on, so TTFT is
+    /// captured) and returns the comparison. For manual latency validation.
+    static func runAB(
+        local: CotypingCompleting,
+        http: CotypingCompleting,
+        config: CotypingConfiguration,
+        personalization: CotypingPersonalization,
+        learnedExamples: @escaping (CotypingField) -> [String] = { _ in [] }
+    ) async -> CotypingABComparison {
+        let localSummary = await run(
+            engine: local, config: config, personalization: personalization,
+            streamPartials: true, learnedExamples: learnedExamples)
+        let httpSummary = await run(
+            engine: http, config: config, personalization: personalization,
+            streamPartials: true, learnedExamples: learnedExamples)
+        return CotypingABComparison(local: localSummary, http: httpSummary)
+    }
+}

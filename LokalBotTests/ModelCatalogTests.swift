@@ -72,34 +72,6 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertEqual(LlamaServer.cotyping.contextTokens, 2_048)
     }
 
-    func testCotypistModelReuseRequiresGGUFAtExpectedPath() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("cotypist-model-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let models = root
-            .appendingPathComponent("app.cotypist.Cotypist", isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
-        try FileManager.default.createDirectory(at: models, withIntermediateDirectories: true)
-        let model = models.appendingPathComponent("gemma-4-E4B-UD-Q5_K_XL.gguf")
-        try Data("GGUF".utf8).write(to: model)
-
-        XCTAssertEqual(ModelCatalog.cotypistModelURL(appSupport: root), model)
-    }
-
-    func testCotypistModelReuseIgnoresInvalidFiles() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("cotypist-invalid-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let models = root
-            .appendingPathComponent("app.cotypist.Cotypist", isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
-        try FileManager.default.createDirectory(at: models, withIntermediateDirectories: true)
-        try Data("nope".utf8)
-            .write(to: models.appendingPathComponent("gemma-4-E4B-UD-Q5_K_XL.gguf"))
-
-        XCTAssertNil(ModelCatalog.cotypistModelURL(appSupport: root))
-    }
-
     func testDownloadURLsAreValid() {
         for entry in ModelCatalog.entries {
             XCTAssertNotNil(URL(string: entry.url), "\(entry.id) has an invalid URL")
