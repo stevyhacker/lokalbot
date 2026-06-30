@@ -156,6 +156,7 @@ targetTemplates:
           - -lllama
         LD_RUNPATH_SEARCH_PATHS:
           - $(inherited)
+          - "@executable_path/../Frameworks"
           - "@executable_path/../Resources/llama-cpp"
 
 targets:

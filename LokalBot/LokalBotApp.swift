@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import AVFoundation
+import LaunchAtLogin
 
 /// Whether this launch should come up menu-bar-only (accessory: no Dock icon,
 /// no window). Computed identically in the pre-launch entry point (to disable
@@ -146,11 +147,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forceActivateForUITests()
             return
         }
-        // macOS may still restore/auto-open the main window at launch despite
-        // `.accessory`; for a menu-bar-only start, evict any window that appears
-        // in the first moments (the user can't have opened one yet).
+        // Menu-bar-only *start* is gated on HOW we launched. Only a login
+        // auto-start (the "Launch at login" item firing) should come up silent
+        // in the menu bar; a manual open (Finder/Launchpad/Dock/`open`) must
+        // show the main window. `willFinishLaunching` already set `.accessory`
+        // to avoid a window-flash, so for a manual open we explicitly bring the
+        // window back up as a regular, Dock-visible app. `wasLaunchedAtLogin`
+        // is only reliable here in `applicationDidFinishLaunching`.
         if lokalbotLaunchesMenuBarOnly() {
-            DispatchQueue.main.async { DockPolicy.beginLaunchSuppression() }
+            if LaunchAtLogin.wasLaunchedAtLogin {
+                DispatchQueue.main.async { DockPolicy.beginLaunchSuppression() }
+            } else {
+                DispatchQueue.main.async { WindowAccess.shared.open("main") }
+            }
         }
         let center = NotificationCenter.default
         for name: NSNotification.Name in [
