@@ -848,6 +848,10 @@ final class CotypingFocusPollBackoffTests: XCTestCase {
         return backoff
     }
 
+    func testFocusTrackerDefaultCadenceMatchesCoTabbyResponsiveness() {
+        XCTAssertEqual(CotypingFocusTracker.defaultIntervalMs, 50)
+    }
+
     func testRecentActivityStaysAtFullCadence() {
         XCTAssertEqual(CotypingFocusPollBackoff.captureStride(idleCaptureCount: 0), 1)
         XCTAssertEqual(CotypingFocusPollBackoff.captureStride(idleCaptureCount: 4), 1)
@@ -923,6 +927,14 @@ final class CotypingFocusPollBackoffTests: XCTestCase {
             lastCaptureUptimeNanoseconds: 10_000_000,
             nowUptimeNanoseconds: 25_000_000,
             maxAgeMilliseconds: 30))
+    }
+}
+
+// MARK: - Input monitor
+
+final class CotypingInputMonitorTests: XCTestCase {
+    func testAcceptTapTeardownDelayMatchesCoTabbyFinalAcceptGuard() {
+        XCTAssertEqual(CotypingInputMonitor.acceptTapTeardownDelaySeconds, 0.05, accuracy: 0.0001)
     }
 }
 
@@ -1039,6 +1051,8 @@ final class CotypingSettingsTests: XCTestCase {
         settings.cotypingShowAcceptKeyHint = false
         settings.cotypingAcceptGranularity = .phrase
         settings.cotypingFullAcceptKey = .rightArrow
+        settings.cotypingAutoAcceptTrailingPunctuation = false
+        settings.cotypingAddSpaceAfterAccept = true
         settings.cotypingExcludedApps = "Terminal, 1Password"
         settings.cotypingSuggestInIntegratedTerminals = true
         settings.cotypingBuiltInModelID = ModelCatalog.bundledID
@@ -1059,6 +1073,8 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertFalse(decoded.cotypingShowAcceptKeyHint)
         XCTAssertEqual(decoded.cotypingAcceptGranularity, .phrase)
         XCTAssertEqual(decoded.cotypingFullAcceptKey, .rightArrow)
+        XCTAssertFalse(decoded.cotypingAutoAcceptTrailingPunctuation)
+        XCTAssertTrue(decoded.cotypingAddSpaceAfterAccept)
         XCTAssertEqual(decoded.cotypingExcludedAppList, ["Terminal", "1Password"])
         XCTAssertTrue(decoded.cotypingSuggestInIntegratedTerminals)
         XCTAssertEqual(decoded.cotypingBuiltInModelID, ModelCatalog.bundledID)
@@ -1081,6 +1097,8 @@ final class CotypingSettingsTests: XCTestCase {
             AppSettings.defaultCotypingFadeInDurationSeconds,
             accuracy: 0.0001)
         XCTAssertTrue(settings.cotypingShowAcceptKeyHint)
+        XCTAssertTrue(settings.cotypingAutoAcceptTrailingPunctuation)
+        XCTAssertFalse(settings.cotypingAddSpaceAfterAccept)
         XCTAssertTrue(settings.cotypingUseLocalLearning)
         XCTAssertEqual(settings.cotypingBuiltInModelID, ModelCatalog.recommendedCotypingID)
         XCTAssertTrue(settings.menuBarOnly)
@@ -1113,6 +1131,8 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertTrue(settings.cotypingFadeInSuggestions)
         XCTAssertEqual(settings.cotypingFadeInDurationSeconds, 0.15, accuracy: 0.0001)
         XCTAssertTrue(settings.cotypingShowAcceptKeyHint)
+        XCTAssertTrue(settings.cotypingAutoAcceptTrailingPunctuation)
+        XCTAssertFalse(settings.cotypingAddSpaceAfterAccept)
         XCTAssertEqual(settings.cotypingMaxResponseTokens, 26)
     }
 
@@ -1148,15 +1168,26 @@ final class CotypingSettingsTests: XCTestCase {
 // MARK: - Stale-field guard (continuation)
 
 final class CotypingContinuationTests: XCTestCase {
-    private func field(_ preceding: String, pid: pid_t = 5) -> CotypingField {
+    private func field(
+        _ preceding: String,
+        pid: pid_t = 5,
+        focusIdentityKey: String? = nil
+    ) -> CotypingField {
         CotypingField(
             appName: "Slack", bundleID: "com.tinyspeck.slackmacgap", processID: pid,
-            role: "AXTextArea", precedingText: preceding, trailingText: "",
+            role: "AXTextArea", focusIdentityKey: focusIdentityKey,
+            precedingText: preceding, trailingText: "",
             selectionLength: 0, caretRect: .zero, isSecure: false, caretIsExact: true)
     }
 
-    private func session(_ preceding: String, pid: pid_t = 5) -> CotypingSession {
-        CotypingSession(field: field(preceding, pid: pid), fullText: " up on the deck")
+    private func session(
+        _ preceding: String,
+        pid: pid_t = 5,
+        focusIdentityKey: String? = nil
+    ) -> CotypingSession {
+        CotypingSession(
+            field: field(preceding, pid: pid, focusIdentityKey: focusIdentityKey),
+            fullText: " up on the deck")
     }
 
     func testSameUntouchedFieldIsContinuation() {
@@ -1171,6 +1202,18 @@ final class CotypingContinuationTests: XCTestCase {
     func testDifferentFieldSameProcessIsNotContinuation() {
         // Another compose box in the same app (same PID) must NOT match.
         XCTAssertFalse(CotypingCoordinator.isContinuation(of: session("I wanted to follow"), liveField: field("Reply to the thread")))
+    }
+
+    func testDifferentFieldSameProcessWithSameTextIsNotContinuationWhenIdentityDiffers() {
+        XCTAssertFalse(CotypingCoordinator.isContinuation(
+            of: session("I wanted to follow", focusIdentityKey: "field-a"),
+            liveField: field("I wanted to follow", focusIdentityKey: "field-b")))
+    }
+
+    func testMissingFocusIdentityKeepsTextFallbackForContinuation() {
+        XCTAssertTrue(CotypingCoordinator.isContinuation(
+            of: session("I wanted to follow", focusIdentityKey: "field-a"),
+            liveField: field("I wanted to follow")))
     }
 
     func testCappedLongFieldShiftAfterAcceptedWordIsContinuation() {
@@ -1238,6 +1281,122 @@ final class CotypingContinuationTests: XCTestCase {
         XCTAssertNil(CotypingCoordinator.sessionAdvancedByPublishedTyping(
             session("I wanted to follow"),
             liveField: field("I wanted to follow nope")))
+    }
+
+    func testPublishedTypingDoesNotAdvanceAcrossKnownDifferentFieldIdentity() {
+        XCTAssertNil(CotypingCoordinator.sessionAdvancedByPublishedTyping(
+            session("I wanted to follow", focusIdentityKey: "field-a"),
+            liveField: field("I wanted to follow up", focusIdentityKey: "field-b")))
+    }
+
+    func testDirectTypedCharactersAdvanceSuggestionTailBeforeHostPublishes() throws {
+        let advanced = try XCTUnwrap(CotypingCoordinator.sessionAdvancedByTypedCharacters(
+            session("I wanted to follow"),
+            typedCharacters: " up"))
+
+        XCTAssertEqual(advanced.consumedCount, 3)
+        XCTAssertEqual(advanced.remainingText, " on the deck")
+        XCTAssertEqual(advanced.field.precedingText, "I wanted to follow")
+    }
+
+    func testDirectTypedCharactersRejectMismatchAndControlInput() {
+        XCTAssertNil(CotypingCoordinator.sessionAdvancedByTypedCharacters(
+            session("I wanted to follow"),
+            typedCharacters: " nope"))
+        XCTAssertNil(CotypingCoordinator.sessionAdvancedByTypedCharacters(
+            session("I wanted to follow"),
+            typedCharacters: "\n"))
+    }
+
+    func testPublishedTypingRebasesOptimisticallyAdvancedSessionWhenHostCatchesUp() throws {
+        let optimistic = session("I wanted to follow").advanced(by: 3)
+        let rebased = try XCTUnwrap(CotypingCoordinator.sessionReconciledByPublishedTyping(
+            optimistic,
+            liveField: field("I wanted to follow up")))
+
+        XCTAssertEqual(rebased.consumedCount, 3)
+        XCTAssertEqual(rebased.remainingText, " on the deck")
+        XCTAssertEqual(rebased.field.precedingText, "I wanted to follow up")
+    }
+
+    func testPublishedTypingCanAdvanceBeyondOptimisticConsumedPrefix() throws {
+        let optimistic = session("I wanted to follow").advanced(by: 1)
+        let advanced = try XCTUnwrap(CotypingCoordinator.sessionReconciledByPublishedTyping(
+            optimistic,
+            liveField: field("I wanted to follow up")))
+
+        XCTAssertEqual(advanced.consumedCount, 3)
+        XCTAssertEqual(advanced.remainingText, " on the deck")
+    }
+
+    func testPostInsertionSyncWaitsWhileAcceptedTextIsNotPublished() {
+        let accepted = session("I wanted to follow").advanced(by: 3)
+
+        XCTAssertTrue(CotypingCoordinator.shouldAwaitPostInsertionSync(
+            accepted,
+            liveField: field("I wanted to follow"),
+            pendingInsertionConsumedCount: 3))
+    }
+
+    func testPostInsertionSyncStopsWaitingOnceAcceptedTextPublishes() {
+        let accepted = session("I wanted to follow").advanced(by: 3)
+
+        XCTAssertFalse(CotypingCoordinator.shouldAwaitPostInsertionSync(
+            accepted,
+            liveField: field("I wanted to follow up"),
+            pendingInsertionConsumedCount: 3))
+    }
+
+    func testPostInsertionSyncRequiresMatchingPendingConsumedCount() {
+        let accepted = session("I wanted to follow").advanced(by: 3)
+
+        XCTAssertFalse(CotypingCoordinator.shouldAwaitPostInsertionSync(
+            accepted,
+            liveField: field("I wanted to follow"),
+            pendingInsertionConsumedCount: nil))
+        XCTAssertFalse(CotypingCoordinator.shouldAwaitPostInsertionSync(
+            accepted,
+            liveField: field("I wanted to follow"),
+            pendingInsertionConsumedCount: 1))
+    }
+
+    func testPostInsertionSyncDoesNotCrossKnownDifferentFieldIdentity() {
+        let accepted = session("I wanted to follow", focusIdentityKey: "field-a").advanced(by: 3)
+
+        XCTAssertFalse(CotypingCoordinator.shouldAwaitPostInsertionSync(
+            accepted,
+            liveField: field("I wanted to follow", focusIdentityKey: "field-b"),
+            pendingInsertionConsumedCount: 3))
+    }
+
+    func testPostInsertionSyncDoesNotWaitWhenTextIsSelected() {
+        let accepted = session("I wanted to follow").advanced(by: 3)
+        var selected = field("I wanted to follow")
+        selected.selectionLength = 2
+
+        XCTAssertFalse(CotypingCoordinator.shouldAwaitPostInsertionSync(
+            accepted,
+            liveField: selected,
+            pendingInsertionConsumedCount: 3))
+    }
+
+    func testVisibleOverlayMustMatchSessionTailBeforeAcceptance() {
+        XCTAssertTrue(CotypingCoordinator.overlayAllowsAcceptance(
+            of: " up on the deck",
+            visibleAcceptanceText: nil,
+            overlayIsVisible: false))
+        XCTAssertTrue(CotypingCoordinator.overlayAllowsAcceptance(
+            of: " up on the deck",
+            visibleAcceptanceText: " up on the deck",
+            overlayIsVisible: true))
+        XCTAssertFalse(CotypingCoordinator.overlayAllowsAcceptance(
+            of: " up on the deck",
+            visibleAcceptanceText: " stale text",
+            overlayIsVisible: true))
+        XCTAssertFalse(CotypingCoordinator.overlayAllowsAcceptance(
+            of: " up on the deck",
+            visibleAcceptanceText: nil,
+            overlayIsVisible: true))
     }
 
     func testStaleAcceptanceEchoDropsRepeatOfAcceptedTailWhileFieldUnchanged() {
@@ -1584,12 +1743,81 @@ final class CotypingStreamingTests: XCTestCase {
 
 final class CotypingWordAcceptanceTests: XCTestCase {
     func testLatinAcceptanceUnchangedBySpacelessBranch() {
-        XCTAssertEqual(CotypingCoordinator.nextWord(in: "hello world"), "hello ")
-        XCTAssertEqual(CotypingCoordinator.nextWord(in: "don't stop now"), "don't ")
-        XCTAssertEqual(CotypingCoordinator.nextWord(in: "U.S.A today"), "U.S.A ")
-        XCTAssertEqual(CotypingCoordinator.nextWord(in: "1.5 times"), "1.5 ")
-        XCTAssertEqual(CotypingCoordinator.nextWord(in: "caf\u{00e9} Ren\u{00e9}"), "caf\u{00e9} ")
-        XCTAssertEqual(CotypingCoordinator.nextWord(in: "world \u{4f60}\u{597d}"), "world ")
+        XCTAssertEqual(CotypingCoordinator.nextWord(in: "hello world"), "hello")
+        XCTAssertEqual(CotypingCoordinator.nextWord(in: "don't stop now"), "don't")
+        XCTAssertEqual(CotypingCoordinator.nextWord(in: "U.S.A today"), "U.S.A")
+        XCTAssertEqual(CotypingCoordinator.nextWord(in: "1.5 times"), "1.5")
+        XCTAssertEqual(CotypingCoordinator.nextWord(in: "caf\u{00e9} Ren\u{00e9}"), "caf\u{00e9}")
+        XCTAssertEqual(CotypingCoordinator.nextWord(in: "world \u{4f60}\u{597d}"), "world")
+    }
+
+    func testSplitsTrailingPunctuationWhenAutoAcceptDisabled() {
+        XCTAssertEqual(
+            CotypingCoordinator.nextWord(in: "you?", autoAcceptTrailingPunctuation: false),
+            "you")
+        XCTAssertEqual(
+            CotypingCoordinator.nextWord(in: "?!", autoAcceptTrailingPunctuation: false),
+            "?!")
+        XCTAssertEqual(
+            CotypingCoordinator.nextWord(in: "U.S.A.", autoAcceptTrailingPunctuation: false),
+            "U.S.A")
+        XCTAssertEqual(
+            CotypingCoordinator.nextWord(in: " don't!", autoAcceptTrailingPunctuation: false),
+            " don't")
+    }
+
+    func testAddSpacePolicyConsumesModelWhitespaceOnlyWhenEnabled() {
+        XCTAssertEqual(
+            CotypingCoordinator.acceptanceChunkConsumingTrailingSpace(
+                "hello",
+                remainingText: "hello world"),
+            "hello ")
+        XCTAssertEqual(
+            CotypingCoordinator.acceptanceChunkConsumingTrailingSpace(
+                "hello",
+                remainingText: "helloworld"),
+            "hello")
+        XCTAssertEqual(
+            CotypingCoordinator.acceptanceChunkConsumingTrailingSpace(
+                "\u{8cc7}\u{6599}",
+                remainingText: "\u{8cc7}\u{6599} \u{5185}\u{5bb9}"),
+            "\u{8cc7}\u{6599}")
+    }
+
+    func testInsertionChunkDropsLeadingSpaceWhenFieldAlreadyHasOne() {
+        XCTAssertEqual(
+            CotypingCoordinator.insertionChunk(
+                forAcceptedChunk: " world",
+                precedingText: "hello "),
+            "world")
+        XCTAssertEqual(
+            CotypingCoordinator.insertionChunk(
+                forAcceptedChunk: " world",
+                precedingText: "hello"),
+            " world")
+    }
+
+    func testFinalAddSpaceAppendsOnlyAfterCompletedWords() {
+        let session = CotypingSession(
+            field: CotypingField(
+                appName: "TextEdit", bundleID: "com.apple.TextEdit", processID: 1,
+                role: "AXTextArea", precedingText: "hello", trailingText: "",
+                selectionLength: 0, caretRect: .zero, isSecure: false, caretIsExact: true),
+            fullText: " world")
+        XCTAssertEqual(
+            CotypingCoordinator.insertionTextApplyingAutoSpace(
+                insertionChunk: " world",
+                acceptedChunk: " world",
+                session: session,
+                addSpaceAfterAccept: true),
+            " world ")
+        XCTAssertEqual(
+            CotypingCoordinator.insertionTextApplyingAutoSpace(
+                insertionChunk: " world.",
+                acceptedChunk: " world.",
+                session: CotypingSession(field: session.field, fullText: " world."),
+                addSpaceAfterAccept: true),
+            " world.")
     }
 
     func testChineseRunSegmentsInsteadOfAcceptingWholeTail() {
@@ -1643,7 +1871,7 @@ final class CotypingPhraseTests: XCTestCase {
         XCTAssertEqual(CotypingCoordinator.nextPhrase(in: "the quick brown"), "the quick brown")
     }
     func testStopsAtSentenceEnd() {
-        XCTAssertEqual(CotypingCoordinator.nextPhrase(in: "done. next thing"), "done. ")
+        XCTAssertEqual(CotypingCoordinator.nextPhrase(in: "done. next thing"), "done.")
     }
     func testStopsAtNewline() {
         XCTAssertEqual(CotypingCoordinator.nextPhrase(in: "done\nnext thing"), "done\n")
@@ -1656,6 +1884,37 @@ final class CotypingPhraseTests: XCTestCase {
             CotypingCoordinator.nextPhrase(in: "\u{4f60}\u{597d}\u{3002}\u{518d}\u{89c1}"),
             "\u{4f60}\u{597d}\u{3002}")
     }
+
+    func testWalksPastDottedInitialsToRealSentenceEnd() {
+        XCTAssertEqual(
+            CotypingCoordinator.nextPhrase(in: "U.S.A. is great."),
+            "U.S.A. is great.")
+    }
+
+    func testDoesNotStopPhraseAtDecimalListNumberOrAbbreviationPeriod() {
+        XCTAssertEqual(
+            CotypingCoordinator.nextPhrase(in: "version 1.2 is ready."),
+            "version 1.2 is ready.")
+        XCTAssertEqual(
+            CotypingCoordinator.nextPhrase(in: "for example, e.g. this one."),
+            "for example, e.g. this one.")
+        XCTAssertEqual(
+            CotypingCoordinator.nextPhrase(in: "item 1. next"),
+            "item 1. next")
+    }
+
+    func testPhraseOutputInvariantToAutoAcceptTrailingPunctuationFlag() {
+        XCTAssertEqual(
+            CotypingCoordinator.nextPhrase(
+                in: "you? Yes.",
+                autoAcceptTrailingPunctuation: true),
+            "you?")
+        XCTAssertEqual(
+            CotypingCoordinator.nextPhrase(
+                in: "you? Yes.",
+                autoAcceptTrailingPunctuation: false),
+            "you?")
+    }
 }
 
 final class CotypingAcceptOptionsTests: XCTestCase {
@@ -1664,6 +1923,8 @@ final class CotypingAcceptOptionsTests: XCTestCase {
         XCTAssertEqual(settings.cotypingAcceptGranularity, .word)
         XCTAssertEqual(settings.cotypingAcceptKey, .tab)
         XCTAssertEqual(settings.cotypingFullAcceptKey, .backtick)
+        XCTAssertTrue(settings.cotypingAutoAcceptTrailingPunctuation)
+        XCTAssertFalse(settings.cotypingAddSpaceAfterAccept)
     }
     func testKeyCodes() {
         XCTAssertEqual(CotypingAcceptKey.tab.keyCode, 48)
@@ -2615,7 +2876,7 @@ final class CotypingSuggestionFadeInPolicyTests: XCTestCase {
 
 final class CotypingGhostHighlightTests: XCTestCase {
     func testHighlightsNextAcceptedLatinChunk() {
-        XCTAssertEqual(CotypingGhostHighlight.acceptancePrefix(in: "hello world"), "hello ")
+        XCTAssertEqual(CotypingGhostHighlight.acceptancePrefix(in: "hello world"), "hello")
         XCTAssertEqual(CotypingGhostHighlight.acceptancePrefix(in: "done\nnext"), "done")
     }
 
@@ -2726,6 +2987,19 @@ final class CotypingOverlayGeometryTests: XCTestCase {
             millisecondsSinceLastAcceptance: 80))
     }
 
+    func testInlineReanchorMirrorsBackwardJumpForRTL() {
+        XCTAssertTrue(CotypingOverlayGeometry.shouldHoldInlineReanchor(
+            currentFrame: CGRect(x: 120, y: 500, width: 100, height: 16),
+            targetFrame: CGRect(x: 160, y: 500, width: 100, height: 16),
+            millisecondsSinceLastAcceptance: 80,
+            isRightToLeft: true))
+        XCTAssertFalse(CotypingOverlayGeometry.shouldHoldInlineReanchor(
+            currentFrame: CGRect(x: 120, y: 500, width: 100, height: 16),
+            targetFrame: CGRect(x: 80, y: 500, width: 100, height: 16),
+            millisecondsSinceLastAcceptance: 80,
+            isRightToLeft: true))
+    }
+
     func testInlineReanchorAllowsBackwardJumpAfterHoldWindow() {
         XCTAssertFalse(CotypingOverlayGeometry.shouldHoldInlineReanchor(
             currentFrame: CGRect(x: 160, y: 500, width: 100, height: 16),
@@ -2819,5 +3093,19 @@ final class CotypingOverlayGeometryTests: XCTestCase {
         XCTAssertEqual(converted.origin.y, 960)
         XCTAssertEqual(converted.width, 2)
         XCTAssertEqual(converted.height, 20)
+    }
+}
+
+final class CotypingTextDirectionDetectorTests: XCTestCase {
+    func testDetectsRTLNearCaret() {
+        XCTAssertTrue(CotypingTextDirectionDetector.isRightToLeft("hello \u{05E9}\u{05DC}\u{05D5}\u{05DD}"))
+    }
+
+    func testRecentStrongLTRWinsOverEarlierRTL() {
+        XCTAssertFalse(CotypingTextDirectionDetector.isRightToLeft("\u{05E9}\u{05DC}\u{05D5}\u{05DD} hello"))
+    }
+
+    func testFallsBackToLTRWhenNoStrongDirection() {
+        XCTAssertFalse(CotypingTextDirectionDetector.isRightToLeft("1234 ..."))
     }
 }

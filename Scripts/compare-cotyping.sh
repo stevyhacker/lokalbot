@@ -15,9 +15,10 @@ Set COTYPING_COMPARE_ACCEPT=1 to press Tab after the screenshot and record
 the resulting TextEdit document text in *.accepted.txt.
 
 Set COTYPING_COMPARE_INPUT_MODE=direct to avoid System Events keystrokes and
-write TextEdit's document text directly. This lower-fidelity mode can show
-whether suggestions appear on accessibility value changes, but it cannot verify
-Tab acceptance.
+write TextEdit's document text directly into a fresh Untitled document. This
+lower-fidelity mode can show whether suggestions appear on one-shot
+accessibility value changes, but it cannot verify incremental typing or Tab
+acceptance.
 USAGE
 }
 
@@ -223,6 +224,9 @@ Each prompt also writes:
 
 Read back the text files before drawing conclusions: a UI probe can fail by
 partially accepting, inserting a literal Tab, or showing no visible suggestion.
+When input mode is \`direct\`, treat a no-suggestion capture as weak evidence:
+many cotyping apps intentionally listen to real keystroke/input-monitoring
+events and ignore one-shot Accessibility value changes.
 EOF
 
 echo "$out_dir"

@@ -12,6 +12,11 @@ enum CotypingKeyKind: Equatable, Sendable {
     case other
 }
 
+struct CotypingInputEvent: Equatable, Sendable {
+    var kind: CotypingKeyKind
+    var characters: String
+}
+
 /// Global keyboard watcher for cotyping. Ported from Cotabby's `InputMonitor`:
 ///
 ///  • an always-on **observer** tap (`.listenOnly`, head-insert) that classifies
@@ -26,7 +31,7 @@ enum CotypingKeyKind: Equatable, Sendable {
 @MainActor
 final class CotypingInputMonitor {
     /// Fired for every observed keyDown (not the accept key consumption itself).
-    var onKey: ((CotypingKeyKind) -> Void)?
+    var onKey: ((CotypingInputEvent) -> Void)?
     /// Invoked by the accept tap with the scope of the key that fired (next
     /// chunk vs whole). Returns `true` if it acted (key swallowed); else passthrough.
     var onAcceptKey: ((CotypingAcceptScope) -> Bool)?
@@ -40,9 +45,16 @@ final class CotypingInputMonitor {
     private var observerSource: CFRunLoopSource?
     private var acceptTap: CFMachPort?
     private var acceptSource: CFRunLoopSource?
+    private var acceptTeardownWorkItem: DispatchWorkItem?
 
     private(set) var isRunning = false
     private(set) var isAcceptActive = false
+
+    /// Keep the accepting tap alive briefly after a final accept. The inserter
+    /// posts synthetic key events from inside the accept tap callback; invalidating
+    /// the tap immediately can pull it from the event chain before those events
+    /// drain into the host app.
+    nonisolated static let acceptTapTeardownDelaySeconds: TimeInterval = 0.05
 
     /// Installs the listen-only observer tap. Returns false if the OS refuses
     /// (Input Monitoring not granted).
@@ -66,7 +78,10 @@ final class CotypingInputMonitor {
     }
 
     func stop() {
-        setAcceptActive(false)
+        acceptTeardownWorkItem?.cancel()
+        acceptTeardownWorkItem = nil
+        isAcceptActive = false
+        teardown(tap: &acceptTap, source: &acceptSource)
         teardown(tap: &observerTap, source: &observerSource)
         isRunning = false
     }
@@ -77,6 +92,12 @@ final class CotypingInputMonitor {
     func setAcceptActive(_ active: Bool) {
         guard active != isAcceptActive else { return }
         if active {
+            acceptTeardownWorkItem?.cancel()
+            acceptTeardownWorkItem = nil
+            if acceptTap != nil {
+                isAcceptActive = true
+                return
+            }
             let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
             guard let tap = CGEvent.tapCreate(
                 tap: .cgSessionEventTap, place: .tailAppendEventTap, options: .defaultTap,
@@ -92,22 +113,16 @@ final class CotypingInputMonitor {
             isAcceptActive = true
         } else {
             isAcceptActive = false
-            // Defer the port teardown one runloop hop: setAcceptActive(false) is
-            // reached from inside the accept tap's own callback (a suggestion was
-            // just accepted or invalidated), and invalidating a CFMachPort from
-            // within its callback is unsafe. Deferring also lets a synthetic insert
-            // drain before the tap dies.
-            let tap = acceptTap
-            let source = acceptSource
-            acceptTap = nil
-            acceptSource = nil
-            DispatchQueue.main.async {
-                if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
-                if let tap {
-                    CGEvent.tapEnable(tap: tap, enable: false)
-                    CFMachPortInvalidate(tap)
-                }
+            acceptTeardownWorkItem?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, !self.isAcceptActive else { return }
+                self.teardown(tap: &self.acceptTap, source: &self.acceptSource)
+                self.acceptTeardownWorkItem = nil
             }
+            acceptTeardownWorkItem = work
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + Self.acceptTapTeardownDelaySeconds,
+                execute: work)
         }
     }
 
@@ -145,26 +160,32 @@ final class CotypingInputMonitor {
 
     // MARK: - Classification
 
-    private func classify(_ event: CGEvent) -> CotypingKeyKind {
+    private func classify(_ event: CGEvent) -> CotypingInputEvent {
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
         let plain = !flags.contains(.maskCommand) && !flags.contains(.maskControl)
             && !flags.contains(.maskAlternate) && !flags.contains(.maskShift)
         if plain {
-            if keyCode == acceptKeyCodeProvider() { return .acceptance }
-            if let full = fullAcceptKeyCodeProvider(), keyCode == full { return .fullAcceptance }
+            if keyCode == acceptKeyCodeProvider() {
+                return CotypingInputEvent(kind: .acceptance, characters: "")
+            }
+            if let full = fullAcceptKeyCodeProvider(), keyCode == full {
+                return CotypingInputEvent(kind: .fullAcceptance, characters: "")
+            }
         }
-        if flags.contains(.maskCommand) || flags.contains(.maskControl) { return .shortcut }
+        if flags.contains(.maskCommand) || flags.contains(.maskControl) {
+            return CotypingInputEvent(kind: .shortcut, characters: "")
+        }
         switch Int(keyCode) {
-        case 53, 36, 76: return .dismissal          // Esc, Return, Keypad Enter
-        case 123, 124, 125, 126: return .navigation // arrows
-        case 51, 117: return .textMutation          // Backspace, Forward Delete
+        case 53, 36, 76: return CotypingInputEvent(kind: .dismissal, characters: "")  // Esc, Return, Keypad Enter
+        case 123, 124, 125, 126: return CotypingInputEvent(kind: .navigation, characters: "") // arrows
+        case 51, 117: return CotypingInputEvent(kind: .textMutation, characters: "") // Backspace, Forward Delete
         default:
             let chars = Self.characters(from: event)
             if !chars.isEmpty, chars.unicodeScalars.allSatisfy({ $0.value >= 0x20 }) {
-                return .textMutation
+                return CotypingInputEvent(kind: .textMutation, characters: chars)
             }
-            return .other
+            return CotypingInputEvent(kind: .other, characters: chars)
         }
     }
 

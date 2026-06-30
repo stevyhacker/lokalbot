@@ -22,7 +22,7 @@ Parity defaults:
   keypress will insert.
 - Completion token budget follows Cotypist/Cotabby's English baseline: `ceil(words * 1.3)`, floor 5, doubled for multi-line up to 120.
 - The dedicated cotyping `llama-server` launches with a 2048-token context window, matching Cotypist/Cotabby's local llama runtime configuration.
-- Focus polling uses a Cotabby-style 80 ms active cadence, then stretches after
+- Focus polling uses a Cotabby-style 50 ms active cadence, then stretches after
   sustained no-change captures so idle Accessibility reads back off without
   making post-keystroke suggestions feel delayed.
 - Generation start and result apply reuse a focus snapshot only when the last
@@ -143,8 +143,10 @@ swiftc Scripts/cotyping-probe.swift -o /tmp/cotyping-probe
 The probe opens its own temporary AppKit text window, inserts text internally,
 captures the full screen, and writes `*.document.txt`, `*.rect`, and `*.png`.
 Use it only to inspect whether a target app responds to accessibility value
-changes in a plain AppKit editor. It does not send real keystrokes, does not
-exercise Tab acceptance, and is not a substitute for the TextEdit side-by-side.
+changes in a plain AppKit editor. It does not exercise System Events keystrokes
+or Tab acceptance, and many cotyping apps deliberately ignore one-shot value
+changes, so a no-suggestion probe is weak evidence rather than a product
+failure.
 
 For repeatable backend latency/output checks against LokalBot's dedicated
 Gemma Q5 XL `llama-server`:

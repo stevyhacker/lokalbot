@@ -133,6 +133,13 @@ struct AppSettings: Codable {
     /// Primary accept key (next word/phrase) and the full-accept key (whole tail).
     var cotypingAcceptKey: CotypingAcceptKey = .tab
     var cotypingFullAcceptKey: CotypingFullAcceptKey = .backtick
+    /// Accept punctuation attached to the next word in the same Tab press.
+    /// Matches CoTabby's default; disabling lets punctuation be accepted as its
+    /// own chunk.
+    var cotypingAutoAcceptTrailingPunctuation: Bool = true
+    /// Add or consume a horizontal space after accepting a completed word.
+    /// Off by default to match CoTabby's shipped behavior.
+    var cotypingAddSpaceAfterAccept: Bool = false
     /// Comma-separated app-name / bundle-id substrings never suggested into.
     /// Preseeded with password managers and terminals.
     var cotypingExcludedApps: String = "1Password, Keychain Access, Bitwarden, KeePassXC, Terminal, iTerm"
@@ -299,6 +306,8 @@ struct AppSettings: Codable {
         case cotypingAcceptGranularity
         case cotypingAcceptKey
         case cotypingFullAcceptKey
+        case cotypingAutoAcceptTrailingPunctuation
+        case cotypingAddSpaceAfterAccept
         case cotypingExcludedApps
         case cotypingExcludedDomains
         case cotypingSuggestInIntegratedTerminals
@@ -379,6 +388,8 @@ struct AppSettings: Codable {
         try c.encode(cotypingAcceptGranularity, forKey: .cotypingAcceptGranularity)
         try c.encode(cotypingAcceptKey, forKey: .cotypingAcceptKey)
         try c.encode(cotypingFullAcceptKey, forKey: .cotypingFullAcceptKey)
+        try c.encode(cotypingAutoAcceptTrailingPunctuation, forKey: .cotypingAutoAcceptTrailingPunctuation)
+        try c.encode(cotypingAddSpaceAfterAccept, forKey: .cotypingAddSpaceAfterAccept)
         try c.encode(cotypingExcludedApps, forKey: .cotypingExcludedApps)
         try c.encode(cotypingExcludedDomains, forKey: .cotypingExcludedDomains)
         try c.encode(cotypingSuggestInIntegratedTerminals, forKey: .cotypingSuggestInIntegratedTerminals)
@@ -447,6 +458,8 @@ struct AppSettings: Codable {
         cotypingAcceptGranularity = (try? c.decode(CotypingAcceptGranularity.self, forKey: .cotypingAcceptGranularity)) ?? defaults.cotypingAcceptGranularity
         cotypingAcceptKey = (try? c.decode(CotypingAcceptKey.self, forKey: .cotypingAcceptKey)) ?? defaults.cotypingAcceptKey
         cotypingFullAcceptKey = (try? c.decode(CotypingFullAcceptKey.self, forKey: .cotypingFullAcceptKey)) ?? defaults.cotypingFullAcceptKey
+        cotypingAutoAcceptTrailingPunctuation = (try? c.decode(Bool.self, forKey: .cotypingAutoAcceptTrailingPunctuation)) ?? defaults.cotypingAutoAcceptTrailingPunctuation
+        cotypingAddSpaceAfterAccept = (try? c.decode(Bool.self, forKey: .cotypingAddSpaceAfterAccept)) ?? defaults.cotypingAddSpaceAfterAccept
         cotypingExcludedApps = (try? c.decode(String.self, forKey: .cotypingExcludedApps)) ?? defaults.cotypingExcludedApps
         cotypingExcludedDomains = (try? c.decode(String.self, forKey: .cotypingExcludedDomains)) ?? defaults.cotypingExcludedDomains
         cotypingSuggestInIntegratedTerminals = (try? c.decode(Bool.self, forKey: .cotypingSuggestInIntegratedTerminals)) ?? defaults.cotypingSuggestInIntegratedTerminals

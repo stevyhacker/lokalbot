@@ -255,6 +255,10 @@ struct SettingsView: View {
                         Picker("Accept whole suggestion", selection: $app.settings.cotypingFullAcceptKey) {
                             ForEach(CotypingFullAcceptKey.allCases) { Text($0.label).tag($0) }
                         }
+                        Toggle("Accept trailing punctuation with words",
+                               isOn: $app.settings.cotypingAutoAcceptTrailingPunctuation)
+                        Toggle("Add space after accepting words",
+                               isOn: $app.settings.cotypingAddSpaceAfterAccept)
                         Toggle("Paste large / multi-line accepts", isOn: $app.settings.cotypingPasteInsertion)
                         Text("Commits big, multi-line, or composing-IME suggestions via paste instead of synthetic keystrokes. Briefly uses the clipboard, then restores it.")
                             .font(.caption).foregroundStyle(.secondary)
