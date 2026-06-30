@@ -85,6 +85,9 @@ protocol CotypingCompleting: AnyObject {
     /// Default is a no-op: only the in-process `LocalLlamaCotypingEngine` has a
     /// model to prewarm; the HTTP engine boots its server lazily.
     func prewarm() async throws
+    /// Best-effort focus-time prompt prefill for in-process engines. This lets
+    /// the first real keystroke reuse prompt KV when the user pauses after focus.
+    func prewarm(for request: CotypingRequest) async throws
     /// Frees any in-process resources the engine holds. Default is a no-op:
     /// only the in-process `LocalLlamaCotypingEngine` holds a loaded model; the
     /// HTTP engine has nothing to free. The `CotypingEngineSelector` calls this
@@ -102,6 +105,10 @@ extension CotypingCompleting {
     }
 
     func prewarm() async throws {}
+
+    func prewarm(for request: CotypingRequest) async throws {
+        try await prewarm()
+    }
 
     func unload() async {}
 }

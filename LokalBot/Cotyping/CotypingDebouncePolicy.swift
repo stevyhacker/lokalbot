@@ -9,9 +9,18 @@ enum CotypingDebouncePolicy {
     /// Largest backoff we'll add regardless of how slow the model is.
     static let maxBackoffMilliseconds = 600
 
-    static func milliseconds(lastLatencyMilliseconds: Int?, configured: Int) -> Int {
+    static func milliseconds(
+        lastLatencyMilliseconds: Int?,
+        configured: Int,
+        consumedDelayMilliseconds: Int = 0
+    ) -> Int {
         let floor = max(minimumMilliseconds, configured)
-        guard let last = lastLatencyMilliseconds, last > 0 else { return floor }
-        return max(floor, min(last / 2, maxBackoffMilliseconds))
+        let total: Int
+        if let last = lastLatencyMilliseconds, last > 0 {
+            total = max(floor, min(last / 2, maxBackoffMilliseconds))
+        } else {
+            total = floor
+        }
+        return max(0, total - max(0, consumedDelayMilliseconds))
     }
 }

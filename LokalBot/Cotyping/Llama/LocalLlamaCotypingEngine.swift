@@ -10,6 +10,7 @@ final class LocalLlamaCotypingEngine: CotypingCompleting {
     private let runtime: LlamaCotypingRuntime
     private let modelPath: String
     private var memoryPressureSource: DispatchSourceMemoryPressure?
+    private var inflightPrewarmTask: Task<Void, Never>?
 
     init(runtime: LlamaCotypingRuntime, modelPath: String) {
         self.runtime = runtime
@@ -24,11 +25,36 @@ final class LocalLlamaCotypingEngine: CotypingCompleting {
         self.memoryPressureSource = source
     }
 
-    deinit { memoryPressureSource?.cancel() }
+    deinit {
+        inflightPrewarmTask?.cancel()
+        memoryPressureSource?.cancel()
+    }
 
     /// Loads + primes the model so the first keystroke isn't cold.
     func prewarm() async throws {
+        inflightPrewarmTask?.cancel()
+        inflightPrewarmTask = nil
         try await runtime.prewarm(modelPath: modelPath)
+    }
+
+    /// Best-effort prompt KV prefill for the focused field. A real generation
+    /// cancels this so it does not sit behind obsolete warmup work.
+    func prewarm(for request: CotypingRequest) async throws {
+        inflightPrewarmTask?.cancel()
+        let task = Task { [runtime, modelPath] in
+            do {
+                try await runtime.loadIfNeeded(modelPath: modelPath)
+                let promptTokens = await runtime.tokenize(request.prompt, addBOS: true)
+                guard !promptTokens.isEmpty else { return }
+                try Task.checkCancellation()
+                try await runtime.prefill(promptTokens: promptTokens)
+            } catch {
+                // Prompt prefill is opportunistic; the following generation can
+                // still run a normal prefill or fall back through the selector.
+            }
+        }
+        inflightPrewarmTask = task
+        await task.value
     }
 
     /// Frees the in-process model + context. Called when the selector routes
@@ -51,6 +77,8 @@ final class LocalLlamaCotypingEngine: CotypingCompleting {
         _ request: CotypingRequest,
         onPartial: @escaping @Sendable (CotypingNormalizationResult) -> Void
     ) async throws -> CotypingNormalizationResult {
+        inflightPrewarmTask?.cancel()
+        inflightPrewarmTask = nil
         try await runtime.loadIfNeeded(modelPath: modelPath)
         let promptTokens = await runtime.tokenize(request.prompt, addBOS: true)
         guard !promptTokens.isEmpty else {

@@ -12,6 +12,9 @@ Parity defaults:
 - Streaming partial suggestions default off, matching Cotypist/Cotabby.
 - Completion token budget follows Cotypist/Cotabby's English baseline: `ceil(words * 1.3)`, floor 5, doubled for multi-line up to 120.
 - The dedicated cotyping `llama-server` launches with a 2048-token context window, matching Cotypist/Cotabby's local llama runtime configuration.
+- Focus polling uses a Cotabby-style 80 ms active cadence, then stretches after
+  sustained no-change captures so idle Accessibility reads back off without
+  making post-keystroke suggestions feel delayed.
 
 ## Automated Check
 
@@ -59,16 +62,35 @@ Record:
 For repeatable screenshot capture:
 
 ```bash
+Scripts/compare-cotyping.sh cotabby /tmp/cotyping-cotabby
 Scripts/compare-cotyping.sh cotypist /tmp/cotyping-cotypist
 Scripts/compare-cotyping.sh lokalbot /tmp/cotyping-lokalbot
 ```
 
 The script opens TextEdit, clicks into the document, types each prompt as real
 keystrokes, waits for the active cotyping app, and captures the TextEdit window
-region as one PNG per prompt. It requires
+region as one PNG per prompt. It also writes `*.document.txt` with the TextEdit
+document text after the wait. Set `COTYPING_COMPARE_ACCEPT=1` to press Tab after
+the screenshot and write `*.accepted.txt`, which is the source of truth for
+spacing/partial-accept behavior. It requires
 Accessibility for the shell and Screen Recording for `screencapture`.
 Set `COTYPING_COMPARE_FIRST_WAIT_SECONDS` or `COTYPING_COMPARE_WAIT_SECONDS` if
 the first Q5 XL model load needs more time on a cold run.
+
+If the shell does not have Accessibility and fails with
+`osascript is not allowed assistive access`, the fallback probe can capture a
+lower-confidence signal without touching TextEdit documents:
+
+```bash
+swiftc Scripts/cotyping-probe.swift -o /tmp/cotyping-probe
+/tmp/cotyping-probe --prompt "I wanted to follow" --slug 01-follow-up --output-dir /tmp/cotyping-probe-lokalbot --wait 12
+```
+
+The probe opens its own temporary AppKit text window, inserts text internally,
+captures the full screen, and writes `*.document.txt`, `*.rect`, and `*.png`.
+Use it only to inspect whether a target app responds to accessibility value
+changes in a plain AppKit editor. It does not send real keystrokes, does not
+exercise Tab acceptance, and is not a substitute for the TextEdit side-by-side.
 
 For repeatable backend latency/output checks against LokalBot's dedicated
 Gemma Q5 XL `llama-server`:

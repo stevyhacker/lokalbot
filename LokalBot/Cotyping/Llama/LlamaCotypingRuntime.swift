@@ -93,6 +93,36 @@ actor LlamaCotypingRuntime {
     /// Prewarm == load + the priming decode `loadIfNeeded` already performs.
     func prewarm(modelPath: String) throws { try loadIfNeeded(modelPath: modelPath) }
 
+    /// Decodes a prompt into KV without sampling so a later generation can reuse
+    /// it. Cancellation/failure clears KV because a partial prefill must never
+    /// masquerade as the prompt represented by `cachedTokens`.
+    func prefill(promptTokens: [Int32]) throws {
+        guard let ctx, !promptTokens.isEmpty else { return }
+        let mem = llama_get_memory(ctx)
+        let shared = IncrementalPrefill.commonPrefixLength(cachedTokens, promptTokens)
+        let reuse = min(shared, promptTokens.count - 1)
+
+        do {
+            if supportsPartialReuse, reuse > 0,
+               llama_memory_seq_rm(mem, 0, Int32(reuse), -1) {
+                try decodeCancellable(
+                    Array(promptTokens[reuse...]),
+                    startPos: Int32(reuse),
+                    logitsLastOnly: true)
+            } else {
+                llama_memory_seq_rm(mem, 0, 0, -1)
+                try decodeCancellable(promptTokens, startPos: 0, logitsLastOnly: true)
+            }
+            lastPrefillTokenCount = promptTokens.count - reuse
+            cachedTokens = promptTokens
+        } catch {
+            llama_memory_seq_rm(mem, 0, 0, -1)
+            cachedTokens = []
+            lastPrefillTokenCount = 0
+            throw error
+        }
+    }
+
     func unload() {
         if let c = ctx { llama_free(c) }
         if let m = model { llama_model_free(m) }
@@ -170,6 +200,28 @@ actor LlamaCotypingRuntime {
         }
         batch.n_tokens = Int32(tokens.count)
         return llama_decode(ctx, batch) == 0
+    }
+
+    private func decodeCancellable(
+        _ tokens: [Int32],
+        startPos: Int32,
+        logitsLastOnly: Bool
+    ) throws {
+        let chunkSize = 256
+        var offset = 0
+        while offset < tokens.count {
+            try Task.checkCancellation()
+            let end = min(tokens.count, offset + chunkSize)
+            guard decode(
+                Array(tokens[offset..<end]),
+                startPos: startPos + Int32(offset),
+                logitsLastOnly: logitsLastOnly)
+            else {
+                throw LlamaRuntimeError.decodeFailed
+            }
+            offset = end
+        }
+        try Task.checkCancellation()
     }
 
     // MARK: - Generate

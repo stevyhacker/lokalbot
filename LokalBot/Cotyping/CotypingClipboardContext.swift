@@ -7,8 +7,9 @@ import Foundation
 /// sanitization, bounding, and an "already-in-the-field" guard are pure here;
 /// reading the pasteboard is a thin runtime wrapper (`CotypingClipboardProvider`).
 ///
-/// Privacy: off by default; the clipboard is read only at generation time and
-/// never cached, persisted, or logged.
+/// Privacy: off by default; snippets may be memoized in memory for one focused
+/// field/pasteboard state to keep the prompt prefix stable, but are never
+/// persisted or logged.
 enum CotypingClipboardContext {
     /// Hard cap on the snippet included in the prompt (mirrors Cotabby's 1_200).
     static let maxSnippetCharacters = 1_200
@@ -41,9 +42,24 @@ enum CotypingClipboardContext {
     }
 }
 
+/// One pinned, non-empty clipboard-context verdict for a focused field and a
+/// pasteboard state. Nil verdicts are intentionally not represented: they add
+/// nothing to the prompt and should re-evaluate as the user types more context.
+nonisolated struct CotypingClipboardPrefaceMemo: Equatable, Sendable {
+    let identityKey: String
+    let changeCount: Int
+    let value: String
+
+    func valueIfReusable(identityKey: String, changeCount: Int) -> String? {
+        guard self.identityKey == identityKey,
+              self.changeCount == changeCount else { return nil }
+        return value
+    }
+}
+
 /// Reads the system pasteboard. `@MainActor`; the snippet is read fresh at
-/// generation time and never cached or persisted (clipboard contents are
-/// sensitive and change outside our control). Injectable for tests.
+/// generation time and never persisted (clipboard contents are sensitive and
+/// change outside our control). Injectable for tests.
 @MainActor
 final class CotypingClipboardProvider {
     private let pasteboard: NSPasteboard
@@ -54,4 +70,6 @@ final class CotypingClipboardProvider {
 
     /// The current plain-text clipboard contents, or nil.
     var currentText: String? { pasteboard.string(forType: .string) }
+
+    var changeCount: Int { pasteboard.changeCount }
 }

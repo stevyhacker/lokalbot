@@ -94,6 +94,11 @@ final class CotypingEngineSelector: CotypingCompleting {
         try? await engine.prewarm()
     }
 
+    func prewarm(for request: CotypingRequest) async {
+        guard let engine = localIfEligible() else { return }
+        try? await engine.prewarm(for: request)
+    }
+
     func unload() async {
         guard let engine = takeLocalEngine() else { return }
         await engine.unload()

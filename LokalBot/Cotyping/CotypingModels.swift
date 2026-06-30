@@ -33,6 +33,9 @@ struct CotypingField: Equatable, Sendable {
     var bundleID: String?
     var processID: pid_t
     var role: String
+    /// Stable-enough identity for short-lived focus smoothing. This is not part
+    /// of the content signature because host apps may recycle AX element handles.
+    var focusIdentityKey: String? = nil
     /// Bounded text immediately before the caret (newest text at the end).
     var precedingText: String
     /// Bounded text immediately after the caret (used by the trailing-duplication filter).
@@ -72,6 +75,10 @@ struct CotypingFocus: Equatable, Sendable {
     var bundleID: String?
     var capability: CotypingCapability
     var field: CotypingField?
+    /// Identity of the focused editable element when it can be read without
+    /// exposing text. Used for transient capability smoothing while blocked
+    /// snapshots intentionally omit a full field payload.
+    var focusIdentityKey: String? = nil
     /// Normalized host of the focused tab's URL (browsers only), read over AX when
     /// per-domain rules are configured. Nil otherwise. Used only for site gating.
     var host: String? = nil

@@ -32,11 +32,28 @@ final class CotypingCoordinator: ObservableObject {
     private var session: CotypingSession?
     private var generation: UInt64 = 0
     private var debounceTask: Task<Void, Never>?
+    private var focusPrewarmTask: Task<Void, Never>?
+    private var hostPublishPollGeneration: UInt64 = 0
     private var wired = false
     private var lastLatencyMilliseconds: Int?
+    private var isPostExhaustionAcceptanceArmed = false
+    private var hasQueuedPostExhaustionAccept = false
+    private var postExhaustionAcceptanceGeneration: UInt64 = 0
+    private var pendingStreamPartial: PendingStreamPartial?
+    private var isStreamDrainScheduled = false
+    private var lastAcceptedTail: AcceptedSuggestionTail?
+    private var lastAcceptanceAt: Date?
+    private var suggestionAnchorCache = CotypingSuggestionAnchorCache()
+    private var clipboardPrefaceMemo: CotypingClipboardPrefaceMemo?
+    private var pendingSpeculativeSignature: String?
+    private var pendingSpeculativeResult: PendingSpeculativeResult?
     private let spellChecker = CotypingSpellChecker()
     private let clipboardProvider = CotypingClipboardProvider()
     private nonisolated static let axPrecedingWindowLimit = 4096
+    private nonisolated static let hostPublishWaitCeilingMs = 400
+    private nonisolated static let hostPublishFirstPollIntervalMs = 10
+    private nonisolated static let hostPublishPollIntervalMs = 30
+    private nonisolated static let postExhaustionAcceptanceWindowSeconds: TimeInterval = 0.8
 
     init(
         engine: CotypingCompleting,
@@ -85,8 +102,7 @@ final class CotypingCoordinator: ObservableObject {
     }
 
     func stop(reason: String? = nil) {
-        debounceTask?.cancel()
-        debounceTask = nil
+        cancelPendingGenerationWork()
         clearSuggestion()
         focusTracker.stop()
         inputMonitor.stop()
@@ -100,7 +116,10 @@ final class CotypingCoordinator: ObservableObject {
         focusTracker.onChange = { [weak self] focus in self?.handleFocusChange(focus) }
         inputMonitor.onKey = { [weak self] kind in self?.handleKey(kind) }
         inputMonitor.onAcceptKey = { [weak self] scope in self?.acceptFromTap(scope) ?? false }
-        inputMonitor.acceptGate = { [weak self] in self?.overlay.isVisible ?? false }
+        inputMonitor.acceptGate = { [weak self] in
+            guard let self else { return false }
+            return self.overlay.isVisible || self.isPostExhaustionAcceptanceArmed
+        }
         inputMonitor.acceptKeyCodeProvider = { [weak self] in
             self?.settingsProvider().cotypingAcceptKey.keyCode ?? 48
         }
@@ -117,9 +136,9 @@ final class CotypingCoordinator: ObservableObject {
         case .acceptance, .fullAcceptance:
             break // owned by the accept tap
         case .textMutation:
-            scheduleGeneration()
+            scheduleGenerationAfterHostPublishDelay()
         case .dismissal, .navigation, .shortcut, .other:
-            debounceTask?.cancel()
+            cancelPendingGenerationWork()
             clearSuggestion()
             state = .idle
         }
@@ -146,6 +165,7 @@ final class CotypingCoordinator: ObservableObject {
                 state = .idle
             }
         }
+        scheduleFocusPrewarm(for: focus)
     }
 
     private var isDisabledState: Bool {
@@ -155,20 +175,165 @@ final class CotypingCoordinator: ObservableObject {
 
     // MARK: - Generation
 
-    private func scheduleGeneration() {
+    private func scheduleFocusPrewarm(for focus: CotypingFocus) {
+        focusPrewarmTask?.cancel()
+        guard isRunning,
+              session == nil,
+              state == .idle,
+              case .supported = focus.capability,
+              let field = focus.field else {
+            focusPrewarmTask = nil
+            return
+        }
+        let settings = settingsProvider()
+        guard CotypingAvailability.disabledReason(
+            enabled: settings.cotypingEnabled,
+            excludedApps: settings.cotypingExcludedAppList,
+            selfBundleID: selfBundleID,
+            focus: focus) == nil,
+              let request = buildRequest(for: field, settings: settings, generation: generation)
+        else {
+            focusPrewarmTask = nil
+            return
+        }
+
+        focusPrewarmTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(50))
+            guard !Task.isCancelled else { return }
+            try? await self?.engine.prewarm(for: request)
+        }
+    }
+
+    private func scheduleGeneration(consumedDelayMilliseconds: Int = 0) {
+        pendingSpeculativeSignature = nil
+        pendingSpeculativeResult = nil
         debounceTask?.cancel()
         generation &+= 1
         let work = generation
-        clearSuggestion()
+        clearSuggestion(releasePostExhaustionWindow: !isPostExhaustionAcceptanceArmed)
         state = .debouncing
         let delay = CotypingDebouncePolicy.milliseconds(
             lastLatencyMilliseconds: lastLatencyMilliseconds,
-            configured: settingsProvider().cotypingDebounceMs)
+            configured: settingsProvider().cotypingDebounceMs,
+            consumedDelayMilliseconds: consumedDelayMilliseconds)
         debounceTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(delay))
             guard !Task.isCancelled else { return }
             await self?.generate(work: work)
         }
+    }
+
+    private func scheduleGenerationAfterHostPublishDelay(baseline explicitBaseline: CotypingField? = nil) {
+        cancelPendingGenerationWork()
+        let baseline = explicitBaseline ?? focusTracker.focus.field
+        let pollGeneration = hostPublishPollGeneration
+        let keystrokeUptimeNanoseconds = DispatchTime.now().uptimeNanoseconds
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(Self.hostPublishFirstPollIntervalMs)) { [weak self] in
+            self?.pollForHostPublish(
+                baseline: baseline,
+                pollGeneration: pollGeneration,
+                elapsedMs: Self.hostPublishFirstPollIntervalMs,
+                keystrokeUptimeNanoseconds: keystrokeUptimeNanoseconds
+            )
+        }
+    }
+
+    private func pollForHostPublish(
+        baseline: CotypingField?,
+        pollGeneration: UInt64,
+        elapsedMs: Int,
+        keystrokeUptimeNanoseconds: UInt64
+    ) {
+        guard isRunning, pollGeneration == hostPublishPollGeneration else { return }
+        let focus = focusTracker.refreshNow()
+        guard isRunning, pollGeneration == hostPublishPollGeneration else { return }
+
+        if Self.hostPublishDidMove(from: baseline, to: focus.field) {
+            let consumed = Self.elapsedMilliseconds(since: keystrokeUptimeNanoseconds)
+            if let field = focus.field,
+               field.contentSignature == pendingSpeculativeSignature {
+                _ = applyPendingSpeculativeResultIfReady(publishedField: field)
+                return
+            }
+            pendingSpeculativeSignature = nil
+            pendingSpeculativeResult = nil
+            if let field = focus.field,
+               advanceActiveSessionIfPublishedTextMatches(field, consumedDelayMilliseconds: consumed) {
+                return
+            }
+            scheduleGeneration(consumedDelayMilliseconds: consumed)
+            return
+        }
+
+        let nextElapsed = elapsedMs + Self.hostPublishPollIntervalMs
+        guard nextElapsed < Self.hostPublishWaitCeilingMs else {
+            pendingSpeculativeSignature = nil
+            pendingSpeculativeResult = nil
+            scheduleGeneration(consumedDelayMilliseconds: Self.elapsedMilliseconds(since: keystrokeUptimeNanoseconds))
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(Self.hostPublishPollIntervalMs)) { [weak self] in
+            self?.pollForHostPublish(
+                baseline: baseline,
+                pollGeneration: pollGeneration,
+                elapsedMs: nextElapsed,
+                keystrokeUptimeNanoseconds: keystrokeUptimeNanoseconds
+            )
+        }
+    }
+
+    private nonisolated static func hostPublishDidMove(from baseline: CotypingField?, to current: CotypingField?) -> Bool {
+        guard let baseline else { return current != nil }
+        guard let current else { return true }
+        return current.contentSignature != baseline.contentSignature
+            || current.processID != baseline.processID
+            || current.bundleID != baseline.bundleID
+            || current.role != baseline.role
+    }
+
+    private nonisolated static func elapsedMilliseconds(since uptimeNanoseconds: UInt64) -> Int {
+        Int((DispatchTime.now().uptimeNanoseconds &- uptimeNanoseconds) / 1_000_000)
+    }
+
+    private func cancelPendingGenerationWork() {
+        focusPrewarmTask?.cancel()
+        focusPrewarmTask = nil
+        hostPublishPollGeneration &+= 1
+        pendingSpeculativeSignature = nil
+        pendingSpeculativeResult = nil
+        debounceTask?.cancel()
+        debounceTask = nil
+        generation &+= 1
+    }
+
+    private func advanceActiveSessionIfPublishedTextMatches(
+        _ liveField: CotypingField,
+        consumedDelayMilliseconds: Int
+    ) -> Bool {
+        guard let current = session,
+              let advanced = Self.sessionAdvancedByPublishedTyping(current, liveField: liveField) else {
+            return false
+        }
+
+        session = advanced
+        if advanced.isExhausted {
+            clearSuggestion()
+            state = .idle
+            scheduleGeneration(consumedDelayMilliseconds: consumedDelayMilliseconds)
+            return true
+        }
+
+        overlay.show(
+            text: advanced.remainingText,
+            caretRect: liveField.caretRect,
+            style: liveField.fieldStyle,
+            placement: placement(for: liveField))
+        syncAcceptInterception()
+        lastSuggestion = advanced.remainingText
+        state = .ready(text: advanced.remainingText)
+        return true
     }
 
     private func generate(work: UInt64) async {
@@ -193,7 +358,7 @@ final class CotypingCoordinator: ObservableObject {
         if settings.cotypingEmoji, let emoji = CotypingEmoji.match(trailing: field.precedingText) {
             session = CotypingSession(field: field, fullText: emoji.glyph, kind: .emoji(shortcode: emoji.shortcode))
             overlay.show(text: "\(emoji.glyph) :\(emoji.shortcode):", caretRect: field.caretRect, style: field.fieldStyle, placement: placement(for: field))
-            inputMonitor.setAcceptActive(overlay.isVisible)
+            syncAcceptInterception()
             lastSuggestion = emoji.glyph
             state = .ready(text: emoji.glyph)
             return
@@ -203,7 +368,7 @@ final class CotypingCoordinator: ObservableObject {
         if settings.cotypingMacros, let macro = CotypingMacro.match(trailing: field.precedingText) {
             session = CotypingSession(field: field, fullText: macro.result.insertion, kind: .macro)
             overlay.show(text: macro.result.preview, caretRect: field.caretRect, style: field.fieldStyle, placement: placement(for: field))
-            inputMonitor.setAcceptActive(overlay.isVisible)
+            syncAcceptInterception()
             lastSuggestion = macro.result.insertion
             state = .ready(text: macro.result.insertion)
             return
@@ -214,7 +379,7 @@ final class CotypingCoordinator: ObservableObject {
         case .offerCorrection(let word, let corrected):
             session = CotypingSession(field: field, fullText: corrected, kind: .correction(typoWord: word))
             overlay.show(text: corrected, caretRect: field.caretRect, style: field.fieldStyle, placement: placement(for: field))
-            inputMonitor.setAcceptActive(overlay.isVisible)
+            syncAcceptInterception()
             lastSuggestion = corrected
             state = .ready(text: corrected)
             return
@@ -226,26 +391,11 @@ final class CotypingCoordinator: ObservableObject {
             break
         }
 
-        var cfg = config
-        cfg.maxResponseTokens = settings.cotypingMaxResponseTokens
-        cfg.maxResponseWords = settings.cotypingMaxWords
-        // Clipboard context (off by default; read fresh at generation time,
-        // never cached or persisted — clipboard contents are sensitive).
-        let clipboardSnippet = settings.cotypingUseClipboard
-            ? CotypingClipboardContext.resolve(
-                rawClipboard: clipboardProvider.currentText,
-                precedingText: field.precedingText)
-            : nil
-        let learnedExamples = settings.cotypingUseLocalLearning
-            ? learningStore.examples(
-                for: field,
-                limit: settings.cotypingLearningExamplesInPrompt)
-            : []
-        guard let request = CotypingRequestBuilder.build(
-            field: field, config: cfg,
-            personalization: settings.cotypingPersonalization, generation: work,
-            clipboardContext: clipboardSnippet,
-            learnedExamples: learnedExamples) else {
+        if restoreSuggestionFromAnchorCache(field: field, work: work) {
+            return
+        }
+
+        guard let request = buildRequest(for: field, settings: settings, generation: work) else {
             state = .idle
             return
         }
@@ -260,27 +410,17 @@ final class CotypingCoordinator: ObservableObject {
             let streamPartials = settings.cotypingStreamSuggestionsWhileGenerating
             let result = try await engine.generateStreaming(request) { [weak self] partial in
                 guard streamPartials else { return }
-                Task { @MainActor in self?.renderStreamPartial(partial, work: work, field: field) }
+                Task { @MainActor in self?.queueStreamPartial(partial, work: work, field: field) }
             }
             guard work == generation, isRunning else { return }
-            lastLatencyMilliseconds = Int(Date().timeIntervalSince(start) * 1000)
-            CotypingStatsStore.shared.recordGeneration(latencyMs: lastLatencyMilliseconds ?? 0)
-            let text = result.text
-            guard !text.isEmpty else {
-                clearSuggestion()
-                state = .idle
-                return
-            }
-            guard seamVerdict(precedingText: field.precedingText, completion: text) == .allow else {
-                clearSuggestion()
-                state = .idle
-                return
-            }
-            session = CotypingSession(field: field, fullText: text, kind: .continuation)
-            overlay.show(text: text, caretRect: field.caretRect, style: field.fieldStyle, placement: placement(for: field))
-            inputMonitor.setAcceptActive(overlay.isVisible)
-            lastSuggestion = text
-            state = .ready(text: text)
+            let pendingAcceptedTail = lastAcceptedTail
+            lastAcceptedTail = nil
+            _ = applyGenerationResult(
+                result,
+                field: field,
+                work: work,
+                latencyMilliseconds: Int(Date().timeIntervalSince(start) * 1000),
+                pendingAcceptedTail: pendingAcceptedTail)
         } catch is CancellationError {
             return
         } catch let urlError as URLError where urlError.code == .cancelled {
@@ -292,19 +432,295 @@ final class CotypingCoordinator: ObservableObject {
         }
     }
 
-    /// Renders a streamed partial (off the generation task, hopped to the main
-    /// actor). Monotonic: ignores reordered/shorter partials so the ghost only grows.
+    private func buildRequest(
+        for field: CotypingField,
+        settings: AppSettings,
+        generation: UInt64
+    ) -> CotypingRequest? {
+        var cfg = config
+        cfg.maxResponseTokens = settings.cotypingMaxResponseTokens
+        cfg.maxResponseWords = settings.cotypingMaxWords
+        let clipboardSnippet = pinnedClipboardContext(for: field, enabled: settings.cotypingUseClipboard)
+        let learnedExamples = settings.cotypingUseLocalLearning
+            ? learningStore.examples(
+                for: field,
+                limit: settings.cotypingLearningExamplesInPrompt)
+            : []
+        return CotypingRequestBuilder.build(
+            field: field, config: cfg,
+            personalization: settings.cotypingPersonalization, generation: generation,
+            clipboardContext: clipboardSnippet,
+            learnedExamples: learnedExamples)
+    }
+
+    private func pinnedClipboardContext(for field: CotypingField, enabled: Bool) -> String? {
+        guard enabled else {
+            clipboardPrefaceMemo = nil
+            return nil
+        }
+        let identityKey = Self.suggestionAnchorIdentity(for: field)
+        let changeCount = clipboardProvider.changeCount
+        if let pinned = clipboardPrefaceMemo?.valueIfReusable(
+            identityKey: identityKey,
+            changeCount: changeCount) {
+            return pinned
+        }
+
+        let value = CotypingClipboardContext.resolve(
+            rawClipboard: clipboardProvider.currentText,
+            precedingText: field.precedingText)
+        if let value {
+            clipboardPrefaceMemo = CotypingClipboardPrefaceMemo(
+                identityKey: identityKey,
+                changeCount: changeCount,
+                value: value)
+        } else if clipboardPrefaceMemo?.identityKey != identityKey
+                    || clipboardPrefaceMemo?.changeCount != changeCount {
+            clipboardPrefaceMemo = nil
+        }
+        return value
+    }
+
+    private func applyGenerationResult(
+        _ result: CotypingNormalizationResult,
+        field: CotypingField,
+        work: UInt64,
+        latencyMilliseconds: Int,
+        pendingAcceptedTail: AcceptedSuggestionTail?
+    ) -> Bool {
+        guard work == generation, isRunning else { return false }
+        lastLatencyMilliseconds = latencyMilliseconds
+        CotypingStatsStore.shared.recordGeneration(latencyMs: latencyMilliseconds)
+        let text = result.text
+        guard !text.isEmpty else {
+            clearSuggestion()
+            state = .idle
+            return false
+        }
+        if let pendingAcceptedTail,
+           Self.isStaleAcceptanceEcho(
+               resultText: text,
+               acceptedChunk: pendingAcceptedTail.text,
+               currentPrecedingText: field.precedingText,
+               acceptedPrecedingText: pendingAcceptedTail.precedingText) {
+            clearSuggestion()
+            state = .idle
+            return false
+        }
+        guard seamVerdict(precedingText: field.precedingText, completion: text) == .allow else {
+            clearSuggestion()
+            state = .idle
+            return false
+        }
+        suggestionAnchorCache.record(
+            identityKey: Self.suggestionAnchorIdentity(for: field),
+            precedingText: field.precedingText,
+            fullText: text)
+        session = CotypingSession(field: field, fullText: text, kind: .continuation)
+        overlay.show(text: text, caretRect: field.caretRect, style: field.fieldStyle, placement: placement(for: field))
+        syncAcceptInterception()
+        lastSuggestion = text
+        state = .ready(text: text)
+        flushQueuedPostExhaustionAcceptIfNeeded()
+        return true
+    }
+
+    private func restoreSuggestionFromAnchorCache(field: CotypingField, work: UInt64) -> Bool {
+        guard work == generation,
+              field.selectionLength == 0,
+              !field.isSecure else { return false }
+        guard let text = suggestionAnchorCache.remainder(
+            identityKey: Self.suggestionAnchorIdentity(for: field),
+            precedingText: field.precedingText),
+              !text.isEmpty else { return false }
+
+        guard !CotypingTrailingDuplicationFilter.duplicatesTrailingText(
+            text,
+            trailingText: field.trailingText) else {
+            return false
+        }
+        if let pendingAcceptedTail = lastAcceptedTail,
+           Self.isStaleAcceptanceEcho(
+               resultText: text,
+               acceptedChunk: pendingAcceptedTail.text,
+               currentPrecedingText: field.precedingText,
+               acceptedPrecedingText: pendingAcceptedTail.precedingText) {
+            return false
+        }
+        guard seamVerdict(precedingText: field.precedingText, completion: text) == .allow else {
+            return false
+        }
+
+        lastAcceptedTail = nil
+        session = CotypingSession(field: field, fullText: text, kind: .continuation)
+        overlay.show(text: text, caretRect: field.caretRect, style: field.fieldStyle, placement: placement(for: field))
+        syncAcceptInterception()
+        lastSuggestion = text
+        state = .ready(text: text)
+        flushQueuedPostExhaustionAcceptIfNeeded()
+        return true
+    }
+
+    private func dispatchSpeculativePostAcceptanceGeneration(
+        from liveField: CotypingField,
+        insertionText: String,
+        deletingTrailingCharacters: Int
+    ) {
+        guard !insertionText.isEmpty else { return }
+        let optimisticField = Self.optimisticFieldAfterAcceptance(
+            liveField,
+            insertionText: insertionText,
+            deletingTrailingCharacters: deletingTrailingCharacters)
+        let settings = settingsProvider()
+        guard case .proceed = typoDecision(
+            for: optimisticField.precedingText,
+            enabled: settings.cotypingAutocorrect) else {
+            return
+        }
+
+        generation &+= 1
+        let work = generation
+        guard let request = buildRequest(for: optimisticField, settings: settings, generation: work) else { return }
+        let signature = optimisticField.contentSignature
+        pendingSpeculativeSignature = signature
+        pendingSpeculativeResult = nil
+        state = .generating
+        let start = Date()
+
+        Task { [weak self] in
+            do {
+                guard let self else { return }
+                let result = try await self.engine.generate(request)
+                self.finishSpeculativeGeneration(
+                    result,
+                    optimisticField: optimisticField,
+                    work: work,
+                    latencyMilliseconds: Int(Date().timeIntervalSince(start) * 1000),
+                    signature: signature)
+            } catch is CancellationError {
+                return
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                return
+            } catch {
+                self?.failSpeculativeGeneration(work: work, signature: signature)
+            }
+        }
+    }
+
+    private func finishSpeculativeGeneration(
+        _ result: CotypingNormalizationResult,
+        optimisticField: CotypingField,
+        work: UInt64,
+        latencyMilliseconds: Int,
+        signature: String
+    ) {
+        guard work == generation,
+              pendingSpeculativeSignature == signature,
+              isRunning else { return }
+        let settings = settingsProvider()
+        let focus = focusTracker.refreshNow(
+            includeSurface: settings.cotypingUseAppContext,
+            includeURL: !settings.cotypingExcludedDomainList.isEmpty,
+            includeStyle: settings.cotypingMatchHostStyle)
+        if let publishedField = focus.field,
+           publishedField.contentSignature == signature {
+            _ = applySpeculativeResult(
+                result,
+                publishedField: publishedField,
+                work: work,
+                latencyMilliseconds: latencyMilliseconds,
+                signature: signature)
+            return
+        }
+        pendingSpeculativeResult = PendingSpeculativeResult(
+            result: result,
+            work: work,
+            optimisticField: optimisticField,
+            latencyMilliseconds: latencyMilliseconds)
+    }
+
+    private func failSpeculativeGeneration(work: UInt64, signature: String) {
+        guard work == generation,
+              pendingSpeculativeSignature == signature,
+              isRunning else { return }
+        pendingSpeculativeSignature = nil
+        pendingSpeculativeResult = nil
+        scheduleGeneration(consumedDelayMilliseconds: 0)
+    }
+
+    private func applyPendingSpeculativeResultIfReady(publishedField: CotypingField) -> Bool {
+        guard let signature = pendingSpeculativeSignature,
+              publishedField.contentSignature == signature else { return false }
+        guard let pending = pendingSpeculativeResult else { return true }
+        return applySpeculativeResult(
+            pending.result,
+            publishedField: publishedField,
+            work: pending.work,
+            latencyMilliseconds: pending.latencyMilliseconds,
+            signature: signature)
+    }
+
+    private func applySpeculativeResult(
+        _ result: CotypingNormalizationResult,
+        publishedField: CotypingField,
+        work: UInt64,
+        latencyMilliseconds: Int,
+        signature: String
+    ) -> Bool {
+        guard work == generation,
+              pendingSpeculativeSignature == signature,
+              publishedField.contentSignature == signature else { return false }
+        pendingSpeculativeSignature = nil
+        pendingSpeculativeResult = nil
+        let pendingAcceptedTail = lastAcceptedTail
+        lastAcceptedTail = nil
+        return applyGenerationResult(
+            result,
+            field: publishedField,
+            work: work,
+            latencyMilliseconds: latencyMilliseconds,
+            pendingAcceptedTail: pendingAcceptedTail)
+    }
+
+    /// Coalesces streamed partials to one main-queue render pass. Tokens can
+    /// arrive faster than AppKit can relayout the overlay; latest-wins keeps the
+    /// visible ghost fresh without stacking window updates on the main actor.
+    private func queueStreamPartial(_ result: CotypingNormalizationResult, work: UInt64, field: CotypingField) {
+        guard work == generation, isRunning else { return }
+        pendingStreamPartial = PendingStreamPartial(result: result, work: work, field: field)
+        guard !isStreamDrainScheduled else { return }
+        isStreamDrainScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            self?.drainStreamPartial()
+        }
+    }
+
+    private func drainStreamPartial() {
+        isStreamDrainScheduled = false
+        guard let pending = pendingStreamPartial else { return }
+        pendingStreamPartial = nil
+        renderStreamPartial(pending.result, work: pending.work, field: pending.field)
+    }
+
+    /// Renders a streamed partial. Monotonic: ignores reordered/shorter partials
+    /// so the ghost only grows.
     private func renderStreamPartial(_ result: CotypingNormalizationResult, work: UInt64, field: CotypingField) {
         guard work == generation, isRunning, !result.text.isEmpty else { return }
         guard CotypingSeamGuard.allowsStreamedPartial(
             precedingText: field.precedingText,
             completion: result.text
         ) else { return }
-        if let session, session.field.contentSignature == field.contentSignature,
-           session.fullText.count >= result.text.count { return }
+        let currentlyRendered = session?.field.contentSignature == field.contentSignature
+            ? session?.fullText
+            : nil
+        guard CotypingStreamedGhostTextPolicy.isRenderableExtension(
+            candidate: result.text,
+            currentlyRendered: currentlyRendered) else {
+            return
+        }
         session = CotypingSession(field: field, fullText: result.text, kind: .continuation)
         overlay.show(text: result.text, caretRect: field.caretRect, style: field.fieldStyle, placement: placement(for: field))
-        inputMonitor.setAcceptActive(overlay.isVisible)
+        syncAcceptInterception()
         lastSuggestion = result.text
         state = .ready(text: result.text)
     }
@@ -336,7 +752,14 @@ final class CotypingCoordinator: ObservableObject {
     // MARK: - Acceptance (called synchronously from the accept tap)
 
     private func acceptFromTap(_ scope: CotypingAcceptScope) -> Bool {
-        guard isRunning, overlay.isVisible, var current = session else { return false }
+        guard isRunning else { return false }
+        guard overlay.isVisible, var current = session else {
+            if isPostExhaustionAcceptanceArmed {
+                hasQueuedPostExhaustionAccept = true
+                return true
+            }
+            return false
+        }
         let live = CotypingAXHelper.resolveFocus()
 
         // Typo correction: swap the misspelled word for its fix in one edit,
@@ -424,6 +847,7 @@ final class CotypingCoordinator: ObservableObject {
             }
         }
         guard inserted else { return false }
+        lastAcceptanceAt = Date()
         CotypingStatsStore.shared.recordAccept(charsAccepted: chunk.count)
         if settingsProvider().cotypingUseLocalLearning {
             learningStore.recordAccepted(field: live.field ?? current.field, acceptedText: chunk)
@@ -434,29 +858,93 @@ final class CotypingCoordinator: ObservableObject {
         session = current
 
         if current.isExhausted {
+            lastAcceptedTail = AcceptedSuggestionTail(text: chunk, precedingText: liveField.precedingText)
             clearSuggestion()
             state = .idle
+            armPostExhaustionAcceptance()
+            scheduleGenerationAfterHostPublishDelay(baseline: liveField)
+            dispatchSpeculativePostAcceptanceGeneration(
+                from: liveField,
+                insertionText: chunk,
+                deletingTrailingCharacters: forwardDeleteCount)
         } else {
             // Re-anchor the ghost after the host commits the insert (AX lag).
             let remainingText = current.remainingText
-            overlay.show(text: remainingText, caretRect: live.field?.caretRect ?? current.field.caretRect, style: (live.field ?? current.field).fieldStyle, placement: placement(for: live.field ?? current.field))
+            if !overlay.advanceInline(to: remainingText, insertedText: chunk) {
+                overlay.show(text: remainingText, caretRect: live.field?.caretRect ?? current.field.caretRect, style: (live.field ?? current.field).fieldStyle, placement: placement(for: live.field ?? current.field))
+            }
+            syncAcceptInterception()
             Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(30))
                 guard let self, self.overlay.isVisible, let liveSession = self.session,
                       liveSession.remainingText == remainingText else { return }
                 let focus = self.focusTracker.refreshNow()
                 if let field = focus.field {
-                    self.overlay.show(text: remainingText, caretRect: field.caretRect, style: field.fieldStyle, placement: placement(for: field))
+                    let placement = self.placement(for: field)
+                    if self.overlay.shouldHoldInlineReanchor(
+                        text: remainingText,
+                        caretRect: field.caretRect,
+                        style: field.fieldStyle,
+                        placement: placement,
+                        millisecondsSinceLastAcceptance: self.millisecondsSinceLastAcceptance()) {
+                        return
+                    }
+                    self.overlay.show(text: remainingText, caretRect: field.caretRect, style: field.fieldStyle, placement: placement)
+                    self.syncAcceptInterception()
                 }
             }
         }
         return true
     }
 
-    private func clearSuggestion() {
+    private func clearSuggestion(releasePostExhaustionWindow: Bool = true) {
         session = nil
         overlay.hide()
-        inputMonitor.setAcceptActive(false)
+        pendingStreamPartial = nil
+        if releasePostExhaustionWindow {
+            clearPostExhaustionAcceptanceWindow()
+        }
+        syncAcceptInterception()
+    }
+
+    private func syncAcceptInterception() {
+        inputMonitor.setAcceptActive(overlay.isVisible || isPostExhaustionAcceptanceArmed)
+    }
+
+    private func armPostExhaustionAcceptance() {
+        isPostExhaustionAcceptanceArmed = true
+        hasQueuedPostExhaustionAccept = false
+        syncAcceptInterception()
+        postExhaustionAcceptanceGeneration &+= 1
+        let armedGeneration = postExhaustionAcceptanceGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.postExhaustionAcceptanceWindowSeconds) { [weak self] in
+            guard let self, self.postExhaustionAcceptanceGeneration == armedGeneration else { return }
+            self.releasePostExhaustionAcceptanceWindow()
+        }
+    }
+
+    private func clearPostExhaustionAcceptanceWindow() {
+        isPostExhaustionAcceptanceArmed = false
+        hasQueuedPostExhaustionAccept = false
+        postExhaustionAcceptanceGeneration &+= 1
+    }
+
+    private func releasePostExhaustionAcceptanceWindow() {
+        guard isPostExhaustionAcceptanceArmed || hasQueuedPostExhaustionAccept else { return }
+        clearPostExhaustionAcceptanceWindow()
+        syncAcceptInterception()
+    }
+
+    private func flushQueuedPostExhaustionAcceptIfNeeded() {
+        let shouldAccept = isPostExhaustionAcceptanceArmed && hasQueuedPostExhaustionAccept
+        clearPostExhaustionAcceptanceWindow()
+        syncAcceptInterception()
+        guard shouldAccept else { return }
+        _ = acceptFromTap(.chunk)
+    }
+
+    private func millisecondsSinceLastAcceptance() -> Int? {
+        lastAcceptanceAt.map { Int(Date().timeIntervalSince($0) * 1000) }
     }
 
     // MARK: - In-app preview
@@ -552,6 +1040,63 @@ final class CotypingCoordinator: ObservableObject {
         return hasCappedPrefixWindowOverlap(previous: previous, live: live)
     }
 
+    nonisolated static func sessionAdvancedByPublishedTyping(
+        _ session: CotypingSession,
+        liveField: CotypingField?
+    ) -> CotypingSession? {
+        guard case .continuation = session.kind,
+              let liveField,
+              isContinuation(of: session, liveField: liveField) else { return nil }
+
+        let expectedPrefix = session.field.precedingText + session.acceptedText
+        guard liveField.precedingText.hasPrefix(expectedPrefix) else { return nil }
+        let typed = String(liveField.precedingText.dropFirst(expectedPrefix.count))
+        guard !typed.isEmpty, session.remainingText.hasPrefix(typed) else { return nil }
+
+        return CotypingSession(
+            field: liveField,
+            fullText: session.fullText,
+            consumedCount: min(session.fullText.count, session.consumedCount + typed.count),
+            kind: session.kind)
+    }
+
+    nonisolated static func isStaleAcceptanceEcho(
+        resultText: String,
+        acceptedChunk: String,
+        currentPrecedingText: String,
+        acceptedPrecedingText: String
+    ) -> Bool {
+        let trimmedChunk = acceptedChunk.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedChunk.isEmpty else { return false }
+        guard resultText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedChunk else { return false }
+        return currentPrecedingText == acceptedPrecedingText
+    }
+
+    nonisolated static func optimisticFieldAfterAcceptance(
+        _ field: CotypingField,
+        insertionText: String,
+        deletingTrailingCharacters: Int = 0
+    ) -> CotypingField {
+        var copy = field
+        copy.precedingText += insertionText
+        if deletingTrailingCharacters > 0 {
+            copy.trailingText = String(copy.trailingText.dropFirst(deletingTrailingCharacters))
+        }
+        copy.selectionLength = 0
+        return copy
+    }
+
+    nonisolated static func suggestionAnchorIdentity(for field: CotypingField) -> String {
+        [
+            String(field.processID),
+            field.bundleID ?? "",
+            field.appName,
+            field.role,
+            field.windowTitle ?? "",
+            field.fieldPlaceholder ?? "",
+        ].joined(separator: "\u{1f}")
+    }
+
     private nonisolated static func hasCappedPrefixWindowOverlap(previous: String, live: String) -> Bool {
         let maxLength = min(min(previous.count, live.count), axPrecedingWindowLimit)
         let minimumOverlap = min(1024, maxLength)
@@ -562,6 +1107,24 @@ final class CotypingCoordinator: ObservableObject {
             length -= 1
         }
         return false
+    }
+
+    private struct PendingStreamPartial {
+        var result: CotypingNormalizationResult
+        var work: UInt64
+        var field: CotypingField
+    }
+
+    private struct PendingSpeculativeResult {
+        var result: CotypingNormalizationResult
+        var work: UInt64
+        var optimisticField: CotypingField
+        var latencyMilliseconds: Int
+    }
+
+    private struct AcceptedSuggestionTail {
+        var text: String
+        var precedingText: String
     }
 
     private func shortError(_ error: Error) -> String {

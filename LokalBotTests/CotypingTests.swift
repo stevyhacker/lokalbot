@@ -471,6 +471,219 @@ final class CotypingTrailingDuplicationFilterTests: XCTestCase {
     }
 }
 
+// MARK: - Marker selection synthesis
+
+final class CotypingMarkerSelectionSynthesizerTests: XCTestCase {
+    func testCaretInMiddleProducesZeroLengthSelectionAtBeforeLength() {
+        let result = CotypingMarkerSelectionSynthesizer.make(
+            beforeCaret: "Hello ",
+            selected: "",
+            afterCaret: "world")
+
+        XCTAssertEqual(result.text, "Hello world")
+        XCTAssertEqual(result.selection, NSRange(location: 6, length: 0))
+    }
+
+    func testNonEmptySelectionIndexesIntoSynthesizedText() {
+        let result = CotypingMarkerSelectionSynthesizer.make(
+            beforeCaret: "Hi ",
+            selected: "there",
+            afterCaret: "!")
+
+        XCTAssertEqual(result.text, "Hi there!")
+        XCTAssertEqual(result.selection, NSRange(location: 3, length: 5))
+        XCTAssertEqual((result.text as NSString).substring(with: result.selection), "there")
+    }
+
+    func testWindowingKeepsCaretAdjacentTextAndSelectionConsistent() {
+        let result = CotypingMarkerSelectionSynthesizer.make(
+            beforeCaret: "ABCDEFG",
+            selected: "X",
+            afterCaret: "HIJKLM",
+            window: 3)
+
+        XCTAssertEqual(result.text, "EFGXHIJ")
+        XCTAssertEqual(result.selection, NSRange(location: 3, length: 1))
+        XCTAssertEqual((result.text as NSString).substring(with: result.selection), "X")
+    }
+
+    func testWindowDoesNotSplitSurrogatePairs() {
+        let result = CotypingMarkerSelectionSynthesizer.make(
+            beforeCaret: "😀😀😀",
+            selected: "",
+            afterCaret: "",
+            window: 3)
+
+        XCTAssertFalse(result.text.unicodeScalars.contains("\u{FFFD}"))
+        XCTAssertTrue(result.text.allSatisfy { $0 == "😀" })
+        XCTAssertEqual(result.selection.location, (result.text as NSString).length)
+        XCTAssertEqual(result.selection.length, 0)
+    }
+
+    func testShorterThanWindowIsUnchanged() {
+        let result = CotypingMarkerSelectionSynthesizer.make(
+            beforeCaret: "ab",
+            selected: "",
+            afterCaret: "cd",
+            window: 100)
+
+        XCTAssertEqual(result.text, "abcd")
+        XCTAssertEqual(result.selection, NSRange(location: 2, length: 0))
+    }
+}
+
+final class CotypingWebAccessibilityPrimingTests: XCTestCase {
+    func testChromiumBrowsersNeedPriming() {
+        XCTAssertTrue(CotypingAXHelper.needsWebAccessibilityPriming(bundleID: "com.google.Chrome"))
+        XCTAssertTrue(CotypingAXHelper.needsWebAccessibilityPriming(bundleID: "com.google.Chrome.canary"))
+        XCTAssertTrue(CotypingAXHelper.needsWebAccessibilityPriming(bundleID: "company.thebrowser.Browser"))
+        XCTAssertTrue(CotypingAXHelper.needsWebAccessibilityPriming(bundleID: "com.brave.Browser"))
+        XCTAssertTrue(CotypingAXHelper.needsWebAccessibilityPriming(bundleID: "com.microsoft.edgemac"))
+    }
+
+    func testSafariAndFirefoxDoNotNeedChromiumPriming() {
+        XCTAssertFalse(CotypingAXHelper.needsWebAccessibilityPriming(bundleID: "com.apple.Safari"))
+        XCTAssertFalse(CotypingAXHelper.needsWebAccessibilityPriming(bundleID: "org.mozilla.firefox"))
+    }
+
+    func testNamedElectronEditorsNeedPrimingCaseInsensitively() {
+        XCTAssertTrue(CotypingAXHelper.needsWebAccessibilityPriming(bundleID: "com.microsoft.VSCode"))
+        XCTAssertTrue(CotypingAXHelper.needsWebAccessibilityPriming(bundleID: "com.microsoft.vscodeinsiders"))
+        XCTAssertTrue(CotypingAXHelper.needsWebAccessibilityPriming(bundleID: "com.vscodium"))
+        XCTAssertTrue(CotypingAXHelper.needsWebAccessibilityPriming(bundleID: "com.clickup.desktop-app"))
+    }
+
+    func testBroadElectronOrToDesktopAppsAreNotPrimedByPrefix() {
+        XCTAssertFalse(CotypingAXHelper.needsWebAccessibilityPriming(bundleID: "com.todesktop.12345"))
+        XCTAssertFalse(CotypingAXHelper.needsWebAccessibilityPriming(bundleID: "com.electron.random"))
+    }
+}
+
+// MARK: - Streamed ghost text policy
+
+final class CotypingStreamedGhostTextPolicyTests: XCTestCase {
+    func testFirstNonEmptyPartialCanRender() {
+        XCTAssertTrue(CotypingStreamedGhostTextPolicy.isRenderableExtension(
+            candidate: " up",
+            currentlyRendered: nil))
+    }
+
+    func testEmptyPartialCannotRender() {
+        XCTAssertFalse(CotypingStreamedGhostTextPolicy.isRenderableExtension(
+            candidate: "",
+            currentlyRendered: nil))
+    }
+
+    func testStrictPrefixExtensionCanRender() {
+        XCTAssertTrue(CotypingStreamedGhostTextPolicy.isRenderableExtension(
+            candidate: " up today",
+            currentlyRendered: " up"))
+    }
+
+    func testSameOrShorterPartialCannotReplaceRenderedText() {
+        XCTAssertFalse(CotypingStreamedGhostTextPolicy.isRenderableExtension(
+            candidate: " up",
+            currentlyRendered: " up"))
+        XCTAssertFalse(CotypingStreamedGhostTextPolicy.isRenderableExtension(
+            candidate: " up",
+            currentlyRendered: " up today"))
+    }
+
+    func testLongerNonPrefixPartialCannotReplaceRenderedText() {
+        XCTAssertFalse(CotypingStreamedGhostTextPolicy.isRenderableExtension(
+            candidate: " tomorrow",
+            currentlyRendered: " today"))
+    }
+}
+
+// MARK: - Suggestion anchor cache
+
+final class CotypingSuggestionAnchorCacheTests: XCTestCase {
+    private var clock = Date(timeIntervalSince1970: 1_000_000)
+
+    private func makeCache() -> CotypingSuggestionAnchorCache {
+        CotypingSuggestionAnchorCache(now: { self.clock })
+    }
+
+    func testFreshAnchorMatchesAtZeroConsumed() {
+        var cache = makeCache()
+        cache.record(identityKey: "field", precedingText: "Hello", fullText: " world again")
+        XCTAssertEqual(cache.remainder(identityKey: "field", precedingText: "Hello"), " world again")
+    }
+
+    func testTypeThroughConsumesPrefix() {
+        var cache = makeCache()
+        cache.record(identityKey: "field", precedingText: "Hello", fullText: " world again")
+        XCTAssertEqual(cache.remainder(identityKey: "field", precedingText: "Hello wo"), "rld again")
+    }
+
+    func testBackspaceRollbackRestoresEarlierPosition() {
+        var cache = makeCache()
+        cache.record(identityKey: "field", precedingText: "Hello", fullText: " world again")
+        XCTAssertEqual(cache.remainder(identityKey: "field", precedingText: "Hello wo"), "rld again")
+        XCTAssertEqual(cache.remainder(identityKey: "field", precedingText: "Hello"), " world again")
+    }
+
+    func testFullyConsumedSuggestionNeverReoffersItsTail() {
+        var cache = makeCache()
+        cache.record(identityKey: "field", precedingText: "Hello", fullText: " world")
+        XCTAssertNil(cache.remainder(identityKey: "field", precedingText: "Hello world"))
+    }
+
+    func testDivergentTypingDoesNotMatch() {
+        var cache = makeCache()
+        cache.record(identityKey: "field", precedingText: "Hello", fullText: " world again")
+        XCTAssertNil(cache.remainder(identityKey: "field", precedingText: "Hello wa"))
+    }
+
+    func testDifferentFieldDoesNotMatch() {
+        var cache = makeCache()
+        cache.record(identityKey: "first", precedingText: "Hello", fullText: " world")
+        XCTAssertNil(cache.remainder(identityKey: "second", precedingText: "Hello"))
+    }
+
+    func testDeepestConsumedMatchWins() {
+        var cache = makeCache()
+        cache.record(identityKey: "field", precedingText: "Hello", fullText: " world again")
+        cache.record(identityKey: "field", precedingText: "Hello wo", fullText: "rld forever")
+        XCTAssertEqual(cache.remainder(identityKey: "field", precedingText: "Hello wor"), "ld again")
+    }
+
+    func testEntriesExpire() {
+        var cache = makeCache()
+        cache.record(identityKey: "field", precedingText: "Hello", fullText: " world")
+        clock = clock.addingTimeInterval(CotypingSuggestionAnchorCache.maxEntryAge + 1)
+        XCTAssertNil(cache.remainder(identityKey: "field", precedingText: "Hello"))
+    }
+
+    func testCapacityEvictsOldest() {
+        var cache = makeCache()
+        for index in 0..<(CotypingSuggestionAnchorCache.capacity + 4) {
+            cache.record(identityKey: "field", precedingText: "prefix \(index)", fullText: "suffix \(index)")
+        }
+        XCTAssertNil(cache.remainder(identityKey: "field", precedingText: "prefix 0"))
+        XCTAssertEqual(
+            cache.remainder(
+                identityKey: "field",
+                precedingText: "prefix \(CotypingSuggestionAnchorCache.capacity + 3)"),
+            "suffix \(CotypingSuggestionAnchorCache.capacity + 3)")
+    }
+
+    func testLongPrefixesMatchOnTheBoundedTail() {
+        var cache = makeCache()
+        let longPrefix = String(repeating: "a", count: 2_000) + " ending here"
+        cache.record(identityKey: "field", precedingText: longPrefix, fullText: " and more")
+        XCTAssertEqual(cache.remainder(identityKey: "field", precedingText: longPrefix + " and"), " more")
+    }
+
+    func testRemoveAllEmptiesTheCache() {
+        var cache = makeCache()
+        cache.record(identityKey: "field", precedingText: "Hello", fullText: " world")
+        cache.removeAll()
+        XCTAssertNil(cache.remainder(identityKey: "field", precedingText: "Hello"))
+    }
+}
+
 // MARK: - Prefix window + gating
 
 final class CotypingPrefixWindowTests: XCTestCase {
@@ -571,6 +784,154 @@ final class CotypingAvailabilityTests: XCTestCase {
     func testSupportedNotExcludedAllows() {
         XCTAssertNil(CotypingAvailability.disabledReason(
             enabled: true, excludedApps: ["Terminal"], selfBundleID: "me.dotenv.LokalBot", focus: focus()))
+    }
+}
+
+// MARK: - Focus poll backoff
+
+final class CotypingFocusPollBackoffTests: XCTestCase {
+    private func idledBackoff(captures count: Int) -> CotypingFocusPollBackoff {
+        var backoff = CotypingFocusPollBackoff()
+        for _ in 0..<count {
+            backoff.recordCapture(didChange: false)
+        }
+        return backoff
+    }
+
+    func testRecentActivityStaysAtFullCadence() {
+        XCTAssertEqual(CotypingFocusPollBackoff.captureStride(idleCaptureCount: 0), 1)
+        XCTAssertEqual(CotypingFocusPollBackoff.captureStride(idleCaptureCount: 4), 1)
+    }
+
+    func testStrideGrowsAsIdlePersists() {
+        XCTAssertEqual(CotypingFocusPollBackoff.captureStride(idleCaptureCount: 5), 3)
+        XCTAssertEqual(CotypingFocusPollBackoff.captureStride(idleCaptureCount: 11), 3)
+        XCTAssertEqual(CotypingFocusPollBackoff.captureStride(idleCaptureCount: 12), 6)
+        XCTAssertEqual(CotypingFocusPollBackoff.captureStride(idleCaptureCount: 29), 6)
+        XCTAssertEqual(CotypingFocusPollBackoff.captureStride(idleCaptureCount: 30), 10)
+    }
+
+    func testStrideIsMonotonicNonDecreasing() {
+        var previous = 0
+        for count in 0...120 {
+            let stride = CotypingFocusPollBackoff.captureStride(idleCaptureCount: count)
+            XCTAssertGreaterThanOrEqual(stride, previous, "stride decreased at idleCaptureCount=\(count)")
+            previous = stride
+        }
+    }
+
+    func testChangeAfterIdleResetsToFullCadence() {
+        var backoff = idledBackoff(captures: 400)
+        XCTAssertEqual(backoff.idleCaptureCount, CotypingFocusPollBackoff.idleCaptureCountCap)
+        XCTAssertGreaterThan(backoff.captureStride, 1)
+
+        backoff.recordCapture(didChange: true)
+
+        XCTAssertEqual(backoff.idleCaptureCount, 0)
+        XCTAssertEqual(backoff.captureStride, 1)
+    }
+
+    func testExplicitRefreshResetReturnsToFullCadence() {
+        var backoff = idledBackoff(captures: 30)
+        XCTAssertEqual(backoff.captureStride, 10)
+
+        backoff.reset()
+
+        XCTAssertEqual(backoff.idleCaptureCount, 0)
+        XCTAssertEqual(backoff.captureStride, 1)
+    }
+}
+
+// MARK: - Focus capability flicker gate
+
+final class CotypingFocusCapabilityFlickerGateTests: XCTestCase {
+    func testSingleBlockedFlickerOnSameElementIsSuppressed() {
+        var gate = CotypingFocusCapabilityFlickerGate()
+        _ = gate.evaluate(supportedFocus(identity: "field-A"))
+
+        XCTAssertEqual(
+            gate.evaluate(blockedFocus(identity: "field-A")),
+            .suppress(pendingBlockedReadCount: 1))
+    }
+
+    func testSupportedReturnAfterFlickerResetsCounter() {
+        var gate = CotypingFocusCapabilityFlickerGate()
+        _ = gate.evaluate(supportedFocus(identity: "field-A"))
+        _ = gate.evaluate(blockedFocus(identity: "field-A"))
+
+        XCTAssertEqual(gate.evaluate(supportedFocus(identity: "field-A")), .apply)
+        XCTAssertEqual(
+            gate.evaluate(blockedFocus(identity: "field-A")),
+            .suppress(pendingBlockedReadCount: 1))
+    }
+
+    func testSecondConsecutiveBlockedReadAppliesDowngrade() {
+        var gate = CotypingFocusCapabilityFlickerGate()
+        _ = gate.evaluate(supportedFocus(identity: "field-A"))
+
+        XCTAssertEqual(
+            gate.evaluate(blockedFocus(identity: "field-A")),
+            .suppress(pendingBlockedReadCount: 1))
+        XCTAssertEqual(gate.evaluate(blockedFocus(identity: "field-A")), .apply)
+    }
+
+    func testBlockedOnDifferentElementAppliesImmediately() {
+        var gate = CotypingFocusCapabilityFlickerGate()
+        _ = gate.evaluate(supportedFocus(identity: "field-A"))
+
+        XCTAssertEqual(gate.evaluate(blockedFocus(identity: "field-B")), .apply)
+    }
+
+    func testUnsupportedIsNeverSuppressed() {
+        var gate = CotypingFocusCapabilityFlickerGate()
+        _ = gate.evaluate(supportedFocus(identity: "field-A"))
+
+        XCTAssertEqual(
+            gate.evaluate(CotypingFocus(
+                appName: "Finder", bundleID: "com.apple.finder",
+                capability: .unsupported("No focused text field."), field: nil)),
+            .apply)
+    }
+
+    func testSecureFieldBlockIsNeverSuppressed() {
+        var gate = CotypingFocusCapabilityFlickerGate()
+        _ = gate.evaluate(supportedFocus(identity: "field-A"))
+
+        XCTAssertEqual(
+            gate.evaluate(CotypingFocus(
+                appName: "Safari", bundleID: "com.apple.Safari",
+                capability: .blocked("Secure field — never read."), field: nil,
+                focusIdentityKey: "field-A")),
+            .apply)
+    }
+
+    func testMissingBlockedIdentityAppliesImmediately() {
+        var gate = CotypingFocusCapabilityFlickerGate()
+        _ = gate.evaluate(supportedFocus(identity: "field-A"))
+
+        XCTAssertEqual(
+            gate.evaluate(CotypingFocus(
+                appName: "Safari", bundleID: "com.apple.Safari",
+                capability: .blocked("Text selected."), field: nil)),
+            .apply)
+    }
+
+    private func supportedFocus(identity: String?) -> CotypingFocus {
+        let field = CotypingField(
+            appName: "Safari", bundleID: "com.apple.Safari", processID: 1,
+            role: "AXTextArea", focusIdentityKey: identity,
+            precedingText: "hello", trailingText: "", selectionLength: 0,
+            caretRect: .zero, isSecure: false, caretIsExact: true)
+        return CotypingFocus(
+            appName: "Safari", bundleID: "com.apple.Safari",
+            capability: .supported, field: field, focusIdentityKey: identity)
+    }
+
+    private func blockedFocus(identity: String?) -> CotypingFocus {
+        CotypingFocus(
+            appName: "Safari", bundleID: "com.apple.Safari",
+            capability: .blocked("Text selected."), field: nil,
+            focusIdentityKey: identity)
     }
 }
 
@@ -709,6 +1070,95 @@ final class CotypingContinuationTests: XCTestCase {
 
     func testNoLiveFieldIsNotContinuation() {
         XCTAssertFalse(CotypingCoordinator.isContinuation(of: session("I wanted to follow"), liveField: nil))
+    }
+
+    func testPublishedTypingAdvancesSuggestionTail() throws {
+        let advanced = try XCTUnwrap(CotypingCoordinator.sessionAdvancedByPublishedTyping(
+            session("I wanted to follow"),
+            liveField: field("I wanted to follow up")))
+
+        XCTAssertEqual(advanced.consumedCount, 3)
+        XCTAssertEqual(advanced.remainingText, " on the deck")
+        XCTAssertEqual(advanced.field.precedingText, "I wanted to follow up")
+    }
+
+    func testPublishedTypingHonorsAlreadyAcceptedPrefix() throws {
+        let accepted = session("I wanted to follow").advanced(by: 3)
+        let advanced = try XCTUnwrap(CotypingCoordinator.sessionAdvancedByPublishedTyping(
+            accepted,
+            liveField: field("I wanted to follow up on")))
+
+        XCTAssertEqual(advanced.consumedCount, 6)
+        XCTAssertEqual(advanced.remainingText, " the deck")
+    }
+
+    func testPublishedTypingDoesNotAdvanceMismatchedText() {
+        XCTAssertNil(CotypingCoordinator.sessionAdvancedByPublishedTyping(
+            session("I wanted to follow"),
+            liveField: field("I wanted to follow nope")))
+    }
+
+    func testStaleAcceptanceEchoDropsRepeatOfAcceptedTailWhileFieldUnchanged() {
+        XCTAssertTrue(CotypingCoordinator.isStaleAcceptanceEcho(
+            resultText: " today",
+            acceptedChunk: " today",
+            currentPrecedingText: "what's on your mind",
+            acceptedPrecedingText: "what's on your mind"))
+    }
+
+    func testStaleAcceptanceEchoToleratesLeadingWhitespaceDifference() {
+        XCTAssertTrue(CotypingCoordinator.isStaleAcceptanceEcho(
+            resultText: "today",
+            acceptedChunk: " today",
+            currentPrecedingText: "what's on your mind",
+            acceptedPrecedingText: "what's on your mind"))
+    }
+
+    func testStaleAcceptanceEchoAllowsSuggestionOnceInsertPublished() {
+        XCTAssertFalse(CotypingCoordinator.isStaleAcceptanceEcho(
+            resultText: " today",
+            acceptedChunk: " today",
+            currentPrecedingText: "what's on your mind today",
+            acceptedPrecedingText: "what's on your mind"))
+    }
+
+    func testStaleAcceptanceEchoAllowsGenuinelyDifferentContinuation() {
+        XCTAssertFalse(CotypingCoordinator.isStaleAcceptanceEcho(
+            resultText: " tomorrow",
+            acceptedChunk: " today",
+            currentPrecedingText: "what's on your mind",
+            acceptedPrecedingText: "what's on your mind"))
+    }
+
+    func testStaleAcceptanceEchoIgnoresWhitespaceOnlyChunk() {
+        XCTAssertFalse(CotypingCoordinator.isStaleAcceptanceEcho(
+            resultText: " ",
+            acceptedChunk: " ",
+            currentPrecedingText: "what's on your mind",
+            acceptedPrecedingText: "what's on your mind"))
+    }
+
+    func testOptimisticFieldAfterAcceptanceAppendsInsertedText() {
+        let optimistic = CotypingCoordinator.optimisticFieldAfterAcceptance(
+            field("what's on your mind"),
+            insertionText: " today")
+
+        XCTAssertEqual(optimistic.precedingText, "what's on your mind today")
+        XCTAssertEqual(optimistic.trailingText, "")
+        XCTAssertEqual(optimistic.selectionLength, 0)
+    }
+
+    func testOptimisticFieldAfterAcceptanceDropsForwardDeletedTrailingOverlap() {
+        var live = field("rec")
+        live.trailingText = "eive the files"
+
+        let optimistic = CotypingCoordinator.optimisticFieldAfterAcceptance(
+            live,
+            insertionText: "eive",
+            deletingTrailingCharacters: 4)
+
+        XCTAssertEqual(optimistic.precedingText, "receive")
+        XCTAssertEqual(optimistic.trailingText, " the files")
     }
 }
 
@@ -1144,6 +1594,22 @@ final class CotypingDebounceTests: XCTestCase {
     }
     func testBackoffCapped() {
         XCTAssertEqual(CotypingDebouncePolicy.milliseconds(lastLatencyMilliseconds: 4000, configured: 150), 600)
+    }
+    func testHostPublishWaitConsumesDebounceWindow() {
+        XCTAssertEqual(
+            CotypingDebouncePolicy.milliseconds(
+                lastLatencyMilliseconds: nil,
+                configured: 150,
+                consumedDelayMilliseconds: 40),
+            110)
+    }
+    func testHostPublishWaitCanExhaustDebounceWindow() {
+        XCTAssertEqual(
+            CotypingDebouncePolicy.milliseconds(
+                lastLatencyMilliseconds: 800,
+                configured: 150,
+                consumedDelayMilliseconds: 450),
+            0)
     }
 }
 
@@ -1696,6 +2162,19 @@ final class CotypingClipboardContextTests: XCTestCase {
     func testUseClipboardDefaultsOff() {
         XCTAssertFalse(AppSettings().cotypingUseClipboard)
     }
+
+    func testClipboardPrefaceMemoReusesOnlySameFieldAndChangeCount() {
+        let memo = CotypingClipboardPrefaceMemo(
+            identityKey: "field-a",
+            changeCount: 12,
+            value: "release notes")
+
+        XCTAssertEqual(
+            memo.valueIfReusable(identityKey: "field-a", changeCount: 12),
+            "release notes")
+        XCTAssertNil(memo.valueIfReusable(identityKey: "field-b", changeCount: 12))
+        XCTAssertNil(memo.valueIfReusable(identityKey: "field-a", changeCount: 13))
+    }
 }
 
 // MARK: - Insertion strategy (keystroke vs paste)
@@ -1751,6 +2230,66 @@ final class CotypingOverlayGeometryTests: XCTestCase {
             textSize: CGSize(width: 60, height: 16), lineHeight: 16, visible: screen)
         XCTAssertEqual(frame.minX, 102)
         XCTAssertEqual(frame.width, 60)
+    }
+
+    func testAdvancedInlineFrameSlidesByAcceptedTextWidth() throws {
+        let frame = CotypingOverlayGeometry.inlineFrame(
+            caret: CGRect(x: 100, y: 500, width: 0, height: 16),
+            textSize: CGSize(width: 160, height: 16), lineHeight: 16, visible: screen)
+        let advanced = try XCTUnwrap(CotypingOverlayGeometry.advancedInlineFrame(
+            from: frame,
+            insertedTextSize: CGSize(width: 42, height: 16),
+            remainingTextSize: CGSize(width: 118, height: 16),
+            lineHeight: 16,
+            visible: screen))
+
+        XCTAssertEqual(advanced.minX, frame.minX + 42, accuracy: 0.5)
+        XCTAssertEqual(advanced.midY, frame.midY, accuracy: 0.5)
+        XCTAssertEqual(advanced.width, 118)
+    }
+
+    func testAdvancedInlineFrameFallsBackWhenSlideWouldOverflow() {
+        let frame = CGRect(x: 1340, y: 500, width: 90, height: 16)
+        let advanced = CotypingOverlayGeometry.advancedInlineFrame(
+            from: frame,
+            insertedTextSize: CGSize(width: 50, height: 16),
+            remainingTextSize: CGSize(width: 70, height: 16),
+            lineHeight: 16,
+            visible: screen)
+
+        XCTAssertNil(advanced)
+    }
+
+    func testInlineReanchorHoldsSmallSameTextDrift() {
+        XCTAssertTrue(CotypingOverlayGeometry.shouldHoldInlineReanchor(
+            currentFrame: CGRect(x: 120, y: 500, width: 100, height: 16),
+            targetFrame: CGRect(x: 124, y: 497, width: 100, height: 16),
+            millisecondsSinceLastAcceptance: nil))
+    }
+
+    func testInlineReanchorHoldsBackwardJumpInsidePostAcceptWindow() {
+        XCTAssertTrue(CotypingOverlayGeometry.shouldHoldInlineReanchor(
+            currentFrame: CGRect(x: 160, y: 500, width: 100, height: 16),
+            targetFrame: CGRect(x: 120, y: 500, width: 100, height: 16),
+            millisecondsSinceLastAcceptance: 80))
+    }
+
+    func testInlineReanchorAllowsBackwardJumpAfterHoldWindow() {
+        XCTAssertFalse(CotypingOverlayGeometry.shouldHoldInlineReanchor(
+            currentFrame: CGRect(x: 160, y: 500, width: 100, height: 16),
+            targetFrame: CGRect(x: 120, y: 500, width: 100, height: 16),
+            millisecondsSinceLastAcceptance: 450))
+    }
+
+    func testInlineReanchorAllowsForwardAndVerticalMoves() {
+        XCTAssertFalse(CotypingOverlayGeometry.shouldHoldInlineReanchor(
+            currentFrame: CGRect(x: 120, y: 500, width: 100, height: 16),
+            targetFrame: CGRect(x: 140, y: 500, width: 100, height: 16),
+            millisecondsSinceLastAcceptance: 80))
+        XCTAssertFalse(CotypingOverlayGeometry.shouldHoldInlineReanchor(
+            currentFrame: CGRect(x: 120, y: 500, width: 100, height: 16),
+            targetFrame: CGRect(x: 120, y: 512, width: 100, height: 16),
+            millisecondsSinceLastAcceptance: 80))
     }
 
     func testInlineClampsToRightEdgeInsteadOfOverflowing() {

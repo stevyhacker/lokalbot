@@ -23,6 +23,14 @@ enum CotypingAXHelper {
     private static let maxPrecedingCharacters = 4096
     private static let maxTrailingCharacters = 1024
 
+    private static let selectedTextMarkerRangeAttribute = "AXSelectedTextMarkerRange" as CFString
+    private static let startTextMarkerAttribute = "AXStartTextMarker" as CFString
+    private static let endTextMarkerAttribute = "AXEndTextMarker" as CFString
+    private static let startMarkerForRangeAttribute = "AXStartTextMarkerForTextMarkerRange" as CFString
+    private static let endMarkerForRangeAttribute = "AXEndTextMarkerForTextMarkerRange" as CFString
+    private static let markerRangeForMarkersAttribute = "AXTextMarkerRangeForUnorderedTextMarkers" as CFString
+    private static let stringForMarkerRangeAttribute = "AXStringForTextMarkerRange" as CFString
+
     private static let systemWide: AXUIElement = {
         let element = AXUIElementCreateSystemWide()
         AXUIElementSetMessagingTimeout(element, 0.05)
@@ -36,6 +44,10 @@ enum CotypingAXHelper {
     /// doesn't re-read `AXAttributedStringForRange` for a field it already styled.
     /// Keyed by the element's stable `AXIdentifier`; cleared wholesale at 64 entries.
     @MainActor private static var fieldStyleCache: [String: CotypingFieldStyle] = [:]
+    @MainActor private static var primedWebAccessibilityPIDs: Set<pid_t> = []
+    @MainActor private static var unsupportedWebAccessibilityPIDs: Set<pid_t> = []
+    @MainActor private static var lastFrontmostPrimePID: pid_t?
+    @MainActor private static var chromiumHitTestCache: (element: AXUIElement, pid: pid_t)?
 
     /// Resolve the current focus into a cotyping snapshot. Pure read; safe to
     /// call from the focus-tracker timer on the main thread.
@@ -46,6 +58,9 @@ enum CotypingAXHelper {
                                  capability: .unsupported("Accessibility permission needed."),
                                  field: nil)
         }
+        if let frontmost = NSWorkspace.shared.frontmostApplication {
+            primeWebAccessibilityIfNeeded(application: frontmost)
+        }
         guard let element = focusedElement() else { return .none }
 
         let owner = owningApp(of: element)
@@ -55,6 +70,8 @@ enum CotypingAXHelper {
 
         let role = stringAttribute(element, kAXRoleAttribute as String) ?? ""
         let subrole = stringAttribute(element, kAXSubroleAttribute as String)
+        let focusIdentityKey = focusIdentityKey(
+            for: element, processID: pid, bundleID: bundleID, role: role, subrole: subrole)
 
         // Secure fields: never read or suggest into them.
         if subrole == (kAXSecureTextFieldSubrole as String) {
@@ -63,19 +80,29 @@ enum CotypingAXHelper {
         }
 
         let isEditable = editableRoles.contains(role) || isAttributeSettable(element, kAXValueAttribute as String)
-        guard isEditable, let value = stringAttribute(element, kAXValueAttribute as String) else {
+        guard isEditable else {
             return CotypingFocus(appName: appName, bundleID: bundleID,
                                  capability: .unsupported("Not an editable text field."), field: nil)
         }
 
-        guard let selection = selectionRange(element) else {
+        let nativeSelection = selectionRange(element)
+        let markerSelection = nativeSelection == nil ? synthesizeMarkerSelection(on: element) : nil
+        let usesMarkerSelection = markerSelection != nil
+
+        guard let value = markerSelection?.text ?? stringAttribute(element, kAXValueAttribute as String) else {
+            return CotypingFocus(appName: appName, bundleID: bundleID,
+                                 capability: .unsupported("Not an editable text field."), field: nil)
+        }
+
+        guard let selection = markerSelection?.selection ?? nativeSelection else {
             return CotypingFocus(appName: appName, bundleID: bundleID,
                                  capability: .unsupported("No caret in this field."), field: nil)
         }
 
         if selection.length > 0 {
             return CotypingFocus(appName: appName, bundleID: bundleID,
-                                 capability: .blocked("Text selected."), field: nil)
+                                 capability: .blocked("Text selected."), field: nil,
+                                 focusIdentityKey: focusIdentityKey)
         }
 
         let nsValue = value as NSString
@@ -85,7 +112,10 @@ enum CotypingAXHelper {
         let preceding = String(precedingFull.suffix(maxPrecedingCharacters))
         let trailing = String(trailingFull.prefix(maxTrailingCharacters))
 
-        let (caretRect, exact) = caretRect(element, caretLocation: caret)
+        let (caretRect, exact) = caretRect(
+            element,
+            caretLocation: caret,
+            allowBoundsForRange: !usesMarkerSelection)
         // App/window context — only read when actually building a suggestion (it
         // costs extra AX round-trips), gated by the cotyping setting upstream.
         let surfaceTitle = includeSurface ? windowTitle(near: element) : nil
@@ -96,17 +126,159 @@ enum CotypingAXHelper {
         let host = includeURL ? webURL(near: element).flatMap(CotypingBrowserDomain.host(fromURLString:)) : nil
         // Host field font/color — read (cached per element) only when matching is
         // enabled, so the overlay can mimic the field instead of a fixed style.
-        let resolvedStyle = includeStyle
+        let resolvedStyle = includeStyle && !usesMarkerSelection
             ? resolveFieldStyle(for: element, caretLocation: caret, textLength: nsValue.length)
             : nil
 
         let field = CotypingField(
             appName: appName, bundleID: bundleID, processID: pid, role: role,
+            focusIdentityKey: focusIdentityKey,
             precedingText: preceding, trailingText: trailing,
             selectionLength: selection.length, caretRect: caretRect,
             isSecure: false, caretIsExact: exact,
             windowTitle: surfaceTitle, fieldPlaceholder: surfacePlaceholder, fieldStyle: resolvedStyle)
-        return CotypingFocus(appName: appName, bundleID: bundleID, capability: .supported, field: field, host: host)
+        return CotypingFocus(appName: appName, bundleID: bundleID, capability: .supported,
+                             field: field, focusIdentityKey: focusIdentityKey, host: host)
+    }
+
+    private static func focusIdentityKey(
+        for element: AXUIElement,
+        processID: pid_t,
+        bundleID: String?,
+        role: String,
+        subrole: String?
+    ) -> String {
+        let axIdentifier = stringAttribute(element, kAXIdentifierAttribute as String)
+            .flatMap { $0.isEmpty ? nil : $0 }
+        let elementPart = axIdentifier ?? "cf:\(CFHash(element))"
+        return [
+            String(processID),
+            bundleID ?? "",
+            role,
+            subrole ?? "",
+            elementPart
+        ].joined(separator: "\u{1f}")
+    }
+
+    /// Wakes Chromium/Electron web accessibility trees lazily, matching
+    /// CoTabby's focus pipeline. Safe to call on every poll: successful and
+    /// unsupported PIDs are cached, while named Electron editors get one
+    /// re-assertion per activation edge.
+    @MainActor
+    private static func primeWebAccessibilityIfNeeded(application: NSRunningApplication) {
+        let pid = application.processIdentifier
+        let bundleID = application.bundleIdentifier
+        let isActivationEdge = pid != lastFrontmostPrimePID
+        lastFrontmostPrimePID = pid
+
+        guard pid > 0,
+              needsWebAccessibilityPriming(bundleID: bundleID),
+              !unsupportedWebAccessibilityPIDs.contains(pid) else {
+            return
+        }
+
+        let reassertForElectronEditor = isActivationEdge && isElectronEditor(bundleID: bundleID)
+        guard !primedWebAccessibilityPIDs.contains(pid) || reassertForElectronEditor else {
+            return
+        }
+
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, 0.05)
+        let value: CFBoolean = kCFBooleanTrue
+        switch AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, value) {
+        case .success:
+            primedWebAccessibilityPIDs.insert(pid)
+        case .attributeUnsupported:
+            unsupportedWebAccessibilityPIDs.insert(pid)
+        default:
+            break
+        }
+    }
+
+    nonisolated static func needsWebAccessibilityPriming(bundleID: String?) -> Bool {
+        isChromiumBrowser(bundleID: bundleID) || isElectronEditor(bundleID: bundleID)
+    }
+
+    private nonisolated static func isChromiumBrowser(bundleID: String?) -> Bool {
+        hasMatchingPrefix(bundleID, in: [
+            "com.google.chrome",
+            "company.thebrowser.browser",
+            "com.brave.browser",
+            "com.microsoft.edgemac",
+        ])
+    }
+
+    nonisolated static func isElectronEditor(bundleID: String?) -> Bool {
+        guard let lowered = bundleID?.lowercased() else { return false }
+        return [
+            "com.clickup.desktop-app",
+            "com.microsoft.vscode",
+            "com.microsoft.vscodeinsiders",
+            "com.vscodium",
+        ].contains(lowered)
+    }
+
+    private nonisolated static func hasMatchingPrefix(_ bundleID: String?, in prefixes: [String]) -> Bool {
+        guard let lowered = bundleID?.lowercased() else { return false }
+        return prefixes.contains { lowered.hasPrefix($0) }
+    }
+
+    /// Chromium/WebKit contenteditable fields can expose caret text through the
+    /// opaque text-marker API instead of `AXSelectedTextRange`. The marker reads
+    /// are best-effort and never cached; nil means the existing native-range
+    /// unsupported path remains in force.
+    private static func synthesizeMarkerSelection(on element: AXUIElement) -> CotypingMarkerSelection? {
+        let parameterized = Set(parameterizedAttributeNames(on: element))
+        guard parameterized.contains(startMarkerForRangeAttribute as String),
+              parameterized.contains(endMarkerForRangeAttribute as String),
+              parameterized.contains(markerRangeForMarkersAttribute as String),
+              parameterized.contains(stringForMarkerRangeAttribute as String)
+        else {
+            return nil
+        }
+
+        guard let selectionRange = copyOpaqueAttribute(selectedTextMarkerRangeAttribute, on: element),
+              let documentStart = copyOpaqueAttribute(startTextMarkerAttribute, on: element),
+              let documentEnd = copyOpaqueAttribute(endTextMarkerAttribute, on: element),
+              let selectionStart = copyOpaqueParameterized(
+                startMarkerForRangeAttribute, parameter: selectionRange, on: element),
+              let selectionEnd = copyOpaqueParameterized(
+                endMarkerForRangeAttribute, parameter: selectionRange, on: element)
+        else {
+            return nil
+        }
+
+        guard let preRange = markerRange(from: documentStart, to: selectionStart, on: element),
+              let beforeText = stringForMarkerRange(preRange, on: element) else {
+            return nil
+        }
+
+        let selectedText = stringForMarkerRange(selectionRange, on: element) ?? ""
+        let afterText: String
+        if let postRange = markerRange(from: selectionEnd, to: documentEnd, on: element),
+           let trailing = stringForMarkerRange(postRange, on: element) {
+            afterText = trailing
+        } else {
+            afterText = ""
+        }
+
+        return CotypingMarkerSelectionSynthesizer.make(
+            beforeCaret: beforeText,
+            selected: selectedText,
+            afterCaret: afterText)
+    }
+
+    private static func markerRange(
+        from start: CFTypeRef,
+        to end: CFTypeRef,
+        on element: AXUIElement
+    ) -> CFTypeRef? {
+        let markers = [start, end] as CFArray
+        return copyOpaqueParameterized(markerRangeForMarkersAttribute, parameter: markers, on: element)
+    }
+
+    private static func stringForMarkerRange(_ range: CFTypeRef, on element: AXUIElement) -> String? {
+        copyOpaqueParameterized(stringForMarkerRangeAttribute, parameter: range, on: element) as? String
     }
 
     /// Reads the focused field's own font + text color (cached per element) so
@@ -230,15 +402,105 @@ enum CotypingAXHelper {
 
     // MARK: - Element + owner
 
+    @MainActor
     static func focusedElement() -> AXUIElement? {
-        guard let raw = copyAttribute(systemWide, kAXFocusedUIElementAttribute as String),
-              CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
+        if let element = focusedElement(from: systemWide) {
+            return element
+        }
+        // Some Chromium/Electron fields are missed by the system-wide focused
+        // element query but still resolve through the app-scoped AX object.
+        guard let frontmost = NSWorkspace.shared.frontmostApplication else {
+            return nil
+        }
+        if let element = focusedElement(forApplicationPID: frontmost.processIdentifier) {
+            chromiumHitTestCache = nil
+            return element
+        }
+        return chromiumHitTestFallback(for: frontmost)
+    }
+
+    private static func focusedElement(forApplicationPID pid: pid_t) -> AXUIElement? {
+        guard pid > 0 else { return nil }
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, 0.05)
+        return focusedElement(from: appElement)
+    }
+
+    private static func focusedElement(from root: AXUIElement) -> AXUIElement? {
+        guard let raw = copyAttribute(root, kAXFocusedUIElementAttribute as String),
+              CFGetTypeID(raw) == AXUIElementGetTypeID() else {
+            return nil
+        }
         let element = raw as! AXUIElement
-        // `systemWide`'s timeout is already process-global (per AXUIElement.h, a
-        // system-wide timeout applies to every element using the default), but pin
-        // it on the focused element too so a wedged target app can never block the
-        // main-thread reads in `resolveFocus` past 50 ms regardless of global state.
+        // Pin the timeout on the focused element too so a wedged target app can
+        // never block the main-thread reads in `resolveFocus` past 50 ms.
         AXUIElementSetMessagingTimeout(element, 0.05)
+        return element
+    }
+
+    @MainActor
+    private static func chromiumHitTestFallback(for application: NSRunningApplication) -> AXUIElement? {
+        let pid = application.processIdentifier
+        guard pid > 0,
+              needsWebAccessibilityPriming(bundleID: application.bundleIdentifier) else {
+            chromiumHitTestCache = nil
+            return nil
+        }
+
+        if let cache = chromiumHitTestCache,
+           cache.pid == pid,
+           isFocused(cache.element) {
+            return cache.element
+        }
+        chromiumHitTestCache = nil
+
+        guard let hit = element(atCocoaPoint: NSEvent.mouseLocation) else {
+            return nil
+        }
+        let editable = nearestEditable(from: hit)
+        chromiumHitTestCache = (editable, pid)
+        return editable
+    }
+
+    private static func element(atCocoaPoint point: CGPoint) -> AXUIElement? {
+        guard let primaryHeight = NSScreen.screens.first?.frame.height else {
+            return nil
+        }
+        let axPoint = CGPoint(x: point.x, y: primaryHeight - point.y)
+        var element: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(
+            systemWide, Float(axPoint.x), Float(axPoint.y), &element) == .success else {
+            return nil
+        }
+        if let element {
+            AXUIElementSetMessagingTimeout(element, 0.05)
+        }
+        return element
+    }
+
+    private static func isFocused(_ element: AXUIElement) -> Bool {
+        boolAttribute(element, kAXFocusedAttribute as String) ?? false
+    }
+
+    /// Climb from a Chromium hit-test leaf to the nearest likely editable
+    /// container. Final support still depends on the normal `resolveFocus`
+    /// value/selection/caret checks, so a wrong leaf degrades to unsupported.
+    private static func nearestEditable(from element: AXUIElement, maxClimb: Int = 5) -> AXUIElement {
+        var current = element
+        for _ in 0...maxClimb {
+            let role = stringAttribute(current, kAXRoleAttribute as String) ?? ""
+            let attributes = Set(attributeNames(on: current))
+            let explicitEditable = attributes.contains("AXEditable")
+                ? boolAttribute(current, "AXEditable")
+                : nil
+            if editableRoles.contains(role)
+                || explicitEditable == true
+                || attributes.contains(selectedTextMarkerRangeAttribute as String) {
+                return current
+            }
+            guard let parent = parentElement(of: current) else { break }
+            current = parent
+        }
         return element
     }
 
@@ -261,8 +523,50 @@ enum CotypingAXHelper {
         return value
     }
 
+    private static func copyOpaqueAttribute(_ attribute: CFString, on element: AXUIElement) -> CFTypeRef? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else {
+            return nil
+        }
+        return value
+    }
+
+    private static func copyOpaqueParameterized(
+        _ attribute: CFString,
+        parameter: CFTypeRef,
+        on element: AXUIElement
+    ) -> CFTypeRef? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(element, attribute, parameter, &value) == .success else {
+            return nil
+        }
+        return value
+    }
+
+    private static func attributeNames(on element: AXUIElement) -> [String] {
+        var names: CFArray?
+        guard AXUIElementCopyAttributeNames(element, &names) == .success,
+              let names else {
+            return []
+        }
+        return names as? [String] ?? []
+    }
+
+    private static func parameterizedAttributeNames(on element: AXUIElement) -> [String] {
+        var names: CFArray?
+        guard AXUIElementCopyParameterizedAttributeNames(element, &names) == .success,
+              let names else {
+            return []
+        }
+        return names as? [String] ?? []
+    }
+
     private static func stringAttribute(_ element: AXUIElement, _ attribute: String) -> String? {
         copyAttribute(element, attribute) as? String
+    }
+
+    private static func boolAttribute(_ element: AXUIElement, _ attribute: String) -> Bool? {
+        copyAttribute(element, attribute) as? Bool
     }
 
     private static func isAttributeSettable(_ element: AXUIElement, _ attribute: String) -> Bool {
@@ -286,8 +590,13 @@ enum CotypingAXHelper {
 
     /// Returns the caret rect in global Cocoa coordinates and whether it is
     /// exact (from a range query) vs an element-frame estimate.
-    private static func caretRect(_ element: AXUIElement, caretLocation: Int) -> (rect: CGRect, exact: Bool) {
-        if let rect = boundsForRange(element, location: caretLocation, length: 0),
+    private static func caretRect(
+        _ element: AXUIElement,
+        caretLocation: Int,
+        allowBoundsForRange: Bool = true
+    ) -> (rect: CGRect, exact: Bool) {
+        if allowBoundsForRange,
+           let rect = boundsForRange(element, location: caretLocation, length: 0),
            rect.width.isFinite, rect.height.isFinite, rect.height > 0 {
             return (cocoaRect(fromAX: rect), true)
         }
