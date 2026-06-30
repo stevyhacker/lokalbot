@@ -20,10 +20,17 @@ enum CotypingInsertionStrategySelector {
     /// for the overwhelmingly common case.
     static let pasteCharacterThreshold = 80
 
-    /// Picks the insertion strategy for `chunk`. Returns `.keystroke` whenever
-    /// paste insertion is disabled, so the default behavior is unchanged;
-    /// otherwise it pastes multi-line or long chunks and keystrokes the rest.
-    static func select(forChunk chunk: String, pasteEnabled: Bool) -> CotypingInsertionStrategy {
+    /// Picks the insertion strategy for `chunk`. A composing IME always uses
+    /// paste because synthetic Unicode keystrokes can be reabsorbed into marked
+    /// text instead of committing to the host field.
+    static func select(
+        forChunk chunk: String,
+        pasteEnabled: Bool,
+        isComposingIMEActive: Bool = false
+    ) -> CotypingInsertionStrategy {
+        if isComposingIMEActive {
+            return .paste
+        }
         guard pasteEnabled else { return .keystroke }
         if chunk.contains(where: \.isNewline) { return .paste }
         return chunk.count >= pasteCharacterThreshold ? .paste : .keystroke

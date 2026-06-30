@@ -12,6 +12,7 @@ enum CotypingAvailability {
         enabled: Bool,
         excludedApps: [String],
         excludedDomains: [String] = [],
+        suggestInIntegratedTerminals: Bool = false,
         selfBundleID: String?,
         focus: CotypingFocus
     ) -> String? {
@@ -28,6 +29,14 @@ enum CotypingAvailability {
 
         if CotypingBrowserDomain.isHostDisabled(focus.host, excludedDomains: excludedDomains) {
             return "Disabled on \(focus.host ?? "this site")."
+        }
+
+        if CotypingSurfaceClassifier.classify(bundleID: focus.bundleID) == .terminal {
+            return "Not available in terminal apps."
+        }
+
+        if !suggestInIntegratedTerminals, focus.field?.isIntegratedTerminal == true {
+            return "Not available in the integrated terminal."
         }
 
         switch focus.capability {

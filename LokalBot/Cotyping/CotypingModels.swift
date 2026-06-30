@@ -47,6 +47,9 @@ struct CotypingField: Equatable, Sendable {
     var caretRect: CGRect
     /// True for password / secure-entry fields — never read or suggested into.
     var isSecure: Bool
+    /// True when the focused web text field is an xterm.js terminal surface
+    /// embedded inside a non-terminal host like VS Code, Cursor, or a browser.
+    var isIntegratedTerminal: Bool = false
     /// `true` when the caret rect came from an exact AX range query; `false`
     /// when it was estimated from the field frame (lower placement confidence).
     var caretIsExact: Bool
@@ -63,7 +66,13 @@ struct CotypingField: Equatable, Sendable {
     /// across keystrokes and to drop stale async generations. Excludes the AX
     /// element identity on purpose: web engines recycle element handles.
     var contentSignature: String {
-        [String(selectionLength), precedingText, trailingText, isSecure ? "secure" : "plain"]
+        [
+            String(selectionLength),
+            precedingText,
+            trailingText,
+            isSecure ? "secure" : "plain",
+            isIntegratedTerminal ? "terminal" : "text"
+        ]
             .joined(separator: "\u{1f}")
     }
 }

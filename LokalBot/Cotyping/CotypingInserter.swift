@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import Foundation
 
@@ -27,6 +28,8 @@ final class CotypingInserter {
     /// pastes coalesce onto the single saved clipboard rather than re-snapshotting
     /// our own completion back into it.
     private var pendingPasteboardRestore: DispatchWorkItem?
+    private var savedClipboardForRestore: [[NSPasteboard.PasteboardType: Data]]?
+    private var cachedPasteMenuItems: [pid_t: AXUIElement] = [:]
     @discardableResult
     func insert(_ text: String) -> Bool {
         let scrubbed = text.replacingOccurrences(of: "\r", with: "")
@@ -120,16 +123,34 @@ final class CotypingInserter {
         let scrubbed = text.replacingOccurrences(of: "\r", with: "")
         guard !scrubbed.isEmpty else { return false }
         let pasteboard = NSPasteboard.general
-        let saved = Self.snapshotPasteboard(pasteboard)
+        if pendingPasteboardRestore == nil {
+            savedClipboardForRestore = Self.snapshotPasteboard(pasteboard)
+        }
+        let saved = savedClipboardForRestore ?? []
+
         pasteboard.clearContents()
         guard pasteboard.setString(scrubbed, forType: .string) else {
+            pendingPasteboardRestore?.cancel()
             Self.restorePasteboard(saved, to: pasteboard)
+            clearPendingPasteboardRestore()
             return false
         }
         let expectedChangeCount = pasteboard.changeCount
-        guard let vDown = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: true),
-              let vUp = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: false) else {
+
+        if pressPasteMenuItem() {
+            schedulePasteboardRestore(saved: saved, expectedChangeCount: expectedChangeCount)
+            return true
+        }
+
+        let source = CGEventSource(stateID: .combinedSessionState)
+        source?.setLocalEventsFilterDuringSuppressionState(
+            [.permitLocalMouseEvents, .permitSystemDefinedEvents],
+            state: .eventSuppressionStateSuppressionInterval)
+        guard let vDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true),
+              let vUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false) else {
+            pendingPasteboardRestore?.cancel()
             Self.restorePasteboard(saved, to: pasteboard)
+            clearPendingPasteboardRestore()
             return false
         }
         // Cmd via flags (no separate modifier key event). Marked synthetic so the
@@ -138,25 +159,57 @@ final class CotypingInserter {
         vUp.flags = .maskCommand
         CotypingSyntheticMarker.mark(vDown)
         CotypingSyntheticMarker.mark(vUp)
-        vDown.post(tap: .cghidEventTap)
-        vUp.post(tap: .cghidEventTap)
+        vDown.post(tap: .cgAnnotatedSessionEventTap)
+        vUp.post(tap: .cgAnnotatedSessionEventTap)
 
+        schedulePasteboardRestore(saved: saved, expectedChangeCount: expectedChangeCount)
+        return true
+    }
+
+    private func pressPasteMenuItem() -> Bool {
+        guard let focusedElement = CotypingAXHelper.focusedElement(),
+              let application = CotypingAXHelper.owningApplication(of: focusedElement) else {
+            return false
+        }
+        let pid = application.processIdentifier
+        if let cached = cachedPasteMenuItems[pid] {
+            if AXUIElementPerformAction(cached, kAXPressAction as CFString) == .success {
+                return true
+            }
+            cachedPasteMenuItems[pid] = nil
+        }
+        guard let item = CotypingAXHelper.pasteMenuItem(forApplicationPID: pid),
+              AXUIElementPerformAction(item, kAXPressAction as CFString) == .success else {
+            return false
+        }
+        cachedPasteMenuItems[pid] = item
+        return true
+    }
+
+    private func schedulePasteboardRestore(
+        saved: [[NSPasteboard.PasteboardType: Data]],
+        expectedChangeCount: Int
+    ) {
         let restore = DispatchWorkItem { [weak self] in
             if NSPasteboard.general.changeCount == expectedChangeCount {
                 Self.restorePasteboard(saved, to: NSPasteboard.general)
             }
-            self?.pendingPasteboardRestore = nil
+            self?.clearPendingPasteboardRestore()
         }
         pendingPasteboardRestore?.cancel()
         pendingPasteboardRestore = restore
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.pasteboardRestoreDelay, execute: restore)
-        return true
     }
 
     /// How long the completion stays on the pasteboard before the user's clipboard
     /// is restored — long enough for the host to service Cmd-V, short enough that
     /// the user's clipboard is theirs again almost immediately.
     private static let pasteboardRestoreDelay: TimeInterval = 0.3
+
+    private func clearPendingPasteboardRestore() {
+        pendingPasteboardRestore = nil
+        savedClipboardForRestore = nil
+    }
 
     /// Captures every representation of every pasteboard item so the user's
     /// clipboard can be restored exactly, not just its plain-text form.

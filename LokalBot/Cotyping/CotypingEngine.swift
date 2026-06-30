@@ -38,7 +38,9 @@ enum CotypingRequestBuilder {
         if personalization.appContextEnabled,
            let surface = CotypingSurfaceComposer.compose(
                appName: field.appName, bundleID: field.bundleID,
-               windowTitle: field.windowTitle, fieldPlaceholder: field.fieldPlaceholder) {
+               windowTitle: field.windowTitle,
+               fieldPlaceholder: field.fieldPlaceholder,
+               isIntegratedTerminal: field.isIntegratedTerminal) {
             surfaceLines = CotypingSurfaceComposer.prefaceLines(for: surface)
         } else {
             surfaceLines = []

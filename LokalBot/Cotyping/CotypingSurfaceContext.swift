@@ -16,7 +16,8 @@ enum CotypingSurfaceClass: Equatable, Sendable {
 
 /// Bundle-identifier → surface classification. Prefix-matched, case-folded.
 enum CotypingSurfaceClassifier {
-    static func classify(bundleID: String?) -> CotypingSurfaceClass {
+    static func classify(bundleID: String?, isIntegratedTerminal: Bool = false) -> CotypingSurfaceClass {
+        if isIntegratedTerminal { return .terminal }
         guard let raw = bundleID?.lowercased(), !raw.isEmpty else { return .other }
         if terminalPrefixes.contains(where: raw.hasPrefix) { return .terminal }
         if codeEditorPrefixes.contains(where: raw.hasPrefix) { return .codeEditor }
@@ -29,6 +30,7 @@ enum CotypingSurfaceClassifier {
     static let terminalPrefixes = [
         "com.apple.terminal", "com.googlecode.iterm2", "dev.warp.",
         "io.alacritty", "net.kovidgoyal.kitty", "co.zeit.hyper", "com.github.wez.wezterm",
+        "com.mitchellh.ghostty", "io.rio.terminal",
     ]
     static let codeEditorPrefixes = [
         "com.apple.dt.xcode", "com.microsoft.vscode", "com.jetbrains.",
@@ -47,6 +49,10 @@ enum CotypingSurfaceClassifier {
         "com.microsoft.edgemac", "com.brave.browser", "company.thebrowser.browser",
         "com.operasoftware.opera", "com.vivaldi.vivaldi",
     ]
+
+    static func isIntegratedTerminal(domClassList: [String]) -> Bool {
+        domClassList.contains { $0.lowercased().hasPrefix("xterm") }
+    }
 }
 
 /// A sanitized surface description ready to condition a prompt.
@@ -64,9 +70,15 @@ enum CotypingSurfaceComposer {
     /// Builds a surface description, or `nil` when there's nothing useful (or
     /// safe) to say — code editors, terminals, and bare generic apps.
     static func compose(
-        appName: String, bundleID: String?, windowTitle: String?, fieldPlaceholder: String?
+        appName: String,
+        bundleID: String?,
+        windowTitle: String?,
+        fieldPlaceholder: String?,
+        isIntegratedTerminal: Bool = false
     ) -> CotypingSurfaceContext? {
-        let surfaceClass = CotypingSurfaceClassifier.classify(bundleID: bundleID)
+        let surfaceClass = CotypingSurfaceClassifier.classify(
+            bundleID: bundleID,
+            isIntegratedTerminal: isIntegratedTerminal)
         switch surfaceClass {
         case .codeEditor, .terminal:
             return nil

@@ -785,6 +785,55 @@ final class CotypingAvailabilityTests: XCTestCase {
         XCTAssertNil(CotypingAvailability.disabledReason(
             enabled: true, excludedApps: ["Terminal"], selfBundleID: "me.dotenv.LokalBot", focus: focus()))
     }
+
+    func testTerminalAppsAreBlockedByDefault() {
+        let reason = CotypingAvailability.disabledReason(
+            enabled: true,
+            excludedApps: [],
+            selfBundleID: nil,
+            focus: focus(app: "Terminal", bundle: "com.apple.Terminal"))
+        XCTAssertEqual(reason, "Not available in terminal apps.")
+    }
+
+    func testIntegratedTerminalsAreBlockedByDefault() {
+        var field = CotypingField(
+            appName: "Code", bundleID: "com.microsoft.VSCode", processID: 1,
+            role: "AXTextField", precedingText: "npm", trailingText: "",
+            selectionLength: 0, caretRect: .zero, isSecure: false,
+            isIntegratedTerminal: true, caretIsExact: true)
+        let reason = CotypingAvailability.disabledReason(
+            enabled: true,
+            excludedApps: [],
+            selfBundleID: nil,
+            focus: CotypingFocus(
+                appName: "Code",
+                bundleID: "com.microsoft.VSCode",
+                capability: .supported,
+                field: field))
+        XCTAssertEqual(reason, "Not available in the integrated terminal.")
+
+        XCTAssertNil(CotypingAvailability.disabledReason(
+            enabled: true,
+            excludedApps: [],
+            suggestInIntegratedTerminals: true,
+            selfBundleID: nil,
+            focus: CotypingFocus(
+                appName: "Code",
+                bundleID: "com.microsoft.VSCode",
+                capability: .supported,
+                field: field)))
+
+        field.isIntegratedTerminal = false
+        XCTAssertNil(CotypingAvailability.disabledReason(
+            enabled: true,
+            excludedApps: [],
+            selfBundleID: nil,
+            focus: CotypingFocus(
+                appName: "Code",
+                bundleID: "com.microsoft.VSCode",
+                capability: .supported,
+                field: field)))
+    }
 }
 
 // MARK: - Focus poll backoff
@@ -839,6 +888,40 @@ final class CotypingFocusPollBackoffTests: XCTestCase {
 
         XCTAssertEqual(backoff.idleCaptureCount, 0)
         XCTAssertEqual(backoff.captureStride, 1)
+    }
+
+    func testMillisecondsSinceCaptureIsNilBeforeFirstCapture() {
+        XCTAssertNil(CotypingFocusTracker.millisecondsSinceCapture(
+            lastCaptureUptimeNanoseconds: nil,
+            nowUptimeNanoseconds: 1_000_000))
+    }
+
+    func testMillisecondsSinceCaptureUsesCompletedCaptureTime() {
+        XCTAssertEqual(CotypingFocusTracker.millisecondsSinceCapture(
+            lastCaptureUptimeNanoseconds: 10_000_000,
+            nowUptimeNanoseconds: 42_000_000), 32)
+    }
+
+    func testShouldRefreshCaptureWhenAgeUnknownOrOlderThanWindow() {
+        XCTAssertTrue(CotypingFocusTracker.shouldRefreshCapture(
+            lastCaptureUptimeNanoseconds: nil,
+            nowUptimeNanoseconds: 42_000_000,
+            maxAgeMilliseconds: 30))
+        XCTAssertTrue(CotypingFocusTracker.shouldRefreshCapture(
+            lastCaptureUptimeNanoseconds: 10_000_000,
+            nowUptimeNanoseconds: 41_000_000,
+            maxAgeMilliseconds: 30))
+    }
+
+    func testShouldReuseCaptureWithinFreshnessWindow() {
+        XCTAssertFalse(CotypingFocusTracker.shouldRefreshCapture(
+            lastCaptureUptimeNanoseconds: 10_000_000,
+            nowUptimeNanoseconds: 40_000_000,
+            maxAgeMilliseconds: 30))
+        XCTAssertFalse(CotypingFocusTracker.shouldRefreshCapture(
+            lastCaptureUptimeNanoseconds: 10_000_000,
+            nowUptimeNanoseconds: 25_000_000,
+            maxAgeMilliseconds: 30))
     }
 }
 
@@ -953,6 +1036,7 @@ final class CotypingSettingsTests: XCTestCase {
         settings.cotypingAcceptGranularity = .phrase
         settings.cotypingFullAcceptKey = .rightArrow
         settings.cotypingExcludedApps = "Terminal, 1Password"
+        settings.cotypingSuggestInIntegratedTerminals = true
         settings.cotypingBuiltInModelID = ModelCatalog.bundledID
         settings.cotypingUseLocalLearning = false
         settings.cotypingLearningExamplesInPrompt = 5
@@ -969,6 +1053,7 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertEqual(decoded.cotypingAcceptGranularity, .phrase)
         XCTAssertEqual(decoded.cotypingFullAcceptKey, .rightArrow)
         XCTAssertEqual(decoded.cotypingExcludedAppList, ["Terminal", "1Password"])
+        XCTAssertTrue(decoded.cotypingSuggestInIntegratedTerminals)
         XCTAssertEqual(decoded.cotypingBuiltInModelID, ModelCatalog.bundledID)
         XCTAssertFalse(decoded.cotypingUseLocalLearning)
         XCTAssertEqual(decoded.cotypingLearningExamplesInPrompt, 5)
@@ -1072,6 +1157,33 @@ final class CotypingContinuationTests: XCTestCase {
         XCTAssertFalse(CotypingCoordinator.isContinuation(of: session("I wanted to follow"), liveField: nil))
     }
 
+    func testCurrentGenerationTargetRequiresSameContentAndIdentity() {
+        var original = field("I wanted to follow")
+        original.focusIdentityKey = "field-a"
+        var live = original
+
+        XCTAssertTrue(CotypingCoordinator.isCurrentGenerationTarget(original, liveField: live))
+
+        live.precedingText += " up"
+        XCTAssertFalse(CotypingCoordinator.isCurrentGenerationTarget(original, liveField: live))
+
+        live = original
+        live.focusIdentityKey = "field-b"
+        XCTAssertFalse(CotypingCoordinator.isCurrentGenerationTarget(original, liveField: live))
+    }
+
+    func testCurrentGenerationTargetAllowsMissingFocusIdentityButStillRequiresAnchorIdentity() {
+        var original = field("I wanted to follow")
+        original.windowTitle = "Draft"
+        var live = original
+        live.focusIdentityKey = nil
+
+        XCTAssertTrue(CotypingCoordinator.isCurrentGenerationTarget(original, liveField: live))
+
+        live.windowTitle = "Other Draft"
+        XCTAssertFalse(CotypingCoordinator.isCurrentGenerationTarget(original, liveField: live))
+    }
+
     func testPublishedTypingAdvancesSuggestionTail() throws {
         let advanced = try XCTUnwrap(CotypingCoordinator.sessionAdvancedByPublishedTyping(
             session("I wanted to follow"),
@@ -1171,8 +1283,18 @@ final class CotypingSurfaceContextTests: XCTestCase {
         XCTAssertEqual(CotypingSurfaceClassifier.classify(bundleID: "com.google.Chrome"), .browser)
         XCTAssertEqual(CotypingSurfaceClassifier.classify(bundleID: "com.apple.dt.Xcode"), .codeEditor)
         XCTAssertEqual(CotypingSurfaceClassifier.classify(bundleID: "com.apple.Terminal"), .terminal)
+        XCTAssertEqual(CotypingSurfaceClassifier.classify(bundleID: "com.mitchellh.ghostty"), .terminal)
+        XCTAssertEqual(CotypingSurfaceClassifier.classify(bundleID: "io.rio.terminal"), .terminal)
+        XCTAssertEqual(CotypingSurfaceClassifier.classify(bundleID: "com.microsoft.VSCode", isIntegratedTerminal: true), .terminal)
         XCTAssertEqual(CotypingSurfaceClassifier.classify(bundleID: "com.acme.unknown"), .other)
         XCTAssertEqual(CotypingSurfaceClassifier.classify(bundleID: nil), .other)
+    }
+
+    func testIntegratedTerminalClassDetection() {
+        XCTAssertTrue(CotypingSurfaceClassifier.isIntegratedTerminal(domClassList: ["xterm-helper-textarea"]))
+        XCTAssertTrue(CotypingSurfaceClassifier.isIntegratedTerminal(domClassList: ["xterm-screen"]))
+        XCTAssertFalse(CotypingSurfaceClassifier.isIntegratedTerminal(domClassList: ["monaco-editor"]))
+        XCTAssertFalse(CotypingSurfaceClassifier.isIntegratedTerminal(domClassList: []))
     }
 
     func testSuppressedInCodeEditorAndTerminal() {
@@ -1180,6 +1302,12 @@ final class CotypingSurfaceContextTests: XCTestCase {
             appName: "Xcode", bundleID: "com.apple.dt.Xcode", windowTitle: "main.swift", fieldPlaceholder: nil))
         XCTAssertNil(CotypingSurfaceComposer.compose(
             appName: "Terminal", bundleID: "com.apple.Terminal", windowTitle: "bash", fieldPlaceholder: nil))
+        XCTAssertNil(CotypingSurfaceComposer.compose(
+            appName: "Code",
+            bundleID: "com.microsoft.VSCode",
+            windowTitle: "Cloud Shell",
+            fieldPlaceholder: nil,
+            isIntegratedTerminal: true))
     }
 
     func testGenericAppWithNoCuesIsNil() {
@@ -2163,6 +2291,79 @@ final class CotypingClipboardContextTests: XCTestCase {
         XCTAssertFalse(AppSettings().cotypingUseClipboard)
     }
 
+    func testClipboardSignificantTokensIgnoreShortTokensAndCase() {
+        XCTAssertEqual(
+            CotypingClipboardContext.significantTokens(from: "A deployment, API, and x y z"),
+            ["deployment", "api", "and"])
+    }
+
+    func testClipboardRelevanceFirstObservationBaselinesWithoutInjecting() {
+        let filter = CotypingClipboardRelevanceFilter()
+
+        XCTAssertNil(filter.filter(
+            rawClipboard: "meeting agenda",
+            pasteboardChangeCount: 42,
+            precedingText: "the meeting starts soon"))
+    }
+
+    func testClipboardRelevanceFreshCopyRequiresTokenOverlap() {
+        let filter = CotypingClipboardRelevanceFilter()
+        _ = filter.filter(
+            rawClipboard: "baseline content",
+            pasteboardChangeCount: 1,
+            precedingText: "")
+
+        XCTAssertNil(filter.filter(
+            rawClipboard: "SELECT * FROM users",
+            pasteboardChangeCount: 2,
+            precedingText: "Dear hiring manager"))
+        XCTAssertEqual(filter.filter(
+            rawClipboard: "Deployment Pipeline",
+            pasteboardChangeCount: 3,
+            precedingText: "the deployment is running"),
+            "Deployment Pipeline")
+    }
+
+    func testClipboardRelevanceIgnoresShortTokenOverlap() {
+        let filter = CotypingClipboardRelevanceFilter()
+        _ = filter.filter(
+            rawClipboard: "baseline content",
+            pasteboardChangeCount: 1,
+            precedingText: "")
+
+        XCTAssertNil(filter.filter(
+            rawClipboard: "a b c",
+            pasteboardChangeCount: 2,
+            precedingText: "a b c d e"))
+    }
+
+    func testClipboardRelevanceExpiresAndNewCopyResetsClock() {
+        var now = Date()
+        let filter = CotypingClipboardRelevanceFilter(dateProvider: { now })
+        _ = filter.filter(
+            rawClipboard: "baseline content",
+            pasteboardChangeCount: 1,
+            precedingText: "")
+
+        XCTAssertEqual(filter.filter(
+            rawClipboard: "first content",
+            pasteboardChangeCount: 2,
+            precedingText: "first content"),
+            "first content")
+
+        now = now.addingTimeInterval(CotypingClipboardRelevanceFilter.staleThresholdSeconds + 1)
+
+        XCTAssertNil(filter.filter(
+            rawClipboard: "first content",
+            pasteboardChangeCount: 2,
+            precedingText: "first content"))
+        XCTAssertEqual(filter.filter(
+            rawClipboard: "second content",
+            pasteboardChangeCount: 3,
+            precedingText: "second content"),
+            "second content")
+    }
+
     func testClipboardPrefaceMemoReusesOnlySameFieldAndChangeCount() {
         let memo = CotypingClipboardPrefaceMemo(
             identityKey: "field-a",
@@ -2199,8 +2400,61 @@ final class CotypingInsertionStrategyTests: XCTestCase {
         XCTAssertEqual(CotypingInsertionStrategySelector.select(forChunk: String(repeating: "x", count: 79), pasteEnabled: true), .keystroke)
     }
 
+    func testComposingIMEAlwaysPastes() {
+        XCTAssertEqual(
+            CotypingInsertionStrategySelector.select(
+                forChunk: "short",
+                pasteEnabled: false,
+                isComposingIMEActive: true),
+            .paste)
+    }
+
     func testPasteInsertionDefaultsOn() {
         XCTAssertTrue(AppSettings().cotypingPasteInsertion)
+    }
+}
+
+// MARK: - IME composition input modes
+
+final class CotypingCompositionInputModeClassifierTests: XCTestCase {
+    func testPlainKeyboardLayoutIsNotComposing() {
+        XCTAssertFalse(
+            CotypingCompositionInputModeClassifier.isComposingInputMode(
+                isKeyboardLayout: true,
+                inputModeID: nil))
+    }
+
+    func testKnownComposingModesAreComposing() {
+        XCTAssertTrue(
+            CotypingCompositionInputModeClassifier.isComposingInputMode(
+                isKeyboardLayout: false,
+                inputModeID: "com.apple.inputmethod.Japanese.Hiragana"))
+        XCTAssertTrue(
+            CotypingCompositionInputModeClassifier.isComposingInputMode(
+                isKeyboardLayout: false,
+                inputModeID: "com.apple.inputmethod.SCIM.ITABC"))
+        XCTAssertTrue(
+            CotypingCompositionInputModeClassifier.isComposingInputMode(
+                isKeyboardLayout: false,
+                inputModeID: "com.apple.inputmethod.Korean.2SetKorean"))
+    }
+
+    func testRomanDirectModeIsNotComposing() {
+        XCTAssertFalse(
+            CotypingCompositionInputModeClassifier.isComposingInputMode(
+                isKeyboardLayout: false,
+                inputModeID: "com.apple.inputmethod.Roman"))
+    }
+
+    func testUnknownNonLayoutInputMethodIsComposing() {
+        XCTAssertTrue(
+            CotypingCompositionInputModeClassifier.isComposingInputMode(
+                isKeyboardLayout: false,
+                inputModeID: nil))
+        XCTAssertTrue(
+            CotypingCompositionInputModeClassifier.isComposingInputMode(
+                isKeyboardLayout: false,
+                inputModeID: "com.justsystems.inputmethod.atok33.Japanese"))
     }
 }
 

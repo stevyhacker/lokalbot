@@ -105,8 +105,9 @@ struct AppSettings: Codable {
     /// Allow multi-line completions (off keeps suggestions to one line).
     var cotypingMultiLine: Bool = false
     /// Insert large / multi-line accepts via paste (more reliable than synthetic
-    /// keystrokes in some hosts). On by default; briefly uses the clipboard and
-    /// restores it.
+    /// keystrokes in some hosts). Composing IMEs always use the paste path so
+    /// marked text does not swallow accepted completions. Briefly uses the
+    /// clipboard and restores it.
     var cotypingPasteInsertion: Bool = true
     /// Soft length target; drives the per-request token budget. The default
     /// mirrors Cotypist/Cotabby's longest shipped preset (12-20 words).
@@ -130,6 +131,10 @@ struct AppSettings: Codable {
     /// Comma-separated domains where cotyping never runs (bare host or full URL;
     /// subdomains included). Read over Accessibility in browsers only.
     var cotypingExcludedDomains: String = ""
+    /// Allow suggestions in xterm.js integrated terminals (VS Code / Cursor /
+    /// browser terminals). Off by default because terminal history/completions
+    /// conflict with ghost text; standalone terminal apps remain blocked.
+    var cotypingSuggestInIntegratedTerminals: Bool = false
     /// Condition suggestions on the focused app + window title / field label
     /// (e.g. the email subject or chat channel). On by default; reads window
     /// titles via Accessibility (already required for cotyping), stays on-device.
@@ -274,6 +279,7 @@ struct AppSettings: Codable {
         case cotypingFullAcceptKey
         case cotypingExcludedApps
         case cotypingExcludedDomains
+        case cotypingSuggestInIntegratedTerminals
         case cotypingUseAppContext
         case cotypingUseClipboard
         case cotypingMatchHostStyle
@@ -348,6 +354,7 @@ struct AppSettings: Codable {
         try c.encode(cotypingFullAcceptKey, forKey: .cotypingFullAcceptKey)
         try c.encode(cotypingExcludedApps, forKey: .cotypingExcludedApps)
         try c.encode(cotypingExcludedDomains, forKey: .cotypingExcludedDomains)
+        try c.encode(cotypingSuggestInIntegratedTerminals, forKey: .cotypingSuggestInIntegratedTerminals)
         try c.encode(cotypingUseAppContext, forKey: .cotypingUseAppContext)
         try c.encode(cotypingUseClipboard, forKey: .cotypingUseClipboard)
         try c.encode(cotypingMatchHostStyle, forKey: .cotypingMatchHostStyle)
@@ -411,6 +418,7 @@ struct AppSettings: Codable {
         cotypingFullAcceptKey = (try? c.decode(CotypingFullAcceptKey.self, forKey: .cotypingFullAcceptKey)) ?? defaults.cotypingFullAcceptKey
         cotypingExcludedApps = (try? c.decode(String.self, forKey: .cotypingExcludedApps)) ?? defaults.cotypingExcludedApps
         cotypingExcludedDomains = (try? c.decode(String.self, forKey: .cotypingExcludedDomains)) ?? defaults.cotypingExcludedDomains
+        cotypingSuggestInIntegratedTerminals = (try? c.decode(Bool.self, forKey: .cotypingSuggestInIntegratedTerminals)) ?? defaults.cotypingSuggestInIntegratedTerminals
         cotypingUseAppContext = (try? c.decode(Bool.self, forKey: .cotypingUseAppContext)) ?? defaults.cotypingUseAppContext
         cotypingUseClipboard = (try? c.decode(Bool.self, forKey: .cotypingUseClipboard)) ?? defaults.cotypingUseClipboard
         cotypingMatchHostStyle = (try? c.decode(Bool.self, forKey: .cotypingMatchHostStyle)) ?? defaults.cotypingMatchHostStyle

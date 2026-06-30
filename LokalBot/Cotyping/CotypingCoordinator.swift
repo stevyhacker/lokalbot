@@ -21,6 +21,7 @@ final class CotypingCoordinator: ObservableObject {
 
     private let focusTracker: CotypingFocusTracker
     private let inputMonitor: CotypingInputMonitor
+    private let inputSourceMonitor: CotypingKeyboardInputSourceMonitor
     private let overlay: CotypingOverlayController
     private let inserter: CotypingInserter
     private let engine: CotypingCompleting
@@ -49,10 +50,12 @@ final class CotypingCoordinator: ObservableObject {
     private var pendingSpeculativeResult: PendingSpeculativeResult?
     private let spellChecker = CotypingSpellChecker()
     private let clipboardProvider = CotypingClipboardProvider()
+    private let clipboardRelevanceFilter = CotypingClipboardRelevanceFilter()
     private nonisolated static let axPrecedingWindowLimit = 4096
     private nonisolated static let hostPublishWaitCeilingMs = 400
     private nonisolated static let hostPublishFirstPollIntervalMs = 10
     private nonisolated static let hostPublishPollIntervalMs = 30
+    private nonisolated static let freshSnapshotReuseWindowMilliseconds = 30
     private nonisolated static let postExhaustionAcceptanceWindowSeconds: TimeInterval = 0.8
 
     init(
@@ -67,6 +70,7 @@ final class CotypingCoordinator: ObservableObject {
         self.selfBundleID = selfBundleID
         self.focusTracker = CotypingFocusTracker()
         self.inputMonitor = CotypingInputMonitor()
+        self.inputSourceMonitor = CotypingKeyboardInputSourceMonitor()
         self.overlay = CotypingOverlayController()
         self.inserter = CotypingInserter()
     }
@@ -156,6 +160,7 @@ final class CotypingCoordinator: ObservableObject {
             if let reason = CotypingAvailability.disabledReason(
                 enabled: settings.cotypingEnabled,
                 excludedApps: settings.cotypingExcludedAppList,
+                suggestInIntegratedTerminals: settings.cotypingSuggestInIntegratedTerminals,
                 selfBundleID: selfBundleID, focus: focus),
                case .unsupported = focus.capability {
                 // Only reflect hard "not a text field" states passively; avoid
@@ -189,6 +194,7 @@ final class CotypingCoordinator: ObservableObject {
         guard CotypingAvailability.disabledReason(
             enabled: settings.cotypingEnabled,
             excludedApps: settings.cotypingExcludedAppList,
+            suggestInIntegratedTerminals: settings.cotypingSuggestInIntegratedTerminals,
             selfBundleID: selfBundleID,
             focus: focus) == nil,
               let request = buildRequest(for: field, settings: settings, generation: generation)
@@ -339,15 +345,13 @@ final class CotypingCoordinator: ObservableObject {
     private func generate(work: UInt64) async {
         guard work == generation, isRunning else { return }
         let settings = settingsProvider()
-        let focus = focusTracker.refreshNow(
-            includeSurface: settings.cotypingUseAppContext,
-            includeURL: !settings.cotypingExcludedDomainList.isEmpty,
-            includeStyle: settings.cotypingMatchHostStyle)
+        let focus = refreshFocusForPrediction(settings: settings)
 
         if let reason = CotypingAvailability.disabledReason(
             enabled: settings.cotypingEnabled,
             excludedApps: settings.cotypingExcludedAppList,
             excludedDomains: settings.cotypingExcludedDomainList,
+            suggestInIntegratedTerminals: settings.cotypingSuggestInIntegratedTerminals,
             selfBundleID: selfBundleID, focus: focus) {
             state = .disabled(reason)
             return
@@ -413,11 +417,17 @@ final class CotypingCoordinator: ObservableObject {
                 Task { @MainActor in self?.queueStreamPartial(partial, work: work, field: field) }
             }
             guard work == generation, isRunning else { return }
+            guard let liveField = validatedLiveFieldForGeneratedResult(
+                originalField: field,
+                settings: settings) else {
+                clearStaleGeneratedResult()
+                return
+            }
             let pendingAcceptedTail = lastAcceptedTail
             lastAcceptedTail = nil
             _ = applyGenerationResult(
                 result,
-                field: field,
+                field: liveField,
                 work: work,
                 latencyMilliseconds: Int(Date().timeIntervalSince(start) * 1000),
                 pendingAcceptedTail: pendingAcceptedTail)
@@ -440,7 +450,10 @@ final class CotypingCoordinator: ObservableObject {
         var cfg = config
         cfg.maxResponseTokens = settings.cotypingMaxResponseTokens
         cfg.maxResponseWords = settings.cotypingMaxWords
-        let clipboardSnippet = pinnedClipboardContext(for: field, enabled: settings.cotypingUseClipboard)
+        let clipboardSnippet = pinnedClipboardContext(
+            for: field,
+            config: cfg,
+            enabled: settings.cotypingUseClipboard)
         let learnedExamples = settings.cotypingUseLocalLearning
             ? learningStore.examples(
                 for: field,
@@ -453,13 +466,29 @@ final class CotypingCoordinator: ObservableObject {
             learnedExamples: learnedExamples)
     }
 
-    private func pinnedClipboardContext(for field: CotypingField, enabled: Bool) -> String? {
+    private func pinnedClipboardContext(
+        for field: CotypingField,
+        config: CotypingConfiguration,
+        enabled: Bool
+    ) -> String? {
         guard enabled else {
             clipboardPrefaceMemo = nil
+            clipboardRelevanceFilter.reset()
             return nil
         }
         let identityKey = Self.suggestionAnchorIdentity(for: field)
         let changeCount = clipboardProvider.changeCount
+        let prefix = CotypingPrefixWindow.truncatedPrefix(
+            from: field.precedingText,
+            maxCharacters: config.maxPrefixCharacters,
+            maxWords: config.maxPrefixWords)
+        guard let relevantClipboard = clipboardRelevanceFilter.filter(
+            rawClipboard: clipboardProvider.currentText,
+            pasteboardChangeCount: changeCount,
+            precedingText: prefix) else {
+            clipboardPrefaceMemo = nil
+            return nil
+        }
         if let pinned = clipboardPrefaceMemo?.valueIfReusable(
             identityKey: identityKey,
             changeCount: changeCount) {
@@ -467,8 +496,8 @@ final class CotypingCoordinator: ObservableObject {
         }
 
         let value = CotypingClipboardContext.resolve(
-            rawClipboard: clipboardProvider.currentText,
-            precedingText: field.precedingText)
+            rawClipboard: relevantClipboard,
+            precedingText: prefix)
         if let value {
             clipboardPrefaceMemo = CotypingClipboardPrefaceMemo(
                 identityKey: identityKey,
@@ -479,6 +508,48 @@ final class CotypingCoordinator: ObservableObject {
             clipboardPrefaceMemo = nil
         }
         return value
+    }
+
+    private func refreshFocusForPrediction(settings: AppSettings) -> CotypingFocus {
+        let includeSurface = settings.cotypingUseAppContext
+        let includeURL = !settings.cotypingExcludedDomainList.isEmpty
+        let includeStyle = settings.cotypingMatchHostStyle
+        guard !includeSurface, !includeURL, !includeStyle else {
+            return focusTracker.refreshNow(
+                includeSurface: includeSurface,
+                includeURL: includeURL,
+                includeStyle: includeStyle)
+        }
+        return focusTracker.refreshIfStale(
+            maxAgeMilliseconds: Self.freshSnapshotReuseWindowMilliseconds)
+    }
+
+    private func validatedLiveFieldForGeneratedResult(
+        originalField: CotypingField,
+        settings: AppSettings
+    ) -> CotypingField? {
+        let focus = refreshFocusForPrediction(settings: settings)
+        if let reason = CotypingAvailability.disabledReason(
+            enabled: settings.cotypingEnabled,
+            excludedApps: settings.cotypingExcludedAppList,
+            excludedDomains: settings.cotypingExcludedDomainList,
+            suggestInIntegratedTerminals: settings.cotypingSuggestInIntegratedTerminals,
+            selfBundleID: selfBundleID,
+            focus: focus) {
+            state = .disabled(reason)
+            return nil
+        }
+        guard Self.isCurrentGenerationTarget(originalField, liveField: focus.field) else {
+            return nil
+        }
+        return focus.field
+    }
+
+    private func clearStaleGeneratedResult() {
+        clearSuggestion()
+        if !isDisabledState {
+            state = .idle
+        }
     }
 
     private func applyGenerationResult(
@@ -706,11 +777,18 @@ final class CotypingCoordinator: ObservableObject {
     /// so the ghost only grows.
     private func renderStreamPartial(_ result: CotypingNormalizationResult, work: UInt64, field: CotypingField) {
         guard work == generation, isRunning, !result.text.isEmpty else { return }
+        let settings = settingsProvider()
+        guard let liveField = validatedLiveFieldForGeneratedResult(
+            originalField: field,
+            settings: settings) else {
+            clearStaleGeneratedResult()
+            return
+        }
         guard CotypingSeamGuard.allowsStreamedPartial(
-            precedingText: field.precedingText,
+            precedingText: liveField.precedingText,
             completion: result.text
         ) else { return }
-        let currentlyRendered = session?.field.contentSignature == field.contentSignature
+        let currentlyRendered = session?.field.contentSignature == liveField.contentSignature
             ? session?.fullText
             : nil
         guard CotypingStreamedGhostTextPolicy.isRenderableExtension(
@@ -718,8 +796,8 @@ final class CotypingCoordinator: ObservableObject {
             currentlyRendered: currentlyRendered) else {
             return
         }
-        session = CotypingSession(field: field, fullText: result.text, kind: .continuation)
-        overlay.show(text: result.text, caretRect: field.caretRect, style: field.fieldStyle, placement: placement(for: field))
+        session = CotypingSession(field: liveField, fullText: result.text, kind: .continuation)
+        overlay.show(text: result.text, caretRect: liveField.caretRect, style: liveField.fieldStyle, placement: placement(for: liveField))
         syncAcceptInterception()
         lastSuggestion = result.text
         state = .ready(text: result.text)
@@ -836,7 +914,9 @@ final class CotypingCoordinator: ObservableObject {
                 trailingText: liveField.trailingText)
             : 0
         let strategy = CotypingInsertionStrategySelector.select(
-            forChunk: chunk, pasteEnabled: settingsProvider().cotypingPasteInsertion)
+            forChunk: chunk,
+            pasteEnabled: settingsProvider().cotypingPasteInsertion,
+            isComposingIMEActive: inputSourceMonitor.isComposingIMEActive)
         let inserted: Bool
         if forwardDeleteCount > 0 {
             inserted = inserter.replaceForward(deletingCharacters: forwardDeleteCount, with: chunk)
@@ -1038,6 +1118,26 @@ final class CotypingCoordinator: ObservableObject {
             return false
         }
         return hasCappedPrefixWindowOverlap(previous: previous, live: live)
+    }
+
+    nonisolated static func isCurrentGenerationTarget(
+        _ originalField: CotypingField,
+        liveField: CotypingField?
+    ) -> Bool {
+        guard let liveField else { return false }
+        guard liveField.processID == originalField.processID,
+              liveField.bundleID == originalField.bundleID,
+              liveField.role == originalField.role,
+              liveField.contentSignature == originalField.contentSignature,
+              suggestionAnchorIdentity(for: liveField) == suggestionAnchorIdentity(for: originalField) else {
+            return false
+        }
+        if let originalIdentity = originalField.focusIdentityKey,
+           let liveIdentity = liveField.focusIdentityKey,
+           originalIdentity != liveIdentity {
+            return false
+        }
+        return true
     }
 
     nonisolated static func sessionAdvancedByPublishedTyping(

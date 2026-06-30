@@ -19,12 +19,22 @@ final class CotypingFocusTracker: ObservableObject {
     private var scheduledIntervalMs: Int?
     private var pollBackoff = CotypingFocusPollBackoff()
     private var capabilityFlickerGate = CotypingFocusCapabilityFlickerGate()
+    private var lastCaptureUptimeNanoseconds: UInt64?
 
     init(intervalMs: Int = 80) {
         self.baseIntervalMs = intervalMs
     }
 
     var isRunning: Bool { timer != nil }
+
+    /// Milliseconds since the last completed AX capture, or nil before the
+    /// first capture. Hot-path callers use this to avoid a redundant
+    /// synchronous Accessibility walk moments after the host-publish poll.
+    var millisecondsSinceLastCapture: Int? {
+        Self.millisecondsSinceCapture(
+            lastCaptureUptimeNanoseconds: lastCaptureUptimeNanoseconds,
+            nowUptimeNanoseconds: DispatchTime.now().uptimeNanoseconds)
+    }
 
     func start() {
         guard timer == nil else { return }
@@ -56,6 +66,7 @@ final class CotypingFocusTracker: ObservableObject {
         timer?.invalidate()
         timer = nil
         scheduledIntervalMs = nil
+        lastCaptureUptimeNanoseconds = nil
         pollBackoff.reset()
         capabilityFlickerGate = CotypingFocusCapabilityFlickerGate()
         if focus != .none {
@@ -81,9 +92,26 @@ final class CotypingFocusTracker: ObservableObject {
         return latest
     }
 
+    @discardableResult
+    func refreshIfStale(
+        maxAgeMilliseconds: Int,
+        includeSurface: Bool = false,
+        includeURL: Bool = false,
+        includeStyle: Bool = false
+    ) -> CotypingFocus {
+        guard Self.shouldRefreshCapture(
+            lastCaptureUptimeNanoseconds: lastCaptureUptimeNanoseconds,
+            nowUptimeNanoseconds: DispatchTime.now().uptimeNanoseconds,
+            maxAgeMilliseconds: maxAgeMilliseconds) else {
+            return focus
+        }
+        return refreshNow(includeSurface: includeSurface, includeURL: includeURL, includeStyle: includeStyle)
+    }
+
     private func captureFocus(includeSurface: Bool, includeURL: Bool, includeStyle: Bool) -> CotypingFocus {
         let latestRaw = CotypingAXHelper.resolveFocus(
             includeSurface: includeSurface, includeURL: includeURL, includeStyle: includeStyle)
+        lastCaptureUptimeNanoseconds = DispatchTime.now().uptimeNanoseconds
         let latest: CotypingFocus
         switch capabilityFlickerGate.evaluate(latestRaw) {
         case .apply:
@@ -96,5 +124,27 @@ final class CotypingFocusTracker: ObservableObject {
             onChange?(latest)
         }
         return latest
+    }
+
+    nonisolated static func millisecondsSinceCapture(
+        lastCaptureUptimeNanoseconds: UInt64?,
+        nowUptimeNanoseconds: UInt64
+    ) -> Int? {
+        guard let lastCaptureUptimeNanoseconds else { return nil }
+        guard nowUptimeNanoseconds >= lastCaptureUptimeNanoseconds else { return 0 }
+        return Int((nowUptimeNanoseconds - lastCaptureUptimeNanoseconds) / 1_000_000)
+    }
+
+    nonisolated static func shouldRefreshCapture(
+        lastCaptureUptimeNanoseconds: UInt64?,
+        nowUptimeNanoseconds: UInt64,
+        maxAgeMilliseconds: Int
+    ) -> Bool {
+        guard let age = millisecondsSinceCapture(
+            lastCaptureUptimeNanoseconds: lastCaptureUptimeNanoseconds,
+            nowUptimeNanoseconds: nowUptimeNanoseconds) else {
+            return true
+        }
+        return age > maxAgeMilliseconds
     }
 }

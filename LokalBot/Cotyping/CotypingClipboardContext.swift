@@ -3,9 +3,10 @@ import Foundation
 
 /// Sanitized clipboard context folded into the cotyping prompt so the model can
 /// "see" what was just copied — a trimmed port of Cotabby's clipboard context
-/// (`ClipboardContextProvider` + `SuggestionRequestFactory` clipping). The
-/// sanitization, bounding, and an "already-in-the-field" guard are pure here;
-/// reading the pasteboard is a thin runtime wrapper (`CotypingClipboardProvider`).
+/// (`ClipboardRelevanceFilter` + request-factory clipping). The sanitization,
+/// bounding, relevance checks, and an "already-in-the-field" guard are pure
+/// here; reading the pasteboard is a thin runtime wrapper
+/// (`CotypingClipboardProvider`).
 ///
 /// Privacy: off by default; snippets may be memoized in memory for one focused
 /// field/pasteboard state to keep the prompt prefix stable, but are never
@@ -39,6 +40,70 @@ enum CotypingClipboardContext {
         guard let snippet = sanitize(rawClipboard, maxCharacters: maxCharacters),
               shouldInclude(snippet: snippet, precedingText: precedingText) else { return nil }
         return snippet
+    }
+
+    static func significantTokens(from text: String, minimumLength: Int = 3) -> Set<String> {
+        Set(
+            text.lowercased()
+                .split { character in
+                    !character.isLetter && !character.isNumber
+                }
+                .map(String.init)
+                .filter { $0.count >= minimumLength }
+        )
+    }
+}
+
+/// CoTabby-style gate for clipboard context. The first pasteboard observation is
+/// treated as an unknown-age baseline, not a fresh copy. Only later copies made
+/// during this app session can enter the prompt, and then only while fresh and
+/// related to the typed prefix.
+final class CotypingClipboardRelevanceFilter {
+    static let staleThresholdSeconds: TimeInterval = 300
+
+    private var lastKnownChangeCount: Int?
+    private var lastChangeDate: Date?
+    private let dateProvider: () -> Date
+
+    init(dateProvider: @escaping () -> Date = { Date() }) {
+        self.dateProvider = dateProvider
+    }
+
+    func filter(
+        rawClipboard: String?,
+        pasteboardChangeCount: Int,
+        precedingText: String
+    ) -> String? {
+        guard let rawClipboard else { return nil }
+
+        guard let baselineChangeCount = lastKnownChangeCount else {
+            lastKnownChangeCount = pasteboardChangeCount
+            return nil
+        }
+
+        if pasteboardChangeCount != baselineChangeCount {
+            lastKnownChangeCount = pasteboardChangeCount
+            lastChangeDate = dateProvider()
+        }
+
+        guard let lastChangeDate,
+              dateProvider().timeIntervalSince(lastChangeDate) < Self.staleThresholdSeconds else {
+            return nil
+        }
+
+        let clipboardTokens = CotypingClipboardContext.significantTokens(from: rawClipboard)
+        let prefixTokens = CotypingClipboardContext.significantTokens(from: precedingText)
+        guard !clipboardTokens.isEmpty,
+              !clipboardTokens.isDisjoint(with: prefixTokens) else {
+            return nil
+        }
+
+        return rawClipboard
+    }
+
+    func reset() {
+        lastKnownChangeCount = nil
+        lastChangeDate = nil
     }
 }
 

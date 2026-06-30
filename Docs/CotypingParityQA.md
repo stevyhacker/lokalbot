@@ -15,6 +15,22 @@ Parity defaults:
 - Focus polling uses a Cotabby-style 80 ms active cadence, then stretches after
   sustained no-change captures so idle Accessibility reads back off without
   making post-keystroke suggestions feel delayed.
+- Generation start and result apply reuse a focus snapshot only when the last
+  Accessibility capture is at most 30 ms old; otherwise they re-read focus and
+  drop stale decode output before painting, matching Cotabby's protection
+  against focus switches during generation.
+- Clipboard context matches Cotabby's relevance gate: the first pasteboard read
+  is only a baseline, clipboard text must be freshly copied during the app
+  session, it expires after five minutes, and it must share significant tokens
+  with the current prompt prefix before it can condition a suggestion.
+- Terminal gating matches Cotabby's default: standalone terminal apps are never
+  assisted, and xterm.js integrated terminals are suppressed unless explicitly
+  enabled in Settings.
+- Accepted continuation text follows Cotabby's IME-safe path: while a composing
+  input source is active, the accept path uses paste instead of a synthetic
+  Unicode keystroke so marked-text input methods do not swallow the commit.
+  The paste path first presses the host app's real Paste menu item, then falls
+  back to a session-sourced Cmd-V event.
 
 ## Automated Check
 
@@ -57,6 +73,13 @@ Record:
 - Whether the suggestion is grammatically valid.
 - Whether it keeps the app/window topic.
 - Whether accepting by word or phrase leaves correct spacing.
+- Whether accepting under a composing IME commits the suggestion instead of
+  reopening or extending marked text.
+- Whether switching to another field while generation is running prevents the
+  old field's suggestion from appearing.
+- Whether terminal apps and integrated terminals stay quiet by default.
+- Whether old or unrelated clipboard contents do not steer suggestions when
+  clipboard context is enabled.
 - Whether it avoids code editors, terminals, secure fields, and excluded domains.
 
 For repeatable screenshot capture:

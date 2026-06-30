@@ -117,7 +117,7 @@ struct SettingsView: View {
                 }
             }
 
-            if shows("Cotyping", ["cotyping", "autocomplete", "inline", "ghost", "suggestion", "typing", "complete", "tab", "autocorrect", "emoji", "macro", "privacy", "exclude", "exclusion", "clipboard", "learn"]) {
+            if shows("Cotyping", ["cotyping", "autocomplete", "inline", "ghost", "suggestion", "typing", "complete", "tab", "autocorrect", "emoji", "macro", "privacy", "exclude", "exclusion", "clipboard", "learn", "terminal", "xterm", "cursor"]) {
                 Section("Cotyping") {
                     Toggle("Inline AI autocomplete (cotyping)", isOn: $app.settings.cotypingEnabled)
                     Text("Suggests text inline as you type in other apps. Choose its model under Models (it can differ from summarization). Needs Accessibility + Input Monitoring; open the Cotyping tab for setup and a live preview.")
@@ -236,11 +236,11 @@ struct SettingsView: View {
                             ForEach(CotypingFullAcceptKey.allCases) { Text($0.label).tag($0) }
                         }
                         Toggle("Paste large / multi-line accepts", isOn: $app.settings.cotypingPasteInsertion)
-                        Text("Commits big or multi-line suggestions via paste instead of synthetic keystrokes \u{2014} steadier in some apps. Briefly uses the clipboard, then restores it.")
+                        Text("Commits big, multi-line, or composing-IME suggestions via paste instead of synthetic keystrokes. Briefly uses the clipboard, then restores it.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                if app.settings.cotypingEnabled, shows("Cotyping", ["exclude", "exclusion", "never", "app", "website", "domain", "password", "privacy", "block"]) {
+                if app.settings.cotypingEnabled, shows("Cotyping", ["exclude", "exclusion", "never", "app", "website", "domain", "password", "privacy", "block", "terminal", "xterm", "cursor"]) {
                     Section("Privacy & exclusions") {
                         TextField("Never suggest in (app names, comma-separated)",
                                   text: $app.settings.cotypingExcludedApps)
@@ -249,6 +249,9 @@ struct SettingsView: View {
                         TextField("Never suggest on (websites, comma-separated)",
                                   text: $app.settings.cotypingExcludedDomains)
                         Text("Block cotyping on specific sites (e.g. \u{201c}bank.com\u{201d}). Subdomains included; read locally via Accessibility in browsers.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Toggle("Suggest in integrated terminals", isOn: $app.settings.cotypingSuggestInIntegratedTerminals)
+                        Text("Allows VS Code, Cursor, and browser xterm.js terminals. Standalone terminal apps stay off because shell completions conflict with ghost text.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }

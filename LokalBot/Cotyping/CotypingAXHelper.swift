@@ -129,13 +129,15 @@ enum CotypingAXHelper {
         let resolvedStyle = includeStyle && !usesMarkerSelection
             ? resolveFieldStyle(for: element, caretLocation: caret, textLength: nsValue.length)
             : nil
+        let isIntegratedTerminal = CotypingSurfaceClassifier.isIntegratedTerminal(
+            domClassList: stringArrayAttribute(element, "AXDOMClassList"))
 
         let field = CotypingField(
             appName: appName, bundleID: bundleID, processID: pid, role: role,
             focusIdentityKey: focusIdentityKey,
             precedingText: preceding, trailingText: trailing,
             selectionLength: selection.length, caretRect: caretRect,
-            isSecure: false, caretIsExact: exact,
+            isSecure: false, isIntegratedTerminal: isIntegratedTerminal, caretIsExact: exact,
             windowTitle: surfaceTitle, fieldPlaceholder: surfacePlaceholder, fieldStyle: resolvedStyle)
         return CotypingFocus(appName: appName, bundleID: bundleID, capability: .supported,
                              field: field, focusIdentityKey: focusIdentityKey, host: host)
@@ -513,6 +515,38 @@ enum CotypingAXHelper {
         return (name: app.localizedName ?? "", bundleID: app.bundleIdentifier, pid: pid)
     }
 
+    static func owningApplication(of element: AXUIElement) -> NSRunningApplication? {
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(element, &pid) == .success, pid > 0 else { return nil }
+        return NSRunningApplication(processIdentifier: pid)
+    }
+
+    /// Locates the host app's Paste command by its Cmd-V key equivalent rather
+    /// than localized title. The IME-safe paste path presses this menu item when
+    /// available so no keyboard event can be reinterpreted by the input method.
+    static func pasteMenuItem(forApplicationPID pid: pid_t) -> AXUIElement? {
+        guard pid > 0 else { return nil }
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, 0.05)
+        guard let menuBarValue = copyAttribute(appElement, kAXMenuBarAttribute as String),
+              CFGetTypeID(menuBarValue) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        let menuBar = menuBarValue as! AXUIElement
+        AXUIElementSetMessagingTimeout(menuBar, 0.05)
+
+        for topLevelItem in childElements(of: menuBar) {
+            AXUIElementSetMessagingTimeout(topLevelItem, 0.05)
+            for menu in childElements(of: topLevelItem) {
+                AXUIElementSetMessagingTimeout(menu, 0.05)
+                for item in childElements(of: menu) where isCommandVMenuItem(item) {
+                    return item
+                }
+            }
+        }
+        return nil
+    }
+
     // MARK: - Attribute readers
 
     private static func copyAttribute(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
@@ -565,8 +599,41 @@ enum CotypingAXHelper {
         copyAttribute(element, attribute) as? String
     }
 
+    private static func stringArrayAttribute(_ element: AXUIElement, _ attribute: String) -> [String] {
+        copyAttribute(element, attribute) as? [String] ?? []
+    }
+
     private static func boolAttribute(_ element: AXUIElement, _ attribute: String) -> Bool? {
         copyAttribute(element, attribute) as? Bool
+    }
+
+    private static func intAttribute(_ element: AXUIElement, _ attribute: String) -> Int? {
+        if let value = copyAttribute(element, attribute) as? Int {
+            return value
+        }
+        return (copyAttribute(element, attribute) as? NSNumber)?.intValue
+    }
+
+    private static func childElements(of element: AXUIElement) -> [AXUIElement] {
+        guard let values = copyAttribute(element, kAXChildrenAttribute as String) as? [AnyObject] else {
+            return []
+        }
+        return values.compactMap { value in
+            guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
+                return nil
+            }
+            return unsafeBitCast(value, to: AXUIElement.self)
+        }
+    }
+
+    private static func isCommandVMenuItem(_ item: AXUIElement) -> Bool {
+        AXUIElementSetMessagingTimeout(item, 0.05)
+        guard let cmdChar = stringAttribute(item, kAXMenuItemCmdCharAttribute as String),
+              cmdChar.uppercased() == "V",
+              let modifiers = intAttribute(item, kAXMenuItemCmdModifiersAttribute as String) else {
+            return false
+        }
+        return modifiers == 0
     }
 
     private static func isAttributeSettable(_ element: AXUIElement, _ attribute: String) -> Bool {
