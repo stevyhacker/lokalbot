@@ -331,11 +331,7 @@ final class CotypingCoordinator: ObservableObject {
             return true
         }
 
-        overlay.show(
-            text: advanced.remainingText,
-            caretRect: liveField.caretRect,
-            style: liveField.fieldStyle,
-            placement: placement(for: liveField))
+        showOverlay(text: advanced.remainingText, field: liveField)
         syncAcceptInterception()
         lastSuggestion = advanced.remainingText
         state = .ready(text: advanced.remainingText)
@@ -361,7 +357,7 @@ final class CotypingCoordinator: ObservableObject {
         // Emoji: an explicit `:shortcode` intent wins over autocorrect and the LLM.
         if settings.cotypingEmoji, let emoji = CotypingEmoji.match(trailing: field.precedingText) {
             session = CotypingSession(field: field, fullText: emoji.glyph, kind: .emoji(shortcode: emoji.shortcode))
-            overlay.show(text: "\(emoji.glyph) :\(emoji.shortcode):", caretRect: field.caretRect, style: field.fieldStyle, placement: placement(for: field))
+            showOverlay(text: "\(emoji.glyph) :\(emoji.shortcode):", field: field)
             syncAcceptInterception()
             lastSuggestion = emoji.glyph
             state = .ready(text: emoji.glyph)
@@ -371,7 +367,7 @@ final class CotypingCoordinator: ObservableObject {
         // Macros: an explicit `/expr` (math, date, unit, currency, random) wins too.
         if settings.cotypingMacros, let macro = CotypingMacro.match(trailing: field.precedingText) {
             session = CotypingSession(field: field, fullText: macro.result.insertion, kind: .macro)
-            overlay.show(text: macro.result.preview, caretRect: field.caretRect, style: field.fieldStyle, placement: placement(for: field))
+            showOverlay(text: macro.result.preview, field: field)
             syncAcceptInterception()
             lastSuggestion = macro.result.insertion
             state = .ready(text: macro.result.insertion)
@@ -382,7 +378,7 @@ final class CotypingCoordinator: ObservableObject {
         switch typoDecision(for: field.precedingText, enabled: settings.cotypingAutocorrect) {
         case .offerCorrection(let word, let corrected):
             session = CotypingSession(field: field, fullText: corrected, kind: .correction(typoWord: word))
-            overlay.show(text: corrected, caretRect: field.caretRect, style: field.fieldStyle, placement: placement(for: field))
+            showOverlay(text: corrected, field: field)
             syncAcceptInterception()
             lastSuggestion = corrected
             state = .ready(text: corrected)
@@ -588,7 +584,7 @@ final class CotypingCoordinator: ObservableObject {
             precedingText: field.precedingText,
             fullText: text)
         session = CotypingSession(field: field, fullText: text, kind: .continuation)
-        overlay.show(text: text, caretRect: field.caretRect, style: field.fieldStyle, placement: placement(for: field))
+        showOverlay(text: text, field: field)
         syncAcceptInterception()
         lastSuggestion = text
         state = .ready(text: text)
@@ -624,7 +620,7 @@ final class CotypingCoordinator: ObservableObject {
 
         lastAcceptedTail = nil
         session = CotypingSession(field: field, fullText: text, kind: .continuation)
-        overlay.show(text: text, caretRect: field.caretRect, style: field.fieldStyle, placement: placement(for: field))
+        showOverlay(text: text, field: field)
         syncAcceptInterception()
         lastSuggestion = text
         state = .ready(text: text)
@@ -797,7 +793,7 @@ final class CotypingCoordinator: ObservableObject {
             return
         }
         session = CotypingSession(field: liveField, fullText: result.text, kind: .continuation)
-        overlay.show(text: result.text, caretRect: liveField.caretRect, style: liveField.fieldStyle, placement: placement(for: liveField))
+        showOverlay(text: result.text, field: liveField)
         syncAcceptInterception()
         lastSuggestion = result.text
         state = .ready(text: result.text)
@@ -825,6 +821,22 @@ final class CotypingCoordinator: ObservableObject {
             caretIsExact: field.caretIsExact,
             isCaretAtEndOfLine: CotypingRenderModePolicy.isCaretAtEndOfLine(trailingText: field.trailingText),
             preference: settingsProvider().cotypingMirrorPreference)
+    }
+
+    private func showOverlay(
+        text: String,
+        field: CotypingField,
+        placement: CotypingOverlayPlacement? = nil
+    ) {
+        let settings = settingsProvider()
+        overlay.show(
+            text: text,
+            caretRect: field.caretRect,
+            style: field.fieldStyle,
+            placement: placement ?? self.placement(for: field),
+            acceptanceHintLabel: settings.cotypingShowAcceptKeyHint ? settings.cotypingAcceptKey.label : nil,
+            fadeIn: settings.cotypingFadeInSuggestions,
+            fadeDurationSeconds: settings.cotypingFadeInDurationSeconds)
     }
 
     // MARK: - Acceptance (called synchronously from the accept tap)
@@ -951,7 +963,7 @@ final class CotypingCoordinator: ObservableObject {
             // Re-anchor the ghost after the host commits the insert (AX lag).
             let remainingText = current.remainingText
             if !overlay.advanceInline(to: remainingText, insertedText: chunk) {
-                overlay.show(text: remainingText, caretRect: live.field?.caretRect ?? current.field.caretRect, style: (live.field ?? current.field).fieldStyle, placement: placement(for: live.field ?? current.field))
+                showOverlay(text: remainingText, field: live.field ?? current.field)
             }
             syncAcceptInterception()
             Task { [weak self] in
@@ -969,7 +981,7 @@ final class CotypingCoordinator: ObservableObject {
                         millisecondsSinceLastAcceptance: self.millisecondsSinceLastAcceptance()) {
                         return
                     }
-                    self.overlay.show(text: remainingText, caretRect: field.caretRect, style: field.fieldStyle, placement: placement)
+                    self.showOverlay(text: remainingText, field: field, placement: placement)
                     self.syncAcceptInterception()
                 }
             }
@@ -1074,33 +1086,106 @@ final class CotypingCoordinator: ObservableObject {
 
     // MARK: - Helpers
 
-    /// First word of `text`, including leading whitespace and one trailing space,
-    /// so consecutive accepts advance cleanly word by word.
-    static func nextWord(in text: String) -> String {
+    /// First word-like acceptance chunk of `text`, preserving leading
+    /// whitespace. Space-less scripts use ICU word segmentation so one accept
+    /// advances by a word-sized unit instead of swallowing a whole CJK/Thai run.
+    nonisolated static func nextWord(in text: String) -> String {
+        guard !text.isEmpty else { return "" }
         var index = text.startIndex
         while index < text.endIndex, text[index].isWhitespace { index = text.index(after: index) }
+        let tokenStart = index
         while index < text.endIndex, !text[index].isWhitespace { index = text.index(after: index) }
+
+        if tokenStart < index,
+           text[tokenStart].cotypingBeginsSpacelessScriptWord,
+           let wordEnd = firstSegmentedWordEnd(in: text, from: tokenStart, notPast: index) {
+            index = endOfCJKPunctuationRun(in: text, from: wordEnd, notPast: index)
+        } else if tokenStart < index,
+                  text[tokenStart].cotypingBindsToPrecedingSpacelessWord
+                  || text[tokenStart].cotypingIsCJKOpeningBracket {
+            index = endOfCJKPunctuationRun(
+                in: text, from: tokenStart, notPast: index, includingOpeners: true)
+        }
+
         if index < text.endIndex, text[index] == " " { index = text.index(after: index) }
         return String(text[text.startIndex..<index])
     }
 
     /// Text up to and including the next sentence/clause boundary (or the whole
-    /// remaining text when there is none), plus one trailing space. Mirrors
-    /// Cotabby's phrase acceptance granularity (CJK punctuation included).
+    /// remaining text when there is none). Mirrors Cotabby's phrase acceptance
+    /// granularity: ASCII sentence terminators, newlines, and CJK clause marks;
+    /// ASCII commas stay inside the phrase.
     nonisolated static func nextPhrase(in text: String) -> String {
-        let boundaries: Set<Character> = [
-            ".", "!", "?", ",", ";", ":",
-            "\u{3002}", "\u{ff01}", "\u{ff1f}", "\u{3001}", "\u{ff1b}", "\u{ff1a}",
-        ]
-        var index = text.startIndex
-        while index < text.endIndex, text[index].isWhitespace { index = text.index(after: index) }
-        while index < text.endIndex {
-            let character = text[index]
-            index = text.index(after: index)
-            if boundaries.contains(character) { break }
+        guard !text.isEmpty else { return "" }
+        var accumulated = ""
+        var working = text
+
+        while !working.isEmpty {
+            let chunk = nextWord(in: working)
+            guard !chunk.isEmpty else { break }
+            if let newlineIndex = chunk.firstIndex(of: "\n") {
+                accumulated += chunk[...newlineIndex]
+                return accumulated
+            }
+            accumulated += chunk
+            working = String(working.dropFirst(chunk.count))
+            if endsAtPhraseBoundary(accumulated) {
+                return accumulated
+            }
         }
-        if index < text.endIndex, text[index] == " " { index = text.index(after: index) }
-        return String(text[text.startIndex..<index])
+
+        return accumulated
+    }
+
+    private nonisolated static func firstSegmentedWordEnd(
+        in text: String,
+        from start: String.Index,
+        notPast limit: String.Index
+    ) -> String.Index? {
+        var wordEnd: String.Index?
+        text.enumerateSubstrings(
+            in: start..<limit,
+            options: [.byWords, .substringNotRequired]
+        ) { _, range, _, stop in
+            wordEnd = range.upperBound
+            stop = true
+        }
+        guard let wordEnd, wordEnd > start else { return nil }
+        return min(wordEnd, limit)
+    }
+
+    private nonisolated static func endOfCJKPunctuationRun(
+        in text: String,
+        from start: String.Index,
+        notPast limit: String.Index,
+        includingOpeners: Bool = false
+    ) -> String.Index {
+        var cursor = start
+        while cursor < limit {
+            let character = text[cursor]
+            guard character.cotypingBindsToPrecedingSpacelessWord
+                    || (includingOpeners && character.cotypingIsCJKOpeningBracket) else {
+                break
+            }
+            cursor = text.index(after: cursor)
+        }
+        return cursor
+    }
+
+    private nonisolated static func endsAtPhraseBoundary(_ text: String) -> Bool {
+        var index = text.endIndex
+        while index > text.startIndex {
+            let previous = text.index(before: index)
+            if text[previous] == " " || text[previous] == "\t" || text[previous].cotypingIsPhraseClosingPunctuation {
+                index = previous
+            } else {
+                break
+            }
+        }
+        guard index > text.startIndex else { return false }
+        let previous = text.index(before: index)
+        return text[previous].cotypingIsPhraseClauseBoundary
+            || text[previous].cotypingIsPhraseSentenceTerminator
     }
 
     /// True when `liveField` is plausibly the same editable field `session` was
@@ -1229,5 +1314,62 @@ final class CotypingCoordinator: ObservableObject {
 
     private func shortError(_ error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+}
+
+private extension Character {
+    var cotypingBeginsSpacelessScriptWord: Bool {
+        guard let scalar = unicodeScalars.first else { return false }
+        switch scalar.value {
+        case 0x3040...0x30FF,   // Hiragana + Katakana
+             0x3400...0x4DBF,   // CJK Unified Ideographs Extension A
+             0x4E00...0x9FFF,   // CJK Unified Ideographs
+             0xF900...0xFAFF,   // CJK Compatibility Ideographs
+             0xAC00...0xD7A3,   // Hangul syllables
+             0x1100...0x11FF,   // Hangul Jamo
+             0x0E00...0x0E7F,   // Thai
+             0x0E80...0x0EFF,   // Lao
+             0x1780...0x17FF,   // Khmer
+             0x1000...0x109F,   // Myanmar
+             0x20000...0x2A6DF, // CJK Unified Ideographs Extension B
+             0x30000...0x3134F: // CJK Unified Ideographs Extension G
+            return true
+        default:
+            return false
+        }
+    }
+
+    var cotypingBindsToPrecedingSpacelessWord: Bool {
+        cotypingIsCJKSentenceTerminator
+            || cotypingIsPhraseClauseBoundary
+            || cotypingIsCJKClosingPunctuation
+    }
+
+    var cotypingIsCJKSentenceTerminator: Bool {
+        self == "\u{3002}" || self == "\u{FF01}" || self == "\u{FF1F}" || self == "\u{FF61}"
+    }
+
+    var cotypingIsCJKClosingPunctuation: Bool {
+        self == "\u{300D}" || self == "\u{300F}" || self == "\u{FF09}"
+            || self == "\u{3011}" || self == "\u{3009}" || self == "\u{300B}" || self == "\u{FF63}"
+    }
+
+    var cotypingIsCJKOpeningBracket: Bool {
+        self == "\u{300C}" || self == "\u{300E}" || self == "\u{FF08}"
+            || self == "\u{3010}" || self == "\u{3008}" || self == "\u{300A}" || self == "\u{FF62}"
+    }
+
+    var cotypingIsPhraseSentenceTerminator: Bool {
+        self == "." || self == "!" || self == "?" || cotypingIsCJKSentenceTerminator
+    }
+
+    var cotypingIsPhraseClauseBoundary: Bool {
+        self == "\u{3001}" || self == "\u{FF0C}" || self == "\u{FF64}"
+    }
+
+    var cotypingIsPhraseClosingPunctuation: Bool {
+        self == "\"" || self == "'" || self == "\u{201D}" || self == "\u{2019}"
+            || self == ")" || self == "]" || self == "}"
+            || cotypingIsCJKClosingPunctuation
     }
 }

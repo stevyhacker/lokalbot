@@ -10,6 +10,16 @@ Parity defaults:
 - Suggestion length defaults to 20 words, matching Cotypist/Cotabby's 12-20 word preset upper bound.
 - Debounce defaults to 20 ms.
 - Streaming partial suggestions default off, matching Cotypist/Cotabby.
+- New suggestions fade in over 0.15 s by default, matching Cotabby's shipped
+  presentation. The fade only runs on a true first appearance, never on streamed
+  updates or accepted-word reanchors, and the system Reduce Motion setting
+  suppresses it.
+- Ghost text shows the configured accept key as a small keycap badge by default,
+  matching Cotabby's acceptance cue. Turning off "Show accept-key badge" restores
+  bare ghost text.
+- Popup/mirror suggestions highlight the next word-sized accept chunk at stronger
+  weight/contrast, matching Cotabby's preview card cue for what the next accept
+  keypress will insert.
 - Completion token budget follows Cotypist/Cotabby's English baseline: `ceil(words * 1.3)`, floor 5, doubled for multi-line up to 120.
 - The dedicated cotyping `llama-server` launches with a 2048-token context window, matching Cotypist/Cotabby's local llama runtime configuration.
 - Focus polling uses a Cotabby-style 80 ms active cadence, then stretches after
@@ -22,7 +32,10 @@ Parity defaults:
 - Clipboard context matches Cotabby's relevance gate: the first pasteboard read
   is only a baseline, clipboard text must be freshly copied during the app
   session, it expires after five minutes, and it must share significant tokens
-  with the current prompt prefix before it can condition a suggestion.
+  with the current prompt prefix before it can condition a suggestion. Clipboard
+  text is also sanitized before prompting: ANSI escapes, shell/Markdown-style
+  separators, control characters, and punctuation-heavy noise are stripped, and
+  long multi-line clips keep only lines overlapping the current prefix.
 - Terminal gating matches Cotabby's default: standalone terminal apps are never
   assisted, and xterm.js integrated terminals are suppressed unless explicitly
   enabled in Settings.
@@ -31,6 +44,11 @@ Parity defaults:
   Unicode keystroke so marked-text input methods do not swallow the commit.
   The paste path first presses the host app's real Paste menu item, then falls
   back to a session-sourced Cmd-V event.
+- Word-by-word acceptance follows Cotabby's space-less-script cadence: CJK,
+  Japanese, Korean, Thai, and related runs are split with word segmentation
+  instead of being accepted as one long whitespace-delimited token. Phrase
+  acceptance stops at sentence/newline boundaries and CJK clause punctuation;
+  ASCII commas stay inside the phrase.
 
 ## Automated Check
 
@@ -73,6 +91,9 @@ Record:
 - Whether the suggestion is grammatically valid.
 - Whether it keeps the app/window topic.
 - Whether accepting by word or phrase leaves correct spacing.
+- Whether word-by-word acceptance in space-less scripts advances by a single
+  word-sized segment, and phrase acceptance stops on CJK commas without stopping
+  at ordinary English commas.
 - Whether accepting under a composing IME commits the suggestion instead of
   reopening or extending marked text.
 - Whether switching to another field while generation is running prevents the
@@ -80,6 +101,16 @@ Record:
 - Whether terminal apps and integrated terminals stay quiet by default.
 - Whether old or unrelated clipboard contents do not steer suggestions when
   clipboard context is enabled.
+- Whether copied terminal/Markdown output is cleaned into prose-like context
+  instead of leaking symbols such as `$`, backticks, fences, or ANSI escapes
+  into suggestions.
+- Whether the first visible suggestion fades in once, while streamed updates,
+  word-by-word acceptance, and post-accept reanchors do not flicker or restart
+  the fade.
+- Whether the keycap badge shows the configured accept key, remains legible next
+  to inline and popup suggestions, and disappears when disabled in Settings.
+- Whether popup/mirror suggestions visually emphasize the next accept chunk
+  rather than rendering the whole preview at the same strength.
 - Whether it avoids code editors, terminals, secure fields, and excluded domains.
 
 For repeatable screenshot capture:

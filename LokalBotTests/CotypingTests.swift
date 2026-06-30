@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import LokalBot
 
@@ -1033,6 +1034,9 @@ final class CotypingSettingsTests: XCTestCase {
         settings.cotypingMultiLine = true
         settings.cotypingDebounceMs = 500
         settings.cotypingStreamSuggestionsWhileGenerating = true
+        settings.cotypingFadeInSuggestions = false
+        settings.cotypingFadeInDurationSeconds = 0.25
+        settings.cotypingShowAcceptKeyHint = false
         settings.cotypingAcceptGranularity = .phrase
         settings.cotypingFullAcceptKey = .rightArrow
         settings.cotypingExcludedApps = "Terminal, 1Password"
@@ -1050,6 +1054,9 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertTrue(decoded.cotypingMultiLine)
         XCTAssertEqual(decoded.cotypingDebounceMs, 500)
         XCTAssertTrue(decoded.cotypingStreamSuggestionsWhileGenerating)
+        XCTAssertFalse(decoded.cotypingFadeInSuggestions)
+        XCTAssertEqual(decoded.cotypingFadeInDurationSeconds, 0.25, accuracy: 0.0001)
+        XCTAssertFalse(decoded.cotypingShowAcceptKeyHint)
         XCTAssertEqual(decoded.cotypingAcceptGranularity, .phrase)
         XCTAssertEqual(decoded.cotypingFullAcceptKey, .rightArrow)
         XCTAssertEqual(decoded.cotypingExcludedAppList, ["Terminal", "1Password"])
@@ -1068,6 +1075,12 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertEqual(
             settings.cotypingStreamSuggestionsWhileGenerating,
             AppSettings().cotypingStreamSuggestionsWhileGenerating)
+        XCTAssertTrue(settings.cotypingFadeInSuggestions)
+        XCTAssertEqual(
+            settings.cotypingFadeInDurationSeconds,
+            AppSettings.defaultCotypingFadeInDurationSeconds,
+            accuracy: 0.0001)
+        XCTAssertTrue(settings.cotypingShowAcceptKeyHint)
         XCTAssertTrue(settings.cotypingUseLocalLearning)
         XCTAssertEqual(settings.cotypingBuiltInModelID, ModelCatalog.recommendedCotypingID)
         XCTAssertTrue(settings.menuBarOnly)
@@ -1097,7 +1110,24 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertEqual(settings.cotypingMaxWords, 20)
         XCTAssertEqual(settings.cotypingDebounceMs, 20)
         XCTAssertFalse(settings.cotypingStreamSuggestionsWhileGenerating)
+        XCTAssertTrue(settings.cotypingFadeInSuggestions)
+        XCTAssertEqual(settings.cotypingFadeInDurationSeconds, 0.15, accuracy: 0.0001)
+        XCTAssertTrue(settings.cotypingShowAcceptKeyHint)
         XCTAssertEqual(settings.cotypingMaxResponseTokens, 26)
+    }
+
+    func testFadeDurationClampsToCotypistBand() throws {
+        let tooLow = #"{"cotypingFadeInDurationSeconds":0.001}"#.data(using: .utf8)!
+        XCTAssertEqual(
+            try JSONDecoder().decode(AppSettings.self, from: tooLow).cotypingFadeInDurationSeconds,
+            AppSettings.minimumCotypingFadeInDurationSeconds,
+            accuracy: 0.0001)
+
+        let tooHigh = #"{"cotypingFadeInDurationSeconds":2.0}"#.data(using: .utf8)!
+        XCTAssertEqual(
+            try JSONDecoder().decode(AppSettings.self, from: tooHigh).cotypingFadeInDurationSeconds,
+            AppSettings.maximumCotypingFadeInDurationSeconds,
+            accuracy: 0.0001)
     }
 
     func testMaxResponseTokensMirrorCotypistBudget() {
@@ -1552,9 +1582,62 @@ final class CotypingStreamingTests: XCTestCase {
 
 // MARK: - Phrase acceptance, accept options, context prompt
 
+final class CotypingWordAcceptanceTests: XCTestCase {
+    func testLatinAcceptanceUnchangedBySpacelessBranch() {
+        XCTAssertEqual(CotypingCoordinator.nextWord(in: "hello world"), "hello ")
+        XCTAssertEqual(CotypingCoordinator.nextWord(in: "don't stop now"), "don't ")
+        XCTAssertEqual(CotypingCoordinator.nextWord(in: "U.S.A today"), "U.S.A ")
+        XCTAssertEqual(CotypingCoordinator.nextWord(in: "1.5 times"), "1.5 ")
+        XCTAssertEqual(CotypingCoordinator.nextWord(in: "caf\u{00e9} Ren\u{00e9}"), "caf\u{00e9} ")
+        XCTAssertEqual(CotypingCoordinator.nextWord(in: "world \u{4f60}\u{597d}"), "world ")
+    }
+
+    func testChineseRunSegmentsInsteadOfAcceptingWholeTail() {
+        let run = "\u{4f60}\u{597d}\u{4e16}\u{754c}"
+        let chunk = CotypingCoordinator.nextWord(in: run)
+        XCTAssertFalse(chunk.isEmpty)
+        XCTAssertTrue(run.hasPrefix(chunk))
+        XCTAssertLessThan(chunk.count, run.count)
+    }
+
+    func testJapaneseRunSegmentsInsteadOfAcceptingWholeTail() {
+        let run = "\u{4eca}\u{65e5}\u{306f}\u{3044}\u{3044}\u{5929}\u{6c17}\u{3067}\u{3059}"
+        let chunk = CotypingCoordinator.nextWord(in: run)
+        XCTAssertFalse(chunk.isEmpty)
+        XCTAssertTrue(run.hasPrefix(chunk))
+        XCTAssertLessThan(chunk.count, run.count)
+    }
+
+    func testThaiRunSegmentsInsteadOfAcceptingWholeTail() {
+        let run = "\u{0e2a}\u{0e27}\u{0e31}\u{0e2a}\u{0e14}\u{0e35}\u{0e04}\u{0e23}\u{0e31}\u{0e1a}"
+        let chunk = CotypingCoordinator.nextWord(in: run)
+        XCTAssertFalse(chunk.isEmpty)
+        XCTAssertTrue(run.hasPrefix(chunk))
+        XCTAssertLessThan(chunk.count, run.count)
+    }
+
+    func testBindsTrailingCJKPunctuationToWord() {
+        XCTAssertEqual(
+            CotypingCoordinator.nextWord(in: "\u{8cc7}\u{6599}\u{3001}\u{5185}\u{5bb9}"),
+            "\u{8cc7}\u{6599}\u{3001}")
+    }
+
+    func testPeelsLeadingCJKPunctuationRun() {
+        XCTAssertEqual(
+            CotypingCoordinator.nextWord(in: "\u{3001}\u{7406}\u{89e3}\u{3057}\u{3001}\u{305d}\u{306e}\u{5185}\u{5bb9}"),
+            "\u{3001}")
+        XCTAssertEqual(
+            CotypingCoordinator.nextWord(in: "\u{3002}\u{300d}\u{6b21}\u{306e}\u{6587}"),
+            "\u{3002}\u{300d}")
+        XCTAssertEqual(
+            CotypingCoordinator.nextWord(in: "\u{300c}\u{5206}\u{304b}\u{3063}\u{305f}\u{300d}\u{3068}\u{8a00}\u{3063}\u{305f}"),
+            "\u{300c}")
+    }
+}
+
 final class CotypingPhraseTests: XCTestCase {
-    func testStopsAtClauseBoundary() {
-        XCTAssertEqual(CotypingCoordinator.nextPhrase(in: "Hi Sarah, thanks"), "Hi Sarah, ")
+    func testDoesNotStopAtAsciiComma() {
+        XCTAssertEqual(CotypingCoordinator.nextPhrase(in: "Hi Sarah, thanks."), "Hi Sarah, thanks.")
     }
     func testWholeTextWhenNoBoundary() {
         XCTAssertEqual(CotypingCoordinator.nextPhrase(in: "the quick brown"), "the quick brown")
@@ -1562,7 +1645,13 @@ final class CotypingPhraseTests: XCTestCase {
     func testStopsAtSentenceEnd() {
         XCTAssertEqual(CotypingCoordinator.nextPhrase(in: "done. next thing"), "done. ")
     }
+    func testStopsAtNewline() {
+        XCTAssertEqual(CotypingCoordinator.nextPhrase(in: "done\nnext thing"), "done\n")
+    }
     func testCJKClauseBoundary() {
+        XCTAssertEqual(
+            CotypingCoordinator.nextPhrase(in: "\u{8cc7}\u{6599}\u{3092}\u{8aad}\u{307f}\u{3001}\u{6b21}\u{3078}"),
+            "\u{8cc7}\u{6599}\u{3092}\u{8aad}\u{307f}\u{3001}")
         XCTAssertEqual(
             CotypingCoordinator.nextPhrase(in: "\u{4f60}\u{597d}\u{3002}\u{518d}\u{89c1}"),
             "\u{4f60}\u{597d}\u{3002}")
@@ -2238,14 +2327,21 @@ final class CotypingStatsStoreTests: XCTestCase {
 final class CotypingClipboardContextTests: XCTestCase {
     func testSanitizeCollapsesAndTrims() {
         XCTAssertEqual(CotypingClipboardContext.sanitize("  hello   world  "), "hello world")
-        XCTAssertEqual(CotypingClipboardContext.sanitize("a\n\nb\tc"), "a b c")
+        XCTAssertEqual(CotypingClipboardContext.sanitize("a\n\nb\tc"), "a\nb c")
         XCTAssertEqual(CotypingClipboardContext.sanitize("hello"), "hello")
+    }
+
+    func testSanitizeStripsAnsiEscapesAndPromptShapedPunctuation() {
+        let input = "\u{001B}[31mraw-output\u{001B}[0m ```$ deploy --prod```"
+
+        XCTAssertEqual(CotypingClipboardContext.sanitize(input), "raw output deploy prod")
     }
 
     func testSanitizeDropsEmpty() {
         XCTAssertNil(CotypingClipboardContext.sanitize(nil))
         XCTAssertNil(CotypingClipboardContext.sanitize(""))
         XCTAssertNil(CotypingClipboardContext.sanitize("   \n\t  "))
+        XCTAssertNil(CotypingClipboardContext.sanitize("*** --- ```"))
     }
 
     func testSanitizeCapsLength() {
@@ -2260,12 +2356,30 @@ final class CotypingClipboardContextTests: XCTestCase {
         XCTAssertTrue(CotypingClipboardContext.shouldInclude(snippet: "abc", precedingText: ""))
         XCTAssertFalse(CotypingClipboardContext.shouldInclude(snippet: nil, precedingText: "hi"))
         XCTAssertFalse(CotypingClipboardContext.shouldInclude(snippet: "", precedingText: "hi"))
+        XCTAssertFalse(CotypingClipboardContext.shouldInclude(
+            snippet: "raw output",
+            precedingText: "The raw-output log is attached"))
     }
 
     func testResolveCombinesSanitizeAndGuard() {
         XCTAssertEqual(CotypingClipboardContext.resolve(rawClipboard: "plans", precedingText: "meeting about"), "plans")
         XCTAssertNil(CotypingClipboardContext.resolve(rawClipboard: "plans", precedingText: "the plans are set"))  // already there
         XCTAssertNil(CotypingClipboardContext.resolve(rawClipboard: "   ", precedingText: "x"))                    // empty after sanitize
+    }
+
+    func testResolveDistillsLongClipboardToLinesOverlappingThePrefix() {
+        let raw = """
+        invoice totals and renewal schedule
+        unrelated terminal output
+        api rollout notes
+        renewal customer summary
+        """
+
+        let result = CotypingClipboardContext.resolve(
+            rawClipboard: raw,
+            precedingText: "I will send the renewal update")
+
+        XCTAssertEqual(result, "invoice totals and renewal schedule\nrenewal customer summary")
     }
 
     func testPromptIncludesClipboardLine() {
@@ -2460,8 +2574,92 @@ final class CotypingCompositionInputModeClassifierTests: XCTestCase {
 
 // MARK: - Overlay geometry
 
+final class CotypingSuggestionFadeInPolicyTests: XCTestCase {
+    func testFadesOnlyOnFreshAppearanceWhenEnabledAndMotionAllowed() {
+        XCTAssertTrue(CotypingSuggestionFadeInPolicy.shouldFadeIn(
+            isEnabled: true,
+            overlayWasVisible: false,
+            reduceMotionEnabled: false))
+        XCTAssertFalse(CotypingSuggestionFadeInPolicy.shouldFadeIn(
+            isEnabled: true,
+            overlayWasVisible: true,
+            reduceMotionEnabled: false))
+    }
+
+    func testDisabledAndReduceMotionBothSuppressFade() {
+        XCTAssertFalse(CotypingSuggestionFadeInPolicy.shouldFadeIn(
+            isEnabled: false,
+            overlayWasVisible: false,
+            reduceMotionEnabled: false))
+        XCTAssertFalse(CotypingSuggestionFadeInPolicy.shouldFadeIn(
+            isEnabled: true,
+            overlayWasVisible: false,
+            reduceMotionEnabled: true))
+    }
+
+    func testFadeDurationClampUsesCotypistBand() {
+        XCTAssertEqual(
+            CotypingSuggestionFadeInPolicy.clampedDurationSeconds(0.001),
+            CotypingSuggestionFadeInPolicy.minimumDurationSeconds,
+            accuracy: 0.0001)
+        XCTAssertEqual(
+            CotypingSuggestionFadeInPolicy.clampedDurationSeconds(2),
+            CotypingSuggestionFadeInPolicy.maximumDurationSeconds,
+            accuracy: 0.0001)
+        XCTAssertEqual(
+            CotypingSuggestionFadeInPolicy.clampedDurationSeconds(.infinity),
+            CotypingSuggestionFadeInPolicy.defaultDurationSeconds,
+            accuracy: 0.0001)
+    }
+}
+
+final class CotypingGhostHighlightTests: XCTestCase {
+    func testHighlightsNextAcceptedLatinChunk() {
+        XCTAssertEqual(CotypingGhostHighlight.acceptancePrefix(in: "hello world"), "hello ")
+        XCTAssertEqual(CotypingGhostHighlight.acceptancePrefix(in: "done\nnext"), "done")
+    }
+
+    func testHighlightsNextAcceptedSpacelessScriptChunk() {
+        let run = "\u{4f60}\u{597d}\u{4e16}\u{754c}"
+        let prefix = CotypingGhostHighlight.acceptancePrefix(in: run)
+        XCTAssertFalse(prefix.isEmpty)
+        XCTAssertTrue(run.hasPrefix(prefix))
+        XCTAssertLessThan(prefix.count, run.count)
+    }
+
+    func testHighlightsBoundCJKPunctuationChunk() {
+        XCTAssertEqual(
+            CotypingGhostHighlight.acceptancePrefix(in: "\u{8cc7}\u{6599}\u{3001}\u{5185}\u{5bb9}"),
+            "\u{8cc7}\u{6599}\u{3001}")
+    }
+}
+
 final class CotypingOverlayGeometryTests: XCTestCase {
     private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+
+    func testAcceptanceHintAddsKeycapWidthToOverlayBudget() {
+        let textSize = CGSize(width: 72, height: 16)
+        let hinted = CotypingAcceptanceHintLayout.reservedSize(for: textSize, label: "Tab")
+
+        XCTAssertGreaterThan(hinted.width, textSize.width + CotypingAcceptanceHintLayout.spacing)
+        XCTAssertGreaterThanOrEqual(hinted.height, textSize.height)
+        XCTAssertEqual(CotypingAcceptanceHintLayout.reservedSize(for: textSize, label: nil), textSize)
+    }
+
+    func testInlineFrameUsesAcceptanceHintBudget() {
+        let baseTextSize = CGSize(width: 60, height: 16)
+        let hintedTextSize = CotypingAcceptanceHintLayout.reservedSize(
+            for: baseTextSize,
+            label: "Right Arrow")
+        let frame = CotypingOverlayGeometry.inlineFrame(
+            caret: CGRect(x: 100, y: 500, width: 0, height: 16),
+            textSize: hintedTextSize,
+            lineHeight: 16,
+            visible: screen)
+
+        XCTAssertEqual(frame.width, hintedTextSize.width, accuracy: 0.5)
+        XCTAssertGreaterThan(frame.width, baseTextSize.width)
+    }
 
     /// The core consistency property: two AX providers reporting the same line
     /// center with different caret heights (AppKit line box vs WebKit marker
@@ -2570,6 +2768,45 @@ final class CotypingOverlayGeometryTests: XCTestCase {
             caret: CGRect(x: 100, y: 5, width: 0, height: 16),
             content: CGSize(width: 120, height: 24), visible: screen)
         XCTAssertGreaterThanOrEqual(nearBottom.minY, screen.minY)
+    }
+
+    func testMirrorLayoutWrapsLongSuggestionWithinBudget() {
+        let font = NSFont.systemFont(ofSize: 13)
+        let maxWidth: CGFloat = 140
+        let lines = CotypingGhostTextLayout.wrappedLines(
+            text: "Please confirm the renewal schedule before sending the customer update",
+            font: font,
+            maxWidth: maxWidth,
+            maxLines: 4)
+
+        XCTAssertGreaterThan(lines.count, 1)
+        for line in lines {
+            let width = (line as NSString).size(withAttributes: [.font: font]).width
+            XCTAssertLessThanOrEqual(width, maxWidth + 0.5)
+        }
+    }
+
+    func testMirrorLayoutPreservesExplicitLineBoundaries() {
+        let font = NSFont.systemFont(ofSize: 13)
+        let lines = CotypingGhostTextLayout.wrappedLines(
+            text: "first line\nsecond line",
+            font: font,
+            maxWidth: 400,
+            maxLines: 4)
+
+        XCTAssertEqual(lines, ["first line", "second line"])
+    }
+
+    func testMirrorLayoutEllipsizesWhenRowsAreExhausted() {
+        let font = NSFont.systemFont(ofSize: 13)
+        let lines = CotypingGhostTextLayout.wrappedLines(
+            text: "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda",
+            font: font,
+            maxWidth: 90,
+            maxLines: 2)
+
+        XCTAssertEqual(lines.count, 2)
+        XCTAssertTrue(lines[1].hasSuffix("..."))
     }
 
     func testAXRectConversionUsesContainingScreenFrame() {

@@ -154,26 +154,14 @@ run_prompt() {
   local wait_seconds="${3:-3}"
 
   if [[ "$input_mode" == "direct" ]]; then
-    osascript - "$prompt" "$key_delay_seconds" <<'OSA'
-on run argv
-  set promptText to item 1 of argv
-  set keyDelay to item 2 of argv as real
-  tell application "TextEdit"
-    activate
-    if not (exists document 1) then make new document
-    set text of front document to ""
-  end tell
-  delay 0.3
-  set builtText to ""
-  repeat with characterIndex from 1 to count characters of promptText
-    set builtText to builtText & character characterIndex of promptText
-    tell application "TextEdit"
-      set text of front document to builtText
-    end tell
-    if keyDelay > 0 then delay keyDelay
-  end repeat
-end run
-OSA
+    osascript \
+      -e 'on run argv' \
+      -e 'set promptText to item 1 of argv' \
+      -e 'tell application "TextEdit" to activate' \
+      -e 'tell application "TextEdit" to make new document' \
+      -e 'tell application "TextEdit" to set text of front document to promptText' \
+      -e 'end run' \
+      "$prompt"
   else
     osascript - "$prompt" "$key_delay_seconds" <<'OSA'
 on run argv
@@ -181,8 +169,7 @@ on run argv
   set keyDelay to item 2 of argv as real
   tell application "TextEdit"
     activate
-    if not (exists document 1) then make new document
-    set text of front document to ""
+    make new document
   end tell
   delay 0.3
   tell application "System Events"

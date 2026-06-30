@@ -120,6 +120,14 @@ struct AppSettings: Codable {
     /// Off by default to match Cotypist/Cotabby's shipped behavior: suggestions
     /// appear once, fully formed, after normalization.
     var cotypingStreamSuggestionsWhileGenerating: Bool = false
+    /// Smoothly fade in newly visible suggestions. Updates to an already visible
+    /// ghost never restart the fade; Reduce Motion suppresses it automatically.
+    var cotypingFadeInSuggestions: Bool = true
+    /// Duration of the ghost-text fade-in ramp, in seconds.
+    var cotypingFadeInDurationSeconds: Double = AppSettings.defaultCotypingFadeInDurationSeconds
+    /// Show the primary accept key beside the ghost text, like Cotabby's keycap
+    /// hint. The label follows the configured accept key.
+    var cotypingShowAcceptKeyHint: Bool = true
     /// How much the primary accept key takes (the full-accept key always takes all).
     var cotypingAcceptGranularity: CotypingAcceptGranularity = .word
     /// Primary accept key (next word/phrase) and the full-accept key (whole tail).
@@ -177,6 +185,17 @@ struct AppSettings: Codable {
     var cotypingUseLocalLearning: Bool = true
     /// Number of similar accepted completions folded into the next prompt.
     var cotypingLearningExamplesInPrompt: Int = 3
+
+    static let minimumCotypingFadeInDurationSeconds: Double = 0.05
+    static let maximumCotypingFadeInDurationSeconds: Double = 0.30
+    static let defaultCotypingFadeInDurationSeconds: Double = 0.15
+
+    static func clampedCotypingFadeInDurationSeconds(_ seconds: Double) -> Double {
+        guard seconds.isFinite else { return defaultCotypingFadeInDurationSeconds }
+        return min(
+            maximumCotypingFadeInDurationSeconds,
+            max(minimumCotypingFadeInDurationSeconds, seconds))
+    }
 
     var cotypingExcludedAppList: [String] {
         cotypingExcludedApps
@@ -274,6 +293,9 @@ struct AppSettings: Codable {
         case cotypingMaxWords
         case cotypingDebounceMs
         case cotypingStreamSuggestionsWhileGenerating
+        case cotypingFadeInSuggestions
+        case cotypingFadeInDurationSeconds
+        case cotypingShowAcceptKeyHint
         case cotypingAcceptGranularity
         case cotypingAcceptKey
         case cotypingFullAcceptKey
@@ -349,6 +371,11 @@ struct AppSettings: Codable {
         try c.encode(cotypingMaxWords, forKey: .cotypingMaxWords)
         try c.encode(cotypingDebounceMs, forKey: .cotypingDebounceMs)
         try c.encode(cotypingStreamSuggestionsWhileGenerating, forKey: .cotypingStreamSuggestionsWhileGenerating)
+        try c.encode(cotypingFadeInSuggestions, forKey: .cotypingFadeInSuggestions)
+        try c.encode(
+            Self.clampedCotypingFadeInDurationSeconds(cotypingFadeInDurationSeconds),
+            forKey: .cotypingFadeInDurationSeconds)
+        try c.encode(cotypingShowAcceptKeyHint, forKey: .cotypingShowAcceptKeyHint)
         try c.encode(cotypingAcceptGranularity, forKey: .cotypingAcceptGranularity)
         try c.encode(cotypingAcceptKey, forKey: .cotypingAcceptKey)
         try c.encode(cotypingFullAcceptKey, forKey: .cotypingFullAcceptKey)
@@ -413,6 +440,10 @@ struct AppSettings: Codable {
         cotypingMaxWords = (try? c.decode(Int.self, forKey: .cotypingMaxWords)) ?? defaults.cotypingMaxWords
         cotypingDebounceMs = (try? c.decode(Int.self, forKey: .cotypingDebounceMs)) ?? defaults.cotypingDebounceMs
         cotypingStreamSuggestionsWhileGenerating = (try? c.decode(Bool.self, forKey: .cotypingStreamSuggestionsWhileGenerating)) ?? defaults.cotypingStreamSuggestionsWhileGenerating
+        cotypingFadeInSuggestions = (try? c.decode(Bool.self, forKey: .cotypingFadeInSuggestions)) ?? defaults.cotypingFadeInSuggestions
+        cotypingFadeInDurationSeconds = Self.clampedCotypingFadeInDurationSeconds(
+            (try? c.decode(Double.self, forKey: .cotypingFadeInDurationSeconds)) ?? defaults.cotypingFadeInDurationSeconds)
+        cotypingShowAcceptKeyHint = (try? c.decode(Bool.self, forKey: .cotypingShowAcceptKeyHint)) ?? defaults.cotypingShowAcceptKeyHint
         cotypingAcceptGranularity = (try? c.decode(CotypingAcceptGranularity.self, forKey: .cotypingAcceptGranularity)) ?? defaults.cotypingAcceptGranularity
         cotypingAcceptKey = (try? c.decode(CotypingAcceptKey.self, forKey: .cotypingAcceptKey)) ?? defaults.cotypingAcceptKey
         cotypingFullAcceptKey = (try? c.decode(CotypingFullAcceptKey.self, forKey: .cotypingFullAcceptKey)) ?? defaults.cotypingFullAcceptKey
