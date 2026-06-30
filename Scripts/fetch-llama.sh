@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-TAG=b9789   # pinned llama.cpp release (macOS arm64 tar.gz)
+TAG=b9844   # pinned llama.cpp release (macOS arm64 tar.gz)
 SERVER_DIR=Vendor/llama-cpp
 MODEL_DIR=Vendor/llama-models
 DEFAULT_MODEL=Qwen3.5-0.8B-Q4_K_M.gguf
@@ -37,7 +37,7 @@ fi
 
 # --- Public C headers for in-process libllama (LlamaCore module) ---
 # Fetched from the pinned source tag so the Swift module compiles against the
-# exact b9789 API the vendored dylib exports. Idempotent: skip if present.
+# exact b9844 API the vendored dylib exports. Idempotent: skip if present.
 INCLUDE_DIR="$SERVER_DIR/include"
 RAW_BASE="https://raw.githubusercontent.com/ggml-org/llama.cpp/$TAG"
 HEADERS=(

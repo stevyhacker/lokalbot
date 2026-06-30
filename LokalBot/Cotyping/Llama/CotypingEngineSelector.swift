@@ -69,6 +69,13 @@ final class CotypingEngineSelector: CotypingCompleting {
         return local
     }
 
+    private func takeLocalEngine() -> CotypingCompleting? {
+        guard let engine = local else { return nil }
+        local = nil
+        localModelPath = nil
+        return engine
+    }
+
     /// Drops the cached in-process engine and frees its loaded model when the
     /// selector routes away from local (flag toggled off, Intel, or the model
     /// stops resolving). Self-limiting: a no-op once already dropped, so it's
@@ -78,15 +85,18 @@ final class CotypingEngineSelector: CotypingCompleting {
     /// back on and the model resolves, `localIfEligible()` rebuilds a fresh
     /// engine via `makeLocal` (cold reload on the next generate).
     private func dropLocalEngine() {
-        guard let engine = local else { return }
-        local = nil
-        localModelPath = nil
+        guard let engine = takeLocalEngine() else { return }
         Task { await engine.unload() }
     }
 
     func prewarm() async {
         guard let engine = localIfEligible() else { return }
         try? await engine.prewarm()
+    }
+
+    func unload() async {
+        guard let engine = takeLocalEngine() else { return }
+        await engine.unload()
     }
 
     func generate(_ request: CotypingRequest) async throws -> CotypingNormalizationResult {

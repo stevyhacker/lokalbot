@@ -9,7 +9,7 @@ options:
   groupSortPosition: top
 
 # Shared across EVERY target (incl. LokalBotTests, which `import LlamaCore`
-# directly): point the compiler at the vendored b9789 headers + the generated
+# directly): point the compiler at the vendored b9844 headers + the generated
 # LlamaCore module map so `import LlamaCore` resolves. Link flags / rpath live
 # on the LokalBotApp template only — see its settings.base below.
 settings:
@@ -24,7 +24,7 @@ settings:
 packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio
-    exactVersion: 0.15.2   # pinned: 0.x releases break API between minors
+    exactVersion: 0.15.4   # pinned: 0.x releases break API between minors
   WhisperKit:
     url: https://github.com/argmaxinc/WhisperKit
     exactVersion: 1.0.0

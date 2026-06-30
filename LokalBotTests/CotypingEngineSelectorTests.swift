@@ -105,6 +105,35 @@ final class CotypingEngineSelectorTests: XCTestCase {
                        "the returned result must be the HTTP engine's output")
     }
 
+    func testExplicitUnloadAwaitsLocalEngineAndRebuilds() throws {
+        try XCTSkipUnless(CotypingEngineSelector.isAppleSilicon,
+                          "Selector routes to local only on Apple Silicon.")
+        let env = try GGUFFixture()
+        defer { env.tearDown() }
+
+        let http = RecordingHTTPEngine()
+        var locals: [RecordingLocalEngine] = []
+        let selector = CotypingEngineSelector(
+            http: http,
+            makeLocal: { _ in
+                let engine = RecordingLocalEngine()
+                locals.append(engine)
+                return engine
+            },
+            settings: { env.settings },
+            storage: env.storage)
+
+        let request = makeMinimalRequestExpectingNoServer()
+        _ = try awaitGenerate(selector, request)
+        XCTAssertEqual(locals.count, 1, "first eligible completion should build one local engine")
+
+        awaitUnload(selector)
+        XCTAssertEqual(locals[0].unloadCalls, 1, "explicit unload must await the local engine unload")
+
+        _ = try awaitGenerate(selector, request)
+        XCTAssertEqual(locals.count, 2, "next eligible completion should rebuild after explicit unload")
+    }
+
     // MARK: - Helpers
 
     /// Builds a temp StorageManager rooted at a throwaway dir with a GGUF-magic
@@ -179,6 +208,15 @@ final class CotypingEngineSelectorTests: XCTestCase {
         wait(for: [exp], timeout: 5)
         return try captured.get()
     }
+
+    private func awaitUnload(_ selector: CotypingEngineSelector) {
+        let exp = expectation(description: "unload")
+        Task { @MainActor in
+            await selector.unload()
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 5)
+    }
 }
 
 /// Thread-safe build counter for the `makeLocal` seam.
@@ -198,6 +236,21 @@ private final class RecordingHTTPEngine: CotypingCompleting {
     func generate(_ request: CotypingRequest) async throws -> CotypingNormalizationResult {
         generateCalls += 1
         return CotypingNormalizationResult(text: Self.sentinel, suppression: nil)
+    }
+}
+
+@MainActor
+private final class RecordingLocalEngine: CotypingCompleting {
+    private(set) var generateCalls = 0
+    private(set) var unloadCalls = 0
+
+    func generate(_ request: CotypingRequest) async throws -> CotypingNormalizationResult {
+        generateCalls += 1
+        return CotypingNormalizationResult(text: "LOCAL", suppression: nil)
+    }
+
+    func unload() async {
+        unloadCalls += 1
     }
 }
 

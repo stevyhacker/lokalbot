@@ -31,7 +31,7 @@ Passing target:
 - Expected-term hits are reviewed as a quality signal, not a hard pass/fail.
 
 - **Generation runtime — DONE.** Cotyping now decodes the built-in GGUF model
-  in-process via `libllama` (`b9789`), holding a persistent KV cache and
+  in-process via `libllama` (`b9844`), holding a persistent KV cache and
   re-prefilling only the typed suffix (`LocalLlamaCotypingEngine` →
   `LlamaCotypingRuntime`). The HTTP `llama-server` path remains as the fallback
   for non-GGUF backends, when the in-process runtime is toggled off

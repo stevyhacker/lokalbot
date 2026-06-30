@@ -117,6 +117,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static var appState: AppState?
 
     private var uiTestWindow: NSWindow?
+    private var terminationCleanupStarted = false
+    private var terminationCleanupFinished = false
 
     /// Hides the Dock icon for a menu-bar-only start. Setting `.accessory` this
     /// early also stops SwiftUI from auto-opening the launch window; restoration
@@ -179,6 +181,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         if !hasVisibleWindows { WindowAccess.shared.open("main") }
         return true
+    }
+
+    /// Give the in-process llama runtime a real shutdown window before AppKit
+    /// calls exit(). Letting C++ static destructors run while Metal buffers are
+    /// still resident trips ggml-metal's residency-set assertion on quit.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if terminationCleanupFinished { return .terminateNow }
+        guard !terminationCleanupStarted else { return .terminateLater }
+        terminationCleanupStarted = true
+        Task { @MainActor [weak self, weak sender] in
+            if let app = Self.appState {
+                await app.prepareForTermination()
+            } else {
+                await LlamaServer.shared.stop()
+                await LlamaServer.embedder.stop()
+                await LlamaServer.cotyping.stop()
+            }
+            self?.terminationCleanupFinished = true
+            sender?.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     @MainActor
@@ -516,6 +539,7 @@ final class AppState: ObservableObject {
     /// True only on the real interactive launch path (not headless / UI test) —
     /// gates recording notifications and first-run onboarding.
     private var interactive = false
+    private var terminationCleanupTask: Task<Void, Never>?
 
     var isRecording: Bool { if case .recording = status { true } else { false } }
     var elapsed: TimeInterval {
@@ -568,14 +592,6 @@ final class AppState: ObservableObject {
             }
         }
         searchIndex.reindexAll(meetings, storage: storage)
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
-            Task {
-                await LlamaServer.shared.stop()
-                await LlamaServer.embedder.stop()
-                await LlamaServer.cotyping.stop()
-            }
-        }
         if handleHeadlessProcessing()
             || handleHeadlessSearch()
             || handleHeadlessRecord()
@@ -637,6 +653,31 @@ final class AppState: ObservableObject {
         // place; otherwise it parks itself (no taps installed).
         cotyping.applySettings()
         if settings.cotypingEnabled { Task { await cotypingEngine.prewarm() } }
+    }
+
+    func prepareForTermination() async {
+        if let terminationCleanupTask {
+            await terminationCleanupTask.value
+            return
+        }
+        let task = Task { @MainActor in
+            interactive = false
+            transcriptionPrewarmTask?.cancel()
+            transcriptionPrewarmTask = nil
+            if isRecording { stopRecording(process: false) }
+            detector.stop()
+            audioMonitor.stop()
+            sampler.stop()
+            screenshots.stop()
+            chat.stop()
+            cotyping.stop()
+            await cotypingEngine.unload()
+            await LlamaServer.shared.stop()
+            await LlamaServer.embedder.stop()
+            await LlamaServer.cotyping.stop()
+        }
+        terminationCleanupTask = task
+        await task.value
     }
 
     // MARK: - Recording control

@@ -241,7 +241,7 @@ Set your team under **Signing & Capabilities**, pick a scheme, and Run:
 | **LokalBot** | `me.dotenv.LokalBot` | production; Sparkle auto-update compiled in |
 | **LokalBot Dev** | `me.dotenv.LokalBot.dev` | `LOKALBOT_DEV` flag; Sparkle compiled out. A distinct bundle id keeps its own Mic / Screen Recording / Accessibility grants, so running from Xcode never disturbs the released app |
 
-The first build runs `Scripts/fetch-llama.sh` (a pre-build phase) which vendors the pinned llama.cpp server (`b9789` — server + dylibs, ~10 MB) and the built-in model (Qwen3.5 0.8B Q4_K_M, ~0.5 GB) into `Vendor/`, copied into the app bundle. On first recording, macOS prompts for **Microphone** and **System Audio Recording**; transcription and screenshot models download from Hugging Face on first use.
+The first build runs `Scripts/fetch-llama.sh` (a pre-build phase) which vendors the pinned llama.cpp server (`b9844` — server + dylibs, ~10 MB) and the built-in model (Qwen3.5 0.8B Q4_K_M, ~0.5 GB) into `Vendor/`, copied into the app bundle. On first recording, macOS prompts for **Microphone** and **System Audio Recording**; transcription and screenshot models download from Hugging Face on first use.
 
 > The shipped app is **LokalBot** (`me.dotenv.LokalBot`); the Xcode project and scheme are named `LokalBot`.
 

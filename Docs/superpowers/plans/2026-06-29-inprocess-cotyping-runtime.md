@@ -4,9 +4,9 @@
 
 **Goal:** Replace the per-keystroke HTTP→`llama-server`→SSE cotyping path with an in-process `libllama` runtime that holds a persistent KV cache, re-prefills only the typed suffix, streams tokens natively, and cancels instantly — for the built-in GGUF backend only, with the HTTP engine retained as fallback.
 
-**Architecture:** Additive seam swap. The coordinator already depends only on `CotypingCompleting`. We add a `LlamaCore` C-interop module over the already-vendored `libllama.dylib` (`b9789`), an `LlamaCotypingRuntime` actor that owns the model/context/KV, a `LocalLlamaCotypingEngine: CotypingCompleting` that reuses the existing normalizer + stop policy, and a `CotypingEngineSelector` that routes built-in-GGUF-on-Apple-Silicon to the local engine and everything else to the existing HTTP `CotypingEngine`. Nothing in the orchestration, prompting, normalization, overlay, accept, learning, or debounce layers changes.
+**Architecture:** Additive seam swap. The coordinator already depends only on `CotypingCompleting`. We add a `LlamaCore` C-interop module over the already-vendored `libllama.dylib` (`b9844`), an `LlamaCotypingRuntime` actor that owns the model/context/KV, a `LocalLlamaCotypingEngine: CotypingCompleting` that reuses the existing normalizer + stop policy, and a `CotypingEngineSelector` that routes built-in-GGUF-on-Apple-Silicon to the local engine and everything else to the existing HTTP `CotypingEngine`. Nothing in the orchestration, prompting, normalization, overlay, accept, learning, or debounce layers changes.
 
-**Tech Stack:** Swift 5.10 (actors, structured concurrency), C-interop via Clang module map, llama.cpp `libllama` C API pinned to release `b9789` (vendored `libllama.0.0.9789.dylib` + `libggml*.dylib`), Metal offload, XcodeGen (`project.yml` → `LokalBot.xcodeproj`), XCTest, `xcodebuild`.
+**Tech Stack:** Swift 5.10 (actors, structured concurrency), C-interop via Clang module map, llama.cpp `libllama` C API pinned to release `b9844` (vendored `libllama.0.0.9844.dylib` + `libggml*.dylib`), Metal offload, XcodeGen (`project.yml` → `LokalBot.xcodeproj`), XCTest, `xcodebuild`.
 
 ## Global Constraints
 
@@ -15,13 +15,13 @@ Every task's requirements implicitly include this section. Values are copied ver
 - **100% on-device.** Nothing leaves the device. No cloud calls. The in-process runtime makes zero network requests; it loads a local GGUF and decodes locally.
 - **Clipboard context is sensitive.** Read fresh at generation time, never cached or persisted. This plan does not touch clipboard handling — `CotypingRequestBuilder` already reads it fresh and the prompt arrives pre-built in `CotypingRequest`.
 - **Platform:** macOS 15.0+, Apple Silicon only. `MACOSX_DEPLOYMENT_TARGET = 15.0`.
-- **Version lock:** llama.cpp release **`b9789`**. Code against the *vendored header*, not memory. The dylibs are already in `Vendor/llama-cpp/` (`libllama.0.0.9789.dylib`); headers are fetched at the same tag.
+- **Version lock:** llama.cpp release **`b9844`**. Code against the *vendored header*, not memory. The dylibs are already in `Vendor/llama-cpp/` (`libllama.0.0.9844.dylib`); headers are fetched at the same tag.
 - **No new third-party dependency, no new binary in the bundle.** Reuse the exact dylibs and GGUF models already shipped. One model format (GGUF).
 - **Contained blast radius (spec §3):** Do NOT modify `CotypingCoordinator`, `CotypingPromptRenderer`/`CotypingRequestBuilder`, `CotypingTextNormalizer`, `CotypingOverlayController`, accept logic, the learning store, the debounce policy, or `LlamaServer`. The HTTP `CotypingEngine` stays as the fallback + non-GGUF path.
 - **No main-thread blocking.** `llama_decode` runs off the main actor (on the `LlamaCotypingRuntime` actor's executor). Only ghost-painting hops to `@MainActor`.
 - **Cotyping seam is `@MainActor`.** `CotypingCompleting` is `@MainActor`; all conformers and the selector are `@MainActor`.
 
-### Pinned `b9789` C API (verified via `nm -gU Vendor/llama-cpp/libllama.dylib`)
+### Pinned `b9844` C API (verified via `nm -gU Vendor/llama-cpp/libllama.dylib`)
 
 These exact symbols are exported by the vendored dylib. Use these — the older `llama_kv_cache_*` / `llama_kv_self_*` / `llama_new_context_with_model` names are deprecated/renamed and MUST NOT be used (prefer the new names below, both happen to be exported):
 
@@ -50,7 +50,7 @@ Swift bridging notes: opaque `struct *` arrive as `OpaquePointer?`; `llama_token
 - `LokalBotTests/CotypingABBenchmarkTests.swift`
 
 **Modify:**
-- `Scripts/fetch-llama.sh` — also fetch `b9789` headers into `Vendor/llama-cpp/include/` and generate the `module.modulemap` there (both gitignored, script-reproduced — `Vendor/` stays fully generated).
+- `Scripts/fetch-llama.sh` — also fetch `b9844` headers into `Vendor/llama-cpp/include/` and generate the `module.modulemap` there (both gitignored, script-reproduced — `Vendor/` stays fully generated).
 - `project.yml` — header search path + `SWIFT_INCLUDE_PATHS` (module map) + link `-lllama` + `LD_RUNPATH_SEARCH_PATHS`.
 - `LokalBot/Models/AppSettings.swift` — add `cotypingInProcessRuntime: Bool` (default `true`), tolerant decode.
 - `LokalBot/LokalBotApp.swift` — `cotypingEngine` becomes a `CotypingEngineSelector`; prewarm on cotyping-enable.
@@ -70,17 +70,17 @@ The riskiest piece (spec risk: "Link / `@rpath` issues"; open question #2: exact
 - Test: `LokalBotTests/LlamaCoreSmokeTests.swift` (create)
 
 **Interfaces:**
-- Consumes: vendored `Vendor/llama-cpp/libllama.dylib` (+ `libggml*.dylib`), `b9789`.
-- Produces: a Swift-importable module `LlamaCore` exposing the `b9789` C API; build settings other targets inherit (`HEADER_SEARCH_PATHS`, `SWIFT_INCLUDE_PATHS`, link flags, rpath). Later tasks `import LlamaCore`.
+- Consumes: vendored `Vendor/llama-cpp/libllama.dylib` (+ `libggml*.dylib`), `b9844`.
+- Produces: a Swift-importable module `LlamaCore` exposing the `b9844` C API; build settings other targets inherit (`HEADER_SEARCH_PATHS`, `SWIFT_INCLUDE_PATHS`, link flags, rpath). Later tasks `import LlamaCore`.
 
 - [ ] **Step 1: Add header fetch to `Scripts/fetch-llama.sh`**
 
-Open `Scripts/fetch-llama.sh`. It already sets `TAG=b9789`, `SERVER_DIR=Vendor/llama-cpp`, and downloads/extracts `llama-$TAG-bin-macos-arm64.tar.gz`. After the block that copies `llama-server` + `*.dylib` into `$SERVER_DIR`, add a header-fetch block. The macOS bin tarball does not reliably ship headers, so fetch them from the pinned source tag. Insert:
+Open `Scripts/fetch-llama.sh`. It already sets `TAG=b9844`, `SERVER_DIR=Vendor/llama-cpp`, and downloads/extracts `llama-$TAG-bin-macos-arm64.tar.gz`. After the block that copies `llama-server` + `*.dylib` into `$SERVER_DIR`, add a header-fetch block. The macOS bin tarball does not reliably ship headers, so fetch them from the pinned source tag. Insert:
 
 ```bash
 # --- Public C headers for in-process libllama (LlamaCore module) ---
 # Fetched from the pinned source tag so the Swift module compiles against the
-# exact b9789 API the vendored dylib exports. Idempotent: skip if present.
+# exact b9844 API the vendored dylib exports. Idempotent: skip if present.
 INCLUDE_DIR="$SERVER_DIR/include"
 RAW_BASE="https://raw.githubusercontent.com/ggml-org/llama.cpp/$TAG"
 HEADERS=(
@@ -118,12 +118,12 @@ EOF
 - [ ] **Step 2: Run the script and confirm headers + module map land**
 
 Run: `cd /Users/0xmithrandir/Documents/GitHub/lokalbotfable/LokalBot && bash Scripts/fetch-llama.sh && ls Vendor/llama-cpp/include`
-Expected: lists `llama.h ggml.h ggml-backend.h ggml-alloc.h ggml-cpu.h ggml-metal.h module.modulemap` (and no error). If `curl` 404s on a header, that header moved at this tag — open the tag tree at `https://github.com/ggml-org/llama.cpp/tree/b9789/ggml/include` to find its path and fix the `HEADERS` entry. This is the open-question-#2 resolution: confirm the transitive set compiles in Step 6 and trim/extend here. (`llama.h` was already verified present at this tag — `raw.githubusercontent.com/ggml-org/llama.cpp/b9789/include/llama.h` returns HTTP 200.)
+Expected: lists `llama.h ggml.h ggml-backend.h ggml-alloc.h ggml-cpu.h ggml-metal.h module.modulemap` (and no error). If `curl` 404s on a header, that header moved at this tag — open the tag tree at `https://github.com/ggml-org/llama.cpp/tree/b9844/ggml/include` to find its path and fix the `HEADERS` entry. This is the open-question-#2 resolution: confirm the transitive set compiles in Step 6 and trim/extend here. (`llama.h` was already verified present at this tag — `raw.githubusercontent.com/ggml-org/llama.cpp/b9844/include/llama.h` returns HTTP 200.)
 
 - [ ] **Step 3: Confirm the dylib install name + that the needed symbols exist**
 
 Run: `cd /Users/0xmithrandir/Documents/GitHub/lokalbotfable/LokalBot && otool -D Vendor/llama-cpp/libllama.dylib && nm -gU Vendor/llama-cpp/libllama.dylib | grep -E '_llama_(backend_init|model_default_params|model_load_from_file|init_from_model|get_memory|memory_seq_rm|tokenize|decode|sampler_sample)$' | sort`
-Expected: `otool -D` prints an install name (e.g. `@rpath/libllama.0.0.9789.dylib` or `@rpath/libllama.dylib`); the `nm` grep lists all nine symbols. Note the `@rpath` value — Step 5 must make that rpath resolve.
+Expected: `otool -D` prints an install name (e.g. `@rpath/libllama.0.0.9844.dylib` or `@rpath/libllama.dylib`); the `nm` grep lists all nine symbols. Note the `@rpath` value — Step 5 must make that rpath resolve.
 
 - [ ] **Step 4: Confirm the generated `LlamaCore` module map**
 
@@ -192,7 +192,7 @@ import XCTest
 import LlamaCore
 
 /// Proves the LlamaCore module imports, the vendored libllama.dylib links, and
-/// the @rpath resolves at runtime by executing real b9789 C calls.
+/// the @rpath resolves at runtime by executing real b9844 C calls.
 final class LlamaCoreSmokeTests: XCTestCase {
     func testBackendInitAndDefaultParamsLink() {
         llama_backend_init()
@@ -216,7 +216,7 @@ Expected: `Test Suite 'LlamaCoreSmokeTests' passed`, `** TEST SUCCEEDED **`. If 
 ```bash
 cd /Users/0xmithrandir/Documents/GitHub/lokalbotfable/LokalBot
 git add Scripts/fetch-llama.sh project.yml LokalBot.xcodeproj LokalBotTests/LlamaCoreSmokeTests.swift
-git commit -m "build: link in-process libllama via LlamaCore module (b9789)"
+git commit -m "build: link in-process libllama via LlamaCore module (b9844)"
 ```
 
 Note: nothing under `Vendor/` is committed — `.gitignore` ignores the whole tree (confirmed: `git check-ignore Vendor/llama-cpp/include/module.modulemap` matches `Vendor/`). The module map and headers are regenerated/fetched by `Scripts/fetch-llama.sh` on every build (it is a pre-build phase), so a fresh clone and CI reconstruct them. Do NOT `git add -f` the module map or headers.
@@ -569,7 +569,7 @@ enum LlamaRuntimeError: Error, Equatable {
 /// (off the main actor). Re-prefills only the diverged suffix per call
 /// (`IncrementalPrefill`), which is what makes per-keystroke decode cheap.
 ///
-/// Pinned to llama.cpp `b9789`; symbols verified against the vendored dylib.
+/// Pinned to llama.cpp `b9844`; symbols verified against the vendored dylib.
 actor LlamaCotypingRuntime {
     private var model: OpaquePointer?
     private var ctx: OpaquePointer?
@@ -1492,7 +1492,7 @@ Open `Docs/CotypingParityQA.md`. Find the line that names the runtime as the kno
 
 ```markdown
 - **Generation runtime — DONE.** Cotyping now decodes the built-in GGUF model
-  in-process via `libllama` (`b9789`), holding a persistent KV cache and
+  in-process via `libllama` (`b9844`), holding a persistent KV cache and
   re-prefilling only the typed suffix (`LocalLlamaCotypingEngine` →
   `LlamaCotypingRuntime`). The HTTP `llama-server` path remains as the fallback
   for non-GGUF backends, when the in-process runtime is toggled off

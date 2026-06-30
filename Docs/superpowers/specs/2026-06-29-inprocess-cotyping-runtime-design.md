@@ -49,7 +49,7 @@ Intelligence), which must keep working over the existing HTTP path.
   `CotypingTextNormalizer`, `CotypingOverlayController`, accept logic, the learning
   store, or the debounce policy.
 - Reuse the dylibs and GGUF models already shipped — one model format, version
-  locked to the bundled `llama-server` (`b9789`).
+  locked to the bundled `llama-server` (`b9844`).
 - Measurable latency improvement, proven by an A/B benchmark against the HTTP path.
 
 ## 4. Non-goals
@@ -83,7 +83,7 @@ Intelligence), which must keep working over the existing HTTP path.
 | Decision | Choice | Rationale |
 | --- | --- | --- |
 | Runtime path | In-process now (not incremental-only / not measure-first) | User wants real Cotypist parity; HTTP is the ceiling on the felt latency. |
-| Integration mechanism | Direct C-interop with vendored `libllama.dylib` via a Clang module map | Reuses exact dylibs + GGUF models already shipped; version-locked to `b9789`; stable public C API. Rejected: Obj-C++ over `common` (unstable internal API, headers not vendored); MLX (forks the model format into a second ecosystem). |
+| Integration mechanism | Direct C-interop with vendored `libllama.dylib` via a Clang module map | Reuses exact dylibs + GGUF models already shipped; version-locked to `b9844`; stable public C API. Rejected: Obj-C++ over `common` (unstable internal API, headers not vendored); MLX (forks the model format into a second ecosystem). |
 | HTTP engine | Keep as live fallback | It is also the non-GGUF backend path; removing it would regress Ollama / OpenAI-compatible / Apple Intelligence and remove the safety net. |
 | Spec scope | Root A (runtime) only | Coherent, single-plan-sized. B and C are independent and sequenced. |
 
@@ -115,13 +115,13 @@ Each unit below states *what it does*, *its interface*, and *what it depends on*
 ### 8.1 `LlamaCore` — C-interop module
 - **Does:** exposes the pinned llama.cpp C API to Swift.
 - **Interface:** `import LlamaCore` → `llama.h` / `ggml.h` symbols.
-- **Depends on:** vendored `b9789` headers in `Vendor/llama-cpp/include/` + a
+- **Depends on:** vendored `b9844` headers in `Vendor/llama-cpp/include/` + a
   `module.modulemap`; links the already-vendored `libllama.dylib` (+ `libggml*.dylib`).
 - **Notes:** exact symbol names (e.g. `llama_model_load_from_file`,
   `llama_init_from_model`, `llama_get_memory` / `llama_memory_seq_rm`,
   `llama_sampler_*`) are pinned by the vendored header — confirm against it rather
   than from memory, since the C API evolved (the old `llama_kv_cache_*` and
-  `llama_new_context_with_model` names were renamed/deprecated before `b9789`).
+  `llama_new_context_with_model` names were renamed/deprecated before `b9844`).
 
 ### 8.2 `LlamaCotypingRuntime` — inference actor
 - **Does:** owns the model + context + KV state; runs incremental prefill and the
@@ -225,7 +225,7 @@ focus → debounce → coordinator.generate → build CotypingRequest (unchanged
 
 ## 12. Build & packaging
 
-- **`Scripts/fetch-llama.sh`:** additionally fetch the `b9789` headers
+- **`Scripts/fetch-llama.sh`:** additionally fetch the `b9844` headers
   (`llama.h`, `ggml.h`, and the ggml-backend/alloc headers the public API pulls in)
   into `Vendor/llama-cpp/include/`. Same `TAG`, idempotent, runs as the existing
   pre-build phase.
@@ -285,7 +285,7 @@ These were identified as separate roots and are **not** in this spec:
 
 | Risk | Mitigation |
 | --- | --- |
-| C API drift vs memory of it | Pin headers to `b9789`; code against the vendored header, not recollection. |
+| C API drift vs memory of it | Pin headers to `b9844`; code against the vendored header, not recollection. |
 | Two model copies in RAM (cotyping + summarizer) when both active | Cotyping now defaults to Gemma 4 E4B Q5 XL (~5 GB resident), so memory-pressure unload (§11) is load-bearing, not optional. On <16 GB Macs, steer to a smaller cotyping model (Qwen3.5 2B / LFM2.5 1.2B). |
 | Main-thread stalls from decode | Inference strictly off the main actor; only paint hops to MainActor. |
 | Link / `@rpath` issues with in-process dylibs | The dylibs are already shipped + signed for the server; verify link phase + rpath in an early build spike. |
@@ -298,4 +298,4 @@ These were identified as separate roots and are **not** in this spec:
   the latency win? (Recommendation: flag-gated default-on, with the HTTP fallback
   one toggle away.)
 - Confirm the exact set of public headers `llama.h` transitively requires at
-  `b9789` so `fetch-llama.sh` pulls all of them (resolve during the build spike).
+  `b9844` so `fetch-llama.sh` pulls all of them (resolve during the build spike).
