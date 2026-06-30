@@ -410,6 +410,19 @@ kbd {
 }
 .hero__diagram-img { display: block; width: 100%; height: auto; position: relative; }
 
+/* how-it-works architecture diagram — wide glass panel */
+.how__diagram {
+  max-width: 980px;
+  margin: 0 auto 56px;
+  padding: clamp(12px, 2vw, 22px);
+  border-radius: var(--radius-lg);
+}
+.how__diagram-img { display: block; width: 100%; height: auto; position: relative; z-index: 1; }
+@media (max-width: 760px) {
+  .how__diagram { overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 12px; }
+  .how__diagram-img { min-width: 560px; }
+}
+
 /* hero "app glamour" card (kept for the alternate hero layout) */
 .appcard {
   position: relative;

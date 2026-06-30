@@ -173,6 +173,10 @@
         <h2 class="section__title">Three steps, zero cloud.</h2>
       </header>
 
+      <figure class="how__diagram glass reveal">
+        <img class="how__diagram-img" src="assets/architecture-diagram.svg" width="900" height="430" alt="LokalBot's on-device pipeline: capture (mic as Me via AVAudioEngine, system audio as Them via a Core Audio process tap), transcribe on the Neural Engine with Parakeet/Whisper/Qwen plus pyannote diarization, summarize on a local llama.cpp server, and index in SQLite with FTS5 and vector embeddings. Search, chat, replay, cotyping, and the day timeline all read locally; nothing leaves the device except an optional one-time model download." loading="lazy" decoding="async" />
+      </figure>
+
       <ol class="steps">
         <li class="step reveal">
           <span class="step__num">01</span>
