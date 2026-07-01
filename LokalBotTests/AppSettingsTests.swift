@@ -29,6 +29,26 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(AppSettings().multiSpeakerDiarization)
     }
 
+    func testStopDebounceDefaultsToBackToBackFriendlyValue() {
+        XCTAssertEqual(AppSettings().stopDebounceSeconds, AppSettings.defaultStopDebounceSeconds)
+    }
+
+    func testMigratesLegacyStopDebounceDefault() throws {
+        let data = #"{"stopDebounceSeconds":60}"#.data(using: .utf8)!
+
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertEqual(settings.stopDebounceSeconds, AppSettings.defaultStopDebounceSeconds)
+    }
+
+    func testPreservesExplicitCurrentStopDebounceValue() throws {
+        let data = #"{"meetingSettingsVersion":1,"stopDebounceSeconds":60}"#.data(using: .utf8)!
+
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertEqual(settings.stopDebounceSeconds, 60)
+    }
+
     func testDecodesSettingsWithoutMultiSpeakerDiarizationKeyAsDefault() throws {
         let data = #"{"autoTranscribe":false}"#.data(using: .utf8)!
 

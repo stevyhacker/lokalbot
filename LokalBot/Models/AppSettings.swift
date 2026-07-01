@@ -17,8 +17,9 @@ struct AppSettings: Codable {
     }
 
     var autoRecordMode: AutoRecordMode = .automatic
-    /// Seconds the mic must be released before a meeting counts as ended.
-    var stopDebounceSeconds: TimeInterval = 60
+    /// Seconds the meeting app's own audio must be gone before a meeting counts
+    /// as ended.
+    var stopDebounceSeconds: TimeInterval = Self.defaultStopDebounceSeconds
 
     // MARK: Calendar-assisted detection
 
@@ -179,7 +180,7 @@ struct AppSettings: Codable {
     /// Built-in catalog model id for cotyping. Cotyping always runs its own
     /// dedicated built-in (llama.cpp) model on a separate server instance, so
     /// inline suggestions never contend with summarization for the shared
-    /// server. Defaults to the recommended Cotypist-parity model.
+    /// server. Defaults to the recommended cotyping model.
     var cotypingBuiltInModelID: String = ModelCatalog.recommendedCotypingID
     /// When true (default), cotyping uses the in-process `libllama` runtime for
     /// the built-in GGUF backend on Apple Silicon; false forces the HTTP
@@ -196,6 +197,11 @@ struct AppSettings: Codable {
     static let minimumCotypingFadeInDurationSeconds: Double = 0.05
     static let maximumCotypingFadeInDurationSeconds: Double = 0.30
     static let defaultCotypingFadeInDurationSeconds: Double = 0.15
+    static let currentMeetingSettingsVersion: Int = 1
+    static let defaultStopDebounceSeconds: TimeInterval = 15
+    static let legacyDefaultStopDebounceSeconds: TimeInterval = 60
+    static let minimumStopDebounceSeconds: TimeInterval = 5
+    static let maximumStopDebounceSeconds: TimeInterval = 120
     static let currentCotypingSettingsVersion: Int = 2
     static let legacyPreviewCotypingSettingsVersion: Int = 0
     static let legacyPreviewCotypingMaxWords: Int = 2
@@ -232,6 +238,17 @@ struct AppSettings: Codable {
         return min(
             maximumCotypingFadeInDurationSeconds,
             max(minimumCotypingFadeInDurationSeconds, seconds))
+    }
+
+    static func migratedStopDebounceSeconds(_ seconds: TimeInterval,
+                                            decodedSettingsVersion: Int) -> TimeInterval {
+        guard seconds.isFinite else { return defaultStopDebounceSeconds }
+        let clamped = min(maximumStopDebounceSeconds, max(minimumStopDebounceSeconds, seconds))
+        if decodedSettingsVersion < currentMeetingSettingsVersion,
+           clamped == legacyDefaultStopDebounceSeconds {
+            return defaultStopDebounceSeconds
+        }
+        return clamped
     }
 
     var cotypingExcludedAppList: [String] {
@@ -295,6 +312,7 @@ struct AppSettings: Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case meetingSettingsVersion
         case autoRecordMode
         case stopDebounceSeconds
         case calendarDetectionEnabled
@@ -377,8 +395,13 @@ struct AppSettings: Codable {
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(Self.currentMeetingSettingsVersion, forKey: .meetingSettingsVersion)
         try c.encode(autoRecordMode, forKey: .autoRecordMode)
-        try c.encode(stopDebounceSeconds, forKey: .stopDebounceSeconds)
+        try c.encode(
+            Self.migratedStopDebounceSeconds(
+                stopDebounceSeconds,
+                decodedSettingsVersion: Self.currentMeetingSettingsVersion),
+            forKey: .stopDebounceSeconds)
         try c.encode(calendarDetectionEnabled, forKey: .calendarDetectionEnabled)
         try c.encode(useCalendarTitles, forKey: .useCalendarTitles)
         try c.encode(requireCalendarForBrowser, forKey: .requireCalendarForBrowser)
@@ -447,8 +470,13 @@ struct AppSettings: Codable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = AppSettings()
+        let meetingSettingsVersion = (try? c.decode(Int.self, forKey: .meetingSettingsVersion)) ?? 0
         autoRecordMode = (try? c.decode(AutoRecordMode.self, forKey: .autoRecordMode)) ?? defaults.autoRecordMode
-        stopDebounceSeconds = (try? c.decode(TimeInterval.self, forKey: .stopDebounceSeconds)) ?? defaults.stopDebounceSeconds
+        let decodedStopDebounceSeconds =
+            (try? c.decode(TimeInterval.self, forKey: .stopDebounceSeconds)) ?? defaults.stopDebounceSeconds
+        stopDebounceSeconds = Self.migratedStopDebounceSeconds(
+            decodedStopDebounceSeconds,
+            decodedSettingsVersion: meetingSettingsVersion)
         calendarDetectionEnabled = (try? c.decode(Bool.self, forKey: .calendarDetectionEnabled)) ?? defaults.calendarDetectionEnabled
         useCalendarTitles = (try? c.decode(Bool.self, forKey: .useCalendarTitles)) ?? defaults.useCalendarTitles
         requireCalendarForBrowser = (try? c.decode(Bool.self, forKey: .requireCalendarForBrowser)) ?? defaults.requireCalendarForBrowser

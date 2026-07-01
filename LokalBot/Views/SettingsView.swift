@@ -63,8 +63,12 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     LabeledContent("Stop debounce") {
-                        Text("\(Int(app.settings.stopDebounceSeconds)) s after mic releases")
-                            .foregroundStyle(.secondary)
+                        Stepper(value: $app.settings.stopDebounceSeconds,
+                                in: AppSettings.minimumStopDebounceSeconds...AppSettings.maximumStopDebounceSeconds,
+                                step: 5) {
+                            Text("\(Int(app.settings.stopDebounceSeconds)) s after audio stops")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     Divider()
                     Toggle("Use calendar to improve detection", isOn: $app.settings.calendarDetectionEnabled)

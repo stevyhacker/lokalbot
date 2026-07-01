@@ -57,7 +57,7 @@ struct ModelCatalog {
         Entry(id: recommendedCotypingID, displayName: "Gemma 4 E4B Q5 XL",
               fileName: "gemma-4-E4B-it-UD-Q5_K_XL.gguf",
               url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-UD-Q5_K_XL.gguf",
-              sizeGB: 6.66, blurb: "Recommended Cotypist-parity cotyping quality target. 16 GB+ Macs.",
+              sizeGB: 6.66, blurb: "Recommended cotyping quality target. 16 GB+ Macs.",
               disablesThinking: false),
         Entry(id: "lfm2.5-8b-a1b", displayName: "LFM2.5 8B (MoE)",
               fileName: "LFM2.5-8B-A1B-Q4_K_M.gguf",

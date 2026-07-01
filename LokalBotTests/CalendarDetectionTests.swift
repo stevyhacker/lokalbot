@@ -185,6 +185,26 @@ final class CalendarDetectionTests: XCTestCase {
             eventID: "evt#1", lastEventID: nil, lastEndedAt: nil, now: now, cooldown: 300), "no prior recording")
     }
 
+    // MARK: - Back-to-back calendar handoff
+
+    func testSplitsWhenActiveCalendarEventChanges() {
+        XCTAssertTrue(MeetingMatcher.shouldSplitForCalendarHandoff(
+            activeEventID: "evt#standup",
+            nextEventID: "evt#planning"))
+    }
+
+    func testDoesNotSplitForSameOrMissingCalendarEvent() {
+        XCTAssertFalse(MeetingMatcher.shouldSplitForCalendarHandoff(
+            activeEventID: "evt#standup",
+            nextEventID: "evt#standup"))
+        XCTAssertFalse(MeetingMatcher.shouldSplitForCalendarHandoff(
+            activeEventID: nil,
+            nextEventID: "evt#planning"))
+        XCTAssertFalse(MeetingMatcher.shouldSplitForCalendarHandoff(
+            activeEventID: "evt#standup",
+            nextEventID: nil))
+    }
+
     // MARK: - Titling
 
     func testRecordingTitlePrefersCalendar() {

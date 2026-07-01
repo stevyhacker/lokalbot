@@ -636,6 +636,10 @@ final class AppState: ObservableObject {
             case .manual: break
             }
         }
+        detector.onMeetingSwitched = { [weak self] context in
+            guard let self, self.settings.autoRecordMode == .automatic else { return }
+            self.splitRecordingForCalendarHandoff(context)
+        }
         detector.onMeetingEnded = { [weak self] in
             self?.stopRecording()
         }
@@ -810,6 +814,20 @@ final class AppState: ObservableObject {
                 if let husk = created { storage.deleteMeeting(husk) }
             }
         }
+    }
+
+    private func splitRecordingForCalendarHandoff(_ context: MeetingDetectionContext) {
+        guard isRecording, !isStartingRecording,
+              let currentMeeting,
+              let nextEventID = context.calendarEvent?.externalID,
+              MeetingMatcher.shouldSplitForCalendarHandoff(
+                  activeEventID: currentMeeting.calendarEventID,
+                  nextEventID: nextEventID)
+        else { return }
+        lokalbotLog(
+            "calendar handoff split old=\(currentMeeting.calendarEventID ?? "?") new=\(nextEventID)")
+        stopRecording()
+        startRecording(context: context, source: "calendar-handoff")
     }
 
     private func prewarmSelectedTranscriptionModel(reason: String) {

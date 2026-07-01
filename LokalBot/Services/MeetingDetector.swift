@@ -53,8 +53,9 @@ final class MeetingDetector {
     private static let webMeetingMarkers = ["Meet – ", "Meet - ", "meet.google.com", "Jitsi", "Whereby"]
 
     var onMeetingStarted: ((MeetingDetectionContext) -> Void)?
+    var onMeetingSwitched: ((MeetingDetectionContext) -> Void)?
     var onMeetingEnded: (() -> Void)?
-    var stopDebounce: TimeInterval = 60
+    var stopDebounce: TimeInterval = AppSettings.defaultStopDebounceSeconds
     /// Extra grace before stopping while a calendar-backed meeting is still in
     /// its scheduled window — brief audio drops mid-meeting shouldn't end it.
     static let calendarBackedGrace: TimeInterval = 180
@@ -204,8 +205,20 @@ final class MeetingDetector {
                     confidence: MeetingMatcher.confidence(hasApp: true, hasCalendar: calendarEvent != nil),
                     reason: "detector"))
             } else {
+                let previousEventID = activeCalendarEvent?.externalID
                 activeApp = app
-                if let calendarEvent { activeCalendarEvent = calendarEvent }
+                if let calendarEvent {
+                    activeCalendarEvent = calendarEvent
+                    if MeetingMatcher.shouldSplitForCalendarHandoff(
+                        activeEventID: previousEventID,
+                        nextEventID: calendarEvent.externalID) {
+                        onMeetingSwitched?(MeetingDetectionContext(
+                            detectedApp: app,
+                            calendarEvent: calendarEvent,
+                            confidence: MeetingMatcher.confidence(hasApp: true, hasCalendar: true),
+                            reason: "calendar-handoff"))
+                    }
+                }
             }
         } else if activeApp != nil, pendingStop == nil {
             // Never stop because calendar time ended — only audio does. While the

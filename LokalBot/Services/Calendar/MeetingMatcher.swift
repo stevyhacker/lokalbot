@@ -54,6 +54,15 @@ enum MeetingMatcher {
         return now.timeIntervalSince(lastEndedAt) < cooldown
     }
 
+    /// A live recording backed by one calendar event should split immediately
+    /// when the active calendar event changes. This prevents back-to-back
+    /// meetings from being merged during the stop debounce.
+    static func shouldSplitForCalendarHandoff(activeEventID: String?,
+                                              nextEventID: String?) -> Bool {
+        guard let activeEventID, let nextEventID else { return false }
+        return activeEventID != nextEventID
+    }
+
     /// The recording title: the calendar event's title when titling is on and it
     /// has one, else the app-derived "<App> meeting", else "Manual recording".
     static func recordingTitle(calendarTitle: String?, useCalendarTitles: Bool, appName: String?) -> String {
