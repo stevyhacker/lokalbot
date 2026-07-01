@@ -34,6 +34,38 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
         }
     }
 
+    /// SF Symbol used by onboarding, settings, and permission repair surfaces.
+    var systemImageName: String {
+        switch self {
+        case .microphone: "mic.fill"
+        case .screenRecording: "rectangle.dashed.badge.record"
+        case .accessibility: "accessibility"
+        case .inputMonitoring: "keyboard.fill"
+        }
+    }
+
+    /// Short card copy for the setup flow.
+    var onboardingSubtitle: String {
+        switch self {
+        case .microphone:
+            "Record your side of each call."
+        case .screenRecording:
+            "Capture system audio and screen context."
+        case .accessibility:
+            "Read app and window context."
+        case .inputMonitoring:
+            "Optional: detect typing for cotyping."
+        }
+    }
+
+    var isRequiredForOnboarding: Bool {
+        Self.coreCases.contains(self)
+    }
+
+    var isOptionalOnboardingEnhancement: Bool {
+        self == .inputMonitoring
+    }
+
     /// One-sentence rationale shown beside each permission row.
     var why: String {
         switch self {

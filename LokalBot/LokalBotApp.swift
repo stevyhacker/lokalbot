@@ -212,18 +212,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        let showsOnboarding = ProcessInfo.processInfo.environment["LOKALBOT_UI_TEST_WINDOW"] == "onboarding"
+        let contentSize = showsOnboarding
+            ? NSSize(width: 640, height: 720)
+            : NSSize(width: 1180, height: 740)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1180, height: 740),
+            contentRect: NSRect(origin: .zero, size: contentSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false)
-        window.title = "LokalBot"
-        window.identifier = NSUserInterfaceItemIdentifier("main.window")
-        let hostingView = NSHostingView(
-            rootView: MainWindowView()
-                .environmentObject(app)
-                .brandTinted())
-        hostingView.identifier = NSUserInterfaceItemIdentifier("main.window.host")
+        window.title = showsOnboarding ? "Welcome to LokalBot" : "LokalBot"
+        window.identifier = NSUserInterfaceItemIdentifier(showsOnboarding ? "onboarding.window" : "main.window")
+        let hostingView = NSHostingView(rootView: uiTestRootView(app: app, showsOnboarding: showsOnboarding))
+        hostingView.identifier = NSUserInterfaceItemIdentifier(showsOnboarding ? "onboarding.window.host" : "main.window.host")
         window.contentView = hostingView
         window.center()
         window.isReleasedWhenClosed = false
@@ -231,6 +232,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         window.makeMain()
         window.orderFrontRegardless()
+    }
+
+    @MainActor
+    private func uiTestRootView(app: AppState, showsOnboarding: Bool) -> some View {
+        Group {
+            if showsOnboarding {
+                OnboardingView()
+                    .environmentObject(app)
+                    .brandTinted()
+            } else {
+                MainWindowView()
+                    .environmentObject(app)
+                    .brandTinted()
+            }
+        }
     }
 
 #if LOKALBOT_UI_TEST_HOST

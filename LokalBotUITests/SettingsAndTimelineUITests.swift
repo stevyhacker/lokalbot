@@ -24,15 +24,17 @@ final class SettingsUITests: XCTestCase {
     func testPermissionRepairPaneRendersCorePermissions() {
         UITestHarness.clickSidebar("sidebar.settings", in: app)
 
-        XCTAssertTrue(UITestHarness.staticText(containing: "Grant three permissions", in: app)
+        XCTAssertTrue(UITestHarness.staticText(containing: "Permissions", in: app)
             .waitForExistence(timeout: 6), "permission repair pane missing")
         XCTAssertTrue(UITestHarness.staticText(containing: "Microphone", in: app).exists,
                       "microphone permission row missing")
-        XCTAssertTrue(UITestHarness.staticText(containing: "Screen & System Audio Recording", in: app).exists,
+        XCTAssertTrue(UITestHarness.staticText(containing: "Screen Recording", in: app).exists,
                       "screen/system-audio permission row missing")
         XCTAssertTrue(UITestHarness.staticText(containing: "Accessibility", in: app).exists,
                       "accessibility permission row missing")
-        XCTAssertTrue(app.buttons["Relaunch LokalBot"].exists,
+        XCTAssertTrue(UITestHarness.staticText(containing: "Input Monitoring", in: app).exists,
+                      "optional input monitoring row missing")
+        XCTAssertTrue(app.buttons["Relaunch"].exists,
                       "relaunch affordance missing")
     }
 
