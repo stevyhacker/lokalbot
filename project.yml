@@ -100,6 +100,10 @@ targetTemplates:
       - name: Fetch sherpa-onnx vendor
         script: "\"$PROJECT_DIR/Scripts/fetch-sherpa.sh\""
         basedOnDependencyAnalysis: false
+    postBuildScripts:
+      - name: Sign bundled native runtimes
+        script: "\"$PROJECT_DIR/Scripts/sign-bundled-native-code.sh\""
+        basedOnDependencyAnalysis: false
     entitlements:
       path: LokalBot/LokalBot.entitlements
       properties:
