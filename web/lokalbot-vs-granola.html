@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LokalBot vs Granola: the on-device, open-source alternative</title>
+  <meta name="description" content="Granola is a polished cloud AI notepad. LokalBot keeps the bot-free meeting workflow but runs transcription and summaries on your Mac — no account, no upload, free and GPLv3." />
+  <meta name="theme-color" content="#0b1119" />
+
+  <link rel="canonical" href="https://www.lokalbot.com/lokalbot-vs-granola.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://www.lokalbot.com/lokalbot-vs-granola.html" />
+  <meta property="og:title" content="LokalBot vs Granola — the on-device alternative" />
+  <meta property="og:description" content="Same bot-free meeting notes, zero cloud: transcription and summaries run on your Mac. Free, open source, no account." />
+  <meta property="og:image" content="https://www.lokalbot.com/assets/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://www.lokalbot.com/assets/og-image.png" />
+
+  <link rel="icon" href="assets/lokalbot-icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="assets/lokalbot-icon.svg" />
+
+  <link rel="preconnect" href="https://unpkg.com" crossorigin />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://unpkg.com/@phosphor-icons/web@2.1.1" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <!-- ambient brand background -->
+  <div class="bg-field" aria-hidden="true">
+    <div class="bg-glow bg-glow--a"></div>
+    <div class="bg-glow bg-glow--b"></div>
+    <div class="bg-glow bg-glow--c"></div>
+    <div class="bg-refract"></div>
+    <div class="bg-grain"></div>
+  </div>
+
+  <svg class="glass-defs" aria-hidden="true" focusable="false" width="0" height="0">
+    <filter id="liquidGlass" x="-25%" y="-25%" width="150%" height="150%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.011 0.015" numOctaves="2" seed="7" result="noise" />
+      <feGaussianBlur in="noise" stdDeviation="2.4" result="soft" />
+      <feDisplacementMap in="SourceGraphic" in2="soft" scale="26" xChannelSelector="R" yChannelSelector="G" />
+    </filter>
+  </svg>
+
+  <!-- ───────────────────────── NAV ───────────────────────── -->
+  <header class="nav" id="top">
+    <a class="brand" href="index.html" aria-label="LokalBot home">
+      <img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="32" height="32" />
+      <span class="brand__name">LokalBot</span>
+    </a>
+    <nav class="nav__links" aria-label="Primary">
+      <a href="index.html#features">Features</a>
+      <a href="index.html#how">How it works</a>
+      <a href="index.html#privacy">Privacy</a>
+    </nav>
+    <div class="nav__actions">
+      <a class="icon-link" href="https://github.com/stevyhacker/lokalbot" aria-label="LokalBot on GitHub" target="_blank" rel="noopener">
+        <i class="ph ph-github-logo" aria-hidden="true"></i>
+      </a>
+      <a class="btn btn--primary btn--sm" href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">Download</a>
+    </div>
+  </header>
+
+  <main>
+    <!-- ─────────────────────── HEAD ─────────────────────── -->
+    <section class="section compare-head">
+      <header class="section__head reveal">
+        <p class="eyebrow">Compare</p>
+        <h1 class="section__title">LokalBot vs Granola</h1>
+        <p class="section__lead">Granola is one of the most polished AI notepads around — bot-free capture, great templates, strong team features. The trade-off is that your meetings are processed in the cloud, under an account. LokalBot keeps the bot-free workflow but runs the AI on your Mac: no account, no upload, nothing to opt out of.</p>
+        <p class="compare-updated">Last verified July 2026 · spot something outdated? <a href="https://github.com/stevyhacker/lokalbot/issues" target="_blank" rel="noopener">Open an issue</a>.</p>
+      </header>
+    </section>
+
+    <!-- ─────────────────────── TABLE ─────────────────────── -->
+    <section class="section section--tight" aria-label="Feature comparison">
+      <div class="compare-wrap reveal">
+        <table class="compare">
+          <thead>
+            <tr>
+              <th scope="col">Feature</th>
+              <th scope="col">LokalBot</th>
+              <th scope="col">Granola</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Where the AI runs</th>
+              <td>On your Mac — Neural Engine transcription, local llama.cpp summaries</td>
+              <td>In the cloud, via third-party AI providers</td>
+            </tr>
+            <tr>
+              <th scope="row">Account required</th>
+              <td><i class="ph ph-x" aria-hidden="true"></i>None</td>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Yes</td>
+            </tr>
+            <tr>
+              <th scope="row">Works offline</th>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Fully, after a one-time model download</td>
+              <td>Needs a connection for AI notes</td>
+            </tr>
+            <tr>
+              <th scope="row">Bot-free meeting capture</th>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Mic + system-audio tap, labeled Me / Them</td>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Yes — no bot joins your call</td>
+            </tr>
+            <tr>
+              <th scope="row">Model training on your data</th>
+              <td>Nothing leaves the Mac, so there is nothing to opt out of</td>
+              <td><span class="dim">&ldquo;Opt out of model training any time&rdquo; is a listed plan feature</span></td>
+            </tr>
+            <tr>
+              <th scope="row">System-wide dictation</th>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Hold ⌥ Space in any app</td>
+              <td><i class="ph ph-x" aria-hidden="true"></i>No</td>
+            </tr>
+            <tr>
+              <th scope="row">Day timeline</th>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Opt-in screenshots + OCR, deleted after 14 days by default</td>
+              <td><i class="ph ph-x" aria-hidden="true"></i>No</td>
+            </tr>
+            <tr>
+              <th scope="row">Writing autocomplete</th>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Cotyping, in almost any app</td>
+              <td><i class="ph ph-x" aria-hidden="true"></i>No</td>
+            </tr>
+            <tr>
+              <th scope="row">Source code</th>
+              <td>Open source, GPLv3</td>
+              <td>Proprietary</td>
+            </tr>
+            <tr>
+              <th scope="row">Price</th>
+              <td>Free</td>
+              <td>Free tier · Business $14 per user/mo · Enterprise $35 per user/mo</td>
+            </tr>
+            <tr>
+              <th scope="row">Platforms</th>
+              <td>macOS 15+ on Apple Silicon</td>
+              <td>macOS, Windows, iOS</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ─────────────────────── PICKS ─────────────────────── -->
+    <section class="section section--tight" aria-label="Which one is for you">
+      <div class="pick-grid">
+        <article class="pick reveal">
+          <h3>Pick Granola if&hellip;</h3>
+          <p>It is a genuinely good product — these are real advantages.</p>
+          <ul class="checklist">
+            <li><i class="ph ph-check" aria-hidden="true"></i> You want shared folders, team workspaces, and admin controls</li>
+            <li><i class="ph ph-check" aria-hidden="true"></i> You capture meetings on iOS or Windows too</li>
+            <li><i class="ph ph-check" aria-hidden="true"></i> You prefer AI-polished typed notes over full transcripts</li>
+            <li><i class="ph ph-check" aria-hidden="true"></i> Cloud processing by a well-funded vendor is acceptable to you</li>
+          </ul>
+        </article>
+        <article class="pick pick--lokal reveal">
+          <h3>Pick LokalBot if&hellip;</h3>
+          <p>Built for when the content of your meetings must stay yours.</p>
+          <ul class="checklist">
+            <li><i class="ph ph-check" aria-hidden="true"></i> Your meetings can't leave the machine — legal, health, finance, source protection</li>
+            <li><i class="ph ph-check" aria-hidden="true"></i> You want no account and no per-seat subscription — it's free</li>
+            <li><i class="ph ph-check" aria-hidden="true"></i> You want dictation, a day timeline, and autocomplete in the same app</li>
+            <li><i class="ph ph-check" aria-hidden="true"></i> You want source code you — or your security team — can read</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <!-- ─────────────────────── QA ─────────────────────── -->
+    <section class="section faq">
+      <header class="section__head reveal">
+        <p class="eyebrow">Questions</p>
+        <h2 class="section__title">The short answers.</h2>
+      </header>
+      <div class="faq__list reveal">
+        <details class="qa">
+          <summary>Isn't bot-free capture the differentiator?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>Not anymore — Granola and several others skip the meeting bot now. The differentiator is where processing happens. LokalBot transcribes and summarizes on the Mac itself; your audio and notes are never uploaded anywhere.</p>
+        </details>
+        <details class="qa">
+          <summary>What does LokalBot send over the network?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>A one-time model download and update checks. Meeting audio, transcripts, summaries, and screenshots never leave the machine — there is no backend to send them to.</p>
+        </details>
+        <details class="qa">
+          <summary>Can I try LokalBot next to Granola?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>Yes. LokalBot is free — run it on your next few meetings and compare the notes. Neither app puts a bot in your call, so nobody on the call will notice either one.</p>
+        </details>
+      </div>
+    </section>
+
+    <!-- ─────────────────────── CTA ─────────────────────── -->
+    <section class="section download">
+      <div class="download__panel reveal">
+        <img class="download__icon" src="assets/lokalbot-icon.svg" alt="" width="80" height="80" />
+        <p class="eyebrow">Download</p>
+        <h2 class="section__title">Keep your meetings on your Mac.</h2>
+        <p class="section__lead">Free and open source. Models download on first run, then it works fully offline.</p>
+        <a class="btn btn--primary btn--lg" href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">
+          <i class="ph ph-download-simple" aria-hidden="true"></i>
+          Download for macOS
+        </a>
+        <p class="download__sub">.dmg installer &middot; <a href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">all releases and notes</a></p>
+      </div>
+    </section>
+
+    <!-- ─────────────────────── MORE ─────────────────────── -->
+    <section class="section section--tight" aria-label="More comparisons">
+      <nav class="compare-more">
+        <a href="lokalbot-vs-rewind.html">LokalBot vs Rewind</a>
+        <a href="lokalbot-vs-superwhisper.html">LokalBot vs Superwhisper</a>
+        <a href="lokalbot-vs-hyprnote.html">LokalBot vs Hyprnote</a>
+      </nav>
+      <p class="compare-disclaimer">Granola is a trademark of its owner; LokalBot is not affiliated with or endorsed by it. Details are based on public pages and pricing as of July 2026 and may change — if something here is wrong or out of date, <a href="https://github.com/stevyhacker/lokalbot/issues" target="_blank" rel="noopener">open an issue</a> and we'll fix it.</p>
+    </section>
+  </main>
+
+  <!-- ───────────────────────── FOOTER ───────────────────────── -->
+  <footer class="footer">
+    <div class="footer__brand">
+      <a class="brand" href="index.html">
+        <img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="30" height="30" />
+        <span class="brand__name">LokalBot</span>
+      </a>
+      <p>A private, on-device AI workspace for macOS — meetings, dictation, notes, and autocomplete.</p>
+      <p class="footer__meta">Apple Silicon &middot; macOS 15.0+</p>
+    </div>
+    <nav class="footer__col" aria-label="Product">
+      <h4>Product</h4>
+      <a href="index.html#features">Features</a>
+      <a href="index.html#how">How it works</a>
+      <a href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">Download</a>
+    </nav>
+    <nav class="footer__col" aria-label="Compare">
+      <h4>Compare</h4>
+      <a href="lokalbot-vs-granola.html">vs Granola</a>
+      <a href="lokalbot-vs-rewind.html">vs Rewind</a>
+      <a href="lokalbot-vs-superwhisper.html">vs Superwhisper</a>
+      <a href="lokalbot-vs-hyprnote.html">vs Hyprnote</a>
+    </nav>
+    <nav class="footer__col" aria-label="Project">
+      <h4>Project</h4>
+      <a href="https://github.com/stevyhacker/lokalbot" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">Releases</a>
+      <a href="https://github.com/stevyhacker/lokalbot#build--run" target="_blank" rel="noopener">Build from source</a>
+    </nav>
+    <p class="footer__legal">Runs entirely on your Mac. Your meetings are yours.</p>
+  </footer>
+</body>
+</html>

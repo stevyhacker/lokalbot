@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LokalBot vs Superwhisper: on-device dictation compared</title>
+  <meta name="description" content="Superwhisper is a deep, dedicated dictation app. LokalBot includes hold-⌥-Space dictation as one feature of a free, open-source on-device workspace with meetings, a day timeline, and autocomplete." />
+  <meta name="theme-color" content="#0b1119" />
+
+  <link rel="canonical" href="https://www.lokalbot.com/lokalbot-vs-superwhisper.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://www.lokalbot.com/lokalbot-vs-superwhisper.html" />
+  <meta property="og:title" content="LokalBot vs Superwhisper — on-device dictation compared" />
+  <meta property="og:description" content="One is a dedicated dictation tool. The other is a free, open-source workspace where dictation is one of five features. An honest comparison." />
+  <meta property="og:image" content="https://www.lokalbot.com/assets/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://www.lokalbot.com/assets/og-image.png" />
+
+  <link rel="icon" href="assets/lokalbot-icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="assets/lokalbot-icon.svg" />
+
+  <link rel="preconnect" href="https://unpkg.com" crossorigin />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://unpkg.com/@phosphor-icons/web@2.1.1" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <!-- ambient brand background -->
+  <div class="bg-field" aria-hidden="true">
+    <div class="bg-glow bg-glow--a"></div>
+    <div class="bg-glow bg-glow--b"></div>
+    <div class="bg-glow bg-glow--c"></div>
+    <div class="bg-refract"></div>
+    <div class="bg-grain"></div>
+  </div>
+
+  <svg class="glass-defs" aria-hidden="true" focusable="false" width="0" height="0">
+    <filter id="liquidGlass" x="-25%" y="-25%" width="150%" height="150%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.011 0.015" numOctaves="2" seed="7" result="noise" />
+      <feGaussianBlur in="noise" stdDeviation="2.4" result="soft" />
+      <feDisplacementMap in="SourceGraphic" in2="soft" scale="26" xChannelSelector="R" yChannelSelector="G" />
+    </filter>
+  </svg>
+
+  <!-- ───────────────────────── NAV ───────────────────────── -->
+  <header class="nav" id="top">
+    <a class="brand" href="index.html" aria-label="LokalBot home">
+      <img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="32" height="32" />
+      <span class="brand__name">LokalBot</span>
+    </a>
+    <nav class="nav__links" aria-label="Primary">
+      <a href="index.html#features">Features</a>
+      <a href="index.html#how">How it works</a>
+      <a href="index.html#privacy">Privacy</a>
+    </nav>
+    <div class="nav__actions">
+      <a class="icon-link" href="https://github.com/stevyhacker/lokalbot" aria-label="LokalBot on GitHub" target="_blank" rel="noopener">
+        <i class="ph ph-github-logo" aria-hidden="true"></i>
+      </a>
+      <a class="btn btn--primary btn--sm" href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">Download</a>
+    </div>
+  </header>
+
+  <main>
+    <!-- ─────────────────────── HEAD ─────────────────────── -->
+    <section class="section compare-head">
+      <header class="section__head reveal">
+        <p class="eyebrow">Compare</p>
+        <h1 class="section__title">LokalBot vs Superwhisper</h1>
+        <p class="section__lead">The honest version: if dictation is the only thing you want, Superwhisper is the deeper tool — custom modes, AI rewrites, an iOS keyboard. LokalBot's dictation is simpler by design — hold ⌥ Space, speak, it types — and it comes inside a free, open-source workspace that also records your meetings, tracks your day, and autocompletes your writing.</p>
+        <p class="compare-updated">Last verified July 2026 · spot something outdated? <a href="https://github.com/stevyhacker/lokalbot/issues" target="_blank" rel="noopener">Open an issue</a>.</p>
+      </header>
+    </section>
+
+    <!-- ─────────────────────── TABLE ─────────────────────── -->
+    <section class="section section--tight" aria-label="Feature comparison">
+      <div class="compare-wrap reveal">
+        <table class="compare">
+          <thead>
+            <tr>
+              <th scope="col">Feature</th>
+              <th scope="col">LokalBot</th>
+              <th scope="col">Superwhisper</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Dictation</th>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Hold or toggle ⌥ Space, live transcript pill, pastes at the cursor</td>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Deeper: custom modes, AI text processing, per-app behavior</td>
+            </tr>
+            <tr>
+              <th scope="row">Runs on-device</th>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Always — there is no cloud path for your audio</td>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Local models, with optional cloud models</td>
+            </tr>
+            <tr>
+              <th scope="row">Audio retention</th>
+              <td>Scratch recording is deleted right after transcription</td>
+              <td><span class="dim">Configurable in-app</span></td>
+            </tr>
+            <tr>
+              <th scope="row">Meeting notetaker</th>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Bot-free capture with Me / Them tracks, summarized locally</td>
+              <td><i class="ph ph-x" aria-hidden="true"></i>Voice-first tool, not a system-audio meeting notetaker</td>
+            </tr>
+            <tr>
+              <th scope="row">Day timeline</th>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Opt-in screenshots + OCR with app tracking</td>
+              <td><i class="ph ph-x" aria-hidden="true"></i>No</td>
+            </tr>
+            <tr>
+              <th scope="row">Writing autocomplete</th>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Cotyping ghost text as you type</td>
+              <td><i class="ph ph-x" aria-hidden="true"></i>No — AI modes transform what you dictate instead</td>
+            </tr>
+            <tr>
+              <th scope="row">Source code</th>
+              <td>Open source, GPLv3</td>
+              <td>Proprietary</td>
+            </tr>
+            <tr>
+              <th scope="row">Price</th>
+              <td>Free — dictation included, nothing gated</td>
+              <td>Free tier · Pro subscription or a lifetime license (~$250 at last check)</td>
+            </tr>
+            <tr>
+              <th scope="row">Platforms</th>
+              <td>macOS 15+ on Apple Silicon</td>
+              <td>macOS and iOS</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ─────────────────────── PICKS ─────────────────────── -->
+    <section class="section section--tight" aria-label="Which one is for you">
+      <div class="pick-grid">
+        <article class="pick reveal">
+          <h3>Pick Superwhisper if&hellip;</h3>
+          <p>Dictation power users are its whole audience, and it shows.</p>
+          <ul class="checklist">
+            <li><i class="ph ph-check" aria-hidden="true"></i> Dictation is your primary way of writing, all day</li>
+            <li><i class="ph ph-check" aria-hidden="true"></i> You want per-app modes and AI rewriting of what you say</li>
+            <li><i class="ph ph-check" aria-hidden="true"></i> You dictate on your iPhone too</li>
+          </ul>
+        </article>
+        <article class="pick pick--lokal reveal">
+          <h3>Pick LokalBot if&hellip;</h3>
+          <p>Good dictation, plus everything around it — for free.</p>
+          <ul class="checklist">
+            <li><i class="ph ph-check" aria-hidden="true"></i> You want dictation and meeting notes, a day timeline, and autocomplete</li>
+            <li><i class="ph ph-check" aria-hidden="true"></i> One model download covers your meetings and your dictation</li>
+            <li><i class="ph ph-check" aria-hidden="true"></i> You prefer free and open source over a license</li>
+            <li><i class="ph ph-check" aria-hidden="true"></i> You want a strict no-cloud guarantee you can verify in the code</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <!-- ─────────────────────── QA ─────────────────────── -->
+    <section class="section faq">
+      <header class="section__head reveal">
+        <p class="eyebrow">Questions</p>
+        <h2 class="section__title">The short answers.</h2>
+      </header>
+      <div class="faq__list reveal">
+        <details class="qa">
+          <summary>Which speech models does LokalBot use?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>Granite, Parakeet, or Whisper-family models running on the Neural Engine. Dictation reuses whichever engine and language you picked for meetings, and keeps it warm so transcription starts instantly when you hold the key.</p>
+        </details>
+        <details class="qa">
+          <summary>Does LokalBot keep my dictation audio?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>No. It records to a scratch file, transcribes it on-device, pastes the text, and deletes the recording. It even pauses your music before it starts listening.</p>
+        </details>
+        <details class="qa">
+          <summary>Can I run both apps?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>Sure — they use different shortcuts. Some people will want Superwhisper for heavy dictation workflows and LokalBot for meetings and everything else. LokalBot is free, so trying the combination costs nothing.</p>
+        </details>
+      </div>
+    </section>
+
+    <!-- ─────────────────────── CTA ─────────────────────── -->
+    <section class="section download">
+      <div class="download__panel reveal">
+        <img class="download__icon" src="assets/lokalbot-icon.svg" alt="" width="80" height="80" />
+        <p class="eyebrow">Download</p>
+        <h2 class="section__title">Speak anywhere. Stays on your Mac.</h2>
+        <p class="section__lead">Free and open source. Models download on first run, then it works fully offline.</p>
+        <a class="btn btn--primary btn--lg" href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">
+          <i class="ph ph-download-simple" aria-hidden="true"></i>
+          Download for macOS
+        </a>
+        <p class="download__sub">.dmg installer &middot; <a href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">all releases and notes</a></p>
+      </div>
+    </section>
+
+    <!-- ─────────────────────── MORE ─────────────────────── -->
+    <section class="section section--tight" aria-label="More comparisons">
+      <nav class="compare-more">
+        <a href="lokalbot-vs-granola.html">LokalBot vs Granola</a>
+        <a href="lokalbot-vs-rewind.html">LokalBot vs Rewind</a>
+        <a href="lokalbot-vs-hyprnote.html">LokalBot vs Hyprnote</a>
+      </nav>
+      <p class="compare-disclaimer">Superwhisper is a trademark of its owner; LokalBot is not affiliated with or endorsed by it. Details are based on public pages and pricing as of July 2026 and may change — if something here is wrong or out of date, <a href="https://github.com/stevyhacker/lokalbot/issues" target="_blank" rel="noopener">open an issue</a> and we'll fix it.</p>
+    </section>
+  </main>
+
+  <!-- ───────────────────────── FOOTER ───────────────────────── -->
+  <footer class="footer">
+    <div class="footer__brand">
+      <a class="brand" href="index.html">
+        <img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="30" height="30" />
+        <span class="brand__name">LokalBot</span>
+      </a>
+      <p>A private, on-device AI workspace for macOS — meetings, dictation, notes, and autocomplete.</p>
+      <p class="footer__meta">Apple Silicon &middot; macOS 15.0+</p>
+    </div>
+    <nav class="footer__col" aria-label="Product">
+      <h4>Product</h4>
+      <a href="index.html#features">Features</a>
+      <a href="index.html#how">How it works</a>
+      <a href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">Download</a>
+    </nav>
+    <nav class="footer__col" aria-label="Compare">
+      <h4>Compare</h4>
+      <a href="lokalbot-vs-granola.html">vs Granola</a>
+      <a href="lokalbot-vs-rewind.html">vs Rewind</a>
+      <a href="lokalbot-vs-superwhisper.html">vs Superwhisper</a>
+      <a href="lokalbot-vs-hyprnote.html">vs Hyprnote</a>
+    </nav>
+    <nav class="footer__col" aria-label="Project">
+      <h4>Project</h4>
+      <a href="https://github.com/stevyhacker/lokalbot" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">Releases</a>
+      <a href="https://github.com/stevyhacker/lokalbot#build--run" target="_blank" rel="noopener">Build from source</a>
+    </nav>
+    <p class="footer__legal">Runs entirely on your Mac. Your meetings are yours.</p>
+  </footer>
+</body>
+</html>
