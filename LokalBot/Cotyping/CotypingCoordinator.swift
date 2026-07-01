@@ -33,7 +33,9 @@ final class CotypingCoordinator: ObservableObject {
     private var session: CotypingSession?
     private var generation: UInt64 = 0
     private var debounceTask: Task<Void, Never>?
+    private var generationTask: Task<Void, Never>?
     private var focusPrewarmTask: Task<Void, Never>?
+    private var focusPrewarmFieldIdentity: String?
     private var hostPublishPollGeneration: UInt64 = 0
     private var wired = false
     private var lastLatencyMilliseconds: Int?
@@ -70,10 +72,11 @@ final class CotypingCoordinator: ObservableObject {
         self.settingsProvider = settingsProvider
         self.selfBundleID = selfBundleID
         self.focusTracker = CotypingFocusTracker()
-        self.inputMonitor = CotypingInputMonitor()
+        let suppressionController = CotypingInputSuppressionController()
+        self.inputMonitor = CotypingInputMonitor(suppressionController: suppressionController)
         self.inputSourceMonitor = CotypingKeyboardInputSourceMonitor()
         self.overlay = CotypingOverlayController()
-        self.inserter = CotypingInserter()
+        self.inserter = CotypingInserter(suppressionController: suppressionController)
     }
 
     // MARK: - Lifecycle
@@ -155,7 +158,11 @@ final class CotypingCoordinator: ObservableObject {
     private func handleFocusChange(_ focus: CotypingFocus) {
         guard isRunning else { return }
         // Drop a live suggestion when focus leaves the field/app it belongs to.
-        if let session, !Self.isContinuation(of: session, liveField: focus.field) {
+        if let session,
+           Self.shouldClearActiveSessionOnFocusChange(
+               session,
+               liveField: focus.field,
+               pendingInsertionConsumedCount: pendingInsertionConsumedCount) {
             clearSuggestion()
         }
         // Surface a disabled reason in the UI while idle (no live suggestion).
@@ -185,13 +192,21 @@ final class CotypingCoordinator: ObservableObject {
     // MARK: - Generation
 
     private func scheduleFocusPrewarm(for focus: CotypingFocus) {
-        focusPrewarmTask?.cancel()
         guard isRunning,
-              session == nil,
-              state == .idle,
               case .supported = focus.capability,
               let field = focus.field else {
+            focusPrewarmTask?.cancel()
             focusPrewarmTask = nil
+            focusPrewarmFieldIdentity = nil
+            return
+        }
+
+        let fieldIdentity = Self.prewarmFieldIdentity(for: field)
+        guard fieldIdentity != focusPrewarmFieldIdentity else { return }
+
+        focusPrewarmTask?.cancel()
+        focusPrewarmTask = nil
+        guard session == nil, state == .idle else {
             return
         }
         let settings = settingsProvider()
@@ -203,10 +218,10 @@ final class CotypingCoordinator: ObservableObject {
             focus: focus) == nil,
               let request = buildRequest(for: field, settings: settings, generation: generation)
         else {
-            focusPrewarmTask = nil
             return
         }
 
+        focusPrewarmFieldIdentity = fieldIdentity
         focusPrewarmTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(50))
             guard !Task.isCancelled else { return }
@@ -218,6 +233,8 @@ final class CotypingCoordinator: ObservableObject {
         pendingSpeculativeSignature = nil
         pendingSpeculativeResult = nil
         debounceTask?.cancel()
+        generationTask?.cancel()
+        generationTask = nil
         generation &+= 1
         let work = generation
         clearSuggestion(releasePostExhaustionWindow: !isPostExhaustionAcceptanceArmed)
@@ -229,7 +246,7 @@ final class CotypingCoordinator: ObservableObject {
         debounceTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(delay))
             guard !Task.isCancelled else { return }
-            await self?.generate(work: work)
+            self?.replaceGenerationWork(for: work)
         }
     }
 
@@ -310,13 +327,26 @@ final class CotypingCoordinator: ObservableObject {
         }
     }
 
-    private nonisolated static func hostPublishDidMove(from baseline: CotypingField?, to current: CotypingField?) -> Bool {
+    nonisolated static func hostPublishDidMove(from baseline: CotypingField?, to current: CotypingField?) -> Bool {
         guard let baseline else { return current != nil }
         guard let current else { return true }
         return current.contentSignature != baseline.contentSignature
             || current.processID != baseline.processID
             || current.bundleID != baseline.bundleID
             || current.role != baseline.role
+            || knownFocusIdentityDidMove(from: baseline, to: current)
+            || suggestionAnchorIdentity(for: current) != suggestionAnchorIdentity(for: baseline)
+    }
+
+    private nonisolated static func knownFocusIdentityDidMove(
+        from baseline: CotypingField,
+        to current: CotypingField
+    ) -> Bool {
+        guard let original = baseline.focusIdentityKey,
+              let live = current.focusIdentityKey else {
+            return false
+        }
+        return original != live
     }
 
     private nonisolated static func elapsedMilliseconds(since uptimeNanoseconds: UInt64) -> Int {
@@ -331,7 +361,23 @@ final class CotypingCoordinator: ObservableObject {
         pendingSpeculativeResult = nil
         debounceTask?.cancel()
         debounceTask = nil
+        generationTask?.cancel()
+        generationTask = nil
         generation &+= 1
+    }
+
+    private func replaceGenerationWork(for work: UInt64) {
+        guard work == generation, isRunning else { return }
+        generationTask?.cancel()
+        generationTask = Task { [weak self] in
+            guard let self, !Task.isCancelled, work == self.generation else { return }
+            defer {
+                if self.generation == work {
+                    self.generationTask = nil
+                }
+            }
+            await self.generate(work: work)
+        }
     }
 
     private func advanceActiveSessionIfPublishedTextMatches(
@@ -360,6 +406,7 @@ final class CotypingCoordinator: ObservableObject {
             style: liveField.fieldStyle,
             placement: placement,
             millisecondsSinceLastAcceptance: millisecondsSinceLastAcceptance(),
+            inputFrameRect: liveField.inputFrameRect,
             isRightToLeft: CotypingTextDirectionDetector.isRightToLeft(liveField.precedingText)) {
             showOverlay(text: remainingText, field: liveField, placement: placement)
         }
@@ -539,32 +586,15 @@ final class CotypingCoordinator: ObservableObject {
             from: field.precedingText,
             maxCharacters: config.maxPrefixCharacters,
             maxWords: config.maxPrefixWords)
-        guard let relevantClipboard = clipboardRelevanceFilter.filter(
+        let resolution = CotypingClipboardPrefaceResolver.resolve(
             rawClipboard: clipboardProvider.currentText,
             pasteboardChangeCount: changeCount,
-            precedingText: prefix) else {
-            clipboardPrefaceMemo = nil
-            return nil
-        }
-        if let pinned = clipboardPrefaceMemo?.valueIfReusable(
+            precedingText: prefix,
             identityKey: identityKey,
-            changeCount: changeCount) {
-            return pinned
-        }
-
-        let value = CotypingClipboardContext.resolve(
-            rawClipboard: relevantClipboard,
-            precedingText: prefix)
-        if let value {
-            clipboardPrefaceMemo = CotypingClipboardPrefaceMemo(
-                identityKey: identityKey,
-                changeCount: changeCount,
-                value: value)
-        } else if clipboardPrefaceMemo?.identityKey != identityKey
-                    || clipboardPrefaceMemo?.changeCount != changeCount {
-            clipboardPrefaceMemo = nil
-        }
-        return value
+            memo: clipboardPrefaceMemo,
+            relevanceFilter: clipboardRelevanceFilter)
+        clipboardPrefaceMemo = resolution.memo
+        return resolution.value
     }
 
     private func refreshFocusForPrediction(settings: AppSettings) -> CotypingFocus {
@@ -715,10 +745,20 @@ final class CotypingCoordinator: ObservableObject {
         state = .generating
         let start = Date()
 
-        Task { [weak self] in
+        debounceTask?.cancel()
+        debounceTask = nil
+        generationTask?.cancel()
+        generationTask = Task { [weak self] in
             do {
                 guard let self else { return }
+                defer {
+                    if self.generation == work {
+                        self.generationTask = nil
+                    }
+                }
+                guard !Task.isCancelled, work == self.generation else { return }
                 let result = try await self.engine.generate(request)
+                guard !Task.isCancelled else { return }
                 self.finishSpeculativeGeneration(
                     result,
                     optimisticField: optimisticField,
@@ -894,10 +934,13 @@ final class CotypingCoordinator: ObservableObject {
         overlay.show(
             text: text,
             caretRect: field.caretRect,
+            inputFrameRect: field.inputFrameRect,
+            focusIdentityKey: field.focusIdentityKey,
             style: field.fieldStyle,
             placement: placement ?? self.placement(for: field),
             acceptanceHintLabel: settings.cotypingShowAcceptKeyHint ? settings.cotypingAcceptKey.label : nil,
             acceptanceText: acceptanceText,
+            isRightToLeft: CotypingTextDirectionDetector.isRightToLeft(field.precedingText),
             fadeIn: settings.cotypingFadeInSuggestions,
             fadeDurationSeconds: settings.cotypingFadeInDurationSeconds)
     }
@@ -970,7 +1013,10 @@ final class CotypingCoordinator: ObservableObject {
         }
 
         // Continuation: never insert into the wrong field (mouse-moved focus).
-        guard Self.isContinuation(of: current, liveField: live.field) else {
+        guard Self.isAcceptanceContinuation(
+            of: current,
+            liveField: live.field,
+            pendingInsertionConsumedCount: pendingInsertionConsumedCount) else {
             clearSuggestion()
             return false
         }
@@ -1076,6 +1122,7 @@ final class CotypingCoordinator: ObservableObject {
                         style: field.fieldStyle,
                         placement: placement,
                         millisecondsSinceLastAcceptance: self.millisecondsSinceLastAcceptance(),
+                        inputFrameRect: field.inputFrameRect,
                         isRightToLeft: CotypingTextDirectionDetector.isRightToLeft(field.precedingText)) {
                         return
                     }
@@ -1445,6 +1492,50 @@ final class CotypingCoordinator: ObservableObject {
         return hasCappedPrefixWindowOverlap(previous: previous, live: live)
     }
 
+    nonisolated static func isAcceptanceContinuation(
+        of session: CotypingSession,
+        liveField: CotypingField?,
+        pendingInsertionConsumedCount: Int?
+    ) -> Bool {
+        guard isContinuation(of: session, liveField: liveField) else { return false }
+        guard let liveField else { return false }
+        if shouldAwaitPostInsertionSync(
+            session,
+            liveField: liveField,
+            pendingInsertionConsumedCount: pendingInsertionConsumedCount) {
+            return true
+        }
+        if isPostInsertionSyncTarget(
+            session,
+            liveField: liveField,
+            pendingInsertionConsumedCount: pendingInsertionConsumedCount) {
+            return true
+        }
+        return liveField.trailingText == session.field.trailingText
+    }
+
+    nonisolated static func shouldClearActiveSessionOnFocusChange(
+        _ session: CotypingSession,
+        liveField: CotypingField?,
+        pendingInsertionConsumedCount: Int?
+    ) -> Bool {
+        guard let liveField else { return true }
+        if shouldAwaitPostInsertionSync(
+            session,
+            liveField: liveField,
+            pendingInsertionConsumedCount: pendingInsertionConsumedCount) {
+            return false
+        }
+        if isPostInsertionSyncTarget(
+            session,
+            liveField: liveField,
+            pendingInsertionConsumedCount: pendingInsertionConsumedCount) {
+            return false
+        }
+        guard isContinuation(of: session, liveField: liveField) else { return true }
+        return liveField.trailingText != session.field.trailingText
+    }
+
     nonisolated static func isCurrentGenerationTarget(
         _ originalField: CotypingField,
         liveField: CotypingField?
@@ -1516,9 +1607,29 @@ final class CotypingCoordinator: ObservableObject {
         liveField: CotypingField?,
         pendingInsertionConsumedCount: Int?
     ) -> Bool {
+        guard let liveField,
+              isPostInsertionSyncTarget(
+                  session,
+                  liveField: liveField,
+                  pendingInsertionConsumedCount: pendingInsertionConsumedCount) else {
+            return false
+        }
+
+        let expectedPrefix = session.field.precedingText + session.acceptedText
+        guard !liveField.precedingText.hasPrefix(expectedPrefix) else {
+            return false
+        }
+
+        return true
+    }
+
+    private nonisolated static func isPostInsertionSyncTarget(
+        _ session: CotypingSession,
+        liveField: CotypingField,
+        pendingInsertionConsumedCount: Int?
+    ) -> Bool {
         guard case .continuation = session.kind,
               pendingInsertionConsumedCount == session.consumedCount,
-              let liveField,
               liveField.processID == session.field.processID,
               liveField.bundleID == session.field.bundleID,
               liveField.role == session.field.role,
@@ -1530,18 +1641,7 @@ final class CotypingCoordinator: ObservableObject {
            originalIdentity != liveIdentity {
             return false
         }
-
-        let expectedPrefix = session.field.precedingText + session.acceptedText
-        guard !liveField.precedingText.hasPrefix(expectedPrefix) else {
-            return false
-        }
-
-        let originalPrefix = session.field.precedingText
-        let livePrefix = liveField.precedingText
-        if livePrefix.hasPrefix(originalPrefix) || originalPrefix.hasPrefix(livePrefix) {
-            return true
-        }
-        return hasCappedPrefixWindowOverlap(previous: originalPrefix, live: livePrefix)
+        return true
     }
 
     nonisolated static func sessionAdvancedByTypedCharacters(
@@ -1605,6 +1705,38 @@ final class CotypingCoordinator: ObservableObject {
             field.windowTitle ?? "",
             field.fieldPlaceholder ?? "",
         ].joined(separator: "\u{1f}")
+    }
+
+    nonisolated static func prewarmFieldIdentity(for field: CotypingField) -> String {
+        let fieldPart: String
+        if let focusIdentityKey = field.focusIdentityKey, !focusIdentityKey.isEmpty {
+            fieldPart = "focus:\(focusIdentityKey)"
+        } else if let frame = field.inputFrameRect {
+            fieldPart = "frame:\(roundedRectIdentity(frame))"
+        } else {
+            fieldPart = [
+                field.windowTitle ?? "",
+                field.fieldPlaceholder ?? "",
+            ].joined(separator: "\u{1f}")
+        }
+        return [
+            String(field.processID),
+            field.bundleID ?? "",
+            field.appName,
+            field.role,
+            fieldPart,
+        ].joined(separator: "\u{1f}")
+    }
+
+    private nonisolated static func roundedRectIdentity(_ rect: CGRect) -> String {
+        [
+            rect.origin.x,
+            rect.origin.y,
+            rect.size.width,
+            rect.size.height,
+        ]
+            .map { String(Int($0.rounded())) }
+            .joined(separator: ",")
     }
 
     private nonisolated static func hasCappedPrefixWindowOverlap(previous: String, live: String) -> Bool {

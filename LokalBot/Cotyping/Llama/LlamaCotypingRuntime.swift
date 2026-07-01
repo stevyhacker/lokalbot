@@ -7,6 +7,35 @@ enum LlamaRuntimeError: Error, Equatable {
     case decodeFailed
 }
 
+private final class LlamaDecodeAbortState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var abortRequested = false
+
+    func reset() {
+        lock.lock()
+        abortRequested = false
+        lock.unlock()
+    }
+
+    func requestAbort() {
+        lock.lock()
+        abortRequested = true
+        lock.unlock()
+    }
+
+    var isAbortRequested: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return abortRequested
+    }
+}
+
+private func llamaCotypingAbortCallback(_ rawState: UnsafeMutableRawPointer?) -> Bool {
+    guard let rawState else { return false }
+    let state = Unmanaged<LlamaDecodeAbortState>.fromOpaque(rawState).takeUnretainedValue()
+    return state.isAbortRequested
+}
+
 /// In-process llama.cpp runtime for cotyping. Owns the model, a persistent
 /// context + memory, and serializes all inference on the actor's executor
 /// (off the main actor).
@@ -14,9 +43,9 @@ enum LlamaRuntimeError: Error, Equatable {
 /// The KV-reuse probe (`IncrementalPrefill`) reports how much of each prompt
 /// overlaps the previous one. On a pure-attention model this drives true
 /// partial-prefix reuse: the shared prefix KV is kept and only the diverged
-/// suffix is re-decoded. The bundled Qwen3.5 is a hybrid SSM/attention model
-/// whose recurrent state cannot be partially rewound to a prefix, so it falls
-/// back to a full re-prefill on every call; `lastPrefillTokenCount` still
+/// suffix is re-decoded. Hybrid/recurrent models cannot rewind their rolling
+/// state to a prefix, so focus prefill records only the logical prompt baseline
+/// and generation falls back to a full re-prefill; `lastPrefillTokenCount` still
 /// surfaces the diverged-suffix length as the meaningful reuse signal either
 /// way. The capability is cached once at load (`supportsPartialReuse`).
 ///
@@ -34,6 +63,9 @@ actor LlamaCotypingRuntime {
     /// partially evicted (`seq_rm` at a non-zero p0). Recurrent/hybrid (SSM/Mamba)
     /// models cannot rewind their rolling state to a prefix, so they full-reprefill.
     private var supportsPartialReuse = false
+    /// Thread-safe bridge into llama.cpp's abort callback. A superseded Task can
+    /// flip this from outside the actor while `llama_decode` is still running.
+    private let decodeAbortState = LlamaDecodeAbortState()
 
     /// Initializes the llama backend exactly once across ALL instances. Swift
     /// guarantees a static `let` initializer runs once and is thread-safe, which
@@ -44,6 +76,12 @@ actor LlamaCotypingRuntime {
     }()
 
     var isLoaded: Bool { model != nil && ctx != nil }
+
+    var canReusePromptPrefix: Bool { supportsPartialReuse }
+
+    nonisolated func abortInFlightDecode() {
+        decodeAbortState.requestAbort()
+    }
 
     // MARK: - Lifecycle
 
@@ -69,6 +107,11 @@ actor LlamaCotypingRuntime {
             llama_model_free(m)
             throw LlamaRuntimeError.contextInitFailed
         }
+        decodeAbortState.reset()
+        llama_set_abort_callback(
+            c,
+            llamaCotypingAbortCallback,
+            Unmanaged.passUnretained(decodeAbortState).toOpaque())
 
         model = m
         ctx = c
@@ -98,6 +141,18 @@ actor LlamaCotypingRuntime {
     /// masquerade as the prompt represented by `cachedTokens`.
     func prefill(promptTokens: [Int32]) throws {
         guard let ctx, !promptTokens.isEmpty else { return }
+        decodeAbortState.reset()
+        defer { decodeAbortState.reset() }
+        try Task.checkCancellation()
+        guard supportsPartialReuse else {
+            // CoTabby avoids speculative prefills once a model cannot reuse a
+            // prompt KV prefix. For hybrid/recurrent models this keeps focus
+            // prewarm from doubling the first real autocomplete decode while
+            // preserving the logical prefix baseline used for diagnostics.
+            cachedTokens = promptTokens
+            lastPrefillTokenCount = 0
+            return
+        }
         let mem = llama_get_memory(ctx)
         let shared = IncrementalPrefill.commonPrefixLength(cachedTokens, promptTokens)
         let reuse = min(shared, promptTokens.count - 1)
@@ -145,6 +200,8 @@ actor LlamaCotypingRuntime {
     /// keystroke, then clears the KV so generation starts from a clean cache.
     private func warmup() {
         guard let vocab, let ctx else { return }
+        decodeAbortState.reset()
+        defer { decodeAbortState.reset() }
         let bos = llama_vocab_bos(vocab)
         _ = decode([bos], startPos: 0, logitsLastOnly: true)
         llama_memory_clear(llama_get_memory(ctx), true)
@@ -212,16 +269,26 @@ actor LlamaCotypingRuntime {
         while offset < tokens.count {
             try Task.checkCancellation()
             let end = min(tokens.count, offset + chunkSize)
-            guard decode(
+            try decodeOrThrow(
                 Array(tokens[offset..<end]),
                 startPos: startPos + Int32(offset),
                 logitsLastOnly: logitsLastOnly)
-            else {
-                throw LlamaRuntimeError.decodeFailed
-            }
             offset = end
         }
         try Task.checkCancellation()
+    }
+
+    private func decodeOrThrow(
+        _ tokens: [Int32],
+        startPos: Int32,
+        logitsLastOnly: Bool
+    ) throws {
+        guard decode(tokens, startPos: startPos, logitsLastOnly: logitsLastOnly) else {
+            if decodeAbortState.isAbortRequested || Task.isCancelled {
+                throw CancellationError()
+            }
+            throw LlamaRuntimeError.decodeFailed
+        }
     }
 
     // MARK: - Generate
@@ -230,10 +297,13 @@ actor LlamaCotypingRuntime {
         promptTokens: [Int32],
         maxTokens: Int,
         samplerSpecs: [LlamaSamplerSpec],
+        stopAtArgmaxEOG: Bool = true,
         onToken: @Sendable (String) -> Bool
     ) throws -> String {
         guard let ctx, let vocab, !promptTokens.isEmpty else { return "" }
         guard let sampler = makeSampler(samplerSpecs) else { return "" }
+        decodeAbortState.reset()
+        defer { decodeAbortState.reset() }
         defer { llama_sampler_free(sampler) }
 
         let mem = llama_get_memory(ctx)
@@ -245,37 +315,51 @@ actor LlamaCotypingRuntime {
         let shared = IncrementalPrefill.commonPrefixLength(cachedTokens, promptTokens)
         let reuse = min(shared, promptTokens.count - 1)
 
-        if supportsPartialReuse, reuse > 0,
-           llama_memory_seq_rm(mem, 0, Int32(reuse), -1) {
-            // Attention model: the shared prefix KV is kept and only the diverged
-            // suffix is re-decoded. seq_rm dropped [reuse, end) — the diverged tail
-            // plus any stale tokens the previous generation appended past the prompt.
-            //
-            // Cotyping prompts are NOT guaranteed to stay inside the production
-            // Gemma4 model's 512-token sliding window: worst case is ~850–1100
-            // tokens (a 150-word prefix + the ~900-char preface + up to 2500 prefix
-            // chars). The load-bearing guard is the `llama_memory_seq_rm` return
-            // value below: it returns false when the partial removal can't be
-            // honored (e.g. the kept prefix [0, reuse) aged out of the SWA window on
-            // a long prompt), and we then fall through to the full re-prefill in the
-            // `else` branch. DO NOT remove that fallback — partial reuse is only
-            // safe when seq_rm confirms the kept prefix is still resident.
-            guard decode(Array(promptTokens[reuse...]), startPos: Int32(reuse),
-                         logitsLastOnly: true) else { throw LlamaRuntimeError.decodeFailed }
-        } else {
-            // Recurrent/hybrid model (SSM/Mamba) cannot partially rewind its rolling
-            // state, or a partial seq_rm above was not honored. Reset and prefill the
-            // whole prompt from position 0. `reuse` above is still the meaningful
-            // KV-reuse *signal* callers read via lastPrefillTokenCount.
+        do {
+            try Task.checkCancellation()
+            if supportsPartialReuse, reuse > 0,
+               llama_memory_seq_rm(mem, 0, Int32(reuse), -1) {
+                // Attention model: the shared prefix KV is kept and only the diverged
+                // suffix is re-decoded. seq_rm dropped [reuse, end) — the diverged tail
+                // plus any stale tokens the previous generation appended past the prompt.
+                //
+                // Cotyping prompts are NOT guaranteed to stay inside the production
+                // Gemma4 model's 512-token sliding window: worst case is ~850–1100
+                // tokens (a 150-word prefix + the ~900-char preface + up to 2500 prefix
+                // chars). The load-bearing guard is the `llama_memory_seq_rm` return
+                // value below: it returns false when the partial removal can't be
+                // honored (e.g. the kept prefix [0, reuse) aged out of the SWA window on
+                // a long prompt), and we then fall through to the full re-prefill in the
+                // `else` branch. DO NOT remove that fallback — partial reuse is only
+                // safe when seq_rm confirms the kept prefix is still resident.
+                try decodeCancellable(
+                    Array(promptTokens[reuse...]),
+                    startPos: Int32(reuse),
+                    logitsLastOnly: true)
+            } else {
+                // Recurrent/hybrid model (SSM/Mamba) cannot partially rewind its rolling
+                // state, or a partial seq_rm above was not honored. Reset and prefill the
+                // whole prompt from position 0. `reuse` above is still the meaningful
+                // KV-reuse *signal* callers read via lastPrefillTokenCount.
+                llama_memory_seq_rm(mem, 0, 0, -1)
+                try decodeCancellable(promptTokens, startPos: 0, logitsLastOnly: true)
+            }
+            lastPrefillTokenCount = promptTokens.count - reuse
+            cachedTokens = promptTokens
+        } catch {
             llama_memory_seq_rm(mem, 0, 0, -1)
-            guard decode(promptTokens, startPos: 0, logitsLastOnly: true) else { throw LlamaRuntimeError.decodeFailed }
+            cachedTokens = []
+            lastPrefillTokenCount = 0
+            throw error
         }
-        lastPrefillTokenCount = promptTokens.count - reuse
-        cachedTokens = promptTokens
 
         var output = ""
         var pos = Int32(promptTokens.count)
         for _ in 0..<maxTokens {
+            try Task.checkCancellation()
+            if stopAtArgmaxEOG, argmaxTokenIsEOG(ctx: ctx, vocab: vocab) {
+                break
+            }
             let tok = llama_sampler_sample(sampler, ctx, -1)
             if llama_vocab_is_eog(vocab, tok) { break }
             llama_sampler_accept(sampler, tok)
@@ -285,10 +369,38 @@ actor LlamaCotypingRuntime {
             // A mid-generation decode failure discards the partial output and
             // propagates so the selector falls back to HTTP, rather than
             // surfacing a truncated ghost as if it were a complete suggestion.
-            guard decode([tok], startPos: pos, logitsLastOnly: true) else { throw LlamaRuntimeError.decodeFailed }
+            try decodeOrThrow([tok], startPos: pos, logitsLastOnly: true)
             pos += 1
         }
         return output
+    }
+
+    private func argmaxTokenIsEOG(ctx: OpaquePointer, vocab: OpaquePointer) -> Bool {
+        guard let token = Self.argmaxToken(
+            in: llama_get_logits_ith(ctx, -1),
+            vocabularySize: llama_vocab_n_tokens(vocab))
+        else {
+            return false
+        }
+        return llama_vocab_is_eog(vocab, token)
+    }
+
+    nonisolated static func argmaxToken(
+        in logits: UnsafePointer<Float>?,
+        vocabularySize: Int32
+    ) -> Int32? {
+        guard let logits, vocabularySize > 0 else { return nil }
+        var bestToken: Int32?
+        var bestLogit = -Float.infinity
+        for index in 0..<Int(vocabularySize) {
+            let value = logits[index]
+            guard !value.isNaN else { continue }
+            if value > bestLogit {
+                bestLogit = value
+                bestToken = Int32(index)
+            }
+        }
+        return bestToken
     }
 
     private func makeSampler(_ specs: [LlamaSamplerSpec]) -> UnsafeMutablePointer<llama_sampler>? {

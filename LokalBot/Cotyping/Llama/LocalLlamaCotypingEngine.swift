@@ -47,7 +47,11 @@ final class LocalLlamaCotypingEngine: CotypingCompleting {
                 let promptTokens = await runtime.tokenize(request.prompt, addBOS: true)
                 guard !promptTokens.isEmpty else { return }
                 try Task.checkCancellation()
-                try await runtime.prefill(promptTokens: promptTokens)
+                try await withTaskCancellationHandler {
+                    try await runtime.prefill(promptTokens: promptTokens)
+                } onCancel: {
+                    runtime.abortInFlightDecode()
+                }
             } catch {
                 // Prompt prefill is opportunistic; the following generation can
                 // still run a normal prefill or fall back through the selector.
@@ -99,22 +103,26 @@ final class LocalLlamaCotypingEngine: CotypingCompleting {
         // propagates out of run() → the selector's `catch let error as
         // LlamaRuntimeError`, so a decode failure reaches the HTTP fallback
         // instead of surfacing a silent empty/truncated ghost.
-        let raw = try await runtime.generate(
-            promptTokens: promptTokens,
-            maxTokens: request.maxTokens,
-            samplerSpecs: specs
-        ) { piece in
-            if Task.isCancelled { return false }
-            accumulator.append(piece)
-            let result = CotypingTextNormalizer.normalizeDetailed(accumulator.raw, for: request)
-            onPartial(result)
-            // Native decode-stop at the SAME boundary the HTTP path stops at.
-            if CotypingDecodeStopPolicy.verdict(
-                accumulated: accumulator.raw,
-                tokensGenerated: accumulator.count) != nil {
-                return false
+        let raw = try await withTaskCancellationHandler {
+            try await runtime.generate(
+                promptTokens: promptTokens,
+                maxTokens: request.maxTokens,
+                samplerSpecs: specs
+            ) { piece in
+                if Task.isCancelled { return false }
+                accumulator.append(piece)
+                let result = CotypingTextNormalizer.normalizeDetailed(accumulator.raw, for: request)
+                onPartial(result)
+                // Native decode-stop at the SAME boundary the HTTP path stops at.
+                if CotypingDecodeStopPolicy.verdict(
+                    accumulated: accumulator.raw,
+                    tokensGenerated: accumulator.count) != nil {
+                    return false
+                }
+                return true
             }
-            return true
+        } onCancel: {
+            runtime.abortInFlightDecode()
         }
 
         if Task.isCancelled { throw CancellationError() }

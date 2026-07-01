@@ -15,25 +15,33 @@ final class CotypingOverlayController {
     private let sampler = CotypingBackgroundSampler()
     private var sampleGeneration = 0
     private var samplingInFlight = false
+    private var fontStabilizer = CotypingGhostFontSizeStabilizer()
     private var lastInlineRender: InlineRenderState?
 
     private struct InlineRenderState {
         var text: String
         var frame: CGRect
-        var style: CotypingFieldStyle?
+        var sourceStyle: CotypingFieldStyle?
+        var renderStyle: CotypingFieldStyle?
         var acceptanceHintLabel: String?
         var lineHeight: CGFloat
+        var lineCount: Int
         var visibleFrame: CGRect?
+        var inputFrameRect: CGRect?
+        var caretIsExact: Bool
         var backgroundLuminance: CGFloat?
     }
 
     func show(
         text: String,
         caretRect: CGRect,
+        inputFrameRect: CGRect? = nil,
+        focusIdentityKey: String? = nil,
         style: CotypingFieldStyle? = nil,
         placement: CotypingOverlayPlacement = .inlineDefault,
         acceptanceHintLabel: String? = nil,
         acceptanceText: String? = nil,
+        isRightToLeft: Bool = false,
         fadeIn: Bool = true,
         fadeDurationSeconds: Double = CotypingSuggestionFadeInPolicy.defaultDurationSeconds
     ) {
@@ -56,20 +64,41 @@ final class CotypingOverlayController {
         let generation = sampleGeneration
         let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let visible = screenVisibleFrame(containing: caretRect)
+        let stabilizedCaretHeight = fontStabilizer.stabilizedCaretHeight(
+            caretRect.height,
+            focusSessionKey: Self.fontSessionKey(
+                focusIdentityKey: focusIdentityKey,
+                inputFrameRect: inputFrameRect,
+                caretRect: caretRect))
+        let renderStyle = CotypingGhostFontSizing.renderStyle(
+            from: style,
+            caretHeight: stabilizedCaretHeight,
+            caretIsExact: placement.caretIsExact)
         let mirrorLayout = mode.isMirror
-            ? CotypingGhostTextLayout.mirrorLayout(text: text, style: style, visible: visible)
+            ? CotypingGhostTextLayout.mirrorLayout(text: text, style: renderStyle, visible: visible)
+            : nil
+        let inlineLayout = mode == .inline
+            ? CotypingInlineGhostLayout.make(
+                text: text,
+                caretRect: caretRect,
+                inputFrameRect: inputFrameRect,
+                style: renderStyle,
+                visible: visible,
+                acceptanceHintLabel: acceptanceHintLabel,
+                isRightToLeft: isRightToLeft)
             : nil
         let displayText = mirrorLayout?.displayText ?? text
         // Inline ghosts contrast against the real host pixels (sampled below);
         // mirror sits on its own pill, so it keeps the appearance-based color.
         let cachedLuminance = mode.isMirror ? nil : sampler.cachedLuminance(forApp: bundleID)
         hosting.rootView = CotypingGhostView(
-            text: displayText, style: style, showsChrome: mode.isMirror,
-            acceptanceHintLabel: acceptanceHintLabel, backgroundLuminance: cachedLuminance)
+            text: displayText, style: renderStyle, showsChrome: mode.isMirror,
+            acceptanceHintLabel: acceptanceHintLabel, inlineLayout: inlineLayout,
+            backgroundLuminance: cachedLuminance)
         hosting.layoutSubtreeIfNeeded()
 
         let fitting = hosting.fittingSize
-        let measured = CotypingGhostStyle.measuredTextSize(text, style: style)
+        let measured = CotypingGhostStyle.measuredTextSize(text, style: renderStyle)
         let measuredWithHint = CotypingAcceptanceHintLayout.reservedSize(
             for: measured,
             label: acceptanceHintLabel)
@@ -82,18 +111,35 @@ final class CotypingOverlayController {
         let frame: CGRect
         switch mode {
         case .inline:
-            let font = CotypingGhostStyle.resolvedFont(from: style)
-            let lineHeight = ceil(font.ascender - font.descender)
-            let textSize = CGSize(
-                width: max(fitting.width, measuredWithHint.width),
-                height: max(fitting.height, measuredWithHint.height))
-            frame = CotypingOverlayGeometry.inlineFrame(
-                caret: caretRect, textSize: textSize,
-                lineHeight: lineHeight, visible: visible)
+            let font = CotypingGhostStyle.resolvedFont(from: renderStyle)
+            let lineHeight = inlineLayout?.lineHeight ?? ceil(font.ascender - font.descender)
+            if let inlineLayout {
+                let estimatedContent = CotypingInlineGhostLayout.estimatedContentSize(
+                    for: inlineLayout,
+                    style: renderStyle,
+                    acceptanceHintLabel: acceptanceHintLabel)
+                let contentSize = CGSize(
+                    width: max(fitting.width, estimatedContent.width),
+                    height: max(fitting.height, estimatedContent.height))
+                frame = inlineLayout.panelFrame(
+                    for: contentSize,
+                    caretRect: caretRect,
+                    visible: visible)
+            } else {
+                let textSize = CGSize(
+                    width: max(fitting.width, measuredWithHint.width),
+                    height: max(fitting.height, measuredWithHint.height))
+                frame = CotypingOverlayGeometry.inlineFrame(
+                    caret: caretRect, textSize: textSize,
+                    lineHeight: lineHeight, visible: visible)
+            }
             lastInlineRender = InlineRenderState(
-                text: text, frame: frame.integral, style: style,
+                text: text, frame: frame.integral, sourceStyle: style, renderStyle: renderStyle,
                 acceptanceHintLabel: acceptanceHintLabel, lineHeight: lineHeight,
-                visibleFrame: visible, backgroundLuminance: cachedLuminance)
+                lineCount: inlineLayout?.lines.count ?? 1,
+                visibleFrame: visible, inputFrameRect: inputFrameRect,
+                caretIsExact: placement.caretIsExact,
+                backgroundLuminance: cachedLuminance)
         case .mirror:
             let mirrorSize = mirrorLayout?.textSize ?? measured
             let mirrorSizeWithHint = CotypingAcceptanceHintLayout.reservedSize(
@@ -128,8 +174,9 @@ final class CotypingOverlayController {
                 guard generation == self.sampleGeneration, self.isVisible,
                       let hosting = self.hosting, let luminance else { return }
                 hosting.rootView = CotypingGhostView(
-                    text: text, style: style, showsChrome: false,
-                    acceptanceHintLabel: acceptanceHintLabel, backgroundLuminance: luminance)
+                    text: text, style: renderStyle, showsChrome: false,
+                    acceptanceHintLabel: acceptanceHintLabel, inlineLayout: inlineLayout,
+                    backgroundLuminance: luminance)
                 self.lastInlineRender?.backgroundLuminance = luminance
             }
         }
@@ -148,18 +195,25 @@ final class CotypingOverlayController {
               !remainingText.isEmpty,
               !insertedText.isEmpty,
               var render = lastInlineRender,
+              render.lineCount == 1,
               let hosting,
               render.text.hasPrefix(insertedText),
               String(render.text.dropFirst(insertedText.count)) == remainingText else {
             return false
         }
-        let insertedSize = CotypingGhostStyle.measuredTextSize(insertedText, style: render.style)
+        let renderedInsertedSize = CotypingGhostStyle.measuredTextSize(insertedText, style: render.renderStyle)
+        let hostInsertedWidth = render.caretIsExact
+            ? CotypingInsertedTextAdvance.width(of: insertedText, style: render.sourceStyle)
+            : nil
+        let insertedSize = CGSize(
+            width: ceil(hostInsertedWidth ?? renderedInsertedSize.width),
+            height: renderedInsertedSize.height)
         hosting.rootView = CotypingGhostView(
-            text: remainingText, style: render.style, showsChrome: false,
+            text: remainingText, style: render.renderStyle, showsChrome: false,
             acceptanceHintLabel: render.acceptanceHintLabel,
             backgroundLuminance: render.backgroundLuminance)
         hosting.layoutSubtreeIfNeeded()
-        let remainingMeasured = CotypingGhostStyle.measuredTextSize(remainingText, style: render.style)
+        let remainingMeasured = CotypingGhostStyle.measuredTextSize(remainingText, style: render.renderStyle)
         let remainingWithHint = CotypingAcceptanceHintLayout.reservedSize(
             for: remainingMeasured,
             label: render.acceptanceHintLabel)
@@ -192,21 +246,33 @@ final class CotypingOverlayController {
         style: CotypingFieldStyle?,
         placement: CotypingOverlayPlacement,
         millisecondsSinceLastAcceptance: Int?,
+        inputFrameRect: CGRect? = nil,
         isRightToLeft: Bool = false
     ) -> Bool {
         guard isVisible,
               placement.mode == .inline,
               let render = lastInlineRender,
               render.text == text,
-              render.style == style else {
+              render.sourceStyle == style else {
             return false
         }
-        let measured = CotypingGhostStyle.measuredTextSize(text, style: style)
-        let target = CotypingOverlayGeometry.inlineFrame(
-            caret: caretRect,
-            textSize: measured,
-            lineHeight: render.lineHeight,
-            visible: screenVisibleFrame(containing: caretRect)).integral
+        let visible = screenVisibleFrame(containing: caretRect)
+        let layout = CotypingInlineGhostLayout.make(
+            text: text,
+            caretRect: caretRect,
+            inputFrameRect: inputFrameRect,
+            style: render.renderStyle,
+            visible: visible,
+            acceptanceHintLabel: render.acceptanceHintLabel,
+            isRightToLeft: isRightToLeft)
+        let targetSize = CotypingInlineGhostLayout.estimatedContentSize(
+            for: layout,
+            style: render.renderStyle,
+            acceptanceHintLabel: render.acceptanceHintLabel)
+        let target = layout.panelFrame(
+            for: targetSize,
+            caretRect: caretRect,
+            visible: visible).integral
         return CotypingOverlayGeometry.shouldHoldInlineReanchor(
             currentFrame: render.frame,
             targetFrame: target,
@@ -219,6 +285,21 @@ final class CotypingOverlayController {
         isVisible = false
         acceptanceText = nil
         lastInlineRender = nil
+    }
+
+    private static func fontSessionKey(
+        focusIdentityKey: String?,
+        inputFrameRect: CGRect?,
+        caretRect: CGRect
+    ) -> String {
+        if let focusIdentityKey, !focusIdentityKey.isEmpty {
+            return focusIdentityKey
+        }
+        if let rect = inputFrameRect?.integral {
+            return "frame:\(Int(rect.minX)):\(Int(rect.minY)):\(Int(rect.width)):\(Int(rect.height))"
+        }
+        let rect = caretRect.integral
+        return "caret:\(Int(rect.minX)):\(Int(rect.minY))"
     }
 
     /// Visible frame of the screen containing `rect`, or nil if none matches.
@@ -289,6 +370,98 @@ nonisolated enum CotypingSuggestionFadeInPolicy {
     }
 }
 
+nonisolated enum CotypingGhostFontSizing {
+    static let minimumGhostFontSize: CGFloat = 14
+    static let maximumGhostFontSize: CGFloat = 24
+    static let maximumEstimatedGhostFontSize: CGFloat = 16
+    static let fontToLineHeightRatio: CGFloat = 0.78
+    static let absoluteMinimumPointSize: CGFloat = 9
+
+    struct FieldFontMetrics: Equatable {
+        let pointSize: CGFloat
+        let ascender: CGFloat
+        let descender: CGFloat
+    }
+
+    static func pointSize(
+        caretHeight: CGFloat,
+        fieldMetrics: FieldFontMetrics?,
+        caretIsExact: Bool,
+        sizeMultiplier: CGFloat = 1
+    ) -> CGFloat {
+        let maximum = caretIsExact ? maximumGhostFontSize : maximumEstimatedGhostFontSize
+        let ratio = metricRatio(fieldMetrics) ?? fontToLineHeightRatio
+        let autoSize = min(maximum, max(minimumGhostFontSize, caretHeight * ratio))
+        return max(absoluteMinimumPointSize, autoSize * max(sizeMultiplier, 0))
+    }
+
+    static func renderStyle(
+        from style: CotypingFieldStyle?,
+        caretHeight: CGFloat,
+        caretIsExact: Bool
+    ) -> CotypingFieldStyle? {
+        let referenceFont = style.flatMap(CotypingGhostStyle.font(from:))
+        let metrics = referenceFont.map {
+            FieldFontMetrics(
+                pointSize: $0.pointSize,
+                ascender: $0.ascender,
+                descender: $0.descender)
+        }
+        let size = pointSize(
+            caretHeight: caretHeight,
+            fieldMetrics: metrics,
+            caretIsExact: caretIsExact)
+        return CotypingFieldStyle(
+            fontName: style?.fontName,
+            fontPointSize: size,
+            colorHex: style?.colorHex,
+            backgroundColorHex: style?.backgroundColorHex)
+    }
+
+    private static func metricRatio(_ metrics: FieldFontMetrics?) -> CGFloat? {
+        guard let metrics, metrics.pointSize > 0 else { return nil }
+        let glyphBoxHeight = metrics.ascender - metrics.descender
+        guard glyphBoxHeight > 0 else { return nil }
+        return metrics.pointSize / glyphBoxHeight
+    }
+}
+
+nonisolated struct CotypingGhostFontSizeStabilizer {
+    private var sessionKey: String?
+    private var minCaretHeight: CGFloat?
+
+    mutating func stabilizedCaretHeight(_ caretHeight: CGFloat, focusSessionKey: String) -> CGFloat {
+        guard caretHeight > 0 else {
+            return caretHeight
+        }
+        if sessionKey != focusSessionKey {
+            sessionKey = focusSessionKey
+            minCaretHeight = caretHeight
+            return caretHeight
+        }
+        let stabilized = min(caretHeight, minCaretHeight ?? caretHeight)
+        minCaretHeight = stabilized
+        return stabilized
+    }
+}
+
+nonisolated enum CotypingInsertedTextAdvance {
+    static func width(of text: String, style: CotypingFieldStyle?) -> CGFloat? {
+        guard !text.isEmpty,
+              let style,
+              let pointSize = style.fontPointSize,
+              pointSize.isFinite,
+              pointSize > 0 else {
+            return nil
+        }
+        let font = style.fontName.flatMap { NSFont(name: $0, size: pointSize) }
+            ?? NSFont.systemFont(ofSize: pointSize)
+        let width = (text as NSString).size(withAttributes: [.font: font]).width
+        guard width.isFinite, width > 0 else { return nil }
+        return width
+    }
+}
+
 /// The inline ghost text. Keep this visually close to host text instead of a
 /// separate popup pill; CotypingRenderMode controls when popup placement is
 /// necessary.
@@ -297,6 +470,7 @@ struct CotypingGhostView: View {
     var style: CotypingFieldStyle? = nil
     var showsChrome = false
     var acceptanceHintLabel: String? = nil
+    var inlineLayout: CotypingInlineGhostLayout? = nil
     /// Average luminance (0…1) of the host pixels behind the ghost, sampled from
     /// the screen when available; lets the color contrast with the real
     /// background instead of guessing from AX/appearance.
@@ -344,7 +518,16 @@ struct CotypingGhostView: View {
         }
     }
 
+    @ViewBuilder
     private var textView: some View {
+        if !showsChrome, let inlineLayout {
+            inlineTextView(layout: inlineLayout)
+        } else {
+            singleTextView
+        }
+    }
+
+    private var singleTextView: some View {
         HStack(alignment: .firstTextBaseline, spacing: acceptanceHintLabel == nil ? 0 : 6) {
             Text(attributedText)
                 .multilineTextAlignment(.leading)
@@ -354,6 +537,33 @@ struct CotypingGhostView: View {
 
             if let acceptanceHintLabel {
                 CotypingGhostKeycap(label: acceptanceHintLabel)
+            }
+        }
+        .fixedSize(horizontal: true, vertical: true)
+    }
+
+    private func inlineTextView(layout: CotypingInlineGhostLayout) -> some View {
+        let alignment: HorizontalAlignment = layout.isRightToLeft ? .trailing : .leading
+        return VStack(alignment: alignment, spacing: 0) {
+            ForEach(layout.lines) { line in
+                let showsKeycap = line.showsKeycap && acceptanceHintLabel != nil
+                HStack(alignment: .firstTextBaseline, spacing: showsKeycap ? CotypingAcceptanceHintLayout.spacing : 0) {
+                    if layout.isRightToLeft, showsKeycap, let acceptanceHintLabel {
+                        CotypingGhostKeycap(label: acceptanceHintLabel)
+                    }
+
+                    Text(line.text)
+                        .font(font)
+                        .foregroundStyle(color)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: true)
+
+                    if !layout.isRightToLeft, showsKeycap, let acceptanceHintLabel {
+                        CotypingGhostKeycap(label: acceptanceHintLabel)
+                    }
+                }
+                .padding(layout.isRightToLeft ? .trailing : .leading, line.leadingIndent)
+                .fixedSize(horizontal: true, vertical: true)
             }
         }
         .fixedSize(horizontal: true, vertical: true)
@@ -456,9 +666,339 @@ nonisolated enum CotypingGhostHighlight {
     }
 }
 
+/// CoTabby-style inline layout: split long ghost text into visual rows before
+/// SwiftUI renders it, so inline suggestions can wrap within the input bounds
+/// instead of truncating at one screen-edge-clamped line.
+nonisolated struct CotypingInlineGhostLayout: Equatable {
+    struct Line: Equatable, Identifiable {
+        let index: Int
+        let text: String
+        let leadingIndent: CGFloat
+        let showsKeycap: Bool
+
+        var id: Int { index }
+    }
+
+    let lines: [Line]
+    let panelOriginX: CGFloat
+    let lineHeight: CGFloat
+    let topLineCenterOffsetFromCaret: CGFloat
+    let isRightToLeft: Bool
+
+    var minimumContentHeight: CGFloat {
+        max(CGFloat(lines.count), 1) * max(lineHeight, 1)
+    }
+
+    private enum Metrics {
+        static let caretGap: CGFloat = 6
+        static let inputHorizontalPadding: CGFloat = 8
+        static let fallbackScreenMargin: CGFloat = 16
+        static let minimumLineWidth: CGFloat = 48
+        static let lineHeightMultiplier: CGFloat = 1.25
+    }
+
+    static func make(
+        text: String,
+        caretRect: CGRect,
+        inputFrameRect: CGRect?,
+        style: CotypingFieldStyle?,
+        visible: CGRect?,
+        acceptanceHintLabel: String?,
+        isRightToLeft: Bool
+    ) -> CotypingInlineGhostLayout {
+        let font = CotypingGhostStyle.resolvedFont(from: style)
+        return make(
+            text: text,
+            caretRect: caretRect,
+            inputFrameRect: inputFrameRect,
+            font: font,
+            visible: visible,
+            acceptanceHintLabel: acceptanceHintLabel,
+            isRightToLeft: isRightToLeft)
+    }
+
+    static func make(
+        text: String,
+        caretRect: CGRect,
+        inputFrameRect: CGRect?,
+        font: NSFont,
+        visible: CGRect?,
+        acceptanceHintLabel: String?,
+        isRightToLeft: Bool
+    ) -> CotypingInlineGhostLayout {
+        let normalizedText = normalizedDisplayText(text)
+        let lineHeight = ceil(max(font.ascender - font.descender, font.pointSize * Metrics.lineHeightMultiplier))
+        let keycapSize = CotypingAcceptanceHintLayout.keycapSize(label: acceptanceHintLabel)
+        let showsAcceptanceHint = keycapSize.width > 0
+        let keycapReservation = showsAcceptanceHint
+            ? keycapSize.width + CotypingAcceptanceHintLayout.spacing
+            : 0
+        let visibleFrame = visible ?? fallbackVisibleFrame(around: caretRect)
+        let usableFrame = usableTextFrame(
+            caretRect: caretRect,
+            inputFrameRect: inputFrameRect,
+            visibleFrame: visibleFrame,
+            isRightToLeft: isRightToLeft)
+
+        let firstLineAnchor: CGFloat
+        let firstLineBudget: CGFloat
+        if isRightToLeft {
+            firstLineAnchor = min(
+                max(caretRect.minX - Metrics.caretGap, usableFrame.minX),
+                usableFrame.maxX)
+            firstLineBudget = max(0, firstLineAnchor - usableFrame.minX - keycapReservation)
+        } else {
+            firstLineAnchor = min(
+                max(caretRect.maxX + Metrics.caretGap, usableFrame.minX),
+                usableFrame.maxX)
+            firstLineBudget = max(0, usableFrame.maxX - firstLineAnchor - keycapReservation)
+        }
+
+        let overflowBudget = max(Metrics.minimumLineWidth, usableFrame.width - keycapReservation)
+        let singleLineFits = !normalizedText.contains("\n")
+            && measuredWidth(normalizedText, font: font) <= firstLineBudget
+
+        if singleLineFits {
+            return CotypingInlineGhostLayout(
+                lines: [
+                    Line(index: 0, text: normalizedText, leadingIndent: 0, showsKeycap: showsAcceptanceHint)
+                ],
+                panelOriginX: firstLineAnchor,
+                lineHeight: lineHeight,
+                topLineCenterOffsetFromCaret: 0,
+                isRightToLeft: isRightToLeft)
+        }
+
+        let panelOriginX = isRightToLeft ? usableFrame.maxX : usableFrame.minX
+        var remainingText = normalizedText
+        var rawLines: [(text: String, leadingIndent: CGFloat)] = []
+        var startsBelowCaret = false
+
+        if firstLineBudget >= Metrics.minimumLineWidth {
+            let split = splitPrefix(from: remainingText, maxWidth: firstLineBudget, font: font)
+            if !split.line.isEmpty {
+                let indent = isRightToLeft
+                    ? panelOriginX - firstLineAnchor
+                    : firstLineAnchor - panelOriginX
+                rawLines.append((split.line, indent))
+                remainingText = split.remainder
+            } else {
+                startsBelowCaret = true
+            }
+        } else {
+            startsBelowCaret = true
+        }
+
+        while !remainingText.isEmpty {
+            let split = splitPrefix(from: remainingText, maxWidth: overflowBudget, font: font)
+            guard !split.line.isEmpty else { break }
+            rawLines.append((split.line, 0))
+            remainingText = split.remainder
+        }
+
+        if rawLines.isEmpty {
+            rawLines.append((normalizedText, 0))
+            startsBelowCaret = true
+        }
+
+        let finalLines = rawLines.enumerated().map { offset, rawLine in
+            Line(
+                index: offset,
+                text: rawLine.text,
+                leadingIndent: rawLine.leadingIndent,
+                showsKeycap: showsAcceptanceHint && offset == rawLines.count - 1)
+        }
+
+        return CotypingInlineGhostLayout(
+            lines: finalLines,
+            panelOriginX: panelOriginX,
+            lineHeight: lineHeight,
+            topLineCenterOffsetFromCaret: startsBelowCaret ? -lineHeight : 0,
+            isRightToLeft: isRightToLeft)
+    }
+
+    func panelFrame(for contentSize: CGSize, caretRect: CGRect, visible: CGRect?) -> CGRect {
+        let topLineCenterY = caretRect.midY + topLineCenterOffsetFromCaret
+        let width = max(contentSize.width, Metrics.minimumLineWidth)
+        let height = max(contentSize.height, lineHeight)
+        var frame = CGRect(
+            x: isRightToLeft ? panelOriginX - width : panelOriginX,
+            y: topLineCenterY - height + (lineHeight / 2),
+            width: width,
+            height: height)
+        guard let visible else { return frame }
+        if frame.minX < visible.minX + Metrics.caretGap {
+            frame.origin.x = visible.minX + Metrics.caretGap
+        } else if frame.maxX > visible.maxX - Metrics.caretGap {
+            frame.origin.x = visible.maxX - frame.width - Metrics.caretGap
+        }
+        if frame.minY < visible.minY + Metrics.caretGap {
+            frame.origin.y = visible.minY + Metrics.caretGap
+        } else if frame.maxY > visible.maxY - Metrics.caretGap {
+            frame.origin.y = visible.maxY - frame.height - Metrics.caretGap
+        }
+        return frame
+    }
+
+    static func renderedWidth(of text: String, font: NSFont) -> CGFloat {
+        measuredWidth(normalizedDisplayText(text), font: font)
+    }
+
+    static func estimatedContentSize(
+        for layout: CotypingInlineGhostLayout,
+        style: CotypingFieldStyle?,
+        acceptanceHintLabel: String?
+    ) -> CGSize {
+        let font = CotypingGhostStyle.resolvedFont(from: style)
+        let keycap = CotypingAcceptanceHintLayout.keycapSize(label: acceptanceHintLabel)
+        let widest = layout.lines.map { line -> CGFloat in
+            let keycapWidth = line.showsKeycap && keycap.width > 0
+                ? CotypingAcceptanceHintLayout.spacing + keycap.width
+                : 0
+            return line.leadingIndent + measuredWidth(line.text, font: font) + keycapWidth
+        }.max() ?? Metrics.minimumLineWidth
+        return CGSize(
+            width: ceil(max(widest, Metrics.minimumLineWidth)),
+            height: ceil(layout.minimumContentHeight))
+    }
+
+    private static func usableTextFrame(
+        caretRect: CGRect,
+        inputFrameRect: CGRect?,
+        visibleFrame: CGRect,
+        isRightToLeft: Bool
+    ) -> CGRect {
+        if let inputFrame = inputFrameRect?.standardized,
+           inputFrame.width > Metrics.minimumLineWidth {
+            let minX = max(
+                inputFrame.minX + Metrics.inputHorizontalPadding,
+                visibleFrame.minX + Metrics.fallbackScreenMargin)
+            let maxX = min(
+                inputFrame.maxX - Metrics.inputHorizontalPadding,
+                visibleFrame.maxX - Metrics.fallbackScreenMargin)
+            if maxX - minX > Metrics.minimumLineWidth {
+                return CGRect(x: minX, y: inputFrame.minY, width: maxX - minX, height: inputFrame.height)
+            }
+        }
+
+        let fallbackMinX: CGFloat
+        let fallbackMaxX: CGFloat
+        if isRightToLeft {
+            fallbackMinX = visibleFrame.minX + Metrics.fallbackScreenMargin
+            fallbackMaxX = caretRect.minX - Metrics.caretGap
+        } else {
+            fallbackMinX = caretRect.maxX + Metrics.caretGap
+            fallbackMaxX = visibleFrame.maxX - Metrics.fallbackScreenMargin
+        }
+        return CGRect(
+            x: fallbackMinX,
+            y: caretRect.minY,
+            width: max(Metrics.minimumLineWidth, fallbackMaxX - fallbackMinX),
+            height: caretRect.height)
+    }
+
+    private static func fallbackVisibleFrame(around caretRect: CGRect) -> CGRect {
+        CGRect(
+            x: caretRect.minX - 16,
+            y: caretRect.minY - 300,
+            width: 800,
+            height: 600)
+    }
+
+    private static func normalizedDisplayText(_ text: String) -> String {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let normalizedLines = lines.map { line -> String in
+            let words = line.split(whereSeparator: \.isWhitespace).map(String.init)
+            guard !words.isEmpty else { return "" }
+            let joined = words.joined(separator: " ")
+            return line.first?.isWhitespace == true ? " \(joined)" : joined
+        }
+        return normalizedLines.joined(separator: "\n")
+    }
+
+    private static func splitPrefix(
+        from text: String,
+        maxWidth: CGFloat,
+        font: NSFont
+    ) -> (line: String, remainder: String) {
+        let source = text.trimmingCharacters(in: .whitespaces)
+        guard !source.isEmpty else { return ("", "") }
+        let safeMaxWidth = max(maxWidth, Metrics.minimumLineWidth)
+
+        if let newlineIndex = source.firstIndex(of: "\n") {
+            return splitAtNewline(
+                source: source,
+                newlineIndex: newlineIndex,
+                maxWidth: safeMaxWidth,
+                font: font)
+        }
+
+        if measuredWidth(source, font: font) <= safeMaxWidth {
+            return (source, "")
+        }
+
+        let characters = Array(source)
+        var lastWhitespaceBreak: Int?
+        for endIndex in characters.indices {
+            let prefix = String(characters[...endIndex])
+            if characters[endIndex].isWhitespace {
+                lastWhitespaceBreak = endIndex + 1
+            }
+
+            if measuredWidth(prefix, font: font) > safeMaxWidth {
+                if let breakIndex = lastWhitespaceBreak, breakIndex > 0 {
+                    return (
+                        String(characters[..<breakIndex]).trimmingCharacters(in: .whitespaces),
+                        String(characters[breakIndex...]).trimmingCharacters(in: .whitespaces))
+                }
+                let splitIndex = max(endIndex, 1)
+                return (
+                    String(characters[..<splitIndex]).trimmingCharacters(in: .whitespaces),
+                    String(characters[splitIndex...]).trimmingCharacters(in: .whitespaces))
+            }
+        }
+
+        return (source, "")
+    }
+
+    private static func splitAtNewline(
+        source: String,
+        newlineIndex: String.Index,
+        maxWidth: CGFloat,
+        font: NSFont
+    ) -> (line: String, remainder: String) {
+        let segment = String(source[..<newlineIndex]).trimmingCharacters(in: .whitespaces)
+        let afterIndex = source.index(after: newlineIndex)
+        let afterNewline = afterIndex < source.endIndex
+            ? String(source[afterIndex...]).trimmingCharacters(in: .whitespaces)
+            : ""
+        guard !segment.isEmpty else {
+            return splitPrefix(from: afterNewline, maxWidth: maxWidth, font: font)
+        }
+        if measuredWidth(segment, font: font) <= maxWidth {
+            return (segment, afterNewline)
+        }
+        let widthSplit = splitPrefix(from: segment, maxWidth: maxWidth, font: font)
+        let combined: String
+        if widthSplit.remainder.isEmpty {
+            combined = afterNewline
+        } else if afterNewline.isEmpty {
+            combined = widthSplit.remainder
+        } else {
+            combined = widthSplit.remainder + "\n" + afterNewline
+        }
+        return (widthSplit.line, combined)
+    }
+
+    private static func measuredWidth(_ text: String, font: NSFont) -> CGFloat {
+        guard !text.isEmpty else { return 0 }
+        return (text as NSString).size(withAttributes: [.font: font]).width
+    }
+}
+
 /// Pre-wraps popup/mirror ghost text so multi-line suggestions do not collapse
-/// into a single truncated row. Inline remains single-line; popup has its own
-/// chrome and can safely show multiple rows without painting over host text.
+/// into a single truncated row. Inline uses `CotypingInlineGhostLayout`; popup
+/// has its own chrome and independently bounded rows.
 nonisolated enum CotypingGhostTextLayout {
     static let maxMirrorTextWidth: CGFloat = 420
     static let minMirrorTextWidth: CGFloat = 80

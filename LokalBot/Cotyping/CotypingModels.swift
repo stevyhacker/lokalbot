@@ -45,6 +45,9 @@ struct CotypingField: Equatable, Sendable {
     /// Caret rectangle in global Cocoa coordinates (bottom-left origin, already
     /// Y-flipped against the primary display in `CotypingAXHelper`).
     var caretRect: CGRect
+    /// Focused editable element bounds in global Cocoa coordinates, when AX
+    /// exposes them. Inline ghost layout uses this as the wrapping budget.
+    var inputFrameRect: CGRect? = nil
     /// True for password / secure-entry fields — never read or suggested into.
     var isSecure: Bool
     /// True when the focused web text field is an xterm.js terminal surface

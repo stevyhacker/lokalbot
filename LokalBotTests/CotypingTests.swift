@@ -837,6 +837,59 @@ final class CotypingAvailabilityTests: XCTestCase {
     }
 }
 
+// MARK: - Sensitive field detector
+
+final class CotypingSecureFieldDetectorTests: XCTestCase {
+    func testPlainTextFieldIsNotSecure() {
+        XCTAssertFalse(CotypingSecureFieldDetector.isSecure(
+            role: "AXTextField",
+            subrole: nil,
+            roleDescription: "text field",
+            title: "Email",
+            descriptionLabel: nil))
+    }
+
+    func testSecureTextFieldRoleDescriptionBlocksBeforeValueRead() {
+        XCTAssertTrue(CotypingSecureFieldDetector.isSecure(
+            role: "AXTextField",
+            subrole: nil,
+            roleDescription: "secure text field",
+            title: nil,
+            descriptionLabel: nil))
+    }
+
+    func testNativeSecureSubroleStillBlocks() {
+        XCTAssertTrue(CotypingSecureFieldDetector.isSecure(
+            role: "AXTextField",
+            subrole: kAXSecureTextFieldSubrole as String,
+            roleDescription: nil,
+            title: nil,
+            descriptionLabel: nil))
+    }
+
+    func testNonPasswordSecretLabelsBlock() {
+        for label in ["CVV", "Security code", "Verification code", "One-time code", "Card number"] {
+            XCTAssertTrue(
+                CotypingSecureFieldDetector.isSecure(
+                    role: "AXTextField",
+                    subrole: nil,
+                    roleDescription: nil,
+                    title: label,
+                    descriptionLabel: nil),
+                "Expected \(label) to be treated as sensitive")
+        }
+    }
+
+    func testSearchFieldIsNotOvermatched() {
+        XCTAssertFalse(CotypingSecureFieldDetector.isSecure(
+            role: "AXTextField",
+            subrole: nil,
+            roleDescription: "text field",
+            title: "Search",
+            descriptionLabel: "Type to search"))
+    }
+}
+
 // MARK: - Focus poll backoff
 
 final class CotypingFocusPollBackoffTests: XCTestCase {
@@ -935,6 +988,35 @@ final class CotypingFocusPollBackoffTests: XCTestCase {
 final class CotypingInputMonitorTests: XCTestCase {
     func testAcceptTapTeardownDelayMatchesCoTabbyFinalAcceptGuard() {
         XCTAssertEqual(CotypingInputMonitor.acceptTapTeardownDelaySeconds, 0.05, accuracy: 0.0001)
+    }
+
+    func testSyntheticSuppressionAccumulatesAcrossRapidBursts() {
+        let controller = CotypingInputSuppressionController()
+        let now = Date()
+
+        controller.registerSyntheticInsertion(expectedKeyDownCount: 3, now: now)
+        XCTAssertTrue(controller.consumeIfNeeded(now: now))
+        controller.registerSyntheticInsertion(expectedKeyDownCount: 2, now: now)
+
+        XCTAssertTrue(controller.consumeIfNeeded(now: now))
+        XCTAssertTrue(controller.consumeIfNeeded(now: now))
+        XCTAssertTrue(controller.consumeIfNeeded(now: now))
+        XCTAssertTrue(controller.consumeIfNeeded(now: now))
+        XCTAssertFalse(controller.consumeIfNeeded(now: now))
+    }
+
+    func testSyntheticSuppressionDropsStaleTokens() {
+        let controller = CotypingInputSuppressionController()
+        let now = Date()
+        controller.registerSyntheticInsertion(expectedKeyDownCount: 5, now: now)
+
+        XCTAssertFalse(controller.consumeIfNeeded(
+            now: now.addingTimeInterval(
+                CotypingInputSuppressionController.syntheticSuppressionWindowSeconds + 0.1)))
+
+        controller.registerSyntheticInsertion(expectedKeyDownCount: 1, now: now)
+        XCTAssertTrue(controller.consumeIfNeeded(now: now))
+        XCTAssertFalse(controller.consumeIfNeeded(now: now))
     }
 }
 
@@ -1082,6 +1164,48 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertEqual(decoded.cotypingLearningExamplesInPrompt, 5)
     }
 
+    func testLegacyDefaultDebounceMigratesToCurrentLatencyTarget() throws {
+        let data = #"{"cotypingDebounceMs":350}"#.data(using: .utf8)!
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertEqual(settings.cotypingDebounceMs, AppSettings.defaultCotypingDebounceMs)
+    }
+
+    func testUnversionedPreviewDefaultsMigrateToCurrentCotypistTargets() throws {
+        let data = #"{"cotypingDebounceMs":150,"cotypingMaxWords":2}"#.data(using: .utf8)!
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertEqual(settings.cotypingDebounceMs, AppSettings.defaultCotypingDebounceMs)
+        XCTAssertEqual(settings.cotypingMaxWords, AppSettings().cotypingMaxWords)
+    }
+
+    func testVersionedShortCustomCotypingValuesArePreserved() throws {
+        let data = #"{"cotypingSettingsVersion":2,"cotypingDebounceMs":150,"cotypingMaxWords":2}"#.data(using: .utf8)!
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertEqual(settings.cotypingDebounceMs, 150)
+        XCTAssertEqual(settings.cotypingMaxWords, 2)
+    }
+
+    func testLegacyCustomDebounceIsPreservedWithinSupportedRange() throws {
+        let data = #"{"cotypingDebounceMs":500}"#.data(using: .utf8)!
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertEqual(settings.cotypingDebounceMs, 500)
+    }
+
+    func testCotypingDebounceDecodeClampsToSupportedRange() throws {
+        let tooLow = #"{"cotypingSettingsVersion":1,"cotypingDebounceMs":5}"#.data(using: .utf8)!
+        XCTAssertEqual(
+            try JSONDecoder().decode(AppSettings.self, from: tooLow).cotypingDebounceMs,
+            CotypingDebouncePolicy.minimumMilliseconds)
+
+        let tooHigh = #"{"cotypingSettingsVersion":1,"cotypingDebounceMs":2000}"#.data(using: .utf8)!
+        XCTAssertEqual(
+            try JSONDecoder().decode(AppSettings.self, from: tooHigh).cotypingDebounceMs,
+            AppSettings.maximumCotypingDebounceMs)
+    }
+
     func testTolerantDecodeKeepsOtherDefaults() throws {
         let data = #"{"cotypingEnabled":true}"#.data(using: .utf8)!
         let settings = try JSONDecoder().decode(AppSettings.self, from: data)
@@ -1170,13 +1294,14 @@ final class CotypingSettingsTests: XCTestCase {
 final class CotypingContinuationTests: XCTestCase {
     private func field(
         _ preceding: String,
+        trailingText: String = "",
         pid: pid_t = 5,
         focusIdentityKey: String? = nil
     ) -> CotypingField {
         CotypingField(
             appName: "Slack", bundleID: "com.tinyspeck.slackmacgap", processID: pid,
             role: "AXTextArea", focusIdentityKey: focusIdentityKey,
-            precedingText: preceding, trailingText: "",
+            precedingText: preceding, trailingText: trailingText,
             selectionLength: 0, caretRect: .zero, isSecure: false, caretIsExact: true)
     }
 
@@ -1230,6 +1355,45 @@ final class CotypingContinuationTests: XCTestCase {
         XCTAssertFalse(CotypingCoordinator.isContinuation(of: session("I wanted to follow"), liveField: nil))
     }
 
+    func testAcceptanceRequiresTrailingTextToRemainStable() {
+        let current = CotypingSession(
+            field: field("I wanted to follow", trailingText: " tomorrow"),
+            fullText: " up on the deck")
+
+        XCTAssertTrue(CotypingCoordinator.isAcceptanceContinuation(
+            of: current,
+            liveField: field("I wanted to follow", trailingText: " tomorrow"),
+            pendingInsertionConsumedCount: nil))
+        XCTAssertFalse(CotypingCoordinator.isAcceptanceContinuation(
+            of: current,
+            liveField: field("I wanted to follow", trailingText: " changed"),
+            pendingInsertionConsumedCount: nil))
+    }
+
+    func testFocusChangeClearsWhenTrailingTextChangesOutsideInsertionSync() {
+        let current = CotypingSession(
+            field: field("I wanted to follow", trailingText: " tomorrow"),
+            fullText: " up on the deck")
+
+        XCTAssertTrue(CotypingCoordinator.shouldClearActiveSessionOnFocusChange(
+            current,
+            liveField: field("I wanted to follow", trailingText: " changed"),
+            pendingInsertionConsumedCount: nil))
+    }
+
+    func testPostInsertionSyncToleratesTransientTrailingAndPrefixRaces() {
+        let current = session("I wanted to follow").advanced(by: 3)
+
+        XCTAssertFalse(CotypingCoordinator.shouldClearActiveSessionOnFocusChange(
+            current,
+            liveField: field("I wanted to follow", trailingText: " changed"),
+            pendingInsertionConsumedCount: 3))
+        XCTAssertFalse(CotypingCoordinator.shouldClearActiveSessionOnFocusChange(
+            current,
+            liveField: field("Goodbye", trailingText: " changed"),
+            pendingInsertionConsumedCount: 3))
+    }
+
     func testCurrentGenerationTargetRequiresSameContentAndIdentity() {
         var original = field("I wanted to follow")
         original.focusIdentityKey = "field-a"
@@ -1255,6 +1419,29 @@ final class CotypingContinuationTests: XCTestCase {
 
         live.windowTitle = "Other Draft"
         XCTAssertFalse(CotypingCoordinator.isCurrentGenerationTarget(original, liveField: live))
+    }
+
+    func testHostPublishDetectsSameTextFieldSwitchWhenIdentityIsKnown() {
+        let original = field("I wanted to follow", focusIdentityKey: "field-a")
+        let live = field("I wanted to follow", focusIdentityKey: "field-b")
+
+        XCTAssertTrue(CotypingCoordinator.hostPublishDidMove(from: original, to: live))
+    }
+
+    func testHostPublishUsesAnchorIdentityWhenFocusIdentityIsMissing() {
+        var original = field("I wanted to follow")
+        original.windowTitle = "Draft"
+        var live = original
+        live.windowTitle = "Other Draft"
+
+        XCTAssertTrue(CotypingCoordinator.hostPublishDidMove(from: original, to: live))
+    }
+
+    func testHostPublishKeepsSameTextFallbackWhenIdentityIsMissing() {
+        let original = field("I wanted to follow", focusIdentityKey: "field-a")
+        let live = field("I wanted to follow")
+
+        XCTAssertFalse(CotypingCoordinator.hostPublishDidMove(from: original, to: live))
     }
 
     func testPublishedTypingAdvancesSuggestionTail() throws {
@@ -1380,6 +1567,15 @@ final class CotypingContinuationTests: XCTestCase {
             pendingInsertionConsumedCount: 3))
     }
 
+    func testPostInsertionSyncToleratesPrefixAnchorRace() {
+        let accepted = session("I wanted to follow").advanced(by: 3)
+
+        XCTAssertTrue(CotypingCoordinator.shouldAwaitPostInsertionSync(
+            accepted,
+            liveField: field("Goodbye"),
+            pendingInsertionConsumedCount: 3))
+    }
+
     func testVisibleOverlayMustMatchSessionTailBeforeAcceptance() {
         XCTAssertTrue(CotypingCoordinator.overlayAllowsAcceptance(
             of: " up on the deck",
@@ -1460,6 +1656,82 @@ final class CotypingContinuationTests: XCTestCase {
 
         XCTAssertEqual(optimistic.precedingText, "receive")
         XCTAssertEqual(optimistic.trailingText, " the files")
+    }
+}
+
+final class CotypingFocusPrewarmIdentityTests: XCTestCase {
+    private func field(
+        preceding: String = "draft",
+        focusIdentityKey: String? = "field-a",
+        inputFrameRect: CGRect? = CGRect(x: 20, y: 40, width: 300, height: 44),
+        windowTitle: String? = "Draft",
+        fieldPlaceholder: String? = "Message"
+    ) -> CotypingField {
+        CotypingField(
+            appName: "Slack",
+            bundleID: "com.tinyspeck.slackmacgap",
+            processID: 42,
+            role: "AXTextArea",
+            focusIdentityKey: focusIdentityKey,
+            precedingText: preceding,
+            trailingText: "",
+            selectionLength: 0,
+            caretRect: CGRect(x: 120, y: 40, width: 1, height: 18),
+            inputFrameRect: inputFrameRect,
+            isSecure: false,
+            caretIsExact: true,
+            windowTitle: windowTitle,
+            fieldPlaceholder: fieldPlaceholder)
+    }
+
+    func testPrewarmIdentityIgnoresTextCaretAndSurfaceChurnWhenFocusIdentityExists() {
+        let original = field()
+        var changed = original
+        changed.precedingText = "draft with more words"
+        changed.caretRect = CGRect(x: 240, y: 40, width: 1, height: 18)
+        changed.windowTitle = "Draft (edited)"
+        changed.fieldPlaceholder = "Reply"
+
+        XCTAssertEqual(
+            CotypingCoordinator.prewarmFieldIdentity(for: original),
+            CotypingCoordinator.prewarmFieldIdentity(for: changed))
+    }
+
+    func testPrewarmIdentityChangesWithFocusedFieldIdentity() {
+        let original = field(focusIdentityKey: "field-a")
+        let other = field(focusIdentityKey: "field-b")
+
+        XCTAssertNotEqual(
+            CotypingCoordinator.prewarmFieldIdentity(for: original),
+            CotypingCoordinator.prewarmFieldIdentity(for: other))
+    }
+
+    func testPrewarmIdentityFallsBackToFrameWhenFocusIdentityIsMissing() {
+        let original = field(focusIdentityKey: nil, inputFrameRect: CGRect(x: 20, y: 40, width: 300, height: 44))
+        var changedTextAndTitle = original
+        changedTextAndTitle.precedingText = "draft with more words"
+        changedTextAndTitle.windowTitle = "Draft (edited)"
+        let otherFrame = field(focusIdentityKey: nil, inputFrameRect: CGRect(x: 20, y: 120, width: 300, height: 44))
+
+        XCTAssertEqual(
+            CotypingCoordinator.prewarmFieldIdentity(for: original),
+            CotypingCoordinator.prewarmFieldIdentity(for: changedTextAndTitle))
+        XCTAssertNotEqual(
+            CotypingCoordinator.prewarmFieldIdentity(for: original),
+            CotypingCoordinator.prewarmFieldIdentity(for: otherFrame))
+    }
+
+    func testPrewarmIdentityUsesSurfaceOnlyAsLastResort() {
+        let original = field(focusIdentityKey: nil, inputFrameRect: nil, windowTitle: "Draft", fieldPlaceholder: "Message")
+        let sameSurface = field(focusIdentityKey: nil, inputFrameRect: nil, windowTitle: "Draft", fieldPlaceholder: "Message")
+        let differentSurface = field(focusIdentityKey: nil, inputFrameRect: nil, windowTitle: "Thread", fieldPlaceholder: "Reply")
+
+        XCTAssertEqual(
+            CotypingCoordinator.prewarmFieldIdentity(for: original),
+            CotypingCoordinator.prewarmFieldIdentity(for: sameSurface))
+        XCTAssertNotEqual(
+            CotypingCoordinator.prewarmFieldIdentity(for: original),
+            CotypingCoordinator.prewarmFieldIdentity(for: differentSurface))
     }
 }
 
@@ -1565,6 +1837,115 @@ final class CotypingSurfaceContextTests: XCTestCase {
         let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(s))
         XCTAssertFalse(decoded.cotypingUseAppContext)
         XCTAssertFalse(decoded.cotypingPersonalization.appContextEnabled)
+    }
+
+    func testSurfaceCaptureCacheReusesSameFocusedFieldSession() {
+        var cache = CotypingSurfaceCaptureCache()
+        let key = CotypingSurfaceCaptureCache.key(
+            processID: 42,
+            bundleID: "com.google.Chrome",
+            role: "AXTextArea",
+            subrole: nil,
+            focusIdentityKey: "compose-field",
+            inputFrameRect: CGRect(x: 10.2, y: 20.6, width: 300.1, height: 44.0),
+            includeSurface: true,
+            includeURL: true)
+        var resolveCount = 0
+
+        let first = cache.capture(forKey: key) {
+            resolveCount += 1
+            return CotypingSurfaceCapture(
+                windowTitle: "Inbox - Gmail",
+                fieldPlaceholder: "Message",
+                urlString: "https://mail.google.com/mail/u/0/#inbox")
+        }
+        let second = cache.capture(forKey: key) {
+            resolveCount += 1
+            return CotypingSurfaceCapture(
+                windowTitle: "Inbox (1) - Gmail",
+                fieldPlaceholder: "Reply",
+                urlString: "https://mail.google.com/mail/u/0/#inbox")
+        }
+
+        XCTAssertEqual(resolveCount, 1)
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(second.windowTitle, "Inbox - Gmail")
+        XCTAssertEqual(second.fieldPlaceholder, "Message")
+    }
+
+    func testSurfaceCaptureCacheRefreshesForDifferentFocusedField() {
+        var cache = CotypingSurfaceCaptureCache()
+        let firstKey = CotypingSurfaceCaptureCache.key(
+            processID: 42,
+            bundleID: "com.tinyspeck.slackmacgap",
+            role: "AXTextArea",
+            subrole: nil,
+            focusIdentityKey: "message-a",
+            inputFrameRect: CGRect(x: 10, y: 20, width: 300, height: 44),
+            includeSurface: true,
+            includeURL: false)
+        let secondKey = CotypingSurfaceCaptureCache.key(
+            processID: 42,
+            bundleID: "com.tinyspeck.slackmacgap",
+            role: "AXTextArea",
+            subrole: nil,
+            focusIdentityKey: "message-b",
+            inputFrameRect: CGRect(x: 10, y: 20, width: 300, height: 44),
+            includeSurface: true,
+            includeURL: false)
+        var resolveCount = 0
+
+        _ = cache.capture(forKey: firstKey) {
+            resolveCount += 1
+            return CotypingSurfaceCapture(windowTitle: "#general", fieldPlaceholder: "Message #general", urlString: nil)
+        }
+        let refreshed = cache.capture(forKey: secondKey) {
+            resolveCount += 1
+            return CotypingSurfaceCapture(windowTitle: "#support", fieldPlaceholder: "Message #support", urlString: nil)
+        }
+
+        XCTAssertEqual(resolveCount, 2)
+        XCTAssertEqual(refreshed.windowTitle, "#support")
+        XCTAssertEqual(refreshed.fieldPlaceholder, "Message #support")
+    }
+
+    func testSurfaceCaptureCacheSeparatesURLAndSurfaceRequests() {
+        var cache = CotypingSurfaceCaptureCache()
+        let fieldFrame = CGRect(x: 10, y: 20, width: 300, height: 44)
+        let surfaceOnlyKey = CotypingSurfaceCaptureCache.key(
+            processID: 42,
+            bundleID: "com.google.Chrome",
+            role: "AXTextArea",
+            subrole: nil,
+            focusIdentityKey: "compose-field",
+            inputFrameRect: fieldFrame,
+            includeSurface: true,
+            includeURL: false)
+        let surfaceAndURLKey = CotypingSurfaceCaptureCache.key(
+            processID: 42,
+            bundleID: "com.google.Chrome",
+            role: "AXTextArea",
+            subrole: nil,
+            focusIdentityKey: "compose-field",
+            inputFrameRect: fieldFrame,
+            includeSurface: true,
+            includeURL: true)
+        var resolveCount = 0
+
+        _ = cache.capture(forKey: surfaceOnlyKey) {
+            resolveCount += 1
+            return CotypingSurfaceCapture(windowTitle: "Inbox - Gmail", fieldPlaceholder: "Message", urlString: nil)
+        }
+        let withURL = cache.capture(forKey: surfaceAndURLKey) {
+            resolveCount += 1
+            return CotypingSurfaceCapture(
+                windowTitle: "Inbox - Gmail",
+                fieldPlaceholder: "Message",
+                urlString: "https://mail.google.com/mail/u/0/#inbox")
+        }
+
+        XCTAssertEqual(resolveCount, 2)
+        XCTAssertEqual(withURL.urlString, "https://mail.google.com/mail/u/0/#inbox")
     }
 }
 
@@ -2751,6 +3132,29 @@ final class CotypingClipboardContextTests: XCTestCase {
         XCTAssertNil(memo.valueIfReusable(identityKey: "field-b", changeCount: 12))
         XCTAssertNil(memo.valueIfReusable(identityKey: "field-a", changeCount: 13))
     }
+
+    func testClipboardPrefaceResolverUsesPinnedMemoBeforeRelevanceFilter() {
+        let filter = CotypingClipboardRelevanceFilter()
+        _ = filter.filter(
+            rawClipboard: "baseline content",
+            pasteboardChangeCount: 1,
+            precedingText: "")
+        let memo = CotypingClipboardPrefaceMemo(
+            identityKey: "field-a",
+            changeCount: 2,
+            value: "Deployment Pipeline")
+
+        let resolution = CotypingClipboardPrefaceResolver.resolve(
+            rawClipboard: "Deployment Pipeline",
+            pasteboardChangeCount: 2,
+            precedingText: "Dear hiring manager",
+            identityKey: "field-a",
+            memo: memo,
+            relevanceFilter: filter)
+
+        XCTAssertEqual(resolution.value, "Deployment Pipeline")
+        XCTAssertEqual(resolution.memo, memo)
+    }
 }
 
 // MARK: - Insertion strategy (keystroke vs paste)
@@ -3030,6 +3434,139 @@ final class CotypingOverlayGeometryTests: XCTestCase {
             caret: CGRect(x: 10, y: 500, width: 0, height: 40),
             textSize: CGSize(width: 60, height: 0), lineHeight: 18, visible: nil)
         XCTAssertEqual(frame.height, 18)
+    }
+
+    func testGhostFontSizingDerivesFromCaretHeight() {
+        let size = CotypingGhostFontSizing.pointSize(
+            caretHeight: 20,
+            fieldMetrics: nil,
+            caretIsExact: true)
+
+        XCTAssertEqual(size, 15.6, accuracy: 0.1)
+    }
+
+    func testGhostFontSizingCapsEstimatedCaretFrames() {
+        let size = CotypingGhostFontSizing.pointSize(
+            caretHeight: 80,
+            fieldMetrics: nil,
+            caretIsExact: false)
+
+        XCTAssertEqual(size, CotypingGhostFontSizing.maximumEstimatedGhostFontSize)
+    }
+
+    func testGhostRenderStylePreservesHostColorsWhileReplacingPointSize() throws {
+        let base = CotypingFieldStyle(
+            fontName: NSFont.systemFont(ofSize: 13).fontName,
+            fontPointSize: 13,
+            colorHex: "123456",
+            backgroundColorHex: "ABCDEF")
+        let render = try XCTUnwrap(CotypingGhostFontSizing.renderStyle(
+            from: base,
+            caretHeight: 24,
+            caretIsExact: true))
+
+        XCTAssertEqual(render.fontName, base.fontName)
+        XCTAssertNotEqual(render.fontPointSize, base.fontPointSize)
+        XCTAssertEqual(render.colorHex, "123456")
+        XCTAssertEqual(render.backgroundColorHex, "ABCDEF")
+    }
+
+    func testGhostFontSizeStabilizerKeepsSmallestCaretHeightPerField() {
+        var stabilizer = CotypingGhostFontSizeStabilizer()
+
+        XCTAssertEqual(stabilizer.stabilizedCaretHeight(18, focusSessionKey: "field-a"), 18)
+        XCTAssertEqual(stabilizer.stabilizedCaretHeight(44, focusSessionKey: "field-a"), 18)
+        XCTAssertEqual(stabilizer.stabilizedCaretHeight(22, focusSessionKey: "field-b"), 22)
+    }
+
+    func testInsertedTextAdvanceUsesHostPointSizeInsteadOfGhostFloor() throws {
+        let hostFont = NSFont.systemFont(ofSize: 11)
+        let sourceStyle = CotypingFieldStyle(fontName: hostFont.fontName, fontPointSize: 11)
+        let renderStyle = CotypingFieldStyle(fontName: hostFont.fontName, fontPointSize: 14)
+
+        let hostAdvance = try XCTUnwrap(CotypingInsertedTextAdvance.width(
+            of: "follow",
+            style: sourceStyle))
+        let ghostAdvance = CotypingGhostStyle.measuredTextSize("follow", style: renderStyle).width
+
+        XCTAssertLessThan(hostAdvance, ghostAdvance)
+    }
+
+    func testInsertedTextAdvanceReturnsNilWithoutUsableHostSize() {
+        XCTAssertNil(CotypingInsertedTextAdvance.width(
+            of: "follow",
+            style: CotypingFieldStyle(fontName: NSFont.systemFont(ofSize: 13).fontName)))
+        XCTAssertNil(CotypingInsertedTextAdvance.width(
+            of: "",
+            style: CotypingFieldStyle(fontName: NSFont.systemFont(ofSize: 13).fontName, fontPointSize: 13)))
+    }
+
+    func testInlineLayoutWrapsInsideInputFrameAndKeepsKeycapOnLastLine() {
+        let font = NSFont.systemFont(ofSize: 13)
+        let inputFrame = CGRect(x: 40, y: 480, width: 240, height: 28)
+        let caret = CGRect(x: 178, y: 492, width: 1, height: 16)
+        let layout = CotypingInlineGhostLayout.make(
+            text: "confirm renewal timing before customer update",
+            caretRect: caret,
+            inputFrameRect: inputFrame,
+            font: font,
+            visible: screen,
+            acceptanceHintLabel: "Tab",
+            isRightToLeft: false)
+
+        XCTAssertGreaterThan(layout.lines.count, 1)
+        XCTAssertGreaterThan(layout.lines[0].leadingIndent, 0)
+        XCTAssertEqual(layout.lines.dropLast().contains(where: \.showsKeycap), false)
+        XCTAssertEqual(layout.lines.last?.showsKeycap, true)
+
+        let contentSize = CotypingInlineGhostLayout.estimatedContentSize(
+            for: layout,
+            style: CotypingFieldStyle(fontName: font.fontName, fontPointSize: font.pointSize),
+            acceptanceHintLabel: "Tab")
+        let frame = layout.panelFrame(for: contentSize, caretRect: caret, visible: screen)
+        XCTAssertGreaterThanOrEqual(frame.minX, inputFrame.minX + 8 - 0.5)
+        XCTAssertLessThanOrEqual(frame.maxX, inputFrame.maxX - 8 + 0.5)
+    }
+
+    func testInlineLayoutStartsOverflowBelowCaretWhenFirstLineHasNoRoom() {
+        let font = NSFont.systemFont(ofSize: 13)
+        let inputFrame = CGRect(x: 40, y: 480, width: 180, height: 28)
+        let caret = CGRect(x: 214, y: 492, width: 1, height: 16)
+        let layout = CotypingInlineGhostLayout.make(
+            text: "confirm renewal timing",
+            caretRect: caret,
+            inputFrameRect: inputFrame,
+            font: font,
+            visible: screen,
+            acceptanceHintLabel: "Tab",
+            isRightToLeft: false)
+
+        XCTAssertLessThan(layout.topLineCenterOffsetFromCaret, 0)
+        XCTAssertEqual(layout.lines.first?.leadingIndent, 0)
+        XCTAssertEqual(layout.lines.last?.showsKeycap, true)
+    }
+
+    func testInlineLayoutMirrorsAnchorForRTLText() {
+        let font = NSFont.systemFont(ofSize: 13)
+        let inputFrame = CGRect(x: 40, y: 480, width: 260, height: 28)
+        let caret = CGRect(x: 158, y: 492, width: 1, height: 16)
+        let layout = CotypingInlineGhostLayout.make(
+            text: "\u{05d0}\u{05d1}\u{05d2} \u{05d3}\u{05d4}\u{05d5} \u{05d6}\u{05d7}\u{05d8} \u{05d9}\u{05da}\u{05db}",
+            caretRect: caret,
+            inputFrameRect: inputFrame,
+            font: font,
+            visible: screen,
+            acceptanceHintLabel: "Tab",
+            isRightToLeft: true)
+
+        XCTAssertTrue(layout.isRightToLeft)
+        XCTAssertGreaterThan(layout.lines[0].leadingIndent, 0)
+        let contentSize = CotypingInlineGhostLayout.estimatedContentSize(
+            for: layout,
+            style: CotypingFieldStyle(fontName: font.fontName, fontPointSize: font.pointSize),
+            acceptanceHintLabel: "Tab")
+        let frame = layout.panelFrame(for: contentSize, caretRect: caret, visible: screen)
+        XCTAssertLessThanOrEqual(frame.maxX, inputFrame.maxX - 8 + 0.5)
     }
 
     func testMirrorSitsBelowCaretAndFlipsAboveWhenNoRoom() {

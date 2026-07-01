@@ -19,6 +19,41 @@ enum CotypingSyntheticMarker {
     }
 }
 
+final class CotypingInputSuppressionController {
+    private var remainingKeyDownSuppressions = 0
+    private var suppressionExpiry = Date.distantPast
+
+    nonisolated static let syntheticSuppressionWindowSeconds: TimeInterval = 1.0
+
+    func registerSyntheticInsertion(expectedKeyDownCount: Int, now: Date = Date()) {
+        if now > suppressionExpiry {
+            remainingKeyDownSuppressions = 0
+        }
+        remainingKeyDownSuppressions += max(expectedKeyDownCount, 0)
+        suppressionExpiry = now.addingTimeInterval(Self.syntheticSuppressionWindowSeconds)
+    }
+
+    func consumeIfNeeded(now: Date = Date()) -> Bool {
+        guard remainingKeyDownSuppressions > 0 else {
+            return false
+        }
+        guard now <= suppressionExpiry else {
+            remainingKeyDownSuppressions = 0
+            return false
+        }
+        remainingKeyDownSuppressions -= 1
+        return true
+    }
+
+    func markSynthetic(_ event: CGEvent) {
+        CotypingSyntheticMarker.mark(event)
+    }
+
+    func isSynthetic(_ event: CGEvent) -> Bool {
+        CotypingSyntheticMarker.isSynthetic(event)
+    }
+}
+
 /// Inserts accepted ghost text into the focused host app by synthesizing Unicode
 /// keystrokes (Cotabby's approach — AX value-set is silently dropped by Chromium
 /// and others). Each event is marked synthetic so the input monitor skips it.
@@ -30,6 +65,12 @@ final class CotypingInserter {
     private var pendingPasteboardRestore: DispatchWorkItem?
     private var savedClipboardForRestore: [[NSPasteboard.PasteboardType: Data]]?
     private var cachedPasteMenuItems: [pid_t: AXUIElement] = [:]
+    private let suppressionController: CotypingInputSuppressionController
+
+    init(suppressionController: CotypingInputSuppressionController = CotypingInputSuppressionController()) {
+        self.suppressionController = suppressionController
+    }
+
     @discardableResult
     func insert(_ text: String) -> Bool {
         let scrubbed = text.replacingOccurrences(of: "\r", with: "")
@@ -44,8 +85,9 @@ final class CotypingInserter {
             down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: base)
             up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: base)
         }
-        CotypingSyntheticMarker.mark(down)
-        CotypingSyntheticMarker.mark(up)
+        suppressionController.registerSyntheticInsertion(expectedKeyDownCount: 1)
+        suppressionController.markSynthetic(down)
+        suppressionController.markSynthetic(up)
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
         return true
@@ -77,7 +119,9 @@ final class CotypingInserter {
             events.append(down)
             events.append(up)
         }
-        for event in events { CotypingSyntheticMarker.mark(event) }
+        suppressionController.registerSyntheticInsertion(
+            expectedKeyDownCount: max(0, count) + (scrubbed.isEmpty ? 0 : 1))
+        for event in events { suppressionController.markSynthetic(event) }
         for event in events { event.post(tap: .cghidEventTap) }
         return true
     }
@@ -108,7 +152,9 @@ final class CotypingInserter {
             events.append(down)
             events.append(up)
         }
-        for event in events { CotypingSyntheticMarker.mark(event) }
+        suppressionController.registerSyntheticInsertion(
+            expectedKeyDownCount: max(0, count) + (scrubbed.isEmpty ? 0 : 1))
+        for event in events { suppressionController.markSynthetic(event) }
         for event in events { event.post(tap: .cghidEventTap) }
         return true
     }
@@ -157,8 +203,9 @@ final class CotypingInserter {
         // consuming input tap ignores it.
         vDown.flags = .maskCommand
         vUp.flags = .maskCommand
-        CotypingSyntheticMarker.mark(vDown)
-        CotypingSyntheticMarker.mark(vUp)
+        suppressionController.registerSyntheticInsertion(expectedKeyDownCount: 1)
+        suppressionController.markSynthetic(vDown)
+        suppressionController.markSynthetic(vUp)
         vDown.post(tap: .cgAnnotatedSessionEventTap)
         vUp.post(tap: .cgAnnotatedSessionEventTap)
 

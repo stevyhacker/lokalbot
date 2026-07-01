@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// "What am I writing in?" context that conditions cotyping's suggestions on the
@@ -61,6 +62,75 @@ struct CotypingSurfaceContext: Equatable, Sendable {
     let applicationName: String
     let windowTitle: String?
     let fieldPlaceholder: String?
+}
+
+/// AX-derived app/window metadata captured once per focused-field session.
+///
+/// CoTabby freezes this context while focus remains in one field: a browser tab
+/// title or placeholder that mutates while the user types must not rewrite the
+/// prompt head on every request, because that defeats llama KV prefix reuse and
+/// can look like a field switch to fallback identity checks.
+struct CotypingSurfaceCapture: Equatable, Sendable {
+    var windowTitle: String?
+    var fieldPlaceholder: String?
+    var urlString: String?
+
+    static let empty = CotypingSurfaceCapture(
+        windowTitle: nil,
+        fieldPlaceholder: nil,
+        urlString: nil)
+}
+
+/// Tiny, one-entry focus-session cache for expensive surface AX reads.
+struct CotypingSurfaceCaptureCache: Sendable {
+    private var key: String?
+    private var captured: CotypingSurfaceCapture = .empty
+
+    mutating func capture(forKey key: String, resolve: () -> CotypingSurfaceCapture) -> CotypingSurfaceCapture {
+        if key == self.key {
+            return captured
+        }
+        let resolved = resolve()
+        self.key = key
+        captured = resolved
+        return resolved
+    }
+
+    mutating func removeAll() {
+        key = nil
+        captured = .empty
+    }
+
+    static func key(
+        processID: pid_t,
+        bundleID: String?,
+        role: String,
+        subrole: String?,
+        focusIdentityKey: String?,
+        inputFrameRect: CGRect?,
+        includeSurface: Bool,
+        includeURL: Bool
+    ) -> String {
+        [
+            String(processID),
+            bundleID ?? "",
+            role,
+            subrole ?? "",
+            focusIdentityKey ?? "",
+            roundedFrameKey(inputFrameRect),
+            includeSurface ? "surface" : "",
+            includeURL ? "url" : "",
+        ].joined(separator: "\u{1f}")
+    }
+
+    private static func roundedFrameKey(_ rect: CGRect?) -> String {
+        guard let rect else { return "" }
+        return [
+            rect.origin.x, rect.origin.y, rect.size.width, rect.size.height,
+        ]
+            .map { String(Int($0.rounded())) }
+            .joined(separator: ",")
+    }
 }
 
 enum CotypingSurfaceComposer {

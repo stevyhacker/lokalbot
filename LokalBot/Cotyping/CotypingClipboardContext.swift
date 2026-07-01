@@ -199,6 +199,48 @@ nonisolated struct CotypingClipboardPrefaceMemo: Equatable, Sendable {
     }
 }
 
+nonisolated struct CotypingClipboardPrefaceResolution: Equatable, Sendable {
+    let value: String?
+    let memo: CotypingClipboardPrefaceMemo?
+}
+
+enum CotypingClipboardPrefaceResolver {
+    static func resolve(
+        rawClipboard: String?,
+        pasteboardChangeCount: Int,
+        precedingText: String,
+        identityKey: String,
+        memo: CotypingClipboardPrefaceMemo?,
+        relevanceFilter: CotypingClipboardRelevanceFilter
+    ) -> CotypingClipboardPrefaceResolution {
+        if let pinned = memo?.valueIfReusable(
+            identityKey: identityKey,
+            changeCount: pasteboardChangeCount) {
+            return CotypingClipboardPrefaceResolution(value: pinned, memo: memo)
+        }
+
+        guard let relevantClipboard = relevanceFilter.filter(
+            rawClipboard: rawClipboard,
+            pasteboardChangeCount: pasteboardChangeCount,
+            precedingText: precedingText) else {
+            return CotypingClipboardPrefaceResolution(value: nil, memo: nil)
+        }
+
+        guard let value = CotypingClipboardContext.resolve(
+            rawClipboard: relevantClipboard,
+            precedingText: precedingText) else {
+            return CotypingClipboardPrefaceResolution(value: nil, memo: nil)
+        }
+
+        return CotypingClipboardPrefaceResolution(
+            value: value,
+            memo: CotypingClipboardPrefaceMemo(
+                identityKey: identityKey,
+                changeCount: pasteboardChangeCount,
+                value: value))
+    }
+}
+
 /// Reads the system pasteboard. `@MainActor`; the snippet is read fresh at
 /// generation time and never persisted (clipboard contents are sensitive and
 /// change outside our control). Injectable for tests.

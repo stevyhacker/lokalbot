@@ -115,7 +115,7 @@ struct AppSettings: Codable {
     /// Idle time after the last keystroke before asking the model. Low so the
     /// suggestion feels near-instant and matches Cotypist/Cotabby's shipped
     /// debounce window.
-    var cotypingDebounceMs: Int = 20
+    var cotypingDebounceMs: Int = Self.defaultCotypingDebounceMs
     /// Paint partial suggestions token-by-token while the model is decoding.
     /// Off by default to match Cotypist/Cotabby's shipped behavior: suggestions
     /// appear once, fully formed, after normalization.
@@ -196,6 +196,36 @@ struct AppSettings: Codable {
     static let minimumCotypingFadeInDurationSeconds: Double = 0.05
     static let maximumCotypingFadeInDurationSeconds: Double = 0.30
     static let defaultCotypingFadeInDurationSeconds: Double = 0.15
+    static let currentCotypingSettingsVersion: Int = 2
+    static let legacyPreviewCotypingSettingsVersion: Int = 0
+    static let legacyPreviewCotypingMaxWords: Int = 2
+    static let legacyPreviewCotypingDebounceMs: Int = 150
+    static let defaultCotypingDebounceMs: Int = 20
+    static let legacyDefaultCotypingDebounceMs: Int = 350
+    static let maximumCotypingDebounceMs: Int = 1_000
+
+    static func migratedCotypingMaxWords(_ words: Int, decodedSettingsVersion: Int) -> Int {
+        if decodedSettingsVersion == legacyPreviewCotypingSettingsVersion,
+           words == legacyPreviewCotypingMaxWords {
+            return AppSettings().cotypingMaxWords
+        }
+        return words
+    }
+
+    static func migratedCotypingDebounceMs(_ milliseconds: Int, decodedSettingsVersion: Int) -> Int {
+        let clamped = min(
+            maximumCotypingDebounceMs,
+            max(CotypingDebouncePolicy.minimumMilliseconds, milliseconds))
+        if decodedSettingsVersion == legacyPreviewCotypingSettingsVersion,
+           clamped == legacyPreviewCotypingDebounceMs {
+            return defaultCotypingDebounceMs
+        }
+        if decodedSettingsVersion < currentCotypingSettingsVersion,
+           clamped == legacyDefaultCotypingDebounceMs {
+            return defaultCotypingDebounceMs
+        }
+        return clamped
+    }
 
     static func clampedCotypingFadeInDurationSeconds(_ seconds: Double) -> Double {
         guard seconds.isFinite else { return defaultCotypingFadeInDurationSeconds }
@@ -297,6 +327,7 @@ struct AppSettings: Codable {
         case cotypingStyleNote
         case cotypingMultiLine
         case cotypingPasteInsertion
+        case cotypingSettingsVersion
         case cotypingMaxWords
         case cotypingDebounceMs
         case cotypingStreamSuggestionsWhileGenerating
@@ -377,8 +408,13 @@ struct AppSettings: Codable {
         try c.encode(cotypingStyleNote, forKey: .cotypingStyleNote)
         try c.encode(cotypingMultiLine, forKey: .cotypingMultiLine)
         try c.encode(cotypingPasteInsertion, forKey: .cotypingPasteInsertion)
+        try c.encode(Self.currentCotypingSettingsVersion, forKey: .cotypingSettingsVersion)
         try c.encode(cotypingMaxWords, forKey: .cotypingMaxWords)
-        try c.encode(cotypingDebounceMs, forKey: .cotypingDebounceMs)
+        try c.encode(
+            Self.migratedCotypingDebounceMs(
+                cotypingDebounceMs,
+                decodedSettingsVersion: Self.currentCotypingSettingsVersion),
+            forKey: .cotypingDebounceMs)
         try c.encode(cotypingStreamSuggestionsWhileGenerating, forKey: .cotypingStreamSuggestionsWhileGenerating)
         try c.encode(cotypingFadeInSuggestions, forKey: .cotypingFadeInSuggestions)
         try c.encode(
@@ -448,8 +484,16 @@ struct AppSettings: Codable {
         cotypingStyleNote = (try? c.decode(String.self, forKey: .cotypingStyleNote)) ?? defaults.cotypingStyleNote
         cotypingMultiLine = (try? c.decode(Bool.self, forKey: .cotypingMultiLine)) ?? defaults.cotypingMultiLine
         cotypingPasteInsertion = (try? c.decode(Bool.self, forKey: .cotypingPasteInsertion)) ?? defaults.cotypingPasteInsertion
-        cotypingMaxWords = (try? c.decode(Int.self, forKey: .cotypingMaxWords)) ?? defaults.cotypingMaxWords
-        cotypingDebounceMs = (try? c.decode(Int.self, forKey: .cotypingDebounceMs)) ?? defaults.cotypingDebounceMs
+        let cotypingSettingsVersion = (try? c.decode(Int.self, forKey: .cotypingSettingsVersion)) ?? 0
+        let decodedCotypingMaxWords = (try? c.decode(Int.self, forKey: .cotypingMaxWords)) ?? defaults.cotypingMaxWords
+        cotypingMaxWords = Self.migratedCotypingMaxWords(
+            decodedCotypingMaxWords,
+            decodedSettingsVersion: cotypingSettingsVersion)
+        let decodedCotypingDebounceMs =
+            (try? c.decode(Int.self, forKey: .cotypingDebounceMs)) ?? defaults.cotypingDebounceMs
+        cotypingDebounceMs = Self.migratedCotypingDebounceMs(
+            decodedCotypingDebounceMs,
+            decodedSettingsVersion: cotypingSettingsVersion)
         cotypingStreamSuggestionsWhileGenerating = (try? c.decode(Bool.self, forKey: .cotypingStreamSuggestionsWhileGenerating)) ?? defaults.cotypingStreamSuggestionsWhileGenerating
         cotypingFadeInSuggestions = (try? c.decode(Bool.self, forKey: .cotypingFadeInSuggestions)) ?? defaults.cotypingFadeInSuggestions
         cotypingFadeInDurationSeconds = Self.clampedCotypingFadeInDurationSeconds(

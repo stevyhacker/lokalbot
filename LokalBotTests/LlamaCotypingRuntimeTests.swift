@@ -8,12 +8,45 @@ final class LlamaCotypingRuntimeTests: XCTestCase {
         let entry = ModelCatalog.entry(id: ModelCatalog.bundledID)!
         let storage = StorageManager()
         guard let url = ModelCatalog.localURL(for: entry, storage: storage) else {
-            throw XCTSkip("Bundled model \(entry.fileName) not present; skipping libllama integration test.")
+            let repoRoot = URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+            let vendorURL = repoRoot
+                .appendingPathComponent("Vendor/llama-models")
+                .appendingPathComponent(entry.fileName)
+            guard ModelFileValidator.looksLikeGGUF(vendorURL) else {
+                throw XCTSkip("Bundled model \(entry.fileName) not present; skipping libllama integration test.")
+            }
+            return vendorURL.path
         }
         return url.path
     }
 
     private let standardSpecs = LlamaSamplerSpec.specs(from: .standard)
+
+    func testArgmaxTokenChoosesLargestFiniteLogit() {
+        let logits: [Float] = [-3.0, .nan, 0.4, 1.2, -0.1]
+        let token = logits.withUnsafeBufferPointer { buffer in
+            LlamaCotypingRuntime.argmaxToken(
+                in: buffer.baseAddress,
+                vocabularySize: Int32(buffer.count))
+        }
+
+        XCTAssertEqual(token, 3)
+    }
+
+    func testArgmaxTokenReturnsNilForInvalidLogits() {
+        XCTAssertNil(LlamaCotypingRuntime.argmaxToken(in: nil, vocabularySize: 5))
+
+        let logits: [Float] = [.nan, .nan]
+        let token = logits.withUnsafeBufferPointer { buffer in
+            LlamaCotypingRuntime.argmaxToken(
+                in: buffer.baseAddress,
+                vocabularySize: Int32(buffer.count))
+        }
+
+        XCTAssertNil(token)
+    }
 
     func testLoadsAndGeneratesDeterministically() async throws {
         let path = try bundledModelPath()
@@ -72,6 +105,79 @@ final class LlamaCotypingRuntimeTests: XCTestCase {
                        "logical prefill count should equal only the appended suffix")
     }
 
+    func testFocusPrefillSkipsDecodeWhenPromptPrefixCannotBeReused() async throws {
+        let path = try bundledModelPath()
+        let runtime = LlamaCotypingRuntime()
+        try await runtime.loadIfNeeded(modelPath: path)
+        let canReusePromptPrefix = await runtime.canReusePromptPrefix
+        guard !canReusePromptPrefix else {
+            throw XCTSkip("Bundled model can reuse prompt prefixes; skip hybrid/recurrent prefill test.")
+        }
+
+        let prompt = await runtime.tokenize(
+            "Hi Sarah, thanks for sending this over. I wanted to follow",
+            addBOS: true)
+        try await runtime.prefill(promptTokens: prompt)
+
+        let skippedPrefillCount = await runtime.lastPrefillTokenCount
+        XCTAssertEqual(skippedPrefillCount, 0)
+
+        let extended = prompt + (await runtime.tokenize(" up tomorrow", addBOS: false))
+        _ = try await runtime.generate(
+            promptTokens: extended,
+            maxTokens: 2,
+            samplerSpecs: standardSpecs) { _ in true }
+
+        let generatedPrefillCount = await runtime.lastPrefillTokenCount
+        XCTAssertEqual(
+            generatedPrefillCount,
+            extended.count - prompt.count,
+            "Skipped focus prefill should still seed the logical prefix baseline.")
+    }
+
+    func testGenerateHonorsTaskCancellationBeforePrefill() async throws {
+        let path = try bundledModelPath()
+        let runtime = LlamaCotypingRuntime()
+        try await runtime.loadIfNeeded(modelPath: path)
+        let prompt = await runtime.tokenize(
+            "Hi Sarah, thanks for sending this over. I wanted to follow",
+            addBOS: true)
+        let gate = AsyncGate()
+
+        let task = Task {
+            await gate.wait()
+            return try await runtime.generate(
+                promptTokens: prompt,
+                maxTokens: 8,
+                samplerSpecs: standardSpecs) { _ in true }
+        }
+        task.cancel()
+        await gate.open()
+
+        do {
+            _ = try await task.value
+            XCTFail("Cancelled generation should throw before prompt prefill.")
+        } catch is CancellationError {
+            let prefilled = await runtime.lastPrefillTokenCount
+            XCTAssertEqual(prefilled, 0)
+        }
+    }
+
+    func testAbortSignalDoesNotPoisonNextGeneration() async throws {
+        let path = try bundledModelPath()
+        let runtime = LlamaCotypingRuntime()
+        try await runtime.loadIfNeeded(modelPath: path)
+        runtime.abortInFlightDecode()
+
+        let prompt = await runtime.tokenize("The capital of Italy is", addBOS: true)
+        let out = try await runtime.generate(
+            promptTokens: prompt,
+            maxTokens: 4,
+            samplerSpecs: standardSpecs) { _ in true }
+
+        XCTAssertFalse(out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
     func testOnTokenReturningFalseStopsDecode() async throws {
         let path = try bundledModelPath()
         let runtime = LlamaCotypingRuntime()
@@ -101,5 +207,26 @@ private final class TokenCounter: @unchecked Sendable {
     var value: Int {
         lock.lock(); defer { lock.unlock() }
         return count
+    }
+}
+
+private actor AsyncGate {
+    private var isOpen = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func open() {
+        isOpen = true
+        let waiting = continuations
+        continuations.removeAll()
+        for continuation in waiting {
+            continuation.resume()
+        }
     }
 }

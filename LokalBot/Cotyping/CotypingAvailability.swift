@@ -60,3 +60,40 @@ enum CotypingAvailability {
         }
     }
 }
+
+/// Conservative, pure classifier for sensitive focused fields. Accessibility
+/// hosts do not always expose native password boxes as `AXSecureTextField`;
+/// some only surface a role description or label. A false positive only hides
+/// autocomplete, while a false negative could show a secret as ghost text.
+enum CotypingSecureFieldDetector {
+    static func isSecure(
+        role: String?,
+        subrole: String?,
+        roleDescription: String?,
+        title: String?,
+        descriptionLabel: String?
+    ) -> Bool {
+        let markers = [role, subrole, roleDescription, title, descriptionLabel]
+            .compactMap { $0?.lowercased() }
+            .filter { !$0.isEmpty }
+        return markers.contains { marker in
+            sensitiveMarkers.contains { marker.contains($0) }
+        }
+    }
+
+    static let sensitiveMarkers: [String] = [
+        "secure",
+        "password",
+        "passcode",
+        "passphrase",
+        "cvv",
+        "cvc",
+        "security code",
+        "verification code",
+        "one-time code",
+        "one time code",
+        "social security",
+        "card number",
+        "credit card",
+    ]
+}

@@ -44,6 +44,7 @@ enum CotypingAXHelper {
     /// doesn't re-read `AXAttributedStringForRange` for a field it already styled.
     /// Keyed by the element's stable `AXIdentifier`; cleared wholesale at 64 entries.
     @MainActor private static var fieldStyleCache: [String: CotypingFieldStyle] = [:]
+    @MainActor private static var surfaceCaptureCache = CotypingSurfaceCaptureCache()
     @MainActor private static var primedWebAccessibilityPIDs: Set<pid_t> = []
     @MainActor private static var unsupportedWebAccessibilityPIDs: Set<pid_t> = []
     @MainActor private static var lastFrontmostPrimePID: pid_t?
@@ -73,8 +74,18 @@ enum CotypingAXHelper {
         let focusIdentityKey = focusIdentityKey(
             for: element, processID: pid, bundleID: bundleID, role: role, subrole: subrole)
 
-        // Secure fields: never read or suggest into them.
-        if subrole == (kAXSecureTextFieldSubrole as String) {
+        // Secure fields: never read or suggest into them. Some hosts only
+        // expose sensitivity through role description/title/description, so
+        // check all cheap metadata before touching AXValue.
+        let roleDescription = stringAttribute(element, kAXRoleDescriptionAttribute as String)
+        let title = stringAttribute(element, kAXTitleAttribute as String)
+        let descriptionLabel = stringAttribute(element, kAXDescriptionAttribute as String)
+        if CotypingSecureFieldDetector.isSecure(
+            role: role,
+            subrole: subrole,
+            roleDescription: roleDescription,
+            title: title,
+            descriptionLabel: descriptionLabel) {
             return CotypingFocus(appName: appName, bundleID: bundleID,
                                  capability: .blocked("Secure field — never read."), field: nil)
         }
@@ -116,14 +127,24 @@ enum CotypingAXHelper {
             element,
             caretLocation: caret,
             allowBoundsForRange: !usesMarkerSelection)
+        let inputFrameRect = elementFrame(element).map { cocoaRect(fromAX: $0) }
         // App/window context — only read when actually building a suggestion (it
         // costs extra AX round-trips), gated by the cotyping setting upstream.
-        let surfaceTitle = includeSurface ? windowTitle(near: element) : nil
-        let surfacePlaceholder = includeSurface
-            ? stringAttribute(element, kAXPlaceholderValueAttribute as String) : nil
+        let surfaceCapture = resolveSurfaceCapture(
+            element: element,
+            processID: pid,
+            bundleID: bundleID,
+            role: role,
+            subrole: subrole,
+            focusIdentityKey: focusIdentityKey,
+            inputFrameRect: inputFrameRect,
+            includeSurface: includeSurface,
+            includeURL: includeURL)
+        let surfaceTitle = includeSurface ? surfaceCapture.windowTitle : nil
+        let surfacePlaceholder = includeSurface ? surfaceCapture.fieldPlaceholder : nil
         // Per-site rules: read the tab URL only when domains are configured (it
         // costs an extra bounded ancestor walk), gated by the coordinator.
-        let host = includeURL ? webURL(near: element).flatMap(CotypingBrowserDomain.host(fromURLString:)) : nil
+        let host = includeURL ? surfaceCapture.urlString.flatMap(CotypingBrowserDomain.host(fromURLString:)) : nil
         // Host field font/color — read (cached per element) only when matching is
         // enabled, so the overlay can mimic the field instead of a fixed style.
         let resolvedStyle = includeStyle && !usesMarkerSelection
@@ -137,6 +158,7 @@ enum CotypingAXHelper {
             focusIdentityKey: focusIdentityKey,
             precedingText: preceding, trailingText: trailing,
             selectionLength: selection.length, caretRect: caretRect,
+            inputFrameRect: inputFrameRect,
             isSecure: false, isIntegratedTerminal: isIntegratedTerminal, caretIsExact: exact,
             windowTitle: surfaceTitle, fieldPlaceholder: surfacePlaceholder, fieldStyle: resolvedStyle)
         return CotypingFocus(appName: appName, bundleID: bundleID, capability: .supported,
@@ -370,6 +392,36 @@ enum CotypingAXHelper {
         guard let raw = copyAttribute(element, kAXWindowAttribute as String),
               CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
         return stringAttribute(raw as! AXUIElement, kAXTitleAttribute as String)
+    }
+
+    @MainActor
+    private static func resolveSurfaceCapture(
+        element: AXUIElement,
+        processID: pid_t,
+        bundleID: String?,
+        role: String,
+        subrole: String?,
+        focusIdentityKey: String?,
+        inputFrameRect: CGRect?,
+        includeSurface: Bool,
+        includeURL: Bool
+    ) -> CotypingSurfaceCapture {
+        guard includeSurface || includeURL else { return .empty }
+        let key = CotypingSurfaceCaptureCache.key(
+            processID: processID,
+            bundleID: bundleID,
+            role: role,
+            subrole: subrole,
+            focusIdentityKey: focusIdentityKey,
+            inputFrameRect: inputFrameRect,
+            includeSurface: includeSurface,
+            includeURL: includeURL)
+        return surfaceCaptureCache.capture(forKey: key) {
+            CotypingSurfaceCapture(
+                windowTitle: includeSurface ? windowTitle(near: element) : nil,
+                fieldPlaceholder: includeSurface ? stringAttribute(element, kAXPlaceholderValueAttribute as String) : nil,
+                urlString: includeURL ? webURL(near: element) : nil)
+        }
     }
 
     /// Best-effort, fail-safe read of the focused tab's URL near `element`, for

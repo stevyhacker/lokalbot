@@ -6,7 +6,16 @@ final class LocalLlamaCotypingEngineTests: XCTestCase {
     private func bundledModelPath() throws -> String {
         let entry = ModelCatalog.entry(id: ModelCatalog.bundledID)!
         guard let url = ModelCatalog.localURL(for: entry, storage: StorageManager()) else {
-            throw XCTSkip("Bundled model not present; skipping engine integration test.")
+            let repoRoot = URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+            let vendorURL = repoRoot
+                .appendingPathComponent("Vendor/llama-models")
+                .appendingPathComponent(entry.fileName)
+            guard ModelFileValidator.looksLikeGGUF(vendorURL) else {
+                throw XCTSkip("Bundled model not present; skipping engine integration test.")
+            }
+            return vendorURL.path
         }
         return url.path
     }
@@ -32,9 +41,9 @@ final class LocalLlamaCotypingEngineTests: XCTestCase {
     func testStreamingFiresPartials() async throws {
         let path = try bundledModelPath()
         let engine = LocalLlamaCotypingEngine(runtime: LlamaCotypingRuntime(), modelPath: path)
-        var partials = 0
-        _ = try await engine.generateStreaming(makeRequest()) { _ in partials += 1 }
-        XCTAssertGreaterThan(partials, 0)
+        let partials = PartialCounter()
+        _ = try await engine.generateStreaming(makeRequest()) { _ in partials.increment() }
+        XCTAssertGreaterThan(partials.value, 0)
     }
 
     /// `unload()` is callable on the engine seam and is a safe no-op when nothing
@@ -49,5 +58,22 @@ final class LocalLlamaCotypingEngineTests: XCTestCase {
         await engine.unload()
         let after = await runtime.isLoaded
         XCTAssertFalse(after)
+    }
+}
+
+private final class PartialCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func increment() {
+        lock.lock()
+        defer { lock.unlock() }
+        count += 1
+    }
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
     }
 }

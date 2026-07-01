@@ -46,6 +46,7 @@ final class CotypingInputMonitor {
     private var acceptTap: CFMachPort?
     private var acceptSource: CFRunLoopSource?
     private var acceptTeardownWorkItem: DispatchWorkItem?
+    private let suppressionController: CotypingInputSuppressionController
 
     private(set) var isRunning = false
     private(set) var isAcceptActive = false
@@ -55,6 +56,10 @@ final class CotypingInputMonitor {
     /// the tap immediately can pull it from the event chain before those events
     /// drain into the host app.
     nonisolated static let acceptTapTeardownDelaySeconds: TimeInterval = 0.05
+
+    init(suppressionController: CotypingInputSuppressionController = CotypingInputSuppressionController()) {
+        self.suppressionController = suppressionController
+    }
 
     /// Installs the listen-only observer tap. Returns false if the OS refuses
     /// (Input Monitoring not granted).
@@ -143,7 +148,14 @@ final class CotypingInputMonitor {
             if let observerTap { CGEvent.tapEnable(tap: observerTap, enable: true) }
             return
         }
-        guard type == .keyDown, !CotypingSyntheticMarker.isSynthetic(event) else { return }
+        guard type == .keyDown else { return }
+        if suppressionController.isSynthetic(event) {
+            _ = suppressionController.consumeIfNeeded()
+            return
+        }
+        if suppressionController.consumeIfNeeded() {
+            return
+        }
         onKey?(classify(event))
     }
 
@@ -153,7 +165,7 @@ final class CotypingInputMonitor {
             if let acceptTap { CGEvent.tapEnable(tap: acceptTap, enable: true) }
             return false
         }
-        guard type == .keyDown, !CotypingSyntheticMarker.isSynthetic(event) else { return false }
+        guard type == .keyDown, !suppressionController.isSynthetic(event) else { return false }
         guard acceptGate(), let scope = acceptScope(for: event) else { return false }
         return onAcceptKey?(scope) ?? false
     }
