@@ -9,7 +9,7 @@ final class ProcessingPipeline: ObservableObject {
 
     enum Stage: Equatable {
         case queued
-        case preparingModel      // first run: Parakeet download from Hugging Face
+        case preparingModel      // first run: selected model download from Hugging Face
         case transcribing
         case summarizing
         case failed(String)
@@ -17,7 +17,7 @@ final class ProcessingPipeline: ObservableObject {
         var label: String {
             switch self {
             case .queued: "Queued…"
-            case .preparingModel: "Preparing transcription model (first run downloads ~600 MB)…"
+            case .preparingModel: "Preparing transcription model (download size depends on your selection)…"
             case .transcribing: "Transcribing…"
             case .summarizing: "Summarizing…"
             case .failed(let message): "Failed: \(message)"
@@ -338,7 +338,7 @@ final class ProcessingPipeline: ObservableObject {
         case .builtIn:
             guard let entry = ModelCatalog.entry(id: config.builtInModelID,
                                                  custom: config.customBuiltInModels)
-                    ?? ModelCatalog.entry(id: ModelCatalog.bundledID) else {
+                    ?? ModelCatalog.entry(id: ModelCatalog.recommendedSummarizationID) else {
                 throw PipelineError.badServerURL
             }
             guard let modelURL = ModelCatalog.localURL(for: entry, storage: storage) else {

@@ -44,7 +44,7 @@ final class CotypingEngineSelector: CotypingCompleting {
     /// Resolves the built-in cotyping model path the same way `makeTextEngine` does.
     private func resolvedModelURL(_ s: AppSettings) -> URL? {
         guard let entry = ModelCatalog.entry(id: s.cotypingBuiltInModelID, custom: s.customBuiltInModels)
-                ?? ModelCatalog.entry(id: ModelCatalog.bundledID) else { return nil }
+                ?? ModelCatalog.entry(id: ModelCatalog.recommendedCotypingID) else { return nil }
         return ModelCatalog.localURL(for: entry, storage: storage)
     }
 

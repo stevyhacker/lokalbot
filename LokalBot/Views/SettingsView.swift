@@ -137,7 +137,7 @@ struct SettingsView: View {
                                 Text(entry.displayName).tag(entry.id)
                             }
                         }
-                        Text("Cotyping runs its own dedicated model. Gemma 4 E4B Q5 XL is the recommended quality target; Qwen3.5 2B and LFM2.5 1.2B are smaller latency options.")
+                        Text("Cotyping runs its own dedicated model. Gemma 4 · E4B is the recommended quality target; Qwen 3.5 2B and LFM2.5 1.2B are smaller latency options.")
                             .font(.caption).foregroundStyle(.secondary)
                         LabeledContent("Suggestions generated") {
                             Text("\(cotypingStats.stats.generations)").foregroundStyle(.secondary)

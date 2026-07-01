@@ -87,7 +87,7 @@ final class ChatAgentTests: XCTestCase {
     }
 
     func testParseNativeFunctionCallWithTokens() {
-        // The bundled Qwen model emits this form instead of JSON.
+        // Some Qwen-compatible local models emit this form instead of JSON.
         let text = "<|tool_call_start|>[get_meeting(id='abc12345', include='summary')]<|tool_call_end|>"
         guard case .call(let call) = ChatPrompt.parse(text, tools: ["get_meeting"]) else {
             return XCTFail("native function-call form should parse as a tool call")

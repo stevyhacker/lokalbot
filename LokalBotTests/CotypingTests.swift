@@ -189,7 +189,7 @@ final class CotypingModelPreparationTests: XCTestCase {
         var settings = AppSettings()
         // Cotyping always runs its own model; the recommended Gemma id is the default.
         XCTAssertTrue(CotypingModelPreparer.recommendedIsActive(settings: settings))
-        settings.cotypingBuiltInModelID = ModelCatalog.bundledID
+        settings.cotypingBuiltInModelID = ModelCatalog.compactFallbackID
         XCTAssertFalse(CotypingModelPreparer.recommendedIsActive(settings: settings))
     }
 
@@ -1137,7 +1137,7 @@ final class CotypingSettingsTests: XCTestCase {
         settings.cotypingAddSpaceAfterAccept = true
         settings.cotypingExcludedApps = "Terminal, 1Password"
         settings.cotypingSuggestInIntegratedTerminals = true
-        settings.cotypingBuiltInModelID = ModelCatalog.bundledID
+        settings.cotypingBuiltInModelID = ModelCatalog.compactFallbackID
         settings.cotypingUseLocalLearning = false
         settings.cotypingLearningExamplesInPrompt = 5
 
@@ -1159,7 +1159,7 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertTrue(decoded.cotypingAddSpaceAfterAccept)
         XCTAssertEqual(decoded.cotypingExcludedAppList, ["Terminal", "1Password"])
         XCTAssertTrue(decoded.cotypingSuggestInIntegratedTerminals)
-        XCTAssertEqual(decoded.cotypingBuiltInModelID, ModelCatalog.bundledID)
+        XCTAssertEqual(decoded.cotypingBuiltInModelID, ModelCatalog.compactFallbackID)
         XCTAssertFalse(decoded.cotypingUseLocalLearning)
         XCTAssertEqual(decoded.cotypingLearningExamplesInPrompt, 5)
     }

@@ -55,10 +55,9 @@ jobs:
       - name: Generate project
         run: xcodegen generate
 
-      # The pre-build phase Scripts/fetch-llama.sh downloads ~0.7 GB (pinned
-      # llama.cpp server + default GGUF model) into Vendor/. Cache it keyed on
-      # that script (which holds the pinned llama.cpp tag + model name), so only
-      # a script change forces a re-download.
+      # The pre-build phase Scripts/fetch-llama.sh downloads the pinned
+      # llama.cpp server into Vendor/. GGUF models are user-selected downloads,
+      # not bundled in CI artifacts.
       - name: Cache llama.cpp vendor
         uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:

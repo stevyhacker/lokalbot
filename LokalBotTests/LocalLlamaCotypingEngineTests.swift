@@ -4,7 +4,7 @@ import XCTest
 @MainActor
 final class LocalLlamaCotypingEngineTests: XCTestCase {
     private func bundledModelPath() throws -> String {
-        let entry = ModelCatalog.entry(id: ModelCatalog.bundledID)!
+        let entry = ModelCatalog.entry(id: ModelCatalog.compactFallbackID)!
         guard let url = ModelCatalog.localURL(for: entry, storage: StorageManager()) else {
             let repoRoot = URL(fileURLWithPath: #filePath)
                 .deletingLastPathComponent()
@@ -13,7 +13,7 @@ final class LocalLlamaCotypingEngineTests: XCTestCase {
                 .appendingPathComponent("Vendor/llama-models")
                 .appendingPathComponent(entry.fileName)
             guard ModelFileValidator.looksLikeGGUF(vendorURL) else {
-                throw XCTSkip("Bundled model not present; skipping engine integration test.")
+                throw XCTSkip("Compact fallback model not present; skipping engine integration test.")
             }
             return vendorURL.path
         }

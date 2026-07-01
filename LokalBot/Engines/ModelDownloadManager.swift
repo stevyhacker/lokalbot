@@ -58,7 +58,6 @@ final class ModelDownloadManager: NSObject, ObservableObject, URLSessionDownload
     }
 
     func delete(_ entry: ModelCatalog.Entry, storage: StorageManager) {
-        guard !entry.isBundled else { return }
         try? FileManager.default.removeItem(
             at: storage.rootURL.appendingPathComponent("models/\(entry.fileName)"))
         objectWillChange.send()

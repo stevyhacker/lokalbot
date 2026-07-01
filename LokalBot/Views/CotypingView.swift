@@ -140,11 +140,11 @@ private struct CotypingContent: View {
         let entry = ModelCatalog.entry(
             id: app.settings.cotypingBuiltInModelID,
             custom: app.settings.customBuiltInModels)
-        return "Dedicated — \(entry?.displayName ?? "built-in model")"
+        return "Dedicated — \(entry?.displayName ?? "catalog model")"
     }
 
     private var modelDetail: String {
-        "Cotyping runs on its own llama.cpp server, separate from summarization. Gemma 4 E4B Q5 XL is the recommended quality target."
+        "Cotyping runs on its own llama.cpp runtime, separate from summarization. Gemma 4 · E4B is the recommended quality target."
     }
 
     // MARK: Preview

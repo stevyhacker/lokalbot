@@ -3,9 +3,9 @@ import XCTest
 
 final class LlamaCotypingRuntimeTests: XCTestCase {
 
-    /// Resolves the bundled tiny model from the app bundle's Resources, or skips.
+    /// Resolves the compact fallback model from the local cache or Vendor tree, or skips.
     private func bundledModelPath() throws -> String {
-        let entry = ModelCatalog.entry(id: ModelCatalog.bundledID)!
+        let entry = ModelCatalog.entry(id: ModelCatalog.compactFallbackID)!
         let storage = StorageManager()
         guard let url = ModelCatalog.localURL(for: entry, storage: storage) else {
             let repoRoot = URL(fileURLWithPath: #filePath)
@@ -15,7 +15,7 @@ final class LlamaCotypingRuntimeTests: XCTestCase {
                 .appendingPathComponent("Vendor/llama-models")
                 .appendingPathComponent(entry.fileName)
             guard ModelFileValidator.looksLikeGGUF(vendorURL) else {
-                throw XCTSkip("Bundled model \(entry.fileName) not present; skipping libllama integration test.")
+                throw XCTSkip("Compact fallback model \(entry.fileName) not present; skipping libllama integration test.")
             }
             return vendorURL.path
         }

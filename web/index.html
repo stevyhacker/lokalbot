@@ -4,12 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>LokalBot: a private AI workspace for your Mac</title>
-  <meta name="description" content="A private AI workspace for your Mac. Record your meetings, autocomplete your writing, and see where your day went — all on-device. No account, no setup, no cloud." />
+  <meta name="description" content="A private AI workspace for your Mac. Record your meetings, autocomplete your writing, and see where your day went — all on-device. No account, no API keys, no cloud." />
   <meta name="theme-color" content="#0b1119" />
 
   <meta property="og:type" content="website" />
   <meta property="og:title" content="LokalBot — a private AI workspace for your Mac" />
-  <meta property="og:description" content="Meetings, notes, and autocomplete — on-device. No account, no setup, no cloud." />
+  <meta property="og:description" content="Meetings, notes, and autocomplete — on-device. No account, no API keys, no cloud." />
   <meta property="og:image" content="assets/lokalbot-icon.svg" />
   <meta name="twitter:card" content="summary_large_image" />
 
@@ -68,9 +68,9 @@
     <!-- ───────────────────────── HERO ───────────────────────── -->
     <section class="hero hero--centered">
       <div class="hero__copy reveal">
-        <p class="eyebrow">On-device. Zero setup.</p>
+        <p class="eyebrow">On-device. No API keys.</p>
         <h1 class="hero__title">A private AI workspace for your Mac.</h1>
-        <p class="hero__sub">Record your meetings, autocomplete your writing, and see where your day went — all on your Mac. No account, no setup, no cloud.</p>
+        <p class="hero__sub">Record your meetings, autocomplete your writing, and see where your day went — all on your Mac. No account, no API keys, no cloud.</p>
         <div class="hero__cta">
           <a class="btn btn--primary" href="#download">
             <i class="ph ph-apple-logo" aria-hidden="true"></i>
@@ -100,8 +100,8 @@
       <div class="proof__item">
         <i class="ph ph-seal-check" aria-hidden="true"></i>
         <div>
-          <strong>Free, zero setup</strong>
-          <span>No account, no API keys — a model's bundled in.</span>
+          <strong>Free, no API keys</strong>
+          <span>Pick the best local model for each job and download it once.</span>
         </div>
       </div>
       <div class="proof__item">
@@ -174,7 +174,7 @@
       </header>
 
       <figure class="how__diagram glass reveal">
-        <img class="how__diagram-img" src="assets/architecture-diagram.svg" width="900" height="430" alt="LokalBot's on-device pipeline: capture (mic as Me via AVAudioEngine, system audio as Them via a Core Audio process tap), transcribe on the Neural Engine with Parakeet/Whisper/Qwen plus pyannote diarization, summarize on a local llama.cpp server, and index in SQLite with FTS5 and vector embeddings. Search, chat, replay, cotyping, and the day timeline all read locally; nothing leaves the device except an optional one-time model download." loading="lazy" decoding="async" />
+        <img class="how__diagram-img" src="assets/architecture-diagram.svg" width="900" height="430" alt="LokalBot's on-device pipeline: capture (mic as Me via AVAudioEngine, system audio as Them via a Core Audio process tap), transcribe on the Neural Engine with Granite/Parakeet/Whisper plus pyannote diarization, summarize on a local llama.cpp server, and index in SQLite with FTS5 and vector embeddings. Search, chat, replay, cotyping, and the day timeline all read locally; nothing leaves the device except an optional one-time model download." loading="lazy" decoding="async" />
       </figure>
 
       <ol class="steps">
@@ -287,7 +287,7 @@
         <ul class="reqs">
           <li><i class="ph ph-apple-logo" aria-hidden="true"></i> Apple Silicon (M1 and later)</li>
           <li><i class="ph ph-monitor" aria-hidden="true"></i> macOS 15.0 or later</li>
-          <li><i class="ph ph-hard-drives" aria-hidden="true"></i> About 1 GB of models on first run</li>
+          <li><i class="ph ph-hard-drives" aria-hidden="true"></i> Model downloads vary by your choices</li>
         </ul>
 
         <div class="build">
@@ -325,7 +325,7 @@
         </details>
         <details class="qa">
           <summary>Can I use my own model?<i class="ph ph-plus" aria-hidden="true"></i></summary>
-          <p>Yes. The bundled llama.cpp model needs no setup, or point LokalBot at Ollama, any OpenAI-compatible server, or Apple Intelligence.</p>
+          <p>Yes. Use the built-in llama.cpp runtime with any downloaded GGUF model, or point LokalBot at Ollama, any OpenAI-compatible server, or Apple Intelligence.</p>
         </details>
         <details class="qa">
           <summary>Is my screen being watched?<i class="ph ph-plus" aria-hidden="true"></i></summary>

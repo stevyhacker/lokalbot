@@ -60,9 +60,6 @@ targetTemplates:
       - path: Vendor/llama-cpp
         type: folder
         buildPhase: resources
-      - path: Vendor/llama-models
-        type: folder
-        buildPhase: resources
       - path: Vendor/sherpa-onnx
         type: folder
         buildPhase: resources

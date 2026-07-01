@@ -2,8 +2,8 @@ import Foundation
 
 /// Built-in LLM backend, part 1 of 3: the model catalog + on-disk validation.
 /// A bundled llama.cpp `llama-server` (Metal) speaks the OpenAI-compatible API
-/// on localhost. The small default model ships inside the app; bigger ones
-/// download on demand (Handy-style catalog). No Ollama / LM Studio required.
+/// on localhost. Users choose and download GGUF models on demand into
+/// Application Support. No Ollama / LM Studio required.
 ///
 /// Runtime split (mirrors the lifecycle/prompt/lifecycle separation): catalog
 /// here, download orchestration in `ModelDownloadManager.swift`, the server
@@ -19,20 +19,19 @@ struct ModelCatalog {
         let blurb: String
         /// Qwen3 (non-2507) thinks by default; we turn that off for summaries.
         let disablesThinking: Bool
-        var isBundled: Bool { id == ModelCatalog.bundledID }
     }
 
-    static let bundledID = "qwen3.5-0.8b"
+    static let compactFallbackID = "qwen3.5-0.8b"
     static let recommendedSummarizationID = "qwen3.6-35b-a3b"
     static let recommendedCotypingID = "gemma4-e4b-q5-xl"
 
     /// Local GGUF catalog, roughly ordered from tiny fallbacks to higher-quality
     /// meeting-summary and cotyping options.
     static let entries: [Entry] = [
-        Entry(id: bundledID, displayName: "Qwen3.5 0.8B (built-in)",
+        Entry(id: compactFallbackID, displayName: "Qwen 3.5 · 0.8B",
               fileName: "Qwen3.5-0.8B-Q4_K_M.gguf",
               url: "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf",
-              sizeGB: 0.53, blurb: "Ships with the app. Tiny fallback for short meetings and cotyping.",
+              sizeGB: 0.53, blurb: "Tiny downloadable fallback for short meetings and cotyping.",
               disablesThinking: true),
         Entry(id: "lfm2.5-1.2b-instruct", displayName: "LFM2.5 1.2B Instruct",
               fileName: "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
@@ -54,17 +53,17 @@ struct ModelCatalog {
               url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf",
               sizeGB: 4.98, blurb: "Legacy edge-optimized option. 16 GB Macs.",
               disablesThinking: false),
-        Entry(id: recommendedCotypingID, displayName: "Gemma 4 E4B Q5 XL",
+        Entry(id: recommendedCotypingID, displayName: "Gemma 4 · E4B",
               fileName: "gemma-4-E4B-it-UD-Q5_K_XL.gguf",
               url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-UD-Q5_K_XL.gguf",
-              sizeGB: 6.66, blurb: "Recommended cotyping quality target. 16 GB+ Macs.",
+              sizeGB: 6.66, blurb: "Recommended cotyping quality target (Q5 XL quant). 16 GB+ Macs.",
               disablesThinking: false),
         Entry(id: "lfm2.5-8b-a1b", displayName: "LFM2.5 8B (MoE)",
               fileName: "LFM2.5-8B-A1B-Q4_K_M.gguf",
               url: "https://huggingface.co/LiquidAI/LFM2.5-8B-A1B-GGUF/resolve/main/LFM2.5-8B-A1B-Q4_K_M.gguf",
               sizeGB: 5.16, blurb: "Fast meeting summaries; ~1B active. 16 GB Macs.",
               disablesThinking: false),
-        Entry(id: recommendedSummarizationID, displayName: "Qwen3.6 35B-A3B (MoE)",
+        Entry(id: recommendedSummarizationID, displayName: "Qwen 3.6 · 35B-A3B",
               fileName: "Qwen3.6-35B-A3B-UD-IQ4_XS.gguf",
               url: "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf",
               sizeGB: 17.73, blurb: "Recommended long-meeting default; ~3B active. 32 GB+ Macs.",
@@ -93,14 +92,8 @@ struct ModelCatalog {
         selectableEntries(custom: custom).first { $0.id == id }
     }
 
-    /// Bundled model lives in Resources; downloads live in <storage>/models/.
+    /// Downloads live in <storage>/models/.
     static func localURL(for entry: Entry, storage: StorageManager) -> URL? {
-        if entry.isBundled,
-           let bundled = Bundle.main.resourceURL?
-               .appendingPathComponent("llama-models/\(entry.fileName)"),
-           ModelFileValidator.looksLikeGGUF(bundled) {
-            return bundled
-        }
         let downloaded = storage.rootURL.appendingPathComponent("models/\(entry.fileName)")
         if ModelFileValidator.looksLikeGGUF(downloaded) { return downloaded }
         return nil

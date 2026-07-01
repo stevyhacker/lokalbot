@@ -12,8 +12,8 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertEqual(names.count, Set(names).count)
     }
 
-    func testBundledModelExistsInCatalog() {
-        XCTAssertNotNil(ModelCatalog.entry(id: ModelCatalog.bundledID))
+    func testCompactFallbackModelExistsInCatalog() {
+        XCTAssertNotNil(ModelCatalog.entry(id: ModelCatalog.compactFallbackID))
     }
 
     func testRecommendedCotypingModelExistsInCatalog() {
@@ -29,6 +29,7 @@ final class ModelCatalogTests: XCTestCase {
 
     func testRecommendedSummarizationAndMaximumQualityModelsExist() {
         XCTAssertNotNil(ModelCatalog.entry(id: ModelCatalog.recommendedSummarizationID))
+        XCTAssertEqual(AppSettings().builtInModelID, ModelCatalog.recommendedSummarizationID)
         XCTAssertNotNil(ModelCatalog.entry(id: "qwen3.6-27b"))
         XCTAssertNotNil(ModelCatalog.entry(id: "gemma4-12b"))
         XCTAssertNotNil(ModelCatalog.entry(id: "qwen3.5-4b"))
@@ -42,6 +43,7 @@ final class ModelCatalogTests: XCTestCase {
 
     func testGraniteSpeechModelIsRunnableChoice() {
         XCTAssertTrue(TranscriptionModelChoice.allCases.contains(.graniteSpeech))
+        XCTAssertEqual(AppSettings().transcriptionModel, .graniteSpeech)
         XCTAssertEqual(TranscriptionModelChoice.graniteSpeech.engine.displayName, "Granite Speech 4.1 2B")
     }
 

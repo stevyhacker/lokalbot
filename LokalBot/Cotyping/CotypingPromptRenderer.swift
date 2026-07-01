@@ -8,7 +8,7 @@ import Foundation
 /// is the LAST thing in the prompt, trailing-trimmed so generation begins at a
 /// clean word boundary.
 ///
-/// LokalBot's built-in model is instruction-tuned rather than a base model, but
+/// LokalBot's recommended cotyping model is instruction-tuned rather than a base model, but
 /// raw `/v1/completions` still continues text from this prompt; the conditioning
 /// preface + `CotypingTextNormalizer` keep the output usable.
 enum CotypingPromptRenderer {

@@ -4,7 +4,7 @@ import AppKit
 /// The "Models" section (sidebar → Engine → Models). All model selection and
 /// management lives here, extracted from Settings into a dedicated card-per-role
 /// surface: Transcription, Summarization, Cotyping, and Embeddings each pick and
-/// manage their own model. Downloads come from the bundled catalog or Hugging Face.
+/// manage their own model. Downloads come from the local catalog or Hugging Face.
 struct ModelsView: View {
     @EnvironmentObject var app: AppState
 
@@ -83,18 +83,21 @@ struct ModelsView: View {
                   subtitle: "Meeting summaries, day digests, chat Q&A") {
             Picker("Backend", selection: $app.settings.summarizerBackend) {
                 ForEach(AppSettings.SummarizerBackend.allCases) { backend in
-                    Text(backend.rawValue).tag(backend)
+                    Text(backend.displayName).tag(backend)
                 }
             }
             switch app.settings.summarizerBackend {
             case .builtIn:
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(ModelCatalog.selectableEntries(custom: app.settings.customBuiltInModels)) { entry in
-                        ModelCatalogRow(entry: entry)
+                        ModelCatalogRow(
+                            entry: entry,
+                            recommendedLabel: entry.id == ModelCatalog.recommendedSummarizationID
+                                ? "RECOMMENDED SUMMARY" : nil)
                     }
                     Button("Browse Hugging Face…") { showingHFBrowse = true }
                         .controlSize(.small)
-                    Text("Runs on the bundled llama.cpp server (Metal) — nothing to install. Downloads come from Hugging Face.")
+                    Text("Runs on the included llama.cpp server (Metal). Download the model you want from Hugging Face.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             case .appleIntelligence:
@@ -160,7 +163,7 @@ struct ModelsView: View {
                 }
             }
             .frame(maxWidth: 360)
-            Text("Cotyping runs on a dedicated built-in llama.cpp server, separate from summarization. Gemma 4 E4B Q5 XL is the recommended quality target; Qwen3.5 2B and LFM2.5 1.2B are smaller latency options.")
+            Text("Cotyping runs on a dedicated llama.cpp runtime, separate from summarization. Gemma 4 · E4B is the recommended quality target; Qwen 3.5 2B and LFM2.5 1.2B are smaller latency options.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .accessibilityIdentifier("models.cotyping")
@@ -321,6 +324,7 @@ struct ModelsView: View {
         @EnvironmentObject var app: AppState
         @ObservedObject var downloads = ModelDownloadManager.shared
         let entry: ModelCatalog.Entry
+        var recommendedLabel: String? = nil
 
         var body: some View {
             let available = ModelCatalog.localURL(for: entry, storage: app.storage) != nil
@@ -334,10 +338,10 @@ struct ModelsView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(entry.displayName).font(.system(size: 12.5, weight: .medium))
-                        if entry.isBundled {
-                            Text("BUILT-IN").font(.system(size: 8.5, weight: .bold))
+                        if let recommendedLabel {
+                            Text(recommendedLabel).font(.system(size: 8.5, weight: .bold))
                                 .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(.green.opacity(0.2), in: Capsule())
+                                .background(Color.accentColor.opacity(0.18), in: Capsule())
                         }
                     }
                     Text("\(String(format: "%.1f", entry.sizeGB)) GB · \(entry.blurb)")
@@ -355,10 +359,8 @@ struct ModelsView: View {
                     ProgressView(value: fraction).frame(width: 70)
                     Button("Cancel") { downloads.cancel(entry) }.controlSize(.mini)
                 } else if available {
-                    if !entry.isBundled {
-                        Button("Delete") { downloads.delete(entry, storage: app.storage) }
-                            .controlSize(.mini)
-                    }
+                    Button("Delete") { downloads.delete(entry, storage: app.storage) }
+                        .controlSize(.mini)
                 } else {
                     Button("Download") { downloads.download(entry, storage: app.storage) }
                         .controlSize(.small)
@@ -390,6 +392,11 @@ struct ModelsView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(choice.rawValue).font(.system(size: 12.5, weight: .medium))
+                        if choice == TranscriptionModelChoice.recommended {
+                            Text("RECOMMENDED").font(.system(size: 8.5, weight: .bold))
+                                .padding(.horizontal, 4).padding(.vertical, 1)
+                                .background(Color.accentColor.opacity(0.18), in: Capsule())
+                        }
                         if ready {
                             Text("READY").font(.system(size: 8.5, weight: .bold))
                                 .padding(.horizontal, 4).padding(.vertical, 1)

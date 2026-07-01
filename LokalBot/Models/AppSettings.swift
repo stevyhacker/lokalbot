@@ -14,6 +14,12 @@ struct AppSettings: Codable {
         case ollama = "Ollama"
         case openAICompatible = "OpenAI-compatible server"
         var id: String { rawValue }
+        var displayName: String {
+            switch self {
+            case .builtIn: "Built-in llama.cpp"
+            case .appleIntelligence, .ollama, .openAICompatible: rawValue
+            }
+        }
     }
 
     var autoRecordMode: AutoRecordMode = .automatic
@@ -41,7 +47,7 @@ struct AppSettings: Codable {
 
     // MARK: Models (M2)
 
-    var transcriptionModel: TranscriptionModelChoice = .parakeetV3
+    var transcriptionModel: TranscriptionModelChoice = TranscriptionModelChoice.recommended
     var transcriptionLanguage: TranscriptionLanguage = .auto
     var autoTranscribe: Bool = true
     var autoSummarize: Bool = true
@@ -65,7 +71,7 @@ struct AppSettings: Codable {
     }
 
     var summarizerBackend: SummarizerBackend = .builtIn
-    var builtInModelID: String = ModelCatalog.bundledID
+    var builtInModelID: String = ModelCatalog.recommendedSummarizationID
     var customBuiltInModels: [ModelCatalog.Entry] = []
     var ollamaBaseURL: String = "http://localhost:11434"
     var ollamaModel: String = ""
@@ -177,13 +183,13 @@ struct AppSettings: Codable {
     var cotypingLanguages: String = ""
     /// Free-form notes / glossary / jargon folded into the prompt as context.
     var cotypingExtendedContext: String = ""
-    /// Built-in catalog model id for cotyping. Cotyping always runs its own
-    /// dedicated built-in (llama.cpp) model on a separate server instance, so
+    /// Catalog model id for cotyping. Cotyping always runs its own dedicated
+    /// llama.cpp model on a separate server instance, so
     /// inline suggestions never contend with summarization for the shared
     /// server. Defaults to the recommended cotyping model.
     var cotypingBuiltInModelID: String = ModelCatalog.recommendedCotypingID
     /// When true (default), cotyping uses the in-process `libllama` runtime for
-    /// the built-in GGUF backend on Apple Silicon; false forces the HTTP
+    /// the selected GGUF backend on Apple Silicon; false forces the HTTP
     /// `llama-server` path. The HTTP fallback also covers non-GGUF backends and
     /// any in-process load failure regardless of this flag.
     var cotypingInProcessRuntime: Bool = true

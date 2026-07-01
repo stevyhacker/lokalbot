@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg viewBox="0 0 900 430" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
   <title id="t">How LokalBot works — an on-device pipeline</title>
-  <desc id="d">Capture (mic as Me via AVAudioEngine, system audio as Them via a Core Audio process tap) → transcribe on the Neural Engine (Parakeet/Whisper/Qwen) with pyannote diarization → summarize on a local llama.cpp server → index in SQLite (FTS5 + vector embeddings). Search, chat, replay, cotyping, day timeline, and the CLI all read locally. Nothing leaves the device except an optional one-time model download.</desc>
+  <desc id="d">Capture (mic as Me via AVAudioEngine, system audio as Them via a Core Audio process tap) → transcribe on the Neural Engine (Granite/Parakeet/Whisper) with pyannote diarization → summarize on a local llama.cpp server → index in SQLite (FTS5 + vector embeddings). Search, chat, replay, cotyping, day timeline, and the CLI all read locally. Nothing leaves the device except an optional one-time model download.</desc>
   <defs>
     <marker id="ah" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#5BD0BD"/></marker>
   </defs>
@@ -49,7 +49,7 @@
   <rect x="256" y="120" width="176" height="124" rx="14" fill="#121A25" stroke="#283644"/>
   <text class="hd" x="272" y="146">2 · Transcribe</text>
   <text class="ln" x="272" y="170">ASR on Neural Engine</text>
-  <text class="sb" x="272" y="186">Parakeet · Whisper · Qwen</text>
+  <text class="sb" x="272" y="186">Granite · Parakeet · Whisper</text>
   <text class="sb" x="272" y="203">CoreML / MLX</text>
   <text class="sb" x="272" y="220">+ pyannote diarization</text>
   <text class="fl" x="344" y="262" text-anchor="middle">transcript.json</text>

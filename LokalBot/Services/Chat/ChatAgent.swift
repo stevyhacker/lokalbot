@@ -8,9 +8,9 @@ import Foundation
 ///
 /// The local backends only speak single-shot `generate(system:prompt:context:)`
 /// (no native function-calling), so tool use is a prompt-driven ReAct loop with
-/// a deliberately simple JSON protocol and tolerant parsing — the default model
-/// is a 0.8B GGUF, so the protocol has to survive sloppy output and degrade to
-/// a plain answer rather than fail.
+/// a deliberately simple JSON protocol and tolerant parsing — smaller local
+/// GGUFs may emit sloppy output, so the protocol degrades to a plain answer
+/// rather than fail.
 
 // MARK: - Value types
 

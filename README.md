@@ -6,7 +6,7 @@
 
 **A private AI workspace for your Mac.**
 
-Record your meetings, autocomplete your writing, and see where your day went — all on-device. No account, no setup, no cloud.
+Record your meetings, autocomplete your writing, and see where your day went — all on-device. No account, no API keys, no cloud.
 
 ![macOS 15.0+](https://img.shields.io/badge/macOS-15.0%2B-000000?logo=apple&logoColor=white)
 ![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-required-1f6feb)
@@ -47,7 +47,7 @@ LokalBot is a strictly-local AI workspace for macOS. It records both sides of a 
 | | |
 | --- | --- |
 | **100% on-device** | Audio, transcripts, summaries, and models stay on your Mac. The only network calls are optional (downloading a model once). |
-| **Free, zero setup** | No account, no API keys — a model's bundled in. |
+| **Free, no API keys** | Pick the best local model for each job and download it once. |
 | **Open source** | Read every line, or build it yourself. |
 
 ## See it in action
@@ -73,14 +73,14 @@ LokalBot is a strictly-local AI workspace for macOS. It records both sides of a 
 ## Features
 
 - **Records both sides of the call.** Auto-detects Zoom, Teams, Meet, Slack, Webex, and FaceTime, then captures *you* and *them* on two synced tracks — speaker labels for free.
-- **Transcribes locally in 25+ languages.** Parakeet runs at ~190× realtime on the Neural Engine; switch to Whisper for 99 languages, or Qwen3-ASR for harder recordings.
+- **Transcribes locally.** Recommended default: IBM Granite Speech 4.1; switch to Parakeet for speed, Whisper for 99 languages, or Qwen3-ASR for harder recordings.
 - **Writes the recap automatically.** A TL;DR with decisions and action items the moment the call ends. Pick a notes template, summary language, and re-run anytime.
 - **Search every word you've heard.** Full-text *and* meaning-based search across transcripts, summaries, and on-screen text. Click a hit to play from that exact second.
 - **Chat with your meetings.** Ask "what did we decide?" or "find the action items" in plain language — answers are grounded in your library.
-- **Cotyping — inline AI autocomplete.** Ghost text as you type in almost any app; press **Tab** to accept. Runs its own dedicated on-device model (in-process Gemma-4 by default). Opt-in.
+- **Cotyping — inline AI autocomplete.** Ghost text as you type in almost any app; press **Tab** to accept. Runs its own dedicated on-device model (recommended Gemma 4 · E4B). Opt-in.
 - **See where your day went.** A private timeline of apps and meetings, a generated daily digest, and an "ask your day" box.
 - **Private by construction.** Optional screenshots are AES-GCM encrypted and auto-delete after 14 days. Password fields and excluded apps are never read.
-- **Bring your own model.** Built-in llama.cpp model (zero setup), or point at Ollama, any OpenAI-compatible server, or Apple Intelligence.
+- **Bring your own model.** Use the included llama.cpp runtime with a GGUF you choose, or point at Ollama, any OpenAI-compatible server, or Apple Intelligence.
 - **Built for coding agents.** `lokalbot-cli` gives agents read-only access to your meeting library.
 
 <details>
@@ -99,7 +99,8 @@ Engines (Settings → Transcription; CoreML/MLX, in-process, Neural Engine/Metal
 
 | Engine | Coverage | Notes |
 | --- | --- | --- |
-| **Parakeet TDT 0.6B v3** | 25 languages, ~190× realtime | **default** |
+| **IBM Granite Speech 4.1** | high-accuracy local ASR | **recommended** |
+| **Parakeet TDT 0.6B v3** | 25 languages, ~190× realtime | fastest local option |
 | **Parakeet TDT 0.6B v2** | English only | slightly higher recall |
 | **Qwen3-ASR 1.7B** (MLX, ~3.2 GB) | 52 languages/dialects | best Qwen accuracy tier for harder recordings |
 | **Qwen3-ASR 0.6B** (MLX, ~0.7 GB) | global coverage | compact tier |
@@ -117,7 +118,7 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 <details>
 <summary><strong>Summarization &amp; notes</strong> — backends, templates, pipeline</summary>
 
-- **Backends** (Settings → Summarization, all HTTP-to-localhost only): **Built-in** (bundled llama.cpp — no setup, *default*) · **Apple Intelligence** (FoundationModels, macOS 26+, gated so the app still builds/launches on 15.0) · **Ollama** · **any OpenAI-compatible server** (LM Studio, vllm-mlx, …).
+- **Backends** (Settings → Summarization, all HTTP-to-localhost only): **Built-in** (included llama.cpp runtime; choose/download a GGUF model) · **Apple Intelligence** (FoundationModels, macOS 26+, gated so the app still builds/launches on 15.0) · **Ollama** · **any OpenAI-compatible server** (LM Studio, vllm-mlx, …).
 - **Output:** `summary.md` with TL;DR / Key points / Decisions / Action items / Open questions. Map-reduce for long meetings; `<think>` reasoning blocks are stripped.
 - **Templates & language:** pick a notes template (Meeting / Lecture / Study guide / Podcast / Free-form) and a summary language (auto-detected via `NLLanguageRecognizer`, with Simplified / Traditional / Cantonese handling). Prompt budgeting (`TokenCountEstimator`, `PromptContextSanitizer`, `PromptSectionBudget`) keeps prompts within the model's context.
 - **Pipeline:** runs automatically when a recording stops (configurable); serial queue with per-meeting status in the UI, plus a Process menu for manual re-runs.
@@ -125,20 +126,20 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 </details>
 
 <details>
-<summary><strong>Built-in LLM runtime</strong> — bundled llama.cpp &amp; model catalog</summary>
+<summary><strong>Built-in LLM runtime</strong> — llama.cpp &amp; model catalog</summary>
 
 - `LlamaServer` copies the vendored `llama-server` out of Resources into Application Support on first run (never executes from inside the bundle), spawns it (`-ngl 99 --jinja`, port 17872), health-checks `/health`, restarts on model switch, and terminates on quit.
 - **Model catalog** (Settings → Summarization) — download / cancel / delete with progress, radio-select the active model. Qwen "thinking" is disabled for summaries via `chat_template_kwargs`.
 
 | Model | Size | Best for |
 | --- | --- | --- |
-| Qwen3.5 0.8B | ~0.5 GB | built-in default |
+| Qwen 3.5 0.8B | ~0.5 GB | tiny downloadable fallback |
 | LFM2.5 1.2B Instruct | ~0.9 GB | fast cotyping |
 | Qwen3.5 2B | 1.3 GB | lightweight cotyping |
 | Qwen3.5 4B | ~2.8 GB | balanced summaries |
-| Gemma 4 E4B Q5 XL | ~6.7 GB | recommended cotyping |
+| Gemma 4 · E4B | ~6.7 GB | recommended cotyping |
 | LFM2.5 8B MoE | 5.2 GB | fast summaries |
-| Qwen3.6 35B-A3B MoE | 17.7 GB | recommended summaries |
+| Qwen 3.6 · 35B-A3B | 17.7 GB | recommended summaries |
 | Qwen3.6 27B | ~16.8 GB | maximum-quality dense summaries |
 | Gemma 4 12B | ~7.5 GB | multimodal-family summaries |
 
@@ -179,7 +180,7 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 <summary><strong>Cotyping</strong> — inline AI autocomplete</summary>
 
 - **Ghost text everywhere:** as you type in almost any macOS text field, a gray suggestion appears next to the cursor; press **Tab** to accept (a word at a time, or the whole thing — Settings → Cotyping), or keep typing / press **Esc** to dismiss. Built on the same loop as [Cotabby](https://cotabby.app): an Accessibility poll resolves the focused field + caret, a `CGEventTap` watches keystrokes (and swallows the accept key only while a suggestion shows), a borderless click-through `NSPanel` renders the ghost at the caret, and accepted text is inserted as synthetic Unicode keystrokes.
-- **Its own dedicated on-device model:** cotyping decodes a dedicated model (default **Gemma 4 E4B Q5 XL**) **in-process via libllama** for low latency, with the localhost `llama-server` as the fallback (non-GGUF backends, the in-process runtime toggled off, or on model load failure). The prompt treats the model as a pure text-continuer; raw output is cleaned by a shared normalizer (strips chat/`<think>` scaffolding, prompt echoes, and trailing-text duplication; collapses to one line). Nothing leaves the Mac.
+- **Its own dedicated on-device model:** cotyping decodes a dedicated model (recommended **Gemma 4 · E4B**) **in-process via libllama** for low latency, with the localhost `llama-server` as the fallback (non-GGUF backends, the in-process runtime toggled off, or on model load failure). The prompt treats the model as a pure text-continuer; raw output is cleaned by a shared normalizer (strips chat/`<think>` scaffolding, prompt echoes, and trailing-text duplication; collapses to one line). Nothing leaves the Mac.
 - **Opt-in & private:** off by default; needs **Accessibility** + **Input Monitoring**. Never reads password/secure fields; honors a per-user app exclusion list (preseeded with password managers and terminals).
 - **In-app preview:** the **Cotyping** tab has a live playground that runs the real pipeline on text typed *inside LokalBot* — try it with zero system permissions. Quick-toggle from the menu bar.
 
@@ -221,7 +222,7 @@ flowchart LR
 
 - Apple Silicon Mac (M1 or later)
 - macOS 15.0 or later
-- ~1 GB of models downloaded on first run
+- Model downloads vary by your choices
 
 ## Build from source
 
@@ -241,7 +242,7 @@ Set your team under **Signing & Capabilities**, pick a scheme, and Run:
 | **LokalBot** | `me.dotenv.LokalBot` | production; Sparkle auto-update compiled in |
 | **LokalBot Dev** | `me.dotenv.LokalBot.dev` | `LOKALBOT_DEV` flag; Sparkle compiled out. A distinct bundle id keeps its own Mic / Screen Recording / Accessibility grants, so running from Xcode never disturbs the released app |
 
-The first build runs `Scripts/fetch-llama.sh` (a pre-build phase) which vendors the pinned llama.cpp server (`b9844` — server + dylibs, ~10 MB) and the built-in model (Qwen3.5 0.8B Q4_K_M, ~0.5 GB) into `Vendor/`, copied into the app bundle. On first recording, macOS prompts for **Microphone** and **System Audio Recording**; transcription and screenshot models download from Hugging Face on first use.
+The first build runs `Scripts/fetch-llama.sh` (a pre-build phase) which vendors the pinned llama.cpp server (`b9844` — server + dylibs, ~10 MB) into `Vendor/`, copied into the app bundle. GGUF models are not bundled with the app; users choose and download them into Application Support. On first recording, macOS prompts for **Microphone** and **System Audio Recording**; transcription and screenshot models download from Hugging Face on first use.
 
 > The shipped app is **LokalBot** (`me.dotenv.LokalBot`); the Xcode project and scheme are named `LokalBot`.
 
@@ -283,7 +284,7 @@ Your microphone is one track, labeled **Me**. A Core Audio tap on the meeting ap
 <details>
 <summary>Can I use my own model?</summary>
 
-Yes. The bundled llama.cpp model needs no setup, or point LokalBot at Ollama, any OpenAI-compatible server, or Apple Intelligence.
+Yes. Use the built-in llama.cpp runtime with any downloaded GGUF model, or point LokalBot at Ollama, any OpenAI-compatible server, or Apple Intelligence.
 </details>
 
 <details>
@@ -398,4 +399,4 @@ Issues and pull requests are welcome. See the [issue templates](.github/ISSUE_TE
 
 ## Acknowledgements
 
-Built on [llama.cpp](https://github.com/ggml-org/llama.cpp), [Parakeet](https://huggingface.co/nvidia) / [Whisper](https://github.com/argmaxinc/WhisperKit) / [Qwen3-ASR](https://huggingface.co/Qwen) for transcription, [FluidAudio](https://github.com/FluidInference/FluidAudio) for diarization, [Sparkle](https://github.com/sparkle-project/Sparkle) for updates, and [XcodeGen](https://github.com/yonaskolb/XcodeGen) for the project manifest. Cotyping shares its loop with [Cotabby](https://cotabby.app).
+Built on [llama.cpp](https://github.com/ggml-org/llama.cpp), IBM Granite Speech, [Parakeet](https://huggingface.co/nvidia), [Whisper](https://github.com/argmaxinc/WhisperKit), and [Qwen3-ASR](https://huggingface.co/Qwen) for transcription, [FluidAudio](https://github.com/FluidInference/FluidAudio) for diarization, [Sparkle](https://github.com/sparkle-project/Sparkle) for updates, and [XcodeGen](https://github.com/yonaskolb/XcodeGen) for the project manifest. Cotyping shares its loop with [Cotabby](https://cotabby.app).
