@@ -12,6 +12,7 @@ Record your meetings, autocomplete your writing, and see where your day went —
 ![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-required-1f6feb)
 ![100% on-device](https://img.shields.io/badge/100%25-on--device-2ea043)
 ![Price](https://img.shields.io/badge/price-free-2ea043)
+[![License: GPLv3](https://img.shields.io/badge/license-GPLv3-2ea043)](LICENSE)
 ![Swift](https://img.shields.io/badge/Swift-FA7343?logo=swift&logoColor=white)
 
 [**Download**](#download) · [Features](#features) · [How it works](#how-it-works) · [Build from source](#build-from-source) · [FAQ](#faq) · [Contributing](#contributing)
@@ -46,6 +47,7 @@ LokalBot is a strictly-local AI workspace for macOS. It records both sides of a 
 
 | | |
 | --- | --- |
+| **Your whole workday** | Meetings, notes, search, day tracking, and inline autocomplete, all in one app. |
 | **100% on-device** | Audio, transcripts, summaries, and models stay on your Mac. The only network calls are optional (downloading a model once). |
 | **Free, no API keys** | Pick the best local model for each job and download it once. |
 | **Open source** | Read every line, or build it yourself. |
@@ -133,15 +135,15 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 
 | Model | Size | Best for |
 | --- | --- | --- |
-| Qwen 3.5 0.8B | ~0.5 GB | tiny downloadable fallback |
-| LFM2.5 1.2B Instruct | ~0.9 GB | fast cotyping |
-| Qwen3.5 2B | 1.3 GB | lightweight cotyping |
-| Qwen3.5 4B | ~2.8 GB | balanced summaries |
+| Qwen 3.5 · 0.8B | ~0.5 GB | tiny downloadable fallback |
+| LFM2.5 · 1.2B Instruct | ~0.9 GB | fast cotyping |
+| Qwen 3.5 · 2B | 1.3 GB | lightweight cotyping |
+| Qwen 3.5 · 4B | ~2.8 GB | balanced summaries |
 | Gemma 4 · E4B | ~6.7 GB | recommended cotyping |
-| LFM2.5 8B MoE | 5.2 GB | fast summaries |
+| LFM2.5 · 8B MoE | 5.2 GB | fast summaries |
 | Qwen 3.6 · 35B-A3B | 17.7 GB | recommended summaries |
-| Qwen3.6 27B | ~16.8 GB | maximum-quality dense summaries |
-| Gemma 4 12B | ~7.5 GB | multimodal-family summaries |
+| Qwen 3.6 · 27B | ~16.8 GB | maximum-quality dense summaries |
+| Gemma 4 · 12B | ~7.5 GB | multimodal-family summaries |
 
 - **Browse Hugging Face** in-app: search GGUF repos, list `.gguf` files, download — resilient (synchronous temp-file rescue, outcome classification, GGUF magic-byte validation). `HardwareCapabilityProbe` surfaces a per-model fit advisory under Settings → System.
 
@@ -162,7 +164,7 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 
 - **Chat with your meetings:** the **Chat** sidebar section is a conversational assistant over your library — ask what was decided, find action items, or search transcripts in natural language. A small ReAct agent (`ChatAgent`) reuses the **same** local `TextEngine` as summaries and calls tools to ground every answer; nothing leaves the Mac.
 - **Tools (pi-agent style, mirroring the CLI):** `search_meetings` (FTS5 keyword + optional semantic search), `list_meetings` (filter by title), and `get_meeting` (read a meeting's summary or transcript). The agent picks a tool, reads the observation, then answers — citing meeting titles and dates, and saying so plainly when nothing matches.
-- **Robust protocol:** tools are advertised in the system prompt with the recent-meeting list as ambient context; a tool call is parsed from a JSON object **or** a model's native `name(arg=…)` function-call form (the bundled 0.8B Qwen emits the latter), with a tolerant fallback to a plain answer so a sloppy reply never hard-fails.
+- **Robust protocol:** tools are advertised in the system prompt with the recent-meeting list as ambient context; a tool call is parsed from a JSON object **or** a model's native `name(arg=…)` function-call form (smaller Qwen models emit the latter), with a tolerant fallback to a plain answer so a sloppy reply never hard-fails.
 - **Reuses the configured backend:** built-in llama-server by default, or Ollama / OpenAI-compatible / Apple Intelligence — the same Settings → Summarization choice.
 
 </details>
@@ -198,18 +200,31 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 
 ## How it works
 
-```mermaid
-flowchart LR
-  A[Meeting detected] --> B[Record Me + Them]
-  B --> C[Transcribe on-device]
-  C --> D[Summarize on-device]
-  D --> E[Index in local SQLite]
-  E --> F[Search · Chat · Replay]
-```
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="Assets/architecture-diagram.svg">
+  <source media="(prefers-color-scheme: light)" srcset="Assets/architecture-diagram-light.svg">
+  <img alt="LokalBot's on-device pipeline: capture (mic as Me via AVAudioEngine, system audio as Them via a Core Audio process tap) → transcribe on the Neural Engine (Parakeet / Whisper / Qwen) with pyannote diarization → summarize on a local llama.cpp server → index in SQLite (FTS5 + vector embeddings). Search, chat, replay, cotyping, and the day timeline all read locally; nothing leaves the device except an optional one-time model download." src="Assets/architecture-diagram-light.svg" width="880">
+</picture>
+
+</div>
 
 1. **It notices the meeting.** LokalBot watches for calls and starts recording both sides on its own — or you start it from the menu bar.
 2. **It transcribes and summarizes.** On-device models turn the audio into a labeled transcript and a structured recap the moment the call ends.
 3. **It stays on your Mac.** Everything lands in a local library you can search, replay, and hand to your tools. Nothing is uploaded.
+
+## Privacy
+
+Privacy is the architecture, not a setting. Audio, transcripts, summaries, embeddings, screenshots, and activity all live in a local SQLite database and files under your account. No account, no telemetry, nothing uploaded.
+
+The only outbound connections LokalBot ever makes:
+
+1. **One-time model downloads** from Hugging Face (plus CoreML/MLX weights) the first time you use an engine — after that it runs fully offline.
+2. **A backend you explicitly configure** — if you point summaries or chat at Ollama, an OpenAI-compatible server, or Apple Intelligence, traffic goes only where you send it. The built-in llama.cpp runtime is localhost-only.
+3. **App updates** via Sparkle — off by default; run a manual check or opt into scheduled checks.
+
+Don't take our word for it: run Little Snitch (or `lsof -i -nP | grep LokalBot`) through a full record → transcribe → summarize cycle and watch it stay silent. Optional screenshots are AES-GCM sealed with a per-install Keychain key and auto-delete; password fields and excluded apps are never read.
 
 ## Download
 
@@ -222,7 +237,7 @@ flowchart LR
 
 - Apple Silicon Mac (M1 or later)
 - macOS 15.0 or later
-- Model downloads vary by your choices
+- Disk for models varies by the engines you pick (~0.5–18 GB)
 
 ## Build from source
 
@@ -394,9 +409,10 @@ Issues and pull requests are welcome. See the [issue templates](.github/ISSUE_TE
 
 ## License
 
-> [!IMPORTANT]
-> This repository does not yet include a `LICENSE` file. **Add one before publishing** — without a license, the code is "all rights reserved" by default and others cannot legally use, modify, or redistribute it. MIT and Apache-2.0 are common, permissive choices for projects like this.
+LokalBot is free software: you can redistribute it and/or modify it under the terms of the **GNU General Public License v3.0** as published by the Free Software Foundation. See [`LICENSE`](LICENSE) for the full text.
+
+It is distributed in the hope that it will be useful, but **without any warranty** — without even the implied warranty of merchantability or fitness for a particular purpose. Because the GPL is copyleft, any distributed derivative must also ship under the GPL with source available: the "read every line, or build it yourself" guarantee is enforced by the license, not just promised.
 
 ## Acknowledgements
 
-Built on [llama.cpp](https://github.com/ggml-org/llama.cpp), IBM Granite Speech, [Parakeet](https://huggingface.co/nvidia), [Whisper](https://github.com/argmaxinc/WhisperKit), and [Qwen3-ASR](https://huggingface.co/Qwen) for transcription, [FluidAudio](https://github.com/FluidInference/FluidAudio) for diarization, [Sparkle](https://github.com/sparkle-project/Sparkle) for updates, and [XcodeGen](https://github.com/yonaskolb/XcodeGen) for the project manifest. Cotyping shares its loop with [Cotabby](https://cotabby.app).
+Built on [llama.cpp](https://github.com/ggml-org/llama.cpp), [IBM Granite Speech](https://huggingface.co/ibm-granite), [Parakeet](https://huggingface.co/nvidia), [Whisper](https://github.com/argmaxinc/WhisperKit), and [Qwen3-ASR](https://huggingface.co/Qwen) for transcription, [FluidAudio](https://github.com/FluidInference/FluidAudio) for diarization, [Sparkle](https://github.com/sparkle-project/Sparkle) for updates, and [XcodeGen](https://github.com/yonaskolb/XcodeGen) for the project manifest. Cotyping shares its loop with [Cotabby](https://cotabby.app).
