@@ -370,7 +370,7 @@ LokalBot/
 
 ### Releasing
 
-In-place signed updates ship via [Sparkle](https://github.com/sparkle-project/Sparkle). The release runbook (notarization, appcast signing, DMG tooling) lives in [`RELEASING.md`](RELEASING.md). `AppUpdateManager` stays inert on dev builds (`LOKALBOT_DEV`) and until `SUFeedURL` + `SUPublicEDKey` are real, so a fresh clone never self-updates.
+In-place signed updates ship via [Sparkle](https://github.com/sparkle-project/Sparkle). The release runbook (notarization, appcast signing, DMG tooling) lives in [`RELEASING.md`](RELEASING.md). `AppUpdateManager` stays inert on dev builds (`LOKALBOT_DEV`) and in forks with placeholder `SUFeedURL` or `SUPublicEDKey` values.
 
 ## Status
 
@@ -381,7 +381,7 @@ In-place signed updates ship via [Sparkle](https://github.com/sparkle-project/Sp
 <details>
 <summary><strong>Known limitations</strong></summary>
 
-- Sparkle ships placeholder `SUFeedURL` (`OWNER/REPO`) + `SUPublicEDKey` — generate a key and set the appcast URL before the first release (see [`RELEASING.md`](RELEASING.md)); until then `AppUpdateManager` stays inert.
+- Automatic Sparkle checks are off by default to avoid background network traffic; users can run a manual check or enable scheduled checks in Settings.
 - The system track falls back gracefully to mic-only (with a warning) if tap creation fails.
 - AAC encoding assumes Float32 tap/mic formats — verified on M-series; if `write(from:)` throws on exotic devices, fall back to `.caf` (PCM) and transcode post-meeting.
 

@@ -115,8 +115,8 @@ targetTemplates:
       properties:
         CFBundleDisplayName: LokalBot
         CFBundleIconFile: AppIcon
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "0.1.1"
+        CFBundleVersion: "2"
         NSMicrophoneUsageDescription: >-
           LokalBot records your side of meetings from the microphone.
           Audio never leaves this Mac.
@@ -129,11 +129,11 @@ targetTemplates:
         LSApplicationCategoryType: public.app-category.productivity
         # Sparkle auto-update. SUFeedURL points at the appcast published with
         # each GitHub release; SUPublicEDKey is the ed25519 public key whose
-        # private half signs the DMG. Both ship as documented placeholders —
-        # AppUpdateManager refuses to start Sparkle until they are real
-        # (see RELEASING.md), so a fresh clone never self-updates by accident.
+        # private half signs the DMG. AppUpdateManager refuses to start Sparkle
+        # unless these are real (see RELEASING.md), so forks with placeholder
+        # values never self-update by accident.
         SUFeedURL: https://github.com/stevyhacker/lokalbot/releases/latest/download/appcast.xml
-        SUPublicEDKey: REPLACE_WITH_GENERATED_SPARKLE_PUBLIC_ED_KEY
+        SUPublicEDKey: R1A2lIfQ82UnkmUd12kwgpiS3tOlb6D0pVK8sKSrZdA=
         SUScheduledCheckInterval: 86400
         SUEnableAutomaticChecks: false
     settings:

@@ -31,14 +31,10 @@ notarization and stapling, with no further edits to the DMG.
 - Product: **LokalBot** · bundle id `me.dotenv.LokalBot` · team `K96P3M3997`
 - Xcode project `LokalBot.xcodeproj` · schemes `LokalBot` (prod), `LokalBot Dev` (dev)
 - Sparkle feed (`SUFeedURL`):
-  `https://github.com/OWNER/REPO/releases/latest/download/appcast.xml`
+  `https://github.com/stevyhacker/lokalbot/releases/latest/download/appcast.xml`
 - Feed file name: **`appcast.xml`** (uploaded as a GitHub Release asset, not Pages)
-- Public key (`SUPublicEDKey`): _set after the one-time `generate_keys` step below_
-
-> `OWNER/REPO` is a placeholder. The repo has **no git remote yet** — set the real
-> `owner/repo` slug everywhere it appears (Info.plist `SUFeedURL`, `--repo`, and the
-> `gh` commands) before the first release, otherwise the feed and enclosure URLs
-> will not resolve.
+- Public key (`SUPublicEDKey`):
+  `R1A2lIfQ82UnkmUd12kwgpiS3tOlb6D0pVK8sKSrZdA=`
 
 The private Sparkle key is a secret. **Never commit it.**
 
@@ -48,7 +44,11 @@ The private Sparkle key is a secret. **Never commit it.**
 
 ### 1. Point the project at a GitHub repo
 
-Create the repo, then:
+The canonical remote is `https://github.com/stevyhacker/lokalbot.git`. If you
+are starting from a fresh clone or fork, set the real `owner/repo` slug anywhere
+the examples below still use `OWNER/REPO`.
+
+Create a new remote only for a fresh repository:
 
 ```sh
 git remote add origin git@github.com:OWNER/REPO.git
@@ -90,8 +90,8 @@ Add the Sparkle Info.plist keys via `project.yml` (so xcodegen writes them into
 `LokalBot.app/Contents/Info.plist`). Under `targets.LokalBot.info.properties`:
 
 ```yaml
-        SUFeedURL: https://github.com/OWNER/REPO/releases/latest/download/appcast.xml
-        SUPublicEDKey: <paste the base64 output of `sparkle-generate-keys -p`>
+        SUFeedURL: https://github.com/stevyhacker/lokalbot/releases/latest/download/appcast.xml
+        SUPublicEDKey: R1A2lIfQ82UnkmUd12kwgpiS3tOlb6D0pVK8sKSrZdA=
         SUEnableAutomaticChecks: true        # optional: opt-in auto-update checks
 ```
 
@@ -211,7 +211,7 @@ No edits to the DMG after this point — the signature covers these exact bytes:
 python3 Scripts/generate_appcast.py \
   --archive build/LokalBot.dmg \
   --app build/export/LokalBot.app \
-  --repo OWNER/REPO \
+  --repo stevyhacker/lokalbot \
   --output build/appcast.xml
   # --ed-key-file ~/secure/LokalBot-sparkle-key.txt   # only if the key isn't in your Keychain
 ```
@@ -219,7 +219,7 @@ python3 Scripts/generate_appcast.py \
 The script reads `CFBundleShortVersionString` / `CFBundleVersion` from the app,
 locates `sign_update` (via `--sign-update-tool`, `$SPARKLE_BIN`, your PATH,
 `xcrun`, or DerivedData), signs the DMG, and renders `appcast.xml` with the
-enclosure URL `https://github.com/OWNER/REPO/releases/download/v1.0.0/LokalBot.dmg`.
+enclosure URL `https://github.com/stevyhacker/lokalbot/releases/download/v1.0.0/LokalBot.dmg`.
 
 ### 7. Publish the GitHub Release
 
@@ -288,7 +288,7 @@ hdiutil attach build/LokalBot.dmg
 - Never commit the private key.
 - Always Sparkle-sign **after** the final DMG exists (no edits after signing).
 - Always publish `appcast.xml` **after** the Release asset exists.
-- Always set the real `OWNER/REPO` slug before the first release.
+- Always pass the real `owner/repo` slug when generating the appcast.
 
 ---
 
