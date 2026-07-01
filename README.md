@@ -193,7 +193,7 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 
 - **Capture:** ScreenCaptureKit screenshot of the main display every N minutes (default 3, Settings slider), downscaled to ≤1500 px, HEIC. Skipped when idle (3 min), paused, locked, or when an excluded app is frontmost. Requires the Screen Recording permission.
 - **OCR:** Vision (`VNRecognizeTextRequest`, on-device) runs immediately; text goes into `ocr_fts` (searchable under Search → Screen) and feeds day digests and Ask-your-day.
-- **Encryption & retention:** each screenshot is AES-GCM sealed with a per-install key in the macOS Keychain; pixels auto-delete after N days (default 14, Settings stepper) while OCR text is kept. The timeline shows a decrypted thumbnail filmstrip.
+- **Encryption & retention:** each screenshot is AES-GCM sealed with a per-install key in the macOS Keychain; pixels auto-delete after N days (default 14, Settings stepper), and OCR text follows the same retention unless you opt into keeping it forever (Settings → Privacy). The timeline shows a decrypted thumbnail filmstrip.
 - **Exclusions:** comma-separated app list (preseeded with password managers); excluded time logs as "Private" — no titles, no screenshots.
 
 </details>

@@ -13,8 +13,8 @@ func lokalbotLog(_ message: String) {
 
 /// M5 (design doc §3.2/§3.4): periodic screenshot of the active display →
 /// downscale → OCR (Vision, on-device) → AES-GCM encrypt → disk.
-/// The OCR text is what's indexed and searchable; the pixels are
-/// retention-pruned. Skips idle, lock screen, pauses, and excluded apps.
+/// The OCR text is what's indexed and searchable; pixels and (by default)
+/// text are retention-pruned. Skips idle, lock screen, pauses, and excluded apps.
 @MainActor
 final class ScreenshotService: ObservableObject {
 
@@ -143,14 +143,18 @@ final class ScreenshotService: ObservableObject {
         return try? AES.GCM.open(box, using: key)
     }
 
-    /// Files older than the retention window are deleted; OCR text is kept
-    /// (it is the searchable value and it's small).
+    /// Files older than the retention window are deleted. OCR text follows
+    /// the same cutoff unless the user explicitly opted into keeping it —
+    /// screen text can be as sensitive as the pixels it came from.
     func pruneOldScreenshots() {
         let cutoff = Date().addingTimeInterval(-Double(settings().retentionDays) * 86_400)
         for path in store.screenshotPaths(olderThan: cutoff) {
             try? FileManager.default.removeItem(atPath: path)
         }
         store.clearScreenshotPaths(olderThan: cutoff)
+        if !settings().keepOCRTextForever {
+            store.clearOCRText(olderThan: cutoff)
+        }
     }
 
     // MARK: - Pieces

@@ -73,6 +73,10 @@ struct AppSettings: Codable {
     var screenshotsEnabled: Bool = true
     var screenshotIntervalMinutes: Double = 3
     var retentionDays: Int = 14
+    /// Keep OCR'd screen text past `retentionDays`. Off by default — screen
+    /// text can be as sensitive as the pixels it came from, so keeping it
+    /// forever is an explicit opt-in (Settings → Privacy).
+    var keepOCRTextForever: Bool = false
     /// Comma-separated app-name substrings that are never captured;
     /// their time shows as "Private" in the timeline.
     var excludedApps: String = "1Password, Keychain Access, Bitwarden, KeePassXC"
@@ -352,6 +356,7 @@ struct AppSettings: Codable {
         case screenshotsEnabled
         case screenshotIntervalMinutes
         case retentionDays
+        case keepOCRTextForever
         case excludedApps
         case summarizerBackend
         case builtInModelID
@@ -444,6 +449,7 @@ struct AppSettings: Codable {
         try c.encode(screenshotsEnabled, forKey: .screenshotsEnabled)
         try c.encode(screenshotIntervalMinutes, forKey: .screenshotIntervalMinutes)
         try c.encode(retentionDays, forKey: .retentionDays)
+        try c.encode(keepOCRTextForever, forKey: .keepOCRTextForever)
         try c.encode(excludedApps, forKey: .excludedApps)
         try c.encode(summarizerBackend, forKey: .summarizerBackend)
         try c.encode(builtInModelID, forKey: .builtInModelID)
@@ -531,6 +537,7 @@ struct AppSettings: Codable {
         screenshotsEnabled = (try? c.decode(Bool.self, forKey: .screenshotsEnabled)) ?? defaults.screenshotsEnabled
         screenshotIntervalMinutes = (try? c.decode(Double.self, forKey: .screenshotIntervalMinutes)) ?? defaults.screenshotIntervalMinutes
         retentionDays = (try? c.decode(Int.self, forKey: .retentionDays)) ?? defaults.retentionDays
+        keepOCRTextForever = (try? c.decode(Bool.self, forKey: .keepOCRTextForever)) ?? defaults.keepOCRTextForever
         excludedApps = (try? c.decode(String.self, forKey: .excludedApps)) ?? defaults.excludedApps
         summarizerBackend = (try? c.decode(SummarizerBackend.self, forKey: .summarizerBackend)) ?? defaults.summarizerBackend
         builtInModelID = (try? c.decode(String.self, forKey: .builtInModelID)) ?? defaults.builtInModelID

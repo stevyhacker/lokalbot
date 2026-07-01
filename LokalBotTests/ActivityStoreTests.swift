@@ -1,6 +1,7 @@
 import XCTest
 @testable import LokalBot
 
+@MainActor
 final class ActivityStoreTests: XCTestCase {
     func testDayIntervalUsesCalendarDayAcrossSpringDST() throws {
         var calendar = Calendar(identifier: .gregorian)
@@ -20,5 +21,25 @@ final class ActivityStoreTests: XCTestCase {
         let interval = ActivityStore.dayInterval(containing: day, calendar: calendar)
 
         XCTAssertEqual(interval.duration, 25 * 60 * 60)
+    }
+
+    func testClearOCRTextRemovesOnlyRowsOlderThanCutoff() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ActivityStore(databaseURL: url)
+
+        let old = Date(timeIntervalSinceNow: -3 * 86_400)
+        store.insertScreenshot(ts: old, path: "/tmp/old.heic.enc", app: "Safari",
+                               ocr: "ancient invoice number")
+        store.insertScreenshot(ts: Date(), path: "/tmp/new.heic.enc", app: "Xcode",
+                               ocr: "fresh build log")
+
+        store.clearOCRText(olderThan: Date(timeIntervalSinceNow: -86_400))
+
+        XCTAssertTrue(store.searchOCR("invoice").isEmpty)
+        XCTAssertEqual(store.searchOCR("fresh").count, 1)
+        // Pixel bookkeeping untouched: text pruning is independent of paths.
+        XCTAssertEqual(store.screenshotPaths(olderThan: Date()).count, 2)
     }
 }

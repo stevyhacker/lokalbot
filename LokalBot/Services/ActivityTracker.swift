@@ -138,6 +138,11 @@ final class ActivityStore {
                       bind: [cutoff.timeIntervalSince1970])
     }
 
+    func clearOCRText(olderThan cutoff: Date) {
+        database?.run("DELETE FROM ocr_fts WHERE ts < ?1",
+                      bind: [cutoff.timeIntervalSince1970])
+    }
+
     /// All blocks overlapping the given day, oldest first.
     func blocks(on day: Date) -> [ActivityBlock] {
         let interval = Self.dayInterval(containing: day)

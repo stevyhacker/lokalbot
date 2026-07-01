@@ -40,6 +40,31 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(settings.dictationRetainAudio)
     }
 
+    /// The default prunes OCR text on the same schedule as the pixels;
+    /// keeping it forever is the explicit opt-in.
+    func testKeepOCRTextForeverDefaultsFalse() {
+        XCTAssertFalse(AppSettings().keepOCRTextForever)
+    }
+
+    func testDecodesSettingsWithoutKeepOCRTextForeverKeyAsDefault() throws {
+        let data = #"{"autoTranscribe":false}"#.data(using: .utf8)!
+
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertFalse(settings.keepOCRTextForever)
+        XCTAssertFalse(settings.autoTranscribe)
+    }
+
+    func testKeepOCRTextForeverRoundTrips() throws {
+        var settings = AppSettings()
+        settings.keepOCRTextForever = true
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertTrue(decoded.keepOCRTextForever)
+    }
+
     func testStopDebounceDefaultsToBackToBackFriendlyValue() {
         XCTAssertEqual(AppSettings().stopDebounceSeconds, AppSettings.defaultStopDebounceSeconds)
     }

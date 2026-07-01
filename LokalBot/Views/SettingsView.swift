@@ -359,7 +359,19 @@ struct SettingsView: View {
                     }
                     TextField("Never capture (app names, comma-separated)",
                               text: $app.settings.excludedApps)
-                    Text("Sampled every 5 s, idle-aware (3 min); never captures the lock screen. Screenshots are AES-GCM encrypted (key in your Keychain); extracted text stays searchable after pixels are pruned. Excluded apps log as “Private”.")
+                    Text("Sampled every 5 s, idle-aware (3 min); never captures the lock screen. Screenshots are AES-GCM encrypted (key in your Keychain); extracted text follows the same retention (see Privacy). Excluded apps log as “Private”.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            if shows("Privacy", ["privacy", "retention", "ocr", "text", "screen text", "history",
+                                 "delete", "prune", "forever", "keep"]) {
+                Section("Privacy") {
+                    Toggle("Keep screen text forever", isOn: Binding(
+                        get: { app.settings.keepOCRTextForever },
+                        set: { app.settings.keepOCRTextForever = $0
+                               if !$0 { app.screenshots.pruneOldScreenshots() } }))
+                    Text("Text extracted from screenshots is deleted with the pixels after \(app.settings.retentionDays) days. Turn on to keep it searchable forever; turning back off deletes text older than the window.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
