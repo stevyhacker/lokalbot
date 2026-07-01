@@ -331,6 +331,8 @@ lokalbot-cli search "auth refactor"
 lokalbot-cli get latest --include summary
 ```
 
+<div align="center"><img src="Assets/cli-demo.svg" alt="Animated terminal session: lokalbot-cli lists meetings as a table, searches transcripts for redis and returns JSON, then prints the latest meeting summary" width="720"></div>
+
 See [`.agents/skills/lokalbot-cli/SKILL.md`](.agents/skills/lokalbot-cli/SKILL.md).
 
 ### Headless flags

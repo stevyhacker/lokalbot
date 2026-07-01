@@ -410,6 +410,18 @@ kbd {
 }
 .hero__diagram-img { display: block; width: 100%; height: auto; position: relative; }
 
+/* hero demo video — the real app tour inside the same glass slab */
+.hero__diagram--demo { padding: clamp(14px, 2.6vw, 24px); width: min(880px, 100%); }
+.hero__demo {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: #0b0b0d;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+}
+
 /* how-it-works architecture diagram — wide glass panel */
 .how__diagram {
   max-width: 980px;

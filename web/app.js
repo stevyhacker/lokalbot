@@ -19,6 +19,27 @@
     reveals.forEach(function (el) { io.observe(el); });
   }
 
+  /* ---------- hero demo video: honor reduced motion, pause offscreen ---------- */
+  var heroDemo = $(".hero__demo");
+  if (heroDemo) {
+    if (reduce) {
+      heroDemo.removeAttribute("autoplay");
+      heroDemo.pause();
+    } else if ("IntersectionObserver" in window) {
+      var heroIO = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) {
+            var p = heroDemo.play();
+            if (p && p.catch) { p.catch(function () {}); }
+          } else {
+            heroDemo.pause();
+          }
+        });
+      }, { threshold: 0.1 });
+      heroIO.observe(heroDemo);
+    }
+  }
+
   /* ---------- waveform: randomize bar timing for an organic pulse ---------- */
   if (!reduce) {
     $$("[data-wave] span").forEach(function (bar) {
