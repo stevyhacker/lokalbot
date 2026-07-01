@@ -40,6 +40,30 @@ final class ReuseSubsystemsTests: XCTestCase {
                                                    haystack: ["Dictation", "selected mic", "input device"]))
     }
 
+    func testSearchFindsLiveDictationTerms() {
+        XCTAssertTrue(SettingsSearchRanker.matches(query: "live transcript",
+                                                   haystack: ["Dictation", "live", "transcript", "streaming"]))
+    }
+
+    // MARK: - DictationLiveTranscript
+
+    func testDictationLiveTranscriptKeepsTrailingWordsTentative() {
+        let preview = DictationLiveTranscript.preview(
+            from: "We should ship the release notes before the next design review")
+
+        XCTAssertEqual(preview.committed, "We should ship the release")
+        XCTAssertEqual(preview.tentative, "notes before the next design review")
+        XCTAssertEqual(preview.displayText, "We should ship the release notes before the next design review")
+    }
+
+    func testDictationLiveTranscriptCommitsCompletedSentences() {
+        let preview = DictationLiveTranscript.preview(
+            from: "We shipped the fix. Next we should verify the install")
+
+        XCTAssertEqual(preview.committed, "We shipped the fix.")
+        XCTAssertEqual(preview.tentative, "Next we should verify the install")
+    }
+
     // MARK: - ModelFit
 
     private func capability(gb: UInt64, appleSilicon: Bool = true) -> HardwareCapability {

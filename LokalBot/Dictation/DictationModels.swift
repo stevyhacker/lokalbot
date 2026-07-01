@@ -29,6 +29,52 @@ enum DictationOutputMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+struct DictationLiveTranscript: Equatable, Sendable {
+    var committed: String = ""
+    var tentative: String = ""
+
+    var isEmpty: Bool {
+        committed.isEmpty && tentative.isEmpty
+    }
+
+    var displayText: String {
+        [committed, tentative]
+            .filter { !$0.isEmpty }
+            .joined(separator: committed.isEmpty || tentative.isEmpty ? "" : " ")
+    }
+
+    static func preview(from text: String) -> Self {
+        let normalized = Transcript.normalizedText(text)
+        guard !normalized.isEmpty else { return .init() }
+
+        if let last = normalized.last, ".!?".contains(last) {
+            return .init(committed: normalized, tentative: "")
+        }
+
+        if let boundary = lastSentenceBoundary(in: normalized) {
+            let committed = normalized[..<normalized.index(after: boundary)]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let tentative = normalized[normalized.index(after: boundary)...]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return .init(committed: committed, tentative: tentative)
+        }
+
+        let words = normalized.split(separator: " ", omittingEmptySubsequences: true)
+        guard words.count > 8 else {
+            return .init(committed: "", tentative: normalized)
+        }
+        let committed = words.dropLast(6).joined(separator: " ")
+        let tentative = words.suffix(6).joined(separator: " ")
+        return .init(committed: committed, tentative: tentative)
+    }
+
+    private static func lastSentenceBoundary(in text: String) -> String.Index? {
+        text.indices
+            .filter { ".!?".contains(text[$0]) }
+            .last
+    }
+}
+
 struct DictationShortcut: Equatable, Sendable {
     var keyCode: CGKeyCode
     var modifiers: CGEventFlags
@@ -50,4 +96,3 @@ private extension CGEventFlags {
         intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift])
     }
 }
-

@@ -104,7 +104,8 @@ struct SettingsView: View {
             if shows("Dictation", ["dictation", "speech", "voice", "microphone", "mic", "input",
                                    "input device", "selected mic", "audio", "recording", "shortcut",
                                    "push to talk", "trigger", "transcription", "paste", "copy",
-                                   "clipboard", "overlay", "floating", "pill", "floating pill"]) {
+                                   "clipboard", "overlay", "floating", "pill", "floating pill",
+                                   "live", "stream", "streaming", "preview", "transcript"]) {
                 Section("Dictation") {
                     Toggle("Enable global dictation shortcut", isOn: $app.settings.dictationEnabled)
                     Picker("Trigger", selection: $app.settings.dictationTriggerMode) {
@@ -123,6 +124,8 @@ struct SettingsView: View {
                         }
                     }
                     Toggle("Show floating dictation pill", isOn: $app.settings.dictationShowOverlay)
+                    Toggle("Show live transcript while dictating", isOn: $app.settings.dictationLivePreview)
+                        .disabled(!app.settings.dictationShowOverlay)
                     Text("Uses the selected transcription model and language from Models.")
                         .font(.caption).foregroundStyle(.secondary)
                 }

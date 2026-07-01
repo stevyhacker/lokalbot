@@ -64,6 +64,11 @@ struct DictationView: View {
                 }
             }
             Toggle("Show floating pill", isOn: $app.settings.dictationShowOverlay)
+            Toggle("Show live transcript while dictating", isOn: $app.settings.dictationLivePreview)
+                .disabled(!app.settings.dictationShowOverlay)
+            Text("Live preview uses the selected transcription model. The final paste still comes from the full recording.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -167,4 +172,3 @@ struct DictationView: View {
         }
     }
 }
-

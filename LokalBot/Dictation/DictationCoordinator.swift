@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-import CoreAudio
 import Foundation
 
 @MainActor
@@ -35,6 +34,10 @@ final class DictationCoordinator: ObservableObject {
     @Published private(set) var isShortcutMonitoringActive = false
     @Published private(set) var lastTranscript: String?
     @Published private(set) var lastEngine: String?
+    @Published private(set) var liveTranscript = DictationLiveTranscript()
+    @Published private(set) var livePreviewStatus = ""
+    @Published private(set) var isLivePreviewWorking = false
+    @Published private(set) var isLivePreviewEnabled = false
 
     private let storageRoot: URL
     private let settingsProvider: () -> AppSettings
@@ -47,6 +50,7 @@ final class DictationCoordinator: ObservableObject {
     private lazy var inserter = CotypingInserter()
     private var tick: AnyCancellable?
     private var prewarmTask: Task<Void, Never>?
+    private var livePreviewTask: Task<Void, Never>?
     private var transcribeTask: Task<Void, Never>?
     private var activeAudioURL: URL?
     private var generation = 0
@@ -93,13 +97,31 @@ final class DictationCoordinator: ObservableObject {
         }
     }
 
+    var shouldShowLiveTranscriptPanel: Bool {
+        isLivePreviewEnabled && state.isWorking
+    }
+
     func applySettings() {
-        let shouldMonitor = settingsProvider().dictationEnabled
-        if shouldMonitor {
+        let config = settingsProvider()
+        if config.dictationEnabled {
             isShortcutMonitoringActive = inputMonitor.start()
         } else {
             inputMonitor.stop()
             isShortcutMonitoringActive = false
+        }
+        if case .recording = state, let activeAudioURL {
+            if config.dictationShowOverlay, config.dictationLivePreview {
+                if livePreviewTask == nil {
+                    isLivePreviewEnabled = true
+                    livePreviewStatus = "Listening"
+                    startLivePreviewIfNeeded(
+                        audioURL: activeAudioURL,
+                        config: config,
+                        generation: generation)
+                }
+            } else {
+                stopLivePreview(reset: true)
+            }
         }
         refreshOverlay()
     }
@@ -130,9 +152,9 @@ final class DictationCoordinator: ObservableObject {
             return
         }
         let startedAt = Date()
-        let selectedInputDevice = try? CoreAudioUtils.getDefaultInputDeviceID()
         generation += 1
         let session = generation
+        resetLivePreview()
         Task {
             guard await MicRecorder.requestPermission() else {
                 guard self.generation == session else { return }
@@ -148,18 +170,22 @@ final class DictationCoordinator: ObservableObject {
                 }
                 guard self.generation == session else { return }
                 try await self.startRecorder(writingTo: audioURL)
-                self.restoreSelectedInputDeviceIfNeeded(selectedInputDevice)
                 self.activeAudioURL = audioURL
                 self.state = .recording(startedAt: startedAt)
                 self.startTick()
+                let config = self.settingsProvider()
+                self.isLivePreviewEnabled = config.dictationShowOverlay && config.dictationLivePreview
+                self.livePreviewStatus = self.isLivePreviewEnabled ? "Listening" : ""
                 self.refreshOverlay()
                 self.prewarmSelectedModel(reason: source)
+                self.startLivePreviewIfNeeded(audioURL: audioURL, config: config, generation: session)
                 lokalbotLog("dictation recording started source=\(source)")
             } catch {
                 self.onError("Could not start dictation: \(error.localizedDescription)")
                 self.activeAudioURL = nil
                 self.state = .idle
                 self.stopTick()
+                self.resetLivePreview()
                 self.refreshOverlay()
             }
         }
@@ -167,10 +193,14 @@ final class DictationCoordinator: ObservableObject {
 
     func finishRecordingAndTranscribe(source: String = "ui") {
         guard case .recording(let startedAt) = state, let audioURL = activeAudioURL else { return }
+        stopLivePreview(reset: false)
         recorder.stop()
         activeAudioURL = nil
         stopTick()
         state = .transcribing(startedAt: startedAt)
+        if isLivePreviewEnabled {
+            livePreviewStatus = "Finalizing"
+        }
         refreshOverlay()
         generation += 1
         let session = generation
@@ -187,6 +217,7 @@ final class DictationCoordinator: ObservableObject {
         transcribeTask = nil
         prewarmTask?.cancel()
         prewarmTask = nil
+        stopLivePreview(reset: true)
         if case .recording = state {
             recorder.stop()
         }
@@ -256,6 +287,7 @@ final class DictationCoordinator: ObservableObject {
     private func complete() {
         state = .idle
         stopTick()
+        resetLivePreview()
         refreshOverlay()
     }
 
@@ -283,6 +315,123 @@ final class DictationCoordinator: ObservableObject {
             language: config.transcriptionLanguage.code)
     }
 
+    private func startLivePreviewIfNeeded(
+        audioURL: URL,
+        config: AppSettings,
+        generation session: Int
+    ) {
+        guard config.dictationShowOverlay, config.dictationLivePreview else { return }
+        livePreviewTask?.cancel()
+        livePreviewTask = Task { [weak self] in
+            await self?.runLivePreviewLoop(
+                audioURL: audioURL,
+                config: config,
+                generation: session)
+        }
+    }
+
+    private func runLivePreviewLoop(
+        audioURL: URL,
+        config: AppSettings,
+        generation session: Int
+    ) async {
+        defer {
+            if generation == session {
+                livePreviewTask = nil
+                isLivePreviewWorking = false
+            }
+        }
+        var lastPreviewedDuration: TimeInterval = 0
+        do {
+            try await Task.sleep(for: .milliseconds(1_200))
+            while !Task.isCancelled {
+                guard generation == session, state.isRecording else { return }
+                let duration = recorder.captureHealth().duration
+                let minimumAdvance = duration < 10 ? 1.25 : 2.0
+                guard duration >= 1.25,
+                      duration - lastPreviewedDuration >= minimumAdvance else {
+                    try await Task.sleep(for: .milliseconds(450))
+                    continue
+                }
+
+                let snapshot: URL
+                do {
+                    snapshot = try Self.copyLivePreviewSnapshot(
+                        from: audioURL,
+                        storageRoot: storageRoot)
+                } catch {
+                    try await Task.sleep(for: .milliseconds(700))
+                    continue
+                }
+                lastPreviewedDuration = duration
+                isLivePreviewWorking = true
+                livePreviewStatus = liveTranscript.isEmpty ? "Listening" : "Updating"
+                refreshOverlay()
+
+                do {
+                    let transcript = try await Self.transcribe(snapshot, config: config)
+                    try Task.checkCancellation()
+                    let text = Transcript.normalizedText(
+                        transcript.segments.map(\.displayText).joined(separator: " "))
+                    if generation == session, !text.isEmpty {
+                        liveTranscript = DictationLiveTranscript.preview(from: text)
+                        livePreviewStatus = "Live"
+                        refreshOverlay()
+                    }
+                } catch is CancellationError {
+                    try? FileManager.default.removeItem(at: snapshot)
+                    throw CancellationError()
+                } catch {
+                    if generation == session {
+                        livePreviewStatus = liveTranscript.isEmpty ? "Listening" : "Live"
+                        lokalbotLog("dictation live preview skipped: \(error.localizedDescription)")
+                    }
+                }
+                try? FileManager.default.removeItem(at: snapshot)
+                guard generation == session, state.isRecording else { return }
+                isLivePreviewWorking = false
+                refreshOverlay()
+                try await Task.sleep(
+                    for: .milliseconds(Int(Self.livePreviewInterval(after: duration) * 1_000)))
+            }
+        } catch is CancellationError {
+            isLivePreviewWorking = false
+        } catch {
+            isLivePreviewWorking = false
+            lokalbotLog("dictation live preview stopped: \(error.localizedDescription)")
+        }
+    }
+
+    private func stopLivePreview(reset: Bool) {
+        livePreviewTask?.cancel()
+        livePreviewTask = nil
+        isLivePreviewWorking = false
+        if reset {
+            resetLivePreview()
+        }
+    }
+
+    private func resetLivePreview() {
+        liveTranscript = DictationLiveTranscript()
+        livePreviewStatus = ""
+        isLivePreviewWorking = false
+        isLivePreviewEnabled = false
+    }
+
+    private static func livePreviewInterval(after duration: TimeInterval) -> TimeInterval {
+        min(4.0, max(1.4, duration / 8.0))
+    }
+
+    private static func copyLivePreviewSnapshot(from audioURL: URL, storageRoot: URL) throws -> URL {
+        let dir = storageRoot.appendingPathComponent("dictation-previews", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let ext = audioURL.pathExtension.isEmpty ? "caf" : audioURL.pathExtension
+        let destination = dir.appendingPathComponent(
+            "\(audioURL.deletingPathExtension().lastPathComponent)-live-\(UUID().uuidString).\(ext)")
+        try FileManager.default.copyItem(at: audioURL, to: destination)
+        return destination
+    }
+
     private func startRecorder(writingTo audioURL: URL) async throws {
         recorder.stop()
         try? FileManager.default.removeItem(at: audioURL)
@@ -294,18 +443,6 @@ final class DictationCoordinator: ObservableObject {
             try? FileManager.default.removeItem(at: audioURL)
             try await Task.sleep(for: .milliseconds(150))
             try recorder.start(writingTo: audioURL)
-        }
-    }
-
-    private func restoreSelectedInputDeviceIfNeeded(_ selectedDevice: AudioDeviceID?) {
-        guard let selectedDevice,
-              let currentDevice = try? CoreAudioUtils.getDefaultInputDeviceID(),
-              currentDevice != selectedDevice else { return }
-        do {
-            try CoreAudioUtils.setDefaultInputDeviceID(selectedDevice)
-            lokalbotLog("dictation restored selected input device from=\(currentDevice) to=\(selectedDevice)")
-        } catch {
-            lokalbotLog("dictation selected input restore failed: \(error.localizedDescription)")
         }
     }
 

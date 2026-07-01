@@ -11,7 +11,7 @@ final class DictationOverlayController {
             close()
             return
         }
-        let size = Self.size(for: dictation.state)
+        let size = Self.size(for: dictation)
         if panel == nil {
             let panel = NSPanel(
                 contentRect: NSRect(origin: .zero, size: size),
@@ -49,11 +49,15 @@ final class DictationOverlayController {
         panel.setFrame(NSRect(origin: origin, size: size), display: true, animate: false)
     }
 
-    private static func size(for state: DictationCoordinator.State) -> CGSize {
-        switch state {
-        case .idle: CGSize(width: 172, height: 40)
-        case .recording: CGSize(width: 172, height: 40)
-        case .transcribing: CGSize(width: 216, height: 40)
+    private static func size(for dictation: DictationCoordinator) -> CGSize {
+        if dictation.shouldShowLiveTranscriptPanel {
+            return CGSize(width: 520, height: 156)
+        }
+        switch dictation.state {
+        case .idle, .recording:
+            return CGSize(width: 172, height: 40)
+        case .transcribing:
+            return CGSize(width: 216, height: 40)
         }
     }
 }
@@ -62,6 +66,23 @@ struct DictationOverlayView: View {
     @ObservedObject var dictation: DictationCoordinator
 
     var body: some View {
+        Group {
+            if dictation.shouldShowLiveTranscriptPanel {
+                liveTranscriptPanel
+            } else {
+                compactPanel
+            }
+        }
+        .frame(width: width, height: height)
+        .background(.background.opacity(0.98), in: RoundedRectangle(cornerRadius: radius))
+        .overlay(
+            RoundedRectangle(cornerRadius: radius)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
+        .animation(.snappy(duration: 0.28), value: dictation.state)
+        .animation(.snappy(duration: 0.22), value: dictation.liveTranscript)
+    }
+
+    private var compactPanel: some View {
         HStack(spacing: 0) {
             switch dictation.state {
             case .idle:
@@ -72,12 +93,81 @@ struct DictationOverlayView: View {
                 workingRow
             }
         }
-        .frame(width: width, height: 40)
-        .background(.background.opacity(0.98), in: RoundedRectangle(cornerRadius: radius))
-        .overlay(
-            RoundedRectangle(cornerRadius: radius)
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
-        .animation(.snappy(duration: 0.28), value: dictation.state)
+        .frame(height: 40)
+    }
+
+    private var liveTranscriptPanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                if dictation.state.isRecording {
+                    PulsingDictationDot()
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(dictation.state.isRecording ? "Dictating" : "Transcribing")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(liveStatusText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 10)
+                if dictation.state.isRecording {
+                    DictationWaveform()
+                }
+                cancelButton
+            }
+            .frame(height: 38)
+            .padding(.horizontal, 14)
+
+            Divider()
+                .opacity(0.45)
+
+            liveTranscriptBody
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    @ViewBuilder
+    private var liveTranscriptBody: some View {
+        if dictation.liveTranscript.isEmpty {
+            Text("Listening…")
+                .font(.system(size: 15))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            liveTranscriptText
+                .font(.system(size: 15))
+                .lineSpacing(3)
+                .lineLimit(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var liveTranscriptText: Text {
+        let committed = dictation.liveTranscript.committed
+        let tentative = dictation.liveTranscript.tentative
+        if committed.isEmpty {
+            return Text(tentative)
+                .foregroundColor(.primary)
+        }
+        if tentative.isEmpty {
+            return Text(committed)
+                .foregroundColor(.primary)
+        }
+        return Text(committed + " ")
+            .foregroundColor(.primary)
+        + Text(tentative)
+            .foregroundColor(.secondary)
+    }
+
+    private var liveStatusText: String {
+        let status = dictation.livePreviewStatus.isEmpty ? "Listening" : dictation.livePreviewStatus
+        return "\(status) \(dictation.timerLabel)"
     }
 
     private var recordingRow: some View {
@@ -126,16 +216,26 @@ struct DictationOverlayView: View {
     }
 
     private var width: CGFloat {
+        if dictation.shouldShowLiveTranscriptPanel { return 520 }
         switch dictation.state {
-        case .idle, .recording: 172
-        case .transcribing: 216
+        case .idle, .recording:
+            return 172
+        case .transcribing:
+            return 216
         }
     }
 
+    private var height: CGFloat {
+        dictation.shouldShowLiveTranscriptPanel ? 156 : 40
+    }
+
     private var radius: CGFloat {
+        if dictation.shouldShowLiveTranscriptPanel { return 14 }
         switch dictation.state {
-        case .idle, .recording: 20
-        case .transcribing: 18
+        case .idle, .recording:
+            return 20
+        case .transcribing:
+            return 18
         }
     }
 }

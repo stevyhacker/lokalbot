@@ -36,6 +36,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.dictationTriggerMode, .pushToTalk)
         XCTAssertEqual(settings.dictationOutputMode, .pasteIntoFocusedApp)
         XCTAssertTrue(settings.dictationShowOverlay)
+        XCTAssertTrue(settings.dictationLivePreview)
         XCTAssertFalse(settings.dictationRetainAudio)
     }
 
@@ -84,6 +85,7 @@ final class AppSettingsTests: XCTestCase {
         settings.dictationTriggerMode = .toggle
         settings.dictationOutputMode = .copyToClipboard
         settings.dictationShowOverlay = false
+        settings.dictationLivePreview = false
         settings.dictationRetainAudio = true
 
         let data = try JSONEncoder().encode(settings)
@@ -93,7 +95,17 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(decoded.dictationTriggerMode, .toggle)
         XCTAssertEqual(decoded.dictationOutputMode, .copyToClipboard)
         XCTAssertFalse(decoded.dictationShowOverlay)
+        XCTAssertFalse(decoded.dictationLivePreview)
         XCTAssertTrue(decoded.dictationRetainAudio)
+    }
+
+    func testDecodesSettingsWithoutDictationLivePreviewKeyAsDefault() throws {
+        let data = #"{"autoTranscribe":false}"#.data(using: .utf8)!
+
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertTrue(settings.dictationLivePreview)
+        XCTAssertFalse(settings.autoTranscribe)
     }
 
     /// Settings persisted by a build that predates the key keep working and

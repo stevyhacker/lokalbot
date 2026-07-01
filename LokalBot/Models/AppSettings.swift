@@ -60,6 +60,7 @@ struct AppSettings: Codable {
     var dictationTriggerMode: DictationTriggerMode = .pushToTalk
     var dictationOutputMode: DictationOutputMode = .pasteIntoFocusedApp
     var dictationShowOverlay: Bool = true
+    var dictationLivePreview: Bool = true
     var dictationRetainAudio: Bool = false
 
     /// M4: app/window activity sampling.
@@ -344,6 +345,7 @@ struct AppSettings: Codable {
         case dictationTriggerMode
         case dictationOutputMode
         case dictationShowOverlay
+        case dictationLivePreview
         case dictationRetainAudio
         case trackingEnabled
         case semanticSearchEnabled
@@ -435,6 +437,7 @@ struct AppSettings: Codable {
         try c.encode(dictationTriggerMode, forKey: .dictationTriggerMode)
         try c.encode(dictationOutputMode, forKey: .dictationOutputMode)
         try c.encode(dictationShowOverlay, forKey: .dictationShowOverlay)
+        try c.encode(dictationLivePreview, forKey: .dictationLivePreview)
         try c.encode(dictationRetainAudio, forKey: .dictationRetainAudio)
         try c.encode(trackingEnabled, forKey: .trackingEnabled)
         try c.encode(semanticSearchEnabled, forKey: .semanticSearchEnabled)
@@ -521,6 +524,7 @@ struct AppSettings: Codable {
         dictationTriggerMode = (try? c.decode(DictationTriggerMode.self, forKey: .dictationTriggerMode)) ?? defaults.dictationTriggerMode
         dictationOutputMode = (try? c.decode(DictationOutputMode.self, forKey: .dictationOutputMode)) ?? defaults.dictationOutputMode
         dictationShowOverlay = (try? c.decode(Bool.self, forKey: .dictationShowOverlay)) ?? defaults.dictationShowOverlay
+        dictationLivePreview = (try? c.decode(Bool.self, forKey: .dictationLivePreview)) ?? defaults.dictationLivePreview
         dictationRetainAudio = (try? c.decode(Bool.self, forKey: .dictationRetainAudio)) ?? defaults.dictationRetainAudio
         trackingEnabled = (try? c.decode(Bool.self, forKey: .trackingEnabled)) ?? defaults.trackingEnabled
         semanticSearchEnabled = (try? c.decode(Bool.self, forKey: .semanticSearchEnabled)) ?? defaults.semanticSearchEnabled
