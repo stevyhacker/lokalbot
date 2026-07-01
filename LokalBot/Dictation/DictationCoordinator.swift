@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CoreAudio
 import Foundation
 
 @MainActor
@@ -129,6 +130,7 @@ final class DictationCoordinator: ObservableObject {
             return
         }
         let startedAt = Date()
+        let selectedInputDevice = try? CoreAudioUtils.getDefaultInputDeviceID()
         generation += 1
         let session = generation
         Task {
@@ -140,7 +142,13 @@ final class DictationCoordinator: ObservableObject {
             guard self.generation == session else { return }
             do {
                 let audioURL = try self.nextAudioURL(startedAt: startedAt)
-                try self.recorder.start(writingTo: audioURL)
+                let pausedMedia = MediaPlaybackController.pauseActiveMediaPlayers(reason: "dictation")
+                if !pausedMedia.isEmpty {
+                    try await Task.sleep(for: .milliseconds(250))
+                }
+                guard self.generation == session else { return }
+                try await self.startRecorder(writingTo: audioURL)
+                self.restoreSelectedInputDeviceIfNeeded(selectedInputDevice)
                 self.activeAudioURL = audioURL
                 self.state = .recording(startedAt: startedAt)
                 self.startTick()
@@ -275,6 +283,32 @@ final class DictationCoordinator: ObservableObject {
             language: config.transcriptionLanguage.code)
     }
 
+    private func startRecorder(writingTo audioURL: URL) async throws {
+        recorder.stop()
+        try? FileManager.default.removeItem(at: audioURL)
+        do {
+            try recorder.start(writingTo: audioURL)
+        } catch {
+            lokalbotLog("dictation recorder start retrying after: \(error.localizedDescription)")
+            recorder.stop()
+            try? FileManager.default.removeItem(at: audioURL)
+            try await Task.sleep(for: .milliseconds(150))
+            try recorder.start(writingTo: audioURL)
+        }
+    }
+
+    private func restoreSelectedInputDeviceIfNeeded(_ selectedDevice: AudioDeviceID?) {
+        guard let selectedDevice,
+              let currentDevice = try? CoreAudioUtils.getDefaultInputDeviceID(),
+              currentDevice != selectedDevice else { return }
+        do {
+            try CoreAudioUtils.setDefaultInputDeviceID(selectedDevice)
+            lokalbotLog("dictation restored selected input device from=\(currentDevice) to=\(selectedDevice)")
+        } catch {
+            lokalbotLog("dictation selected input restore failed: \(error.localizedDescription)")
+        }
+    }
+
     private func prewarmSelectedModel(reason: String) {
         prewarmTask?.cancel()
         let choice = settingsProvider().transcriptionModel
@@ -317,7 +351,7 @@ final class DictationCoordinator: ObservableObject {
         let dir = storageRoot.appendingPathComponent("dictations", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let seconds = Int(startedAt.timeIntervalSince1970)
-        return dir.appendingPathComponent("dictation-\(seconds)-\(UUID().uuidString).m4a")
+        return dir.appendingPathComponent("dictation-\(seconds)-\(UUID().uuidString).caf")
     }
 
     private func startTick() {
@@ -348,4 +382,3 @@ private enum DictationError: LocalizedError {
         }
     }
 }
-

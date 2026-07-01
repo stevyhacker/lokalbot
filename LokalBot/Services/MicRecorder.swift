@@ -1,6 +1,8 @@
 import AVFoundation
 
-/// Records the default input device (your voice) to an AAC `.m4a`.
+/// Records the default input device (your voice). Meeting recordings use AAC
+/// `.m4a`; short-lived dictation scratch files can use PCM `.caf` to avoid
+/// AAC container startup failures on some devices.
 /// This is the "Me" track — kept separate from system audio on purpose
 /// so M2 gets speaker attribution for free (design doc §2.2).
 final class MicRecorder {
@@ -72,12 +74,7 @@ final class MicRecorder {
             throw RecorderError.unsupportedInputFormat
         }
 
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: recordingFormat.sampleRate,
-            AVNumberOfChannelsKey: Int(recordingFormat.channelCount),
-            AVEncoderBitRateKey: 64_000,
-        ]
+        let settings = Self.fileSettings(for: url, recordingFormat: recordingFormat)
         file = try AVAudioFile(forWriting: url,
                                settings: settings,
                                commonFormat: recordingFormat.commonFormat,
@@ -186,6 +183,26 @@ final class MicRecorder {
             converter = nil
             throw error
         }
+    }
+
+    private static func fileSettings(for url: URL, recordingFormat: AVAudioFormat) -> [String: Any] {
+        if url.pathExtension.lowercased() == "caf" {
+            return [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: recordingFormat.sampleRate,
+                AVNumberOfChannelsKey: Int(recordingFormat.channelCount),
+                AVLinearPCMBitDepthKey: 32,
+                AVLinearPCMIsFloatKey: true,
+                AVLinearPCMIsBigEndianKey: false,
+                AVLinearPCMIsNonInterleaved: !recordingFormat.isInterleaved,
+            ]
+        }
+        return [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: recordingFormat.sampleRate,
+            AVNumberOfChannelsKey: Int(recordingFormat.channelCount),
+            AVEncoderBitRateKey: 64_000,
+        ]
     }
 
     /// Posted asynchronously when the audio device changes. The engine has

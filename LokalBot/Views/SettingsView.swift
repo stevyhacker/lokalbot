@@ -34,7 +34,8 @@ struct SettingsView: View {
             }
 
             if shows("General", ["launch", "login", "startup", "open at login", "auto start",
-                                 "menu bar", "menubar", "dock", "window", "background", "tray"]) {
+                                 "menu bar", "menubar", "dock", "dock icon", "hide dock",
+                                 "window", "background", "tray"]) {
                 Section("General") {
                     LaunchAtLogin.Toggle("Launch LokalBot at login")
                     Text("Start LokalBot automatically so it's ready to catch meetings.")
@@ -50,7 +51,8 @@ struct SettingsView: View {
                 }
             }
 
-            if shows("Meetings", ["meeting", "auto record", "detect", "debounce", "recording", "calendar"]) {
+            if shows("Meetings", ["meeting", "auto record", "detect", "debounce", "stop debounce",
+                                  "recording", "calendar", "calendar access", "browser", "google meet"]) {
                 Section("Meetings") {
                     Picker("When a meeting is detected", selection: $app.settings.autoRecordMode) {
                         ForEach(AppSettings.AutoRecordMode.allCases) { mode in
@@ -89,7 +91,8 @@ struct SettingsView: View {
                 }
             }
 
-            if shows("Processing", ["transcribe", "summarize", "automatic", "auto", "after meeting"]) {
+            if shows("Processing", ["transcribe", "transcription", "summarize", "summary",
+                                    "automatic", "auto", "after meeting", "model", "models", "engine"]) {
                 Section("Processing") {
                     Toggle("Transcribe automatically after each meeting", isOn: $app.settings.autoTranscribe)
                     Toggle("Summarize automatically after transcription", isOn: $app.settings.autoSummarize)
@@ -98,7 +101,10 @@ struct SettingsView: View {
                 }
             }
 
-            if shows("Dictation", ["dictation", "speech", "voice", "shortcut", "push to talk", "paste", "clipboard", "overlay"]) {
+            if shows("Dictation", ["dictation", "speech", "voice", "microphone", "mic", "input",
+                                   "input device", "selected mic", "audio", "recording", "shortcut",
+                                   "push to talk", "trigger", "transcription", "paste", "copy",
+                                   "clipboard", "overlay", "floating", "pill", "floating pill"]) {
                 Section("Dictation") {
                     Toggle("Enable global dictation shortcut", isOn: $app.settings.dictationEnabled)
                     Picker("Trigger", selection: $app.settings.dictationTriggerMode) {
@@ -122,7 +128,8 @@ struct SettingsView: View {
                 }
             }
 
-            if shows("Summarization", ["summary", "summarize", "notes", "template", "language", "diarization", "speaker"]) {
+            if shows("Summarization", ["summary", "summarize", "notes", "template", "language",
+                                       "diarization", "speaker", "split speaker", "neural"]) {
                 Section("Summarization") {
                     Picker("Notes template", selection: $app.settings.noteTemplate) {
                         ForEach(NoteTemplate.allCases) { template in
@@ -145,7 +152,15 @@ struct SettingsView: View {
                 }
             }
 
-            if shows("Cotyping", ["cotyping", "autocomplete", "inline", "ghost", "suggestion", "typing", "complete", "tab", "autocorrect", "emoji", "macro", "privacy", "exclude", "exclusion", "clipboard", "learn", "terminal", "xterm", "cursor"]) {
+            if shows("Cotyping", ["cotyping", "autocomplete", "inline", "ghost", "suggestion",
+                                  "typing", "complete", "tab", "autocorrect", "emoji", "macro",
+                                  "privacy", "exclude", "exclusion", "clipboard", "learn",
+                                  "terminal", "xterm", "cursor", "model", "stats", "generated",
+                                  "accepted", "latency", "voice", "name", "style", "language",
+                                  "length", "multiline", "stream", "glossary", "context", "font",
+                                  "color", "render", "popup", "fade", "animation", "motion",
+                                  "hint", "badge", "keycap", "accept key", "granularity",
+                                  "paste", "insertion", "website", "domain", "password"]) {
                 Section("Cotyping") {
                     Toggle("Inline AI autocomplete (cotyping)", isOn: $app.settings.cotypingEnabled)
                     Text("Suggests text inline as you type in other apps. Choose its model under Models (it can differ from summarization). Needs Accessibility + Input Monitoring; open the Cotyping tab for setup and a live preview.")
@@ -309,7 +324,9 @@ struct SettingsView: View {
                 }
             }
 
-            if shows("Day tracking", ["tracking", "activity", "screenshots", "ocr", "window", "accessibility", "retention", "private"]) {
+            if shows("Day tracking", ["tracking", "activity", "screenshots", "screen", "capture",
+                                      "ocr", "window", "accessibility", "retention", "private",
+                                      "excluded apps", "never capture"]) {
                 Section("Day tracking") {
                     Toggle("Track app & window activity", isOn: Binding(
                         get: { app.settings.trackingEnabled },
@@ -344,7 +361,7 @@ struct SettingsView: View {
                 }
             }
 
-            if shows("Storage", ["storage", "location", "files", "folder", "disk"]) {
+            if shows("Storage", ["storage", "location", "files", "folder", "finder", "disk"]) {
                 Section("Storage") {
                     LabeledContent("Location") {
                         Button(app.storage.rootURL.path(percentEncoded: false)) {
@@ -355,7 +372,8 @@ struct SettingsView: View {
                 }
             }
 
-            if shows("Updates", ["update", "version", "sparkle", "upgrade", "check", "release"]) {
+            if shows("Updates", ["update", "version", "sparkle", "upgrade", "check", "release",
+                                 "appcast", "download"]) {
                 Section("Updates") {
                     Toggle("Check for updates automatically", isOn: Binding(
                         get: { updates.automaticallyChecksForUpdates },
@@ -374,7 +392,8 @@ struct SettingsView: View {
                 }
             }
 
-            if shows("System", ["system", "hardware", "ram", "memory", "chip", "cpu", "battery", "power", "diagnostics", "performance", "generations"]) {
+            if shows("System", ["system", "hardware", "ram", "memory", "chip", "cpu", "battery",
+                                "power", "low power", "diagnostics", "performance", "generations"]) {
                 Section("System") {
                     LabeledContent("This Mac") {
                         Text(DeviceInfo.snapshot().summaryLine)
@@ -403,7 +422,8 @@ struct SettingsView: View {
                 }
             }
 
-            if shows("Agent CLI", ["cli", "agent", "terminal", "claude", "codex", "cursor", "gemini", "symlink", "install"]) {
+            if shows("Agent CLI", ["cli", "agent", "terminal", "claude", "codex", "cursor",
+                                   "gemini", "symlink", "install", "uninstall", "path"]) {
                 Section("Agent CLI") {
                     let installer = LokalBotCLIInstaller.bundled
                     if installer.bundledBinary == nil {

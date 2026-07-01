@@ -511,9 +511,10 @@ struct MeetingDetailView: View {
         if let summary {
             ScrollView {
                 MarkdownText(summary)
-                    .frame(maxWidth: 720, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
             ContentUnavailableView(
                 "No summary yet",
@@ -532,14 +533,16 @@ struct MeetingDetailView: View {
                     transcriptModelBadge(engine)
                 }
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
+                    LazyVStack(alignment: .leading, spacing: 4) {
                         ForEach(Array(visibleSegments.enumerated()), id: \.offset) { _, segment in
                             segmentRow(segment)
                         }
                     }
-                    .frame(maxWidth: 760, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
             ContentUnavailableView(
                 "No transcript yet",
@@ -582,6 +585,7 @@ struct MeetingDetailView: View {
                 .textSelection(.enabled)
         }
         .padding(.vertical, 4).padding(.horizontal, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(isCurrent ? Color.accentColor.opacity(0.10) : .clear,
                     in: RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
@@ -758,6 +762,7 @@ struct MarkdownText: View {
                 render(line)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder private func render(_ line: String) -> some View {

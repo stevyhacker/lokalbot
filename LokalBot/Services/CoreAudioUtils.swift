@@ -166,6 +166,22 @@ enum CoreAudioUtils {
                           label: "getDefaultInputDevice")
     }
 
+    static func setDefaultInputDeviceID(_ deviceID: AudioDeviceID) throws {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var mutableDeviceID = deviceID
+        let err = AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            UInt32(MemoryLayout<AudioDeviceID>.size),
+            &mutableDeviceID)
+        guard err == noErr else { throw CoreAudioError.osStatus(err, "setDefaultInputDevice") }
+    }
+
     static func getDefaultOutputDeviceID() throws -> AudioDeviceID {
         try defaultDevice(selector: kAudioHardwarePropertyDefaultOutputDevice,
                           label: "getDefaultOutputDevice")

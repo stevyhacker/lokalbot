@@ -26,6 +26,20 @@ final class ReuseSubsystemsTests: XCTestCase {
                                                     haystack: ["Updates", "automatic check"]))
     }
 
+    func testSearchNormalizesPunctuationAndDiacritics() {
+        XCTAssertTrue(SettingsSearchRanker.matches(query: "menu-bar",
+                                                   haystack: ["General", "menu bar", "dock icon"]))
+        XCTAssertTrue(SettingsSearchRanker.matches(query: "floating/pill",
+                                                   haystack: ["Dictation", "floating pill", "overlay"]))
+        XCTAssertTrue(SettingsSearchRanker.matches(query: "resume",
+                                                   haystack: ["Résumé language"]))
+    }
+
+    func testSearchFindsMicTermsInDictationHaystack() {
+        XCTAssertTrue(SettingsSearchRanker.matches(query: "selected mic",
+                                                   haystack: ["Dictation", "selected mic", "input device"]))
+    }
+
     // MARK: - ModelFit
 
     private func capability(gb: UInt64, appleSilicon: Bool = true) -> HardwareCapability {
