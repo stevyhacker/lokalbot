@@ -213,9 +213,9 @@ flowchart LR
 ## Download
 
 > [!NOTE]
-> Releases are published on GitHub. The download is a signed, notarized `.dmg`; models download on first run, then the app works fully offline.
+> Releases are published on GitHub. The download is a signed early-access `.dmg`; models download on first run, then the app works fully offline.
 
-- **[Download the latest `.dmg`](https://github.com/stevyhacker/lokalbot/releases/latest/download/LokalBot.dmg)** · [all releases and notes](https://github.com/stevyhacker/lokalbot/releases)
+- **[Download the latest release](https://github.com/stevyhacker/lokalbot/releases/latest)** · [all releases and notes](https://github.com/stevyhacker/lokalbot/releases)
 
 **Requirements**
 
