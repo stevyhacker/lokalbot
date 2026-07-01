@@ -98,6 +98,30 @@ struct SettingsView: View {
                 }
             }
 
+            if shows("Dictation", ["dictation", "speech", "voice", "shortcut", "push to talk", "paste", "clipboard", "overlay"]) {
+                Section("Dictation") {
+                    Toggle("Enable global dictation shortcut", isOn: $app.settings.dictationEnabled)
+                    Picker("Trigger", selection: $app.settings.dictationTriggerMode) {
+                        ForEach(DictationTriggerMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    LabeledContent("Shortcut") {
+                        Text(DictationShortcut.label)
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    Picker("After transcription", selection: $app.settings.dictationOutputMode) {
+                        ForEach(DictationOutputMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    Toggle("Show floating dictation pill", isOn: $app.settings.dictationShowOverlay)
+                    Text("Uses the selected transcription model and language from Models.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
             if shows("Summarization", ["summary", "summarize", "notes", "template", "language", "diarization", "speaker"]) {
                 Section("Summarization") {
                     Picker("Notes template", selection: $app.settings.noteTemplate) {

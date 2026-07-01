@@ -54,7 +54,7 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
         case .accessibility:
             "Read app and window context."
         case .inputMonitoring:
-            "Optional: detect typing for cotyping."
+            "Optional: detect dictation and cotyping shortcuts."
         }
     }
 
@@ -76,7 +76,7 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
         case .accessibility:
             "Reads window titles to track your activity."
         case .inputMonitoring:
-            "Lets cotyping see your keystrokes so it can suggest as you type and accept on Tab."
+            "Lets dictation and cotyping detect their global keyboard shortcuts."
         }
     }
 

@@ -83,6 +83,12 @@ struct MainWindowView: View {
             } detail: {
                 TimelineView()
             }
+        } else if app.navSection == .dictation {
+            NavigationSplitView {
+                sidebar
+            } detail: {
+                DictationView()
+            }
         } else if app.navSection == .cotyping {
             NavigationSplitView {
                 sidebar
@@ -144,6 +150,9 @@ struct MainWindowView: View {
                     .accessibilityIdentifier("sidebar.search")
             }
             Section("Automation") {
+                Label("Dictation", systemImage: "mic.badge.plus")
+                    .tag(AppState.NavSection.dictation)
+                    .accessibilityIdentifier("sidebar.dictation")
                 Label("Cotyping", systemImage: "text.cursor")
                     .tag(AppState.NavSection.cotyping)
                     .accessibilityIdentifier("sidebar.cotyping")

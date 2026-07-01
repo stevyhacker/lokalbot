@@ -57,6 +57,12 @@ struct LokalBotApp: App {
                         : app.startRecording(context: app.recordingContext(for: app.detector.activeApp), source: "command")
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button(app.dictation.state.isRecording ? "Stop Dictation" : "Start Dictation") {
+                    app.dictation.toggle(source: "command")
+                }
             }
             // ⌘K opens the command palette. Registered at the app level so it
             // works from anywhere; the palette window is opened via openWindow.
@@ -397,12 +403,13 @@ final class AppState: ObservableObject {
     }
 
     enum NavSection: Hashable {
-        case meetings, timeline, cotyping, chat, search, models, settings
+        case meetings, timeline, dictation, cotyping, chat, search, models, settings
 #if LOKALBOT_UI_TEST_HOST
         init?(captureName: String) {
             switch captureName.lowercased() {
             case "meetings": self = .meetings
             case "timeline": self = .timeline
+            case "dictation": self = .dictation
             case "cotyping": self = .cotyping
             case "chat": self = .chat
             case "search": self = .search
@@ -434,6 +441,7 @@ final class AppState: ObservableObject {
             detector.calendarEnabled = settings.calendarDetectionEnabled
             detector.requireCalendarForBrowser = settings.requireCalendarForBrowser
             if interactive {
+                dictation.applySettings()
                 cotyping.applySettings()
                 if settings.cotypingEnabled { Task { await cotypingEngine.prewarm() } }
             }
@@ -475,6 +483,19 @@ final class AppState: ObservableObject {
     private(set) lazy var pipeline = ProcessingPipeline(storage: storage) { [weak self] in
         self?.settings ?? AppSettings()
     }
+    /// Handy-style press-and-speak dictation. It records mic-only audio, uses
+    /// the selected local transcription model, then inserts the transcript into
+    /// the focused app using the same clipboard-safe path as cotyping.
+    private(set) lazy var dictation = DictationCoordinator(
+        storageRoot: storage.rootURL,
+        settingsProvider: { [weak self] in self?.settings ?? AppSettings() },
+        canStart: { [weak self] in !(self?.isRecording ?? false) },
+        onBusy: { [weak self] in
+            self?.lastError = "Stop the current meeting recording before starting dictation."
+        },
+        onError: { [weak self] message in
+            self?.lastError = message
+        })
     /// Cotyping (inline AI autocomplete). Always runs its own model on the
     /// dedicated `LlamaServer.cotyping` instance so it never thrashes the
     /// shared summarizer server. Resolved per-completion, so changes apply live.
@@ -674,8 +695,9 @@ final class AppState: ObservableObject {
                 WindowAccess.shared.open("onboarding")
             }
         }
-        // Bring cotyping up if the user left it enabled and the grants are in
-        // place; otherwise it parks itself (no taps installed).
+        // Bring optional system-wide automation up if the user left it enabled
+        // and the grants are in place; otherwise it parks itself.
+        dictation.applySettings()
         cotyping.applySettings()
         if settings.cotypingEnabled { Task { await cotypingEngine.prewarm() } }
     }
@@ -695,6 +717,7 @@ final class AppState: ObservableObject {
             sampler.stop()
             screenshots.stop()
             chat.stop()
+            dictation.stop()
             cotyping.stop()
             await cotypingEngine.unload()
             await LlamaServer.shared.stop()

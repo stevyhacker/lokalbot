@@ -29,6 +29,16 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(AppSettings().multiSpeakerDiarization)
     }
 
+    func testDictationDefaultsMatchHandyStyleShortcutFlow() {
+        let settings = AppSettings()
+
+        XCTAssertFalse(settings.dictationEnabled)
+        XCTAssertEqual(settings.dictationTriggerMode, .pushToTalk)
+        XCTAssertEqual(settings.dictationOutputMode, .pasteIntoFocusedApp)
+        XCTAssertTrue(settings.dictationShowOverlay)
+        XCTAssertFalse(settings.dictationRetainAudio)
+    }
+
     func testStopDebounceDefaultsToBackToBackFriendlyValue() {
         XCTAssertEqual(AppSettings().stopDebounceSeconds, AppSettings.defaultStopDebounceSeconds)
     }
@@ -66,6 +76,24 @@ final class AppSettingsTests: XCTestCase {
             let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
             XCTAssertEqual(decoded.menuBarOnly, value)
         }
+    }
+
+    func testDictationSettingsRoundTrip() throws {
+        var settings = AppSettings()
+        settings.dictationEnabled = true
+        settings.dictationTriggerMode = .toggle
+        settings.dictationOutputMode = .copyToClipboard
+        settings.dictationShowOverlay = false
+        settings.dictationRetainAudio = true
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertTrue(decoded.dictationEnabled)
+        XCTAssertEqual(decoded.dictationTriggerMode, .toggle)
+        XCTAssertEqual(decoded.dictationOutputMode, .copyToClipboard)
+        XCTAssertFalse(decoded.dictationShowOverlay)
+        XCTAssertTrue(decoded.dictationRetainAudio)
     }
 
     /// Settings persisted by a build that predates the key keep working and

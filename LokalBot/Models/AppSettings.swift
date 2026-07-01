@@ -52,6 +52,16 @@ struct AppSettings: Codable {
     var autoTranscribe: Bool = true
     var autoSummarize: Bool = true
 
+    // MARK: - Dictation
+
+    /// Handy-style system-wide dictation: press the shortcut, speak, transcribe
+    /// locally with the selected ASR engine, then deliver the text to the focused app.
+    var dictationEnabled: Bool = false
+    var dictationTriggerMode: DictationTriggerMode = .pushToTalk
+    var dictationOutputMode: DictationOutputMode = .pasteIntoFocusedApp
+    var dictationShowOverlay: Bool = true
+    var dictationRetainAudio: Bool = false
+
     /// M4: app/window activity sampling.
     var trackingEnabled: Bool = true
 
@@ -330,6 +340,11 @@ struct AppSettings: Codable {
         case languageHint // legacy key used by builds before typed language selection
         case autoTranscribe
         case autoSummarize
+        case dictationEnabled
+        case dictationTriggerMode
+        case dictationOutputMode
+        case dictationShowOverlay
+        case dictationRetainAudio
         case trackingEnabled
         case semanticSearchEnabled
         case screenshotsEnabled
@@ -416,6 +431,11 @@ struct AppSettings: Codable {
         try c.encode(transcriptionLanguage, forKey: .transcriptionLanguage)
         try c.encode(autoTranscribe, forKey: .autoTranscribe)
         try c.encode(autoSummarize, forKey: .autoSummarize)
+        try c.encode(dictationEnabled, forKey: .dictationEnabled)
+        try c.encode(dictationTriggerMode, forKey: .dictationTriggerMode)
+        try c.encode(dictationOutputMode, forKey: .dictationOutputMode)
+        try c.encode(dictationShowOverlay, forKey: .dictationShowOverlay)
+        try c.encode(dictationRetainAudio, forKey: .dictationRetainAudio)
         try c.encode(trackingEnabled, forKey: .trackingEnabled)
         try c.encode(semanticSearchEnabled, forKey: .semanticSearchEnabled)
         try c.encode(screenshotsEnabled, forKey: .screenshotsEnabled)
@@ -497,6 +517,11 @@ struct AppSettings: Codable {
         }
         autoTranscribe = (try? c.decode(Bool.self, forKey: .autoTranscribe)) ?? defaults.autoTranscribe
         autoSummarize = (try? c.decode(Bool.self, forKey: .autoSummarize)) ?? defaults.autoSummarize
+        dictationEnabled = (try? c.decode(Bool.self, forKey: .dictationEnabled)) ?? defaults.dictationEnabled
+        dictationTriggerMode = (try? c.decode(DictationTriggerMode.self, forKey: .dictationTriggerMode)) ?? defaults.dictationTriggerMode
+        dictationOutputMode = (try? c.decode(DictationOutputMode.self, forKey: .dictationOutputMode)) ?? defaults.dictationOutputMode
+        dictationShowOverlay = (try? c.decode(Bool.self, forKey: .dictationShowOverlay)) ?? defaults.dictationShowOverlay
+        dictationRetainAudio = (try? c.decode(Bool.self, forKey: .dictationRetainAudio)) ?? defaults.dictationRetainAudio
         trackingEnabled = (try? c.decode(Bool.self, forKey: .trackingEnabled)) ?? defaults.trackingEnabled
         semanticSearchEnabled = (try? c.decode(Bool.self, forKey: .semanticSearchEnabled)) ?? defaults.semanticSearchEnabled
         screenshotsEnabled = (try? c.decode(Bool.self, forKey: .screenshotsEnabled)) ?? defaults.screenshotsEnabled

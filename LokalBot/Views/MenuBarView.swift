@@ -21,6 +21,11 @@ struct MenuBarLabel: View {
         if app.isRecording {
             Text("\(Image(systemName: "record.circle.fill")) \(app.menuBarTimer)")
                 .monospacedDigit()
+        } else if app.dictation.state.isRecording {
+            Text("\(Image(systemName: "mic.circle.fill")) \(app.dictation.menuBarLabel)")
+                .monospacedDigit()
+        } else if case .transcribing = app.dictation.state {
+            Image(systemName: "mic.and.signal.meter.fill")
         } else {
             Image(systemName: "waveform.circle")
         }
@@ -56,6 +61,8 @@ struct MenuBarView: View {
             Divider()
             recentSection
             Divider()
+            dictationRow
+            Divider()
             cotypingRow
             Divider()
             footer
@@ -80,7 +87,7 @@ struct MenuBarView: View {
             HStack(spacing: 10) {
                 statusDot
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(app.isRecording ? "Recording" : "Not recording")
+                    Text(statusTitle)
                         .font(.headline)
                     Text(statusSubtitle)
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -88,8 +95,8 @@ struct MenuBarView: View {
                 Spacer()
             }
 
-            if app.isRecording {
-                Text(app.menuBarTimer)
+            if app.isRecording || app.dictation.state.isWorking {
+                Text(primaryTimerLabel)
                     .font(.system(size: 30, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                 Label(audioSourceLabel, systemImage: "waveform")
@@ -97,17 +104,20 @@ struct MenuBarView: View {
             }
 
             Button {
-                app.isRecording
-                    ? app.stopRecording()
-                    : app.startRecording(context: app.recordingContext(for: app.detector.activeApp), source: "menubar")
+                if app.isRecording {
+                    app.stopRecording()
+                } else if app.dictation.state.isWorking {
+                    app.dictation.toggle(source: "menubar")
+                } else {
+                    app.startRecording(context: app.recordingContext(for: app.detector.activeApp), source: "menubar")
+                }
             } label: {
-                Label(app.isRecording ? "Stop recording" : "Record now",
-                      systemImage: app.isRecording ? "stop.fill" : "record.circle")
+                Label(primaryActionTitle, systemImage: primaryActionIcon)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .tint(app.isRecording ? .red : .accentColor)
+            .tint((app.isRecording || app.dictation.state.isRecording) ? .red : .accentColor)
         }
         .padding(12)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
@@ -119,10 +129,10 @@ struct MenuBarView: View {
     /// Solid dot, with an expanding ring that pulses while recording.
     private var statusDot: some View {
         Circle()
-            .fill(app.isRecording ? Color.red : Color.secondary.opacity(0.4))
+            .fill((app.isRecording || app.dictation.state.isRecording) ? Color.red : Color.secondary.opacity(0.4))
             .frame(width: 11, height: 11)
             .overlay {
-                if app.isRecording {
+                if app.isRecording || app.dictation.state.isRecording {
                     Circle()
                         .stroke(Color.red.opacity(0.55), lineWidth: 3)
                         .scaleEffect(pulse ? 2.4 : 1)
@@ -133,7 +143,24 @@ struct MenuBarView: View {
             }
     }
 
+    private var statusTitle: String {
+        if app.isRecording { return "Recording" }
+        switch app.dictation.state {
+        case .idle: return "Not recording"
+        case .recording: return "Dictating"
+        case .transcribing: return "Transcribing"
+        }
+    }
+
     private var statusSubtitle: String {
+        switch app.dictation.state {
+        case .recording:
+            return "Release \(DictationShortcut.label) to transcribe"
+        case .transcribing:
+            return "Preparing text for the focused app"
+        case .idle:
+            break
+        }
         if app.isRecording {
             return app.currentMeeting?.title ?? "In progress"
         }
@@ -147,8 +174,38 @@ struct MenuBarView: View {
         }
     }
 
+    private var primaryTimerLabel: String {
+        if app.isRecording { return app.menuBarTimer }
+        switch app.dictation.state {
+        case .idle: return "00:00"
+        case .recording: return app.dictation.timerLabel
+        case .transcribing: return "..."
+        }
+    }
+
+    private var primaryActionTitle: String {
+        if app.isRecording { return "Stop recording" }
+        switch app.dictation.state {
+        case .idle: return "Record now"
+        case .recording: return "Stop & paste"
+        case .transcribing: return "Cancel dictation"
+        }
+    }
+
+    private var primaryActionIcon: String {
+        if app.isRecording { return "stop.fill" }
+        switch app.dictation.state {
+        case .idle: return "record.circle"
+        case .recording: return "stop.fill"
+        case .transcribing: return "xmark.circle"
+        }
+    }
+
     private var audioSourceLabel: String {
-        (app.currentMeeting?.hasSystemTrack ?? false)
+        if app.dictation.state.isWorking {
+            return "Microphone dictation"
+        }
+        return (app.currentMeeting?.hasSystemTrack ?? false)
             ? "Microphone + system audio"
             : "Microphone only"
     }
@@ -223,6 +280,41 @@ struct MenuBarView: View {
         }
         .toggleStyle(.switch)
         .controlSize(.mini)
+    }
+
+    private var dictationRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Dictation", systemImage: "mic.badge.plus")
+                    .font(.callout)
+                Spacer()
+                Text(DictationShortcut.label)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                Toggle("Shortcut", isOn: $app.settings.dictationEnabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                Spacer()
+                Button {
+                    app.dictation.toggle(source: "menubar")
+                } label: {
+                    Text(dictationButtonTitle)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(app.isRecording && !app.dictation.state.isWorking)
+            }
+        }
+    }
+
+    private var dictationButtonTitle: String {
+        switch app.dictation.state {
+        case .idle: "Start"
+        case .recording: "Stop"
+        case .transcribing: "Cancel"
+        }
     }
 
     private func shortMenuTitle(_ title: String) -> String {
