@@ -721,6 +721,25 @@ kbd {
 }
 @keyframes blink { 50% { opacity: 0; } }
 
+/* dictation spotlight — reuses the cotype window, adds the floating pill */
+.dictate__pill {
+  display: inline-flex; align-items: center; gap: 9px;
+  margin: 14px 22px 0;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(8, 13, 20, 0.55);
+  border: 1px solid var(--glass-border);
+  color: var(--text);
+  font-size: 0.88rem;
+}
+.dictate__dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: #ff5f57;
+  animation: dictpulse 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes dictpulse { 50% { opacity: 0.35; } }
+
 /* =========================================================================
    download — hero glass panel
    ========================================================================= */

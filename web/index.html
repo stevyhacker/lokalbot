@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>LokalBot: a private AI workspace for your Mac</title>
-  <meta name="description" content="A private AI workspace for your Mac. Record your meetings, autocomplete your writing, and see where your day went — all on-device. No account, no API keys, no cloud." />
+  <meta name="description" content="A private AI workspace for your Mac. Record your meetings, autocomplete your writing, dictate into any app, and see where your day went — all on-device. No account, no API keys, no cloud." />
   <meta name="theme-color" content="#0b1119" />
 
   <meta property="og:type" content="website" />
@@ -70,7 +70,7 @@
       <div class="hero__copy reveal">
         <p class="eyebrow">On-device. No API keys.</p>
         <h1 class="hero__title">A private AI workspace for your Mac.</h1>
-        <p class="hero__sub">Record your meetings, autocomplete your writing, and see where your day went — all on your Mac. No account, no API keys, no cloud.</p>
+        <p class="hero__sub">Record your meetings, autocomplete your writing, dictate into any app, and see where your day went — all on your Mac. No account, no API keys, no cloud.</p>
         <div class="hero__cta">
           <a class="btn btn--primary" href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">
             <i class="ph ph-apple-logo" aria-hidden="true"></i>
@@ -224,6 +224,36 @@
       </div>
     </section>
 
+    <!-- ───────────────────────── DICTATION SPOTLIGHT ───────────────────────── -->
+    <section class="section spotlight">
+      <div class="spotlight__demo reveal">
+        <div class="cotype">
+          <div class="cotype__bar" aria-hidden="true">
+            <span class="cotype__chrome"></span><span class="cotype__chrome"></span><span class="cotype__chrome"></span>
+            <span class="cotype__app">Notes</span>
+          </div>
+          <div class="cotype__label" aria-hidden="true">Meeting follow-up</div>
+          <div class="cotype__field" aria-hidden="true">
+            <span class="ct-typed">Draft the release notes and send the beta invite to the team tomorrow morning.</span><span class="ct-caret"></span>
+          </div>
+          <div class="dictate__pill" role="img" aria-label="Floating dictation pill: listening while the Option-Space shortcut is held">
+            <span class="dictate__dot" aria-hidden="true"></span>
+            Listening&hellip;&nbsp;<kbd>⌥ Space</kbd>
+          </div>
+        </div>
+      </div>
+      <div class="spotlight__copy reveal">
+        <p class="eyebrow">Dictation</p>
+        <h2 class="section__title">Hold a key, speak, it types.</h2>
+        <p class="section__lead">Hold <kbd>⌥ Space</kbd> in any app and talk. LokalBot pauses your music, shows a live transcript in a floating pill, and pastes the words at your cursor — transcribed by the same on-device model as your meetings.</p>
+        <ul class="checklist">
+          <li><i class="ph ph-check" aria-hidden="true"></i> Works in any app — paste or clipboard</li>
+          <li><i class="ph ph-check" aria-hidden="true"></i> Live transcript while you speak</li>
+          <li><i class="ph ph-check" aria-hidden="true"></i> Audio transcribed on-device, then deleted</li>
+        </ul>
+      </div>
+    </section>
+
     <!-- ───────────────────────── DAY TIMELINE SPOTLIGHT ───────────────────────── -->
     <section class="section spotlight">
       <div class="spotlight__demo reveal">
@@ -342,7 +372,7 @@
         <img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="30" height="30" />
         <span class="brand__name">LokalBot</span>
       </a>
-      <p>A private, on-device AI workspace for macOS — meetings, notes, and autocomplete.</p>
+      <p>A private, on-device AI workspace for macOS — meetings, dictation, notes, and autocomplete.</p>
       <p class="footer__meta">Apple Silicon &middot; macOS 15.0+</p>
     </div>
     <nav class="footer__col" aria-label="Product">

@@ -6,7 +6,7 @@
 
 **A private AI workspace for your Mac.**
 
-Record your meetings, autocomplete your writing, and see where your day went — all on-device. No account, no API keys, no cloud.
+Record your meetings, autocomplete your writing, dictate into any app, and see where your day went — all on-device. No account, no API keys, no cloud.
 
 ![macOS 15.0+](https://img.shields.io/badge/macOS-15.0%2B-000000?logo=apple&logoColor=white)
 ![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-required-1f6feb)
@@ -21,7 +21,7 @@ Record your meetings, autocomplete your writing, and see where your day went —
 
 ---
 
-LokalBot is a strictly-local AI workspace for macOS. It records both sides of a call, transcribes and summarizes it, indexes everything for search, tracks how you spend your day, and — with **Cotyping** — suggests text inline as you type in any app. Every model runs **on-device** on Apple Silicon, so your audio, transcripts, and notes never touch a server.
+LokalBot is a strictly-local AI workspace for macOS. It records both sides of a call, transcribes and summarizes it, indexes everything for search, tracks how you spend your day, and — with **Cotyping** — suggests text inline as you type in any app. **Dictation** turns a held **⌥ Space** into on-device speech-to-text wherever your cursor is. Every model runs **on-device** on Apple Silicon, so your audio, transcripts, and notes never touch a server.
 
 <div align="center">
 
@@ -80,6 +80,7 @@ LokalBot is a strictly-local AI workspace for macOS. It records both sides of a 
 - **Search every word you've heard.** Full-text *and* meaning-based search across transcripts, summaries, and on-screen text. Click a hit to play from that exact second.
 - **Chat with your meetings.** Ask "what did we decide?" or "find the action items" in plain language — answers are grounded in your library.
 - **Cotyping — inline AI autocomplete.** Ghost text as you type in almost any app; press **Tab** to accept. Runs its own dedicated on-device model (recommended Gemma 4 · E4B). Opt-in.
+- **Dictation — voice typing anywhere.** Hold **⌥ Space**, talk, release: your words are transcribed on-device and pasted at the cursor. Pauses your music first; audio is deleted after transcription. Opt-in.
 - **See where your day went.** A private timeline of apps and meetings, a generated daily digest, and an "ask your day" box.
 - **Private by construction.** Optional screenshots are AES-GCM encrypted and auto-delete after 14 days. Password fields and excluded apps are never read.
 - **Bring your own model.** Use the included llama.cpp runtime with a GGUF you choose, or point at Ollama, any OpenAI-compatible server, or Apple Intelligence.
@@ -189,6 +190,16 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 </details>
 
 <details>
+<summary><strong>Dictation</strong> — system-wide voice typing</summary>
+
+- **Hold ⌥ Space and talk** (or switch to toggle mode): a floating pill shows recording state and a live transcript while you speak; release, and the text is pasted into the focused app — or copied to the clipboard instead (Settings → Dictation).
+- **Your ASR, prewarmed:** dictation reuses the transcription engine and language you picked under Models (Granite, Parakeet, Whisper, Qwen3-ASR, …) and prewarms it when the shortcut is armed, so short dictations start instantly.
+- **Considerate capture:** playing media (Spotify, Music, browsers, VLC, …) is paused before recording starts; audio goes to a local PCM scratch file and is deleted right after transcription.
+- **Opt-in & private:** off by default; needs the Microphone grant plus Input Monitoring for the global shortcut. Audio, transcription, and paste all happen on-device.
+
+</details>
+
+<details>
 <summary><strong>Screenshots, OCR &amp; privacy</strong> — capture, encryption, retention</summary>
 
 - **Capture:** ScreenCaptureKit screenshot of the main display every N minutes (default 3, Settings slider), downscaled to ≤1500 px, HEIC. Skipped when idle (3 min), paused, locked, or when an excluded app is frontmost. Requires the Screen Recording permission.
@@ -268,6 +279,7 @@ Everything is configured in **Settings** inside the app:
 - **Transcription** — pick an engine (see the table above).
 - **Summarization** — choose a backend (Built-in / Apple Intelligence / Ollama / OpenAI-compatible) and the active model; browse and download GGUF models from Hugging Face.
 - **Cotyping** — enable inline autocomplete, set the accept granularity, and manage the per-app exclusion list.
+- **Dictation** — enable the global ⌥ Space shortcut, choose hold-to-talk or toggle, and pick paste vs. clipboard output.
 - **Privacy** — toggle screenshots, set the capture interval and retention window, and edit excluded apps.
 
 ## FAQ
@@ -390,7 +402,7 @@ In-place signed updates ship via [Sparkle](https://github.com/sparkle-project/Sp
 
 ## Status
 
-**Done:** recording with robust device/PID handling · transcription (8 models across 5 engines) + neural diarization · summarization (4 backends) + templates/languages · FTS5 + semantic search · synced player · day tracking + digests · screenshots/OCR/privacy · Ask-your-day · chat assistant · agent CLI · Sparkle updates · dev/prod split · in-app model manager + Hugging Face browse · Cotyping (opt-in).
+**Done:** recording with robust device/PID handling · transcription (8 models across 5 engines) + neural diarization · summarization (4 backends) + templates/languages · FTS5 + semantic search · synced player · day tracking + digests · screenshots/OCR/privacy · Ask-your-day · chat assistant · agent CLI · Sparkle updates · dev/prod split · in-app model manager + Hugging Face browse · Cotyping (opt-in) · system-wide dictation (opt-in).
 
 **Not yet built:** VLM screenshot captions (needs a multimodal model + an mmproj slot in `LlamaServer`).
 
