@@ -5,7 +5,7 @@ description: Read your LokalBot meeting library (recordings, transcripts, summar
 
 # LokalBot CLI Skill
 
-LokalBot is a local-first macOS app that records, transcribes, and summarises meetings entirely on-device. Audio, transcripts, and summaries live in `~/Library/Application Support/com.dotenv.BotinaV2/meetings/`. The `lokalbot-cli` binary reads that library and prints meeting data so other tools (coding agents, shell scripts) can use it without launching the GUI.
+LokalBot is a private, on-device AI workspace for macOS that records, transcribes, and summarises your meetings entirely on-device. Audio, transcripts, and summaries live in `~/Library/Application Support/com.dotenv.BotinaV2/meetings/`. The `lokalbot-cli` binary reads that library and prints meeting data so other tools (coding agents, shell scripts) can use it without launching the GUI.
 
 ## When to invoke
 

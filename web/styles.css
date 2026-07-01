@@ -633,6 +633,18 @@ kbd {
   gap: 56px;
   align-items: center;
 }
+
+/* day-timeline mock image */
+.daytrack { display: block; width: 100%; height: auto; border-radius: var(--radius); box-shadow: var(--glass-shadow); }
+
+/* recommended models */
+.models__grid { display: grid; grid-template-columns: 1fr; gap: 16px; margin-top: 8px; }
+.model-card { padding: 26px 24px; border-radius: var(--radius); display: flex; flex-direction: column; gap: 7px; }
+.model-card__icon { font-size: 1.5rem; color: var(--teal-bright); margin-bottom: 6px; }
+.model-card__task { font-size: 0.76rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--teal-bright); }
+.model-card__name { font-size: 1.16rem; font-weight: 640; color: var(--text); letter-spacing: -0.01em; }
+.model-card__note { font-size: 0.92rem; color: var(--text-dim); line-height: 1.5; }
+@media (min-width: 720px) { .models__grid { grid-template-columns: repeat(3, 1fr); } }
 .checklist { margin-top: 26px; display: grid; gap: 12px; }
 .checklist li { display: flex; align-items: center; gap: 12px; color: var(--text); }
 .checklist i {

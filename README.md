@@ -47,7 +47,7 @@ LokalBot is a strictly-local AI workspace for macOS. It records both sides of a 
 | | |
 | --- | --- |
 | **100% on-device** | Audio, transcripts, summaries, and models stay on your Mac. The only network calls are optional (downloading a model once). |
-| **Free, no account** | No sign-up, no subscription, no telemetry. |
+| **Free, zero setup** | No account, no API keys — a model's bundled in. |
 | **Open source** | Read every line, or build it yourself. |
 
 ## See it in action
