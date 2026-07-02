@@ -80,47 +80,52 @@ struct MenuBarView: View {
     // MARK: Recording status
 
     private var statusCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                statusDot
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(statusTitle)
-                        .font(.headline)
-                    Text(statusSubtitle)
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        HeroPanel(radius: Brand.Radius.panel) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    statusDot
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(statusTitle)
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                        Text(statusSubtitle)
+                            .font(.caption).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
+                    }
+                    Spacer()
+                    if app.isRecording || app.dictation.state.isRecording {
+                        LiveWaveform(barCount: 7, barWidth: 3, maxHeight: 14)
+                    }
                 }
-                Spacer()
-            }
 
-            if app.isRecording || app.dictation.state.isWorking {
-                Text(primaryTimerLabel)
-                    .font(.system(size: 30, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                Label(audioSourceLabel, systemImage: "waveform")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            Button {
-                if app.isRecording {
-                    app.stopRecording()
-                } else if app.dictation.state.isWorking {
-                    app.dictation.toggle(source: "menubar")
-                } else {
-                    app.startRecording(context: app.recordingContext(for: app.detector.activeApp), source: "menubar")
+                if app.isRecording || app.dictation.state.isWorking {
+                    Text(primaryTimerLabel)
+                        .font(.system(size: 30, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                    Label(audioSourceLabel, systemImage: "waveform")
+                        .font(.caption).foregroundStyle(.white.opacity(0.65))
                 }
-            } label: {
-                Label(primaryActionTitle, systemImage: primaryActionIcon)
-                    .frame(maxWidth: .infinity)
+
+                Button {
+                    if app.isRecording {
+                        app.stopRecording()
+                    } else if app.dictation.state.isWorking {
+                        app.dictation.toggle(source: "menubar")
+                    } else {
+                        app.startRecording(context: app.recordingContext(for: app.detector.activeApp), source: "menubar")
+                    }
+                } label: {
+                    Label(primaryActionTitle, systemImage: primaryActionIcon)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .tint((app.isRecording || app.dictation.state.isRecording) ? .red : .accentColor)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint((app.isRecording || app.dictation.state.isRecording) ? .red : .accentColor)
         }
-        .padding(12)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
         .overlay(
             RoundedRectangle(cornerRadius: Brand.Radius.panel)
-                .strokeBorder(app.isRecording ? Brand.recording.opacity(0.35) : Color.clear))
+                .strokeBorder(app.isRecording ? Brand.recording.opacity(0.5) : Color.clear))
     }
 
     /// Solid dot, with an expanding ring that pulses while recording.

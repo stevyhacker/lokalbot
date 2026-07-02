@@ -822,22 +822,25 @@ struct GettingStartedCard: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                HStack(spacing: 14) {
-                    IconTile(systemImage: "waveform.badge.magnifyingglass",
-                             tint: Brand.teal, size: 48)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Welcome to LokalBot").font(.title2.bold())
-                        Text("Record meetings, get the recap, and search everything — all on-device.")
-                            .font(.callout).foregroundStyle(.secondary)
+                HeroPanel(radius: Brand.Radius.card) {
+                    HStack(spacing: 14) {
+                        IconTile(systemImage: "waveform.badge.magnifyingglass",
+                                 tint: Brand.teal, size: 48)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Welcome to LokalBot").font(.title2.bold())
+                                .foregroundStyle(.white)
+                            Text("Record meetings, get the recap, and search everything — all on-device.")
+                                .font(.callout).foregroundStyle(.white.opacity(0.65))
+                        }
+                        Spacer()
+                        Button { dismissed = true } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.title3).foregroundStyle(.white.opacity(0.4))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Dismiss")
+                        .accessibilityIdentifier("welcome.dismiss")
                     }
-                    Spacer()
-                    Button { dismissed = true } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title3).foregroundStyle(.tertiary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Dismiss")
-                    .accessibilityIdentifier("welcome.dismiss")
                 }
 
                 HStack(spacing: 12) {
