@@ -114,7 +114,7 @@ struct DictationOverlayView: View {
                 }
                 Spacer(minLength: 10)
                 if dictation.state.isRecording {
-                    DictationWaveform()
+                    LiveWaveform().padding(.trailing, 8)
                 }
                 cancelButton
             }
@@ -175,7 +175,7 @@ struct DictationOverlayView: View {
             PulsingDictationDot()
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 15)
-            DictationWaveform()
+            LiveWaveform().padding(.trailing, 8)
             cancelButton
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.trailing, 10)
@@ -243,29 +243,5 @@ struct DictationOverlayView: View {
 private struct PulsingDictationDot: View {
     var body: some View {
         StatusDot(color: Brand.recording, size: 7, pulses: true)
-    }
-}
-
-private struct DictationWaveform: View {
-    private let barCount = 9
-
-    var body: some View {
-        SwiftUI.TimelineView(.animation) { timeline in
-            HStack(alignment: .center, spacing: 3) {
-                ForEach(0..<barCount, id: \.self) { index in
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.accentColor)
-                        .frame(width: 4, height: height(for: index, at: timeline.date))
-                }
-            }
-            .frame(height: 18)
-            .padding(.trailing, 8)
-        }
-    }
-
-    private func height(for index: Int, at date: Date) -> CGFloat {
-        let t = date.timeIntervalSinceReferenceDate * 5.2
-        let wave = (sin(t + Double(index) * 0.72) + 1) / 2
-        return max(3, min(18, 3 + CGFloat(pow(wave, 0.7)) * 15))
     }
 }
