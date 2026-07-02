@@ -10,7 +10,6 @@ struct CotypingView: View {
     var body: some View {
         CotypingContent(coordinator: app.cotyping)
             .environmentObject(app)
-            .navigationTitle("Cotyping")
     }
 }
 

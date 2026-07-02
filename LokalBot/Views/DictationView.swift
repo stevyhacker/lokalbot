@@ -17,7 +17,7 @@ struct DictationView: View {
         }
         .formStyle(.grouped)
         .frame(minWidth: 460)
-        .navigationTitle("Dictation")
+        .accessibilityIdentifier("dictation.form")
         .onAppear {
             permissions.startPolling()
             app.dictation.applySettings()

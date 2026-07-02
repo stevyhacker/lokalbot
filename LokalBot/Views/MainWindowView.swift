@@ -88,6 +88,12 @@ struct MainWindowView: View {
             } detail: {
                 TimelineInspectorView(model: timeline)
             }
+        } else if app.navSection == .type {
+            NavigationSplitView {
+                sidebar
+            } detail: {
+                TypeView()
+            }
         } else if app.navSection == .dictation {
             NavigationSplitView {
                 sidebar
