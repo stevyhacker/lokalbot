@@ -6,6 +6,8 @@ struct MainWindowView: View {
     @EnvironmentObject var app: AppState
     @Environment(\.openWindow) private var openWindow
     @State private var pendingDelete: Set<Meeting.ID>?
+    /// Shared by the Timeline section's two columns (day track ↔ inspector).
+    @StateObject private var timeline = TimelineModel()
 
     var body: some View {
         navigation
@@ -74,14 +76,17 @@ struct MainWindowView: View {
         }
     }
 
-    /// Timeline gets the full main area (sidebar + detail, two columns); every
-    /// other section keeps the three-column master/detail split.
+    /// Master/detail sections (Meetings, Assistant, Timeline) use the native
+    /// three-column split; single-surface sections (forms, search) use two.
     @ViewBuilder private var navigation: some View {
         if app.navSection == .timeline {
             NavigationSplitView {
                 sidebar
+            } content: {
+                TimelineDayView(model: timeline)
+                    .navigationSplitViewColumnWidth(min: 300, ideal: 380)
             } detail: {
-                TimelineView()
+                TimelineInspectorView(model: timeline)
             }
         } else if app.navSection == .dictation {
             NavigationSplitView {
