@@ -23,6 +23,11 @@ final class SQLiteDatabase {
         sqlite3_exec(db, sql, nil, nil, nil)
     }
 
+    /// Rowid of the most recent successful INSERT on this connection.
+    func lastInsertRowID() -> Int64 {
+        sqlite3_last_insert_rowid(db)
+    }
+
     func run(_ sql: String, bind values: [Any] = []) {
         withStatement(sql, bind: values) { statement in
             sqlite3_step(statement)

@@ -83,6 +83,66 @@ enum MeetingChatFormat {
         return lines.joined(separator: "\n")
     }
 
+    // MARK: - Screen / activity formatters
+
+    static func screenResults(query: String, hits: [ActivityStore.OCRHit]) -> String {
+        guard !hits.isEmpty else {
+            return "No screen-text matches for “\(query)”. Screen text is only kept "
+                + "for the configured retention window."
+        }
+        var lines = ["Screen-text matches (from on-device screen captures):"]
+        for hit in hits.prefix(12) {
+            let title = hit.windowTitle.isEmpty ? "" : " · \(clean(hit.windowTitle))"
+            lines.append("- [\(hit.app)\(title)] \(dateLabel(hit.ts)): \(clean(hit.snippet))")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    static func activitySummary(dayLabel: String, blocks: [ActivityBlock],
+                                meetings: [Meeting]) -> String {
+        guard !blocks.isEmpty else {
+            return "No app activity tracked on \(dayLabel)."
+        }
+        // Aggregate per app: total time plus the most-used window titles.
+        var totals: [String: TimeInterval] = [:]
+        var titles: [String: [String: TimeInterval]] = [:]
+        for block in blocks {
+            totals[block.app, default: 0] += block.duration
+            if !block.title.isEmpty {
+                titles[block.app, default: [:]][block.title, default: 0] += block.duration
+            }
+        }
+        let tracked = totals.values.reduce(0, +)
+        var lines = ["# Activity on \(dayLabel)",
+                     "Tracked \(durationLabel(tracked)) across \(totals.count) app\(totals.count == 1 ? "" : "s")."]
+        for (app, seconds) in totals.sorted(by: { $0.value > $1.value }).prefix(10) {
+            let top = (titles[app] ?? [:])
+                .sorted { $0.value > $1.value }
+                .prefix(3)
+                .map { clean($0.key) }
+            let detail = top.isEmpty ? "" : " — \(top.joined(separator: "; "))"
+            lines.append("- \(app): \(durationLabel(seconds))\(detail)")
+        }
+        if !meetings.isEmpty {
+            lines.append("")
+            lines.append("Recorded meetings that day:")
+            for meeting in meetings {
+                lines.append("- [\(SessionLookup.shortID(meeting.id))] \(meeting.title) — "
+                    + "\(dateLabel(meeting.startedAt)), \(meeting.durationLabel)")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// "2h 05m" / "12m" / "40s".
+    static func durationLabel(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds)
+        let (h, m) = (total / 3600, (total % 3600) / 60)
+        if h > 0 { return String(format: "%dh %02dm", h, m) }
+        if m > 0 { return "\(m)m" }
+        return "\(total)s"
+    }
+
     // MARK: - Helpers
 
     /// Strip FTS5 «»-markers, collapse whitespace, and cap a single snippet.
@@ -112,28 +172,33 @@ enum MeetingChatFormat {
     }()
 }
 
-/// The chat tool surface: natural-language search, listing, and reading meetings.
+/// The chat tool surface: natural-language search, listing, and reading
+/// meetings, plus screen/activity context (OCR'd screen text and per-app time).
 /// Backed by the app's live state — the loaded meeting list, the FTS5 keyword
-/// index, the semantic embedding index, and on-disk artifacts — so the chat
-/// reflects exactly what the rest of the app sees (and honours the UI-test
-/// storage-root override, unlike the CLI's hard-coded `SessionLookup` paths).
+/// index, the semantic embedding index, the activity store, and on-disk
+/// artifacts — so the chat reflects exactly what the rest of the app sees (and
+/// honours the UI-test storage-root override, unlike the CLI's hard-coded
+/// `SessionLookup` paths).
 @MainActor
 final class MeetingChatTools: ChatToolRunner {
     private let meetingsProvider: () -> [Meeting]
     private let storage: StorageManager
     private let searchIndex: SearchIndex
     private let embeddingIndex: EmbeddingIndex
+    private let activityStore: ActivityStore
     private let settingsProvider: () -> AppSettings
 
     init(meetings: @escaping () -> [Meeting],
          storage: StorageManager,
          searchIndex: SearchIndex,
          embeddingIndex: EmbeddingIndex,
+         activityStore: ActivityStore,
          settings: @escaping () -> AppSettings) {
         self.meetingsProvider = meetings
         self.storage = storage
         self.searchIndex = searchIndex
         self.embeddingIndex = embeddingIndex
+        self.activityStore = activityStore
         self.settingsProvider = settings
     }
 
@@ -158,6 +223,18 @@ final class MeetingChatTools: ChatToolRunner {
                 .init(name: "id", description: "Meeting id from another tool's output, or 'latest' for the most recent.", required: true),
                 .init(name: "include", description: "What to return: 'summary' (default), 'transcript', or 'all'.", required: false),
             ]),
+        ChatToolSpec(
+            name: "search_screen",
+            summary: "Search text the user has SEEN on screen (OCR'd from on-device screen captures, outside of meetings too). Returns app, window and a snippet with a timestamp.",
+            arguments: [
+                .init(name: "query", description: "What to look for, in natural language or keywords.", required: true),
+            ]),
+        ChatToolSpec(
+            name: "activity_summary",
+            summary: "How the user spent their time in apps on a given day: per-app durations, top windows, and any recorded meetings.",
+            arguments: [
+                .init(name: "day", description: "'today' (default), 'yesterday', or a date like 2026-07-01.", required: false),
+            ]),
     ]
 
     func libraryOverview() -> String {
@@ -169,6 +246,8 @@ final class MeetingChatTools: ChatToolRunner {
         case "search_meetings": return await search(call)
         case "list_meetings": return list(call)
         case "get_meeting": return get(call)
+        case "search_screen": return searchScreen(call)
+        case "activity_summary": return activitySummary(call)
         default: return ChatToolResult(text: "Unknown tool '\(call.name)'.", summary: "unknown tool")
         }
     }
@@ -227,6 +306,51 @@ final class MeetingChatTools: ChatToolRunner {
         let text = MeetingChatFormat.meeting(meeting, summary: summary,
                                              transcript: transcript, include: include)
         return ChatToolResult(text: text, summary: meeting.title)
+    }
+
+    private func searchScreen(_ call: ChatToolCall) -> ChatToolResult {
+        guard let query = call.string("query") else {
+            return ChatToolResult(text: "Provide a 'query' argument.", summary: "missing query")
+        }
+        var hits = activityStore.searchOCR(query, limit: 12)
+        if hits.isEmpty {
+            // Same rescue as meeting search: a natural-language question ANDs
+            // stop words and misses; retry on OR'd content keywords.
+            hits = activityStore.searchOCR(query, limit: 12, matchAll: false, dropStopWords: true)
+        }
+        return ChatToolResult(
+            text: MeetingChatFormat.screenResults(query: query, hits: hits),
+            summary: "“\(query)” — \(hits.count) screen match\(hits.count == 1 ? "" : "es")")
+    }
+
+    private func activitySummary(_ call: ChatToolCall) -> ChatToolResult {
+        let argument = call.string("day") ?? "today"
+        guard let day = Self.parseDay(argument) else {
+            return ChatToolResult(
+                text: "Could not understand day '\(argument)'. Use 'today', 'yesterday', or YYYY-MM-DD.",
+                summary: "bad day argument")
+        }
+        let blocks = activityStore.blocks(on: day)
+        let meetings = meetingsProvider()
+            .filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }
+        let label = day.formatted(date: .abbreviated, time: .omitted)
+        return ChatToolResult(
+            text: MeetingChatFormat.activitySummary(dayLabel: label, blocks: blocks,
+                                                    meetings: meetings),
+            summary: "\(label) — \(blocks.count) activity block\(blocks.count == 1 ? "" : "s")")
+    }
+
+    /// 'today' / 'yesterday' / ISO date (YYYY-MM-DD) → a Date inside that day.
+    static func parseDay(_ argument: String, now: Date = Date()) -> Date? {
+        switch argument.lowercased() {
+        case "today", "": return now
+        case "yesterday": return Calendar.current.date(byAdding: .day, value: -1, to: now)
+        default:
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyy-MM-dd"
+            return formatter.date(from: argument)
+        }
     }
 
     /// Resolve by short id / full uuid / 'latest' (via `SessionLookup`, pinned to

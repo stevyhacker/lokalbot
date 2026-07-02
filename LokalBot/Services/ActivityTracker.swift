@@ -31,11 +31,61 @@ final class ActivityStore {
             CREATE INDEX IF NOT EXISTS idx_activity_start ON activity_blocks(start);
             CREATE TABLE IF NOT EXISTS screenshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ts REAL NOT NULL, path TEXT NOT NULL, app TEXT NOT NULL);
-            CREATE VIRTUAL TABLE IF NOT EXISTS ocr_fts USING fts5(
-                text, ts UNINDEXED, app UNINDEXED,
-                tokenize='unicode61 remove_diacritics 2');
+                ts REAL NOT NULL, path TEXT NOT NULL, app TEXT NOT NULL,
+                window_title TEXT NOT NULL DEFAULT '',
+                capture_trigger TEXT NOT NULL DEFAULT 'interval');
             """)
+        migrateScreenshotColumns()
+        migrateOCRTable()
+    }
+
+    /// Screenshots taken by builds before event-driven capture lack the
+    /// `window_title` / `capture_trigger` columns. ALTER is cheap and keeps
+    /// existing rows; fresh databases already have the full shape.
+    private func migrateScreenshotColumns() {
+        let columns = columnNames(of: "screenshots")
+        if !columns.contains("window_title") {
+            database?.exec("ALTER TABLE screenshots ADD COLUMN window_title TEXT NOT NULL DEFAULT ''")
+        }
+        if !columns.contains("capture_trigger") {
+            database?.exec("ALTER TABLE screenshots ADD COLUMN capture_trigger TEXT NOT NULL DEFAULT 'interval'")
+        }
+    }
+
+    /// FTS5 tables cannot ALTER-add columns, so a legacy `ocr_fts`
+    /// (text, ts, app) is rebuilt into the new shape with `window_title`
+    /// indexed (searchable) plus `text_source` / `snapshot_id` metadata.
+    /// `text_source` is always "ocr" today; it exists so Accessibility-first
+    /// capture can land later as a data-only change.
+    private func migrateOCRTable() {
+        let existing = columnNames(of: "ocr_fts")
+        if existing.isEmpty {
+            database?.exec(Self.createOCRTableSQL(named: "ocr_fts"))
+            return
+        }
+        guard !existing.contains("snapshot_id") else { return }
+        database?.exec(Self.createOCRTableSQL(named: "ocr_fts_v2"))
+        database?.exec("""
+            INSERT INTO ocr_fts_v2 (text, window_title, ts, app, text_source, snapshot_id)
+                SELECT text, '', ts, app, 'ocr', 0 FROM ocr_fts;
+            DROP TABLE ocr_fts;
+            ALTER TABLE ocr_fts_v2 RENAME TO ocr_fts;
+            """)
+    }
+
+    private static func createOCRTableSQL(named name: String) -> String {
+        """
+        CREATE VIRTUAL TABLE IF NOT EXISTS \(name) USING fts5(
+            text, window_title, ts UNINDEXED, app UNINDEXED,
+            text_source UNINDEXED, snapshot_id UNINDEXED,
+            tokenize='unicode61 remove_diacritics 2');
+        """
+    }
+
+    private func columnNames(of table: String) -> Set<String> {
+        Set(database?.query("PRAGMA table_info(\(table))") { statement in
+            String(cString: sqlite3_column_text(statement, 1))
+        } ?? [])
     }
 
     nonisolated static func dayInterval(containing day: Date, calendar: Calendar = .current) -> DateInterval {
@@ -56,46 +106,68 @@ final class ActivityStore {
         var ts: Date
         var path: String
         var app: String
+        var windowTitle: String = ""
+        var trigger: String = "interval"
     }
 
     struct OCRHit: Identifiable {
         let id = UUID()
         var ts: Date
         var app: String
+        var windowTitle: String = ""
         var snippet: String
     }
 
-    func insertScreenshot(ts: Date, path: String, app: String, ocr: String) {
-        database?.run("INSERT INTO screenshots (ts, path, app) VALUES (?1, ?2, ?3)",
-                      bind: [ts.timeIntervalSince1970, path, app])
+    /// Insert one paired capture row (pixels bookkeeping + searchable text).
+    /// Returns the screenshot rowid so the OCR row links back to its pixels.
+    @discardableResult
+    func insertScreenshot(ts: Date, path: String, app: String,
+                          windowTitle: String = "", trigger: String = "interval",
+                          textSource: String = "ocr", ocr: String) -> Int64 {
+        database?.run("""
+            INSERT INTO screenshots (ts, path, app, window_title, capture_trigger)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            """, bind: [ts.timeIntervalSince1970, path, app, windowTitle, trigger])
+        let snapshotID = database?.lastInsertRowID() ?? 0
         if !ocr.isEmpty {
-            database?.run("INSERT INTO ocr_fts (text, ts, app) VALUES (?1, ?2, ?3)",
-                          bind: [ocr, ts.timeIntervalSince1970, app])
+            database?.run("""
+                INSERT INTO ocr_fts (text, window_title, ts, app, text_source, snapshot_id)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                """, bind: [ocr, windowTitle, ts.timeIntervalSince1970, app, textSource, snapshotID])
         }
+        return snapshotID
     }
 
     func screenshots(on day: Date) -> [Screenshot] {
         let interval = Self.dayInterval(containing: day)
         return database?.query("""
-            SELECT id, ts, path, app FROM screenshots
+            SELECT id, ts, path, app, window_title, capture_trigger FROM screenshots
             WHERE ts >= ?1 AND ts < ?2 AND path != '' ORDER BY ts
             """, bind: [interval.start.timeIntervalSince1970, interval.end.timeIntervalSince1970]) { statement in
             Screenshot(id: sqlite3_column_int64(statement, 0),
                        ts: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
                        path: String(cString: sqlite3_column_text(statement, 2)),
-                       app: String(cString: sqlite3_column_text(statement, 3)))
+                       app: String(cString: sqlite3_column_text(statement, 3)),
+                       windowTitle: String(cString: sqlite3_column_text(statement, 4)),
+                       trigger: String(cString: sqlite3_column_text(statement, 5)))
         } ?? []
     }
 
-    func searchOCR(_ query: String, limit: Int = 40) -> [OCRHit] {
-        guard let match = SearchIndex.ftsQuery(from: query) else { return [] }
+    /// FTS search over screen text (and window titles). `matchAll: false`
+    /// relaxes a natural-language query to OR'd content keywords — same
+    /// rescue the meeting search uses.
+    func searchOCR(_ query: String, limit: Int = 40,
+                   matchAll: Bool = true, dropStopWords: Bool = false) -> [OCRHit] {
+        guard let match = SearchIndex.ftsQuery(from: query, matchAll: matchAll,
+                                               dropStopWords: dropStopWords) else { return [] }
         return database?.query("""
-            SELECT ts, app, snippet(ocr_fts, 0, '«', '»', '…', 14)
+            SELECT ts, app, window_title, snippet(ocr_fts, 0, '«', '»', '…', 14)
             FROM ocr_fts WHERE ocr_fts MATCH ?1 ORDER BY rank LIMIT \(limit)
             """, bind: [match]) { statement in
             OCRHit(ts: Date(timeIntervalSince1970: sqlite3_column_double(statement, 0)),
                    app: String(cString: sqlite3_column_text(statement, 1)),
-                   snippet: String(cString: sqlite3_column_text(statement, 2)))
+                   windowTitle: String(cString: sqlite3_column_text(statement, 2)),
+                   snippet: String(cString: sqlite3_column_text(statement, 3)))
         } ?? []
     }
 
@@ -173,6 +245,11 @@ final class ActivitySampler: ObservableObject {
     private let store: ActivityStore
     /// Injected by AppState; apps matching these are logged as "Private".
     var excludedApps: () -> [String] = { [] }
+    /// Event-driven capture hook: fired when the sampled (app, title) pair
+    /// changes — i.e. at the same boundaries that close activity blocks.
+    /// `appChanged` distinguishes an app switch from a window/tab change
+    /// inside the same app. Excluded apps arrive as ("Private", "").
+    var onActivityBoundary: ((_ app: String, _ title: String, _ appChanged: Bool) -> Void)?
     private var timer: Timer?
     private var current: (app: String, title: String, start: Date)?
     private var lastSeen = Date()
@@ -232,7 +309,9 @@ final class ActivitySampler: ObservableObject {
 
         if let current {
             if current.app == appName && current.title == title { return }
+            let appChanged = current.app != appName
             closeCurrentBlock()
+            onActivityBoundary?(appName, title, appChanged)
         }
         current = (appName, title, Date())
     }

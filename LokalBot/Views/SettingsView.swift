@@ -344,7 +344,7 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    Toggle("Periodic screenshots (OCR'd locally, encrypted at rest)", isOn: Binding(
+                    Toggle("Screen context capture (on app/window switch, OCR'd locally, encrypted at rest)", isOn: Binding(
                         get: { app.settings.screenshotsEnabled },
                         set: { app.settings.screenshotsEnabled = $0; app.screenshots.restart() }))
                     if app.settings.screenshotsEnabled {
@@ -352,14 +352,14 @@ struct SettingsView: View {
                             get: { app.settings.screenshotIntervalMinutes },
                             set: { app.settings.screenshotIntervalMinutes = $0; app.screenshots.restart() }),
                             in: 1...15, step: 1) {
-                            Text("Every \(Int(app.settings.screenshotIntervalMinutes)) min")
+                            Text("Idle fallback: at least every \(Int(app.settings.screenshotIntervalMinutes)) min")
                         }
                         Stepper("Keep screenshots \(app.settings.retentionDays) days",
                                 value: $app.settings.retentionDays, in: 1...90)
                     }
                     TextField("Never capture (app names, comma-separated)",
                               text: $app.settings.excludedApps)
-                    Text("Sampled every 5 s, idle-aware (3 min); never captures the lock screen. Screenshots are AES-GCM encrypted (key in your Keychain); extracted text follows the same retention (see Privacy). Excluded apps log as “Private”.")
+                    Text("Captures when you switch apps or windows (20 s cooldown, unchanged screens skipped) and at least every few minutes when idle-active; never captures the lock screen. Screenshots are AES-GCM encrypted (key in your Keychain); extracted text follows the same retention (see Privacy). Excluded apps log as “Private”.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }

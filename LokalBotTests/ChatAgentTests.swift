@@ -271,6 +271,7 @@ final class ChatAgentTests: XCTestCase {
         let searchIndex = SearchIndex(databaseURL: sqlite)
         searchIndex.reindex(meeting, storage: storage)
         let embeddingIndex = EmbeddingIndex(databaseURL: sqlite, storage: storage)
+        let activityStore = ActivityStore(databaseURL: sqlite)
 
         var settings = AppSettings()
         settings.semanticSearchEnabled = false      // keep the test offline (no embed server)
@@ -278,6 +279,7 @@ final class ChatAgentTests: XCTestCase {
         let tools = MeetingChatTools(
             meetings: { [meeting] }, storage: storage,
             searchIndex: searchIndex, embeddingIndex: embeddingIndex,
+            activityStore: activityStore,
             settings: { settings })
 
         let list = await tools.run(ChatToolCall(name: "list_meetings", arguments: [:]))
@@ -299,6 +301,102 @@ final class ChatAgentTests: XCTestCase {
 
         let miss = await tools.run(ChatToolCall(name: "get_meeting", arguments: ["id": "zzzzzzzz"]))
         XCTAssertTrue(miss.text.contains("No meeting matches"), "miss: \(miss.text)")
+    }
+
+    // MARK: - Screen / activity tools
+
+    func testSearchScreenAndActivitySummaryAgainstPlantedStore() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lokalbot-screen-\(UUID().uuidString)", isDirectory: true)
+        setenv("LOKALBOT_STORAGE_ROOT", root.path, 1)
+        defer {
+            unsetenv("LOKALBOT_STORAGE_ROOT")
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let storage = StorageManager()
+        let sqlite = storage.rootURL.appendingPathComponent("lokalbotv3.sqlite")
+        try FileManager.default.createDirectory(at: storage.rootURL, withIntermediateDirectories: true)
+        let activityStore = ActivityStore(databaseURL: sqlite)
+
+        activityStore.insertScreenshot(
+            ts: Date(), path: "/tmp/x.heic.enc", app: "Safari",
+            windowTitle: "Stripe invoicing docs", trigger: "app_switch",
+            ocr: "How to issue a refund for an invoice in the Stripe dashboard")
+        activityStore.insert(ActivityBlock(app: "Xcode", title: "LokalBot.xcodeproj",
+                                           start: Date().addingTimeInterval(-7_200),
+                                           end: Date().addingTimeInterval(-3_600)))
+        activityStore.insert(ActivityBlock(app: "Safari", title: "Stripe invoicing docs",
+                                           start: Date().addingTimeInterval(-3_600),
+                                           end: Date().addingTimeInterval(-3_000)))
+
+        var settings = AppSettings()
+        settings.semanticSearchEnabled = false
+        let tools = MeetingChatTools(
+            meetings: { [] }, storage: storage,
+            searchIndex: SearchIndex(databaseURL: sqlite),
+            embeddingIndex: EmbeddingIndex(databaseURL: sqlite, storage: storage),
+            activityStore: activityStore,
+            settings: { settings })
+
+        let hit = await tools.run(ChatToolCall(name: "search_screen",
+                                               arguments: ["query": "refund invoice"]))
+        XCTAssertTrue(hit.text.contains("Safari"), "screen: \(hit.text)")
+        XCTAssertTrue(hit.text.contains("Stripe invoicing docs"), "screen: \(hit.text)")
+
+        // Natural-language question rescued by the relaxed OR fallback.
+        let rescued = await tools.run(ChatToolCall(name: "search_screen",
+                                                   arguments: ["query": "how do I refund that invoice"]))
+        XCTAssertFalse(rescued.text.contains("No screen-text matches"), "rescued: \(rescued.text)")
+
+        let miss = await tools.run(ChatToolCall(name: "search_screen",
+                                                arguments: ["query": "kubernetes"]))
+        XCTAssertTrue(miss.text.contains("No screen-text matches"), "miss: \(miss.text)")
+
+        let summary = await tools.run(ChatToolCall(name: "activity_summary", arguments: [:]))
+        XCTAssertTrue(summary.text.contains("Xcode: 1h 00m"), "summary: \(summary.text)")
+        XCTAssertTrue(summary.text.contains("Safari: 10m"), "summary: \(summary.text)")
+        XCTAssertTrue(summary.text.contains("LokalBot.xcodeproj"), "summary: \(summary.text)")
+
+        let empty = await tools.run(ChatToolCall(name: "activity_summary",
+                                                 arguments: ["day": "2020-01-01"]))
+        XCTAssertTrue(empty.text.contains("No app activity tracked"), "empty: \(empty.text)")
+
+        let bad = await tools.run(ChatToolCall(name: "activity_summary",
+                                               arguments: ["day": "next tuesday"]))
+        XCTAssertTrue(bad.text.contains("Could not understand day"), "bad: \(bad.text)")
+    }
+
+    func testParseDayHandlesRelativeAndISOForms() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        XCTAssertEqual(MeetingChatTools.parseDay("today", now: now), now)
+        let yesterday = MeetingChatTools.parseDay("yesterday", now: now)
+        XCTAssertEqual(yesterday.map { Calendar.current.dateComponents([.day], from: $0, to: now).day }, 1)
+        XCTAssertNotNil(MeetingChatTools.parseDay("2026-07-01"))
+        XCTAssertNil(MeetingChatTools.parseDay("garbage"))
+    }
+
+    func testActivitySummaryFormatterAggregatesAndListsMeetings() {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let blocks = [
+            ActivityBlock(app: "Xcode", title: "foo.swift", start: base, end: base.addingTimeInterval(1_800)),
+            ActivityBlock(app: "Xcode", title: "bar.swift", start: base, end: base.addingTimeInterval(5_400)),
+            ActivityBlock(app: "Slack", title: "#general", start: base, end: base.addingTimeInterval(600)),
+        ]
+        let text = MeetingChatFormat.activitySummary(
+            dayLabel: "Jul 1, 2026", blocks: blocks, meetings: [sampleMeeting(title: "Standup")])
+        XCTAssertTrue(text.contains("Xcode: 2h 00m"), text)
+        XCTAssertTrue(text.contains("Slack: 10m"), text)
+        XCTAssertTrue(text.contains("Standup"), text)
+        // Longest-title-first within an app.
+        XCTAssertTrue(text.range(of: "bar.swift")!.lowerBound
+                      < text.range(of: "foo.swift")!.lowerBound, text)
+    }
+
+    func testDurationLabelFormats() {
+        XCTAssertEqual(MeetingChatFormat.durationLabel(45), "45s")
+        XCTAssertEqual(MeetingChatFormat.durationLabel(600), "10m")
+        XCTAssertEqual(MeetingChatFormat.durationLabel(7_500), "2h 05m")
     }
 
     // MARK: - FTS query relaxation
@@ -348,6 +446,7 @@ final class ChatAgentTests: XCTestCase {
         let searchIndex = SearchIndex(databaseURL: sqlite)
         searchIndex.reindex(meeting, storage: storage)
         let embeddingIndex = EmbeddingIndex(databaseURL: sqlite, storage: storage)
+        let activityStore = ActivityStore(databaseURL: sqlite)
 
         var settings = AppSettings()
         settings.semanticSearchEnabled = false      // no embed server in tests
@@ -355,6 +454,7 @@ final class ChatAgentTests: XCTestCase {
         let tools = MeetingChatTools(
             meetings: { [meeting] }, storage: storage,
             searchIndex: searchIndex, embeddingIndex: embeddingIndex,
+            activityStore: activityStore,
             settings: { settings })
 
         // Strict FTS ANDs every stop word and finds nothing on the raw question…

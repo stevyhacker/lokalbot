@@ -104,11 +104,12 @@ enum ChatPrompt {
     static func systemPrompt(tools: [ChatToolSpec], libraryOverview: String) -> String {
         var lines: [String] = []
         lines.append("""
-        You are LokalBot's meeting assistant. You answer questions about the user's \
-        on-device meeting recordings, transcripts and summaries. Everything is local \
-        and private. Be concise and specific, and cite meetings by their title and \
-        date. Never invent meeting content — if the tools return nothing relevant, \
-        say so plainly.
+        You are LokalBot's assistant. You answer questions about the user's \
+        on-device meeting recordings, transcripts and summaries, and about their \
+        workday context — text seen on screen and time spent in apps. Everything is \
+        local and private. Be concise and specific, and cite meetings by their title \
+        and date. Never invent content — if the tools return nothing relevant, say \
+        so plainly.
         """)
         lines.append("")
         lines.append("You can call tools to look things up. Available tools:")
@@ -132,7 +133,9 @@ enum ChatPrompt {
         final answer in plain language — no JSON, no tool call.
         • Prefer search_meetings for questions about what was said or decided. Use \
         get_meeting to read a specific meeting's summary or transcript. Use \
-        list_meetings to enumerate meetings.
+        list_meetings to enumerate meetings. Use search_screen for things the user \
+        read or saw on screen (docs, sites, code, messages). Use activity_summary \
+        for how a day was spent across apps.
         """)
         if !libraryOverview.isEmpty {
             lines.append("")

@@ -536,6 +536,7 @@ final class AppState: ObservableObject {
             storage: storage,
             searchIndex: searchIndex,
             embeddingIndex: embeddingIndex,
+            activityStore: activityStore,
             settings: { [weak self] in self?.settings ?? AppSettings() }),
         store: ChatStore(rootURL: storage.rootURL))
 
@@ -1318,6 +1319,7 @@ final class AppState: ObservableObject {
                 let tools = MeetingChatTools(
                     meetings: { [weak self] in self?.meetings ?? [] },
                     storage: storage, searchIndex: searchIndex, embeddingIndex: embeddingIndex,
+                    activityStore: activityStore,
                     settings: { [weak self] in self?.settings ?? AppSettings() })
                 let agent = ChatAgent(engine: engine, runner: tools)
                 let answer = try await agent.respond(history: [], latest: question) { event in
