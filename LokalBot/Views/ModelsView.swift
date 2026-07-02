@@ -118,7 +118,7 @@ struct ModelsView: View {
                 TextField("Server", text: $app.settings.ollamaBaseURL)
                 LabeledContent("Status") {
                     HStack(spacing: 6) {
-                        Circle().fill(ollamaReachable ? .green : .red).frame(width: 8, height: 8)
+                        StatusDot(color: ollamaReachable ? .green : .red)
                         Text(ollamaReachable
                              ? "Running · \(ollamaModels.count) model\(ollamaModels.count == 1 ? "" : "s")"
                              : "Not reachable — start with `ollama serve`")
@@ -172,15 +172,11 @@ struct ModelsView: View {
     private var embeddingsCard: some View {
         ModelCard(icon: "point.3.connected.trianglepath.dotted", title: "Embeddings",
                   subtitle: "Semantic search over transcripts & screenshots") {
-            Toggle("Semantic search (embeddings)", isOn: Binding(
-                get: { app.settings.semanticSearchEnabled },
-                set: { enabled in
-                    app.settings.semanticSearchEnabled = enabled
-                    if enabled {
-                        Task { await app.embeddingIndex.reindexAll(app.meetings) }
-                    }
-                }))
-            Text("Finds meetings by meaning, not just keywords. Uses Qwen3-Embedding 0.6B, downloaded when you enable semantic search.")
+            LabeledContent("Semantic search") {
+                Text(app.settings.semanticSearchEnabled ? "On" : "Off — enable it in the Search section")
+                    .foregroundStyle(.secondary)
+            }
+            Text("Finds meetings by meaning, not just keywords. Uses Qwen3-Embedding 0.6B, downloaded when semantic search is first enabled (sidebar → Search).")
                 .font(.caption).foregroundStyle(.secondary)
             Text("Text search now uses Qwen3-Embedding 0.6B. Screenshot/slide embeddings with Qwen3-VL-Embedding 2B are listed as a future pipeline because image vectors need separate indexing and ranking.")
                 .font(.caption).foregroundStyle(.secondary)

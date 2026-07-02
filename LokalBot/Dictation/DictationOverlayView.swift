@@ -241,20 +241,8 @@ struct DictationOverlayView: View {
 }
 
 private struct PulsingDictationDot: View {
-    @State private var pulse = false
-
     var body: some View {
-        Circle()
-            .fill(Color.accentColor)
-            .frame(width: 7, height: 7)
-            .overlay {
-                Circle()
-                    .stroke(Color.accentColor.opacity(0.30), lineWidth: 2)
-                    .scaleEffect(pulse ? 2.2 : 1)
-                    .opacity(pulse ? 0 : 0.8)
-            }
-            .onAppear { pulse = true }
-            .animation(.easeOut(duration: 1.9).repeatForever(autoreverses: false), value: pulse)
+        StatusDot(color: Brand.recording, size: 7, pulses: true)
     }
 }
 

@@ -180,8 +180,7 @@ struct TimelineView: View {
             Text(value).font(.callout.weight(.semibold).monospacedDigit())
             Text(label).font(.caption).foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 9).padding(.vertical, 5)
-        .background(.quaternary.opacity(0.3), in: Capsule())
+        .chipChrome()
     }
 
     // MARK: Inspector pane — selected block + tabbed detail

@@ -29,6 +29,21 @@ struct SearchView: View {
     @State private var ocrHits: [ActivityStore.OCRHit] = []
     @State private var semanticHits: [EmbeddingIndex.Hit] = []
 
+    /// Turning semantic search on kicks off the embedding backfill (which
+    /// downloads the embedding model on first use), same as the Models card
+    /// used to do before the toggle moved here.
+    private var semanticSearchBinding: Binding<Bool> {
+        Binding(
+            get: { app.settings.semanticSearchEnabled },
+            set: { enabled in
+                app.settings.semanticSearchEnabled = enabled
+                if enabled {
+                    Task { await app.embeddingIndex.reindexAll(app.meetings) }
+                }
+                runSearch()
+            })
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
@@ -59,6 +74,11 @@ struct SearchView: View {
                 .labelsHidden()
                 .fixedSize()
                 .accessibilityIdentifier("search.scope")
+                Toggle("Semantic", isOn: semanticSearchBinding)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .help("Also match by meaning, not just keywords. Downloads the Qwen3 embedding model and indexes your transcripts when first enabled.")
+                    .accessibilityIdentifier("search.semantic")
             }
             .padding(12)
             Divider()
@@ -171,10 +191,7 @@ private struct SemanticHitRow: View {
                 Text(meeting?.title ?? "Unknown meeting")
                     .font(.headline)
                 Spacer()
-                Text(String(format: "≈ %.0f%%", hit.score * 100))
-                    .font(.caption2.monospacedDigit())
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(.quaternary, in: Capsule())
+                BrandChip(text: String(format: "≈ %.0f%%", hit.score * 100), size: .compact)
             }
             Text(hit.text).font(.callout)
                 .foregroundStyle(.secondary).lineLimit(3)
@@ -213,10 +230,7 @@ private struct SearchHitRow: View {
         case .summary: "Summary"
         case .segment: "▶ \(Transcript.stamp(hit.start))\(hit.speaker.isEmpty ? "" : " · \(hit.speaker)")"
         }
-        Text(label)
-            .font(.caption2.monospacedDigit())
-            .padding(.horizontal, 7).padding(.vertical, 2)
-            .background(.quaternary, in: Capsule())
+        BrandChip(text: label, size: .compact)
     }
 
     /// Render «matches» from the FTS5 snippet as bold primary text.

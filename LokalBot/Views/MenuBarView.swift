@@ -39,7 +39,6 @@ struct MenuBarView: View {
     @EnvironmentObject var app: AppState
     @Environment(\.openWindow) private var openWindow
     @ObservedObject private var permissions = PermissionManager.shared
-    @State private var pulse = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -74,10 +73,8 @@ struct MenuBarView: View {
             // onboarding) can open windows even when none are on screen.
             WindowAccess.shared.register { openWindow(id: $0) }
             permissions.startPolling()
-            pulse = app.isRecording
         }
         .onDisappear { permissions.stopPolling() }
-        .onChange(of: app.isRecording) { _, recording in pulse = recording }
     }
 
     // MARK: Recording status
@@ -120,27 +117,17 @@ struct MenuBarView: View {
             .tint((app.isRecording || app.dictation.state.isRecording) ? .red : .accentColor)
         }
         .padding(12)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(app.isRecording ? Color.red.opacity(0.35) : Color.clear))
+            RoundedRectangle(cornerRadius: Brand.Radius.panel)
+                .strokeBorder(app.isRecording ? Brand.recording.opacity(0.35) : Color.clear))
     }
 
     /// Solid dot, with an expanding ring that pulses while recording.
     private var statusDot: some View {
-        Circle()
-            .fill((app.isRecording || app.dictation.state.isRecording) ? Color.red : Color.secondary.opacity(0.4))
-            .frame(width: 11, height: 11)
-            .overlay {
-                if app.isRecording || app.dictation.state.isRecording {
-                    Circle()
-                        .stroke(Color.red.opacity(0.55), lineWidth: 3)
-                        .scaleEffect(pulse ? 2.4 : 1)
-                        .opacity(pulse ? 0 : 0.7)
-                        .animation(.easeOut(duration: 1.2).repeatForever(autoreverses: false),
-                                   value: pulse)
-                }
-            }
+        let live = app.isRecording || app.dictation.state.isRecording
+        return StatusDot(color: live ? Brand.recording : Color.secondary.opacity(0.4),
+                         size: 11, pulses: live)
     }
 
     private var statusTitle: String {

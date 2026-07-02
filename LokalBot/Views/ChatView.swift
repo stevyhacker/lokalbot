@@ -56,13 +56,12 @@ private struct ChatContent: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 40)).foregroundStyle(.tint)
-            Text("Chat with your meetings").font(.title2.bold())
+        ContentUnavailableView {
+            Label("Chat with your meetings", systemImage: "bubble.left.and.bubble.right")
+        } description: {
             Text("Ask about anything from your recorded meetings — decisions, action items, who said what. Everything stays on this Mac.")
-                .font(.callout).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center).frame(maxWidth: 380)
+                .frame(maxWidth: 380)
+        } actions: {
             VStack(spacing: 8) {
                 ForEach(model.suggestions, id: \.self) { suggestion in
                     Button { model.send(suggestion) } label: {
@@ -73,15 +72,14 @@ private struct ChatContent: View {
                         }
                         .padding(.horizontal, 12).padding(.vertical, 9)
                         .frame(maxWidth: 400)
-                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 9))
+                        .background(.quaternary.opacity(0.5),
+                                    in: RoundedRectangle(cornerRadius: Brand.Radius.control))
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(.top, 4)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
         .accessibilityIdentifier("chat.empty")
     }
 
@@ -146,11 +144,11 @@ private struct ChatBubble: View {
                 .textSelection(.enabled)
                 .foregroundStyle(.white)
                 .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(.tint, in: RoundedRectangle(cornerRadius: 12))
+                .background(.tint, in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
         } else if message.isPending && message.text.isEmpty {
             TypingIndicator()
                 .padding(.horizontal, 12).padding(.vertical, 11)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
         } else {
             MarkdownText(message.text)
                 .textSelection(.enabled)
@@ -159,7 +157,7 @@ private struct ChatBubble: View {
                 .background(message.isError
                             ? AnyShapeStyle(Color.red.opacity(0.08))
                             : AnyShapeStyle(.quaternary.opacity(0.5)),
-                            in: RoundedRectangle(cornerRadius: 12))
+                            in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
         }
     }
 }
@@ -176,8 +174,7 @@ private struct ActivityRow: View {
             }
             Text(activity.text).font(.caption).foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(.quaternary.opacity(0.4), in: Capsule())
+        .chipChrome()
     }
 }
 
@@ -223,7 +220,7 @@ private struct ConversationListContent: View {
                     }
             }
         }
-        .navigationTitle("Chats")
+        .navigationTitle("Conversations")
         .toolbar {
             ToolbarItem {
                 Button { model.newConversation() } label: {

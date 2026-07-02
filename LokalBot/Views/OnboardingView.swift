@@ -362,7 +362,7 @@ private extension OnboardingView {
 
     var relaunchCard: some View {
         HStack(spacing: 12) {
-            OnboardingIconTile(systemImage: "arrow.triangle.2.circlepath", tint: .orange, size: 34)
+            IconTile(systemImage: "arrow.triangle.2.circlepath", tint: .orange, size: 34)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Relaunch after granting access")
@@ -406,7 +406,7 @@ private struct LokalBotHeroDemo: View {
             .opacity(0.85)
 
             HStack(alignment: .center, spacing: 14) {
-                OnboardingIconTile(
+                IconTile(
                     systemImage: phase == 0 ? "waveform" : phase == 1 ? "doc.text.viewfinder" : "bubble.left.and.text.bubble.right.fill",
                     tint: phase == 0 ? Brand.teal : phase == 1 ? .indigo : .orange,
                     size: 42
@@ -472,7 +472,7 @@ private struct PermissionSetupCard: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            OnboardingIconTile(systemImage: permission.systemImageName, tint: tileTint)
+            IconTile(systemImage: permission.systemImageName, tint: tileTint)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
@@ -543,7 +543,7 @@ private struct TimelineCard: View {
     var body: some View {
         HStack(spacing: 14) {
             ZStack {
-                OnboardingIconTile(systemImage: systemImage, tint: tint, size: 42)
+                IconTile(systemImage: systemImage, tint: tint, size: 42)
                 Text(number)
                     .font(.system(size: 10, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
@@ -575,7 +575,7 @@ private struct PrivacyCard: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            OnboardingIconTile(systemImage: systemImage, tint: tint, size: 40)
+            IconTile(systemImage: systemImage, tint: tint, size: 40)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
@@ -639,31 +639,6 @@ private struct OnboardingBackdrop: View {
     }
 }
 
-private struct OnboardingIconTile: View {
-    let systemImage: String
-    let tint: Color
-    var size: CGFloat = 36
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [tint.opacity(0.84), tint],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .shadow(color: tint.opacity(0.32), radius: size * 0.14, y: size * 0.06)
-
-            Image(systemName: systemImage)
-                .font(.system(size: size * 0.46, weight: .semibold))
-                .foregroundStyle(.white)
-        }
-        .frame(width: size, height: size)
-    }
-}
-
 private struct OnboardingStepHeader: View {
     var systemImage: String?
     var tint: Color = Brand.teal
@@ -673,7 +648,7 @@ private struct OnboardingStepHeader: View {
     var body: some View {
         VStack(spacing: 10) {
             if let systemImage {
-                OnboardingIconTile(systemImage: systemImage, tint: tint, size: 44)
+                IconTile(systemImage: systemImage, tint: tint, size: 44)
                     .padding(.bottom, 4)
             }
 

@@ -1,8 +1,10 @@
 import XCTest
 
-/// End-to-end UI coverage for the Cotyping settings surface added across the
-/// feature batches (emoji, macros, per-domain disable, host font/color match,
-/// mirror render mode, clipboard context, paste insertion, quality metrics).
+/// End-to-end UI coverage for the Cotyping configuration surface, which lives
+/// in the sidebar Cotyping section (its single home — app Settings no longer
+/// duplicates it). Everyday controls (extras, privacy exclusions) render as
+/// soon as cotyping is enabled; the long tail sits behind a
+/// "Show advanced options…" button.
 ///
 /// Like `MainWindowUITests`, this drives the dedicated UI-test host
 /// out-of-process against a synthetic library with `LOKALBOT_UI_TEST=1`, so
@@ -11,9 +13,8 @@ import XCTest
 /// macOS SwiftUI Form `Toggle`/`TextField` elements expose EMPTY accessibility
 /// labels — the visible text is a sibling `staticText`. So controls are matched
 /// by their label `staticText` (value/label CONTAINS), and the master toggle is
-/// driven as the lone `switch` left after the settings search isolates the
-/// Cotyping section. `cotypingEnabled` defaults off, so the sub-controls only
-/// render once that toggle is flipped on.
+/// driven as the FIRST `switch` in the form (the header's "Enable cotyping" —
+/// `cotypingEnabled` defaults off, so it is the lone switch until flipped on).
 final class CotypingSettingsUITests: XCTestCase {
 
     private var app: XCUIApplication!
@@ -28,9 +29,9 @@ final class CotypingSettingsUITests: XCTestCase {
         defaultsSuiteName = launch.defaultsSuiteName
         XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 10),
                       "main window never rendered")
-        clickSidebar("sidebar.settings")
-        XCTAssertTrue(app.descendants(matching: .any)["settings.form"].waitForExistence(timeout: 8),
-                      "settings pane did not render")
+        UITestHarness.clickSidebar("sidebar.cotyping", in: app)
+        XCTAssertTrue(app.descendants(matching: .any)["cotyping.form"].waitForExistence(timeout: 8),
+                      "cotyping pane did not render")
     }
 
     override func tearDownWithError() throws {
@@ -41,48 +42,39 @@ final class CotypingSettingsUITests: XCTestCase {
 
     // MARK: - Helpers
 
-    /// Clicks a sidebar row by identifier using a typed, hittable matcher —
-    /// `descendants(.any)[id]` can resolve to a container (e.g. a ScrollView) the
-    /// identifier propagated to, which is not clickable.
-    private func clickSidebar(_ id: String) {
-        for query in [app.buttons, app.cells, app.staticTexts] where query[id].waitForExistence(timeout: 3) {
-            let el = query[id]
-            if el.isHittable { el.click(); return }
-        }
-        let any = app.descendants(matching: .any)[id]
-        XCTAssertTrue(any.waitForExistence(timeout: 4), "sidebar item \(id) not found")
-        any.click()
-    }
-
-    /// First `staticText` whose visible text contains `fragment`. SwiftUI routes
-    /// `Text` content through AXValue (not AXLabel), so match both, case-insensitively.
-    private func staticText(containing fragment: String) -> XCUIElement {
-        app.staticTexts.matching(
-            NSPredicate(format: "value CONTAINS[c] %@ OR label CONTAINS[c] %@", fragment, fragment))
-            .firstMatch
-    }
-
-    /// Types `query` into the settings search (the first text field in the form),
-    /// filtering the form down to the Cotyping section so its controls land
-    /// on-screen and the master toggle is the only `switch` left.
-    private func isolateCotyping() {
-        let search = app.textFields["settings.search"]
-        XCTAssertTrue(search.waitForExistence(timeout: 6), "settings search field missing")
-        let layoutDeadline = Date().addingTimeInterval(4)
-        while search.frame.width < 40, Date() < layoutDeadline { usleep(150_000) }
-        search.click()
-        search.typeText("cotyping")
-        XCTAssertTrue(staticText(containing: "Cotyping").waitForExistence(timeout: 4),
-                      "Cotyping section did not isolate")
-    }
-
-    /// The master toggle — the sole `switch` once the section is isolated.
+    /// The master toggle — the header "Enable cotyping" switch, first in the form.
     private var masterToggle: XCUIElement { app.switches.firstMatch }
 
     private func setMaster(on desired: Bool) {
         XCTAssertTrue(masterToggle.waitForExistence(timeout: 4), "cotyping master toggle missing")
+        scrollToTop()
         let isOn = "\(masterToggle.value ?? "0")" == "1"
         if isOn != desired { masterToggle.click() }
+    }
+
+    /// Scrolls the form so `element` becomes hittable (grouped Forms are lazy
+    /// lists — off-screen rows may be unhittable even when they exist).
+    private func scrollTo(_ element: XCUIElement, upward: Bool = false) {
+        let scrollArea = app.scrollViews.firstMatch.exists
+            ? app.scrollViews.firstMatch : app.groups.firstMatch
+        for _ in 0..<12 {
+            if element.exists && element.isHittable { return }
+            scrollArea.scroll(byDeltaX: 0, deltaY: upward ? 300 : -300)
+            usleep(120_000)
+        }
+    }
+
+    private func scrollToTop() {
+        let scrollArea = app.scrollViews.firstMatch
+        for _ in 0..<12 {
+            if masterToggle.exists && masterToggle.isHittable { return }
+            scrollArea.scroll(byDeltaX: 0, deltaY: 600)
+            usleep(120_000)
+        }
+    }
+
+    private func staticText(containing fragment: String) -> XCUIElement {
+        UITestHarness.staticText(containing: fragment, in: app)
     }
 
     // MARK: - Tests
@@ -90,35 +82,47 @@ final class CotypingSettingsUITests: XCTestCase {
     /// The Cotyping section and its master toggle render (the toggle shows even
     /// while cotyping is off — it is what gates the sub-controls).
     func testCotypingSectionAndMasterToggleRender() {
-        isolateCotyping()
         XCTAssertTrue(masterToggle.exists, "cotyping master toggle missing")
     }
 
-    /// Flipping the master toggle on reveals the controls added across the
-    /// feature batches.
+    /// Flipping the master toggle on reveals the everyday controls; the
+    /// "Show advanced options…" button then reveals the long tail.
     func testEnablingCotypingRevealsFeatureControls() {
-        isolateCotyping()
         setMaster(on: true)
 
-        let labels = [
-            "Emoji autocomplete",                // emoji batch
+        let everydayLabels = [
+            "Pause before suggesting",           // suggestions tuning
+            "Emoji autocomplete",                // extras
             "Macros (",                          // inline macros
+            "Never suggest in",                  // privacy exclusions
+            "Use the clipboard as context",      // clipboard context (privacy)
+        ]
+        for fragment in everydayLabels {
+            XCTAssertTrue(staticText(containing: fragment).waitForExistence(timeout: 5),
+                          "cotyping control missing after enabling: \(fragment)")
+        }
+
+        let advancedButton = app.buttons["Show advanced options…"]
+        XCTAssertTrue(advancedButton.waitForExistence(timeout: 5),
+                      "advanced options gate missing")
+        scrollTo(advancedButton)
+        advancedButton.click()
+
+        let advancedLabels = [
             "Match the app",                     // host font/color match
             "Show suggestions",                  // mirror render-mode picker
-            "Use the clipboard as context",      // clipboard context
             "Paste large / multi-line accepts",  // insertion strategy (paste)
             "Suggestions generated",             // quality metrics
         ]
-        for fragment in labels {
+        for fragment in advancedLabels {
             XCTAssertTrue(staticText(containing: fragment).waitForExistence(timeout: 5),
-                          "cotyping control missing after enabling: \(fragment)")
+                          "advanced cotyping control missing: \(fragment)")
         }
     }
 
     /// Toggling cotyping back off hides the gated sub-controls — confirms the
     /// `if cotypingEnabled` gating round-trips through the bound setting.
     func testDisablingCotypingHidesSubControls() {
-        isolateCotyping()
         setMaster(on: true)
         XCTAssertTrue(staticText(containing: "Use the clipboard as context").waitForExistence(timeout: 5),
                       "clipboard toggle should be visible while enabled")

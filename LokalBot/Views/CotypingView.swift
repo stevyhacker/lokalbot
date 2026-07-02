@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// The Cotyping section: enable + permission control center, model info, a live
-/// in-app preview (runs the real pipeline with no system grants), and tips.
+/// The Cotyping section — the feature's single home: enable + permissions,
+/// a live in-app preview (runs the real pipeline with no system grants),
+/// model choice, everyday tuning, privacy exclusions, and an advanced layer
+/// for the long tail of behavior knobs.
 struct CotypingView: View {
     @EnvironmentObject var app: AppState
 
@@ -16,6 +18,7 @@ private struct CotypingContent: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var coordinator: CotypingCoordinator
     @StateObject private var permissions = PermissionManager.shared
+    @ObservedObject private var stats = CotypingStatsStore.shared
 
     @State private var previewText = "Hi Sarah, thanks for the update. I wanted to follow"
     @State private var ghost = ""
@@ -24,18 +27,33 @@ private struct CotypingContent: View {
     @State private var previewTask: Task<Void, Never>?
     @State private var benchmarkSummary: CotypingBenchmarkSummary?
     @State private var benchmarkRunning = false
+    @State private var showAdvanced = false
 
     var body: some View {
         Form {
             headerSection
             if app.settings.cotypingEnabled { permissionsSection }
-            modelSection
             previewSection
+            modelSection
+            if app.settings.cotypingEnabled {
+                suggestionsSection
+                personalizeSection
+                extrasSection
+                privacySection
+                advancedGateSection
+                if showAdvanced {
+                    generationSection
+                    renderingSection
+                    acceptSection
+                    activitySection
+                }
+            }
             benchmarkSection
             tipsSection
         }
         .formStyle(.grouped)
         .frame(minWidth: 460)
+        .accessibilityIdentifier("cotyping.form")
         .onAppear { permissions.startPolling() }
         .onDisappear { permissions.stopPolling(); previewTask?.cancel() }
         .onChange(of: permissions.granted) { _, _ in
@@ -65,7 +83,7 @@ private struct CotypingContent: View {
 
     private var statusRow: some View {
         HStack(spacing: 8) {
-            Circle().fill(statusColor).frame(width: 8, height: 8)
+            StatusDot(color: statusColor)
             Text(statusText).foregroundStyle(.secondary).font(.callout)
             Spacer()
         }
@@ -93,9 +111,9 @@ private struct CotypingContent: View {
 
     private var permissionsSection: some View {
         Section("Permissions") {
-            permissionRow(.accessibility,
+            PermissionRow(permission: .accessibility,
                           why: "Reads the text and caret position in the field you're typing in.")
-            permissionRow(.inputMonitoring,
+            PermissionRow(permission: .inputMonitoring,
                           why: "Notices your keystrokes so it knows when to suggest, and catches the Tab key.")
             if !(permissions.granted[.accessibility] ?? false) {
                 Text("Accessibility grants apply at launch — you may need to quit and reopen LokalBot after granting.")
@@ -104,47 +122,193 @@ private struct CotypingContent: View {
         }
     }
 
-    private func permissionRow(_ permission: AppPermission, why: String) -> some View {
-        let granted = permissions.granted[permission] ?? permission.isGranted
-        return HStack(alignment: .top, spacing: 10) {
-            Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.circle")
-                .foregroundStyle(granted ? .green : .orange)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(permission.title)
-                Text(why).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            if !granted {
-                Button("Grant…") {
-                    PermissionManager.shared.request(permission)
-                    PermissionManager.shared.openSettings(for: permission)
-                }
-            }
-        }
-    }
-
     // MARK: Model
 
     private var modelSection: some View {
         Section("Model") {
-            LabeledContent("Engine") {
-                Text(engineDescription).foregroundStyle(.secondary)
+            Picker("Cotyping model", selection: $app.settings.cotypingBuiltInModelID) {
+                ForEach(ModelCatalog.selectableEntries(custom: app.settings.customBuiltInModels)) { entry in
+                    Text(entry.displayName).tag(entry.id)
+                }
             }
-            Text(modelDetail)
+            Text("Cotyping runs its own dedicated model, separate from summarization. Gemma 4 · E4B is the recommended quality target; Qwen 3.5 2B and LFM2.5 1.2B are smaller latency options.")
                 .font(.caption).foregroundStyle(.secondary)
             CotypingModelPreparationView(compact: true)
         }
     }
 
-    private var engineDescription: String {
-        let entry = ModelCatalog.entry(
-            id: app.settings.cotypingBuiltInModelID,
-            custom: app.settings.customBuiltInModels)
-        return "Dedicated — \(entry?.displayName ?? "catalog model")"
+    // MARK: Everyday tuning
+
+    private var suggestionsSection: some View {
+        Section("Suggestions") {
+            LabeledContent("Pause before suggesting") {
+                Text("\(app.settings.cotypingDebounceMs) ms").foregroundStyle(.secondary)
+            }
+            Slider(value: Binding(
+                get: { Double(app.settings.cotypingDebounceMs) },
+                set: { app.settings.cotypingDebounceMs = Int($0) }),
+                in: 20...1000, step: 20)
+            Stepper("Suggestion length: up to \(app.settings.cotypingMaxWords) words",
+                    value: $app.settings.cotypingMaxWords, in: 2...50)
+            Toggle("Allow multi-line suggestions", isOn: $app.settings.cotypingMultiLine)
+        }
     }
 
-    private var modelDetail: String {
-        "Cotyping runs on its own llama.cpp runtime, separate from summarization. Gemma 4 · E4B is the recommended quality target."
+    private var personalizeSection: some View {
+        Section("Personalize") {
+            TextField("Your name (optional — tunes the voice)", text: $app.settings.cotypingUserName)
+            TextField("Writing style (optional, e.g. \u{201c}concise, British spelling\u{201d})", text: $app.settings.cotypingStyleNote)
+            TextField("Languages you write in (optional, e.g. \u{201c}English, German\u{201d})",
+                      text: $app.settings.cotypingLanguages)
+            TextField("Notes / glossary (optional — names, jargon, style)",
+                      text: $app.settings.cotypingExtendedContext, axis: .vertical)
+                .lineLimit(1...3)
+        }
+    }
+
+    private var extrasSection: some View {
+        Section("Extras") {
+            Toggle("Autocorrect the word you're typing", isOn: $app.settings.cotypingAutocorrect)
+            Text("Spots a misspelled word and offers the fix inline — Tab swaps it. Uses the macOS spell checker (on-device); never touches code, URLs, or numbers.")
+                .font(.caption).foregroundStyle(.secondary)
+            Toggle("Emoji autocomplete (\u{201c}:rocket:\u{201d} \u{2192} \u{1f680})", isOn: $app.settings.cotypingEmoji)
+            Toggle("Macros (\u{201c}/5+5\u{201d}, \u{201c}/today\u{201d}, \u{201c}/10km->mi\u{201d})", isOn: $app.settings.cotypingMacros)
+            Text("Type \u{201c}/\u{201d} then an expression — math, dates, unit/currency conversion, or random — and the result shows inline. Accept to swap it in.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var privacySection: some View {
+        Section("Privacy & exclusions") {
+            TextField("Never suggest in (app names, comma-separated)",
+                      text: $app.settings.cotypingExcludedApps)
+            Text("Cotyping never runs in password fields. Add apps (or terminals) here to exclude them too.")
+                .font(.caption).foregroundStyle(.secondary)
+            TextField("Never suggest on (websites, comma-separated)",
+                      text: $app.settings.cotypingExcludedDomains)
+            Text("Block cotyping on specific sites (e.g. \u{201c}bank.com\u{201d}). Subdomains included; read locally via Accessibility in browsers.")
+                .font(.caption).foregroundStyle(.secondary)
+            Toggle("Suggest in integrated terminals", isOn: $app.settings.cotypingSuggestInIntegratedTerminals)
+            Text("Allows VS Code, Cursor, and browser xterm.js terminals. Standalone terminal apps stay off because shell completions conflict with ghost text.")
+                .font(.caption).foregroundStyle(.secondary)
+            Toggle("Use the clipboard as context", isOn: $app.settings.cotypingUseClipboard)
+            Text("Folds what you just copied into the prompt so suggestions can build on it. Read fresh each time and never stored. Off by default — turn on only if you want the model to see your clipboard.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Advanced
+
+    private var advancedGateSection: some View {
+        Section {
+            Button(showAdvanced ? "Hide advanced options" : "Show advanced options…") {
+                withAnimation { showAdvanced.toggle() }
+            }
+        }
+    }
+
+    private var generationSection: some View {
+        Section("Generation") {
+            Toggle("Stream suggestions while generating", isOn: $app.settings.cotypingStreamSuggestionsWhileGenerating)
+            Text("When off, suggestions appear once fully formed, matching Cotypist's default. Turn on to show token-by-token partials sooner.")
+                .font(.caption).foregroundStyle(.secondary)
+            Toggle("Use the fast in-process runtime (recommended)", isOn: $app.settings.cotypingInProcessRuntime)
+                .disabled(!CotypingEngineSelector.isAppleSilicon)
+            Text("Decodes the built-in model in-process for lower latency. Turn off to use the background llama-server. Non-built-in backends always use the server. Requires Apple Silicon.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle("Learn from accepted completions", isOn: $app.settings.cotypingUseLocalLearning)
+            if app.settings.cotypingUseLocalLearning {
+                Stepper("Use \(app.settings.cotypingLearningExamplesInPrompt) learned examples",
+                        value: $app.settings.cotypingLearningExamplesInPrompt, in: 1...5)
+                CotypingLearningControls(store: app.cotypingLearning)
+            }
+        }
+    }
+
+    private var renderingSection: some View {
+        Section("Rendering") {
+            Toggle("Use app & window context", isOn: $app.settings.cotypingUseAppContext)
+            Text("Conditions suggestions on the focused app and its window title (email subject, chat channel, page title) for sharper, on-topic completions. Read locally via Accessibility; skipped in code editors and terminals.")
+                .font(.caption).foregroundStyle(.secondary)
+            Toggle("Match the app\u{2019}s font and text color", isOn: $app.settings.cotypingMatchHostStyle)
+            Text("Ghost text mimics the field you\u{2019}re typing in (font family and a dimmed version of its text color) instead of a fixed style. Read locally via Accessibility; cached per field.")
+                .font(.caption).foregroundStyle(.secondary)
+            Toggle("Show accept-key badge", isOn: $app.settings.cotypingShowAcceptKeyHint)
+            Text("Shows the current accept key beside the suggestion so the cue stays correct when you rebind it.")
+                .font(.caption).foregroundStyle(.secondary)
+            Toggle("Fade in new suggestions", isOn: $app.settings.cotypingFadeInSuggestions)
+            Text("Only first appearances fade; updates and accepted-word reanchors stay steady. Follows the system Reduce Motion setting.")
+                .font(.caption).foregroundStyle(.secondary)
+            if app.settings.cotypingFadeInSuggestions {
+                LabeledContent("Fade duration") {
+                    Text(String(format: "%.2f s", app.settings.cotypingFadeInDurationSeconds))
+                        .foregroundStyle(.secondary)
+                }
+                Slider(value: Binding(
+                    get: { app.settings.cotypingFadeInDurationSeconds },
+                    set: {
+                        app.settings.cotypingFadeInDurationSeconds =
+                            AppSettings.clampedCotypingFadeInDurationSeconds($0)
+                    }),
+                    in: AppSettings.minimumCotypingFadeInDurationSeconds...AppSettings.maximumCotypingFadeInDurationSeconds,
+                    step: 0.05)
+            }
+            Picker("Show suggestions", selection: $app.settings.cotypingMirrorPreference) {
+                ForEach(CotypingMirrorPreference.allCases) { Text($0.label).tag($0) }
+            }
+            Text("\u{201c}Automatic\u{201d} draws ghost text inline at the caret, but falls back to a popup below the caret when its geometry is unreliable or the caret is mid-line.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var acceptSection: some View {
+        Section("Accept & insert") {
+            Picker("Accept next", selection: $app.settings.cotypingAcceptKey) {
+                ForEach(CotypingAcceptKey.allCases) { Text($0.label).tag($0) }
+            }
+            Picker("Each accept takes", selection: $app.settings.cotypingAcceptGranularity) {
+                ForEach(CotypingAcceptGranularity.allCases) { Text($0.label).tag($0) }
+            }
+            Picker("Accept whole suggestion", selection: $app.settings.cotypingFullAcceptKey) {
+                ForEach(CotypingFullAcceptKey.allCases) { Text($0.label).tag($0) }
+            }
+            Toggle("Accept trailing punctuation with words",
+                   isOn: $app.settings.cotypingAutoAcceptTrailingPunctuation)
+            Toggle("Add space after accepting words",
+                   isOn: $app.settings.cotypingAddSpaceAfterAccept)
+            Toggle("Paste large / multi-line accepts", isOn: $app.settings.cotypingPasteInsertion)
+            Text("Commits big, multi-line, or composing-IME suggestions via paste instead of synthetic keystrokes. Briefly uses the clipboard, then restores it.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var activitySection: some View {
+        Section("Activity") {
+            LabeledContent("Suggestions generated") {
+                Text("\(stats.stats.generations)").foregroundStyle(.secondary)
+            }
+            LabeledContent("Accepted") {
+                Text("\(stats.stats.accepts)  (\(String(format: "%.2f", stats.stats.acceptsPerGeneration))/gen)").foregroundStyle(.secondary)
+            }
+            LabeledContent("Characters inserted") {
+                Text("\(stats.stats.charsAccepted)").foregroundStyle(.secondary)
+            }
+            if stats.stats.errors > 0 {
+                LabeledContent("Failed generations") {
+                    Text("\(stats.stats.errors)").foregroundStyle(.secondary)
+                }
+            }
+            if let avg = stats.stats.avgLatencyMs {
+                LabeledContent("Generation latency") {
+                    Text("avg \(avg) ms · p95 \(stats.stats.p95LatencyMs ?? avg) · max \(stats.stats.maxLatencyMs ?? avg)").foregroundStyle(.secondary)
+                }
+            }
+            if stats.stats != CotypingStats() {
+                Button("Reset cotyping stats", role: .destructive) { stats.clear() }
+                    .font(.caption)
+            }
+        }
     }
 
     // MARK: Preview
@@ -291,7 +455,7 @@ private struct CotypingContent: View {
         Section("How it works") {
             tip("keyboard", "Type and pause — a suggestion appears next to your cursor.")
             tip("return", "Press Tab to accept, Esc or keep typing to dismiss.")
-            tip("hand.raised", "Never runs in password fields, and skips the apps you exclude in Settings → Cotyping.")
+            tip("hand.raised", "Never runs in password fields, and skips the apps and sites you exclude above.")
             tip("lock.shield", "Suggestions are generated on-device by your local model. Nothing is sent anywhere.")
         }
     }
@@ -301,6 +465,22 @@ private struct CotypingContent: View {
             Text(text).font(.callout).foregroundStyle(.secondary)
         } icon: {
             Image(systemName: icon).foregroundStyle(.tint)
+        }
+    }
+}
+
+private struct CotypingLearningControls: View {
+    @ObservedObject var store: CotypingLearningStore
+
+    var body: some View {
+        LabeledContent("Learned examples") {
+            Text("\(store.exampleCount)").foregroundStyle(.secondary)
+        }
+        if store.exampleCount > 0 {
+            Button("Delete learned writing data", role: .destructive) {
+                store.clear()
+            }
+            .font(.caption)
         }
     }
 }

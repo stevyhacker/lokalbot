@@ -69,7 +69,7 @@ struct CommandPaletteView: View {
             }),
             .init(id: "nav.meetings", icon: "waveform.circle", title: "Go to Meetings",
                   subtitle: "Library", action: { app.navSection = .meetings }),
-            .init(id: "nav.chat", icon: "bubble.left.and.bubble.right", title: "Go to Chat",
+            .init(id: "nav.chat", icon: "bubble.left.and.bubble.right", title: "Go to Assistant",
                   subtitle: "Library", action: { app.navSection = .chat }),
             .init(id: "nav.timeline", icon: "calendar.day.timeline.left", title: "Go to Timeline",
                   subtitle: "Library", action: { app.navSection = .timeline }),

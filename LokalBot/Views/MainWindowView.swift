@@ -21,6 +21,15 @@ struct MainWindowView: View {
             Text("This permanently deletes the audio, transcript and summary files.")
         }
         .toolbar {
+            ToolbarItem {
+                Button {
+                    openWindow(id: "palette")
+                } label: {
+                    Label("Commands", systemImage: "command")
+                }
+                .help("Command palette (⌘K)")
+                .accessibilityIdentifier("toolbar.palette")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     app.isRecording
@@ -37,16 +46,7 @@ struct MainWindowView: View {
         .background(WindowToolbarStyle())
         .overlay(alignment: .bottom) {
             if let error = app.lastError {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text(error).font(.callout).lineLimit(2)
-                    Button { app.lastError = nil } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain).foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 14).padding(.vertical, 9)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.orange.opacity(0.4)))
-                .padding(12)
+                ErrorToast(message: error) { app.lastError = nil }
             }
         }
         .overlay(alignment: .top) {
@@ -114,7 +114,7 @@ struct MainWindowView: View {
             NavigationSplitView {
                 sidebar
             } detail: {
-                SettingsAndPermissionsView()
+                SettingsView()
             }
         } else if app.navSection == .search {
             NavigationSplitView {
@@ -139,7 +139,7 @@ struct MainWindowView: View {
                 Label("Meetings", systemImage: "waveform.circle")
                     .tag(AppState.NavSection.meetings)
                     .accessibilityIdentifier("sidebar.meetings")
-                Label("Chat", systemImage: "bubble.left.and.bubble.right")
+                Label("Assistant", systemImage: "bubble.left.and.bubble.right")
                     .tag(AppState.NavSection.chat)
                     .accessibilityIdentifier("sidebar.chat")
                 Label("Timeline", systemImage: "calendar.day.timeline.left")
@@ -217,7 +217,7 @@ struct MainWindowView: View {
                             : meeting.durationLabel
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                if live { Circle().fill(.red).frame(width: 9, height: 9) }
+                if live { StatusDot(color: Brand.recording, size: 9) }
                 Text(meeting.title).font(.headline)
             }
             Text("\(meeting.appName) · \(time) · \(duration)")
@@ -246,7 +246,7 @@ struct MainWindowView: View {
         .overlay(alignment: .topTrailing) {
             if app.isRecording {
                 HStack(spacing: 5) {
-                    Circle().fill(.red).frame(width: 7, height: 7)
+                    StatusDot(color: Brand.recording, size: 7)
                     Text("recording…").font(.caption)
                 }
                 .padding(.horizontal, 9).padding(.vertical, 4)
@@ -266,23 +266,6 @@ struct MainWindowView: View {
         }
         .navigationSplitViewColumnWidth(min: 240, ideal: 280)
         .navigationTitle("Meetings")
-    }
-}
-
-private struct SettingsAndPermissionsView: View {
-    var body: some View {
-        HSplitView {
-            SettingsView()
-                .frame(minWidth: 460, idealWidth: 560, maxWidth: .infinity)
-
-            ScrollView {
-                OnboardingView(mode: .permissions)
-                    .padding(.vertical, 12)
-            }
-            .frame(minWidth: 360, idealWidth: 430, maxWidth: .infinity)
-            .accessibilityIdentifier("settings.permissions")
-        }
-        .navigationTitle("Settings")
     }
 }
 
@@ -312,11 +295,11 @@ struct MeetingDetailView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(meeting.title).font(.title2.bold()).accessibilityIdentifier("detail.title")
             HStack(spacing: 6) {
-                metaBadge("calendar", meeting.startedAt.formatted(date: .abbreviated, time: .shortened))
-                metaBadge("clock", meeting.durationLabel)
-                metaBadge("video", meeting.appName)
-                metaBadge(meeting.hasSystemTrack ? "speaker.wave.2.fill" : "mic.fill",
-                          meeting.hasSystemTrack ? "Mic + system" : "Mic only")
+                BrandChip(icon: "calendar", text: meeting.startedAt.formatted(date: .abbreviated, time: .shortened))
+                BrandChip(icon: "clock", text: meeting.durationLabel)
+                BrandChip(icon: "video", text: meeting.appName)
+                BrandChip(icon: meeting.hasSystemTrack ? "speaker.wave.2.fill" : "mic.fill",
+                          text: meeting.hasSystemTrack ? "Mic + system" : "Mic only")
             }
 
             if player.isLoaded { playerBar }
@@ -678,15 +661,6 @@ struct MeetingDetailView: View {
         }
     }
 
-    private func metaBadge(_ systemImage: String, _ text: String) -> some View {
-        Label(text, systemImage: systemImage)
-            .labelStyle(.titleAndIcon)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 9).padding(.vertical, 4)
-            .background(.quaternary, in: Capsule())
-    }
-
     struct SpeakerRenameDraft: Identifiable {
         let speaker: String
         let defaultName: String
@@ -833,16 +807,20 @@ struct GettingStartedCard: View {
     @EnvironmentObject var app: AppState
     @AppStorage("lokalbotv3.gettingStartedDismissed") private var dismissed = false
 
+    // First-checklist-item state: front-load the transcription model download
+    // so it doesn't ambush the user's first recap.
+    @State private var modelDownloaded = false
+    @State private var preparingModel = false
+    @State private var modelProgress: Double?
+    @State private var modelStatus: String?
+    @State private var modelError: String?
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(spacing: 14) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 14).fill(Brand.gradient)
-                            .frame(width: 48, height: 48)
-                        Image(systemName: "waveform.badge.magnifyingglass")
-                            .font(.system(size: 22)).foregroundStyle(.white)
-                    }
+                    IconTile(systemImage: "waveform.badge.magnifyingglass",
+                             tint: Brand.teal, size: 48)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Welcome to LokalBot").font(.title2.bold())
                         Text("Record meetings, get the recap, and search everything — all on-device.")
@@ -870,6 +848,9 @@ struct GettingStartedCard: View {
 
                 Text("Get started").font(.headline)
                 VStack(alignment: .leading, spacing: 10) {
+                    stepRow(done: modelDownloaded ? true : nil) {
+                        modelStep
+                    }
                     stepRow(done: app.isRecording || !app.meetings.isEmpty) {
                         Text("Record a meeting — it appears in the list automatically.")
                     }
@@ -889,7 +870,7 @@ struct GettingStartedCard: View {
                     }
                 }
                 .padding(14)
-                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
+                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
 
                 Text("Tip: press ⌘K anywhere to record, navigate, or jump to a meeting.")
                     .font(.caption).foregroundStyle(.tertiary)
@@ -897,6 +878,55 @@ struct GettingStartedCard: View {
             .padding(24)
             .frame(maxWidth: 560, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .onAppear {
+            modelDownloaded = TranscriptionModelStore.downloadedChoices()
+                .contains(app.settings.transcriptionModel.id)
+        }
+    }
+
+    /// Checklist item 1: get the transcription model onto disk before the
+    /// first recap needs it. `prepare` is idempotent, so racing a first
+    /// transcription is harmless.
+    @ViewBuilder private var modelStep: some View {
+        if modelDownloaded {
+            Text("Transcription model ready — recaps run entirely on-device.")
+        } else if preparingModel {
+            HStack(spacing: 8) {
+                ProgressView(value: modelProgress).frame(width: 160)
+                Text(modelStatus ?? "Downloading…")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Button("Download the transcription model") { downloadModel() }
+                        .buttonStyle(.bordered).controlSize(.small)
+                    Text("one-time — or it downloads with your first recap.")
+                }
+                if let modelError {
+                    Text(modelError).font(.caption).foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
+    private func downloadModel() {
+        guard !preparingModel else { return }
+        preparingModel = true
+        modelError = nil
+        let choice = app.settings.transcriptionModel
+        Task { @MainActor in
+            defer { preparingModel = false }
+            do {
+                try await choice.engine.prepare { update in
+                    modelProgress = update.fractionCompleted
+                    modelStatus = update.status
+                }
+                modelDownloaded = true
+            } catch {
+                modelError = error.localizedDescription
+            }
         }
     }
 
@@ -911,7 +941,7 @@ struct GettingStartedCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
     }
 
     /// `done`: nil = actionable (hollow circle), true/false = checkmark/number.

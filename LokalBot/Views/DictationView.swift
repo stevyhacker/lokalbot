@@ -104,9 +104,9 @@ struct DictationView: View {
 
     private var permissionsSection: some View {
         Section("Permissions") {
-            permissionRow(.microphone, why: "Records your voice for the current dictation.")
-            permissionRow(.inputMonitoring, why: "Detects the global dictation shortcut.")
-            permissionRow(.accessibility, why: "Pastes the transcript into the focused app.")
+            PermissionRow(permission: .microphone, why: "Records your voice for the current dictation.")
+            PermissionRow(permission: .inputMonitoring, why: "Detects the global dictation shortcut.")
+            PermissionRow(permission: .accessibility, why: "Pastes the transcript into the focused app.")
             if !app.dictation.isShortcutMonitoringActive {
                 Text("After granting Input Monitoring, quit and reopen LokalBot if the shortcut is still inactive.")
                     .font(.caption)
@@ -125,25 +125,6 @@ struct DictationView: View {
                 Text(engine)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func permissionRow(_ permission: AppPermission, why: String) -> some View {
-        let granted = permissions.granted[permission] ?? permission.isGranted
-        return HStack(alignment: .top, spacing: 10) {
-            Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.circle")
-                .foregroundStyle(granted ? .green : .orange)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(permission.title)
-                Text(why).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            if !granted {
-                Button("Grant…") {
-                    PermissionManager.shared.request(permission)
-                    PermissionManager.shared.openSettings(for: permission)
-                }
             }
         }
     }

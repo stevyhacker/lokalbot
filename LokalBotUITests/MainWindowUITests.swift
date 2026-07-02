@@ -63,8 +63,8 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["settings.form"]
             .waitForExistence(timeout: 6),
                       "settings pane did not render")
-        XCTAssertTrue(app.descendants(matching: .any)["settings.permissions"].exists,
-                      "permission repair pane missing from Settings")
+        XCTAssertTrue(app.buttons["Relaunch"].waitForExistence(timeout: 4),
+                      "permissions section missing from Settings")
 
         clickSidebar("sidebar.meetings")
         XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 4),
