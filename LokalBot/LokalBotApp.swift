@@ -112,14 +112,17 @@ struct LokalBotApp: App {
 final class AppState: ObservableObject {
 
     enum NavSection: Hashable {
-        case meetings, timeline, dictation, cotyping, chat, search, models, settings
-#if LOKALBOT_UI_TEST_HOST
+        case meetings, timeline, dictation, cotyping, type, chat, search, models, settings
+
+        /// Section names accepted from the UI-test capture environment and
+        /// deep links. Legacy pre-merge names keep working: "dictation" and
+        /// "cotyping" land on the merged Type section (spec §2.1) — pair with
+        /// `TypeTab(captureName:)` to preselect the matching tab.
         init?(captureName: String) {
             switch captureName.lowercased() {
             case "meetings": self = .meetings
             case "timeline": self = .timeline
-            case "dictation": self = .dictation
-            case "cotyping": self = .cotyping
+            case "type", "dictation", "cotyping": self = .type
             case "chat": self = .chat
             case "search": self = .search
             case "models": self = .models
@@ -127,7 +130,22 @@ final class AppState: ObservableObject {
             default: return nil
             }
         }
-#endif
+    }
+
+    /// Which tool the Type section shows. Session-sticky: preserved while
+    /// navigating away so returning lands on the last-used tab.
+    enum TypeTab: String, CaseIterable {
+        case dictation, cotyping
+
+        /// Legacy capture names select their tab; anything else leaves the
+        /// current tab untouched.
+        init?(captureName: String) {
+            switch captureName.lowercased() {
+            case "dictation": self = .dictation
+            case "cotyping": self = .cotyping
+            default: return nil
+            }
+        }
     }
 
     /// True when launched by an XCUITest harness — gates the side-effectful
@@ -166,8 +184,15 @@ final class AppState: ObservableObject {
     // Navigation (main window): sidebar section, selected meeting, and a
     // pending "jump to timestamp" handed from search to the detail player.
     @Published var navSection: NavSection = .meetings
+    @Published var typeTab: TypeTab = .dictation
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []
     @Published var pendingSeek: TimeInterval?
+
+    /// Navigate to the Type section with a specific tab preselected.
+    func openType(_ tab: TypeTab) {
+        typeTab = tab
+        navSection = .type
+    }
 
     /// The meeting shown in the detail pane (single selection only).
     var selectedMeeting: Meeting? {
