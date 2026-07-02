@@ -18,6 +18,8 @@ extension Brand {
         static let panel: CGFloat = 12
         /// Hero surfaces (getting-started card, onboarding cards).
         static let card: CGFloat = 14
+        /// Floating capsules (dictation HUD, banners, the recording pill).
+        static let hud: CGFloat = 20
     }
 }
 
@@ -141,5 +143,38 @@ struct IconTile: View {
                 .foregroundStyle(.white)
         }
         .frame(width: size, height: size)
+    }
+}
+
+// MARK: - Section header
+
+/// Uppercase caption header for list groupings (meeting-list day labels,
+/// menu-bar Recent, inspector headings) — one treatment everywhere.
+struct SectionHeader: View {
+    let text: String
+
+    var body: some View {
+        Text(text.uppercased())
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+    }
+}
+
+// MARK: - Stat tile
+
+/// Icon + value + label stat chip (timeline header stats, Type stats,
+/// Settings metrics). The value keeps monospaced digits so rows align.
+struct StatTile: View {
+    let icon: String
+    let value: String
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.callout.weight(.semibold).monospacedDigit())
+            Text(label).font(.caption).foregroundStyle(.secondary)
+        }
+        .chipChrome()
     }
 }

@@ -205,21 +205,15 @@ struct TimelineDayView: View {
             Calendar.current.isDate($0.startedAt, inSameDayAs: model.day)
         }.count
         return HStack(spacing: 8) {
-            stat("clock", TimelineStyle.hm(total), "tracked")
-            stat("square.grid.2x2", "\(apps)", apps == 1 ? "app" : "apps")
-            stat("camera.viewfinder", "\(model.shots.count)", "screens")
-            if meetings > 0 { stat("waveform", "\(meetings)", meetings == 1 ? "meeting" : "meetings") }
+            StatTile(icon: "clock", value: TimelineStyle.hm(total), label: "tracked")
+            StatTile(icon: "square.grid.2x2", value: "\(apps)", label: apps == 1 ? "app" : "apps")
+            StatTile(icon: "camera.viewfinder", value: "\(model.shots.count)", label: "screens")
+            if meetings > 0 {
+                StatTile(icon: "waveform", value: "\(meetings)",
+                         label: meetings == 1 ? "meeting" : "meetings")
+            }
             Spacer()
         }
-    }
-
-    private func stat(_ icon: String, _ value: String, _ label: String) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.callout.weight(.semibold).monospacedDigit())
-            Text(label).font(.caption).foregroundStyle(.secondary)
-        }
-        .chipChrome()
     }
 }
 

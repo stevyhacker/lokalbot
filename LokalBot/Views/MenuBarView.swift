@@ -201,7 +201,7 @@ struct MenuBarView: View {
 
     private var recentSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("RECENT").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+            SectionHeader(text: "Recent")
             if app.meetings.isEmpty {
                 Text("No meetings yet").font(.caption).foregroundStyle(.secondary)
             } else {

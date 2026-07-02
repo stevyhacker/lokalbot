@@ -242,8 +242,7 @@ struct MainWindowView: View {
                         meetingRow(meeting).tag(meeting.id)
                     }
                 } header: {
-                    Text(group.label).font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                    SectionHeader(text: group.label)
                 }
             }
         }

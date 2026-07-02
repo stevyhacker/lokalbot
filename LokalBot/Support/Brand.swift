@@ -19,6 +19,19 @@ enum Brand {
     /// "Them" speaker (system track) — other participants.
     static let them = Color(red: 0.49, green: 0.62, blue: 0.76)
 
+    /// The icon's dark plate, brought into the app for hero surfaces and
+    /// HUDs. Deliberately stays dark in both appearances — hero surfaces
+    /// read as "plated" like the icon, so content on slate must use fixed
+    /// light foregrounds (white / tealBright), never semantic label colors.
+    static let slate = Color(red: 0.059, green: 0.090, blue: 0.165)          // #0f172a
+    static let slateElevated = Color(red: 0.118, green: 0.161, blue: 0.231)  // #1e293b
+
+    /// Plate gradient for hero panels — elevated slate falling to slate,
+    /// echoing the icon's plate lighting.
+    static let plateGradient = LinearGradient(
+        colors: [slateElevated, slate],
+        startPoint: .topLeading, endPoint: .bottomTrailing)
+
     /// Vertical gradient used on hero surfaces (onboarding, empty states) to
     /// echo the icon body without leaning on the system accent.
     static let gradient = LinearGradient(
