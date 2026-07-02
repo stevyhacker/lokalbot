@@ -249,13 +249,13 @@ struct MainWindowView: View {
         .accessibilityIdentifier("meeting.list")
         .overlay(alignment: .topTrailing) {
             if app.isRecording {
-                HStack(spacing: 5) {
+                HStack(spacing: 6) {
                     StatusDot(color: Brand.recording, size: 7)
                     Text("recording…").font(.caption)
+                    LiveWaveform(barCount: 5, barWidth: 2.5, maxHeight: 10)
                 }
-                .padding(.horizontal, 9).padding(.vertical, 4)
-                .background(.background.opacity(0.9), in: Capsule())
-                .overlay(Capsule().strokeBorder(.quaternary))
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .hudCapsule()
                 .padding(10)
             }
         }

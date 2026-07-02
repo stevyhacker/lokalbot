@@ -40,10 +40,8 @@ struct AudioSourceBanner: View {
             .buttonStyle(.plain)
             .help("Don't ask for this app this session.")
         }
-        .padding(.horizontal, 12).padding(.vertical, 9)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.tint.opacity(0.35)))
-        .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
+        .padding(.horizontal, 14).padding(.vertical, 9)
+        .hudCapsule()
         .frame(maxWidth: 480)
     }
 }

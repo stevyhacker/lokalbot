@@ -74,10 +74,7 @@ struct DictationOverlayView: View {
             }
         }
         .frame(width: width, height: height)
-        .background(.background.opacity(0.98), in: RoundedRectangle(cornerRadius: radius))
-        .overlay(
-            RoundedRectangle(cornerRadius: radius)
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
+        .hudCapsule(radius: radius, shadowed: false)
         .animation(.snappy(duration: 0.28), value: dictation.state)
         .animation(.snappy(duration: 0.22), value: dictation.liveTranscript)
     }
