@@ -94,18 +94,6 @@ struct MainWindowView: View {
             } detail: {
                 TypeView()
             }
-        } else if app.navSection == .dictation {
-            NavigationSplitView {
-                sidebar
-            } detail: {
-                DictationView()
-            }
-        } else if app.navSection == .cotyping {
-            NavigationSplitView {
-                sidebar
-            } detail: {
-                CotypingView()
-            }
         } else if app.navSection == .chat {
             NavigationSplitView {
                 sidebar
@@ -161,12 +149,9 @@ struct MainWindowView: View {
                     .accessibilityIdentifier("sidebar.search")
             }
             Section("Automation") {
-                Label("Dictation", systemImage: "mic.badge.plus")
-                    .tag(AppState.NavSection.dictation)
-                    .accessibilityIdentifier("sidebar.dictation")
-                Label("Cotyping", systemImage: "text.cursor")
-                    .tag(AppState.NavSection.cotyping)
-                    .accessibilityIdentifier("sidebar.cotyping")
+                Label("Type", systemImage: "keyboard")
+                    .tag(AppState.NavSection.type)
+                    .accessibilityIdentifier("sidebar.type")
             }
             Section("Configure") {
                 Label("Models", systemImage: "brain")
@@ -876,7 +861,7 @@ struct GettingStartedCard: View {
                     }
                     stepRow(done: app.settings.cotypingEnabled ? true : nil) {
                         HStack(spacing: 8) {
-                            Button("Try cotyping") { app.navSection = .cotyping }
+                            Button("Try cotyping") { app.openType(.cotyping) }
                                 .buttonStyle(.bordered).controlSize(.small)
                             Text("— inline AI autocomplete that stays on your Mac.")
                         }
