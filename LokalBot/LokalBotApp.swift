@@ -1,33 +1,22 @@
 import SwiftUI
 import Combine
 import AVFoundation
-import LaunchAtLogin
 
-/// Whether this launch should come up menu-bar-only (accessory: no Dock icon,
-/// no window). Computed identically in the pre-launch entry point (to disable
-/// window restoration before AppKit reads the flag) and in the app delegate (to
-/// set the activation policy). "Established" = has seen onboarding OR already
-/// granted every permission, so upgrades that predate the onboarding flag still
-/// go menu-bar-only; only a genuinely-new user (and UI tests) stays windowed.
-func lokalbotLaunchesMenuBarOnly() -> Bool {
-    guard !AppState.isUITesting else { return false }
-    let onboarded = UserDefaults.standard.bool(forKey: AppState.onboardingShownKey)
-        || AppPermission.coreCases.allSatisfy { $0.isGranted }
-    return AppSettings.load().menuBarOnly && onboarded
-}
-
-/// Process entry point. Disables AppKit window restoration *before* SwiftUI
-/// launches when starting menu-bar-only — `applicationWillFinishLaunching` runs
-/// after AppKit has already read the flag, so a previously-open window would be
-/// restored and force the Dock icon back on. Setting it pre-launch is the only
+/// Process entry point. Parses any headless subcommand before SwiftUI exists,
+/// and disables AppKit window restoration *before* SwiftUI launches when
+/// starting menu-bar-only — `applicationWillFinishLaunching` runs after AppKit
+/// has already read the flag, so a previously-open window would be restored
+/// and force the Dock icon back on. Setting it pre-launch is the only
 /// reliable point.
 @main
 enum LokalBotMain {
+    @MainActor
     static func main() {
         // Carry a prior LokalBotV2 install's data forward before anything reads
         // a store: settings are loaded below (via lokalbotLaunchesMenuBarOnly),
         // and AppState builds StorageManager/SearchIndex right after.
         DataMigration.runIfNeeded()
+        HeadlessCommand.requested = HeadlessCommand.parse(CommandLine.arguments)
         UserDefaults.standard.set(lokalbotLaunchesMenuBarOnly(),
                                   forKey: "ApplePersistenceIgnoreState")
         LokalBotApp.main()
@@ -114,293 +103,13 @@ struct LokalBotApp: App {
     }
 }
 
-// MARK: - Menu-bar-only plumbing
-
-/// Bridges AppKit launch + window lifecycle into the menu-bar-only experience.
-/// SwiftUI alone can't suppress the launch window on macOS 14, so the Dock /
-/// activation policy is driven from here.
-final class AppDelegate: NSObject, NSApplicationDelegate {
-    @MainActor static var appState: AppState?
-
-    private var uiTestWindow: NSWindow?
-    private var terminationCleanupStarted = false
-    private var terminationCleanupFinished = false
-
-    /// Hides the Dock icon for a menu-bar-only start. Setting `.accessory` this
-    /// early also stops SwiftUI from auto-opening the launch window; restoration
-    /// was already disabled in `LokalBotMain`. UI tests and not-yet-onboarded
-    /// users stay windowed — see `lokalbotLaunchesMenuBarOnly()`.
-    func applicationWillFinishLaunching(_ notification: Notification) {
-        if AppState.isUITesting {
-            NSApp.setActivationPolicy(.regular)
-            return
-        }
-        if lokalbotLaunchesMenuBarOnly() {
-            NSApp.setActivationPolicy(.accessory)
-        }
-    }
-
-    /// Keep the Dock icon in sync with what's on screen: a real (titled) window
-    /// → show the Dock icon + app menu for full window UX; nothing open → fall
-    /// back to a pure menu-bar accessory.
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        if AppState.isUITesting {
-            NSApp.setActivationPolicy(.regular)
-            let app = Self.appState ?? AppState()
-            Self.appState = app
-#if LOKALBOT_UI_TEST_HOST
-            applyCaptureEnvironment(to: app)
-#endif
-            openUITestWindow(app: app)
-            forceActivateForUITests()
-            return
-        }
-        // Menu-bar-only *start* is gated on HOW we launched. Only a login
-        // auto-start (the "Launch at login" item firing) should come up silent
-        // in the menu bar; a manual open (Finder/Launchpad/Dock/`open`) must
-        // show the main window. `willFinishLaunching` already set `.accessory`
-        // to avoid a window-flash, so for a manual open we explicitly bring the
-        // window back up as a regular, Dock-visible app. `wasLaunchedAtLogin`
-        // is only reliable here in `applicationDidFinishLaunching`.
-        if lokalbotLaunchesMenuBarOnly() {
-            if LaunchAtLogin.wasLaunchedAtLogin {
-                DispatchQueue.main.async { DockPolicy.beginLaunchSuppression() }
-            } else {
-                DispatchQueue.main.async { WindowAccess.shared.open("main") }
-            }
-        }
-        let center = NotificationCenter.default
-        for name: NSNotification.Name in [
-            NSWindow.didBecomeKeyNotification,
-            NSWindow.willCloseNotification,
-        ] {
-            center.addObserver(forName: name, object: nil, queue: .main) { _ in
-                // `willClose` fires while the window still reports visible —
-                // re-evaluate on the next tick once it's actually gone.
-                DispatchQueue.main.async { DockPolicy.sync() }
-            }
-        }
-    }
-
-    /// Reopening the app (Finder/Launchpad relaunch, Dock click) with nothing on
-    /// screen brings the main window back instead of being a silent no-op.
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        if !hasVisibleWindows { WindowAccess.shared.open("main") }
-        return true
-    }
-
-    /// Give the in-process llama runtime a real shutdown window before AppKit
-    /// calls exit(). Letting C++ static destructors run while Metal buffers are
-    /// still resident trips ggml-metal's residency-set assertion on quit.
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if terminationCleanupFinished { return .terminateNow }
-        guard !terminationCleanupStarted else { return .terminateLater }
-        terminationCleanupStarted = true
-        Task { @MainActor [weak self, weak sender] in
-            if let app = Self.appState {
-                await app.prepareForTermination()
-            } else {
-                await LlamaServer.shared.stop()
-                await LlamaServer.embedder.stop()
-                await LlamaServer.cotyping.stop()
-            }
-            self?.terminationCleanupFinished = true
-            sender?.reply(toApplicationShouldTerminate: true)
-        }
-        return .terminateLater
-    }
-
-    @MainActor
-    private func openUITestWindow(app: AppState) {
-        if let uiTestWindow {
-            uiTestWindow.makeKeyAndOrderFront(nil)
-            uiTestWindow.orderFrontRegardless()
-            return
-        }
-
-        let showsOnboarding = ProcessInfo.processInfo.environment["LOKALBOT_UI_TEST_WINDOW"] == "onboarding"
-        let contentSize = showsOnboarding
-            ? NSSize(width: 640, height: 720)
-            : NSSize(width: 1180, height: 740)
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: contentSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false)
-        window.title = showsOnboarding ? "Welcome to LokalBot" : "LokalBot"
-        window.identifier = NSUserInterfaceItemIdentifier(showsOnboarding ? "onboarding.window" : "main.window")
-        let hostingView = NSHostingView(rootView: uiTestRootView(app: app, showsOnboarding: showsOnboarding))
-        hostingView.identifier = NSUserInterfaceItemIdentifier(showsOnboarding ? "onboarding.window.host" : "main.window.host")
-        window.contentView = hostingView
-        window.center()
-        window.isReleasedWhenClosed = false
-        uiTestWindow = window
-        window.makeKeyAndOrderFront(nil)
-        window.makeMain()
-        window.orderFrontRegardless()
-    }
-
-    @MainActor
-    private func uiTestRootView(app: AppState, showsOnboarding: Bool) -> some View {
-        Group {
-            if showsOnboarding {
-                OnboardingView()
-                    .environmentObject(app)
-                    .brandTinted()
-            } else {
-                MainWindowView()
-                    .environmentObject(app)
-                    .brandTinted()
-            }
-        }
-    }
-
-#if LOKALBOT_UI_TEST_HOST
-    /// Screenshot/scripting hook for the UI-test host: a few env vars let an
-    /// external capture script land the window on a specific section with a
-    /// meeting preselected, without synthetic input (no Accessibility needed).
-    /// A no-op unless the vars are set, so the XCUITest suite is unaffected, and
-    /// compiled out of every non-host build.
-    @MainActor
-    private func applyCaptureEnvironment(to app: AppState) {
-        let env = ProcessInfo.processInfo.environment
-        if let raw = env["LOKALBOT_INITIAL_SECTION"],
-           let section = AppState.NavSection(captureName: raw) {
-            app.navSection = section
-        }
-        if env["LOKALBOT_SELECT_FIRST"] == "1", let first = app.meetings.first {
-            app.selectedMeetingIDs = [first.id]
-        }
-        if let raw = env["LOKALBOT_SELECT_INDEX"], let idx = Int(raw) {
-            let ordered = app.meetings.sorted { $0.startedAt > $1.startedAt }
-            if ordered.indices.contains(idx) { app.selectedMeetingIDs = [ordered[idx].id] }
-        }
-        if env["LOKALBOT_DISMISS_ONBOARDING"] == "1" {
-            UserDefaults.standard.set(true, forKey: "lokalbotv3.gettingStartedDismissed")
-        }
-    }
-#endif
-
-    private func forceActivateForUITests() {
-        for delay: Double in [0, 0.15, 0.5, 1.5] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                NSApp.setActivationPolicy(.regular)
-                NSApp.unhide(nil)
-                if let window = self?.uiTestWindow {
-                    window.makeKeyAndOrderFront(nil)
-                    window.makeMain()
-                    window.orderFrontRegardless()
-                }
-                NSApp.activate(ignoringOtherApps: true)
-            }
-        }
-    }
-}
-
-/// Drives the Dock/menu-bar activation policy from the current setting and the
-/// windows on screen: accessory (menu-bar-only) unless the user opted into a
-/// Dock icon or a real window is open. Also the launch-time backstop that evicts
-/// windows macOS restores behind a menu-bar-only start.
-@MainActor
-enum DockPolicy {
-    /// True from a menu-bar-only launch until the first explicit user-initiated
-    /// open. While set, any titled window on screen was restored or auto-opened
-    /// by macOS (the user hasn't asked for one yet) and is evicted — `.accessory`
-    /// and `ApplePersistenceIgnoreState` don't reliably stop that restore, so
-    /// this is the deterministic backstop. Cleared by `WindowAccess.open`.
-    static var evictRestoredWindows = false
-
-    /// Start evicting restored/auto windows after a menu-bar-only launch. Sweeps
-    /// a few times to catch windows SwiftUI restores asynchronously (or without
-    /// firing a key notification); the flag itself persists until the first real
-    /// open, so even a late restore is caught.
-    static func beginLaunchSuppression() {
-        evictRestoredWindows = true
-        for delay: Double in [0, 0.3, 1.0, 2.5] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { sync() }
-        }
-    }
-
-    static func sync() {
-        guard !AppState.isUITesting else { return }
-        let menuBarOnly = AppSettings.load().menuBarOnly
-
-        if menuBarOnly {
-            for window in NSApp.windows where isContentWindow(window) {
-                window.isRestorable = false                 // never restore in menu-bar mode
-                if evictRestoredWindows { window.close() }   // restored/auto → evict
-            }
-            if evictRestoredWindows { setPolicy(.accessory); return }
-        }
-
-        // The menu bar popover is a borderless, non-normal-level panel; only
-        // titled, normal-level windows (main / onboarding / settings) count.
-        let hasWindow = NSApp.windows.contains(where: isContentWindow)
-        setPolicy((!menuBarOnly || hasWindow) ? .regular : .accessory)
-    }
-
-    private static func isContentWindow(_ window: NSWindow) -> Bool {
-        window.isVisible && window.styleMask.contains(.titled) && window.level == .normal
-    }
-
-    private static func setPolicy(_ policy: NSApplication.ActivationPolicy) {
-        guard NSApp.activationPolicy() != policy else { return }
-        NSApp.setActivationPolicy(policy)
-    }
-}
-
-/// Opens SwiftUI windows from non-View code (AppDelegate, AppState). SwiftUI's
-/// `openWindow` only exists inside the View tree, so views register it here and
-/// requests made before a view is alive are queued and flushed on registration.
-@MainActor
-final class WindowAccess {
-    static let shared = WindowAccess()
-
-    private var opener: ((String) -> Void)?
-    private var pending: [String] = []
-
-    /// Called from the first view that comes alive (the menu bar label at
-    /// launch, then the popover/window). Flushes anything queued before now.
-    func register(_ opener: @escaping (String) -> Void) {
-        self.opener = opener
-        let queued = pending
-        pending.removeAll()
-        queued.forEach(open)
-    }
-
-    func open(_ id: String) {
-        // An explicit, user-initiated open: cancel any launch-time window
-        // eviction, then switch to a regular, Dock-visible app so the window
-        // gets standard chrome and the app menu. `willClose` drops back to
-        // accessory afterwards when menu-bar-only.
-        DockPolicy.evictRestoredWindows = false
-        guard let application = NSApp else {
-            pending.append(id)
-            return
-        }
-        application.setActivationPolicy(.regular)
-        application.activate(ignoringOtherApps: true)
-        if id == "main",
-           let existing = application.windows.first(where: { $0.isVisible && $0.title == "LokalBot" }) {
-            existing.makeKeyAndOrderFront(nil)
-            return
-        }
-        if let opener {
-            opener(id)
-        } else {
-            pending.append(id)
-        }
-    }
-}
-
-/// Central app state + recording orchestration (the "coordinator" from the design doc §6).
+/// Central app state (the "coordinator" from the design doc §6): dependency
+/// wiring, the meeting library, navigation, and the detection→recording glue.
+/// The recording lifecycle itself lives in `RecordingController`; headless
+/// subcommands in `HeadlessCommandRunner`; AppKit launch plumbing in
+/// `AppLifecycle.swift`.
 @MainActor
 final class AppState: ObservableObject {
-
-    enum Status: Equatable {
-        case idle
-        case recording(meetingID: UUID)
-    }
 
     enum NavSection: Hashable {
         case meetings, timeline, dictation, cotyping, chat, search, models, settings
@@ -431,12 +140,18 @@ final class AppState: ObservableObject {
     /// read by `AppDelegate` to keep the first run windowed.
     nonisolated static let onboardingShownKey = "lokalbotv3.onboarding.shown"
 
-    @Published private(set) var status: Status = .idle
     @Published private(set) var meetings: [Meeting] = []
     @Published var lastError: String?
-    @Published var settings = AppSettings.load() {
+
+    /// The always-alive settings owner; services capture this, never AppState.
+    let settingsStore = SettingsStore()
+
+    /// UI-facing settings surface (views bind `$app.settings.x`). Writes flow
+    /// through to `settingsStore` (which persists) and fan out to the
+    /// subsystems that apply settings live.
+    @Published var settings: AppSettings {
         didSet {
-            settings.save()
+            settingsStore.current = settings
             detector.stopDebounce = settings.stopDebounceSeconds
             detector.calendarEnabled = settings.calendarDetectionEnabled
             detector.requireCalendarForBrowser = settings.requireCalendarForBrowser
@@ -477,18 +192,27 @@ final class AppState: ObservableObject {
         databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"),
         storage: storage)
     private(set) lazy var screenshots = ScreenshotService(
-        store: activityStore, storage: storage, sampler: sampler) { [weak self] in
-        self?.settings ?? AppSettings()
+        store: activityStore, storage: storage, sampler: sampler) { [store = settingsStore] in
+        store.current
     }
-    private(set) lazy var pipeline = ProcessingPipeline(storage: storage) { [weak self] in
-        self?.settings ?? AppSettings()
+    private(set) lazy var pipeline = ProcessingPipeline(storage: storage) { [store = settingsStore] in
+        store.current
     }
+    /// Meeting-recording lifecycle: recorders, watchdog, timer tick, prewarm.
+    private(set) lazy var recording = RecordingController(
+        storage: storage,
+        settingsStore: settingsStore,
+        audioMonitor: audioMonitor,
+        pipeline: pipeline,
+        isInteractive: { [weak self] in self?.interactive ?? false },
+        onError: { [weak self] message in self?.lastError = message },
+        onMeetingFinished: { [weak self] meeting in self?.meetings.insert(meeting, at: 0) })
     /// Handy-style press-and-speak dictation. It records mic-only audio, uses
     /// the selected local transcription model, then inserts the transcript into
     /// the focused app using the same clipboard-safe path as cotyping.
     private(set) lazy var dictation = DictationCoordinator(
         storageRoot: storage.rootURL,
-        settingsProvider: { [weak self] in self?.settings ?? AppSettings() },
+        settingsProvider: { [store = settingsStore] in store.current },
         canStart: { [weak self] in !(self?.isRecording ?? false) },
         onBusy: { [weak self] in
             self?.lastError = "Stop the current meeting recording before starting dictation."
@@ -509,11 +233,11 @@ final class AppState: ObservableObject {
         makeLocal: { modelPath in
             LocalLlamaCotypingEngine(runtime: LlamaCotypingRuntime(), modelPath: modelPath)
         },
-        settings: { [weak self] in self?.settings ?? AppSettings() },
+        settings: { [store = settingsStore] in store.current },
         storage: storage)
     private(set) lazy var cotyping = CotypingCoordinator(
         engine: cotypingEngine,
-        settingsProvider: { [weak self] in self?.settings ?? AppSettings() },
+        settingsProvider: { [store = settingsStore] in store.current },
         learningStore: cotypingLearning)
 
     @MainActor
@@ -537,70 +261,36 @@ final class AppState: ObservableObject {
             searchIndex: searchIndex,
             embeddingIndex: embeddingIndex,
             activityStore: activityStore,
-            settings: { [weak self] in self?.settings ?? AppSettings() }),
+            settings: { [store = settingsStore] in store.current }),
         store: ChatStore(rootURL: storage.rootURL))
 
-    private let micRecorder = MicRecorder()
-    private let systemRecorder = SystemAudioRecorder()
-    /// The live recording (shown at the top of the library while running).
-    @Published private(set) var currentMeeting: Meeting?
     private var pipelineObserver: AnyCancellable?
+    private var recordingObserver: AnyCancellable?
     private var audioMonitorObserver: AnyCancellable?
     private var audioMonitorChangeForwarder: AnyCancellable?
     private var calendarObserver: AnyCancellable?
-    private var transcriptionPrewarmTask: Task<Void, Never>?
-    private struct SystemAudioTarget {
-        var bundleID: String
-        var pid: pid_t
-    }
-    private var systemAudioTarget: SystemAudioTarget?
-    private var recordingHealthWatchdog: AnyCancellable?
-    private var lastMicRestartAt: Date?
-    private var didWarnAboutMicCaptureStall = false
-    private var lastSystemAudioReattachAt: Date?
-    private var didWarnAboutSilentSystemAudio = false
-    private var samePIDSystemAudioRetryCount = 0
-    private static let recordingHealthWatchdogInterval: TimeInterval = 5
-    private static let micCaptureInitialGrace: TimeInterval = 8
-    private static let micCaptureStallGrace: TimeInterval = 15
-    private static let micCaptureRestartCooldown: TimeInterval = 10
-    private static let systemAudioInitialGrace: TimeInterval = 8
-    private static let systemAudioSilentGrace: TimeInterval = 8
-    private static let systemAudioReattachCooldown: TimeInterval = 10
-    /// Calendar event id + stop time of the last calendar-backed recording, so
-    /// the same scheduled meeting can't immediately re-record (helper-PID churn,
-    /// brief audio drops). See `MeetingMatcher.shouldSuppressRepeat`.
-    private var lastCalendarEventID: String?
-    private var lastCalendarEventEndedAt: Date?
-    private static let calendarRepeatCooldown: TimeInterval = 5 * 60
-
-    /// Ticks once a second while recording so the menu bar timer (and popover)
-    /// stay live even with no window open. Nil when idle.
-    private var recordingTick: AnyCancellable?
-    /// Drives `elapsed`; bumped each second by `recordingTick`.
-    @Published private(set) var now = Date()
     /// True only on the real interactive launch path (not headless / UI test) —
     /// gates recording notifications and first-run onboarding.
     private var interactive = false
     private var terminationCleanupTask: Task<Void, Never>?
 
-    var isRecording: Bool { if case .recording = status { true } else { false } }
-    var elapsed: TimeInterval {
-        guard let m = currentMeeting else { return 0 }
-        return max(0, now.timeIntervalSince(m.startedAt))
+    // Recording facades — views observe AppState only.
+    var isRecording: Bool { recording.isRecording }
+    var currentMeeting: Meeting? { recording.currentMeeting }
+    var elapsed: TimeInterval { recording.elapsed }
+    var menuBarTimer: String { recording.menuBarTimer }
+
+    func startRecording(context: MeetingDetectionContext? = nil, source: String = "ui") {
+        recording.start(context: context, source: source)
     }
 
-    /// Compact "MM:SS" (or "H:MM:SS") elapsed string for the menu bar label.
-    var menuBarTimer: String {
-        let total = Int(elapsed)
-        let (h, m, s) = (total / 3600, (total % 3600) / 60, total % 60)
-        return h > 0
-            ? String(format: "%d:%02d:%02d", h, m, s)
-            : String(format: "%02d:%02d", m, s)
+    func stopRecording(process: Bool = true) {
+        recording.stop(process: process)
     }
 
     init() {
         AppLog.bootstrap()
+        settings = settingsStore.current
         var loaded = storage.loadMeetings()
         // One-time backfill: meetings recorded before `recordedDuration` existed
         // would otherwise show the wall-clock span (which can exceed the captured
@@ -615,10 +305,13 @@ final class AppState: ObservableObject {
             }
         }
         meetings = loaded
-        // Views observe AppState only; forward pipeline / audio-monitor /
-        // update-checker change notifications so MainWindowView refreshes
-        // when those sub-ObservableObjects publish.
+        // Views observe AppState only; forward pipeline / recording /
+        // audio-monitor / calendar change notifications so MainWindowView
+        // refreshes when those sub-ObservableObjects publish.
         pipelineObserver = pipeline.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
+        recordingObserver = recording.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
         audioMonitorChangeForwarder = audioMonitor.objectWillChange.sink { [weak self] in
@@ -635,12 +328,8 @@ final class AppState: ObservableObject {
             }
         }
         searchIndex.reindexAll(meetings, storage: storage)
-        if handleHeadlessProcessing()
-            || handleHeadlessSearch()
-            || handleHeadlessRecord()
-            || handleHeadlessShotTest()
-            || handleHeadlessDigest()
-            || handleHeadlessChat() {
+        if let command = HeadlessCommand.requested {
+            HeadlessCommandRunner(app: self).run(command)
             return
         }
         // UI tests render against pre-seeded fixtures, not a real audio/Sparkle
@@ -660,7 +349,7 @@ final class AppState: ObservableObject {
         }
         detector.onMeetingSwitched = { [weak self] context in
             guard let self, self.settings.autoRecordMode == .automatic else { return }
-            self.splitRecordingForCalendarHandoff(context)
+            self.recording.splitForCalendarHandoff(context)
         }
         detector.onMeetingEnded = { [weak self] in
             self?.stopRecording()
@@ -669,11 +358,6 @@ final class AppState: ObservableObject {
         detector.calendar = calendar
         detector.calendarEnabled = settings.calendarDetectionEnabled
         detector.requireCalendarForBrowser = settings.requireCalendarForBrowser
-        systemRecorder.onCapturedProcessTerminated = { [weak self] in
-            guard let self, self.isRecording else { return }
-            self.lastError = "Meeting app exited — recording stopped."
-            self.stopRecording()
-        }
         // The mic-in-use signal misses meetings with a muted mic. The audio
         // monitor is the complementary "a meeting app just started producing
         // audio output" signal — in automatic mode it auto-records the
@@ -710,9 +394,7 @@ final class AppState: ObservableObject {
         }
         let task = Task { @MainActor in
             interactive = false
-            transcriptionPrewarmTask?.cancel()
-            transcriptionPrewarmTask = nil
-            if isRecording { stopRecording(process: false) }
+            recording.prepareForTermination()
             detector.stop()
             audioMonitor.stop()
             sampler.stop()
@@ -729,12 +411,7 @@ final class AppState: ObservableObject {
         await task.value
     }
 
-    // MARK: - Recording control
-
-    /// Synchronous re-entrancy latch: `status` only flips inside the async
-    /// start task, so without this, rapid triggers (detector ticks, double
-    /// clicks) all pass the `!isRecording` guard and create empty meetings.
-    private var isStartingRecording = false
+    // MARK: - Detection → recording glue
 
     /// Builds a detection context for a user-initiated recording on `detectedApp`
     /// (nil → manual), folding in the active calendar event when calendar
@@ -751,154 +428,12 @@ final class AppState: ObservableObject {
             reason: "user")
     }
 
-    func startRecording(context: MeetingDetectionContext? = nil, source: String = "ui") {
-        guard !isRecording, !isStartingRecording else { return }
-        let detectedApp = context?.detectedApp
-        let calendarEvent = context?.calendarEvent
-        // Don't immediately re-record the same scheduled event after one ended.
-        if MeetingMatcher.shouldSuppressRepeat(
-            eventID: calendarEvent?.externalID, lastEventID: lastCalendarEventID,
-            lastEndedAt: lastCalendarEventEndedAt, now: Date(),
-            cooldown: Self.calendarRepeatCooldown) {
-            lokalbotLog("startRecording suppressed: calendar event \(calendarEvent?.externalID ?? "?") within cooldown")
-            return
-        }
-        isStartingRecording = true
-        audioMonitor.isRecordingActive = true
-        audioMonitor.accept()
-        lokalbotLog("startRecording source=\(source) app=\(detectedApp?.name ?? "manual") calendar=\(calendarEvent?.title ?? "none")")
-        Task {
-            defer { isStartingRecording = false }
-            guard await MicRecorder.requestPermission() else {
-                lastError = "Microphone permission denied."
-                audioMonitor.isRecordingActive = false
-                audioMonitor.reseed()
-                return
-            }
-            var created: Meeting?
-            do {
-                let title = MeetingMatcher.recordingTitle(
-                    calendarTitle: calendarEvent?.title,
-                    useCalendarTitles: settings.useCalendarTitles,
-                    appName: detectedApp?.name)
-                var meeting = try storage.createMeetingFolder(title: title,
-                                                              appName: detectedApp?.name ?? "Manual")
-                if let calendarEvent {
-                    meeting.calendarProvider = calendarEvent.provider
-                    meeting.calendarEventID = calendarEvent.externalID
-                    meeting.calendarTitle = calendarEvent.title
-                    meeting.scheduledStartAt = calendarEvent.startDate
-                    meeting.scheduledEndAt = calendarEvent.endDate
-                    meeting.meetingURL = calendarEvent.meetingURL
-                    meeting.participantNameHints = calendarEvent.participantNames.isEmpty
-                        ? nil
-                        : calendarEvent.participantNames
-                    try? storage.saveMeta(meeting)
-                }
-                created = meeting
-                try micRecorder.start(writingTo: meeting.folderURL(in: storage).appendingPathComponent("mic.m4a"))
-                startRecordingHealthWatchdog()
-
-                if let detectedApp {
-                    let captureProcess = MeetingDetector.currentOutputAudioProcess(for: detectedApp)
-                    let pid = captureProcess?.id ?? detectedApp.pid
-                    do {
-                        try systemRecorder.start(capturingPID: pid,
-                                                 writingTo: meeting.folderURL(in: storage).appendingPathComponent("system.m4a"))
-                        meeting.hasSystemTrack = true
-                        systemAudioTarget = SystemAudioTarget(
-                            bundleID: detectedApp.bundleID,
-                            pid: pid)
-                        if pid != detectedApp.pid || captureProcess?.bundleID != detectedApp.bundleID {
-                            lokalbotLog(
-                                "system audio capture resolved detectedPID=\(detectedApp.pid) capturePID=\(pid) captureBundle=\(captureProcess?.bundleID ?? "unknown") hostBundle=\(detectedApp.bundleID)")
-                        }
-                        lokalbotLog("system audio tap started pid=\(pid) bundle=\(detectedApp.bundleID)")
-                    } catch {
-                        // Degrade gracefully: mic-only recording.
-                        lastError = "System audio tap failed (\(error.localizedDescription)) — recording mic only."
-                        lokalbotLog("system audio tap FAILED: \(error.localizedDescription)")
-                    }
-                }
-                currentMeeting = meeting
-                status = .recording(meetingID: meeting.id)
-                startRecordingTick()
-                if interactive {
-                    RecordingNotifier.shared.recordingStarted(title: meeting.title)
-                    prewarmSelectedTranscriptionModel(reason: source)
-                }
-            } catch {
-                lastError = "Could not start recording: \(error.localizedDescription)"
-                lokalbotLog("startRecording FAILED: \(error.localizedDescription)")
-                stopRecordingHealthWatchdog()
-                systemAudioTarget = nil
-                audioMonitor.isRecordingActive = false
-                audioMonitor.reseed()
-                // Don't leave a 0-minute husk in the library.
-                if let husk = created { storage.deleteMeeting(husk) }
-            }
-        }
-    }
-
-    private func splitRecordingForCalendarHandoff(_ context: MeetingDetectionContext) {
-        guard isRecording, !isStartingRecording,
-              let currentMeeting,
-              let nextEventID = context.calendarEvent?.externalID,
-              MeetingMatcher.shouldSplitForCalendarHandoff(
-                  activeEventID: currentMeeting.calendarEventID,
-                  nextEventID: nextEventID)
-        else { return }
-        lokalbotLog(
-            "calendar handoff split old=\(currentMeeting.calendarEventID ?? "?") new=\(nextEventID)")
-        stopRecording()
-        startRecording(context: context, source: "calendar-handoff")
-    }
-
-    private func prewarmSelectedTranscriptionModel(reason: String) {
-        guard settings.autoTranscribe else { return }
-        guard transcriptionPrewarmTask == nil else { return }
-        let choice = settings.transcriptionModel
-        transcriptionPrewarmTask = Task { [weak self, choice, reason] in
-            let started = Date()
-            lokalbotLog("transcription prewarm start model=\(choice.rawValue) reason=\(reason)")
-            do {
-                switch choice {
-                case .parakeetV3:
-                    await ParakeetEngine.shared.setVariant(.v3)
-                    try await ParakeetEngine.shared.prepare()
-                case .parakeetV2:
-                    await ParakeetEngine.shared.setVariant(.v2)
-                    try await ParakeetEngine.shared.prepare()
-                case .qwenASR17B:
-                    try await QwenASREngine.accuracy.prepare()
-                case .qwenASR06B:
-                    try await QwenASREngine.compact.prepare()
-                case .graniteSpeech:
-                    try await GraniteSpeechEngine.shared.prepare()
-                case .whisperLarge:
-                    try await WhisperEngine.shared.prepare()
-                case .cohere:
-                    try await CohereEngine.shared.prepare()
-                case .senseVoice:
-                    try await OnnxTranscriptionEngine.senseVoice.prepare()
-                case .gigaamRussian:
-                    try await OnnxTranscriptionEngine.gigaamRussian.prepare()
-                }
-                let elapsed = Date().timeIntervalSince(started)
-                lokalbotLog("transcription prewarm ready model=\(choice.rawValue) elapsed=\(String(format: "%.2fs", elapsed))")
-            } catch {
-                lokalbotLog("transcription prewarm FAILED model=\(choice.rawValue): \(error.localizedDescription)")
-            }
-            await MainActor.run { self?.transcriptionPrewarmTask = nil }
-        }
-    }
-
     /// `AudioSourceMonitor` saw an app newly start producing output. Auto-record
     /// in automatic mode only for high-confidence native meeting output or a
     /// calendar-backed native app; leave broader chat apps as banner/detector
     /// candidates so notification sounds cannot start recordings.
     private func audioMonitorDetected(_ process: AudioProcess) {
-        guard !isRecording, !isStartingRecording else { return }
+        guard !recording.isRecording, !recording.isStarting else { return }
         guard settings.autoRecordMode == .automatic, let bundleID = process.bundleID else { return }
         let calendarEvent = (settings.calendarDetectionEnabled && calendar.hasAccess)
             ? calendar.activeCandidate(now: Date()) : nil
@@ -936,221 +471,14 @@ final class AppState: ObservableObject {
             reason: "audio-monitor")
     }
 
-    nonisolated static func meetingTitle(for appName: String) -> String {
-        let trimmed = appName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "Meeting" }
-        return trimmed.localizedCaseInsensitiveContains("meeting")
-            && trimmed.lowercased().hasSuffix("meeting")
-            ? trimmed
-            : "\(trimmed) meeting"
+    private func notifyMeetingDetected(_ context: MeetingDetectionContext) {
+        // M1: simple user notification via the menu bar (badge). A richer
+        // UNUserNotification with a "Record" action button is a fast follow.
+        lastError = nil
+        NSSound.beep()
     }
 
-    func stopRecording(process: Bool = true) {
-        guard isRecording, var meeting = currentMeeting else { return }
-        stopRecordingHealthWatchdog()
-        micRecorder.stop()
-        systemRecorder.stop()
-        systemAudioTarget = nil
-        audioMonitor.isRecordingActive = false
-        audioMonitor.reseed()
-        stopRecordingTick()
-        let endedAt = Date()
-        meeting.endedAt = endedAt
-        let folder = meeting.folderURL(in: storage)
-        let micDuration = AudioFileInspector.duration(at: folder.appendingPathComponent("mic.m4a"))
-        let systemDuration = AudioFileInspector.duration(at: folder.appendingPathComponent("system.m4a"))
-        meeting.hasSystemTrack = AudioFileInspector.isTranscribableAudio(
-            at: folder.appendingPathComponent("system.m4a"))
-        // The wall-clock span can outlast the captured audio (e.g. a device
-        // disruption truncates the tracks while the session stays live), so
-        // store the actual playable length — the longest track — for the UI.
-        meeting.recordedDuration = [micDuration, systemDuration].compactMap { $0 }.max()
-        let wallDuration = endedAt.timeIntervalSince(meeting.startedAt)
-        lokalbotLog(
-            "recording stopped wall=\(String(format: "%.2fs", wallDuration)) recorded=\(String(format: "%.2fs", meeting.recordedDuration ?? 0)) mic=\(Self.formatAudioDuration(micDuration)) system=\(Self.formatAudioDuration(systemDuration)) hasSystem=\(meeting.hasSystemTrack)")
-        if let recordedDuration = meeting.recordedDuration,
-           wallDuration - recordedDuration > 60,
-           recordedDuration < wallDuration * 0.8 {
-            lastError = "Recording saved, but only \(meeting.durationLabel) of audio was captured from a \(Self.formatMinutes(wallDuration)) session."
-        }
-        try? storage.saveMeta(meeting)
-        lastCalendarEventID = meeting.calendarEventID
-        lastCalendarEventEndedAt = endedAt
-        meetings.insert(meeting, at: 0)
-        currentMeeting = nil
-        status = .idle
-        let willTranscribe = process && settings.autoTranscribe
-        if interactive {
-            RecordingNotifier.shared.recordingStopped(
-                title: meeting.title,
-                duration: meeting.recordedDuration ?? endedAt.timeIntervalSince(meeting.startedAt),
-                willTranscribe: willTranscribe)
-        }
-        if willTranscribe {
-            pipeline.enqueue(meeting, transcribe: true, summarize: settings.autoSummarize)
-        }
-    }
-
-    /// Start/stop the once-a-second clock that keeps the menu bar timer live.
-    private func startRecordingTick() {
-        now = Date()
-        recordingTick = Timer.publish(every: 1, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] date in self?.now = date }
-    }
-
-    private func stopRecordingTick() {
-        recordingTick?.cancel()
-        recordingTick = nil
-    }
-
-    private func startRecordingHealthWatchdog() {
-        stopRecordingHealthWatchdog()
-        lastMicRestartAt = nil
-        didWarnAboutMicCaptureStall = false
-        lastSystemAudioReattachAt = nil
-        didWarnAboutSilentSystemAudio = false
-        samePIDSystemAudioRetryCount = 0
-        recordingHealthWatchdog = Timer.publish(
-            every: Self.recordingHealthWatchdogInterval,
-            on: .main,
-            in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                self?.checkMicCapture()
-                self?.checkSystemAudioCapture()
-            }
-    }
-
-    private func stopRecordingHealthWatchdog() {
-        recordingHealthWatchdog?.cancel()
-        recordingHealthWatchdog = nil
-        lastMicRestartAt = nil
-        didWarnAboutMicCaptureStall = false
-        lastSystemAudioReattachAt = nil
-        didWarnAboutSilentSystemAudio = false
-        samePIDSystemAudioRetryCount = 0
-    }
-
-    private func checkMicCapture() {
-        guard isRecording, let meeting = currentMeeting else { return }
-        let now = Date()
-        let elapsed = now.timeIntervalSince(meeting.startedAt)
-        guard elapsed >= Self.micCaptureInitialGrace else { return }
-
-        let health = micRecorder.captureHealth()
-        let captureLag = elapsed - health.duration
-        guard captureLag >= Self.micCaptureStallGrace else { return }
-
-        if let lastMicRestartAt,
-           now.timeIntervalSince(lastMicRestartAt) < Self.micCaptureRestartCooldown {
-            return
-        }
-
-        do {
-            try micRecorder.restartCapture()
-            lastMicRestartAt = now
-            didWarnAboutMicCaptureStall = false
-            lokalbotLog(
-                "mic recorder restarted elapsed=\(String(format: "%.2fs", elapsed)) captured=\(String(format: "%.2fs", health.duration)) lag=\(String(format: "%.2fs", captureLag)) engineRunning=\(health.isEngineRunning)")
-        } catch {
-            lastMicRestartAt = now
-            if !didWarnAboutMicCaptureStall {
-                didWarnAboutMicCaptureStall = true
-                lastError = "Microphone capture stalled (\(error.localizedDescription)); LokalBot is still trying to recover system audio."
-            }
-            lokalbotLog(
-                "mic recorder restart FAILED elapsed=\(String(format: "%.2fs", elapsed)) captured=\(String(format: "%.2fs", health.duration)) lag=\(String(format: "%.2fs", captureLag)): \(error.localizedDescription)")
-        }
-    }
-
-    private func checkSystemAudioCapture() {
-        guard isRecording, var target = systemAudioTarget, let meeting = currentMeeting else { return }
-        let now = Date()
-        let elapsed = now.timeIntervalSince(meeting.startedAt)
-        guard elapsed >= Self.systemAudioInitialGrace else { return }
-
-        let health = systemRecorder.captureHealth()
-        let silentFor = health.lastAudibleWriteAt.map { now.timeIntervalSince($0) } ?? elapsed
-        guard silentFor >= Self.systemAudioSilentGrace else { return }
-
-        if let lastSystemAudioReattachAt,
-           now.timeIntervalSince(lastSystemAudioReattachAt) < Self.systemAudioReattachCooldown {
-            return
-        }
-
-        guard let candidate = currentSystemAudioCandidate(for: target) else {
-            warnOnceAboutSilentSystemAudio(elapsed: elapsed, captured: health.duration,
-                                           audible: health.audibleDuration,
-                                           rms: health.lastRMSLevel,
-                                           peakRMS: health.peakRMSLevel)
-            return
-        }
-
-        // If the tap has never delivered audio, retry even on the same PID.
-        // Once samples exist, reattach only when Core Audio reports a different
-        // active process for the same meeting app/browser family.
-        let shouldRetrySamePID = health.audibleDuration < AudioFileInspector.minimumTranscribableDuration
-        let isSamePIDRetry = candidate.id == target.pid && shouldRetrySamePID
-        guard candidate.id != target.pid || shouldRetrySamePID else {
-            warnOnceAboutSilentSystemAudio(elapsed: elapsed, captured: health.duration,
-                                           audible: health.audibleDuration,
-                                           rms: health.lastRMSLevel,
-                                           peakRMS: health.peakRMSLevel)
-            return
-        }
-        guard !isSamePIDRetry || samePIDSystemAudioRetryCount < 2 else {
-            warnOnceAboutSilentSystemAudio(elapsed: elapsed, captured: health.duration,
-                                           audible: health.audibleDuration,
-                                           rms: health.lastRMSLevel,
-                                           peakRMS: health.peakRMSLevel)
-            return
-        }
-
-        do {
-            try systemRecorder.reattach(capturingPID: candidate.id)
-            let previousPID = target.pid
-            target.pid = candidate.id
-            systemAudioTarget = target
-            lastSystemAudioReattachAt = now
-            samePIDSystemAudioRetryCount = isSamePIDRetry ? samePIDSystemAudioRetryCount + 1 : 0
-            didWarnAboutSilentSystemAudio = false
-            lokalbotLog(
-                "system audio reattached oldPID=\(previousPID) newPID=\(candidate.id) bundle=\(candidate.bundleID ?? "unknown") captured=\(String(format: "%.2fs", health.duration)) audible=\(String(format: "%.2fs", health.audibleDuration)) silentFor=\(String(format: "%.2fs", silentFor)) rms=\(String(format: "%.6f", health.lastRMSLevel)) peakRMS=\(String(format: "%.6f", health.peakRMSLevel))")
-        } catch {
-            lastSystemAudioReattachAt = now
-            lastError = "System audio capture was interrupted (\(error.localizedDescription)); still recording microphone."
-            lokalbotLog("system audio reattach FAILED: \(error.localizedDescription)")
-        }
-    }
-
-    private func currentSystemAudioCandidate(for target: SystemAudioTarget) -> AudioProcess? {
-        MeetingDetector.currentOutputAudioProcess(for: MeetingDetector.DetectedApp(
-            name: target.bundleID,
-            bundleID: target.bundleID,
-            pid: target.pid))
-    }
-
-    private func warnOnceAboutSilentSystemAudio(elapsed: TimeInterval, captured: TimeInterval,
-                                                audible: TimeInterval, rms: Float, peakRMS: Float) {
-        guard !didWarnAboutSilentSystemAudio, elapsed >= 30 else { return }
-        didWarnAboutSilentSystemAudio = true
-        lokalbotLog(
-            "system audio silent elapsed=\(String(format: "%.2fs", elapsed)) captured=\(String(format: "%.2fs", captured)) audible=\(String(format: "%.2fs", audible)) rms=\(String(format: "%.6f", rms)) peakRMS=\(String(format: "%.6f", peakRMS))")
-        if audible < AudioFileInspector.minimumTranscribableDuration {
-            lastError = "System audio capture is silent; LokalBot is keeping the microphone recording and will reattach if the meeting audio process changes."
-        }
-    }
-
-    private static func formatAudioDuration(_ duration: TimeInterval?) -> String {
-        guard let duration else { return "missing" }
-        return String(format: "%.2fs", duration)
-    }
-
-    private static func formatMinutes(_ duration: TimeInterval) -> String {
-        let minutes = max(1, Int(duration / 60))
-        return "\(minutes) min"
-    }
+    // MARK: - Library operations
 
     func reprocess(_ meeting: Meeting, transcribe: Bool, summarize: Bool) {
         pipeline.enqueue(meeting, transcribe: transcribe, summarize: summarize)
@@ -1200,185 +528,5 @@ final class AppState: ObservableObject {
         }
         meetings.removeAll { ids.contains($0.id) }
         selectedMeetingIDs.subtract(ids)
-    }
-
-    /// `LokalBot --process <meeting folder>`: run the pipeline headless and
-    /// exit. Lets the pipeline be exercised (and CI-tested) without the UI.
-    private func handleHeadlessProcessing() -> Bool {
-        let args = CommandLine.arguments
-        guard let flag = args.firstIndex(of: "--process"), args.count > flag + 1 else { return false }
-        let folder = URL(fileURLWithPath: args[flag + 1], isDirectory: true)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        guard let data = try? Data(contentsOf: folder.appendingPathComponent("meta.json")),
-              let decoded = try? decoder.decode(Meeting.self, from: data) else {
-            print("LokalBot --process: no readable meta.json in \(folder.path)")
-            exit(2)
-        }
-        let summarize = !args.contains("--no-summary")
-        pipeline.enqueue(decoded, transcribe: true, summarize: summarize)
-        // Poll the pipeline until the job leaves the stage table, then exit.
-        Task { @MainActor in
-            while true {
-                try? await Task.sleep(for: .milliseconds(500))
-                switch pipeline.stages[decoded.id] {
-                case .none:
-                    print("LokalBot --process: done → \(folder.path)")
-                    await LlamaServer.shared.stop()
-                    exit(0)
-                case .failed(let message):
-                    print("LokalBot --process: FAILED — \(message)")
-                    await LlamaServer.shared.stop()
-                    exit(1)
-                default:
-                    continue
-                }
-            }
-        }
-        return true
-    }
-
-    /// `LokalBot --record <seconds>`: manual mic recording, no pipeline.
-    private func handleHeadlessRecord() -> Bool {
-        let args = CommandLine.arguments
-        guard let flag = args.firstIndex(of: "--record"), args.count > flag + 1,
-              let seconds = Int(args[flag + 1]) else { return false }
-        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
-            print("LokalBot --record: SKIP (microphone not granted)")
-            exit(3)
-        }
-        startRecording(context: nil, source: "headless")
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(seconds))
-            guard isRecording else {
-                print("LokalBot --record: FAILED to start — \(lastError ?? "no error recorded")")
-                exit(1)
-            }
-            stopRecording(process: false)
-            guard let meeting = meetings.first else { print("LokalBot --record: no meeting"); exit(1) }
-            print("LokalBot --record: done → \(meeting.folderURL(in: storage).path)")
-            exit(0)
-        }
-        return true
-    }
-
-    /// `LokalBot --shot-test`: one screenshot capture, exit 0 ok / 3 skip / 1 fail.
-    private func handleHeadlessShotTest() -> Bool {
-        guard CommandLine.arguments.contains("--shot-test") else { return false }
-        Task { @MainActor in
-            guard CGPreflightScreenCaptureAccess() else {
-                print("LokalBot --shot-test: SKIP (screen recording not granted)")
-                exit(3)
-            }
-            let before = Date()
-            screenshots.captureNow()
-            try? await Task.sleep(for: .seconds(8))
-            if let shot = activityStore.screenshots(on: Date()).last(where: { $0.ts >= before }) {
-                print("LokalBot --shot-test: ok (app: \(shot.app))")
-                exit(0)
-            }
-            print("LokalBot --shot-test: FAILED (no screenshot row — see debug.log)")
-            exit(1)
-        }
-        return true
-    }
-
-    /// `LokalBot --digest today`: generate today's journal digest and exit.
-    private func handleHeadlessDigest() -> Bool {
-        guard CommandLine.arguments.contains("--digest") else { return false }
-        Task { @MainActor in
-            do {
-                let day = Date()
-                let todays = meetings.filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }
-                let (text, url) = try await pipeline.generateDayDigest(
-                    for: day, blocks: activityStore.blocks(on: day),
-                    meetings: todays, ocr: activityStore.ocrText(on: day), config: settings)
-                print("LokalBot --digest: \(url.path) (\(text.count) chars)")
-                await LlamaServer.shared.stop()
-                exit(0)
-            } catch {
-                print("LokalBot --digest: FAILED — \(error.localizedDescription)")
-                await LlamaServer.shared.stop()
-                exit(1)
-            }
-        }
-        return true
-    }
-
-    /// `LokalBot --chat "<question>"`: run the meeting chat agent once against
-    /// the real engine + tools and print the answer. Test hook for the chat
-    /// assistant, same spirit as --search / --digest.
-    private func handleHeadlessChat() -> Bool {
-        let args = CommandLine.arguments
-        guard let flag = args.firstIndex(of: "--chat"), args.count > flag + 1 else { return false }
-        let question = args[flag + 1]
-        Task { @MainActor in
-            do {
-                searchIndex.reindexAll(meetings, storage: storage)
-                let engine = try await pipeline.makeTextEngine(settings)
-                let tools = MeetingChatTools(
-                    meetings: { [weak self] in self?.meetings ?? [] },
-                    storage: storage, searchIndex: searchIndex, embeddingIndex: embeddingIndex,
-                    activityStore: activityStore,
-                    settings: { [weak self] in self?.settings ?? AppSettings() })
-                let agent = ChatAgent(engine: engine, runner: tools)
-                let answer = try await agent.respond(history: [], latest: question) { event in
-                    switch event {
-                    case .toolStarted(let call):
-                        print("LokalBot --chat: tool \(call.name)(\(call.arguments))")
-                    case .toolFinished(let name, let summary):
-                        print("LokalBot --chat: done \(name) — \(summary)")
-                    }
-                }
-                print("LokalBot --chat: \(answer)")
-                await LlamaServer.shared.stop()
-                await LlamaServer.embedder.stop()
-                exit(0)
-            } catch {
-                print("LokalBot --chat: FAILED — \(error.localizedDescription)")
-                await LlamaServer.shared.stop()
-                await LlamaServer.embedder.stop()
-                exit(1)
-            }
-        }
-        return true
-    }
-
-    /// `LokalBot --search <query>`: print index hits and exit. Test hook
-    /// for the FTS5 index, same spirit as --process.
-    private func handleHeadlessSearch() -> Bool {
-        let args = CommandLine.arguments
-        guard let flag = args.firstIndex(of: "--search"), args.count > flag + 1 else { return false }
-        let query = args[flag + 1]
-        let hits = searchIndex.search(query)
-        print("LokalBot --search: \(hits.count) keyword hit(s)")
-        for hit in hits {
-            let meeting = meetings.first { $0.id == hit.meetingID }
-            print("[\(hit.kind.rawValue)] \(meeting?.title ?? hit.meetingID.uuidString) @ \(Transcript.stamp(hit.start)): \(hit.snippet)")
-        }
-        Task { @MainActor in
-            if settings.semanticSearchEnabled {
-                await embeddingIndex.reindexAll(meetings)
-                let semantic = await embeddingIndex.search(query)
-                print("LokalBot --search: \(semantic.count) semantic hit(s)")
-                for hit in semantic {
-                    let meeting = meetings.first { $0.id == hit.meetingID }
-                    print(String(format: "[≈%.2f] %@ @ %@: %@", hit.score,
-                                 meeting?.title ?? "?", Transcript.stamp(hit.start),
-                                 String(hit.text.prefix(90))))
-                }
-                await LlamaServer.embedder.stop()
-                exit(hits.isEmpty && semantic.isEmpty ? 1 : 0)
-            }
-            exit(hits.isEmpty ? 1 : 0)
-        }
-        return true
-    }
-
-    private func notifyMeetingDetected(_ context: MeetingDetectionContext) {
-        // M1: simple user notification via the menu bar (badge). A richer
-        // UNUserNotification with a "Record" action button is a fast follow.
-        lastError = nil
-        NSSound.beep()
     }
 }

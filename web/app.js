@@ -151,6 +151,4 @@
       demoIO.observe(cotype || field);
     }
   }
-
-  /* ---------- year in footer legal line (kept current automatically) ---------- */
 })();

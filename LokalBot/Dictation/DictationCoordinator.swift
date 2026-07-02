@@ -304,13 +304,7 @@ final class DictationCoordinator: ObservableObject {
         if let speech = await SpeechActivity.shared.speechSeconds(in: audioURL), speech < 0.5 {
             throw DictationError.noSpeech
         }
-        let choice = config.transcriptionModel
-        switch choice {
-        case .parakeetV3: await ParakeetEngine.shared.setVariant(.v3)
-        case .parakeetV2: await ParakeetEngine.shared.setVariant(.v2)
-        default: break
-        }
-        return try await choice.engine.transcribe(
+        return try await config.transcriptionModel.engine.transcribe(
             audio: audioURL,
             language: config.transcriptionLanguage.code)
     }
@@ -451,36 +445,11 @@ final class DictationCoordinator: ObservableObject {
         let choice = settingsProvider().transcriptionModel
         prewarmTask = Task { [choice, reason] in
             do {
-                try await Self.prepare(choice)
+                try await choice.engine.prepare()
                 lokalbotLog("dictation prewarm ready model=\(choice.rawValue) reason=\(reason)")
             } catch {
                 lokalbotLog("dictation prewarm FAILED model=\(choice.rawValue): \(error.localizedDescription)")
             }
-        }
-    }
-
-    private static func prepare(_ choice: TranscriptionModelChoice) async throws {
-        switch choice {
-        case .parakeetV3:
-            await ParakeetEngine.shared.setVariant(.v3)
-            try await ParakeetEngine.shared.prepare()
-        case .parakeetV2:
-            await ParakeetEngine.shared.setVariant(.v2)
-            try await ParakeetEngine.shared.prepare()
-        case .qwenASR17B:
-            try await QwenASREngine.accuracy.prepare()
-        case .qwenASR06B:
-            try await QwenASREngine.compact.prepare()
-        case .graniteSpeech:
-            try await GraniteSpeechEngine.shared.prepare()
-        case .whisperLarge:
-            try await WhisperEngine.shared.prepare()
-        case .cohere:
-            try await CohereEngine.shared.prepare()
-        case .senseVoice:
-            try await OnnxTranscriptionEngine.senseVoice.prepare()
-        case .gigaamRussian:
-            try await OnnxTranscriptionEngine.gigaamRussian.prepare()
         }
     }
 

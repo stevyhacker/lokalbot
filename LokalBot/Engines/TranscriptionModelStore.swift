@@ -10,10 +10,8 @@ struct TranscriptionModelStore {
 
         static var live: Environment {
             let fileManager = FileManager.default
-            let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-                .appendingPathComponent(AppIdentifiers.bundleID, isDirectory: true)
-            let fluidAudioRoot = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-                .appendingPathComponent("FluidAudio", isDirectory: true)
+            let appSupport = AppDirectories.applicationSupport
+            let fluidAudioRoot = AppDirectories.fluidAudioRoot
             let fluidAudioModelsRoot = fluidAudioRoot
                 .appendingPathComponent("Models", isDirectory: true)
             let whisperKitRepoRoot = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!

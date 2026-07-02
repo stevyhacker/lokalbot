@@ -16,13 +16,7 @@ final class StorageManager {
         // UI-test isolation hook: when the env var points at a directory,
         // every read/write goes there instead of the user's real library.
         // Production launches never set it, so default behaviour is unchanged.
-        if let override = UITestRuntime.storageRoot {
-            rootURL = URL(fileURLWithPath: override, isDirectory: true)
-        } else {
-            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory,
-                                                      in: .userDomainMask).first!
-            rootURL = appSupport.appendingPathComponent(AppIdentifiers.bundleID, isDirectory: true)
-        }
+        rootURL = AppDirectories.libraryRoot
         try? FileManager.default.createDirectory(at: rootURL.appendingPathComponent("meetings"),
                                                  withIntermediateDirectories: true)
     }

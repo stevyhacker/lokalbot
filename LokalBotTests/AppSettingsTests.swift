@@ -40,6 +40,36 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(settings.dictationRetainAudio)
     }
 
+    /// Settings written before TranscriptionModelChoice raw values were
+    /// stabilized persisted the display strings — they must keep decoding so
+    /// an update never silently resets a user's model choice.
+    func testDecodesLegacyTranscriptionModelDisplayString() throws {
+        let data = #"{"transcriptionModel":"Parakeet TDT 0.6B v3 (multilingual)"}"#.data(using: .utf8)!
+
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertEqual(settings.transcriptionModel, .parakeetV3)
+    }
+
+    func testTranscriptionModelPersistsStableRawValue() throws {
+        var settings = AppSettings()
+        settings.transcriptionModel = .whisperLarge
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertTrue(String(data: data, encoding: .utf8)!.contains("whisper-large-v3-turbo"))
+        XCTAssertEqual(decoded.transcriptionModel, .whisperLarge)
+    }
+
+    func testUnknownTranscriptionModelFallsBackToDefault() throws {
+        let data = #"{"transcriptionModel":"some-future-model"}"#.data(using: .utf8)!
+
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertEqual(settings.transcriptionModel, TranscriptionModelChoice.recommended)
+    }
+
     /// The default prunes OCR text on the same schedule as the pixels;
     /// keeping it forever is the explicit opt-in.
     func testKeepOCRTextForeverDefaultsFalse() {

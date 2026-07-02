@@ -74,13 +74,7 @@ final class ProcessingPipeline: ObservableObject {
             if job.transcribe || !FileManager.default.fileExists(
                 atPath: folder.appendingPathComponent("transcript.json").path) {
                 stages[meeting.id] = .preparingModel
-                let choice = config.transcriptionModel
-                switch choice {
-                case .parakeetV3: await ParakeetEngine.shared.setVariant(.v3)
-                case .parakeetV2: await ParakeetEngine.shared.setVariant(.v2)
-                default: break
-                }
-                let engine = choice.engine   // engines prepare lazily inside transcribe
+                let engine = config.transcriptionModel.engine   // engines prepare lazily inside transcribe
 
                 stages[meeting.id] = .transcribing
                 var transcript = try await transcribeTracks(meeting: meeting, folder: folder,
@@ -308,7 +302,7 @@ final class ProcessingPipeline: ObservableObject {
             (meetingLines + lines).joined(separator: "\n"), maxCharacters: 24_000)
         let context = Self.digestContext(date: day, ocr: ocr)
         let text = try await engine.generate(
-            system: "You summarize a person's workday from their app/window activity log, meeting list, and OCR'd on-screen text. Write Markdown: ## What I worked on (grouped bullets, by project/topic inferred from window titles AND the on-screen text), ## Meetings (or 'None'), ## Time allocation (one-line table of top apps). Lean on the screen text for concrete detail; be specific, never invent.",
+            system: PromptTemplates.dayDigestSystem,
             prompt: material.isEmpty ? "No activity was recorded this day." : material,
             context: context)
         let name = day.formatted(.iso8601.year().month().day())

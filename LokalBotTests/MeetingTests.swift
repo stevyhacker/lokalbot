@@ -42,8 +42,8 @@ final class MeetingTests: XCTestCase {
     }
 
     func testMeetingTitleDoesNotDuplicateMeetingSuffix() {
-        XCTAssertEqual(AppState.meetingTitle(for: "Google Chrome"), "Google Chrome meeting")
-        XCTAssertEqual(AppState.meetingTitle(for: "Google Chrome meeting"), "Google Chrome meeting")
+        XCTAssertEqual(MeetingMatcher.meetingTitle(for: "Google Chrome"), "Google Chrome meeting")
+        XCTAssertEqual(MeetingMatcher.meetingTitle(for: "Google Chrome meeting"), "Google Chrome meeting")
     }
 
     func testDurationLabelPrefersRecordedAudioLength() {

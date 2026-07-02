@@ -117,8 +117,8 @@ extension TextEngine {
     /// the continuation. Used by Ollama / Apple Intelligence; the built-in
     /// llama-server (OpenAI-compatible) overrides this with the raw endpoint.
     func complete(_ request: CompletionRequest) async throws -> String {
-        let system = "You are an autocomplete engine. Continue the user's text naturally from exactly where it stops. Output ONLY the continuation — no quotes, no preamble, no explanation, no restating prior text. Keep it to a short phrase."
-        return try await generate(system: system, prompt: request.prompt, context: [])
+        try await generate(system: PromptTemplates.autocompleteSystem,
+                           prompt: request.prompt, context: [])
     }
 
     /// Non-streaming fallback: run once, emit the whole result as one partial.

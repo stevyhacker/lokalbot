@@ -66,22 +66,12 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
 
         // VAD speech regions give real per-utterance timing; fall back to the
         // whole track as a single region when VAD is unavailable.
+        let spans = try await SpeechActivity.shared.spans(in: url, maxSegmentSeconds: nil)
         var regions: [(start: TimeInterval, end: TimeInterval, wav: URL)] = []
-        if let analysis = await SpeechActivity.shared.speechRegions(in: url) {
-            for (index, segment) in analysis.segments.enumerated() {
-                let lo = max(0, segment.startSample(sampleRate: Self.sampleRate))
-                let hi = min(analysis.samples.count, segment.endSample(sampleRate: Self.sampleRate))
-                guard hi > lo else { continue }
-                let wav = work.appendingPathComponent("\(index).wav")
-                try Self.writeWav(Array(analysis.samples[lo..<hi]), to: wav)
-                regions.append((segment.startTime, segment.endTime, wav))
-            }
-        }
-        if regions.isEmpty {
-            let samples = try AudioConverter().resampleAudioFile(url)
-            let wav = work.appendingPathComponent("full.wav")
-            try Self.writeWav(samples, to: wav)
-            regions = [(0, Double(samples.count) / Double(Self.sampleRate), wav)]
+        for (index, span) in spans.enumerated() {
+            let wav = work.appendingPathComponent("\(index).wav")
+            try Self.writeWav(span.samples, to: wav)
+            regions.append((span.start, span.end, wav))
         }
 
         let started = Date()
@@ -139,10 +129,7 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
 
     // MARK: - Paths
 
-    private static var appSupport: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent(AppIdentifiers.bundleID, isDirectory: true)
-    }
+    private static var appSupport: URL { AppDirectories.applicationSupport }
     private static var modelsRoot: URL {
         appSupport.appendingPathComponent("sherpa-models", isDirectory: true)
     }

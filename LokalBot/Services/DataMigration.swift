@@ -59,9 +59,8 @@ enum DataMigration {
             return
         }
 
-        let appSupport = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let currentDir = appSupport.appendingPathComponent(AppIdentifiers.bundleID, isDirectory: true)
+        let appSupport = AppDirectories.userApplicationSupport
+        let currentDir = AppDirectories.applicationSupport
 
         migrateFromV3IfNeeded(appSupport: appSupport, currentDir: currentDir, defaults: defaults)
         migrateFromV2IfNeeded(appSupport: appSupport, currentDir: currentDir, defaults: defaults)

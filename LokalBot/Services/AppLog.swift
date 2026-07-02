@@ -53,16 +53,11 @@ enum AppLog {
         category("app").info("\(message)")
     }
 
-    /// `<App Support>/me.dotenv.LokalBot/debug.log` — the same file the app has
-    /// always appended diagnostics to, so existing tooling keeps working. The
-    /// temp-directory fallback avoids a force-unwrap on the (in practice always
-    /// present) Application Support URL.
+    /// `<library root>/debug.log` — the same file the app has always appended
+    /// diagnostics to, so existing tooling keeps working. Follows the
+    /// `LOKALBOT_STORAGE_ROOT` override so isolated runs log into their own
+    /// library instead of the real one.
     private static func debugLogURL() -> URL {
-        let base = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        return base
-            .appendingPathComponent(AppIdentifiers.bundleID, isDirectory: true)
-            .appendingPathComponent("debug.log", isDirectory: false)
+        AppDirectories.libraryRoot.appendingPathComponent("debug.log", isDirectory: false)
     }
 }

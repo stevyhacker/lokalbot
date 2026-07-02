@@ -176,9 +176,7 @@ enum MeetingChatFormat {
 /// meetings, plus screen/activity context (OCR'd screen text and per-app time).
 /// Backed by the app's live state — the loaded meeting list, the FTS5 keyword
 /// index, the semantic embedding index, the activity store, and on-disk
-/// artifacts — so the chat reflects exactly what the rest of the app sees (and
-/// honours the UI-test storage-root override, unlike the CLI's hard-coded
-/// `SessionLookup` paths).
+/// artifacts — so the chat reflects exactly what the rest of the app sees.
 @MainActor
 final class MeetingChatTools: ChatToolRunner {
     private let meetingsProvider: () -> [Meeting]

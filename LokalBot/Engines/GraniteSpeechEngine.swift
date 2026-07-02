@@ -15,7 +15,6 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     nonisolated static let modelFileName = "granite-speech-4.1-2b-Q4_K_M.gguf"
     nonisolated static let projectorFileName = "mmproj-model-f16.gguf"
     private static let prompt = "transcribe the speech with proper punctuation and capitalization."
-    private static let sampleRate = 16_000
     private static let maxSegmentSeconds = 30.0
     private static let serverPort = 17_875
 
@@ -33,7 +32,8 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
         try await prepare()
         let started = Date()
-        let regions = try await audioRegions(for: url)
+        let regions = try await SpeechActivity.shared.spans(
+            in: url, maxSegmentSeconds: Self.maxSegmentSeconds)
         let work = try Self.makeWorkDir()
         defer { try? FileManager.default.removeItem(at: work) }
 
@@ -88,10 +88,7 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         let projector: URL
     }
 
-    private nonisolated static var appSupport: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent(AppIdentifiers.bundleID, isDirectory: true)
-    }
+    private nonisolated static var appSupport: URL { AppDirectories.applicationSupport }
 
     nonisolated static func modelRoot() -> URL {
         modelRoot(appSupport: appSupport)
@@ -144,6 +141,9 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         return .init(model: model, projector: projector)
     }
 
+    /// Fetches one GGUF through the shared download stack (ranged when the CDN
+    /// supports it, with real progress either way), validates, and installs it
+    /// atomically.
     private nonisolated static func downloadIfNeeded(
         fileName: String,
         destination: URL,
@@ -152,75 +152,23 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     ) async throws {
         if ModelFileValidator.looksLikeGGUF(destination) { return }
         try? FileManager.default.removeItem(at: destination)
-        report(.init(fractionCompleted: nil, status: status), to: progress)
+        report(.init(fractionCompleted: 0, status: status), to: progress)
 
         let url = URL(string: "https://huggingface.co/\(repo)/resolve/main/\(fileName)")!
-        let (downloaded, response) = try await URLSession.shared.download(from: url)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw EngineError.downloadFailed
+        let stashed = try await ParallelRangeDownloader.download(from: url, session: .shared) { update in
+            report(.init(fractionCompleted: update.fractionCompleted, status: status), to: progress)
         }
-
-        let staged = destination.deletingLastPathComponent()
-            .appendingPathComponent(".\(fileName).\(UUID().uuidString).partial")
-        try FileManager.default.moveItem(at: downloaded, to: staged)
-        guard ModelFileValidator.looksLikeGGUF(staged) else {
-            try? FileManager.default.removeItem(at: staged)
+        guard ModelFileValidator.looksLikeGGUF(stashed) else {
+            DownloadFileRescuer.cleanup(stashed)
             throw EngineError.modelUnavailable
         }
-        try? FileManager.default.removeItem(at: destination)
-        try FileManager.default.moveItem(at: staged, to: destination)
+        try DownloadFileRescuer.install(stashed: stashed, to: destination)
     }
 
     private nonisolated static func report(_ update: ModelPreparationUpdate,
                                            to handler: ModelPreparationProgressHandler?) {
         guard let handler else { return }
         Task { @MainActor in handler(update) }
-    }
-
-    // MARK: - Audio segmentation
-
-    private struct AudioRegion: Sendable {
-        let start: TimeInterval
-        let end: TimeInterval
-        let samples: [Float]
-    }
-
-    private nonisolated func audioRegions(for url: URL) async throws -> [AudioRegion] {
-        if let analysis = await SpeechActivity.shared.speechRegions(in: url),
-           !analysis.segments.isEmpty {
-            var regions: [AudioRegion] = []
-            for segment in analysis.segments {
-                let start = max(0, segment.startSample(sampleRate: Self.sampleRate))
-                let end = min(analysis.samples.count, segment.endSample(sampleRate: Self.sampleRate))
-                guard end > start else { continue }
-                regions.append(contentsOf: Self.split(
-                    samples: analysis.samples,
-                    start: start,
-                    end: end,
-                    baseTime: 0))
-            }
-            if !regions.isEmpty { return regions }
-        }
-
-        let samples = try AudioConverter().resampleAudioFile(url)
-        return Self.split(samples: samples, start: 0, end: samples.count, baseTime: 0)
-    }
-
-    private nonisolated static func split(samples: [Float], start: Int, end: Int,
-                                          baseTime: TimeInterval) -> [AudioRegion] {
-        guard end > start else { return [] }
-        let maxSamples = max(1, Int(maxSegmentSeconds * Double(sampleRate)))
-        var regions: [AudioRegion] = []
-        var cursor = start
-        while cursor < end {
-            let next = min(cursor + maxSamples, end)
-            regions.append(.init(
-                start: baseTime + Double(cursor) / Double(sampleRate),
-                end: baseTime + Double(next) / Double(sampleRate),
-                samples: Array(samples[cursor..<next])))
-            cursor = next
-        }
-        return regions
     }
 
     private nonisolated static func makeWorkDir() throws -> URL {
@@ -285,15 +233,12 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     }
 
     enum EngineError: LocalizedError {
-        case downloadFailed
         case modelUnavailable
         case serverUnavailable
         case transcriptionFailed(String)
 
         var errorDescription: String? {
             switch self {
-            case .downloadFailed:
-                "Granite Speech could not be downloaded from Hugging Face."
             case .modelUnavailable:
                 "Granite Speech files are missing or invalid."
             case .serverUnavailable:

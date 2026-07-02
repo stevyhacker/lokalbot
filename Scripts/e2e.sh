@@ -5,16 +5,33 @@
 #   Scripts/install-app.sh && Scripts/e2e.sh
 # Flows needing TCC permissions (screenshots) SKIP instead of failing when
 # the permission is missing, so the suite is useful pre- and post-grant.
+#
+# Hermetic: the whole suite runs against a throwaway library under a temp
+# LOKALBOT_STORAGE_ROOT, so it never touches the user's real meetings,
+# indexes, or journal. Model caches are intentionally shared with the real
+# install (they live outside the storage root), so nothing re-downloads.
 set -uo pipefail
 
 BIN="${LOKALBOT_APP:-/Applications/LokalBot.app}/Contents/MacOS/LokalBot"
-ROOT="$HOME/Library/Application Support/me.dotenv.LokalBot"
 [ -x "$BIN" ] || { echo "no binary at $BIN — run Scripts/install-app.sh first"; exit 2; }
+
+ROOT=$(mktemp -d /tmp/lokalbot-e2e.XXXXXX)
+export LOKALBOT_STORAGE_ROOT="$ROOT"
 
 P=0; F=0; S=0
 pass() { echo "  ✅ $1"; P=$((P+1)); }
 fail() { echo "  ❌ $1"; F=$((F+1)); }
 skip() { echo "  ⏭️  $1"; S=$((S+1)); }
+
+# Keep the library around on failure for debugging; clean up on success.
+finish() {
+  if [ "$F" -eq 0 ]; then
+    rm -rf "$ROOT"
+  else
+    echo "test library kept for inspection: $ROOT"
+  fi
+}
+trap finish EXIT
 
 echo "== T1: manual recording (mic → m4a + meta.json) =="
 OUT=$("$BIN" --record 4 2>/dev/null | tail -1); RC=$?
@@ -25,14 +42,13 @@ elif [[ "$OUT" == *"--record: done"* && -s "$DIR/mic.m4a" && -s "$DIR/meta.json"
   SIZE=$(stat -f%z "$DIR/mic.m4a")
   [ "$SIZE" -gt 5000 ] && pass "recorded mic.m4a (${SIZE}B) + meta.json" \
                        || fail "mic.m4a suspiciously small (${SIZE}B)"
-  rm -rf "$DIR"   # don't pollute the library with 4-second clips
 else
   fail "record flow: $OUT"
 fi
 
 echo "== T2: transcribe + summarize (dual-track, Me/Them, Markdown) =="
 FIX="$ROOT/meetings/2026/06/e2e-fixture"
-rm -rf "$FIX"; mkdir -p "$FIX"
+mkdir -p "$FIX"
 say -v Samantha -o /tmp/e2e_mic.aiff "Let us decide on the caching layer. I propose Redis because of pub sub support. I will draft the eviction policy document by Thursday." 2>/dev/null
 say -v Daniel -o /tmp/e2e_sys.aiff "Agreed on Redis. One open question, do we need cluster mode from day one? Please benchmark failover latency first." 2>/dev/null
 afconvert -f m4af -d aac /tmp/e2e_mic.aiff "$FIX/mic.m4a"
@@ -101,12 +117,9 @@ if [[ "$OUT" == *"--digest: /"* && -s "$JOURNAL" ]]; then
 else
   fail "digest: $OUT"
 fi
-# Undo the seed so the suite never pollutes the real library.
-sqlite3 -cmd ".timeout 5000" "$ROOT/lokalbotv3.sqlite" \
-  "DELETE FROM ocr_fts WHERE ts=$NOW; DELETE FROM activity_blocks WHERE start=$((NOW-600));" 2>/dev/null
 
 echo "== T9: chat assistant (tool-calling Q&A over meetings) =="
-# Reuses the T2 fixture (Redis / eviction policy) now in the real library.
+# Reuses the T2 fixture (Redis / eviction policy) in the test library.
 # The agent must search/read the meeting and ground its answer in it.
 CHAT=$("$BIN" --chat "What did we decide about caching? Name the datastore." 2>/dev/null)
 if echo "$CHAT" | grep -qi "redis"; then

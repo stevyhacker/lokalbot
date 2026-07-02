@@ -173,16 +173,13 @@ final class EmbeddingIndex {
         let folder = storage.rootURL.appendingPathComponent("models", isDirectory: true)
         let path = folder.appendingPathComponent(modelFile)
         if FileManager.default.fileExists(atPath: path.path) { return path }
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let (temp, response) = try await URLSession.shared.download(from: URL(string: modelURL)!)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw TextEngineError.badResponse("embedding model download failed")
-        }
-        guard ModelFileValidator.looksLikeGGUF(temp) else {
+        let stashed = try await ParallelRangeDownloader.download(
+            from: URL(string: modelURL)!, session: .shared) { _ in }
+        guard ModelFileValidator.looksLikeGGUF(stashed) else {
+            DownloadFileRescuer.cleanup(stashed)
             throw TextEngineError.badResponse("embedding model download was not a GGUF model")
         }
-        try? FileManager.default.removeItem(at: path)
-        try FileManager.default.moveItem(at: temp, to: path)
+        try DownloadFileRescuer.install(stashed: stashed, to: path)
         return path
     }
 

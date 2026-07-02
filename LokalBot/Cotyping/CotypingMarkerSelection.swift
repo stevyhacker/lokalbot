@@ -12,7 +12,7 @@ struct CotypingMarkerSelection: Equatable, Sendable {
 }
 
 enum CotypingMarkerSelectionSynthesizer {
-    static let defaultWindow = 4096
+    static let defaultWindow = CotypingAXHelper.maxPrecedingCharacters
 
     static func make(
         beforeCaret: String,

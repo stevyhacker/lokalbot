@@ -180,9 +180,7 @@ actor LlamaServer {
     }
 
     private var pidMarkerURL: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent(AppIdentifiers.bundleID, isDirectory: true)
-        return appSupport.appendingPathComponent("llama-server-\(port).pid.json")
+        AppDirectories.applicationSupport.appendingPathComponent("llama-server-\(port).pid.json")
     }
 
     private func healthy() async -> Bool {
@@ -302,10 +300,8 @@ actor LlamaServer {
               FileManager.default.fileExists(atPath: bundled.appendingPathComponent("llama-server").path)
         else { throw ServerError.binaryMissing }
 
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory,
-                                                  in: .userDomainMask).first!
-            .appendingPathComponent(AppIdentifiers.bundleID)
-        let installed = appSupport.appendingPathComponent("llama-cpp", isDirectory: true)
+        let installed = AppDirectories.applicationSupport
+            .appendingPathComponent("llama-cpp", isDirectory: true)
         let binary = installed.appendingPathComponent("llama-server")
 
         let bundledSize = (try? FileManager.default.attributesOfItem(

@@ -66,7 +66,8 @@ actor QwenASREngine: TranscriptionEngine {
         guard let model else { throw EngineError.notLoaded }
 
         let started = Date()
-        let spans = try await Self.spans(for: url)
+        let spans = try await SpeechActivity.shared.spans(
+            in: url, maxSegmentSeconds: Self.maxSegmentSeconds)
         var segments: [Transcript.Segment] = []
         for span in spans {
             let text = model.transcribe(
@@ -102,8 +103,7 @@ actor QwenASREngine: TranscriptionEngine {
     }
 
     private static func cacheRoot() throws -> URL {
-        let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent(AppIdentifiers.bundleID, isDirectory: true)
+        let root = AppDirectories.applicationSupport
             .appendingPathComponent("qwen3-asr-models", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
@@ -128,52 +128,6 @@ actor QwenASREngine: TranscriptionEngine {
             dir = dir.appendingPathComponent(String(component), isDirectory: true)
         }
         return dir
-    }
-
-    private struct AudioSpan: Sendable {
-        let start: TimeInterval
-        let end: TimeInterval
-        let samples: [Float]
-    }
-
-    private static func spans(for url: URL) async throws -> [AudioSpan] {
-        if let analysis = await SpeechActivity.shared.speechRegions(in: url),
-           !analysis.segments.isEmpty {
-            var spans: [AudioSpan] = []
-            for segment in analysis.segments {
-                let start = max(0, segment.startSample(sampleRate: sampleRate))
-                let end = min(analysis.samples.count, segment.endSample(sampleRate: sampleRate))
-                guard end > start else { continue }
-                spans.append(contentsOf: split(
-                    samples: analysis.samples,
-                    start: start,
-                    end: end,
-                    baseTime: 0))
-            }
-            if !spans.isEmpty { return spans }
-        }
-
-        let samples = try AudioConverter().resampleAudioFile(url)
-        return split(samples: samples, start: 0, end: samples.count, baseTime: 0)
-    }
-
-    private static func split(samples: [Float], start: Int, end: Int,
-                              baseTime: TimeInterval) -> [AudioSpan] {
-        guard end > start else { return [] }
-        let maxSamples = max(1, Int(maxSegmentSeconds * Double(sampleRate)))
-        var spans: [AudioSpan] = []
-        var cursor = start
-        while cursor < end {
-            let next = min(cursor + maxSamples, end)
-            let startTime = baseTime + Double(cursor) / Double(sampleRate)
-            let endTime = baseTime + Double(next) / Double(sampleRate)
-            spans.append(.init(
-                start: startTime,
-                end: endTime,
-                samples: Array(samples[cursor..<next])))
-            cursor = next
-        }
-        return spans
     }
 
     private static func maxTokens(for sampleCount: Int) -> Int {

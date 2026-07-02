@@ -1,12 +1,16 @@
 import Foundation
 
-/// Downloads large static files through parallel HTTP byte ranges.
+/// Downloads large static files through parallel HTTP byte ranges, falling
+/// back to a single streamed GET when the server can't do ranges (or the file
+/// is small enough that ranges don't pay off).
 ///
 /// Hugging Face's CDN supports `Accept-Ranges: bytes` for the GGUF files in the
 /// model catalog. A single `URLSessionDownloadTask` can sit well below the
 /// user's available bandwidth on fast links, while a small number of ranged
 /// requests usually keeps the pipe busier. Callers still validate the final
-/// bytes before installing the model.
+/// bytes before installing the model. Either way the caller gets one temp-file
+/// URL back with progress reported throughout — there is exactly one download
+/// path to reason about.
 enum ParallelRangeDownloader {
     struct Progress: Sendable {
         let bytesWritten: Int64
@@ -26,7 +30,7 @@ enum ParallelRangeDownloader {
         var length: Int64 { end - start + 1 }
     }
 
-    enum FallbackRequired: Error {
+    private enum FallbackRequired: Error {
         case unsupported
     }
 
@@ -74,11 +78,30 @@ enum ParallelRangeDownloader {
         return out
     }
 
+    /// Downloads `url` to a temp file, ranged when the server supports it and
+    /// the file is large enough, else via one streamed GET. Returns the temp
+    /// URL; the caller validates and installs it.
     static func download(
         from url: URL,
         session: URLSession,
         partSize: Int64 = defaultPartSize,
         maxConcurrentParts: Int = defaultMaxConcurrentParts,
+        progress: @escaping @Sendable (Progress) -> Void
+    ) async throws -> URL {
+        do {
+            return try await downloadRanged(
+                from: url, session: session, partSize: partSize,
+                maxConcurrentParts: maxConcurrentParts, progress: progress)
+        } catch is FallbackRequired {
+            return try await downloadWhole(from: url, session: session, progress: progress)
+        }
+    }
+
+    private static func downloadRanged(
+        from url: URL,
+        session: URLSession,
+        partSize: Int64,
+        maxConcurrentParts: Int,
         progress: @escaping @Sendable (Progress) -> Void
     ) async throws -> URL {
         try Task.checkCancellation()
@@ -129,6 +152,64 @@ enum ParallelRangeDownloader {
         success = true
         progress(.init(bytesWritten: probe.totalBytes, totalBytes: probe.totalBytes))
         return assembled
+    }
+
+    /// Single streamed GET for servers without byte-range support (or files
+    /// below the acceleration threshold). Still reports progress — unlike a
+    /// bare `URLSession.download(from:)` — so a 1.5 GB fallback download never
+    /// looks frozen in the UI.
+    private static func downloadWhole(
+        from url: URL,
+        session: URLSession,
+        progress: @escaping @Sendable (Progress) -> Void
+    ) async throws -> URL {
+        try Task.checkCancellation()
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 600
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue(AppIdentifiers.bundleID, forHTTPHeaderField: "User-Agent")
+
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw DownloadError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw DownloadError.httpStatus(http.statusCode)
+        }
+        let totalBytes = parseContentLength(http)
+
+        let fileManager = FileManager.default
+        let destination = fileManager.temporaryDirectory
+            .appendingPathComponent("LokalBot-download-\(UUID().uuidString)", isDirectory: false)
+        _ = fileManager.createFile(atPath: destination.path, contents: nil)
+        let output = try FileHandle(forWritingTo: destination)
+
+        var success = false
+        defer {
+            try? output.close()
+            if !success { try? fileManager.removeItem(at: destination) }
+        }
+
+        var written: Int64 = 0
+        var buffer = Data()
+        buffer.reserveCapacity(8 * 1024 * 1024)
+        progress(.init(bytesWritten: 0, totalBytes: totalBytes))
+        for try await byte in bytes {
+            buffer.append(byte)
+            if buffer.count >= 8 * 1024 * 1024 {
+                try output.write(contentsOf: buffer)
+                written += Int64(buffer.count)
+                buffer.removeAll(keepingCapacity: true)
+                progress(.init(bytesWritten: written, totalBytes: totalBytes))
+            }
+        }
+        if !buffer.isEmpty {
+            try output.write(contentsOf: buffer)
+            written += Int64(buffer.count)
+        }
+        progress(.init(bytesWritten: written, totalBytes: max(totalBytes, written)))
+        success = true
+        return destination
     }
 
     private struct Probe: Sendable {

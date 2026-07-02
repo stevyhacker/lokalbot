@@ -1,0 +1,213 @@
+import Foundation
+import AVFoundation
+import AppKit
+
+/// A `LokalBot --flag` subcommand. Parsed once, in `LokalBotMain.main()`,
+/// before SwiftUI launches — so argument handling never lives inside
+/// `AppState`, and the parse itself is a pure, testable function.
+///
+/// The commands still execute inside the normal app launch (they need the
+/// main run loop for audio, timers, and screen capture); each schedules its
+/// work and calls `exit()` when done.
+enum HeadlessCommand: Equatable {
+    case process(folder: URL, summarize: Bool)
+    case search(query: String)
+    case record(seconds: Int)
+    case shotTest
+    case digest
+    case chat(question: String)
+
+    /// Set by `LokalBotMain.main()`; consumed by `AppState.init`.
+    @MainActor static var requested: HeadlessCommand?
+
+    static func parse(_ args: [String]) -> HeadlessCommand? {
+        if let flag = args.firstIndex(of: "--process"), args.count > flag + 1 {
+            return .process(folder: URL(fileURLWithPath: args[flag + 1], isDirectory: true),
+                            summarize: !args.contains("--no-summary"))
+        }
+        if let flag = args.firstIndex(of: "--search"), args.count > flag + 1 {
+            return .search(query: args[flag + 1])
+        }
+        if let flag = args.firstIndex(of: "--record"), args.count > flag + 1,
+           let seconds = Int(args[flag + 1]) {
+            return .record(seconds: seconds)
+        }
+        if args.contains("--shot-test") { return .shotTest }
+        if args.contains("--digest") { return .digest }
+        if let flag = args.firstIndex(of: "--chat"), args.count > flag + 1 {
+            return .chat(question: args[flag + 1])
+        }
+        return nil
+    }
+}
+
+/// Executes headless subcommands against the app's real subsystems (pipeline,
+/// indexes, recorder). Test hooks for CI and `Scripts/e2e.sh` — the same code
+/// paths as the UI, no window required.
+@MainActor
+struct HeadlessCommandRunner {
+    let app: AppState
+
+    func run(_ command: HeadlessCommand) {
+        switch command {
+        case .process(let folder, let summarize): runProcess(folder: folder, summarize: summarize)
+        case .search(let query): runSearch(query: query)
+        case .record(let seconds): runRecord(seconds: seconds)
+        case .shotTest: runShotTest()
+        case .digest: runDigest()
+        case .chat(let question): runChat(question: question)
+        }
+    }
+
+    /// `LokalBot --process <meeting folder>`: run the pipeline headless and
+    /// exit. Lets the pipeline be exercised (and CI-tested) without the UI.
+    private func runProcess(folder: URL, summarize: Bool) {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("meta.json")),
+              let decoded = try? decoder.decode(Meeting.self, from: data) else {
+            print("LokalBot --process: no readable meta.json in \(folder.path)")
+            exit(2)
+        }
+        app.pipeline.enqueue(decoded, transcribe: true, summarize: summarize)
+        // Poll the pipeline until the job leaves the stage table, then exit.
+        Task { @MainActor in
+            while true {
+                try? await Task.sleep(for: .milliseconds(500))
+                switch app.pipeline.stages[decoded.id] {
+                case .none:
+                    print("LokalBot --process: done → \(folder.path)")
+                    await LlamaServer.shared.stop()
+                    exit(0)
+                case .failed(let message):
+                    print("LokalBot --process: FAILED — \(message)")
+                    await LlamaServer.shared.stop()
+                    exit(1)
+                default:
+                    continue
+                }
+            }
+        }
+    }
+
+    /// `LokalBot --record <seconds>`: manual mic recording, no pipeline.
+    private func runRecord(seconds: Int) {
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+            print("LokalBot --record: SKIP (microphone not granted)")
+            exit(3)
+        }
+        app.startRecording(context: nil, source: "headless")
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard app.isRecording else {
+                print("LokalBot --record: FAILED to start — \(app.lastError ?? "no error recorded")")
+                exit(1)
+            }
+            app.stopRecording(process: false)
+            guard let meeting = app.meetings.first else { print("LokalBot --record: no meeting"); exit(1) }
+            print("LokalBot --record: done → \(meeting.folderURL(in: app.storage).path)")
+            exit(0)
+        }
+    }
+
+    /// `LokalBot --shot-test`: one screenshot capture, exit 0 ok / 3 skip / 1 fail.
+    private func runShotTest() {
+        Task { @MainActor in
+            guard CGPreflightScreenCaptureAccess() else {
+                print("LokalBot --shot-test: SKIP (screen recording not granted)")
+                exit(3)
+            }
+            let before = Date()
+            app.screenshots.captureNow()
+            try? await Task.sleep(for: .seconds(8))
+            if let shot = app.activityStore.screenshots(on: Date()).last(where: { $0.ts >= before }) {
+                print("LokalBot --shot-test: ok (app: \(shot.app))")
+                exit(0)
+            }
+            print("LokalBot --shot-test: FAILED (no screenshot row — see debug.log)")
+            exit(1)
+        }
+    }
+
+    /// `LokalBot --digest today`: generate today's journal digest and exit.
+    private func runDigest() {
+        Task { @MainActor in
+            do {
+                let day = Date()
+                let todays = app.meetings.filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }
+                let (text, url) = try await app.pipeline.generateDayDigest(
+                    for: day, blocks: app.activityStore.blocks(on: day),
+                    meetings: todays, ocr: app.activityStore.ocrText(on: day), config: app.settings)
+                print("LokalBot --digest: \(url.path) (\(text.count) chars)")
+                await LlamaServer.shared.stop()
+                exit(0)
+            } catch {
+                print("LokalBot --digest: FAILED — \(error.localizedDescription)")
+                await LlamaServer.shared.stop()
+                exit(1)
+            }
+        }
+    }
+
+    /// `LokalBot --chat "<question>"`: run the meeting chat agent once against
+    /// the real engine + tools and print the answer. Test hook for the chat
+    /// assistant, same spirit as --search / --digest.
+    private func runChat(question: String) {
+        Task { @MainActor in
+            do {
+                app.searchIndex.reindexAll(app.meetings, storage: app.storage)
+                let engine = try await app.pipeline.makeTextEngine(app.settings)
+                let tools = MeetingChatTools(
+                    meetings: { [weak app] in app?.meetings ?? [] },
+                    storage: app.storage, searchIndex: app.searchIndex, embeddingIndex: app.embeddingIndex,
+                    activityStore: app.activityStore,
+                    settings: { [store = app.settingsStore] in store.current })
+                let agent = ChatAgent(engine: engine, runner: tools)
+                let answer = try await agent.respond(history: [], latest: question) { event in
+                    switch event {
+                    case .toolStarted(let call):
+                        print("LokalBot --chat: tool \(call.name)(\(call.arguments))")
+                    case .toolFinished(let name, let summary):
+                        print("LokalBot --chat: done \(name) — \(summary)")
+                    }
+                }
+                print("LokalBot --chat: \(answer)")
+                await LlamaServer.shared.stop()
+                await LlamaServer.embedder.stop()
+                exit(0)
+            } catch {
+                print("LokalBot --chat: FAILED — \(error.localizedDescription)")
+                await LlamaServer.shared.stop()
+                await LlamaServer.embedder.stop()
+                exit(1)
+            }
+        }
+    }
+
+    /// `LokalBot --search <query>`: print index hits and exit. Test hook
+    /// for the FTS5 index, same spirit as --process.
+    private func runSearch(query: String) {
+        let hits = app.searchIndex.search(query)
+        print("LokalBot --search: \(hits.count) keyword hit(s)")
+        for hit in hits {
+            let meeting = app.meetings.first { $0.id == hit.meetingID }
+            print("[\(hit.kind.rawValue)] \(meeting?.title ?? hit.meetingID.uuidString) @ \(Transcript.stamp(hit.start)): \(hit.snippet)")
+        }
+        Task { @MainActor in
+            if app.settings.semanticSearchEnabled {
+                await app.embeddingIndex.reindexAll(app.meetings)
+                let semantic = await app.embeddingIndex.search(query)
+                print("LokalBot --search: \(semantic.count) semantic hit(s)")
+                for hit in semantic {
+                    let meeting = app.meetings.first { $0.id == hit.meetingID }
+                    print(String(format: "[≈%.2f] %@ @ %@: %@", hit.score,
+                                 meeting?.title ?? "?", Transcript.stamp(hit.start),
+                                 String(hit.text.prefix(90))))
+                }
+                await LlamaServer.embedder.stop()
+                exit(hits.isEmpty && semantic.isEmpty ? 1 : 0)
+            }
+            exit(hits.isEmpty ? 1 : 0)
+        }
+    }
+}

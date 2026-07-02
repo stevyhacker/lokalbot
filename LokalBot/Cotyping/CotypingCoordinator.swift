@@ -54,7 +54,6 @@ final class CotypingCoordinator: ObservableObject {
     private let spellChecker = CotypingSpellChecker()
     private let clipboardProvider = CotypingClipboardProvider()
     private let clipboardRelevanceFilter = CotypingClipboardRelevanceFilter()
-    private nonisolated static let axPrecedingWindowLimit = 4096
     private nonisolated static let hostPublishWaitCeilingMs = 400
     private nonisolated static let hostPublishFirstPollIntervalMs = 10
     private nonisolated static let hostPublishPollIntervalMs = 30
@@ -159,7 +158,7 @@ final class CotypingCoordinator: ObservableObject {
         guard isRunning else { return }
         // Drop a live suggestion when focus leaves the field/app it belongs to.
         if let session,
-           Self.shouldClearActiveSessionOnFocusChange(
+           CotypingSessionReconciler.shouldClearActiveSessionOnFocusChange(
                session,
                liveField: focus.field,
                pendingInsertionConsumedCount: pendingInsertionConsumedCount) {
@@ -201,7 +200,7 @@ final class CotypingCoordinator: ObservableObject {
             return
         }
 
-        let fieldIdentity = Self.prewarmFieldIdentity(for: field)
+        let fieldIdentity = CotypingFieldIdentity.prewarm(for: field)
         guard fieldIdentity != focusPrewarmFieldIdentity else { return }
 
         focusPrewarmTask?.cancel()
@@ -277,7 +276,7 @@ final class CotypingCoordinator: ObservableObject {
         guard isRunning, pollGeneration == hostPublishPollGeneration else { return }
         let nextElapsed = elapsedMs + Self.hostPublishPollIntervalMs
 
-        if Self.hostPublishDidMove(from: baseline, to: focus.field) {
+        if CotypingSessionReconciler.hostPublishDidMove(from: baseline, to: focus.field) {
             let consumed = Self.elapsedMilliseconds(since: keystrokeUptimeNanoseconds)
             if let field = focus.field,
                field.contentSignature == pendingSpeculativeSignature {
@@ -291,7 +290,7 @@ final class CotypingCoordinator: ObservableObject {
                 return
             }
             if let current = session,
-               Self.shouldAwaitPostInsertionSync(
+               CotypingSessionReconciler.shouldAwaitPostInsertionSync(
                    current,
                    liveField: focus.field,
                    pendingInsertionConsumedCount: pendingInsertionConsumedCount),
@@ -325,28 +324,6 @@ final class CotypingCoordinator: ObservableObject {
                 keystrokeUptimeNanoseconds: keystrokeUptimeNanoseconds
             )
         }
-    }
-
-    nonisolated static func hostPublishDidMove(from baseline: CotypingField?, to current: CotypingField?) -> Bool {
-        guard let baseline else { return current != nil }
-        guard let current else { return true }
-        return current.contentSignature != baseline.contentSignature
-            || current.processID != baseline.processID
-            || current.bundleID != baseline.bundleID
-            || current.role != baseline.role
-            || knownFocusIdentityDidMove(from: baseline, to: current)
-            || suggestionAnchorIdentity(for: current) != suggestionAnchorIdentity(for: baseline)
-    }
-
-    private nonisolated static func knownFocusIdentityDidMove(
-        from baseline: CotypingField,
-        to current: CotypingField
-    ) -> Bool {
-        guard let original = baseline.focusIdentityKey,
-              let live = current.focusIdentityKey else {
-            return false
-        }
-        return original != live
     }
 
     private nonisolated static func elapsedMilliseconds(since uptimeNanoseconds: UInt64) -> Int {
@@ -385,7 +362,8 @@ final class CotypingCoordinator: ObservableObject {
         consumedDelayMilliseconds: Int
     ) -> Bool {
         guard let current = session,
-              let advanced = Self.sessionReconciledByPublishedTyping(current, liveField: liveField) else {
+              let advanced = CotypingSessionReconciler.sessionReconciledByPublishedTyping(
+                  current, liveField: liveField) else {
             return false
         }
 
@@ -410,15 +388,13 @@ final class CotypingCoordinator: ObservableObject {
             isRightToLeft: CotypingTextDirectionDetector.isRightToLeft(liveField.precedingText)) {
             showOverlay(text: remainingText, field: liveField, placement: placement)
         }
-        syncAcceptInterception()
-        lastSuggestion = remainingText
-        state = .ready(text: remainingText)
+        markReady(remainingText)
         return true
     }
 
     private func advanceActiveSessionIfTypedCharactersMatch(_ typedCharacters: String) -> Bool {
         guard let current = session,
-              let advanced = Self.sessionAdvancedByTypedCharacters(
+              let advanced = CotypingSessionReconciler.sessionAdvancedByTypedCharacters(
                   current,
                   typedCharacters: typedCharacters) else {
             return false
@@ -440,9 +416,7 @@ final class CotypingCoordinator: ObservableObject {
             isRightToLeft: CotypingTextDirectionDetector.isRightToLeft(current.field.precedingText)) {
             showOverlay(text: remainingText, field: current.field)
         }
-        syncAcceptInterception()
-        lastSuggestion = remainingText
-        state = .ready(text: remainingText)
+        markReady(remainingText)
         return true
     }
 
@@ -464,32 +438,28 @@ final class CotypingCoordinator: ObservableObject {
 
         // Emoji: an explicit `:shortcode` intent wins over autocorrect and the LLM.
         if settings.cotypingEmoji, let emoji = CotypingEmoji.match(trailing: field.precedingText) {
-            startSession(CotypingSession(field: field, fullText: emoji.glyph, kind: .emoji(shortcode: emoji.shortcode)))
-            showOverlay(text: "\(emoji.glyph) :\(emoji.shortcode):", field: field, acceptanceText: emoji.glyph)
-            syncAcceptInterception()
-            lastSuggestion = emoji.glyph
-            state = .ready(text: emoji.glyph)
+            present(
+                CotypingSession(field: field, fullText: emoji.glyph, kind: .emoji(shortcode: emoji.shortcode)),
+                overlayText: "\(emoji.glyph) :\(emoji.shortcode):",
+                acceptanceText: emoji.glyph)
             return
         }
 
         // Macros: an explicit `/expr` (math, date, unit, currency, random) wins too.
         if settings.cotypingMacros, let macro = CotypingMacro.match(trailing: field.precedingText) {
-            startSession(CotypingSession(field: field, fullText: macro.result.insertion, kind: .macro))
-            showOverlay(text: macro.result.preview, field: field, acceptanceText: macro.result.insertion)
-            syncAcceptInterception()
-            lastSuggestion = macro.result.insertion
-            state = .ready(text: macro.result.insertion)
+            present(
+                CotypingSession(field: field, fullText: macro.result.insertion, kind: .macro),
+                overlayText: macro.result.preview,
+                acceptanceText: macro.result.insertion)
             return
         }
 
         // Autocorrect: offer to fix the trailing word before spending an LLM call.
         switch typoDecision(for: field.precedingText, enabled: settings.cotypingAutocorrect) {
         case .offerCorrection(let word, let corrected):
-            startSession(CotypingSession(field: field, fullText: corrected, kind: .correction(typoWord: word)))
-            showOverlay(text: corrected, field: field)
-            syncAcceptInterception()
-            lastSuggestion = corrected
-            state = .ready(text: corrected)
+            present(
+                CotypingSession(field: field, fullText: corrected, kind: .correction(typoWord: word)),
+                overlayText: corrected)
             return
         case .suppress:
             clearSuggestion()
@@ -520,30 +490,90 @@ final class CotypingCoordinator: ObservableObject {
                 guard streamPartials else { return }
                 Task { @MainActor in self?.queueStreamPartial(partial, work: work, field: field) }
             }
-            guard work == generation, isRunning else { return }
-            guard let liveField = validatedLiveFieldForGeneratedResult(
-                originalField: field,
-                settings: settings) else {
-                clearStaleGeneratedResult()
-                return
-            }
-            let pendingAcceptedTail = lastAcceptedTail
-            lastAcceptedTail = nil
-            _ = applyGenerationResult(
+            completeGeneration(
                 result,
-                field: liveField,
+                targetField: field,
                 work: work,
                 latencyMilliseconds: Int(Date().timeIntervalSince(start) * 1000),
-                pendingAcceptedTail: pendingAcceptedTail)
-        } catch is CancellationError {
-            return
-        } catch let urlError as URLError where urlError.code == .cancelled {
-            return
+                holdSignature: nil)
         } catch {
-            guard work == generation else { return }
-            state = .failed(shortError(error))
-            CotypingStatsStore.shared.recordError()
+            handleGenerationFailure(error, work: work, holdSignature: nil)
         }
+    }
+
+    /// Validates and applies a finished generation — the single completion path
+    /// for both normal and speculative work. `holdSignature` marks a
+    /// speculative generation whose target was an optimistic post-acceptance
+    /// snapshot: its result may only apply once the host publishes the matching
+    /// content signature; until then it is parked for the host-publish poll.
+    /// Normal generations (`holdSignature == nil`) apply against the validated
+    /// live field or are discarded as stale.
+    private func completeGeneration(
+        _ result: CotypingNormalizationResult,
+        targetField: CotypingField,
+        work: UInt64,
+        latencyMilliseconds: Int,
+        holdSignature: String?
+    ) {
+        guard work == generation, isRunning else { return }
+        let settings = settingsProvider()
+
+        if let signature = holdSignature {
+            guard pendingSpeculativeSignature == signature else { return }
+            let focus = focusTracker.refreshNow(
+                includeSurface: settings.cotypingUseAppContext,
+                includeURL: !settings.cotypingExcludedDomainList.isEmpty,
+                includeStyle: settings.cotypingMatchHostStyle)
+            if let publishedField = focus.field,
+               publishedField.contentSignature == signature {
+                _ = applySpeculativeResult(
+                    result,
+                    publishedField: publishedField,
+                    work: work,
+                    latencyMilliseconds: latencyMilliseconds,
+                    signature: signature)
+                return
+            }
+            pendingSpeculativeResult = PendingSpeculativeResult(
+                result: result,
+                work: work,
+                optimisticField: targetField,
+                latencyMilliseconds: latencyMilliseconds)
+            return
+        }
+
+        guard let liveField = validatedLiveFieldForGeneratedResult(
+            originalField: targetField,
+            settings: settings) else {
+            clearStaleGeneratedResult()
+            return
+        }
+        let pendingAcceptedTail = lastAcceptedTail
+        lastAcceptedTail = nil
+        _ = applyGenerationResult(
+            result,
+            field: liveField,
+            work: work,
+            latencyMilliseconds: latencyMilliseconds,
+            pendingAcceptedTail: pendingAcceptedTail)
+    }
+
+    /// The single failure path for both generation modes. Cancellation is never
+    /// an error; a failed speculative generation falls back to a fresh normal
+    /// cycle instead of surfacing (the user never asked for it).
+    private func handleGenerationFailure(_ error: Error, work: UInt64, holdSignature: String?) {
+        if error is CancellationError { return }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return }
+        guard work == generation else { return }
+        if let signature = holdSignature {
+            guard pendingSpeculativeSignature == signature, isRunning else { return }
+            pendingSpeculativeSignature = nil
+            pendingSpeculativeResult = nil
+            scheduleGeneration(consumedDelayMilliseconds: 0)
+            return
+        }
+        state = .failed(shortError(error))
+        CotypingStatsStore.shared.recordError()
     }
 
     private func buildRequest(
@@ -580,7 +610,7 @@ final class CotypingCoordinator: ObservableObject {
             clipboardRelevanceFilter.reset()
             return nil
         }
-        let identityKey = Self.suggestionAnchorIdentity(for: field)
+        let identityKey = CotypingFieldIdentity.suggestionAnchor(for: field)
         let changeCount = clipboardProvider.changeCount
         let prefix = CotypingPrefixWindow.truncatedPrefix(
             from: field.precedingText,
@@ -626,7 +656,7 @@ final class CotypingCoordinator: ObservableObject {
             state = .disabled(reason)
             return nil
         }
-        guard Self.isCurrentGenerationTarget(originalField, liveField: focus.field) else {
+        guard CotypingSessionReconciler.isCurrentGenerationTarget(originalField, liveField: focus.field) else {
             return nil
         }
         return focus.field
@@ -656,7 +686,7 @@ final class CotypingCoordinator: ObservableObject {
             return false
         }
         if let pendingAcceptedTail,
-           Self.isStaleAcceptanceEcho(
+           CotypingSessionReconciler.isStaleAcceptanceEcho(
                resultText: text,
                acceptedChunk: pendingAcceptedTail.text,
                currentPrecedingText: field.precedingText,
@@ -671,15 +701,13 @@ final class CotypingCoordinator: ObservableObject {
             return false
         }
         suggestionAnchorCache.record(
-            identityKey: Self.suggestionAnchorIdentity(for: field),
+            identityKey: CotypingFieldIdentity.suggestionAnchor(for: field),
             precedingText: field.precedingText,
             fullText: text)
-        startSession(CotypingSession(field: field, fullText: text, kind: .continuation))
-        showOverlay(text: text, field: field)
-        syncAcceptInterception()
-        lastSuggestion = text
-        state = .ready(text: text)
-        flushQueuedPostExhaustionAcceptIfNeeded()
+        present(
+            CotypingSession(field: field, fullText: text, kind: .continuation),
+            overlayText: text,
+            flushQueuedAccept: true)
         return true
     }
 
@@ -688,7 +716,7 @@ final class CotypingCoordinator: ObservableObject {
               field.selectionLength == 0,
               !field.isSecure else { return false }
         guard let text = suggestionAnchorCache.remainder(
-            identityKey: Self.suggestionAnchorIdentity(for: field),
+            identityKey: CotypingFieldIdentity.suggestionAnchor(for: field),
             precedingText: field.precedingText),
               !text.isEmpty else { return false }
 
@@ -698,7 +726,7 @@ final class CotypingCoordinator: ObservableObject {
             return false
         }
         if let pendingAcceptedTail = lastAcceptedTail,
-           Self.isStaleAcceptanceEcho(
+           CotypingSessionReconciler.isStaleAcceptanceEcho(
                resultText: text,
                acceptedChunk: pendingAcceptedTail.text,
                currentPrecedingText: field.precedingText,
@@ -710,12 +738,10 @@ final class CotypingCoordinator: ObservableObject {
         }
 
         lastAcceptedTail = nil
-        startSession(CotypingSession(field: field, fullText: text, kind: .continuation))
-        showOverlay(text: text, field: field)
-        syncAcceptInterception()
-        lastSuggestion = text
-        state = .ready(text: text)
-        flushQueuedPostExhaustionAcceptIfNeeded()
+        present(
+            CotypingSession(field: field, fullText: text, kind: .continuation),
+            overlayText: text,
+            flushQueuedAccept: true)
         return true
     }
 
@@ -725,7 +751,7 @@ final class CotypingCoordinator: ObservableObject {
         deletingTrailingCharacters: Int
     ) {
         guard !insertionText.isEmpty else { return }
-        let optimisticField = Self.optimisticFieldAfterAcceptance(
+        let optimisticField = CotypingSessionReconciler.optimisticFieldAfterAcceptance(
             liveField,
             insertionText: insertionText,
             deletingTrailingCharacters: deletingTrailingCharacters)
@@ -749,71 +775,26 @@ final class CotypingCoordinator: ObservableObject {
         debounceTask = nil
         generationTask?.cancel()
         generationTask = Task { [weak self] in
-            do {
-                guard let self else { return }
-                defer {
-                    if self.generation == work {
-                        self.generationTask = nil
-                    }
+            guard let self else { return }
+            defer {
+                if self.generation == work {
+                    self.generationTask = nil
                 }
-                guard !Task.isCancelled, work == self.generation else { return }
+            }
+            guard !Task.isCancelled, work == self.generation else { return }
+            do {
                 let result = try await self.engine.generate(request)
                 guard !Task.isCancelled else { return }
-                self.finishSpeculativeGeneration(
+                self.completeGeneration(
                     result,
-                    optimisticField: optimisticField,
+                    targetField: optimisticField,
                     work: work,
                     latencyMilliseconds: Int(Date().timeIntervalSince(start) * 1000),
-                    signature: signature)
-            } catch is CancellationError {
-                return
-            } catch let urlError as URLError where urlError.code == .cancelled {
-                return
+                    holdSignature: signature)
             } catch {
-                self?.failSpeculativeGeneration(work: work, signature: signature)
+                self.handleGenerationFailure(error, work: work, holdSignature: signature)
             }
         }
-    }
-
-    private func finishSpeculativeGeneration(
-        _ result: CotypingNormalizationResult,
-        optimisticField: CotypingField,
-        work: UInt64,
-        latencyMilliseconds: Int,
-        signature: String
-    ) {
-        guard work == generation,
-              pendingSpeculativeSignature == signature,
-              isRunning else { return }
-        let settings = settingsProvider()
-        let focus = focusTracker.refreshNow(
-            includeSurface: settings.cotypingUseAppContext,
-            includeURL: !settings.cotypingExcludedDomainList.isEmpty,
-            includeStyle: settings.cotypingMatchHostStyle)
-        if let publishedField = focus.field,
-           publishedField.contentSignature == signature {
-            _ = applySpeculativeResult(
-                result,
-                publishedField: publishedField,
-                work: work,
-                latencyMilliseconds: latencyMilliseconds,
-                signature: signature)
-            return
-        }
-        pendingSpeculativeResult = PendingSpeculativeResult(
-            result: result,
-            work: work,
-            optimisticField: optimisticField,
-            latencyMilliseconds: latencyMilliseconds)
-    }
-
-    private func failSpeculativeGeneration(work: UInt64, signature: String) {
-        guard work == generation,
-              pendingSpeculativeSignature == signature,
-              isRunning else { return }
-        pendingSpeculativeSignature = nil
-        pendingSpeculativeResult = nil
-        scheduleGeneration(consumedDelayMilliseconds: 0)
     }
 
     private func applyPendingSpeculativeResultIfReady(publishedField: CotypingField) -> Bool {
@@ -893,11 +874,9 @@ final class CotypingCoordinator: ObservableObject {
             currentlyRendered: currentlyRendered) else {
             return
         }
-        startSession(CotypingSession(field: liveField, fullText: result.text, kind: .continuation))
-        showOverlay(text: result.text, field: liveField)
-        syncAcceptInterception()
-        lastSuggestion = result.text
-        state = .ready(text: result.text)
+        present(
+            CotypingSession(field: liveField, fullText: result.text, kind: .continuation),
+            overlayText: result.text)
     }
 
     private func seamVerdict(precedingText: String, completion: String) -> CotypingSeamGuard.Verdict {
@@ -956,10 +935,9 @@ final class CotypingCoordinator: ObservableObject {
             }
             return false
         }
-        guard Self.overlayAllowsAcceptance(
-            of: current.remainingText,
-            visibleAcceptanceText: overlay.acceptanceText,
-            overlayIsVisible: overlay.isVisible) else {
+        // The visible ghost must match the session tail — a mismatch means the
+        // overlay is showing stale text and accepting would insert the wrong thing.
+        guard overlay.acceptanceText == current.remainingText else {
             clearSuggestion()
             state = .idle
             return false
@@ -1013,7 +991,7 @@ final class CotypingCoordinator: ObservableObject {
         }
 
         // Continuation: never insert into the wrong field (mouse-moved focus).
-        guard Self.isAcceptanceContinuation(
+        guard CotypingSessionReconciler.isAcceptanceContinuation(
             of: current,
             liveField: live.field,
             pendingInsertionConsumedCount: pendingInsertionConsumedCount) else {
@@ -1031,24 +1009,24 @@ final class CotypingCoordinator: ObservableObject {
         case .chunk:
             switch settings.cotypingAcceptGranularity {
             case .word:
-                baseChunk = Self.nextWord(
+                baseChunk = CotypingAcceptanceChunker.nextWord(
                     in: remaining,
                     autoAcceptTrailingPunctuation: settings.cotypingAutoAcceptTrailingPunctuation)
             case .phrase:
-                baseChunk = Self.nextPhrase(
+                baseChunk = CotypingAcceptanceChunker.nextPhrase(
                     in: remaining,
                     autoAcceptTrailingPunctuation: settings.cotypingAutoAcceptTrailingPunctuation)
             }
         }
         let acceptedChunk = settings.cotypingAddSpaceAfterAccept
-            ? Self.acceptanceChunkConsumingTrailingSpace(baseChunk, remainingText: remaining)
+            ? CotypingAcceptanceChunker.acceptanceChunkConsumingTrailingSpace(baseChunk, remainingText: remaining)
             : baseChunk
         guard !acceptedChunk.isEmpty else { return false }
         let liveField = live.field ?? current.field
-        let insertionChunk = Self.insertionChunk(
+        let insertionChunk = CotypingAcceptanceChunker.insertionChunk(
             forAcceptedChunk: acceptedChunk,
             precedingText: liveField.precedingText)
-        let insertionText = Self.insertionTextApplyingAutoSpace(
+        let insertionText = CotypingAcceptanceChunker.insertionTextApplyingAutoSpace(
             insertionChunk: insertionChunk,
             acceptedChunk: acceptedChunk,
             session: current,
@@ -1082,7 +1060,7 @@ final class CotypingCoordinator: ObservableObject {
             learningStore.recordAccepted(field: live.field ?? current.field, acceptedText: acceptedChunk)
         }
 
-        acceptedWordCount += Self.acceptedWordCount(in: acceptedChunk)
+        acceptedWordCount += CotypingAcceptanceChunker.acceptedWordCount(in: acceptedChunk)
         current = current.advanced(by: acceptedChunk.count)
         session = current
 
@@ -1132,6 +1110,31 @@ final class CotypingCoordinator: ObservableObject {
             }
         }
         return true
+    }
+
+    /// Atomically presents a suggestion. The invariant *session exists ⟺
+    /// overlay visible ⟺ state == .ready ⟺ accept tap armed* is established
+    /// here (and torn down in `clearSuggestion`) — never by hand at call sites.
+    private func present(
+        _ newSession: CotypingSession,
+        overlayText: String,
+        acceptanceText: String? = nil,
+        flushQueuedAccept: Bool = false
+    ) {
+        startSession(newSession)
+        showOverlay(text: overlayText, field: newSession.field, acceptanceText: acceptanceText)
+        markReady(acceptanceText ?? overlayText)
+        if flushQueuedAccept {
+            flushQueuedPostExhaustionAcceptIfNeeded()
+        }
+    }
+
+    /// The published tail of `present` — also used by the advance paths, which
+    /// keep the existing overlay window and only re-arm interception + state.
+    private func markReady(_ text: String) {
+        syncAcceptInterception()
+        lastSuggestion = text
+        state = .ready(text: text)
     }
 
     private func startSession(_ newSession: CotypingSession) {
@@ -1239,518 +1242,6 @@ final class CotypingCoordinator: ObservableObject {
             })
     }
 
-    // MARK: - Helpers
-
-    /// First word-like acceptance chunk of `text`, preserving leading
-    /// whitespace. Space-less scripts use ICU word segmentation so one accept
-    /// advances by a word-sized unit instead of swallowing a whole CJK/Thai run.
-    nonisolated static func nextWord(
-        in text: String,
-        autoAcceptTrailingPunctuation: Bool = true
-    ) -> String {
-        guard !text.isEmpty else { return "" }
-        var index = text.startIndex
-        while index < text.endIndex, text[index].isWhitespace { index = text.index(after: index) }
-        let tokenStart = index
-        while index < text.endIndex, !text[index].isWhitespace { index = text.index(after: index) }
-
-        if tokenStart < index,
-           text[tokenStart].cotypingBeginsSpacelessScriptWord,
-           let wordEnd = firstSegmentedWordEnd(in: text, from: tokenStart, notPast: index) {
-            index = endOfCJKPunctuationRun(in: text, from: wordEnd, notPast: index)
-        } else if tokenStart < index,
-                  text[tokenStart].cotypingBindsToPrecedingSpacelessWord
-                  || text[tokenStart].cotypingIsCJKOpeningBracket {
-            index = endOfCJKPunctuationRun(
-                in: text, from: tokenStart, notPast: index, includingOpeners: true)
-        }
-
-        if !autoAcceptTrailingPunctuation,
-           let wordEnd = wordEndTrimmingTrailingPunctuation(in: text, from: tokenStart, to: index) {
-            index = wordEnd
-        }
-
-        return String(text[text.startIndex..<index])
-    }
-
-    /// Text up to and including the next sentence/clause boundary (or the whole
-    /// remaining text when there is none). Mirrors Cotabby's phrase acceptance
-    /// granularity: ASCII sentence terminators, newlines, and CJK clause marks;
-    /// ASCII commas stay inside the phrase.
-    nonisolated static func nextPhrase(
-        in text: String,
-        autoAcceptTrailingPunctuation: Bool = true
-    ) -> String {
-        guard !text.isEmpty else { return "" }
-        var accumulated = ""
-        var working = text
-
-        while !working.isEmpty {
-            let chunk = nextWord(
-                in: working,
-                autoAcceptTrailingPunctuation: autoAcceptTrailingPunctuation)
-            guard !chunk.isEmpty else { break }
-            if let newlineIndex = chunk.firstIndex(of: "\n") {
-                accumulated += chunk[...newlineIndex]
-                return accumulated
-            }
-            accumulated += chunk
-            working = String(working.dropFirst(chunk.count))
-            if endsAtPhraseBoundary(accumulated) {
-                return accumulated
-            }
-        }
-
-        return accumulated
-    }
-
-    private nonisolated static func firstSegmentedWordEnd(
-        in text: String,
-        from start: String.Index,
-        notPast limit: String.Index
-    ) -> String.Index? {
-        var wordEnd: String.Index?
-        text.enumerateSubstrings(
-            in: start..<limit,
-            options: [.byWords, .substringNotRequired]
-        ) { _, range, _, stop in
-            wordEnd = range.upperBound
-            stop = true
-        }
-        guard let wordEnd, wordEnd > start else { return nil }
-        return min(wordEnd, limit)
-    }
-
-    private nonisolated static func endOfCJKPunctuationRun(
-        in text: String,
-        from start: String.Index,
-        notPast limit: String.Index,
-        includingOpeners: Bool = false
-    ) -> String.Index {
-        var cursor = start
-        while cursor < limit {
-            let character = text[cursor]
-            guard character.cotypingBindsToPrecedingSpacelessWord
-                    || (includingOpeners && character.cotypingIsCJKOpeningBracket) else {
-                break
-            }
-            cursor = text.index(after: cursor)
-        }
-        return cursor
-    }
-
-    private nonisolated static func endsAtPhraseBoundary(_ text: String) -> Bool {
-        var index = text.endIndex
-        while index > text.startIndex {
-            let previous = text.index(before: index)
-            if text[previous] == " " || text[previous] == "\t" || text[previous].cotypingIsPhraseClosingPunctuation {
-                index = previous
-            } else {
-                break
-            }
-        }
-        guard index > text.startIndex else { return false }
-        let previous = text.index(before: index)
-        if text[previous].cotypingIsPhraseClauseBoundary { return true }
-        guard text[previous].cotypingIsPhraseSentenceTerminator else { return false }
-        if text[previous] == "." {
-            return isTerminalPeriod(in: text, at: previous)
-        }
-        return true
-    }
-
-    private nonisolated static func wordEndTrimmingTrailingPunctuation(
-        in text: String,
-        from tokenStart: String.Index,
-        to tokenEnd: String.Index
-    ) -> String.Index? {
-        var lastWordCharacterEnd: String.Index?
-        var cursor = tokenStart
-        while cursor < tokenEnd {
-            if text[cursor].cotypingIsAcceptanceWordCharacter {
-                lastWordCharacterEnd = text.index(after: cursor)
-            }
-            cursor = text.index(after: cursor)
-        }
-        guard let wordEnd = lastWordCharacterEnd, wordEnd < tokenEnd else {
-            return nil
-        }
-        return wordEnd
-    }
-
-    nonisolated static func insertionChunk(
-        forAcceptedChunk chunk: String,
-        precedingText: String
-    ) -> String {
-        guard let lastScalar = precedingText.unicodeScalars.last,
-              CharacterSet.whitespaces.contains(lastScalar) else {
-            return chunk
-        }
-        return String(chunk.drop(while: { character in
-            character.unicodeScalars.allSatisfy { CharacterSet.whitespaces.contains($0) }
-        }))
-    }
-
-    nonisolated static func insertionTextApplyingAutoSpace(
-        insertionChunk: String,
-        acceptedChunk: String,
-        session: CotypingSession,
-        addSpaceAfterAccept: Bool
-    ) -> String {
-        guard addSpaceAfterAccept,
-              session.advanced(by: acceptedChunk.count).isExhausted else {
-            return insertionChunk
-        }
-        return insertionChunkAppendingTrailingSpace(insertionChunk)
-    }
-
-    nonisolated static func insertionChunkAppendingTrailingSpace(_ chunk: String) -> String {
-        guard let last = chunk.last,
-              last.cotypingIsAcceptanceWordCharacter,
-              !last.cotypingBeginsSpacelessScriptWord else {
-            return chunk
-        }
-        return chunk + " "
-    }
-
-    nonisolated static func acceptanceChunkConsumingTrailingSpace(
-        _ chunk: String,
-        remainingText: String
-    ) -> String {
-        guard let last = chunk.last,
-              last.cotypingIsAcceptanceWordCharacter,
-              !last.cotypingBeginsSpacelessScriptWord else {
-            return chunk
-        }
-        let remainder = remainingText.dropFirst(chunk.count)
-        let trailingSpace = remainder.prefix { $0 == " " || $0 == "\t" }
-        return trailingSpace.isEmpty ? chunk : chunk + trailingSpace
-    }
-
-    nonisolated static func acceptedWordCount(in text: String) -> Int {
-        text
-            .split(whereSeparator: { $0.isWhitespace })
-            .filter { token in
-                token.unicodeScalars.contains { CharacterSet.alphanumerics.contains($0) }
-            }
-            .count
-    }
-
-    private nonisolated static func isTerminalPeriod(in text: String, at periodIndex: String.Index) -> Bool {
-        guard periodIndex > text.startIndex else { return true }
-        let beforeIndex = text.index(before: periodIndex)
-        let beforeChar = text[beforeIndex]
-        if beforeChar.isNumber { return false }
-        if beforeChar.isLetter {
-            let priorIsLetter = beforeIndex > text.startIndex
-                && text[text.index(before: beforeIndex)].isLetter
-            if !priorIsLetter { return false }
-            if terminalPeriodAbbreviations.contains(
-                trailingLetters(in: text, endingBefore: periodIndex).lowercased()) {
-                return false
-            }
-        }
-        return true
-    }
-
-    private nonisolated static let terminalPeriodAbbreviations: Set<String> = [
-        "mr", "mrs", "ms", "dr", "st", "vs", "eg", "ie", "etc", "no", "fig", "approx", "inc", "ltd"
-    ]
-
-    private nonisolated static func trailingLetters(in text: String, endingBefore index: String.Index) -> String {
-        var letters: [Character] = []
-        var cursor = index
-        while cursor > text.startIndex {
-            let previous = text.index(before: cursor)
-            guard text[previous].isLetter else { break }
-            letters.append(text[previous])
-            cursor = previous
-        }
-        return String(letters.reversed())
-    }
-
-    /// True when `liveField` is plausibly the same editable field `session` was
-    /// generated against: same process/role, compatible focused-field identity
-    /// when AX exposes one, and live text still anchored to the session prefix
-    /// (which only grows as we accept words). Guards against accepting a stale
-    /// suggestion after focus moved to another field in the same app, where the
-    /// PID alone would still match.
-    nonisolated static func isContinuation(of session: CotypingSession, liveField: CotypingField?) -> Bool {
-        guard let liveField, liveField.processID == session.field.processID else { return false }
-        guard liveField.bundleID == session.field.bundleID, liveField.role == session.field.role else { return false }
-        if let originalIdentity = session.field.focusIdentityKey,
-           let liveIdentity = liveField.focusIdentityKey,
-           originalIdentity != liveIdentity {
-            return false
-        }
-        let previous = session.field.precedingText
-        let live = liveField.precedingText
-        if live.hasPrefix(previous) { return true }
-        guard previous.count >= axPrecedingWindowLimit || live.count >= axPrecedingWindowLimit else {
-            return false
-        }
-        return hasCappedPrefixWindowOverlap(previous: previous, live: live)
-    }
-
-    nonisolated static func isAcceptanceContinuation(
-        of session: CotypingSession,
-        liveField: CotypingField?,
-        pendingInsertionConsumedCount: Int?
-    ) -> Bool {
-        guard isContinuation(of: session, liveField: liveField) else { return false }
-        guard let liveField else { return false }
-        if shouldAwaitPostInsertionSync(
-            session,
-            liveField: liveField,
-            pendingInsertionConsumedCount: pendingInsertionConsumedCount) {
-            return true
-        }
-        if isPostInsertionSyncTarget(
-            session,
-            liveField: liveField,
-            pendingInsertionConsumedCount: pendingInsertionConsumedCount) {
-            return true
-        }
-        return liveField.trailingText == session.field.trailingText
-    }
-
-    nonisolated static func shouldClearActiveSessionOnFocusChange(
-        _ session: CotypingSession,
-        liveField: CotypingField?,
-        pendingInsertionConsumedCount: Int?
-    ) -> Bool {
-        guard let liveField else { return true }
-        if shouldAwaitPostInsertionSync(
-            session,
-            liveField: liveField,
-            pendingInsertionConsumedCount: pendingInsertionConsumedCount) {
-            return false
-        }
-        if isPostInsertionSyncTarget(
-            session,
-            liveField: liveField,
-            pendingInsertionConsumedCount: pendingInsertionConsumedCount) {
-            return false
-        }
-        guard isContinuation(of: session, liveField: liveField) else { return true }
-        return liveField.trailingText != session.field.trailingText
-    }
-
-    nonisolated static func isCurrentGenerationTarget(
-        _ originalField: CotypingField,
-        liveField: CotypingField?
-    ) -> Bool {
-        guard let liveField else { return false }
-        guard liveField.processID == originalField.processID,
-              liveField.bundleID == originalField.bundleID,
-              liveField.role == originalField.role,
-              liveField.contentSignature == originalField.contentSignature,
-              suggestionAnchorIdentity(for: liveField) == suggestionAnchorIdentity(for: originalField) else {
-            return false
-        }
-        if let originalIdentity = originalField.focusIdentityKey,
-           let liveIdentity = liveField.focusIdentityKey,
-           originalIdentity != liveIdentity {
-            return false
-        }
-        return true
-    }
-
-    nonisolated static func sessionAdvancedByPublishedTyping(
-        _ session: CotypingSession,
-        liveField: CotypingField?
-    ) -> CotypingSession? {
-        guard case .continuation = session.kind,
-              let liveField,
-              isContinuation(of: session, liveField: liveField) else { return nil }
-
-        let expectedPrefix = session.field.precedingText + session.acceptedText
-        guard liveField.precedingText.hasPrefix(expectedPrefix) else { return nil }
-        let typed = String(liveField.precedingText.dropFirst(expectedPrefix.count))
-        guard !typed.isEmpty, session.remainingText.hasPrefix(typed) else { return nil }
-
-        return CotypingSession(
-            field: liveField,
-            fullText: session.fullText,
-            consumedCount: min(session.fullText.count, session.consumedCount + typed.count),
-            kind: session.kind)
-    }
-
-    nonisolated static func sessionReconciledByPublishedTyping(
-        _ session: CotypingSession,
-        liveField: CotypingField?
-    ) -> CotypingSession? {
-        guard case .continuation = session.kind,
-              let liveField,
-              isContinuation(of: session, liveField: liveField) else { return nil }
-
-        let expectedPrefix = session.field.precedingText + session.acceptedText
-        guard liveField.precedingText.hasPrefix(expectedPrefix) else { return nil }
-        let typed = String(liveField.precedingText.dropFirst(expectedPrefix.count))
-        if typed.isEmpty {
-            return CotypingSession(
-                field: liveField,
-                fullText: session.fullText,
-                consumedCount: session.consumedCount,
-                kind: session.kind)
-        }
-        guard session.remainingText.hasPrefix(typed) else { return nil }
-        return CotypingSession(
-            field: liveField,
-            fullText: session.fullText,
-            consumedCount: min(session.fullText.count, session.consumedCount + typed.count),
-            kind: session.kind)
-    }
-
-    nonisolated static func shouldAwaitPostInsertionSync(
-        _ session: CotypingSession,
-        liveField: CotypingField?,
-        pendingInsertionConsumedCount: Int?
-    ) -> Bool {
-        guard let liveField,
-              isPostInsertionSyncTarget(
-                  session,
-                  liveField: liveField,
-                  pendingInsertionConsumedCount: pendingInsertionConsumedCount) else {
-            return false
-        }
-
-        let expectedPrefix = session.field.precedingText + session.acceptedText
-        guard !liveField.precedingText.hasPrefix(expectedPrefix) else {
-            return false
-        }
-
-        return true
-    }
-
-    private nonisolated static func isPostInsertionSyncTarget(
-        _ session: CotypingSession,
-        liveField: CotypingField,
-        pendingInsertionConsumedCount: Int?
-    ) -> Bool {
-        guard case .continuation = session.kind,
-              pendingInsertionConsumedCount == session.consumedCount,
-              liveField.processID == session.field.processID,
-              liveField.bundleID == session.field.bundleID,
-              liveField.role == session.field.role,
-              liveField.selectionLength == 0 else {
-            return false
-        }
-        if let originalIdentity = session.field.focusIdentityKey,
-           let liveIdentity = liveField.focusIdentityKey,
-           originalIdentity != liveIdentity {
-            return false
-        }
-        return true
-    }
-
-    nonisolated static func sessionAdvancedByTypedCharacters(
-        _ session: CotypingSession,
-        typedCharacters: String
-    ) -> CotypingSession? {
-        guard case .continuation = session.kind,
-              !typedCharacters.isEmpty,
-              typedCharacters.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }),
-              session.remainingText.hasPrefix(typedCharacters) else {
-            return nil
-        }
-        return CotypingSession(
-            field: session.field,
-            fullText: session.fullText,
-            consumedCount: min(session.fullText.count, session.consumedCount + typedCharacters.count),
-            kind: session.kind)
-    }
-
-    nonisolated static func overlayAllowsAcceptance(
-        of text: String,
-        visibleAcceptanceText: String?,
-        overlayIsVisible: Bool
-    ) -> Bool {
-        guard overlayIsVisible else { return true }
-        return visibleAcceptanceText == text
-    }
-
-    nonisolated static func isStaleAcceptanceEcho(
-        resultText: String,
-        acceptedChunk: String,
-        currentPrecedingText: String,
-        acceptedPrecedingText: String
-    ) -> Bool {
-        let trimmedChunk = acceptedChunk.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedChunk.isEmpty else { return false }
-        guard resultText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedChunk else { return false }
-        return currentPrecedingText == acceptedPrecedingText
-    }
-
-    nonisolated static func optimisticFieldAfterAcceptance(
-        _ field: CotypingField,
-        insertionText: String,
-        deletingTrailingCharacters: Int = 0
-    ) -> CotypingField {
-        var copy = field
-        copy.precedingText += insertionText
-        if deletingTrailingCharacters > 0 {
-            copy.trailingText = String(copy.trailingText.dropFirst(deletingTrailingCharacters))
-        }
-        copy.selectionLength = 0
-        return copy
-    }
-
-    nonisolated static func suggestionAnchorIdentity(for field: CotypingField) -> String {
-        [
-            String(field.processID),
-            field.bundleID ?? "",
-            field.appName,
-            field.role,
-            field.windowTitle ?? "",
-            field.fieldPlaceholder ?? "",
-        ].joined(separator: "\u{1f}")
-    }
-
-    nonisolated static func prewarmFieldIdentity(for field: CotypingField) -> String {
-        let fieldPart: String
-        if let focusIdentityKey = field.focusIdentityKey, !focusIdentityKey.isEmpty {
-            fieldPart = "focus:\(focusIdentityKey)"
-        } else if let frame = field.inputFrameRect {
-            fieldPart = "frame:\(roundedRectIdentity(frame))"
-        } else {
-            fieldPart = [
-                field.windowTitle ?? "",
-                field.fieldPlaceholder ?? "",
-            ].joined(separator: "\u{1f}")
-        }
-        return [
-            String(field.processID),
-            field.bundleID ?? "",
-            field.appName,
-            field.role,
-            fieldPart,
-        ].joined(separator: "\u{1f}")
-    }
-
-    private nonisolated static func roundedRectIdentity(_ rect: CGRect) -> String {
-        [
-            rect.origin.x,
-            rect.origin.y,
-            rect.size.width,
-            rect.size.height,
-        ]
-            .map { String(Int($0.rounded())) }
-            .joined(separator: ",")
-    }
-
-    private nonisolated static func hasCappedPrefixWindowOverlap(previous: String, live: String) -> Bool {
-        let maxLength = min(min(previous.count, live.count), axPrecedingWindowLimit)
-        let minimumOverlap = min(1024, maxLength)
-        guard minimumOverlap > 0 else { return false }
-        var length = maxLength
-        while length >= minimumOverlap {
-            if previous.suffix(length) == live.prefix(length) { return true }
-            length -= 1
-        }
-        return false
-    }
-
     private struct PendingStreamPartial {
         var result: CotypingNormalizationResult
         var work: UInt64
@@ -1771,66 +1262,5 @@ final class CotypingCoordinator: ObservableObject {
 
     private func shortError(_ error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-    }
-}
-
-private extension Character {
-    var cotypingBeginsSpacelessScriptWord: Bool {
-        guard let scalar = unicodeScalars.first else { return false }
-        switch scalar.value {
-        case 0x3040...0x30FF,   // Hiragana + Katakana
-             0x3400...0x4DBF,   // CJK Unified Ideographs Extension A
-             0x4E00...0x9FFF,   // CJK Unified Ideographs
-             0xF900...0xFAFF,   // CJK Compatibility Ideographs
-             0xAC00...0xD7A3,   // Hangul syllables
-             0x1100...0x11FF,   // Hangul Jamo
-             0x0E00...0x0E7F,   // Thai
-             0x0E80...0x0EFF,   // Lao
-             0x1780...0x17FF,   // Khmer
-             0x1000...0x109F,   // Myanmar
-             0x20000...0x2A6DF, // CJK Unified Ideographs Extension B
-             0x30000...0x3134F: // CJK Unified Ideographs Extension G
-            return true
-        default:
-            return false
-        }
-    }
-
-    var cotypingBindsToPrecedingSpacelessWord: Bool {
-        cotypingIsCJKSentenceTerminator
-            || cotypingIsPhraseClauseBoundary
-            || cotypingIsCJKClosingPunctuation
-    }
-
-    var cotypingIsCJKSentenceTerminator: Bool {
-        self == "\u{3002}" || self == "\u{FF01}" || self == "\u{FF1F}" || self == "\u{FF61}"
-    }
-
-    var cotypingIsCJKClosingPunctuation: Bool {
-        self == "\u{300D}" || self == "\u{300F}" || self == "\u{FF09}"
-            || self == "\u{3011}" || self == "\u{3009}" || self == "\u{300B}" || self == "\u{FF63}"
-    }
-
-    var cotypingIsCJKOpeningBracket: Bool {
-        self == "\u{300C}" || self == "\u{300E}" || self == "\u{FF08}"
-            || self == "\u{3010}" || self == "\u{3008}" || self == "\u{300A}" || self == "\u{FF62}"
-    }
-
-    var cotypingIsPhraseSentenceTerminator: Bool {
-        self == "." || self == "!" || self == "?" || cotypingIsCJKSentenceTerminator
-    }
-
-    var cotypingIsPhraseClauseBoundary: Bool {
-        self == "\u{3001}" || self == "\u{FF0C}" || self == "\u{FF64}"
-    }
-
-    var cotypingIsPhraseClosingPunctuation: Bool {
-        self == "\"" || self == "'" || self == "\u{201D}" || self == "\u{2019}"
-            || self == ")" || self == "]" || self == "}"
-            || cotypingIsCJKClosingPunctuation
-    }
-
-    var cotypingIsAcceptanceWordCharacter: Bool {
-        isLetter || isNumber
     }
 }

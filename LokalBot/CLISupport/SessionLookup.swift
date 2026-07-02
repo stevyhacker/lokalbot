@@ -6,15 +6,13 @@ import Foundation
 /// CLI binary stays light.
 enum SessionLookup {
 
-    /// `~/Library/Application Support/me.dotenv.LokalBot`. The bundle id is
-    /// hard-coded (not `Bundle.main.bundleIdentifier`) so the CLI process,
-    /// whose own bundle id differs, still resolves to the same library the
-    /// app writes.
+    /// The app's meeting library. `AppDirectories` hard-codes the app's bundle
+    /// id (not `Bundle.main.bundleIdentifier`) so the CLI process, whose own
+    /// bundle id differs, resolves the same library the app writes — and it
+    /// honors the `LOKALBOT_STORAGE_ROOT` override, so the CLI can be pointed
+    /// at an isolated test library exactly like the app.
     static var storageRootURL: URL {
-        let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport.appendingPathComponent(AppIdentifiers.appBundleID,
-                                                 isDirectory: true)
+        AppDirectories.libraryRoot
     }
 
     static var meetingsRootURL: URL {

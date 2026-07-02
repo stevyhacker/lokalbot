@@ -73,7 +73,17 @@ enum MeetingMatcher {
         guard let appName, !appName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return "Manual recording"
         }
-        return AppState.meetingTitle(for: appName)
+        return meetingTitle(for: appName)
+    }
+
+    /// "<App> meeting", without doubling a trailing "meeting" in the app name.
+    static func meetingTitle(for appName: String) -> String {
+        let trimmed = appName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Meeting" }
+        return trimmed.localizedCaseInsensitiveContains("meeting")
+            && trimmed.lowercased().hasSuffix("meeting")
+            ? trimmed
+            : "\(trimmed) meeting"
     }
 
     /// Whether the detector should treat a meeting as in progress this tick.

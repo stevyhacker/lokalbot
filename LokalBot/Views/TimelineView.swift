@@ -328,7 +328,7 @@ struct TimelineView: View {
         do {
             let engine = try await app.pipeline.makeTextEngine(app.settings)
             answer = try await engine.generate(
-                system: "Answer the user's question about their workday using ONLY the provided activity log and screen text. Be concrete and brief (Markdown). If the answer isn't in the data, say so.",
+                system: PromptTemplates.timelineQuestionSystem,
                 prompt: question,
                 context: ["Activity log:\n" + lines.joined(separator: "\n"),
                           ocr.isEmpty ? "" : "Screen text excerpts:\n" + ocr])

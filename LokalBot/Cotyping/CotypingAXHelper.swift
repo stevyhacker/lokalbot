@@ -19,8 +19,11 @@ enum CotypingAXHelper {
     ]
 
     /// Bounded context windows so a giant document never ships megabytes into a
-    /// prompt or across the actor boundary.
-    private static let maxPrecedingCharacters = 4096
+    /// prompt or across the actor boundary. `maxPrecedingCharacters` is the
+    /// canonical preceding-window limit — session reconciliation
+    /// (`CotypingSessionReconciler`) and marker-selection synthesis reference
+    /// it so capped-window comparisons can never drift from the AX read path.
+    static let maxPrecedingCharacters = 4096
     private static let maxTrailingCharacters = 1024
 
     private static let selectedTextMarkerRangeAttribute = "AXSelectedTextMarkerRange" as CFString

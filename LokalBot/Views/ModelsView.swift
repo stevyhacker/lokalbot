@@ -391,7 +391,7 @@ struct ModelsView: View {
                     .onTapGesture { app.settings.transcriptionModel = choice }
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
-                        Text(choice.rawValue).font(.system(size: 12.5, weight: .medium))
+                        Text(choice.displayName).font(.system(size: 12.5, weight: .medium))
                         if choice == TranscriptionModelChoice.recommended {
                             Text("RECOMMENDED").font(.system(size: 8.5, weight: .bold))
                                 .padding(.horizontal, 4).padding(.vertical, 1)
@@ -456,28 +456,7 @@ struct ModelsView: View {
             transcriptionModelStatus[id] = update.status
         }
         do {
-            switch choice {
-            case .parakeetV3:
-                await ParakeetEngine.shared.setVariant(.v3)
-                try await ParakeetEngine.shared.prepare(progress: progressHandler)
-            case .parakeetV2:
-                await ParakeetEngine.shared.setVariant(.v2)
-                try await ParakeetEngine.shared.prepare(progress: progressHandler)
-            case .qwenASR17B:
-                try await QwenASREngine.accuracy.prepare(progress: progressHandler)
-            case .qwenASR06B:
-                try await QwenASREngine.compact.prepare(progress: progressHandler)
-            case .graniteSpeech:
-                try await GraniteSpeechEngine.shared.prepare(progress: progressHandler)
-            case .whisperLarge:
-                try await WhisperEngine.shared.prepare(progress: progressHandler)
-            case .cohere:
-                try await CohereEngine.shared.prepare(progress: progressHandler)
-            case .senseVoice:
-                try await OnnxTranscriptionEngine.senseVoice.prepare(progress: progressHandler)
-            case .gigaamRussian:
-                try await OnnxTranscriptionEngine.gigaamRussian.prepare(progress: progressHandler)
-            }
+            try await choice.engine.prepare(progress: progressHandler)
             downloadedTranscriptionModelIDs.insert(choice.id)
             readyTranscriptionModelIDs.insert(choice.id)
         } catch {
@@ -504,8 +483,8 @@ struct ModelsView: View {
         do {
             let engine = try await app.pipeline.makeTextEngine(app.settings)
             let reply = try await engine.generate(
-                system: "You are a connectivity test. Reply with one short sentence.",
-                prompt: "Say hello and name the model you are.",
+                system: PromptTemplates.connectivityTestSystem,
+                prompt: PromptTemplates.connectivityTestPrompt,
                 context: [])
             testResult = "✓ " + reply.prefix(120)
         } catch {

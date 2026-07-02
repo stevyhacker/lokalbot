@@ -264,6 +264,7 @@ targets:
       - path: LokalBot/Models/Meeting.swift
       - path: LokalBot/Models/Transcript.swift
       - path: LokalBot/Models/AppIdentifiers.swift
+      - path: LokalBot/Models/AppDirectories.swift
     dependencies:
       - package: ArgumentParser
         product: ArgumentParser
