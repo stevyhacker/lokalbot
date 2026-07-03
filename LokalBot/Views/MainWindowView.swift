@@ -94,6 +94,15 @@ struct MainWindowView: View {
             } detail: {
                 TypeView()
             }
+        } else if app.navSection == .ask {
+            NavigationSplitView {
+                sidebar
+            } content: {
+                ChatConversationList()
+                    .navigationSplitViewColumnWidth(min: 220, ideal: 260)
+            } detail: {
+                AskView()
+            }
         } else if app.navSection == .chat {
             NavigationSplitView {
                 sidebar
