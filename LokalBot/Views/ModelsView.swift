@@ -289,6 +289,7 @@ struct ModelsView: View {
                                             url: entry.url,
                                             fileName: entry.fileName,
                                             id: entry.id,
+                                            expectedSizeGB: entry.sizeGB > 0 ? entry.sizeGB : nil,
                                             storage: app.storage)
                                         showingHFBrowse = false
                                     }

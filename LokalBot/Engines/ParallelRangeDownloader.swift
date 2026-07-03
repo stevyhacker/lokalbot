@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Downloads large static files through parallel HTTP byte ranges, falling
@@ -11,7 +12,24 @@ import Foundation
 /// bytes before installing the model. Either way the caller gets one temp-file
 /// URL back with progress reported throughout — there is exactly one download
 /// path to reason about.
+///
+/// Ranged downloads are resumable: the partially assembled file and a small
+/// manifest of completed parts live at a stable per-URL path, so a failed,
+/// cancelled, or app-quit download picks up where it stopped instead of
+/// re-fetching 17 GB from byte zero. Pass `stashDirectory` to keep that state
+/// somewhere durable (the temp default can be reaped by macOS between runs).
 enum ParallelRangeDownloader {
+
+    /// Completed-part bookkeeping persisted next to the partial file. The
+    /// stored URL/size/partSize must match the current request exactly or the
+    /// stash is discarded — a changed upstream file must never be stitched
+    /// together from two different versions.
+    struct ResumeState: Codable, Equatable {
+        let url: String
+        let totalBytes: Int64
+        let partSize: Int64
+        var completedParts: [Int]
+    }
     struct Progress: Sendable {
         let bytesWritten: Int64
         let totalBytes: Int64
@@ -86,15 +104,24 @@ enum ParallelRangeDownloader {
         session: URLSession,
         partSize: Int64 = defaultPartSize,
         maxConcurrentParts: Int = defaultMaxConcurrentParts,
+        stashDirectory: URL? = nil,
         progress: @escaping @Sendable (Progress) -> Void
     ) async throws -> URL {
         do {
             return try await downloadRanged(
                 from: url, session: session, partSize: partSize,
-                maxConcurrentParts: maxConcurrentParts, progress: progress)
+                maxConcurrentParts: maxConcurrentParts,
+                stashDirectory: stashDirectory, progress: progress)
         } catch is FallbackRequired {
             return try await downloadWhole(from: url, session: session, progress: progress)
         }
+    }
+
+    /// Stable per-URL name for resume state, so a retried download finds its
+    /// earlier partial file no matter how it was initiated.
+    static func stashName(for url: URL) -> String {
+        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
+        return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
     private static func downloadRanged(
@@ -102,6 +129,7 @@ enum ParallelRangeDownloader {
         session: URLSession,
         partSize: Int64,
         maxConcurrentParts: Int,
+        stashDirectory: URL?,
         progress: @escaping @Sendable (Progress) -> Void
     ) async throws -> URL {
         try Task.checkCancellation()
@@ -114,42 +142,68 @@ enum ParallelRangeDownloader {
         let fileManager = FileManager.default
         let workDir = fileManager.temporaryDirectory
             .appendingPathComponent("LokalBot-ranged-\(UUID().uuidString)", isDirectory: true)
-        let assembled = fileManager.temporaryDirectory
-            .appendingPathComponent("LokalBot-download-\(UUID().uuidString)", isDirectory: false)
+        let stashDir = stashDirectory ?? fileManager.temporaryDirectory
+        let stash = stashName(for: url)
+        let assembled = stashDir.appendingPathComponent("LokalBot-resume-\(stash).partial")
+        let manifestURL = stashDir.appendingPathComponent("LokalBot-resume-\(stash).json")
         try fileManager.createDirectory(at: workDir, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: stashDir, withIntermediateDirectories: true)
 
-        var success = false
-        defer {
-            try? fileManager.removeItem(at: workDir)
-            if !success {
-                try? fileManager.removeItem(at: assembled)
-            }
-        }
+        // On success the assembled file is handed to the caller and the
+        // manifest deleted; on any failure (including cancellation) both stay
+        // behind so the next attempt resumes instead of starting over.
+        defer { try? fileManager.removeItem(at: workDir) }
 
         let byteRanges = ranges(totalBytes: probe.totalBytes, partSize: partSize)
         guard !byteRanges.isEmpty else { throw DownloadError.invalidContentLength }
 
-        progress(.init(bytesWritten: 0, totalBytes: probe.totalBytes))
-        _ = fileManager.createFile(atPath: assembled.path, contents: nil)
+        var completed: Set<Int> = []
+        if let data = try? Data(contentsOf: manifestURL),
+           let state = try? JSONDecoder().decode(ResumeState.self, from: data),
+           state.url == url.absoluteString,
+           state.totalBytes == probe.totalBytes,
+           state.partSize == partSize,
+           fileManager.fileExists(atPath: assembled.path) {
+            completed = Set(state.completedParts).intersection(byteRanges.map(\.index))
+        } else {
+            try? fileManager.removeItem(at: assembled)
+            try? fileManager.removeItem(at: manifestURL)
+        }
+        if !fileManager.fileExists(atPath: assembled.path) {
+            _ = fileManager.createFile(atPath: assembled.path, contents: nil)
+        }
         let output = try FileHandle(forWritingTo: assembled)
         defer { try? output.close() }
 
+        var state = ResumeState(url: url.absoluteString, totalBytes: probe.totalBytes,
+                                partSize: partSize, completedParts: completed.sorted())
         try await downloadParts(
             byteRanges,
+            skipping: completed,
             url: url,
             workDir: workDir,
             session: session,
             output: output,
             totalBytes: probe.totalBytes,
             maxConcurrentParts: max(1, maxConcurrentParts),
-            progress: progress)
+            progress: progress,
+            partCompleted: { index in
+                state.completedParts.append(index)
+                if let data = try? JSONEncoder().encode(state) {
+                    try? data.write(to: manifestURL, options: .atomic)
+                }
+            })
 
         let actual = fileSize(assembled)
         guard actual == probe.totalBytes else {
+            // Corrupt stash (e.g. the partial file was truncated behind our
+            // back) — throw it away so the next attempt starts clean.
+            try? fileManager.removeItem(at: assembled)
+            try? fileManager.removeItem(at: manifestURL)
             throw DownloadError.assemblySizeMismatch(expected: probe.totalBytes, actual: actual)
         }
 
-        success = true
+        try? fileManager.removeItem(at: manifestURL)
         progress(.init(bytesWritten: probe.totalBytes, totalBytes: probe.totalBytes))
         return assembled
     }
@@ -264,19 +318,25 @@ enum ParallelRangeDownloader {
 
     private static func downloadParts(
         _ byteRanges: [ByteRange],
+        skipping alreadyCompleted: Set<Int> = [],
         url: URL,
         workDir: URL,
         session: URLSession,
         output: FileHandle,
         totalBytes: Int64,
         maxConcurrentParts: Int,
-        progress: @escaping @Sendable (Progress) -> Void
+        progress: @escaping @Sendable (Progress) -> Void,
+        partCompleted: (Int) -> Void = { _ in }
     ) async throws {
+        let remaining = byteRanges.filter { !alreadyCompleted.contains($0.index) }
         try await withThrowingTaskGroup(of: PartResult.self) { group in
-            var iterator = byteRanges.makeIterator()
+            var iterator = remaining.makeIterator()
             var active = 0
-            var completedBytes: Int64 = 0
-            var completedParts = 0
+            var completedBytes: Int64 = byteRanges
+                .filter { alreadyCompleted.contains($0.index) }
+                .reduce(0) { $0 + $1.length }
+            var completedParts = alreadyCompleted.count
+            progress(.init(bytesWritten: completedBytes, totalBytes: totalBytes))
 
             func addNextPart() {
                 guard let range = iterator.next() else { return }
@@ -286,7 +346,7 @@ enum ParallelRangeDownloader {
                 }
             }
 
-            for _ in 0..<min(maxConcurrentParts, byteRanges.count) {
+            for _ in 0..<min(maxConcurrentParts, remaining.count) {
                 addNextPart()
             }
 
@@ -297,6 +357,7 @@ enum ParallelRangeDownloader {
                 try copyFile(part.url, to: output, atOffset: part.range.start)
                 completedBytes += part.range.length
                 completedParts += 1
+                partCompleted(part.range.index)
                 progress(.init(bytesWritten: completedBytes, totalBytes: totalBytes))
                 addNextPart()
             }

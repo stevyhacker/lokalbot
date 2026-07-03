@@ -91,7 +91,11 @@ struct AppSettings: Codable {
     }
 
     var summarizerBackend: SummarizerBackend = .builtIn
-    var builtInModelID: String = ModelCatalog.recommendedSummarizationID
+    /// RAM-aware: the recommended model where it fits, a compact one elsewhere
+    /// (a 17.7 GB download that can't load is a terrible first run). Existing
+    /// installs keep whatever their saved settings blob says.
+    var builtInModelID: String = ModelCatalog.defaultSummarizationID(
+        for: HardwareCapabilityProbe.current())
     var customBuiltInModels: [ModelCatalog.Entry] = []
     var ollamaBaseURL: String = "http://localhost:11434"
     var ollamaModel: String = ""

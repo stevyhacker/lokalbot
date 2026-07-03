@@ -29,23 +29,38 @@ final class ModelDownloadManager: ObservableObject {
     }())
 
     func download(_ entry: ModelCatalog.Entry, storage: StorageManager) {
-        download(url: entry.url, fileName: entry.fileName, id: entry.id, storage: storage)
+        download(url: entry.url, fileName: entry.fileName, id: entry.id,
+                 expectedSizeGB: entry.sizeGB, storage: storage)
     }
 
     /// Generic GGUF download keyed by an arbitrary id (catalog id, or a Hugging
     /// Face "<repo>/<file>" key for browsed models). Idempotent per id.
-    func download(url urlString: String, fileName: String, id: String, storage: StorageManager) {
+    /// `expectedSizeGB` (when known) gates the download on free disk space up
+    /// front instead of failing after gigabytes have moved.
+    func download(url urlString: String, fileName: String, id: String,
+                  expectedSizeGB: Double? = nil, storage: StorageManager) {
         guard tasks[id] == nil, let url = URL(string: urlString) else { return }
         let folder = storage.rootURL.appendingPathComponent("models", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let destination = folder.appendingPathComponent(fileName)
+        if let advisory = DiskSpacePrecheck.advisory(
+            expectedBytes: expectedSizeGB.map { Int64($0 * 1_000_000_000) },
+            availableBytes: DiskSpacePrecheck.availableBytes(at: folder)) {
+            errors[id] = advisory
+            return
+        }
         progress[id] = 0
         errors[id] = nil
 
+        // Resume stash inside the models folder (not the system temp dir):
+        // it's on the same volume as the final install and macOS won't reap a
+        // half-finished 17 GB download between attempts.
+        let stashDirectory = folder.appendingPathComponent(".partial", isDirectory: true)
         let session = session
         tasks[id] = Task(priority: .utility) { [weak self] in
             do {
-                let stashed = try await ParallelRangeDownloader.download(from: url, session: session) { update in
+                let stashed = try await ParallelRangeDownloader.download(
+                    from: url, session: session, stashDirectory: stashDirectory) { update in
                     Task { @MainActor [weak self] in
                         self?.publishProgress(id: id, fraction: update.fractionCompleted)
                     }

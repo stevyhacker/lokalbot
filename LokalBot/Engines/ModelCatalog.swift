@@ -24,6 +24,21 @@ struct ModelCatalog {
     static let compactFallbackID = "qwen3.5-0.8b"
     static let recommendedSummarizationID = "qwen3.6-35b-a3b"
     static let recommendedCotypingID = "gemma4-e4b-q5-xl"
+    /// Summarizer preselected on Macs that can't hold the recommended model.
+    static let compactSummarizationID = "qwen3.5-4b"
+
+    /// Fresh-install summarizer default: the recommended long-meeting model
+    /// when this Mac's RAM can hold it, else the compact Qwen3.5 4B. A 17.7 GB
+    /// first download that then fails to load is a worse first run than a
+    /// modest model that just works — the big one stays one click away in
+    /// Settings → Models, labelled "Recommended".
+    static func defaultSummarizationID(for capability: HardwareCapability) -> String {
+        guard let entry = entry(id: recommendedSummarizationID) else {
+            return compactSummarizationID
+        }
+        let fit = ModelFit.evaluate(modelSizeGB: entry.sizeGB, capability: capability)
+        return fit == .tooLarge ? compactSummarizationID : recommendedSummarizationID
+    }
 
     /// Local GGUF catalog, roughly ordered from tiny fallbacks to higher-quality
     /// meeting-summary and cotyping options.

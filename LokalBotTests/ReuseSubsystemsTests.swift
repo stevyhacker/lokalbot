@@ -129,6 +129,51 @@ final class ReuseSubsystemsTests: XCTestCase {
         XCTAssertTrue(ParallelRangeDownloader.ranges(totalBytes: 10, partSize: 0).isEmpty)
     }
 
+    /// Two attempts at the same URL must land on the same stash so a retry
+    /// resumes; different URLs must never share one.
+    func testParallelRangeDownloaderStashNameIsStablePerURL() throws {
+        let a = try XCTUnwrap(URL(string: "https://example.com/model.gguf"))
+        let b = try XCTUnwrap(URL(string: "https://example.com/other.gguf"))
+        XCTAssertEqual(ParallelRangeDownloader.stashName(for: a),
+                       ParallelRangeDownloader.stashName(for: a))
+        XCTAssertNotEqual(ParallelRangeDownloader.stashName(for: a),
+                          ParallelRangeDownloader.stashName(for: b))
+    }
+
+    func testParallelRangeDownloaderResumeStateRoundTrips() throws {
+        let state = ParallelRangeDownloader.ResumeState(
+            url: "https://example.com/model.gguf", totalBytes: 1_000,
+            partSize: 100, completedParts: [0, 3, 7])
+
+        let decoded = try JSONDecoder().decode(
+            ParallelRangeDownloader.ResumeState.self, from: JSONEncoder().encode(state))
+
+        XCTAssertEqual(decoded, state)
+    }
+
+    // MARK: - DiskSpacePrecheck
+
+    func testDiskSpacePrecheckPassesWithRoom() {
+        XCTAssertNil(DiskSpacePrecheck.advisory(
+            expectedBytes: 1_000_000_000,
+            availableBytes: 1_000_000_000 + DiskSpacePrecheck.headroomBytes))
+    }
+
+    func testDiskSpacePrecheckRefusesWhenModelPlusHeadroomWontFit() {
+        let message = DiskSpacePrecheck.advisory(
+            expectedBytes: 17_730_000_000, availableBytes: 18_000_000_000)
+        XCTAssertNotNil(message)
+        XCTAssertTrue(message?.contains("free disk space") == true)
+    }
+
+    /// Unknown size or unreadable volume must not block a download — the
+    /// precheck is an early courtesy, not a gate that can wedge shut.
+    func testDiskSpacePrecheckSkipsWhenSizesUnknown() {
+        XCTAssertNil(DiskSpacePrecheck.advisory(expectedBytes: nil, availableBytes: 1))
+        XCTAssertNil(DiskSpacePrecheck.advisory(expectedBytes: 0, availableBytes: 1))
+        XCTAssertNil(DiskSpacePrecheck.advisory(expectedBytes: 1_000, availableBytes: nil))
+    }
+
     // MARK: - TokenCountEstimator / WordCountFormatter
 
     func testTokenEstimateZeroForEmptyAndMonotonic() {
