@@ -38,8 +38,8 @@ final class ChatHistoryUITests: XCTestCase {
     }
 
     func testPersistedConversationLoadsIntoChat() {
-        let chat = app.descendants(matching: .any)["sidebar.chat"]
-        XCTAssertTrue(chat.waitForExistence(timeout: 10), "chat sidebar item missing")
+        let chat = app.descendants(matching: .any)["sidebar.ask"]
+        XCTAssertTrue(chat.waitForExistence(timeout: 10), "ask sidebar item missing")
         chat.click()
 
         // The seeded conversation appears in the history list…

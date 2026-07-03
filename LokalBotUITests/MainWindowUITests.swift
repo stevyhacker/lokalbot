@@ -153,13 +153,13 @@ final class MainWindowUITests: XCTestCase {
             "speaker chip 'Me' missing on transcript")
     }
 
-    // MARK: - Search
+    // MARK: - Ask
 
     /// FTS5-backed search reindexes on every launch — typing a term that
     /// only appears in the synthetic transcripts surfaces the matching
     /// meeting, and clicking the hit deep-links to that meeting's detail.
     func testSearchFindsTranscriptHitAndDeepLinks() {
-        clickSidebar("sidebar.search")
+        clickSidebar("sidebar.ask")
 
         let field = app.textFields["search.field"]
         XCTAssertTrue(field.waitForExistence(timeout: 8), "search field missing")
@@ -183,30 +183,56 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertEqual(title.value as? String, fixture.designReview.title)
     }
 
-    // MARK: - Chat
+    /// The Ask section is reachable from the sidebar and renders its merged
+    /// surface: the empty state, the single input, and — once a query is
+    /// typed — the pinned assistant-escalation row above live results.
+    /// Stops short of sending (that would spin up the real local LLM).
+    func testAskSectionRendersAndAcceptsInput() {
+        clickSidebar("sidebar.ask")
 
-    /// The Chat section is reachable from the sidebar and renders its assistant
-    /// surface — empty-state prompt + input field — proving the `.chat`
-    /// NavSection wiring and the `ChatView` render path. Stops short of sending
-    /// (that would spin up the real local LLM); typing verifies the input
-    /// binding without a model.
-    func testChatSectionRendersAndAcceptsInput() {
-        clickSidebar("sidebar.chat")
-
-        XCTAssertTrue(textWithContent("Chat with your meetings").firstMatch
+        XCTAssertTrue(textWithContent("Ask your meetings").firstMatch
             .waitForExistence(timeout: 6),
-                      "chat empty-state did not render")
+                      "ask empty-state did not render")
 
-        // The chat input reports its full frame (not a caret sliver like the
-        // search field), so a plain center click takes keyboard focus.
-        let field = app.textFields.firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 4), "chat input field missing")
+        let field = app.textFields["search.field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 4), "ask input field missing")
         let layoutDeadline = Date().addingTimeInterval(4)
         while field.frame.width < 40, Date() < layoutDeadline { usleep(150_000) }
         field.click()
         field.typeText("what did we decide")
         XCTAssertEqual(field.value as? String, "what did we decide",
-                       "chat input did not accept typed text")
+                       "ask input did not accept typed text")
+
+        // Typing switches the pane to results with the pinned escalation row.
+        XCTAssertTrue(app.descendants(matching: .any)["ask.escalate"]
+            .waitForExistence(timeout: 4),
+                      "pinned escalation row missing while searching")
+    }
+
+    /// ↵ escalates the query to the assistant: the pane switches from
+    /// results to the conversation transcript with the query as the user
+    /// turn. The model reply itself is not awaited (no local LLM in the
+    /// test host) — the transition and the persisted user turn are the
+    /// contract under test.
+    func testAskEscalationShowsConversationWithUserTurn() {
+        clickSidebar("sidebar.ask")
+
+        let field = app.textFields["search.field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 8), "ask input field missing")
+        let layoutDeadline = Date().addingTimeInterval(4)
+        while field.frame.width < 40, Date() < layoutDeadline { usleep(150_000) }
+        field.click()
+        field.typeText("failover")
+        XCTAssertTrue(app.descendants(matching: .any)["ask.escalate"]
+            .waitForExistence(timeout: 4), "escalation row missing")
+
+        field.typeText("\r")
+
+        let userTurn = app.staticTexts.matching(
+            NSPredicate(format: "identifier == %@ AND value CONTAINS[c] %@",
+                        "chat.message.user", "failover")).firstMatch
+        XCTAssertTrue(userTurn.waitForExistence(timeout: 6),
+                      "user turn did not appear in the conversation after ↵")
     }
 
     // MARK: - Selection
