@@ -112,19 +112,18 @@ struct LokalBotApp: App {
 final class AppState: ObservableObject {
 
     enum NavSection: Hashable {
-        case meetings, timeline, type, chat, search, models, settings
+        case meetings, timeline, type, ask, chat, search, models, settings
 
         /// Section names accepted from the UI-test capture environment and
         /// deep links. Legacy pre-merge names keep working: "dictation" and
-        /// "cotyping" land on the merged Type section (spec §2.1) — pair with
-        /// `TypeTab(captureName:)` to preselect the matching tab.
+        /// "cotyping" land on the merged Type section, and "search"/"chat"
+        /// land on the merged Ask section (spec §2.1/§2.3).
         init?(captureName: String) {
             switch captureName.lowercased() {
             case "meetings": self = .meetings
             case "timeline": self = .timeline
             case "type", "dictation", "cotyping": self = .type
-            case "chat": self = .chat
-            case "search": self = .search
+            case "ask", "search", "chat": self = .ask
             case "models": self = .models
             case "settings": self = .settings
             default: return nil
@@ -188,10 +187,20 @@ final class AppState: ObservableObject {
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []
     @Published var pendingSeek: TimeInterval?
 
+    /// A query handed to the Ask section by another surface (⌘K palette).
+    /// AskView consumes and clears it on appear/change.
+    @Published var askPrefill: String?
+
     /// Navigate to the Type section with a specific tab preselected.
     func openType(_ tab: TypeTab) {
         typeTab = tab
         navSection = .type
+    }
+
+    /// Navigate to the Ask section, optionally pre-filling the query.
+    func openAsk(query: String = "") {
+        askPrefill = query.isEmpty ? nil : query
+        navSection = .ask
     }
 
     /// The meeting shown in the detail pane (single selection only).
