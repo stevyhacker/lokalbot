@@ -69,6 +69,7 @@ final class ScreenshotService: ObservableObject {
     private let store: ActivityStore
     private let storage: StorageManager
     private let settings: () -> AppSettings
+    private let isMeetingRecordingActive: () -> Bool
     private let sampler: ActivitySampler
     private var timer: Timer?
     private var policy = ScreenCapturePolicy()
@@ -77,10 +78,12 @@ final class ScreenshotService: ObservableObject {
     private var lastContentHash: Data?
 
     init(store: ActivityStore, storage: StorageManager, sampler: ActivitySampler,
+         isMeetingRecordingActive: @escaping () -> Bool = { false },
          settings: @escaping () -> AppSettings) {
         self.store = store
         self.storage = storage
         self.sampler = sampler
+        self.isMeetingRecordingActive = isMeetingRecordingActive
         self.settings = settings
     }
 
@@ -124,6 +127,13 @@ final class ScreenshotService: ObservableObject {
             lokalbotLog("shot skip: disabled"); return
         }
         guard !sampler.isPaused else { lokalbotLog("shot skip: paused"); return }
+        guard Self.shouldCaptureDuringMeetingRecording(
+            trigger: trigger,
+            recordingActive: isMeetingRecordingActive())
+        else {
+            lokalbotLog("shot skip: recording active (\(trigger.rawValue))")
+            return
+        }
         guard policy.shouldCapture(trigger: trigger,
                                    idleInterval: max(60, config.screenshotIntervalMinutes * 60))
         else {
@@ -246,6 +256,13 @@ final class ScreenshotService: ObservableObject {
     }
 
     // MARK: - Pieces
+
+    nonisolated static func shouldCaptureDuringMeetingRecording(
+        trigger: ScreenCaptureTrigger,
+        recordingActive: Bool
+    ) -> Bool {
+        !recordingActive || trigger == .manual
+    }
 
     private static func recognizeText(in image: CGImage) -> String {
         let request = VNRecognizeTextRequest()

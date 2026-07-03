@@ -169,12 +169,63 @@ final class MeetingDetector {
         let now = Date()
         let running = NSWorkspace.shared.runningApplications
         let calendarEvent = calendarEnabled ? calendar?.activeCandidate(now: now) : nil
-        let runningMeetingApp = Self.nativeMeetingApp(in: running, requireAudio: true)
-            ?? Self.browserMeeting(in: running, calendarEvent: calendarEvent,
-                                   calendarEnabled: calendarEnabled,
-                                   requireCalendarForBrowser: requireCalendarForBrowser)
-        let continuingApp = activeApp.flatMap { Self.continuingApp($0, in: running) }
-        let app = runningMeetingApp ?? continuingApp
+
+        if let currentApp = activeApp {
+            let continuingApp = Self.continuingApp(currentApp, in: running)
+            let appAudioActive = continuingApp.map { Self.hasAudio(for: $0) } ?? false
+            let isBrowserApp = continuingApp.map { Self.browsers.contains($0.bundleID) } ?? false
+            let calendarBackedBrowserWithAudio = isBrowserApp
+                && calendarEnabled
+                && calendarEvent?.meetingURL != nil
+                && appAudioActive
+            let inMeeting = MeetingMatcher.isMeetingOngoing(
+                hasActiveSession: true,
+                hasRunningMeetingApp: false,
+                hasContinuingApp: continuingApp != nil,
+                startAudioActive: false,
+                appAudioActive: appAudioActive,
+                calendarBackedBrowserWithAudio: calendarBackedBrowserWithAudio)
+
+            guard inMeeting, let app = continuingApp else {
+                if let replacementApp = Self.detectRunningMeetingApp(
+                    in: running,
+                    calendarEvent: calendarEvent,
+                    calendarEnabled: calendarEnabled,
+                    requireCalendarForBrowser: requireCalendarForBrowser) {
+                    pendingStop?.cancel()
+                    pendingStop = nil
+                    activeApp = replacementApp
+                    activeCalendarEvent = calendarEvent
+                    return
+                }
+                scheduleStopIfNeeded(now: now)
+                return
+            }
+
+            pendingStop?.cancel()
+            pendingStop = nil
+            let previousEventID = activeCalendarEvent?.externalID
+            activeApp = app
+            if let calendarEvent {
+                activeCalendarEvent = calendarEvent
+                if MeetingMatcher.shouldSplitForCalendarHandoff(
+                    activeEventID: previousEventID,
+                    nextEventID: calendarEvent.externalID) {
+                    onMeetingSwitched?(MeetingDetectionContext(
+                        detectedApp: app,
+                        calendarEvent: calendarEvent,
+                        confidence: MeetingMatcher.confidence(hasApp: true, hasCalendar: true),
+                        reason: "calendar-handoff"))
+                }
+            }
+            return
+        }
+
+        let runningMeetingApp = Self.detectRunningMeetingApp(
+            in: running,
+            calendarEvent: calendarEvent,
+            calendarEnabled: calendarEnabled,
+            requireCalendarForBrowser: requireCalendarForBrowser)
         let isBrowserApp = runningMeetingApp.map { Self.browsers.contains($0.bundleID) } ?? false
         let calendarBackedBrowser = isBrowserApp && calendarEnabled && calendarEvent?.meetingURL != nil
         // Both start and continuation hinge on the selected app's OWN audio
@@ -182,60 +233,58 @@ final class MeetingDetector {
         // belong to Dictation/QuickTime/another meeting app while a known meeting
         // app is merely idle in the background.
         let startAudioActive = runningMeetingApp.map { Self.hasAudio(for: $0) } ?? false
-        let appAudioActive = app.map { Self.hasAudio(for: $0) } ?? false
         let calendarBackedBrowserWithAudio = calendarBackedBrowser
             && (runningMeetingApp.map { Self.hasOutputAudio(for: $0) } ?? false)
         let inMeeting = MeetingMatcher.isMeetingOngoing(
-            hasActiveSession: activeApp != nil,
+            hasActiveSession: false,
             hasRunningMeetingApp: runningMeetingApp != nil,
-            hasContinuingApp: continuingApp != nil,
+            hasContinuingApp: false,
             startAudioActive: startAudioActive,
-            appAudioActive: appAudioActive,
+            appAudioActive: false,
             calendarBackedBrowserWithAudio: calendarBackedBrowserWithAudio)
 
-        if inMeeting, let app {
+        if inMeeting, let app = runningMeetingApp {
             pendingStop?.cancel()
             pendingStop = nil
-            if activeApp == nil {
-                activeApp = app
-                activeCalendarEvent = calendarEvent
-                onMeetingStarted?(MeetingDetectionContext(
-                    detectedApp: app,
-                    calendarEvent: calendarEvent,
-                    confidence: MeetingMatcher.confidence(hasApp: true, hasCalendar: calendarEvent != nil),
-                    reason: "detector"))
-            } else {
-                let previousEventID = activeCalendarEvent?.externalID
-                activeApp = app
-                if let calendarEvent {
-                    activeCalendarEvent = calendarEvent
-                    if MeetingMatcher.shouldSplitForCalendarHandoff(
-                        activeEventID: previousEventID,
-                        nextEventID: calendarEvent.externalID) {
-                        onMeetingSwitched?(MeetingDetectionContext(
-                            detectedApp: app,
-                            calendarEvent: calendarEvent,
-                            confidence: MeetingMatcher.confidence(hasApp: true, hasCalendar: true),
-                            reason: "calendar-handoff"))
-                    }
-                }
-            }
-        } else if activeApp != nil, pendingStop == nil {
-            // Never stop because calendar time ended — only audio does. While the
-            // matched event is still in its window, extend the debounce so brief
-            // drops don't split a scheduled meeting.
-            let calendarStillActive = activeCalendarEvent?.isActive(at: now) ?? false
-            let debounce = calendarStillActive ? max(stopDebounce, Self.calendarBackedGrace) : stopDebounce
-            let work = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                self.activeApp = nil
-                self.activeCalendarEvent = nil
-                self.pendingStop = nil
-                self.onMeetingEnded?()
-            }
-            pendingStop = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + debounce, execute: work)
+            activeApp = app
+            activeCalendarEvent = calendarEvent
+            onMeetingStarted?(MeetingDetectionContext(
+                detectedApp: app,
+                calendarEvent: calendarEvent,
+                confidence: MeetingMatcher.confidence(hasApp: true, hasCalendar: calendarEvent != nil),
+                reason: "detector"))
         }
+    }
+
+    private static func detectRunningMeetingApp(
+        in running: [NSRunningApplication],
+        calendarEvent: CalendarMeetingCandidate?,
+        calendarEnabled: Bool,
+        requireCalendarForBrowser: Bool
+    ) -> DetectedApp? {
+        nativeMeetingApp(in: running, requireAudio: true)
+            ?? browserMeeting(in: running,
+                              calendarEvent: calendarEvent,
+                              calendarEnabled: calendarEnabled,
+                              requireCalendarForBrowser: requireCalendarForBrowser)
+    }
+
+    private func scheduleStopIfNeeded(now: Date) {
+        guard activeApp != nil, pendingStop == nil else { return }
+        // Never stop because calendar time ended — only audio does. While the
+        // matched event is still in its window, extend the debounce so brief
+        // drops don't split a scheduled meeting.
+        let calendarStillActive = activeCalendarEvent?.isActive(at: now) ?? false
+        let debounce = calendarStillActive ? max(stopDebounce, Self.calendarBackedGrace) : stopDebounce
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.activeApp = nil
+            self.activeCalendarEvent = nil
+            self.pendingStop = nil
+            self.onMeetingEnded?()
+        }
+        pendingStop = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + debounce, execute: work)
     }
 
     private static func nativeMeetingApp(in running: [NSRunningApplication],

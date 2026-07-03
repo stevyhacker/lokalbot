@@ -131,6 +131,26 @@ final class ActivityStoreTests: XCTestCase {
                                            now: t0.addingTimeInterval(1)))
     }
 
+    func testAutomaticScreenCapturesPauseDuringMeetingRecording() {
+        XCTAssertFalse(ScreenshotService.shouldCaptureDuringMeetingRecording(
+            trigger: .appSwitch,
+            recordingActive: true))
+        XCTAssertFalse(ScreenshotService.shouldCaptureDuringMeetingRecording(
+            trigger: .windowChange,
+            recordingActive: true))
+        XCTAssertFalse(ScreenshotService.shouldCaptureDuringMeetingRecording(
+            trigger: .interval,
+            recordingActive: true))
+
+        // Explicit user action still works while recording.
+        XCTAssertTrue(ScreenshotService.shouldCaptureDuringMeetingRecording(
+            trigger: .manual,
+            recordingActive: true))
+        XCTAssertTrue(ScreenshotService.shouldCaptureDuringMeetingRecording(
+            trigger: .interval,
+            recordingActive: false))
+    }
+
     func testClearOCRTextRemovesOnlyRowsOlderThanCutoff() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")

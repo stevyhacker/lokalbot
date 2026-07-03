@@ -268,7 +268,11 @@ final class AppState: ObservableObject {
         databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"),
         storage: storage)
     private(set) lazy var screenshots = ScreenshotService(
-        store: activityStore, storage: storage, sampler: sampler) { [store = settingsStore] in
+        store: activityStore, storage: storage, sampler: sampler,
+        isMeetingRecordingActive: { [weak self] in
+            guard let self else { return false }
+            return self.recording.isRecording || self.recording.isStarting
+        }) { [store = settingsStore] in
         store.current
     }
     private(set) lazy var pipelineJobStore = PipelineJobStore(
