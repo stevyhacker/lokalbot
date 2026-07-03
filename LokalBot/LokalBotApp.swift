@@ -604,6 +604,15 @@ final class AppState: ObservableObject {
         openMeeting(hit.meetingID)
     }
 
+    /// Chat citation marker → open the cited meeting; timed markers seek the player.
+    func openCitation(_ citation: ChatCitation) {
+        guard let meeting = ((try? SessionLookup.find(id: citation.meetingID, in: meetings)) ?? nil) else { return }
+        if let seconds = citation.seconds {
+            pendingSeek = seconds
+        }
+        openMeeting(meeting.id)
+    }
+
     /// Permanently removes meetings: audio folder, list entry, both indexes.
     func deleteMeetings(_ ids: Set<Meeting.ID>) {
         for meeting in meetings where ids.contains(meeting.id) {
