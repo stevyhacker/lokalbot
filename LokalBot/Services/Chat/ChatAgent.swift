@@ -133,7 +133,8 @@ enum ChatPrompt {
         final answer in plain language — no JSON, no tool call.
         • Prefer search_meetings for questions about what was said or decided. Use \
         get_meeting to read a specific meeting's summary or transcript. Use \
-        list_meetings to enumerate meetings. Use search_screen for things the user \
+        list_meetings to enumerate meetings. Use get_action_items for to-dos, \
+        decisions, or follow-ups. Use search_screen for things the user \
         read or saw on screen (docs, sites, code, messages). Use activity_summary \
         for how a day was spent across apps.
         """)

@@ -56,6 +56,38 @@ enum MeetingChatFormat {
         return lines.joined(separator: "\n")
     }
 
+    static func outcomes(_ entries: [(meeting: Meeting, outcomes: MeetingOutcomes)]) -> String {
+        guard !entries.isEmpty else {
+            return "No structured outcomes found. Outcomes are extracted when a meeting is "
+                + "summarized, so meetings processed before this feature have none."
+        }
+        var lines: [String] = []
+        for entry in entries {
+            lines.append("# [\(SessionLookup.shortID(entry.meeting.id))] \(entry.meeting.title)"
+                + " — \(dateLabel(entry.meeting.startedAt))")
+            if !entry.outcomes.actionItems.isEmpty {
+                lines.append("Action items:")
+                for item in entry.outcomes.actionItems {
+                    var notes: [String] = []
+                    if let owner = item.owner { notes.append("owner: \(owner)") }
+                    if let due = item.due { notes.append("due: \(due)") }
+                    lines.append("- \(item.text)"
+                        + (notes.isEmpty ? "" : " (\(notes.joined(separator: ", ")))"))
+                }
+            }
+            if !entry.outcomes.decisions.isEmpty {
+                lines.append("Decisions:")
+                lines.append(contentsOf: entry.outcomes.decisions.map { "- \($0)" })
+            }
+            if !entry.outcomes.openQuestions.isEmpty {
+                lines.append("Open questions:")
+                lines.append(contentsOf: entry.outcomes.openQuestions.map { "- \($0)" })
+            }
+            lines.append("")
+        }
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static func meeting(_ meeting: Meeting, summary: String?, transcript: String?,
                         include: String) -> String {
         let want = include.lowercased()
@@ -222,6 +254,13 @@ final class MeetingChatTools: ChatToolRunner {
                 .init(name: "include", description: "What to return: 'summary' (default), 'transcript', or 'all'.", required: false),
             ]),
         ChatToolSpec(
+            name: "get_action_items",
+            summary: "Structured action items, decisions and open questions extracted from meetings. Give an id for one meeting, or scan the last few days.",
+            arguments: [
+                .init(name: "id", description: "Meeting id, or 'latest'. Omit to scan recent meetings.", required: false),
+                .init(name: "days", description: "When no id: how many days back to scan (default 7).", required: false),
+            ]),
+        ChatToolSpec(
             name: "search_screen",
             summary: "Search text the user has SEEN on screen (OCR'd from on-device screen captures, outside of meetings too). Returns app, window and a snippet with a timestamp.",
             arguments: [
@@ -244,6 +283,7 @@ final class MeetingChatTools: ChatToolRunner {
         case "search_meetings": return await search(call)
         case "list_meetings": return list(call)
         case "get_meeting": return get(call)
+        case "get_action_items": return actionItems(call)
         case "search_screen": return searchScreen(call)
         case "activity_summary": return activitySummary(call)
         default: return ChatToolResult(text: "Unknown tool '\(call.name)'.", summary: "unknown tool")
@@ -304,6 +344,34 @@ final class MeetingChatTools: ChatToolRunner {
         let text = MeetingChatFormat.meeting(meeting, summary: summary,
                                              transcript: transcript, include: include)
         return ChatToolResult(text: text, summary: meeting.title)
+    }
+
+    private func actionItems(_ call: ChatToolCall) -> ChatToolResult {
+        let meetings = meetingsProvider()
+        var scoped: [Meeting]
+        var scopeLabel: String
+        if let idArgument = call.string("id") {
+            guard let meeting = resolve(idArgument, in: meetings) else {
+                return ChatToolResult(
+                    text: "No meeting matches '\(idArgument)'. Use list_meetings to see ids.",
+                    summary: "no match for \(idArgument)")
+            }
+            scoped = [meeting]
+            scopeLabel = meeting.title
+        } else {
+            let days = max(1, min(call.int("days") ?? 7, 90))
+            let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
+            scoped = meetings.filter { $0.startedAt >= cutoff }
+            scopeLabel = "last \(days) days"
+        }
+        let entries = scoped.compactMap { meeting -> (meeting: Meeting, outcomes: MeetingOutcomes)? in
+            guard let outcomes = MeetingOutcomes.load(from: meeting.folderURL(in: storage)),
+                  !outcomes.isEmpty else { return nil }
+            return (meeting, outcomes)
+        }
+        let count = entries.reduce(0) { $0 + $1.outcomes.actionItems.count }
+        return ChatToolResult(text: MeetingChatFormat.outcomes(entries),
+                              summary: "\(scopeLabel) — \(count) action item\(count == 1 ? "" : "s")")
     }
 
     private func searchScreen(_ call: ChatToolCall) -> ChatToolResult {

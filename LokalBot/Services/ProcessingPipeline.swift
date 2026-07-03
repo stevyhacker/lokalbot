@@ -144,6 +144,8 @@ final class ProcessingPipeline: ObservableObject {
                 }
                 try summary.data(using: .utf8)?.write(
                     to: folder.appendingPathComponent("summary.md"), options: .atomic)
+                await extractOutcomes(transcript: transcript, summary: summary, folder: folder,
+                                      config: config)
             }
             stages[meeting.id] = nil
             jobStore?.markCompleted(meetingID: meeting.id)
@@ -372,6 +374,29 @@ final class ProcessingPipeline: ObservableObject {
             durationSec: Date().timeIntervalSince(started),
             approxTokens: TokenCountEstimator.estimate(body))
         return header + body + "\n"
+    }
+
+    /// Outcomes ride behind the summary: same engine, schema-constrained where
+    /// the backend supports it (see `OutcomesExtractor`). Failure is non-fatal
+    /// — outcomes are an enhancement, never a gate on the meeting artifacts.
+    private func extractOutcomes(transcript: Transcript, summary: String,
+                                 folder: URL, config: AppSettings) async {
+        do {
+            let engine = try await makeTextEngine(config)
+            let output = try await engine.generate(
+                system: OutcomesExtractor.systemPrompt,
+                prompt: OutcomesExtractor.prompt(transcriptMarkdown: transcript.markdown,
+                                                 summary: summary),
+                context: [],
+                schema: OutcomesExtractor.schema)
+            guard let outcomes = OutcomesExtractor.parse(output) else {
+                lokalbotLog("outcomes extraction unparseable, skipping")
+                return
+            }
+            try outcomes.write(to: folder)
+        } catch {
+            lokalbotLog("outcomes extraction failed error=\(error.localizedDescription)")
+        }
     }
 
     /// Day digest (M4/M6) — shared by the Timeline UI and `--digest`. `ocr` is

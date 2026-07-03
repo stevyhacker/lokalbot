@@ -167,6 +167,7 @@ struct MeetingDetailView: View {
 
     @State private var tab: Tab = .summary
     @State private var summary: String?
+    @State private var outcomes: MeetingOutcomes?
     @State private var transcript: Transcript?
     @State private var speakerNameHints: [String] = []
     @State private var speakerRenameDraft: SpeakerRenameDraft?
@@ -379,9 +380,15 @@ struct MeetingDetailView: View {
     @ViewBuilder private var summaryTab: some View {
         if let summary {
             ScrollView {
-                MarkdownText(summary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
+                VStack(alignment: .leading, spacing: 14) {
+                    if let outcomes {
+                        MeetingOutcomesSection(outcomes: outcomes)
+                    }
+                    MarkdownText(summary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
@@ -494,6 +501,7 @@ struct MeetingDetailView: View {
 
     private func loadFiles() {
         summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8)
+        outcomes = MeetingOutcomes.load(from: folder).flatMap { $0.isEmpty ? nil : $0 }
         transcript = try? app.pipeline.loadTranscript(from: folder)
         speakerNameHints = app.speakerNameHints(for: meeting)
     }
@@ -553,6 +561,65 @@ struct MeetingDetailView: View {
         let currentName: String
 
         var id: String { speaker }
+    }
+}
+
+/// Structured outcomes card atop the summary tab, read from `outcomes.json`
+/// (written by the pipeline's extraction pass). Only shown when non-empty.
+private struct MeetingOutcomesSection: View {
+    let outcomes: MeetingOutcomes
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !outcomes.actionItems.isEmpty {
+                group("Action items", icon: "checklist") {
+                    ForEach(Array(outcomes.actionItems.enumerated()), id: \.offset) { _, item in
+                        row(text: item.text, detail: detail(for: item))
+                    }
+                }
+            }
+            if !outcomes.decisions.isEmpty {
+                group("Decisions", icon: "checkmark.seal") {
+                    ForEach(outcomes.decisions, id: \.self) { row(text: $0, detail: nil) }
+                }
+            }
+            if !outcomes.openQuestions.isEmpty {
+                group("Open questions", icon: "questionmark.circle") {
+                    ForEach(outcomes.openQuestions, id: \.self) { row(text: $0, detail: nil) }
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 9))
+        .accessibilityIdentifier("detail.outcomes")
+    }
+
+    private func detail(for item: MeetingOutcomes.ActionItem) -> String? {
+        let notes = [item.owner, item.due.map { "due \($0)" }].compactMap { $0 }
+        return notes.isEmpty ? nil : notes.joined(separator: " · ")
+    }
+
+    private func group(_ title: String, icon: String,
+                       @ViewBuilder rows: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label(title, systemImage: icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            rows()
+        }
+    }
+
+    private func row(text: String, detail: String?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("•").foregroundStyle(.tertiary)
+            Text(text).textSelection(.enabled)
+            if let detail {
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .font(.callout)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
