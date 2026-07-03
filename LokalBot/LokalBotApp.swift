@@ -321,7 +321,16 @@ final class AppState: ObservableObject {
     private(set) lazy var cotyping = CotypingCoordinator(
         engine: cotypingEngine,
         settingsProvider: { [store = settingsStore] in store.current },
-        learningStore: cotypingLearning)
+        learningStore: cotypingLearning,
+        isMeetingRecordingActive: { [weak self] in
+            guard let self else { return false }
+            return self.recording.isRecording || self.recording.isStarting
+        })
+    /// Rolling live transcript of the recording in progress (preview only —
+    /// the pipeline's post-meeting transcript stays authoritative).
+    private(set) lazy var liveTranscriber = LiveMeetingTranscriber(
+        storageRoot: storage.rootURL,
+        settings: { [store = settingsStore] in store.current })
 
     @MainActor
     func prepareRecommendedCotypingModel() {
@@ -349,6 +358,7 @@ final class AppState: ObservableObject {
 
     private var pipelineObserver: AnyCancellable?
     private var recordingObserver: AnyCancellable?
+    private var recordingStatusObserver: AnyCancellable?
     private var audioMonitorObserver: AnyCancellable?
     private var audioMonitorChangeForwarder: AnyCancellable?
     private var calendarObserver: AnyCancellable?
@@ -369,6 +379,20 @@ final class AppState: ObservableObject {
 
     func stopRecording(process: Bool = true) {
         recording.stop(process: process)
+    }
+
+    /// Recording started, stopped, or split to a new meeting: quiet cotyping
+    /// and (re)point the live transcriber at the active meeting folder.
+    private func meetingRecordingStateDidChange(active: Bool) {
+        guard interactive else { return }
+        if settings.cotypingEnabled {
+            cotyping.meetingRecordingStateChanged(active: active)
+        }
+        if active, let meeting = recording.currentMeeting {
+            liveTranscriber.start(folder: meeting.folderURL(in: storage))
+        } else {
+            liveTranscriber.stop()
+        }
     }
 
     init() {
@@ -397,6 +421,19 @@ final class AppState: ObservableObject {
         recordingObserver = recording.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
+        // React to recording start/stop (and calendar-handoff splits, which
+        // change the meeting ID mid-recording): pause cotyping and run the
+        // live transcriber against the active meeting folder.
+        recordingStatusObserver = recording.$status
+            .map { status -> UUID? in
+                if case .recording(let meetingID) = status { return meetingID }
+                return nil
+            }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] meetingID in
+                self?.meetingRecordingStateDidChange(active: meetingID != nil)
+            }
         audioMonitorChangeForwarder = audioMonitor.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }

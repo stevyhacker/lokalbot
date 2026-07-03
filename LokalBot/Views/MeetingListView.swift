@@ -7,6 +7,7 @@ import SwiftUI
 struct MeetingListView: View {
     @EnvironmentObject var app: AppState
     @Binding var pendingDelete: Set<Meeting.ID>?
+    @State private var showLivePanel = false
 
     var body: some View {
         List(selection: $app.selectedMeetingIDs) {
@@ -32,14 +33,25 @@ struct MeetingListView: View {
         }
         .overlay(alignment: .topTrailing) {
             if app.isRecording {
-                HStack(spacing: 6) {
-                    StatusDot(color: Brand.recording, size: 7)
-                    Text("recording…").font(.caption)
-                    LiveWaveform(barCount: 5, barWidth: 2.5, maxHeight: 10)
+                Button {
+                    showLivePanel.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        StatusDot(color: Brand.recording, size: 7)
+                        Text("recording…").font(.caption)
+                        LiveWaveform(barCount: 5, barWidth: 2.5, maxHeight: 10)
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .hudCapsule()
                 }
-                .padding(.horizontal, 10).padding(.vertical, 5)
-                .hudCapsule()
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("live.badge")
                 .padding(10)
+                .popover(isPresented: $showLivePanel, arrowEdge: .bottom) {
+                    LiveMeetingPanel(
+                        transcriber: app.liveTranscriber,
+                        notesFolder: app.currentMeeting?.folderURL(in: app.storage))
+                }
             }
         }
         .contextMenu(forSelectionType: Meeting.ID.self) { ids in

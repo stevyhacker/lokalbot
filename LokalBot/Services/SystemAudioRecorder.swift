@@ -34,6 +34,8 @@ final class SystemAudioRecorder {
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
     private var ioProcID: AudioDeviceIOProcID?
     private var file: AVAudioFile?
+    private var previewTee: AudioPreviewTee?
+    private var previewTeeURL: URL?
     private var tapFormat: AVAudioFormat?
     private var outputURL: URL?
     private var framesWritten: AVAudioFramePosition = 0
@@ -69,7 +71,9 @@ final class SystemAudioRecorder {
         let peakRMSLevel: Float
     }
 
-    func start(capturingPID pid: pid_t, writingTo url: URL) throws {
+    /// `previewTee` mirrors the capture into a snapshot-safe PCM `.caf` for
+    /// the live meeting transcript — best-effort, never fails the recording.
+    func start(capturingPID pid: pid_t, writingTo url: URL, previewTee previewURL: URL? = nil) throws {
         // 1. Translate the PID to its Core Audio process object.
         guard let processObject = CoreAudioUtils.translatePIDToProcessObject(pid: pid) else {
             throw RecorderError.processNotFound
@@ -77,6 +81,7 @@ final class SystemAudioRecorder {
 
         do {
             outputURL = url
+            previewTeeURL = previewURL
             ioQueue.sync {
                 framesWritten = 0
                 audibleFramesWritten = 0
@@ -187,6 +192,7 @@ final class SystemAudioRecorder {
                                    settings: settings,
                                    commonFormat: format.commonFormat,
                                    interleaved: format.isInterleaved)
+            previewTee = previewTeeURL.flatMap { AudioPreviewTee(url: $0, sourceFormat: format) }
             ioQueue.sync {
                 recordingSampleRate = format.sampleRate
             }
@@ -215,10 +221,12 @@ final class SystemAudioRecorder {
             // Snapshot the file ref on the audio thread (atomic class read);
             // strongly retained by the dispatched block until the write returns.
             let fileRef = self.file
+            let teeRef = self.previewTee
             self.ioQueue.async {
                 guard let fileRef else { return }
                 do {
                     try fileRef.write(from: copy)
+                    teeRef?.write(copy)
                     let now = Date()
                     self.framesWritten += AVAudioFramePosition(copy.frameLength)
                     self.lastAudioWriteAt = now
@@ -297,6 +305,9 @@ final class SystemAudioRecorder {
         teardownTap()
         guard closeFile else { return }
         file = nil
+        previewTee?.close()
+        previewTee = nil
+        previewTeeURL = nil
         tapFormat = nil
         outputURL = nil
         capturedPID = 0

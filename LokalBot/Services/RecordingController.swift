@@ -163,15 +163,21 @@ final class RecordingController: ObservableObject {
                     try? storage.saveMeta(meeting)
                 }
                 created = meeting
-                try micRecorder.start(writingTo: meeting.folderURL(in: storage).appendingPathComponent("mic.m4a"))
+                try micRecorder.start(
+                    writingTo: meeting.folderURL(in: storage).appendingPathComponent("mic.m4a"),
+                    previewTee: meeting.folderURL(in: storage)
+                        .appendingPathComponent(AudioPreviewTee.micFileName))
                 startRecordingHealthWatchdog()
 
                 if let detectedApp {
                     let captureProcess = MeetingDetector.currentOutputAudioProcess(for: detectedApp)
                     let pid = captureProcess?.id ?? detectedApp.pid
                     do {
-                        try systemRecorder.start(capturingPID: pid,
-                                                 writingTo: meeting.folderURL(in: storage).appendingPathComponent("system.m4a"))
+                        try systemRecorder.start(
+                            capturingPID: pid,
+                            writingTo: meeting.folderURL(in: storage).appendingPathComponent("system.m4a"),
+                            previewTee: meeting.folderURL(in: storage)
+                                .appendingPathComponent(AudioPreviewTee.systemFileName))
                         meeting.hasSystemTrack = true
                         systemAudioTarget = SystemAudioTarget(
                             bundleID: detectedApp.bundleID,
@@ -219,6 +225,10 @@ final class RecordingController: ObservableObject {
         let endedAt = Date()
         meeting.endedAt = endedAt
         let folder = meeting.folderURL(in: storage)
+        // The live-preview tees served their purpose; only the real tracks stay.
+        for name in [AudioPreviewTee.micFileName, AudioPreviewTee.systemFileName] {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
+        }
         let micDuration = AudioFileInspector.duration(at: folder.appendingPathComponent("mic.m4a"))
         let systemDuration = AudioFileInspector.duration(at: folder.appendingPathComponent("system.m4a"))
         meeting.hasSystemTrack = AudioFileInspector.isTranscribableAudio(

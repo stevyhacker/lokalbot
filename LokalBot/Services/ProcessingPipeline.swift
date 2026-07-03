@@ -106,6 +106,11 @@ final class ProcessingPipeline: ObservableObject {
         let folder = meeting.folderURL(in: storage)
         let config = settings()
         jobStore?.markStarted(meetingID: meeting.id)
+        // Live-preview tees are deleted when a recording stops; sweep any a
+        // crash left behind so they don't sit next to the real tracks forever.
+        for name in [AudioPreviewTee.micFileName, AudioPreviewTee.systemFileName] {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
+        }
         do {
             if job.transcribe || !FileManager.default.fileExists(
                 atPath: folder.appendingPathComponent("transcript.json").path) {
@@ -327,6 +332,10 @@ final class ProcessingPipeline: ObservableObject {
                                                              transcript: transcript)
         let systemPrompt = PromptTemplates.systemPrompt(for: config.noteTemplate,
                                                         summaryLanguage: language)
+        // Quick notes the user typed during the meeting ride along as context
+        // in the final pass (both paths) — they're the user's own words, so
+        // the summary should fold them in rather than rediscover them.
+        let noteContext = MeetingNotes.promptContext(in: meeting.folderURL(in: storage))
         let body: String
 
         // Map-reduce long meetings: per-chunk notes, then one synthesis pass.
@@ -352,14 +361,14 @@ final class ProcessingPipeline: ObservableObject {
                 system: systemPrompt,
                 prompt: "Synthesize the final \(config.noteTemplate.displayName.lowercased()) notes from these per-part notes:\n\n"
                     + fitted,
-                context: [])
+                context: noteContext)
         } else {
             body = try await engine.generate(
                 system: systemPrompt,
                 prompt: PromptTemplates.userPrompt(transcript: text,
                                                    template: config.noteTemplate,
                                                    summaryLanguage: language),
-                context: [])
+                context: noteContext)
         }
 
         let date = meeting.startedAt.formatted(date: .long, time: .shortened)
@@ -389,7 +398,7 @@ final class ProcessingPipeline: ObservableObject {
                 system: OutcomesExtractor.systemPrompt,
                 prompt: OutcomesExtractor.prompt(transcriptMarkdown: transcript.markdown,
                                                  summary: summary),
-                context: [],
+                context: MeetingNotes.promptContext(in: folder),
                 schema: OutcomesExtractor.schema)
             guard let outcomes = OutcomesExtractor.parse(output) else {
                 lokalbotLog("outcomes extraction unparseable, skipping")
