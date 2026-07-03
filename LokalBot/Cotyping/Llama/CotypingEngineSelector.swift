@@ -126,7 +126,7 @@ final class CotypingEngineSelector: CotypingCompleting {
             noteLocalSuccess()
             return result
         } catch let error as LlamaRuntimeError {
-            handleLocalFailure(error)
+            await handleLocalFailure(error)
             return try await http.generate(request)
         }
     }
@@ -143,7 +143,7 @@ final class CotypingEngineSelector: CotypingCompleting {
             noteLocalSuccess()
             return result
         } catch let error as LlamaRuntimeError {
-            handleLocalFailure(error)
+            await handleLocalFailure(error)
             return try await http.generateStreaming(request, onPartial: onPartial)
         }
     }
@@ -155,11 +155,14 @@ final class CotypingEngineSelector: CotypingCompleting {
 
     /// In-process→HTTP fallback. The HTTP path runs the same GGUF in its own
     /// `llama-server` process, so keeping the failed local engine loaded would
-    /// leave TWO ~6.66 GB copies of the weights resident. Instead: free the
-    /// local model immediately and route to HTTP for `localRetryCooldown`, then
-    /// rebuild and retry local (a cold reload, but at most once per cooldown —
-    /// never per keystroke). Logged once per failure episode (spec §13).
-    private func handleLocalFailure(_ error: LlamaRuntimeError) {
+    /// leave TWO ~6.66 GB copies of the weights resident. A failure here is
+    /// likely memory pressure, so the unload is AWAITED — the caller must not
+    /// start the HTTP fallback (which may cold-load the server's copy) until
+    /// the local weights are actually freed. Then route to HTTP for
+    /// `localRetryCooldown` and rebuild + retry local (a cold reload, but at
+    /// most once per cooldown — never per keystroke). Logged once per failure
+    /// episode (spec §13).
+    private func handleLocalFailure(_ error: LlamaRuntimeError) async {
         if !didLogLocalFailure {
             didLogLocalFailure = true
             NSLog("""
@@ -168,6 +171,6 @@ final class CotypingEngineSelector: CotypingCompleting {
             """)
         }
         retryLocalAt = now().addingTimeInterval(Self.localRetryCooldown)
-        dropLocalEngine()
+        if let engine = takeLocalEngine() { await engine.unload() }
     }
 }
