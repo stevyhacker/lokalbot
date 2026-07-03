@@ -76,14 +76,10 @@ enum PromptTemplates {
     // the one exception — it is co-located with its tool-call parser in
     // `ChatAgent`). Views and engines reference these instead of owning copy.
 
-    /// Day digest (Timeline + `--digest`): workday summary from the activity
-    /// log, meeting list, and OCR'd screen text.
+    /// Day digest (Capture's day overview + `--digest`): workday summary from
+    /// the activity log, meeting list, and OCR'd screen text.
     static let dayDigestSystem =
         "You summarize a person's workday from their app/window activity log, meeting list, and OCR'd on-screen text. Write Markdown: ## What I worked on (grouped bullets, by project/topic inferred from window titles AND the on-screen text), ## Meetings (or 'None'), ## Time allocation (one-line table of top apps). Lean on the screen text for concrete detail; be specific, never invent."
-
-    /// Timeline "ask your day" Q&A over the same material as the digest.
-    static let timelineQuestionSystem =
-        "Answer the user's question about their workday using ONLY the provided activity log and screen text. Be concrete and brief (Markdown). If the answer isn't in the data, say so."
 
     /// Chat-backend autocomplete fallback (cotyping via Ollama / Apple
     /// Intelligence; the built-in llama-server uses the raw endpoint instead).

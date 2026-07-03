@@ -68,12 +68,15 @@ struct CommandPaletteView: View {
                 app.isRecording ? app.stopRecording()
                                 : app.startRecording(context: app.recordingContext(for: app.detector.activeApp), source: "palette")
             }),
-            .init(id: "nav.meetings", icon: "waveform.circle", title: "Go to Meetings",
-                  subtitle: "Library", action: { app.navSection = .meetings }),
+            .init(id: "nav.capture", icon: "waveform.circle", title: "Go to Capture",
+                  subtitle: "Library", action: { app.navSection = .capture }),
             .init(id: "nav.ask", icon: "sparkle.magnifyingglass", title: "Go to Ask",
                   subtitle: "Library", action: { app.openAsk() }),
-            .init(id: "nav.timeline", icon: "calendar.day.timeline.left", title: "Go to Timeline",
-                  subtitle: "Library", action: { app.navSection = .timeline }),
+            .init(id: "nav.capture.day", icon: "calendar.day.timeline.left", title: "Go to Day timeline",
+                  subtitle: "Library", action: {
+                app.captureScope = .day
+                app.navSection = .capture
+            }),
             .init(id: "dictation", icon: app.dictation.state.isRecording ? "stop.circle.fill" : "mic.badge.plus",
                   title: app.dictation.state.isRecording ? "Stop dictation" : "Start dictation",
                   subtitle: "Automation", action: { app.dictation.toggle(source: "palette") }),
@@ -95,10 +98,7 @@ struct CommandPaletteView: View {
                 PaletteItem(id: "meeting.\(meeting.id.uuidString)", icon: "waveform",
                             title: meeting.title,
                             subtitle: "Open · \(meeting.appName) · \(meeting.durationLabel)",
-                            action: {
-                    app.navSection = .meetings
-                    app.selectedMeetingIDs = [meeting.id]
-                })
+                            action: { app.openMeeting(meeting.id) })
             }
             return actions + recents
         }

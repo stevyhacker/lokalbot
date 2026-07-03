@@ -212,8 +212,7 @@ struct MenuBarView: View {
             } else {
                 ForEach(app.meetings.prefix(3)) { meeting in
                     Button {
-                        app.navSection = .meetings
-                        app.selectedMeetingIDs = [meeting.id]
+                        app.openMeeting(meeting.id)
                         WindowAccess.shared.open("main")
                     } label: {
                         HStack(spacing: 8) {
