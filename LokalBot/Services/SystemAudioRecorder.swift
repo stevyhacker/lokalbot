@@ -196,8 +196,7 @@ final class SystemAudioRecorder {
         //    The Core Audio buffer list is only valid for the duration of
         //    this callback, and the AAC encoder must not run on the real-time
         //    audio thread — copy the samples, then hop to a serial queue.
-        err = AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggregateID, nil) {
-            [weak self] _, inInputData, _, _, _ in
+        err = AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggregateID, nil) { [weak self] _, inInputData, _, _, _ in
             guard let self, let fmt = self.tapFormat,
                   let src = AVAudioPCMBuffer(pcmFormat: fmt,
                                              bufferListNoCopy: inInputData,

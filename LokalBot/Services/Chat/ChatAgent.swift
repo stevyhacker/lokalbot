@@ -1,16 +1,16 @@
 import Foundation
 
-/// In-app meeting assistant (the "Chat" section). A small agent loop on top of
-/// the same `TextEngine` the summariser uses: the model answers questions about
-/// the user's on-device meetings and may call tools (search / list / read) to
-/// ground its answers. Inspired by the `lokalbot-cli` tool surface — same
-/// `list` / `get` / `search` capabilities, exposed to the LLM as callable tools.
-///
-/// The local backends only speak single-shot `generate(system:prompt:context:)`
-/// (no native function-calling), so tool use is a prompt-driven ReAct loop with
-/// a deliberately simple JSON protocol and tolerant parsing — smaller local
-/// GGUFs may emit sloppy output, so the protocol degrades to a plain answer
-/// rather than fail.
+// In-app meeting assistant (the "Chat" section). A small agent loop on top of
+// the same `TextEngine` the summariser uses: the model answers questions about
+// the user's on-device meetings and may call tools (search / list / read) to
+// ground its answers. Inspired by the `lokalbot-cli` tool surface — same
+// `list` / `get` / `search` capabilities, exposed to the LLM as callable tools.
+//
+// The local backends only speak single-shot `generate(system:prompt:context:)`
+// (no native function-calling), so tool use is a prompt-driven ReAct loop with
+// a deliberately simple JSON protocol and tolerant parsing — smaller local
+// GGUFs may emit sloppy output, so the protocol degrades to a plain answer
+// rather than fail.
 
 // MARK: - Value types
 
@@ -249,9 +249,7 @@ enum ChatPrompt {
         while index < characters.count {
             let character = characters[index]
             if inString {
-                if escaped { escaped = false }
-                else if character == "\\" { escaped = true }
-                else if character == "\"" { inString = false }
+                if escaped { escaped = false } else if character == "\\" { escaped = true } else if character == "\"" { inString = false }
             } else {
                 switch character {
                 case "\"": inString = true

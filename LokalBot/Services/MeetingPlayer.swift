@@ -46,7 +46,7 @@ final class MeetingPlayer: NSObject, ObservableObject {
     }
 
     func playPause() {
-        isPlaying ? pause() : play()
+        if isPlaying { pause() } else { play() }
     }
 
     func play(at time: TimeInterval? = nil) {

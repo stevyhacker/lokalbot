@@ -107,4 +107,3 @@ private func dictationShortcutCallback(
     let swallow = MainActor.assumeIsolated { monitor.handle(type: type, event: event) }
     return swallow ? nil : Unmanaged.passUnretained(event)
 }
-

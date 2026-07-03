@@ -40,7 +40,7 @@ final class CotypingInsertionStrategyTests: XCTestCase {
 
 // MARK: - IME composition input modes
 
-final class CotypingCompositionInputModeClassifierTests: XCTestCase {
+final class CotypingCompositionModeClassifierTests: XCTestCase {
     func testPlainKeyboardLayoutIsNotComposing() {
         XCTAssertFalse(
             CotypingCompositionInputModeClassifier.isComposingInputMode(

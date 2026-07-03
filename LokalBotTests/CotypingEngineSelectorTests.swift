@@ -255,8 +255,7 @@ final class CotypingEngineSelectorTests: XCTestCase {
         let exp = expectation(description: "generate")
         var captured: Result<CotypingNormalizationResult, Error>!
         Task { @MainActor in
-            do { captured = .success(try await selector.generate(request)) }
-            catch { captured = .failure(error) }
+            do { captured = .success(try await selector.generate(request)) } catch { captured = .failure(error) }
             exp.fulfill()
         }
         wait(for: [exp], timeout: 5)

@@ -1,11 +1,11 @@
 import SwiftUI
 
-/// The assistant's conversation surfaces: the editorial transcript embedded
-/// by the Ask section (spec §2.3), and the saved-conversation list shown in
-/// Ask's content column. The assistant itself is a small ReAct agent
-/// (`ChatAgent`) over the summarisation `TextEngine` that can search
-/// transcripts, list meetings, and read a meeting's summary or transcript
-/// via tool calls — all on-device.
+// The assistant's conversation surfaces: the editorial transcript embedded
+// by the Ask section (spec §2.3), and the saved-conversation list shown in
+// Ask's content column. The assistant itself is a small ReAct agent
+// (`ChatAgent`) over the summarisation `TextEngine` that can search
+// transcripts, list meetings, and read a meeting's summary or transcript
+// via tool calls — all on-device.
 
 // MARK: - Editorial transcript
 

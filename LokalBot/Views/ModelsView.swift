@@ -331,7 +331,7 @@ struct ModelsView: View {
         @EnvironmentObject var app: AppState
         @ObservedObject var downloads = ModelDownloadManager.shared
         let entry: ModelCatalog.Entry
-        var recommendedLabel: String? = nil
+        var recommendedLabel: String?
 
         var body: some View {
             let available = ModelCatalog.localURL(for: entry, storage: app.storage) != nil
@@ -488,7 +488,7 @@ struct ModelsView: View {
         }
     }
 
-    private func testGeneration() async {
+    func testGeneration() async {
         testing = true
         testResult = nil
         defer { testing = false }

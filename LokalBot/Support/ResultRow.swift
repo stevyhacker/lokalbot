@@ -39,7 +39,7 @@ struct ResultRow: View {
     let title: String
     let kind: String
     let snippet: String
-    var timestamp: String? = nil
+    var timestamp: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {

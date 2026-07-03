@@ -272,8 +272,7 @@ struct SettingsView: View {
                     Toggle("Track app & window activity", isOn: Binding(
                         get: { app.settings.trackingEnabled },
                         set: { app.settings.trackingEnabled = $0
-                               if $0 { PermissionManager.shared.requestIfNeeded(.accessibility) }
-                               else { app.settings.screenshotsEnabled = false }
+                               if $0 { PermissionManager.shared.requestIfNeeded(.accessibility) } else { app.settings.screenshotsEnabled = false }
                                app.applyTrackingSetting() }))
                     LabeledContent("Window titles") {
                         if ActivitySampler.hasAccessibility {

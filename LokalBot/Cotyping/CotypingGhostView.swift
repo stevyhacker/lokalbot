@@ -6,14 +6,14 @@ import SwiftUI
 /// necessary.
 struct CotypingGhostView: View {
     let text: String
-    var style: CotypingFieldStyle? = nil
+    var style: CotypingFieldStyle?
     var showsChrome = false
-    var acceptanceHintLabel: String? = nil
-    var inlineLayout: CotypingInlineGhostLayout? = nil
+    var acceptanceHintLabel: String?
+    var inlineLayout: CotypingInlineGhostLayout?
     /// Average luminance (0…1) of the host pixels behind the ghost, sampled from
     /// the screen when available; lets the color contrast with the real
     /// background instead of guessing from AX/appearance.
-    var backgroundLuminance: CGFloat? = nil
+    var backgroundLuminance: CGFloat?
 
     /// Matches the host field's font family at a clamped size; falls back to the
     /// system font at the field's (clamped) size — never a fixed 13 pt.

@@ -10,7 +10,7 @@ struct CotypingPersonalization: Sendable, Equatable {
     /// Condition the prompt on the focused app + window title / field placeholder.
     var appContextEnabled: Bool
     /// Free-form glossary / jargon / notes folded into the prompt as context.
-    var extendedContext: String? = nil
+    var extendedContext: String?
 
     static let none = CotypingPersonalization(
         userName: nil, styleNote: nil, languageHint: nil,

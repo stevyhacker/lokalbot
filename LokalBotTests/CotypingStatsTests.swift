@@ -61,14 +61,14 @@ final class CotypingStatsTests: XCTestCase {
         XCTAssertEqual(stats, CotypingStats())
     }
 
-    func testCodableRoundTrip() {
+    func testCodableRoundTrip() throws {
         var stats = CotypingStats()
         stats.recordGeneration(latencyMs: 120)
         stats.recordGeneration(latencyMs: 340)
         stats.recordAccept(charsAccepted: 9)
         stats.recordError()
-        let data = try! JSONEncoder().encode(stats)
-        let decoded = try! JSONDecoder().decode(CotypingStats.self, from: data)
+        let data = try JSONEncoder().encode(stats)
+        let decoded = try JSONDecoder().decode(CotypingStats.self, from: data)
         XCTAssertEqual(decoded, stats)
     }
 }

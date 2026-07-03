@@ -278,8 +278,7 @@ final class MicRecorder {
                 return nil
             }
             if tail.frameLength > 0 {
-                do { try file.write(from: tail) }
-                catch {
+                do { try file.write(from: tail) } catch {
                     NSLog("MicRecorder drain write failed: \(error.localizedDescription)")
                     return
                 }

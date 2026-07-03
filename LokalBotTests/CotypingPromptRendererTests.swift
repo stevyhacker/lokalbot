@@ -2,8 +2,6 @@ import AppKit
 import XCTest
 @testable import LokalBot
 
-@testable import LokalBot
-
 // MARK: - Prompt renderer
 
 final class CotypingPromptRendererTests: XCTestCase {

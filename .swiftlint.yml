@@ -54,6 +54,17 @@ disabled_rules:
   # --- TODO/FIXME markers are working notes here, not lint failures. ---
   - todo
 
+  # --- String<->Data conversion style (2026-07-03): these two became default
+  #     rules in a newer SwiftLint than this config was baselined against and
+  #     fired on ~25 existing call sites at once. They express a preference
+  #     between two equally correct APIs (`Data(str.utf8)` vs
+  #     `str.data(using: .utf8)`, `String(bytes:encoding:)` vs
+  #     `String(data:encoding:)`), not a defect. Disabled to keep `--strict`
+  #     green per the lenient philosophy above; re-enable with a tree-wide
+  #     sweep if the house style settles on the non-optional initializers. ---
+  - non_optional_string_data_conversion
+  - optional_data_string_conversion
+
 # Keep line_length active but warning-first and above the current maximum.
 # The codebase has intentional single-line string literals (SwiftUI `Text` and
 # LLM system prompts) up to ~310 chars; under `--strict` a 140 cap would fail

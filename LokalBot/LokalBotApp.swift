@@ -588,7 +588,7 @@ final class AppState: ObservableObject {
 
     func applyTrackingSetting() {
         sampler.excludedApps = { [weak self] in self?.settings.excludedAppList ?? [] }
-        settings.trackingEnabled ? sampler.start() : sampler.stop()
+        if settings.trackingEnabled { sampler.start() } else { sampler.stop() }
         screenshots.restart()
     }
 

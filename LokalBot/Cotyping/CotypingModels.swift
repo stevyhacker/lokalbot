@@ -35,7 +35,7 @@ struct CotypingField: Equatable, Sendable {
     var role: String
     /// Stable-enough identity for short-lived focus smoothing. This is not part
     /// of the content signature because host apps may recycle AX element handles.
-    var focusIdentityKey: String? = nil
+    var focusIdentityKey: String?
     /// Bounded text immediately before the caret (newest text at the end).
     var precedingText: String
     /// Bounded text immediately after the caret (used by the trailing-duplication filter).
@@ -47,7 +47,7 @@ struct CotypingField: Equatable, Sendable {
     var caretRect: CGRect
     /// Focused editable element bounds in global Cocoa coordinates, when AX
     /// exposes them. Inline ghost layout uses this as the wrapping budget.
-    var inputFrameRect: CGRect? = nil
+    var inputFrameRect: CGRect?
     /// True for password / secure-entry fields — never read or suggested into.
     var isSecure: Bool
     /// True when the focused web text field is an xterm.js terminal surface
@@ -58,12 +58,12 @@ struct CotypingField: Equatable, Sendable {
     var caretIsExact: Bool
     /// The focused window's title (email subject, doc name, chat channel, page
     /// title) when app-context is enabled — the strongest topic cue we get.
-    var windowTitle: String? = nil
+    var windowTitle: String?
     /// The field's placeholder / label (e.g. "To:", "Search", "Message #general").
-    var fieldPlaceholder: String? = nil
+    var fieldPlaceholder: String?
     /// The field's own font/color (resolved from AX, cached per element) when
     /// host-style matching is enabled, so the ghost can mimic the field.
-    var fieldStyle: CotypingFieldStyle? = nil
+    var fieldStyle: CotypingFieldStyle?
 
     /// Content-only fingerprint used to detect "did the field actually change"
     /// across keystrokes and to drop stale async generations. Excludes the AX
@@ -90,10 +90,10 @@ struct CotypingFocus: Equatable, Sendable {
     /// Identity of the focused editable element when it can be read without
     /// exposing text. Used for transient capability smoothing while blocked
     /// snapshots intentionally omit a full field payload.
-    var focusIdentityKey: String? = nil
+    var focusIdentityKey: String?
     /// Normalized host of the focused tab's URL (browsers only), read over AX when
     /// per-domain rules are configured. Nil otherwise. Used only for site gating.
-    var host: String? = nil
+    var host: String?
 
     static let none = CotypingFocus(
         appName: "", bundleID: nil,
