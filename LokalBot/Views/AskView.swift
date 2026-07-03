@@ -109,6 +109,22 @@ private struct AskContent: View {
                       id: "ask.facet.semantic",
                       action: toggleSemantic)
                 .help("Also match by meaning, not just keywords. Downloads the Qwen3 embedding model and indexes your transcripts when first enabled.")
+            if let day = app.askDayScope {
+                HStack(spacing: 4) {
+                    Image(systemName: "calendar")
+                    Text(day.formatted(date: .abbreviated, time: .omitted))
+                    Button { app.askDayScope = nil } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear day scope")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .chipChrome()
+                .help("Questions sent to the assistant are scoped to this day.")
+                .accessibilityIdentifier("ask.dayScope")
+            }
             Spacer()
         }
     }
@@ -144,11 +160,17 @@ private struct AskContent: View {
 
     /// ↵ or the pinned row: hand the query to the assistant and switch the
     /// pane to the conversation (the send appends messages, which flips the
-    /// router to `.conversation`; clearing the query keeps it there).
+    /// router to `.conversation`; clearing the query keeps it there). A day
+    /// scope from Capture is prepended so the agent reaches for its
+    /// activity-summary tool with the right date.
     private func escalate() {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty, !model.isResponding else { return }
-        model.send(q)
+        if let day = app.askDayScope {
+            model.send("About my day on \(day.formatted(date: .long, time: .omitted)): \(q)")
+        } else {
+            model.send(q)
+        }
         query = ""
     }
 
