@@ -43,19 +43,24 @@ final class ModelDownloadManager: ObservableObject {
         let folder = storage.rootURL.appendingPathComponent("models", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let destination = folder.appendingPathComponent(fileName)
+        // Resume stash inside the models folder (not the system temp dir):
+        // it's on the same volume as the final install and macOS won't reap a
+        // half-finished 17 GB download between attempts.
+        let stashDirectory = folder.appendingPathComponent(".partial", isDirectory: true)
+        // Credit bytes an interrupted attempt already stashed: a retry only
+        // fetches the remainder (and an invalidated stash is deleted first,
+        // freeing the same bytes), so requiring the full size again would
+        // refuse resumes that fit fine.
+        let stashedBytes = ParallelRangeDownloader.stashedByteCount(
+            for: url, stashDirectory: stashDirectory)
         if let advisory = DiskSpacePrecheck.advisory(
-            expectedBytes: expectedSizeGB.map { Int64($0 * 1_000_000_000) },
+            expectedBytes: expectedSizeGB.map { max(0, Int64($0 * 1_000_000_000) - stashedBytes) },
             availableBytes: DiskSpacePrecheck.availableBytes(at: folder)) {
             errors[id] = advisory
             return
         }
         progress[id] = 0
         errors[id] = nil
-
-        // Resume stash inside the models folder (not the system temp dir):
-        // it's on the same volume as the final install and macOS won't reap a
-        // half-finished 17 GB download between attempts.
-        let stashDirectory = folder.appendingPathComponent(".partial", isDirectory: true)
         let session = session
         tasks[id] = Task(priority: .utility) { [weak self] in
             do {

@@ -124,6 +124,24 @@ enum ParallelRangeDownloader {
         return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Where the resumable partial for `url` lives inside `stashDirectory`.
+    static func stashPartialURL(for url: URL, in stashDirectory: URL) -> URL {
+        stashDirectory.appendingPathComponent("LokalBot-resume-\(stashName(for: url)).partial")
+    }
+
+    /// Disk bytes already held by the resume stash for `url` (0 when none).
+    /// The disk-space precheck credits these against the expected size: a
+    /// valid stash resumes and only the remainder is fetched, and an
+    /// invalidated one is deleted before parts move — freeing the same bytes
+    /// on the same volume — so either way the extra space a retry needs is
+    /// expected − stashed. Allocated size, not logical size: parts write at
+    /// their offsets, so the partial is sparse until the tail parts land.
+    static func stashedByteCount(for url: URL, stashDirectory: URL) -> Int64 {
+        let values = try? stashPartialURL(for: url, in: stashDirectory)
+            .resourceValues(forKeys: [.totalFileAllocatedSizeKey])
+        return Int64(values?.totalFileAllocatedSize ?? 0)
+    }
+
     private static func downloadRanged(
         from url: URL,
         session: URLSession,
@@ -143,9 +161,8 @@ enum ParallelRangeDownloader {
         let workDir = fileManager.temporaryDirectory
             .appendingPathComponent("LokalBot-ranged-\(UUID().uuidString)", isDirectory: true)
         let stashDir = stashDirectory ?? fileManager.temporaryDirectory
-        let stash = stashName(for: url)
-        let assembled = stashDir.appendingPathComponent("LokalBot-resume-\(stash).partial")
-        let manifestURL = stashDir.appendingPathComponent("LokalBot-resume-\(stash).json")
+        let assembled = stashPartialURL(for: url, in: stashDir)
+        let manifestURL = stashDir.appendingPathComponent("LokalBot-resume-\(stashName(for: url)).json")
         try fileManager.createDirectory(at: workDir, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: stashDir, withIntermediateDirectories: true)
 

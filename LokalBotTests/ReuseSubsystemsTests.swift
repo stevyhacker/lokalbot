@@ -140,6 +140,31 @@ final class ReuseSubsystemsTests: XCTestCase {
                           ParallelRangeDownloader.stashName(for: b))
     }
 
+    /// The disk-space precheck credits stashed bytes against the expected
+    /// download size, so the count must read the actual partial for that URL
+    /// (by allocated size) and be 0 — never an error — when nothing is stashed.
+    func testParallelRangeDownloaderCountsStashedBytesForItsURLOnly() throws {
+        let url = try XCTUnwrap(URL(string: "https://example.com/model.gguf"))
+        let other = try XCTUnwrap(URL(string: "https://example.com/other.gguf"))
+        let stashDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lokalbot-stash-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: stashDir) }
+
+        XCTAssertEqual(ParallelRangeDownloader.stashedByteCount(
+            for: url, stashDirectory: stashDir), 0, "missing stash directory must count as 0")
+
+        try FileManager.default.createDirectory(at: stashDir, withIntermediateDirectories: true)
+        try Data(count: 64_000).write(
+            to: ParallelRangeDownloader.stashPartialURL(for: url, in: stashDir))
+
+        let counted = ParallelRangeDownloader.stashedByteCount(for: url, stashDirectory: stashDir)
+        XCTAssertGreaterThanOrEqual(counted, 64_000,
+                                    "the partial's disk bytes must be credited")
+        XCTAssertEqual(ParallelRangeDownloader.stashedByteCount(
+            for: other, stashDirectory: stashDir), 0,
+            "another URL's stash must never be credited")
+    }
+
     func testParallelRangeDownloaderResumeStateRoundTrips() throws {
         let state = ParallelRangeDownloader.ResumeState(
             url: "https://example.com/model.gguf", totalBytes: 1_000,
