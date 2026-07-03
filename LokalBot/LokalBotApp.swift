@@ -112,16 +112,18 @@ struct LokalBotApp: App {
 final class AppState: ObservableObject {
 
     enum NavSection: Hashable {
-        case meetings, timeline, type, ask, models, settings
+        case capture, meetings, timeline, type, ask, models, settings
+        // `.meetings` / `.timeline` are legacy cases kept only until the
+        // Capture surface lands; `captureName` already resolves their names
+        // onto `.capture` (spec §2.1).
 
         /// Section names accepted from the UI-test capture environment and
-        /// deep links. Legacy pre-merge names keep working: "dictation" and
-        /// "cotyping" land on the merged Type section, and "search"/"chat"
-        /// land on the merged Ask section (spec §2.1/§2.3).
+        /// deep links. Legacy pre-merge names keep working: "meetings" and
+        /// "timeline" land on the merged Capture section, "dictation" and
+        /// "cotyping" on Type, "search"/"chat" on Ask (spec §2.1).
         init?(captureName: String) {
             switch captureName.lowercased() {
-            case "meetings": self = .meetings
-            case "timeline": self = .timeline
+            case "capture", "meetings", "timeline": self = .capture
             case "type", "dictation", "cotyping": self = .type
             case "ask", "search", "chat": self = .ask
             case "models": self = .models
@@ -187,9 +189,19 @@ final class AppState: ObservableObject {
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []
     @Published var pendingSeek: TimeInterval?
 
+    /// Capture's Day⇄Library scope. Nil until first resolved by
+    /// `CaptureScopePolicy` (Day when the day has activity, else Library);
+    /// deep links force `.library` so the meeting list is visible.
+    @Published var captureScope: CaptureScope?
+
     /// A query handed to the Ask section by another surface (⌘K palette).
     /// AskView consumes and clears it on appear/change.
     @Published var askPrefill: String?
+
+    /// A day handed to the Ask section (the old Timeline "Ask" tab, spec
+    /// §2.2): rendered as a removable chip, and prepended to escalated
+    /// queries so the assistant scopes its answer to that day.
+    @Published var askDayScope: Date?
 
     /// Navigate to the Type section with a specific tab preselected.
     func openType(_ tab: TypeTab) {
@@ -197,10 +209,20 @@ final class AppState: ObservableObject {
         navSection = .type
     }
 
-    /// Navigate to the Ask section, optionally pre-filling the query.
-    func openAsk(query: String = "") {
+    /// Navigate to the Ask section, optionally pre-filling the query and/or
+    /// scoping it to a day (Capture's "Ask about this day").
+    func openAsk(query: String = "", dayScope: Date? = nil) {
         askPrefill = query.isEmpty ? nil : query
+        askDayScope = dayScope
         navSection = .ask
+    }
+
+    /// Open one meeting in Capture's Library scope — the deep-link target
+    /// for search hits, menu-bar recents, and palette recents.
+    func openMeeting(_ id: Meeting.ID) {
+        selectedMeetingIDs = [id]
+        captureScope = .library
+        navSection = .capture
     }
 
     /// The meeting shown in the detail pane (single selection only).
@@ -546,11 +568,10 @@ final class AppState: ObservableObject {
 
     /// Search hit → open the meeting; transcript hits seek the player.
     func openSearchHit(_ hit: SearchIndex.Hit) {
-        selectedMeetingIDs = [hit.meetingID]
         if hit.kind == .segment {
             pendingSeek = hit.start
         }
-        navSection = .meetings
+        openMeeting(hit.meetingID)
     }
 
     /// Permanently removes meetings: audio folder, list entry, both indexes.

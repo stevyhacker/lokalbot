@@ -3,16 +3,20 @@ import XCTest
 
 /// The NavSection migration mapping (spec §2.1): capture names from the
 /// UI-test host env and deep links resolve to sections, with legacy
-/// pre-merge names mapping onto the merged Type pillar.
+/// pre-merge names mapping onto the merged pillars.
 final class NavSectionMappingTests: XCTestCase {
 
     func testCaptureNamesMapToTheirSections() {
-        XCTAssertEqual(AppState.NavSection(captureName: "meetings"), .meetings)
-        XCTAssertEqual(AppState.NavSection(captureName: "Timeline"), .timeline)
+        XCTAssertEqual(AppState.NavSection(captureName: "capture"), .capture)
         XCTAssertEqual(AppState.NavSection(captureName: "type"), .type)
         XCTAssertEqual(AppState.NavSection(captureName: "ask"), .ask)
         XCTAssertEqual(AppState.NavSection(captureName: "models"), .models)
         XCTAssertEqual(AppState.NavSection(captureName: "settings"), .settings)
+    }
+
+    func testLegacyMeetingsAndTimelineNamesMapToCapture() {
+        XCTAssertEqual(AppState.NavSection(captureName: "meetings"), .capture)
+        XCTAssertEqual(AppState.NavSection(captureName: "Timeline"), .capture)
     }
 
     func testLegacyTypeNamesMapToType() {
@@ -35,6 +39,6 @@ final class NavSectionMappingTests: XCTestCase {
         XCTAssertEqual(AppState.TypeTab(captureName: "dictation"), .dictation)
         XCTAssertEqual(AppState.TypeTab(captureName: "Cotyping"), .cotyping)
         XCTAssertNil(AppState.TypeTab(captureName: "type"))
-        XCTAssertNil(AppState.TypeTab(captureName: "meetings"))
+        XCTAssertNil(AppState.TypeTab(captureName: "capture"))
     }
 }
