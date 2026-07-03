@@ -29,6 +29,9 @@ final class ProcessingPipeline: ObservableObject {
         var meeting: Meeting
         var transcribe: Bool
         var summarize: Bool
+        /// Re-enqueued from the persisted queue after a crash/quit — keep any
+        /// per-track checkpoints instead of starting from scratch.
+        var resumed: Bool = false
     }
 
     /// Stage per meeting. `.failed` sticks around until the next attempt;
@@ -37,20 +40,52 @@ final class ProcessingPipeline: ObservableObject {
 
     private let storage: StorageManager
     private let settings: () -> AppSettings
+    /// In-memory work list; `jobStore` mirrors it on disk so a crash mid-queue
+    /// loses nothing — see `resumePending(meetings:)`.
     private var queue: [Job] = []
     private var isDraining = false
     private let diarizer = NeuralDiarizationEngine()
+    private let jobStore: PipelineJobStore?
     /// Fired after transcript/summary files land on disk (search re-index).
     var onArtifactsWritten: ((Meeting) -> Void)?
 
-    init(storage: StorageManager, settings: @escaping () -> AppSettings) {
+    init(storage: StorageManager, jobStore: PipelineJobStore? = nil,
+         settings: @escaping () -> AppSettings) {
         self.storage = storage
+        self.jobStore = jobStore
         self.settings = settings
     }
 
     func enqueue(_ meeting: Meeting, transcribe: Bool = true, summarize: Bool = true) {
+        jobStore?.enqueue(meetingID: meeting.id, transcribe: transcribe, summarize: summarize)
         queue.append(Job(meeting: meeting, transcribe: transcribe, summarize: summarize))
         stages[meeting.id] = .queued
+        drain()
+    }
+
+    /// Crash recovery, called once at launch: re-enqueue every persisted job
+    /// that never reached completion. Jobs whose transcript already made it to
+    /// disk skip straight to summarization; jobs that burned through
+    /// `PipelineJobStore.maxAutoResumeAttempts` starts stay parked until the
+    /// user retries explicitly — a meeting that reliably kills the app must
+    /// not crash-loop every launch.
+    func resumePending(meetings: [Meeting]) {
+        guard let jobStore else { return }
+        jobStore.prune(existing: Set(meetings.map(\.id)))
+        let byID = Dictionary(uniqueKeysWithValues: meetings.map { ($0.id, $0) })
+        for job in jobStore.pendingJobs() {
+            guard let meeting = byID[job.meetingID], stages[meeting.id] == nil else { continue }
+            let hasTranscript = FileManager.default.fileExists(
+                atPath: meeting.folderURL(in: storage)
+                    .appendingPathComponent("transcript.json").path)
+            lokalbotLog(
+                "pipeline resume meeting=\(meeting.id) attempts=\(job.attempts) hasTranscript=\(hasTranscript)")
+            queue.append(Job(meeting: meeting,
+                             transcribe: job.transcribe && !hasTranscript,
+                             summarize: job.summarize,
+                             resumed: true))
+            stages[meeting.id] = .queued
+        }
         drain()
     }
 
@@ -70,9 +105,15 @@ final class ProcessingPipeline: ObservableObject {
         let meeting = job.meeting
         let folder = meeting.folderURL(in: storage)
         let config = settings()
+        jobStore?.markStarted(meetingID: meeting.id)
         do {
             if job.transcribe || !FileManager.default.fileExists(
                 atPath: folder.appendingPathComponent("transcript.json").path) {
+                // A fresh enqueue means "transcribe with today's settings" —
+                // stale checkpoints from an earlier failed attempt may have
+                // been produced by a different model. Only a crash resume
+                // trusts them.
+                if !job.resumed { clearCheckpoints(in: folder) }
                 stages[meeting.id] = .preparingModel
                 let engine = config.transcriptionModel.engine   // engines prepare lazily inside transcribe
 
@@ -84,17 +125,33 @@ final class ProcessingPipeline: ObservableObject {
                                                   folder: folder,
                                                   config: config)
                 try write(transcript, to: folder)
+                clearCheckpoints(in: folder)
             }
             if job.summarize {
                 stages[meeting.id] = .summarizing
                 let transcript = try loadTranscript(from: folder)
-                let summary = try await summarize(transcript, meeting: meeting, config: config)
+                let summary: String
+                do {
+                    summary = try await summarize(transcript, meeting: meeting, config: config)
+                } catch {
+                    // One automatic retry: summarization failures are usually
+                    // transient (server still warming up, brief memory
+                    // pressure) and the expensive transcription work is
+                    // already safely on disk.
+                    lokalbotLog("summary retry after error=\(error.localizedDescription)")
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                    summary = try await summarize(transcript, meeting: meeting, config: config)
+                }
                 try summary.data(using: .utf8)?.write(
                     to: folder.appendingPathComponent("summary.md"), options: .atomic)
             }
             stages[meeting.id] = nil
+            jobStore?.markCompleted(meetingID: meeting.id)
             onArtifactsWritten?(meeting)
         } catch {
+            // The persisted job row stays — the next launch re-enqueues it
+            // (until the attempt cap) so a crash or transient failure never
+            // silently drops a meeting.
             stages[meeting.id] = .failed(error.localizedDescription)
         }
     }
@@ -105,23 +162,53 @@ final class ProcessingPipeline: ObservableObject {
                                   engine: TranscriptionEngine, config: AppSettings) async throws -> Transcript {
         let language = config.transcriptionLanguage.code
         var tracks: [Transcript] = []
+        var trackError: Error?
 
-        let micURL = folder.appendingPathComponent("mic.m4a")
-        if let transcript = try await transcribeTrack(name: "mic", url: micURL,
-                                                      speaker: "me", engine: engine,
-                                                      language: language) {
-            tracks.append(transcript)
+        for (name, speaker) in [("mic", "me"), ("system", "them")] {
+            // Per-track checkpoint: a finished track's transcript survives a
+            // crash — and the *other* track failing — so a retry never redoes
+            // an hour of completed transcription.
+            let checkpoint = Self.checkpointURL(track: name, in: folder)
+            if let data = try? Data(contentsOf: checkpoint),
+               let cached = try? JSONDecoder().decode(Transcript.self, from: data) {
+                lokalbotLog("transcription track restored from checkpoint track=\(name)")
+                tracks.append(cached)
+                continue
+            }
+            do {
+                let url = folder.appendingPathComponent("\(name).m4a")
+                if let transcript = try await transcribeTrack(name: name, url: url,
+                                                              speaker: speaker, engine: engine,
+                                                              language: language) {
+                    if let data = try? JSONEncoder().encode(transcript) {
+                        try? data.write(to: checkpoint, options: .atomic)
+                    }
+                    tracks.append(transcript)
+                }
+            } catch {
+                // Keep going: the other track may still succeed, and its
+                // checkpoint means only this track is redone on retry.
+                lokalbotLog("transcription track failed track=\(name) error=\(error.localizedDescription)")
+                trackError = trackError ?? error
+            }
         }
-        let systemURL = folder.appendingPathComponent("system.m4a")
-        if let transcript = try await transcribeTrack(name: "system", url: systemURL,
-                                                      speaker: "them", engine: engine,
-                                                      language: language) {
-            tracks.append(transcript)
-        }
+        if let trackError { throw trackError }
         guard !tracks.isEmpty else {
             throw PipelineError.noAudio
         }
         return Transcript.merged(tracks)
+    }
+
+    /// Where a track's finished-but-not-yet-merged transcript is checkpointed.
+    /// Deleted once the merged transcript.json lands (or on a fresh enqueue).
+    static func checkpointURL(track: String, in folder: URL) -> URL {
+        folder.appendingPathComponent("transcript.\(track).partial.json")
+    }
+
+    private func clearCheckpoints(in folder: URL) {
+        for name in ["mic", "system"] {
+            try? FileManager.default.removeItem(at: Self.checkpointURL(track: name, in: folder))
+        }
     }
 
     private func transcribeTrack(name: String, url: URL, speaker: String,

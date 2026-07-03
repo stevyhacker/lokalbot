@@ -271,7 +271,10 @@ final class AppState: ObservableObject {
         store: activityStore, storage: storage, sampler: sampler) { [store = settingsStore] in
         store.current
     }
-    private(set) lazy var pipeline = ProcessingPipeline(storage: storage) { [store = settingsStore] in
+    private(set) lazy var pipelineJobStore = PipelineJobStore(
+        databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"))
+    private(set) lazy var pipeline = ProcessingPipeline(
+        storage: storage, jobStore: pipelineJobStore) { [store = settingsStore] in
         store.current
     }
     /// Meeting-recording lifecycle: recorders, watchdog, timer tick, prewarm.
@@ -415,6 +418,9 @@ final class AppState: ObservableObject {
         interactive = true
         RecordingNotifier.shared.bootstrap()
         applyTrackingSetting()
+        // Crash recovery: re-enqueue any meeting whose processing never
+        // finished — a quit or crash mid-transcription used to lose the job.
+        pipeline.resumePending(meetings: meetings)
         detector.onMeetingStarted = { [weak self] context in
             guard let self else { return }
             switch self.settings.autoRecordMode {
