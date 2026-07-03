@@ -103,12 +103,6 @@ struct MainWindowView: View {
             } detail: {
                 AskView()
             }
-        } else if app.navSection == .models {
-            NavigationSplitView {
-                sidebar
-            } detail: {
-                ModelsView()
-            }
         } else {
             NavigationSplitView {
                 sidebar
@@ -134,9 +128,6 @@ struct MainWindowView: View {
                     .accessibilityIdentifier("sidebar.type")
             }
             Section("Configure") {
-                Label("Models", systemImage: "brain")
-                    .tag(AppState.NavSection.models)
-                    .accessibilityIdentifier("sidebar.models")
                 Label("Settings", systemImage: "gearshape")
                     .tag(AppState.NavSection.settings)
                     .accessibilityIdentifier("sidebar.settings")

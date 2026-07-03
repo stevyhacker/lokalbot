@@ -112,19 +112,19 @@ struct LokalBotApp: App {
 final class AppState: ObservableObject {
 
     enum NavSection: Hashable {
-        case capture, type, ask, models, settings
+        case capture, type, ask, settings
 
         /// Section names accepted from the UI-test capture environment and
         /// deep links. Legacy pre-merge names keep working: "meetings" and
         /// "timeline" land on the merged Capture section, "dictation" and
-        /// "cotyping" on Type, "search"/"chat" on Ask (spec §2.1).
+        /// "cotyping" on Type, "search"/"chat" on Ask (spec §2.1), and
+        /// "models" on Settings, which absorbed it as a tab (spec §2.5).
         init?(captureName: String) {
             switch captureName.lowercased() {
             case "capture", "meetings", "timeline": self = .capture
             case "type", "dictation", "cotyping": self = .type
             case "ask", "search", "chat": self = .ask
-            case "models": self = .models
-            case "settings": self = .settings
+            case "settings", "models": self = .settings
             default: return nil
             }
         }
@@ -141,6 +141,27 @@ final class AppState: ObservableObject {
             switch captureName.lowercased() {
             case "dictation": self = .dictation
             case "cotyping": self = .cotyping
+            default: return nil
+            }
+        }
+    }
+
+    /// Which tab the Settings surface shows (spec §2.5 — Settings absorbs
+    /// Models as a tab strip). Session-sticky like TypeTab.
+    enum SettingsTab: String, CaseIterable {
+        case general, recording, models, privacy, advanced
+
+        var displayName: String { rawValue.capitalized }
+
+        /// Legacy capture names select their tab; the pre-merge "models"
+        /// section name lands on the Models tab.
+        init?(captureName: String) {
+            switch captureName.lowercased() {
+            case "general": self = .general
+            case "recording": self = .recording
+            case "models": self = .models
+            case "privacy": self = .privacy
+            case "advanced": self = .advanced
             default: return nil
             }
         }
@@ -183,6 +204,7 @@ final class AppState: ObservableObject {
     // pending "jump to timestamp" handed from search to the detail player.
     @Published var navSection: NavSection = .capture
     @Published var typeTab: TypeTab = .dictation
+    @Published var settingsTab: SettingsTab = .general
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []
     @Published var pendingSeek: TimeInterval?
 
@@ -204,6 +226,12 @@ final class AppState: ObservableObject {
     func openType(_ tab: TypeTab) {
         typeTab = tab
         navSection = .type
+    }
+
+    /// Navigate to Settings with a specific tab preselected.
+    func openSettings(tab: SettingsTab) {
+        settingsTab = tab
+        navSection = .settings
     }
 
     /// Navigate to the Ask section, optionally pre-filling the query and/or

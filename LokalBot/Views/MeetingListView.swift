@@ -21,6 +21,15 @@ struct MeetingListView: View {
             }
         }
         .accessibilityIdentifier("meeting.list")
+        .overlay {
+            if groupedMeetings.isEmpty {
+                ContentUnavailableView(
+                    "No meetings yet",
+                    systemImage: "waveform.circle",
+                    description: Text("LokalBot detects meeting apps and records automatically — or press Record in the menu bar.")
+                )
+            }
+        }
         .overlay(alignment: .topTrailing) {
             if app.isRecording {
                 HStack(spacing: 6) {

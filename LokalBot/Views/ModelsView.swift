@@ -1,10 +1,10 @@
 import SwiftUI
 import AppKit
 
-/// The "Models" section (sidebar → Engine → Models). All model selection and
-/// management lives here, extracted from Settings into a dedicated card-per-role
-/// surface: Transcription, Summarization, Cotyping, and Embeddings each pick and
-/// manage their own model. Downloads come from the local catalog or Hugging Face.
+/// The Models tab of Settings (spec §2.5). All model selection and management
+/// lives here, a dedicated card-per-role surface: Transcription, Summarization,
+/// Cotyping, and Embeddings each pick and manage their own model. Downloads
+/// come from the local catalog or Hugging Face.
 struct ModelsView: View {
     @EnvironmentObject var app: AppState
 
@@ -35,7 +35,6 @@ struct ModelsView: View {
             .frame(maxWidth: 760, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .navigationTitle("Models")
         .task {
             refreshTranscriptionDownloads()
             await refreshOllama()
@@ -173,10 +172,10 @@ struct ModelsView: View {
         ModelCard(icon: "point.3.connected.trianglepath.dotted", title: "Embeddings",
                   subtitle: "Semantic search over transcripts & screenshots") {
             LabeledContent("Semantic search") {
-                Text(app.settings.semanticSearchEnabled ? "On" : "Off — enable it in the Search section")
+                Text(app.settings.semanticSearchEnabled ? "On" : "Off — enable it in Ask")
                     .foregroundStyle(.secondary)
             }
-            Text("Finds meetings by meaning, not just keywords. Uses Qwen3-Embedding 0.6B, downloaded when semantic search is first enabled (sidebar → Search).")
+            Text("Finds meetings by meaning, not just keywords. Uses Qwen3-Embedding 0.6B, downloaded when semantic search is first enabled (from Ask).")
                 .font(.caption).foregroundStyle(.secondary)
             Text("Text search now uses Qwen3-Embedding 0.6B. Screenshot/slide embeddings with Qwen3-VL-Embedding 2B are listed as a future pipeline because image vectors need separate indexing and ranking.")
                 .font(.caption).foregroundStyle(.secondary)

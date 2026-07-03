@@ -10,8 +10,24 @@ final class NavSectionMappingTests: XCTestCase {
         XCTAssertEqual(AppState.NavSection(captureName: "capture"), .capture)
         XCTAssertEqual(AppState.NavSection(captureName: "type"), .type)
         XCTAssertEqual(AppState.NavSection(captureName: "ask"), .ask)
-        XCTAssertEqual(AppState.NavSection(captureName: "models"), .models)
         XCTAssertEqual(AppState.NavSection(captureName: "settings"), .settings)
+    }
+
+    /// Spec §2.5: Settings absorbs Models — the legacy "models" capture name
+    /// lands on Settings, and the SettingsTab mapping preselects its tab.
+    func testLegacyModelsNameMapsToSettings() {
+        XCTAssertEqual(AppState.NavSection(captureName: "models"), .settings)
+        XCTAssertEqual(AppState.NavSection(captureName: "Models"), .settings)
+    }
+
+    func testSettingsTabCaptureNamesSelectTheTab() {
+        XCTAssertEqual(AppState.SettingsTab(captureName: "models"), .models)
+        XCTAssertEqual(AppState.SettingsTab(captureName: "general"), .general)
+        XCTAssertEqual(AppState.SettingsTab(captureName: "recording"), .recording)
+        XCTAssertEqual(AppState.SettingsTab(captureName: "privacy"), .privacy)
+        XCTAssertEqual(AppState.SettingsTab(captureName: "advanced"), .advanced)
+        XCTAssertNil(AppState.SettingsTab(captureName: "settings"))
+        XCTAssertNil(AppState.SettingsTab(captureName: "capture"))
     }
 
     func testLegacyMeetingsAndTimelineNamesMapToCapture() {
