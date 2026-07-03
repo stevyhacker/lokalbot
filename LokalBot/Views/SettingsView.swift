@@ -30,10 +30,13 @@ struct SettingsView: View {
                     }
                 }
                 .formStyle(.grouped)
+                // Keep this identifier off the enclosing VStack: a container
+                // identifier propagates onto every child AX element and
+                // clobbers settings.search / settings.tab in the header.
+                .accessibilityIdentifier("settings.form")
             }
         }
         .frame(minWidth: 460)
-        .accessibilityIdentifier("settings.form")
         .navigationTitle("Settings")
         .onAppear {
             power.start()
