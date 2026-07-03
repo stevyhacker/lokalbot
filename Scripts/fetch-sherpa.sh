@@ -15,6 +15,10 @@ cd "$(dirname "$0")/.."
 VERSION=v1.13.3   # pinned sherpa-onnx release (macOS arm64 shared)
 ARTIFACT="sherpa-onnx-$VERSION-osx-arm64-shared.tar.bz2"
 URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/$VERSION/$ARTIFACT"
+# SHA-256 of the release artifact — a GitHub release asset can be replaced in
+# place, so verify before bundling. Recompute when bumping VERSION:
+#   shasum -a 256 <file>
+ARCHIVE_SHA256=d67b1a77ca252a4dbe0480255c61eeadc951708d15ac840c12308864496b134d
 DEST=Vendor/sherpa-onnx
 
 if [ -x "$DEST/sherpa-onnx-offline" ]; then
@@ -25,6 +29,13 @@ fi
 echo "fetch-sherpa: downloading sherpa-onnx ${VERSION}..."
 tmp=$(mktemp -d)
 curl -fsSL -o "$tmp/sherpa.tar.bz2" "$URL"
+actual=$(shasum -a 256 "$tmp/sherpa.tar.bz2" | cut -d' ' -f1)
+if [ "$actual" != "$ARCHIVE_SHA256" ]; then
+  echo "fetch-sherpa: SHA-256 mismatch for $ARTIFACT" >&2
+  echo "  expected: $ARCHIVE_SHA256" >&2
+  echo "  actual:   $actual" >&2
+  exit 1
+fi
 tar -xjf "$tmp/sherpa.tar.bz2" -C "$tmp"
 src="$tmp/sherpa-onnx-$VERSION-osx-arm64-shared"
 
