@@ -74,10 +74,16 @@ final class MainWindowUITests: XCTestCase {
                       "capture section did not come back")
     }
 
-    /// The new Models pane (sidebar → Engine → Models) renders its role cards,
-    /// proving model selection moved out of Settings into its own section.
+    /// The Models tab of Settings (spec §2.5) renders its role cards —
+    /// Models is reached via Settings' tab strip, not its own sidebar entry.
     func testModelsSectionRendersRoleCards() {
-        clickSidebar("sidebar.models")
+        clickSidebar("sidebar.settings")
+        let tabs = app.descendants(matching: .any)["settings.tab"]
+        XCTAssertTrue(tabs.waitForExistence(timeout: 8), "settings tab strip missing")
+        let segment = tabs.buttons["Models"].exists
+            ? tabs.buttons["Models"] : tabs.radioButtons["Models"]
+        XCTAssertTrue(segment.waitForExistence(timeout: 4), "Models segment missing")
+        segment.click()
         XCTAssertTrue(textWithContent("Transcription").firstMatch
             .waitForExistence(timeout: 6),
                       "Models pane did not render the Transcription card")

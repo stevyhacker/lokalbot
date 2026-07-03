@@ -16,24 +16,108 @@ struct SettingsView: View {
     @ObservedObject private var metrics = GenerationMetricsStore.shared
 
     var body: some View {
-        Form {
-            Section {
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("Search settings…", text: $settingsQuery)
-                        .textFieldStyle(.plain)
-                        .frame(minWidth: 220, maxWidth: .infinity)
-                        .accessibilityIdentifier("settings.search")
-                    if !settingsQuery.isEmpty {
-                        Button { settingsQuery = "" } label: {
-                            Image(systemName: "xmark.circle.fill")
-                        }
-                        .buttonStyle(.plain).foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            header
+            Divider()
+            if app.settingsTab == .models && queryIsEmpty {
+                ModelsView()
+            } else {
+                Form {
+                    if queryIsEmpty {
+                        sections(for: app.settingsTab)
+                    } else {
+                        searchResults
                     }
                 }
+                .formStyle(.grouped)
             }
+        }
+        .frame(minWidth: 460)
+        .accessibilityIdentifier("settings.form")
+        .navigationTitle("Settings")
+        .onAppear {
+            power.start()
+            permissions.startPolling()
+            app.calendar.refreshAuthorizationStatus()
+        }
+        .onDisappear { power.stop(); permissions.stopPolling() }
+    }
 
-            if shows("General", ["launch", "login", "startup", "open at login", "auto start",
+    private var queryIsEmpty: Bool {
+        settingsQuery.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// Search field + tab strip, above the tabbed content so search works
+    /// from any tab (including Models).
+    private var header: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search settings…", text: $settingsQuery)
+                    .textFieldStyle(.plain)
+                    .accessibilityIdentifier("settings.search")
+                if !settingsQuery.isEmpty {
+                    Button { settingsQuery = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                }
+            }
+            Picker("", selection: $app.settingsTab) {
+                ForEach(AppState.SettingsTab.allCases, id: \.self) { tab in
+                    Text(tab.displayName).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityIdentifier("settings.tab")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    /// Spec §2.5 tab distribution: SettingsView's existing sections spread
+    /// across General · Recording · Privacy · Advanced; Models is ModelsView.
+    @ViewBuilder private func sections(for tab: AppState.SettingsTab) -> some View {
+        switch tab {
+        case .general:
+            generalSection; permissionsSection; storageSection; updatesSection
+        case .recording:
+            meetingsSection; processingSection; summarizationSection; dayTrackingSection
+        case .models:
+            EmptyView() // handled by the ModelsView branch in body
+        case .privacy:
+            privacySection
+        case .advanced:
+            systemSection; agentCLISection
+        }
+    }
+
+    /// Spec §2.5: the search field filters across ALL tabs — a non-empty
+    /// query shows every matching section regardless of the selected tab,
+    /// plus a jump row into the Models tab when its keywords match.
+    @ViewBuilder private var searchResults: some View {
+        generalSection; permissionsSection; meetingsSection; processingSection
+        summarizationSection; dayTrackingSection; privacySection; storageSection
+        updatesSection; systemSection; agentCLISection
+        if shows("Models", ["model", "models", "transcription", "summarization",
+                            "cotyping", "embeddings", "llm", "whisper", "download",
+                            "gguf", "hugging face", "ollama", "engine", "backend"]) {
+            Section("Models") {
+                Button("Open the Models tab…") {
+                    settingsQuery = ""
+                    app.settingsTab = .models
+                }
+                Text("Transcription, summarization, cotyping, and embedding models live in the Models tab.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - Sections
+
+    @ViewBuilder private var generalSection: some View {
+        if shows("General", ["launch", "login", "startup", "open at login", "auto start",
                                  "menu bar", "menubar", "dock", "dock icon", "hide dock",
                                  "window", "background", "tray"]) {
                 Section("General") {
@@ -51,6 +135,9 @@ struct SettingsView: View {
                 }
             }
 
+    }
+
+    @ViewBuilder private var permissionsSection: some View {
             if shows("Permissions", ["permission", "grant", "access", "microphone", "mic",
                                      "screen recording", "system audio", "accessibility",
                                      "input monitoring", "keyboard", "relaunch", "tcc"]) {
@@ -69,6 +156,9 @@ struct SettingsView: View {
                 }
             }
 
+    }
+
+    @ViewBuilder private var meetingsSection: some View {
             if shows("Meetings", ["meeting", "auto record", "detect", "debounce", "stop debounce",
                                   "recording", "calendar", "calendar access", "browser", "google meet"]) {
                 Section("Meetings") {
@@ -109,16 +199,22 @@ struct SettingsView: View {
                 }
             }
 
+    }
+
+    @ViewBuilder private var processingSection: some View {
             if shows("Processing", ["transcribe", "transcription", "summarize", "summary",
                                     "automatic", "auto", "after meeting", "model", "models", "engine"]) {
                 Section("Processing") {
                     Toggle("Transcribe automatically after each meeting", isOn: $app.settings.autoTranscribe)
                     Toggle("Summarize automatically after transcription", isOn: $app.settings.autoSummarize)
-                    Text("Choose transcription and summarization models in the Models section (sidebar → Engine → Models).")
+                    Text("Choose transcription and summarization models in the Models tab.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
 
+    }
+
+    @ViewBuilder private var summarizationSection: some View {
             if shows("Summarization", ["summary", "summarize", "notes", "template", "language",
                                        "diarization", "speaker", "split speaker", "neural"]) {
                 Section("Summarization") {
@@ -143,6 +239,9 @@ struct SettingsView: View {
                 }
             }
 
+    }
+
+    @ViewBuilder private var dayTrackingSection: some View {
             if shows("Day tracking", ["tracking", "activity", "screenshots", "screen", "capture",
                                       "ocr", "window", "accessibility", "retention", "private",
                                       "excluded apps", "never capture"]) {
@@ -180,6 +279,9 @@ struct SettingsView: View {
                 }
             }
 
+    }
+
+    @ViewBuilder private var privacySection: some View {
             if shows("Privacy", ["privacy", "retention", "ocr", "text", "screen text", "history",
                                  "delete", "prune", "forever", "keep", "local", "network",
                                  "data", "security"]) {
@@ -196,6 +298,9 @@ struct SettingsView: View {
                 }
             }
 
+    }
+
+    @ViewBuilder private var storageSection: some View {
             if shows("Storage", ["storage", "location", "files", "folder", "finder", "disk"]) {
                 Section("Storage") {
                     LabeledContent("Location") {
@@ -207,6 +312,9 @@ struct SettingsView: View {
                 }
             }
 
+    }
+
+    @ViewBuilder private var updatesSection: some View {
             if shows("Updates", ["update", "version", "sparkle", "upgrade", "check", "release",
                                  "appcast", "download"]) {
                 Section("Updates") {
@@ -227,6 +335,9 @@ struct SettingsView: View {
                 }
             }
 
+    }
+
+    @ViewBuilder private var systemSection: some View {
             if shows("System", ["system", "hardware", "ram", "memory", "chip", "cpu", "battery",
                                 "power", "low power", "diagnostics", "performance", "generations"]) {
                 Section("System") {
@@ -257,6 +368,9 @@ struct SettingsView: View {
                 }
             }
 
+    }
+
+    @ViewBuilder private var agentCLISection: some View {
             if shows("Agent CLI", ["cli", "agent", "terminal", "claude", "codex", "cursor",
                                    "gemini", "symlink", "install", "uninstall", "path"]) {
                 Section("Agent CLI") {
@@ -321,17 +435,6 @@ struct SettingsView: View {
                 }
             }
 
-        }
-        .formStyle(.grouped)
-        .frame(minWidth: 460)
-        .accessibilityIdentifier("settings.form")
-        .navigationTitle("Settings")
-        .onAppear {
-            power.start()
-            permissions.startPolling()
-            app.calendar.refreshAuthorizationStatus()
-        }
-        .onDisappear { power.stop(); permissions.stopPolling() }
     }
 
     /// Calendar permission state + action for the Meetings section.
