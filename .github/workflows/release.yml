@@ -183,10 +183,15 @@ jobs:
         run: |
           key_file="$RUNNER_TEMP/sparkle-ed25519.key"
           printf '%s' "$SPARKLE_PRIVATE_KEY" > "$key_file"
+          # --release-tag: the DMG uploads to THIS tag's release, so the
+          # enclosure URL must embed it verbatim. Deriving it from the app's
+          # version would drop a pre-release suffix (v1.0.0-beta → v1.0.0)
+          # and point the feed at a release that doesn't exist.
           python3 Scripts/generate_appcast.py \
             --archive build/LokalBot.dmg \
             --app build/export/LokalBot.app \
             --repo "$GITHUB_REPOSITORY" \
+            --release-tag "$GITHUB_REF_NAME" \
             --output build/appcast.xml \
             --sign-update-tool "$RUNNER_TEMP/sparkle/bin/sign_update" \
             --ed-key-file "$key_file"

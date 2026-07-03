@@ -114,6 +114,17 @@ def parse_args() -> argparse.Namespace:
         help='GitHub "owner/repo" slug used to build the release + enclosure URLs.',
     )
     parser.add_argument(
+        "--release-tag",
+        default=None,
+        help=(
+            "Git tag of the GitHub Release the DMG is uploaded to, e.g. "
+            "v1.0.0-beta. Defaults to v<short-version>, which is only correct "
+            "for stable tags — pre-release tags carry a suffix the app's "
+            "CFBundleShortVersionString doesn't, so the download URL would "
+            "point at a release that doesn't exist."
+        ),
+    )
+    parser.add_argument(
         "--archive-filename",
         default=None,
         help="Filename in the GitHub Release download URL. Defaults to the basename of --archive.",
@@ -283,7 +294,7 @@ def main() -> int:
     ed_signature, archive_length = sign_archive(sign_update_tool, archive, ed_key_file)
 
     repository_url = f"https://github.com/{args.repo}"
-    release_tag = f"v{short_version}"
+    release_tag = args.release_tag or f"v{short_version}"
     release_page_url = f"{repository_url}/releases/tag/{release_tag}"
     archive_filename = args.archive_filename or archive.name
     # Enclosure points at the version-specific asset (not /latest/) so Sparkle

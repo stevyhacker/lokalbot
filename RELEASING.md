@@ -221,6 +221,11 @@ locates `sign_update` (via `--sign-update-tool`, `$SPARKLE_BIN`, your PATH,
 `xcrun`, or DerivedData), signs the DMG, and renders `appcast.xml` with the
 enclosure URL `https://github.com/stevyhacker/lokalbot/releases/download/v1.0.0/LokalBot.dmg`.
 
+The download URL's tag defaults to `v<short-version>`. If you're publishing
+under a pre-release tag (step 7), pass it explicitly — e.g.
+`--release-tag v1.0.0-beta` — so the enclosure points at the release the DMG
+actually uploads to.
+
 ### 7. Publish the GitHub Release
 
 Upload **both** the DMG and the appcast as release assets so the feed at
