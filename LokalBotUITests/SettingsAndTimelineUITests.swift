@@ -11,8 +11,10 @@ final class SettingsUITests: XCTestCase {
         let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "Settings")
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
-        XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 10),
-                      "main window never rendered")
+        // Seeded activity → Capture opens in Day scope, so wait on the scope
+        // control rather than the meeting list.
+        XCTAssertTrue(app.descendants(matching: .any)["capture.scope"]
+            .waitForExistence(timeout: 10), "main window never rendered")
     }
 
     override func tearDownWithError() throws {
@@ -88,12 +90,14 @@ final class SettingsUITests: XCTestCase {
             settingsJSON: settingsJSON)
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
-        XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 10),
-                      "main window never rendered after relaunch")
+        XCTAssertTrue(app.descendants(matching: .any)["capture.scope"]
+            .waitForExistence(timeout: 10), "main window never rendered after relaunch")
     }
 }
 
-final class TimelineEmptyStateUITests: XCTestCase {
+/// Capture against a fixture with no activity blocks — pins the scope
+/// policy's no-activity default and the meetings-as-blocks track.
+final class CaptureDefaultScopeUITests: XCTestCase {
     private var fixture: SyntheticFixture.Library!
     private var app: XCUIApplication!
     private var defaultsSuiteName: String?
@@ -101,7 +105,7 @@ final class TimelineEmptyStateUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         fixture = try SyntheticFixture.plant(includeActivity: false)
-        let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "TimelineEmpty")
+        let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "CaptureDefaultScope")
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
         XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 10),
@@ -114,14 +118,28 @@ final class TimelineEmptyStateUITests: XCTestCase {
         UITestHarness.cleanUp(defaultsSuiteName: defaultsSuiteName)
     }
 
-    func testTimelineEmptyStateDoesNotRenderPopulatedTrackOrInspector() {
-        UITestHarness.clickSidebar("sidebar.timeline", in: app)
-
-        XCTAssertTrue(UITestHarness.staticText(containing: "No activity recorded", in: app)
-            .waitForExistence(timeout: 6), "empty timeline message missing")
+    /// With no activity blocks seeded, Capture defaults to Library scope
+    /// (spec open question 2 — resolved yes): the meeting list is the launch
+    /// surface and no phantom track renders. Switching to Day still shows
+    /// the seeded meetings as first-class track blocks (spec §2.2) rather
+    /// than the empty state.
+    func testCaptureWithoutActivityDefaultsToLibrary() {
+        XCTAssertTrue(app.outlines["meeting.list"].exists,
+                      "Library scope (meeting list) should be the no-activity default")
         XCTAssertFalse(app.descendants(matching: .any)["timeline.track"].exists,
-                       "activity track should not render without activity blocks")
-        XCTAssertFalse(app.descendants(matching: .any)["timeline.inspector"].exists,
-                       "inspector should not render without activity blocks")
+                       "activity track should not render in Library scope")
+
+        let picker = app.descendants(matching: .any)["capture.scope"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 6), "capture scope control missing")
+        let daySegment = picker.buttons["Day"].exists
+            ? picker.buttons["Day"] : picker.radioButtons["Day"]
+        daySegment.click()
+
+        // Meetings alone still populate the day track (meetings-as-blocks).
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
+            .waitForExistence(timeout: 6),
+                      "day track with meeting blocks missing")
+        XCTAssertFalse(UITestHarness.staticText(containing: "No activity recorded", in: app).exists,
+                       "empty state shown despite seeded meetings in the track")
     }
 }

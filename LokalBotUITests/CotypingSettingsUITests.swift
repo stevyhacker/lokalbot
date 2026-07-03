@@ -28,8 +28,10 @@ final class CotypingSettingsUITests: XCTestCase {
         let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "CotypingSettings")
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
-        XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 10),
-                      "main window never rendered")
+        // Seeded activity → Capture opens in Day scope, so wait on the scope
+        // control rather than the meeting list.
+        XCTAssertTrue(app.descendants(matching: .any)["capture.scope"]
+            .waitForExistence(timeout: 10), "main window never rendered")
         UITestHarness.clickSidebar("sidebar.type", in: app)
         openCotypingTab()
     }
@@ -150,11 +152,11 @@ final class CotypingSettingsUITests: XCTestCase {
     }
 
     /// The selected Type tab is session-sticky (spec §6 "Type tab persistence"):
-    /// leave for Meetings, come back, and Cotyping is still the visible form.
+    /// leave for Capture, come back, and Cotyping is still the visible form.
     func testTypeTabPersistsAcrossNavigation() {
-        UITestHarness.clickSidebar("sidebar.meetings", in: app)
-        XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 6),
-                      "meeting list did not come back")
+        UITestHarness.clickSidebar("sidebar.capture", in: app)
+        XCTAssertTrue(app.descendants(matching: .any)["capture.scope"].waitForExistence(timeout: 6),
+                      "capture section did not render")
         UITestHarness.clickSidebar("sidebar.type", in: app)
         XCTAssertTrue(app.descendants(matching: .any)["cotyping.form"].waitForExistence(timeout: 8),
                       "cotyping tab was not restored on return to Type")
