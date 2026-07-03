@@ -13,8 +13,9 @@ import XCTest
 /// macOS SwiftUI Form `Toggle`/`TextField` elements expose EMPTY accessibility
 /// labels — the visible text is a sibling `staticText`. So controls are matched
 /// by their label `staticText` (value/label CONTAINS), and the master toggle is
-/// driven as the FIRST `switch` in the form (the header's "Enable cotyping" —
-/// `cotypingEnabled` defaults off, so it is the lone switch until flipped on).
+/// driven as the first `switch` INSIDE `cotyping.form` (the header's "Enable
+/// cotyping"). Scoping to the form matters: the Type status header above it
+/// contributes two switches of its own.
 final class CotypingSettingsUITests: XCTestCase {
 
     private var app: XCUIApplication!
@@ -29,9 +30,8 @@ final class CotypingSettingsUITests: XCTestCase {
         defaultsSuiteName = launch.defaultsSuiteName
         XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 10),
                       "main window never rendered")
-        UITestHarness.clickSidebar("sidebar.cotyping", in: app)
-        XCTAssertTrue(app.descendants(matching: .any)["cotyping.form"].waitForExistence(timeout: 8),
-                      "cotyping pane did not render")
+        UITestHarness.clickSidebar("sidebar.type", in: app)
+        openCotypingTab()
     }
 
     override func tearDownWithError() throws {
@@ -42,8 +42,12 @@ final class CotypingSettingsUITests: XCTestCase {
 
     // MARK: - Helpers
 
-    /// The master toggle — the header "Enable cotyping" switch, first in the form.
-    private var masterToggle: XCUIElement { app.switches.firstMatch }
+    /// The master toggle — the form's "Enable cotyping" switch, the first
+    /// switch inside `cotyping.form`. (The Type status header's switches sit
+    /// outside the form, so the form scope skips them.)
+    private var masterToggle: XCUIElement {
+        app.descendants(matching: .any)["cotyping.form"].switches.firstMatch
+    }
 
     private func setMaster(on desired: Bool) {
         XCTAssertTrue(masterToggle.waitForExistence(timeout: 4), "cotyping master toggle missing")
@@ -75,6 +79,20 @@ final class CotypingSettingsUITests: XCTestCase {
 
     private func staticText(containing fragment: String) -> XCUIElement {
         UITestHarness.staticText(containing: fragment, in: app)
+    }
+
+    /// Selects the Cotyping tab in the Type section's segmented control and
+    /// waits for the form. Segmented pickers expose their options as buttons
+    /// (radio-button fallback covers older accessibility mappings).
+    private func openCotypingTab() {
+        let picker = app.descendants(matching: .any)["type.tab"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8), "type tab picker missing")
+        let segment = picker.buttons["Cotyping"].exists
+            ? picker.buttons["Cotyping"] : picker.radioButtons["Cotyping"]
+        XCTAssertTrue(segment.waitForExistence(timeout: 4), "Cotyping segment missing")
+        segment.click()
+        XCTAssertTrue(app.descendants(matching: .any)["cotyping.form"].waitForExistence(timeout: 8),
+                      "cotyping pane did not render")
     }
 
     // MARK: - Tests
@@ -129,5 +147,18 @@ final class CotypingSettingsUITests: XCTestCase {
         setMaster(on: false)
         XCTAssertFalse(staticText(containing: "Use the clipboard as context").exists,
                        "sub-controls should be hidden once cotyping is disabled")
+    }
+
+    /// The selected Type tab is session-sticky (spec §6 "Type tab persistence"):
+    /// leave for Meetings, come back, and Cotyping is still the visible form.
+    func testTypeTabPersistsAcrossNavigation() {
+        UITestHarness.clickSidebar("sidebar.meetings", in: app)
+        XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 6),
+                      "meeting list did not come back")
+        UITestHarness.clickSidebar("sidebar.type", in: app)
+        XCTAssertTrue(app.descendants(matching: .any)["cotyping.form"].waitForExistence(timeout: 8),
+                      "cotyping tab was not restored on return to Type")
+        XCTAssertFalse(app.descendants(matching: .any)["dictation.form"].exists,
+                       "dictation form should not be visible when the cotyping tab is restored")
     }
 }
