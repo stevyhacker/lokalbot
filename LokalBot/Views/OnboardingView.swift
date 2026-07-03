@@ -124,7 +124,7 @@ private extension OnboardingView {
                 Text("Welcome to LokalBot")
                     .font(.system(size: 30, weight: .bold, design: .rounded))
 
-                Text("Your local meeting memory, with recording, recap, search, and cotyping on this Mac.")
+                Text("Capture your meetings and day, ask your local library anything, and type with on-device AI — nothing leaves this Mac.")
                     .font(.system(size: 15, design: .rounded))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -138,8 +138,9 @@ private extension OnboardingView {
 
             HStack(spacing: 8) {
                 OnboardingFeatureChip(systemImage: "lock.fill", label: "On-device")
-                OnboardingFeatureChip(systemImage: "waveform", label: "Records both sides")
-                OnboardingFeatureChip(systemImage: "text.cursor", label: "Cotyping ready")
+                OnboardingFeatureChip(systemImage: "waveform.circle", label: "Capture")
+                OnboardingFeatureChip(systemImage: "sparkle.magnifyingglass", label: "Ask")
+                OnboardingFeatureChip(systemImage: "keyboard", label: "Type")
             }
             .onboardingReveal(3)
         }
@@ -152,36 +153,36 @@ private extension OnboardingView {
         VStack(spacing: 24) {
             OnboardingStepHeader(
                 systemImage: "waveform.badge.magnifyingglass",
-                title: "Calls become a searchable memory",
-                subtitle: "LokalBot quietly turns meetings into useful local artifacts."
+                title: "Three pillars: Capture, Ask, Type",
+                subtitle: "Everything LokalBot does hangs off three verbs — all local."
             )
             .onboardingReveal(0)
 
             VStack(spacing: 10) {
                 TimelineCard(
                     number: "1",
-                    systemImage: "dot.radiowaves.left.and.right",
+                    systemImage: "waveform.circle",
                     tint: Brand.teal,
-                    title: "Detect and record",
-                    subtitle: "Meeting audio is captured as separate mic and system tracks."
+                    title: "Capture",
+                    subtitle: "Meetings and your day, recorded, transcribed, and summarized locally."
                 )
                 .onboardingReveal(1)
 
                 TimelineCard(
                     number: "2",
-                    systemImage: "doc.text.viewfinder",
+                    systemImage: "sparkle.magnifyingglass",
                     tint: .indigo,
-                    title: "Transcribe and summarize",
-                    subtitle: "Local models produce the transcript, decisions, and action items."
+                    title: "Ask",
+                    subtitle: "One search over everything you captured — press ↵ to ask the local assistant."
                 )
                 .onboardingReveal(2)
 
                 TimelineCard(
                     number: "3",
-                    systemImage: "magnifyingglass.circle.fill",
+                    systemImage: "keyboard",
                     tint: .orange,
-                    title: "Search and ask",
-                    subtitle: "Replay, search screen text, and ask questions across your library."
+                    title: "Type",
+                    subtitle: "Dictation and Cotyping inline autocomplete, anywhere you type."
                 )
                 .onboardingReveal(3)
             }
@@ -390,56 +391,57 @@ private struct LokalBotHeroDemo: View {
     @State private var phase = 0
 
     private let phases = [
-        ("Recording", "Google Meet", "Mic + system audio"),
-        ("Transcript", "Decision: ship beta Friday", "Action items extracted"),
-        ("Ask", "What did we promise Alex?", "Searches local meetings")
+        ("Capture", "Google Meet · recording", "Mic + system audio, transcribed locally"),
+        ("Ask", "What did we promise Alex?", "Searches your local meeting library"),
+        ("Type", "Cotyping suggests as you type", "Inline autocomplete, on-device")
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 6) {
-                Circle().fill(Color(red: 1.0, green: 0.37, blue: 0.34))
-                Circle().fill(Color(red: 1.0, green: 0.74, blue: 0.18))
-                Circle().fill(Color(red: 0.16, green: 0.78, blue: 0.25))
-            }
-            .frame(height: 7)
-            .opacity(0.85)
-
-            HStack(alignment: .center, spacing: 14) {
-                IconTile(
-                    systemImage: phase == 0 ? "waveform" : phase == 1 ? "doc.text.viewfinder" : "bubble.left.and.text.bubble.right.fill",
-                    tint: phase == 0 ? Brand.teal : phase == 1 ? .indigo : .orange,
-                    size: 42
-                )
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(phases[phase].0)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.secondary)
-                    Text(phases[phase].1)
-                        .font(.system(size: 17, weight: .semibold, design: .rounded))
-                        .lineLimit(1)
-                    Text(phases[phase].2)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+        HeroPanel(radius: 14) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 6) {
+                    Circle().fill(Color(red: 1.0, green: 0.37, blue: 0.34))
+                    Circle().fill(Color(red: 1.0, green: 0.74, blue: 0.18))
+                    Circle().fill(Color(red: 0.16, green: 0.78, blue: 0.25))
                 }
+                .frame(height: 7)
+                .opacity(0.85)
 
-                Spacer(minLength: 0)
+                HStack(alignment: .center, spacing: 14) {
+                    IconTile(
+                        systemImage: phase == 0 ? "waveform.circle" : phase == 1 ? "sparkle.magnifyingglass" : "keyboard",
+                        tint: phase == 0 ? Brand.teal : phase == 1 ? .indigo : .orange,
+                        size: 42
+                    )
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(phases[phase].0)
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.65))
+                        Text(phases[phase].1)
+                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        Text(phases[phase].2)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.65))
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .strokeBorder(Brand.teal.opacity(0.24), lineWidth: 1)
+                )
+                .animation(.spring(response: 0.4, dampingFraction: 0.82), value: phase)
             }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(Color(nsColor: .textBackgroundColor).opacity(0.72))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .strokeBorder(Brand.teal.opacity(0.24), lineWidth: 1)
-            )
-            .animation(.spring(response: 0.4, dampingFraction: 0.82), value: phase)
         }
-        .padding(16)
-        .onboardingCard(cornerRadius: 14)
         .task(id: reduceMotion) {
             guard !reduceMotion else {
                 phase = 1
