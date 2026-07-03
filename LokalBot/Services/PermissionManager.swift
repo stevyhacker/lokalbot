@@ -50,7 +50,7 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
         case .microphone:
             "Record your side of each call."
         case .screenRecording:
-            "Capture system audio and screen context."
+            "Capture screenshots for day memory — only while that feature is on. System audio does not need this."
         case .accessibility:
             "Read app and window context."
         case .inputMonitoring:
@@ -72,7 +72,7 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
         case .microphone:
             "Records your side of the meeting from the microphone."
         case .screenRecording:
-            "Captures periodic screenshots that are OCR'd into your meeting timeline."
+            "Captures the periodic screenshots behind day memory, OCR'd into your timeline. Only used while screenshots are turned on; system-audio capture does not go through this permission."
         case .accessibility:
             "Reads window titles to track your activity."
         case .inputMonitoring:

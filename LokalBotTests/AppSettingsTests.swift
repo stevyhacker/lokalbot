@@ -70,6 +70,25 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.transcriptionModel, TranscriptionModelChoice.recommended)
     }
 
+    /// Day memory is strictly opt-in: neither activity tracking nor screen
+    /// capture may ever default on — accepting onboarding must not silently
+    /// start watching the screen.
+    func testDayTrackingAndScreenshotsDefaultOff() {
+        XCTAssertFalse(AppSettings().trackingEnabled)
+        XCTAssertFalse(AppSettings().screenshotsEnabled)
+    }
+
+    /// A settings blob saved by an existing install keeps whatever the user
+    /// had — the new opt-in default only applies to fresh installs.
+    func testExistingScreenshotChoiceSurvivesDefaultFlip() throws {
+        let data = #"{"trackingEnabled":true,"screenshotsEnabled":true}"#.data(using: .utf8)!
+
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertTrue(settings.trackingEnabled)
+        XCTAssertTrue(settings.screenshotsEnabled)
+    }
+
     /// The default prunes OCR text on the same schedule as the pixels;
     /// keeping it forever is the explicit opt-in.
     func testKeepOCRTextForeverDefaultsFalse() {

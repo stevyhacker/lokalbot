@@ -14,6 +14,7 @@ struct OnboardingView: View {
         case welcome
         case flow
         case privacy
+        case dayMemory
         case permissions
 
         static func < (lhs: WelcomeStep, rhs: WelcomeStep) -> Bool {
@@ -29,6 +30,7 @@ struct OnboardingView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @EnvironmentObject private var app: AppState
     @StateObject private var permissions = PermissionManager.shared
     @State private var step: WelcomeStep = .welcome
     @State private var navigatesForward = true
@@ -87,6 +89,8 @@ struct OnboardingView: View {
             flowPage
         case .privacy:
             privacyPage
+        case .dayMemory:
+            dayMemoryPage
         case .permissions:
             permissionPage
         }
@@ -228,6 +232,60 @@ private extension OnboardingView {
         .pagePadding()
     }
 
+    var dayMemoryPage: some View {
+        VStack(spacing: 22) {
+            OnboardingStepHeader(
+                systemImage: "calendar.day.timeline.left",
+                tint: .indigo,
+                title: "Remember your day?",
+                subtitle: "The Timeline can log your day — locally, and only if you turn it on. Both switches start off; nothing here is captured without them."
+            )
+            .onboardingReveal(0)
+
+            VStack(spacing: 10) {
+                OnboardingOptInCard(
+                    systemImage: "macwindow.on.rectangle",
+                    tint: .indigo,
+                    title: "Track app & window activity",
+                    subtitle: "Logs the frontmost app and window title to build the day timeline. Excluded apps (password managers preseeded) show only as \u{201C}Private\u{201D}.",
+                    isOn: Binding(
+                        get: { app.settings.trackingEnabled },
+                        set: { on in
+                            app.settings.trackingEnabled = on
+                            if !on { app.settings.screenshotsEnabled = false }
+                            app.applyTrackingSetting()
+                        }
+                    )
+                )
+                .onboardingReveal(1)
+
+                OnboardingOptInCard(
+                    systemImage: "camera.viewfinder",
+                    tint: .purple,
+                    title: "Capture screenshots (screen memory)",
+                    subtitle: "Takes a periodic screenshot, OCRs it on-device, encrypts it at rest, and deletes it after \(app.settings.retentionDays) days. Needs the Screen Recording permission (next step). Turning this on also enables activity tracking.",
+                    isOn: Binding(
+                        get: { app.settings.screenshotsEnabled },
+                        set: { on in
+                            app.settings.screenshotsEnabled = on
+                            if on { app.settings.trackingEnabled = true }
+                            app.applyTrackingSetting()
+                        }
+                    )
+                )
+                .onboardingReveal(2)
+            }
+
+            Text("You can change both anytime in Settings → Day tracking. Everything stays in LokalBot's local library folder.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .onboardingReveal(3)
+        }
+        .pagePadding()
+    }
+
     var permissionPage: some View {
         VStack(spacing: 22) {
             OnboardingStepHeader(
@@ -310,7 +368,7 @@ private extension OnboardingView {
                 .disabled(!permissions.allGranted)
                 .help(permissions.allGranted ? "" : "Grant the required permissions to finish setup.")
             } else if let next = step.next {
-                Button(step == .privacy ? "Continue to permissions" : "Continue") {
+                Button(step == .dayMemory ? "Continue to permissions" : "Continue") {
                     go(to: next)
                 }
                 .buttonStyle(.borderedProminent)
@@ -563,6 +621,34 @@ private struct TimelineCard: View {
             }
 
             Spacer(minLength: 0)
+        }
+        .padding(18)
+        .onboardingCard()
+    }
+}
+
+private struct OnboardingOptInCard: View {
+    let systemImage: String
+    let tint: Color
+    let title: String
+    let subtitle: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(spacing: 14) {
+            IconTile(systemImage: systemImage, tint: tint, size: 40)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            Toggle(title, isOn: $isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
         }
         .padding(18)
         .onboardingCard()

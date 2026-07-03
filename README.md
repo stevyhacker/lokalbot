@@ -173,6 +173,7 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 <details>
 <summary><strong>Day tracking</strong> — timeline, digests, "ask your day"</summary>
 
+- **Opt-in:** day tracking is off by default. A dedicated onboarding step (or Settings → Day tracking) turns on activity sampling and, separately, screenshots — finishing setup never silently enables either.
 - **Sampler:** frontmost app + focused-window title (Accessibility; degrades to app-name-only) every 5 s, idle-aware (3 min), minimum 5 s block, pause/resume from the menu bar. Stored in `activity_blocks` (same SQLite db).
 - **Timeline:** per-day colored block bar with hover details, time-by-app totals with %, and day navigation. An **Ask your day** box answers free-form questions from the day's activity blocks + OCR'd screen text + meetings via the local LLM.
 - **Day digest:** "Generate digest" runs the configured LLM over the day's blocks + meetings + OCR'd text → `journal/YYYY-MM-DD.md` (What I worked on / Meetings / Time allocation).
@@ -202,7 +203,7 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 <details>
 <summary><strong>Screenshots, OCR &amp; privacy</strong> — capture, encryption, retention</summary>
 
-- **Capture:** ScreenCaptureKit screenshot of the main display every N minutes (default 3, Settings slider), downscaled to ≤1500 px, HEIC. Skipped when idle (3 min), paused, locked, or when an excluded app is frontmost. Requires the Screen Recording permission.
+- **Capture:** off by default, enabled only by the onboarding day-memory step or Settings → Day tracking. When on: ScreenCaptureKit screenshot of the main display every N minutes (default 3, Settings slider), downscaled to ≤1500 px, HEIC. Skipped when idle (3 min), paused, locked, or when an excluded app is frontmost. Requires the Screen Recording permission (which LokalBot uses for nothing else — system audio rides an entitlement, not this grant).
 - **OCR:** Vision (`VNRecognizeTextRequest`, on-device) runs immediately; text goes into `ocr_fts` (searchable under Search → Screen) and feeds day digests and Ask-your-day.
 - **Encryption & retention:** each screenshot is AES-GCM sealed with a per-install key in the macOS Keychain; pixels auto-delete after N days (default 14, Settings stepper), and OCR text follows the same retention unless you opt into keeping it forever (Settings → Privacy). The timeline shows a decrypted thumbnail filmstrip.
 - **Exclusions:** comma-separated app list (preseeded with password managers); excluded time logs as "Private" — no titles, no screenshots.
@@ -317,7 +318,7 @@ Yes. Use the built-in llama.cpp runtime with any downloaded GGUF model, or point
 <details>
 <summary>Is my screen being watched?</summary>
 
-Only if you turn on screenshots. They're encrypted on disk and deleted after 14 days by default. Password fields and excluded apps are never captured.
+Only if you turn on screenshots — they're off by default and opt-in during onboarding. When on, they're encrypted on disk and deleted after 14 days by default. Password fields and excluded apps are never captured.
 </details>
 
 ## For developers

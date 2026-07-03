@@ -63,14 +63,19 @@ struct AppSettings: Codable {
     var dictationLivePreview: Bool = true
     var dictationRetainAudio: Bool = false
 
-    /// M4: app/window activity sampling.
-    var trackingEnabled: Bool = true
+    /// M4: app/window activity sampling. Off by default — recording which apps
+    /// and windows you use all day is opt-in (the onboarding day-memory step or
+    /// Settings → Day tracking), never a side effect of finishing setup.
+    var trackingEnabled: Bool = false
 
     /// M6: embedding-based semantic search (Qwen3-Embedding, downloaded when enabled).
     var semanticSearchEnabled: Bool = false
 
-    // M5: screenshots + OCR
-    var screenshotsEnabled: Bool = true
+    // M5: screenshots + OCR. Strictly opt-in: periodic screen capture is the
+    // most sensitive thing this app can do, so it defaults off and only an
+    // explicit user action (onboarding day-memory step or Settings → Day
+    // tracking) turns it on.
+    var screenshotsEnabled: Bool = false
     var screenshotIntervalMinutes: Double = 3
     var retentionDays: Int = 14
     /// Keep OCR'd screen text past `retentionDays`. Off by default — screen
