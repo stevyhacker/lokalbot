@@ -46,13 +46,28 @@ actor LlamaServer {
     func ensureRunning(modelAt url: URL) async throws {
         if let process, process.isRunning, loadedModelPath == url.path,
            await healthy(), await healthyServingExpectedConfiguration(modelAt: url) {
+            await ModelResidency.shared.touch(id: residencyID)
             return
         }
         if await healthyServingExpectedConfiguration(modelAt: url) {
             loadedModelPath = url.path
+            await registerResidency(modelAt: url)
             return
         }
         try await start(modelAt: url)
+        await registerResidency(modelAt: url)
+    }
+
+    /// This server's row in the app-wide model-memory ledger. Adopted healthy
+    /// servers register too — their weights are just as resident as ours.
+    private nonisolated var residencyID: String { "llama-server:\(port)" }
+
+    private func registerResidency(modelAt url: URL) async {
+        await ModelResidency.shared.register(
+            id: residencyID,
+            label: url.lastPathComponent,
+            bytes: ModelResidency.weightBytes(at: url),
+            unload: { [weak self] in await self?.stop() })
     }
 
     private func start(modelAt url: URL) async throws {
@@ -79,6 +94,10 @@ actor LlamaServer {
             throw ServerError.failedToStart(
                 "port \(port) is held by another process that is not a llama-server; free it and try again")
         }
+        // Make room before the subprocess mmaps the weights: evict the
+        // least-recently-used other models if this one would bust the budget.
+        await ModelResidency.shared.willLoad(id: residencyID,
+                                             bytes: ModelResidency.weightBytes(at: url))
         let process = Process()
         process.executableURL = binary
         process.arguments = [
@@ -118,6 +137,10 @@ actor LlamaServer {
         let old = process
         process = nil
         loadedModelPath = nil
+        // Fire-and-forget so stop() never awaits the main actor — it runs on
+        // app-termination paths that may be blocking the main thread.
+        let id = residencyID
+        Task { @MainActor in ModelResidency.shared.unregister(id: id) }
         guard let old else { return }
         removePidMarker()
         guard old.isRunning else { return }

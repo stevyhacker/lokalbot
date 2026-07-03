@@ -85,9 +85,17 @@ actor LlamaCotypingRuntime {
 
     // MARK: - Lifecycle
 
-    func loadIfNeeded(modelPath: String) throws {
-        if isLoaded, loadedModelPath == modelPath { return }
+    func loadIfNeeded(modelPath: String) async throws {
+        if isLoaded, loadedModelPath == modelPath {
+            await ModelResidency.shared.touch(id: Self.residencyID)
+            return
+        }
         unload()
+        // Make room before llama mmaps the weights: evict LRU models first
+        // if this load would push total resident weights past the budget.
+        await ModelResidency.shared.willLoad(
+            id: Self.residencyID,
+            bytes: ModelResidency.weightBytes(at: URL(fileURLWithPath: modelPath)))
 
         _ = Self.backendReady   // forces the run-once backend init (idempotent)
 
@@ -123,7 +131,15 @@ actor LlamaCotypingRuntime {
         // would emit a dylib stderr warning on every call for recurrent models.
         supportsPartialReuse = !llama_model_is_recurrent(m) && !llama_model_is_hybrid(m)
         warmup()
+        await ModelResidency.shared.register(
+            id: Self.residencyID,
+            label: URL(fileURLWithPath: modelPath).lastPathComponent + " · in-process",
+            bytes: ModelResidency.weightBytes(at: URL(fileURLWithPath: modelPath)),
+            unload: { [weak self] in await self?.unload() })
     }
+
+    /// One in-process runtime holds weights at a time, so a single ledger row.
+    private static let residencyID = "cotyping-in-process"
 
     /// Frees the llama context + model when the actor is deallocated. Without
     /// this the Metal backend's residency set is still live at process exit,
@@ -134,7 +150,7 @@ actor LlamaCotypingRuntime {
     }
 
     /// Prewarm == load + the priming decode `loadIfNeeded` already performs.
-    func prewarm(modelPath: String) throws { try loadIfNeeded(modelPath: modelPath) }
+    func prewarm(modelPath: String) async throws { try await loadIfNeeded(modelPath: modelPath) }
 
     /// Decodes a prompt into KV without sampling so a later generation can reuse
     /// it. Cancellation/failure clears KV because a partial prefill must never
@@ -187,6 +203,9 @@ actor LlamaCotypingRuntime {
         loadedModelPath = nil
         cachedTokens = []
         supportsPartialReuse = false
+        // Fire-and-forget: unload() stays synchronous for the memory-pressure
+        // path, and unregister is idempotent (evictions already dropped us).
+        Task { @MainActor in ModelResidency.shared.unregister(id: Self.residencyID) }
     }
 
     /// Frees the model + context under memory pressure. The next `generate`
