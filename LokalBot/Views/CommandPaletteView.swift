@@ -87,7 +87,7 @@ struct CommandPaletteView: View {
                   title: app.settings.cotypingEnabled ? "Go to Cotyping (on)" : "Go to Cotyping (off)",
                   subtitle: "Type", action: { app.openType(.cotyping) }),
             .init(id: "nav.models", icon: "brain", title: "Go to Models",
-                  subtitle: "Configure", action: { app.navSection = .models }),
+                  subtitle: "Configure", action: { app.openSettings(tab: .models) }),
             .init(id: "nav.settings", icon: "gearshape", title: "Go to Settings",
                   subtitle: "Configure", action: { app.navSection = .settings })
         ]

@@ -168,6 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            let section = AppState.NavSection(captureName: raw) {
             app.navSection = section
             if let tab = AppState.TypeTab(captureName: raw) { app.typeTab = tab }
+            if let tab = AppState.SettingsTab(captureName: raw) { app.settingsTab = tab }
         }
         if env["LOKALBOT_SELECT_FIRST"] == "1", let first = app.meetings.first {
             app.selectedMeetingIDs = [first.id]
