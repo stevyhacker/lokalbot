@@ -6,8 +6,8 @@ struct MainWindowView: View {
     @EnvironmentObject var app: AppState
     @Environment(\.openWindow) private var openWindow
     @State private var pendingDelete: Set<Meeting.ID>?
-    /// Shared by the Timeline section's two columns (day track ↔ inspector).
-    @StateObject private var timeline = TimelineModel()
+    /// Shared by the Capture section's two columns (content ↔ detail).
+    @StateObject private var capture = CaptureModel()
 
     var body: some View {
         navigation
@@ -76,17 +76,17 @@ struct MainWindowView: View {
         }
     }
 
-    /// Master/detail sections (Meetings, Ask, Timeline) use the native
-    /// three-column split; single-surface sections (forms) use two.
+    /// Master/detail sections (Capture, Ask) use the native three-column
+    /// split; single-surface sections (forms) use two.
     @ViewBuilder private var navigation: some View {
-        if app.navSection == .timeline {
+        if app.navSection == .capture {
             NavigationSplitView {
                 sidebar
             } content: {
-                TimelineDayView(model: timeline)
+                CaptureContentView(model: capture, pendingDelete: $pendingDelete)
                     .navigationSplitViewColumnWidth(min: 300, ideal: 380)
             } detail: {
-                TimelineInspectorView(model: timeline)
+                CaptureDetailView(model: capture, pendingDelete: $pendingDelete)
             }
         } else if app.navSection == .type {
             NavigationSplitView {
@@ -109,21 +109,11 @@ struct MainWindowView: View {
             } detail: {
                 ModelsView()
             }
-        } else if app.navSection == .settings {
+        } else {
             NavigationSplitView {
                 sidebar
             } detail: {
                 SettingsView()
-            }
-        } else {
-            NavigationSplitView {
-                sidebar
-            } content: {
-                MeetingListView(pendingDelete: $pendingDelete)
-                    .navigationSplitViewColumnWidth(min: 240, ideal: 280)
-                    .navigationTitle("Meetings")
-            } detail: {
-                detailPane
             }
         }
     }
@@ -131,12 +121,9 @@ struct MainWindowView: View {
     private var sidebar: some View {
         List(selection: sidebarSelection) {
             Section("Library") {
-                Label("Meetings", systemImage: "waveform.circle")
-                    .tag(AppState.NavSection.meetings)
-                    .accessibilityIdentifier("sidebar.meetings")
-                Label("Timeline", systemImage: "calendar.day.timeline.left")
-                    .tag(AppState.NavSection.timeline)
-                    .accessibilityIdentifier("sidebar.timeline")
+                Label("Capture", systemImage: "waveform.circle")
+                    .tag(AppState.NavSection.capture)
+                    .accessibilityIdentifier("sidebar.capture")
                 Label("Ask", systemImage: "sparkle.magnifyingglass")
                     .tag(AppState.NavSection.ask)
                     .accessibilityIdentifier("sidebar.ask")
@@ -158,27 +145,8 @@ struct MainWindowView: View {
         .navigationSplitViewColumnWidth(min: 180, ideal: 210)
     }
 
-    @ViewBuilder private var detailPane: some View {
-        if let meeting = app.selectedMeeting {
-            MeetingDetailView(meeting: meeting)
-                .id(meeting.id)
-        } else if app.selectedMeetingIDs.count > 1 {
-            ContentUnavailableView {
-                Label("\(app.selectedMeetingIDs.count) meetings selected", systemImage: "checklist")
-            } description: {
-                Text("Press ⌫ or right-click to delete them.")
-            } actions: {
-                Button("Delete \(app.selectedMeetingIDs.count) meetings", role: .destructive) {
-                    pendingDelete = app.selectedMeetingIDs
-                }
-            }
-        } else {
-            GettingStartedCard()
-        }
-    }
-
     private var sidebarSelection: Binding<AppState.NavSection?> {
-        Binding(get: { app.navSection }, set: { app.navSection = $0 ?? .meetings })
+        Binding(get: { app.navSection }, set: { app.navSection = $0 ?? .capture })
     }
 
 }
@@ -773,7 +741,10 @@ struct GettingStartedCard: View {
                     }
                     stepRow(done: nil) {
                         HStack(spacing: 8) {
-                            Button("Turn on day tracking") { app.navSection = .timeline }
+                            Button("Turn on day tracking") {
+                                app.captureScope = .day
+                                app.navSection = .capture
+                            }
                                 .buttonStyle(.bordered).controlSize(.small)
                             Text("to see where your time goes.")
                         }

@@ -199,9 +199,8 @@ private struct AskContent: View {
                                       snippet: hit.text)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
-                                    app.selectedMeetingIDs = [hit.meetingID]
                                     if hit.start > 0 { app.pendingSeek = hit.start }
-                                    app.navSection = .meetings
+                                    app.openMeeting(hit.meetingID)
                                 }
                                 .accessibilityIdentifier("search.hit.semantic.\(hit.meetingID.uuidString)")
                         }

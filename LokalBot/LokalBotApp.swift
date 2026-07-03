@@ -112,10 +112,7 @@ struct LokalBotApp: App {
 final class AppState: ObservableObject {
 
     enum NavSection: Hashable {
-        case capture, meetings, timeline, type, ask, models, settings
-        // `.meetings` / `.timeline` are legacy cases kept only until the
-        // Capture surface lands; `captureName` already resolves their names
-        // onto `.capture` (spec §2.1).
+        case capture, type, ask, models, settings
 
         /// Section names accepted from the UI-test capture environment and
         /// deep links. Legacy pre-merge names keep working: "meetings" and
@@ -184,7 +181,7 @@ final class AppState: ObservableObject {
 
     // Navigation (main window): sidebar section, selected meeting, and a
     // pending "jump to timestamp" handed from search to the detail player.
-    @Published var navSection: NavSection = .meetings
+    @Published var navSection: NavSection = .capture
     @Published var typeTab: TypeTab = .dictation
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []
     @Published var pendingSeek: TimeInterval?
