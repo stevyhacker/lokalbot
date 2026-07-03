@@ -26,10 +26,12 @@ final class SettingsUITests: XCTestCase {
     func testPermissionRepairPaneRendersCorePermissions() {
         UITestHarness.clickSidebar("sidebar.settings", in: app)
 
-        XCTAssertTrue(UITestHarness.staticText(containing: "Permissions", in: app)
-            .waitForExistence(timeout: 6), "permission repair pane missing")
-        XCTAssertTrue(UITestHarness.staticText(containing: "Microphone", in: app).exists,
-                      "microphone permission row missing")
+        // Gate on the Microphone row, not the "Permissions" section header:
+        // Form section headers surface as label-only StaticTexts that live
+        // predicate queries never match on macOS, even though failure-time
+        // AX hierarchies show them. Row texts are value-carrying and match.
+        XCTAssertTrue(UITestHarness.staticText(containing: "Microphone", in: app)
+            .waitForExistence(timeout: 6), "microphone permission row missing")
         XCTAssertTrue(UITestHarness.staticText(containing: "Screen Recording", in: app).exists,
                       "screen/system-audio permission row missing")
         XCTAssertTrue(UITestHarness.staticText(containing: "Accessibility", in: app).exists,
