@@ -57,8 +57,9 @@ struct CommandPaletteView: View {
 
     // MARK: - Items
 
-    /// Everything the palette can do, computed live from app state. Actions
-    /// first (they're stable), then recent meetings whose titles match.
+    /// Everything the palette can do, computed live from app state. Commands,
+    /// plus recent meetings when idle; typed queries add one handoff row into
+    /// Ask — the palette stays a command surface, Ask is the search surface.
     private var results: [PaletteItem] {
         let actions: [PaletteItem] = [
             .init(id: "record", icon: app.isRecording ? "stop.circle.fill" : "record.circle",
@@ -69,12 +70,10 @@ struct CommandPaletteView: View {
             }),
             .init(id: "nav.meetings", icon: "waveform.circle", title: "Go to Meetings",
                   subtitle: "Library", action: { app.navSection = .meetings }),
-            .init(id: "nav.chat", icon: "bubble.left.and.bubble.right", title: "Go to Assistant",
-                  subtitle: "Library", action: { app.navSection = .chat }),
+            .init(id: "nav.ask", icon: "sparkle.magnifyingglass", title: "Go to Ask",
+                  subtitle: "Library", action: { app.openAsk() }),
             .init(id: "nav.timeline", icon: "calendar.day.timeline.left", title: "Go to Timeline",
                   subtitle: "Library", action: { app.navSection = .timeline }),
-            .init(id: "nav.search", icon: "magnifyingglass", title: "Go to Search",
-                  subtitle: "Library", action: { app.navSection = .search }),
             .init(id: "dictation", icon: app.dictation.state.isRecording ? "stop.circle.fill" : "mic.badge.plus",
                   title: app.dictation.state.isRecording ? "Stop dictation" : "Start dictation",
                   subtitle: "Automation", action: { app.dictation.toggle(source: "palette") }),
@@ -89,24 +88,33 @@ struct CommandPaletteView: View {
             .init(id: "nav.settings", icon: "gearshape", title: "Go to Settings",
                   subtitle: "Configure", action: { app.navSection = .settings })
         ]
-        let meetings = app.meetings.prefix(8).map { meeting in
-            PaletteItem(id: "meeting.\(meeting.id.uuidString)", icon: "waveform",
-                        title: meeting.title,
-                        subtitle: "Open · \(meeting.appName) · \(meeting.durationLabel)",
-                        action: {
-                app.navSection = .meetings
-                app.selectedMeetingIDs = [meeting.id]
-            })
-        }
-        let all = actions + meetings
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return all }
-        // Token-containment match: every query token must appear in title/subtitle.
+        // Empty query: commands + recent meetings (quick navigation).
+        guard !q.isEmpty else {
+            let recents = app.meetings.prefix(8).map { meeting in
+                PaletteItem(id: "meeting.\(meeting.id.uuidString)", icon: "waveform",
+                            title: meeting.title,
+                            subtitle: "Open · \(meeting.appName) · \(meeting.durationLabel)",
+                            action: {
+                    app.navSection = .meetings
+                    app.selectedMeetingIDs = [meeting.id]
+                })
+            }
+            return actions + recents
+        }
+        // Non-empty query: matching commands, then a single handoff into Ask
+        // (spec §2.3: the palette's meeting-search rows hand off to Ask).
         let tokens = q.split(separator: " ").map(String.init)
-        return all.filter { item in
+        let matched = actions.filter { item in
             let hay = (item.title + " " + item.subtitle).lowercased()
             return tokens.allSatisfy { hay.contains($0) }
         }
+        let raw = query.trimmingCharacters(in: .whitespaces)
+        let handoff = PaletteItem(id: "ask.handoff", icon: "sparkle.magnifyingglass",
+                                  title: "Search “\(raw)” in Ask",
+                                  subtitle: "Ask",
+                                  action: { app.openAsk(query: raw) })
+        return matched + [handoff]
     }
 
     private func move(by delta: Int) {

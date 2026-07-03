@@ -112,7 +112,7 @@ struct LokalBotApp: App {
 final class AppState: ObservableObject {
 
     enum NavSection: Hashable {
-        case meetings, timeline, type, ask, chat, search, models, settings
+        case meetings, timeline, type, ask, models, settings
 
         /// Section names accepted from the UI-test capture environment and
         /// deep links. Legacy pre-merge names keep working: "dictation" and

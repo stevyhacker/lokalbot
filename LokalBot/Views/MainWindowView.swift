@@ -76,8 +76,8 @@ struct MainWindowView: View {
         }
     }
 
-    /// Master/detail sections (Meetings, Assistant, Timeline) use the native
-    /// three-column split; single-surface sections (forms, search) use two.
+    /// Master/detail sections (Meetings, Ask, Timeline) use the native
+    /// three-column split; single-surface sections (forms) use two.
     @ViewBuilder private var navigation: some View {
         if app.navSection == .timeline {
             NavigationSplitView {
@@ -103,15 +103,6 @@ struct MainWindowView: View {
             } detail: {
                 AskView()
             }
-        } else if app.navSection == .chat {
-            NavigationSplitView {
-                sidebar
-            } content: {
-                ChatConversationList()
-                    .navigationSplitViewColumnWidth(min: 220, ideal: 260)
-            } detail: {
-                ChatView()
-            }
         } else if app.navSection == .models {
             NavigationSplitView {
                 sidebar
@@ -123,12 +114,6 @@ struct MainWindowView: View {
                 sidebar
             } detail: {
                 SettingsView()
-            }
-        } else if app.navSection == .search {
-            NavigationSplitView {
-                sidebar
-            } detail: {
-                SearchView().navigationTitle("Search")
             }
         } else {
             NavigationSplitView {
@@ -147,15 +132,12 @@ struct MainWindowView: View {
                 Label("Meetings", systemImage: "waveform.circle")
                     .tag(AppState.NavSection.meetings)
                     .accessibilityIdentifier("sidebar.meetings")
-                Label("Assistant", systemImage: "bubble.left.and.bubble.right")
-                    .tag(AppState.NavSection.chat)
-                    .accessibilityIdentifier("sidebar.chat")
                 Label("Timeline", systemImage: "calendar.day.timeline.left")
                     .tag(AppState.NavSection.timeline)
                     .accessibilityIdentifier("sidebar.timeline")
-                Label("Search", systemImage: "magnifyingglass")
-                    .tag(AppState.NavSection.search)
-                    .accessibilityIdentifier("sidebar.search")
+                Label("Ask", systemImage: "sparkle.magnifyingglass")
+                    .tag(AppState.NavSection.ask)
+                    .accessibilityIdentifier("sidebar.ask")
             }
             Section("Automation") {
                 Label("Type", systemImage: "keyboard")

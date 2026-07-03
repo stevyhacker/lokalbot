@@ -1,101 +1,11 @@
 import SwiftUI
 
-/// The "Chat" section: a conversational assistant over the user's meetings.
-/// Reuses the summarisation `TextEngine` and a small ReAct agent (`ChatAgent`)
-/// that can search transcripts, list meetings, and read a meeting's summary or
-/// transcript via tool calls — all on-device.
-struct ChatView: View {
-    @EnvironmentObject var app: AppState
-
-    var body: some View {
-        ChatContent(model: app.chat)
-            .navigationTitle("Assistant")
-    }
-}
-
-private struct ChatContent: View {
-    @ObservedObject var model: ChatViewModel
-    @FocusState private var inputFocused: Bool
-
-    var body: some View {
-        VStack(spacing: 0) {
-            transcript
-            Divider()
-            inputBar
-        }
-        .onAppear { inputFocused = true }
-    }
-
-    // MARK: - Transcript
-
-    @ViewBuilder private var transcript: some View {
-        if model.messages.isEmpty {
-            emptyState
-        } else {
-            ChatTranscriptView(model: model)
-        }
-    }
-
-    private var emptyState: some View {
-        ContentUnavailableView {
-            Label("Chat with your meetings", systemImage: "bubble.left.and.bubble.right")
-        } description: {
-            Text("Ask about anything from your recorded meetings — decisions, action items, who said what. Everything stays on this Mac.")
-                .frame(maxWidth: 380)
-        } actions: {
-            VStack(spacing: 8) {
-                ForEach(model.suggestions, id: \.self) { suggestion in
-                    Button { model.send(suggestion) } label: {
-                        HStack {
-                            Text(suggestion).foregroundStyle(.primary)
-                            Spacer(minLength: 8)
-                            Image(systemName: "arrow.up.circle.fill").foregroundStyle(.tint)
-                        }
-                        .padding(.horizontal, 12).padding(.vertical, 9)
-                        .frame(maxWidth: 400)
-                        .background(.quaternary.opacity(0.5),
-                                    in: RoundedRectangle(cornerRadius: Brand.Radius.control))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.top, 4)
-        }
-        .accessibilityIdentifier("chat.empty")
-    }
-
-    // MARK: - Input
-
-    private var inputBar: some View {
-        HStack(alignment: .center, spacing: 8) {
-            TextField("Ask about your meetings…", text: $model.draft)
-                .textFieldStyle(.plain)
-                .focused($inputFocused)
-                .onSubmit { model.send() }
-                .padding(.horizontal, 10).padding(.vertical, 8)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
-                .accessibilityIdentifier("chat.input")
-
-            if model.isResponding {
-                Button(action: model.stop) {
-                    Image(systemName: "stop.circle.fill").font(.title2)
-                }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
-                .help("Stop")
-                .accessibilityIdentifier("chat.stop")
-            } else {
-                Button { model.send() } label: {
-                    Image(systemName: "arrow.up.circle.fill").font(.title2)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(model.canSend ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
-                .disabled(!model.canSend)
-                .accessibilityIdentifier("chat.send")
-            }
-        }
-        .padding(12)
-    }
-}
+/// The assistant's conversation surfaces: the editorial transcript embedded
+/// by the Ask section (spec §2.3), and the saved-conversation list shown in
+/// Ask's content column. The assistant itself is a small ReAct agent
+/// (`ChatAgent`) over the summarisation `TextEngine` that can search
+/// transcripts, list meetings, and read a meeting's summary or transcript
+/// via tool calls — all on-device.
 
 // MARK: - Editorial transcript
 
