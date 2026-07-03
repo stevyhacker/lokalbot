@@ -42,8 +42,18 @@ struct OnboardingView: View {
         AppPermission.coreCases
     }
 
+    /// Welcome mode shows only the optional grants the user's own choices made
+    /// relevant (Accessibility always helps meeting detection; Screen Recording
+    /// only once screenshots were opted in). Input Monitoring waits until
+    /// dictation/cotyping are enabled in the Type tab. Repair mode lists every
+    /// optional grant so nothing is unreachable.
     private var optionalPermissions: [AppPermission] {
-        AppPermission.allCases.filter(\.isOptionalOnboardingEnhancement)
+        guard isWelcomeMode else {
+            return AppPermission.allCases.filter(\.isOptionalOnboardingEnhancement)
+        }
+        var relevant: [AppPermission] = [.accessibility]
+        if app.settings.screenshotsEnabled { relevant.append(.screenRecording) }
+        return relevant
     }
 
     private var missingRequiredCount: Int {
@@ -334,10 +344,9 @@ private extension OnboardingView {
 
     var permissionSubtitle: String {
         if missingRequiredCount == 0 {
-            return "Required permissions are granted. Relaunch if macOS asked you to restart the app."
+            return "The microphone is granted — you're ready. Optional grants can wait until you turn their features on."
         }
-        let noun = missingRequiredCount == 1 ? "permission" : "permissions"
-        return "Grant the \(missingRequiredCount) required \(noun), then come back here. Cotype input monitoring is optional."
+        return "Only the microphone is required — it records your side of a call. Everything else is optional and asked for when its feature is enabled."
     }
 }
 
@@ -366,7 +375,7 @@ private extension OnboardingView {
                 .tint(Brand.teal)
                 .controlSize(.large)
                 .disabled(!permissions.allGranted)
-                .help(permissions.allGranted ? "" : "Grant the required permissions to finish setup.")
+                .help(permissions.allGranted ? "" : "Grant microphone access to finish setup.")
             } else if let next = step.next {
                 Button(step == .dayMemory ? "Continue to permissions" : "Continue") {
                     go(to: next)

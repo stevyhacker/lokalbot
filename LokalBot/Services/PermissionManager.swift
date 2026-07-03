@@ -4,9 +4,9 @@ import ApplicationServices
 import Combine
 import CoreGraphics
 
-/// The exactly three macOS privacy permissions LokalBot needs. System-audio
-/// capture rides on the `com.apple.security.device.audio-input` entitlement, so
-/// it is not a TCC prompt and is intentionally absent here.
+/// The macOS privacy permissions LokalBot can use. System-audio capture rides
+/// on the `com.apple.security.device.audio-input` entitlement, so it is not a
+/// TCC prompt and is intentionally absent here.
 ///
 /// Pure metadata plus stateless TCC reads: the enum stays off `@MainActor` so
 /// its logic (titles, grant checks) is unit-testable on any thread, while the
@@ -20,9 +20,13 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
 
     var id: Self { self }
 
-    /// The permissions the core app needs (recording + day tracking). Cotyping's
-    /// Input Monitoring is opt-in, so onboarding / `allGranted` exclude it.
-    static let coreCases: [AppPermission] = [.microphone, .screenRecording, .accessibility]
+    /// The only permission required to finish onboarding: the microphone, which
+    /// the core promise (record your side of a call) cannot work without.
+    /// Everything else is requested at the moment its feature is enabled —
+    /// Accessibility when day tracking or cotyping turns on (it also improves
+    /// browser-meeting detection), Screen Recording when screenshots turn on,
+    /// Input Monitoring when the dictation/cotyping shortcuts arm.
+    static let coreCases: [AppPermission] = [.microphone]
 
     /// System-Settings-style label.
     var title: String {
@@ -52,9 +56,9 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
         case .screenRecording:
             "Capture screenshots for day memory — only while that feature is on. System audio does not need this."
         case .accessibility:
-            "Read app and window context."
+            "Name windows in your timeline and spot browser meetings."
         case .inputMonitoring:
-            "Optional: detect dictation and cotyping shortcuts."
+            "Detect the dictation and cotyping shortcuts."
         }
     }
 
@@ -63,7 +67,7 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
     }
 
     var isOptionalOnboardingEnhancement: Bool {
-        self == .inputMonitoring
+        !Self.coreCases.contains(self)
     }
 
     /// One-sentence rationale shown beside each permission row.
@@ -183,9 +187,18 @@ final class PermissionManager: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
-    /// Whether all three permissions are currently granted.
+    /// Whether every onboarding-required permission (just the microphone) is
+    /// currently granted. Optional grants never block this.
     var allGranted: Bool {
         AppPermission.coreCases.allSatisfy { granted[$0] == true }
+    }
+
+    /// Fires the native prompt only when `permission` is still missing — the
+    /// "ask at the moment the feature is enabled" hook for Settings toggles.
+    func requestIfNeeded(_ permission: AppPermission) {
+        guard granted[permission] != true, !permission.isGranted else { return }
+        permission.request()
+        refresh()
     }
 
     /// Adds one permission-surface consumer and arms a ~1.5s catch-up poll so the

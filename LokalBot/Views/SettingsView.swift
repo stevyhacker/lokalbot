@@ -142,9 +142,11 @@ struct SettingsView: View {
                                      "screen recording", "system audio", "accessibility",
                                      "input monitoring", "keyboard", "relaunch", "tcc"]) {
                 Section("Permissions") {
-                    ForEach(AppPermission.coreCases) { permission in
-                        PermissionRow(permission: permission)
-                    }
+                    PermissionRow(permission: .microphone)
+                    PermissionRow(permission: .accessibility,
+                                  why: "Optional — window titles for the day timeline and browser-meeting detection.")
+                    PermissionRow(permission: .screenRecording,
+                                  why: "Optional — only used while screenshot capture (Day tracking) is on. System audio does not need it.")
                     PermissionRow(permission: .inputMonitoring,
                                   why: "Optional — powers the dictation and cotyping shortcuts.")
                     HStack {
@@ -248,7 +250,9 @@ struct SettingsView: View {
                 Section("Day tracking") {
                     Toggle("Track app & window activity", isOn: Binding(
                         get: { app.settings.trackingEnabled },
-                        set: { app.settings.trackingEnabled = $0; app.applyTrackingSetting() }))
+                        set: { app.settings.trackingEnabled = $0
+                               if $0 { PermissionManager.shared.requestIfNeeded(.accessibility) }
+                               app.applyTrackingSetting() }))
                     LabeledContent("Window titles") {
                         if ActivitySampler.hasAccessibility {
                             Text("Accessibility granted").foregroundStyle(.secondary)
@@ -261,7 +265,9 @@ struct SettingsView: View {
                     }
                     Toggle("Screen context capture (on app/window switch, OCR'd locally, encrypted at rest)", isOn: Binding(
                         get: { app.settings.screenshotsEnabled },
-                        set: { app.settings.screenshotsEnabled = $0; app.screenshots.restart() }))
+                        set: { app.settings.screenshotsEnabled = $0
+                               if $0 { PermissionManager.shared.requestIfNeeded(.screenRecording) }
+                               app.screenshots.restart() }))
                     if app.settings.screenshotsEnabled {
                         Slider(value: Binding(
                             get: { app.settings.screenshotIntervalMinutes },
