@@ -1,0 +1,69 @@
+# XCUITest suite (Scripts/ui-tests.sh) — scheduled + on-demand, NOT a PR gate.
+#
+# UI tests drive the app through the Accessibility APIs, which needs the
+# runner's controlling process to hold two TCC grants (Automation → Xcode and
+# Accessibility — see the header of Scripts/ui-tests.sh). GitHub's hosted
+# macOS images pre-authorize XCUITest automation, but that arrangement is
+# best-effort and can regress between image releases; a self-hosted Mac whose
+# runner agent holds the grants is the reliable home for this job. If a run
+# dies with "Timed out while enabling automation mode.", the runner lost the
+# TCC grant — that is an infrastructure failure, not a test regression.
+#
+# Deliberately not wired into pull_request: the suite takes tens of minutes
+# and an infra-flaky gate is worse than no gate. Weekly schedule + manual
+# dispatch keeps the signal without blocking merges.
+
+name: UI Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: "Optional single test, e.g. MainWindowUITests/testSearchFindsTranscriptHitAndDeepLinks"
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 5 * * 1" # Mondays 05:00 UTC, runs against the default branch
+
+concurrency:
+  group: ui-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ui-tests:
+    name: XCUITest (macOS)
+    # Move to a self-hosted Mac (runs-on: [self-hosted, macOS]) once one
+    # exists — see the TCC note at the top of this file.
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Cache llama.cpp vendor
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: Vendor
+          key: vendor-${{ runner.os }}-${{ hashFiles('Scripts/fetch-llama.sh') }}
+
+      - name: Fetch llama.cpp vendor
+        run: bash Scripts/fetch-llama.sh
+
+      - name: Run UI tests
+        env:
+          CODE_SIGNING_ALLOWED: "NO" # hosted runners hold no dev cert
+        run: Scripts/ui-tests.sh ${{ inputs.filter }}

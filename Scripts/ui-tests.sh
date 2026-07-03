@@ -31,6 +31,12 @@ ARGS=(
   -derivedDataPath "$DERIVED"
 )
 
+# CI runners hold no signing certificate; let workflows opt out of signing
+# (CODE_SIGNING_ALLOWED=NO Scripts/ui-tests.sh) without changing local runs.
+if [ "${CODE_SIGNING_ALLOWED:-}" != "" ]; then
+  ARGS+=("CODE_SIGNING_ALLOWED=${CODE_SIGNING_ALLOWED}")
+fi
+
 if [ "${1:-}" != "" ]; then
   FILTER="${1#LokalBotUITests/}"
   ARGS+=(-only-testing:"LokalBotUITests/$FILTER")

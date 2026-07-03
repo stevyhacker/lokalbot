@@ -1,0 +1,223 @@
+# Tag-triggered release pipeline for LokalBot.
+#
+# Automates the manual flow in RELEASING.md: import the Developer ID
+# certificate into a temporary keychain, archive + export with Hardened
+# Runtime forced ON (the project.yml default is OFF for fast local builds),
+# build the styled DMG, notarize + staple both the app and the DMG, Sparkle-
+# sign the DMG, render appcast.xml, and upload DMG + appcast to the GitHub
+# Release for the tag.
+#
+# Required repo secrets (see RELEASING.md "CI release"):
+#   MACOS_CERTIFICATE      base64 of the Developer ID Application .p12
+#   MACOS_CERTIFICATE_PWD  the .p12 passphrase
+#   KEYCHAIN_PWD           throwaway password for the temp keychain
+#   NOTARY_APPLE_ID        Apple ID used for notarytool
+#   NOTARY_APPLE_TEAM_ID   team ID (K96P3M3997)
+#   NOTARY_APPLE_PWD       app-specific password for notarytool
+#   SPARKLE_PRIVATE_KEY    base64 Ed25519 private key; written to a temp file
+#                          and passed to generate_appcast.py --ed-key-file.
+#                          The private key must NEVER be committed to the repo.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# One release build at a time; never cancel a run that may already be
+# notarizing or uploading.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # create the Release and upload DMG + appcast
+
+jobs:
+  release:
+    name: Archive, notarize, publish
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: latest-stable
+
+      # Fail fast if the tag doesn't match the Info.plist marketing version —
+      # Sparkle's enclosure URL embeds the tag, so a mismatch ships a feed
+      # pointing at the wrong asset path.
+      - name: Verify tag matches CFBundleShortVersionString
+        run: |
+          short_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' LokalBot/Info.plist)
+          tag="${GITHUB_REF_NAME#v}"
+          if [[ "${tag%%-*}" != "$short_version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match CFBundleShortVersionString $short_version. Bump LokalBot/Info.plist first (RELEASING.md step 1)." >&2
+            exit 1
+          fi
+
+      # Developer ID signing needs the certificate in a keychain codesign can
+      # reach. A dedicated temp keychain keeps the runner's login keychain out
+      # of the picture and is deleted in the always() cleanup step below.
+      - name: Import Developer ID certificate
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          KEYCHAIN_PWD: ${{ secrets.KEYCHAIN_PWD }}
+        run: |
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PWD" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$keychain"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" \
+            -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$KEYCHAIN_PWD" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Cache llama.cpp vendor
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: Vendor
+          key: vendor-${{ runner.os }}-${{ hashFiles('Scripts/fetch-llama.sh') }}
+
+      - name: Fetch llama.cpp vendor
+        run: bash Scripts/fetch-llama.sh
+
+      # Hardened Runtime must be ON for notarization; the project default is
+      # OFF (project.yml) so local dev builds stay fast. Overriding here is the
+      # release-time flip RELEASING.md step 2 documents.
+      - name: Archive (Release, Hardened Runtime ON)
+        run: |
+          xcodebuild archive \
+            -project LokalBot.xcodeproj \
+            -scheme LokalBot \
+            -configuration Release \
+            -archivePath build/LokalBot.xcarchive \
+            ENABLE_HARDENED_RUNTIME=YES
+
+      - name: Export Developer ID app
+        run: |
+          cat > build/exportOptions.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>developer-id</string>
+            <key>teamID</key><string>K96P3M3997</string>
+            <key>signingStyle</key><string>automatic</string>
+          </dict>
+          </plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath build/LokalBot.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist build/exportOptions.plist
+
+      # Staple the app itself (not just the DMG) so first launch succeeds
+      # offline after drag-install.
+      - name: Notarize + staple the app
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_APPLE_TEAM_ID: ${{ secrets.NOTARY_APPLE_TEAM_ID }}
+          NOTARY_APPLE_PWD: ${{ secrets.NOTARY_APPLE_PWD }}
+        run: |
+          ditto -c -k --keepParent build/export/LokalBot.app build/LokalBot-app.zip
+          xcrun notarytool submit build/LokalBot-app.zip \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --team-id "$NOTARY_APPLE_TEAM_ID" \
+            --password "$NOTARY_APPLE_PWD" \
+            --wait
+          xcrun stapler staple build/export/LokalBot.app
+
+      - name: Build styled DMG
+        run: |
+          pip3 install --quiet dmgbuild
+          python3 Scripts/build_release_dmg.py \
+            --app build/export/LokalBot.app \
+            --output build/LokalBot.dmg
+
+      - name: Notarize + staple the DMG
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_APPLE_TEAM_ID: ${{ secrets.NOTARY_APPLE_TEAM_ID }}
+          NOTARY_APPLE_PWD: ${{ secrets.NOTARY_APPLE_PWD }}
+        run: |
+          xcrun notarytool submit build/LokalBot.dmg \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --team-id "$NOTARY_APPLE_TEAM_ID" \
+            --password "$NOTARY_APPLE_PWD" \
+            --wait
+          xcrun stapler staple build/LokalBot.dmg
+
+      # sign_update ships in Sparkle's release tarball; the SwiftPM checkout
+      # used for the app build doesn't expose it on PATH. Same 2.9.1 pin as
+      # project.yml so the signing tool matches the framework we embed.
+      - name: Fetch Sparkle sign_update
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/Sparkle.tar.xz" \
+            https://github.com/sparkle-project/Sparkle/releases/download/2.9.1/Sparkle-2.9.1.tar.xz
+          mkdir -p "$RUNNER_TEMP/sparkle"
+          tar -xJf "$RUNNER_TEMP/Sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle"
+
+      # LAST signing step: the Sparkle signature covers the exact stapled DMG
+      # bytes, so nothing may touch the DMG after this. The private key exists
+      # only as a temp file for the duration of this step.
+      - name: Sparkle-sign + generate appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          key_file="$RUNNER_TEMP/sparkle-ed25519.key"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$key_file"
+          python3 Scripts/generate_appcast.py \
+            --archive build/LokalBot.dmg \
+            --app build/export/LokalBot.app \
+            --repo "$GITHUB_REPOSITORY" \
+            --output build/appcast.xml \
+            --sign-update-tool "$RUNNER_TEMP/sparkle/bin/sign_update" \
+            --ed-key-file "$key_file"
+          rm -f "$key_file"
+
+      # Upload both assets: the Sparkle feed resolves via
+      # releases/latest/download/appcast.xml, so the appcast must live on the
+      # Release next to the DMG it signs. Hyphenated tags (v1.0.0-beta) become
+      # pre-releases and never become "latest" (RELEASING.md step 7).
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease_flag=""
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            prerelease_flag="--prerelease"
+          fi
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "LokalBot ${GITHUB_REF_NAME#v}" \
+              --generate-notes \
+              $prerelease_flag
+          fi
+          gh release upload "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber \
+            build/LokalBot.dmg build/appcast.xml
+
+      - name: Delete temp keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/release.keychain-db" || true
+          security list-keychains -d user -s login.keychain-db

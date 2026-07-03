@@ -12,9 +12,9 @@ name: Lint
 
 on:
   pull_request:
-    branches: [main]
+    branches: [master, dev]
   push:
-    branches: [main]
+    branches: [master, dev]
 
 concurrency:
   group: lint-${{ github.ref }}

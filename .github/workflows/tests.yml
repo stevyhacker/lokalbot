@@ -1,7 +1,8 @@
 # PR-time test runner for LokalBot.
 #
-# Runs `xcodebuild test` against the LokalBot scheme on every PR into main and
-# on pushes to main. Sibling to Build/Lint/XcodeGen — kept separate so each
+# Runs `xcodebuild test` against the LokalBot scheme on every PR into
+# master/dev and on pushes to those branches. Sibling to Build/Lint/XcodeGen —
+# kept separate so each
 # gate has one clear failure mode: a broken test can't mask a compile
 # regression, and a compile failure doesn't hide which tests would fail.
 #
@@ -13,9 +14,9 @@ name: Tests
 
 on:
   pull_request:
-    branches: [main]
+    branches: [master, dev]
   push:
-    branches: [main]
+    branches: [master, dev]
 
 concurrency:
   group: tests-${{ github.ref }}

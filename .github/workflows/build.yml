@@ -1,7 +1,7 @@
 # PR-time build gate for LokalBot (product name: BotinaV2).
 #
-# On PRs into main and on pushes to main: regenerate the XcodeGen project and
-# compile in Debug. Debug type-checks every file (same compile surface as
+# On PRs into master/dev and on pushes to those branches: regenerate the
+# XcodeGen project and compile in Debug. Debug type-checks every file (same compile surface as
 # Release) but is faster and more deterministic, so it's the right signal for a
 # "does it still build" gate.
 #
@@ -13,9 +13,9 @@ name: Build
 
 on:
   pull_request:
-    branches: [main]
+    branches: [master, dev]
   push:
-    branches: [main]
+    branches: [master, dev]
 
 # Cancel superseded runs for the same ref so rapid pushes/force-pushes don't
 # leave a backlog of stale builds burning runner minutes.

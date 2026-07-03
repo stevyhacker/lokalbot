@@ -14,9 +14,9 @@ name: XcodeGen
 
 on:
   pull_request:
-    branches: [main]
+    branches: [master, dev]
   push:
-    branches: [main]
+    branches: [master, dev]
 
 concurrency:
   group: xcodegen-${{ github.ref }}
