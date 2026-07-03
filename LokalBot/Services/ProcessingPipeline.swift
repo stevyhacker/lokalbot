@@ -124,6 +124,8 @@ final class ProcessingPipeline: ObservableObject {
                                                   meeting: meeting,
                                                   folder: folder,
                                                   config: config)
+                transcript = SpeakerAutoNamer.applyingAliases(
+                    to: transcript, participantNames: meeting.participantNameHints ?? [])
                 try write(transcript, to: folder)
                 clearCheckpoints(in: folder)
             }
