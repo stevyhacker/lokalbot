@@ -32,7 +32,7 @@ Scripts/ui-tests.sh MainWindowUITests/testSearchFindsTranscriptHitAndDeepLinks
 Scripts/install-app.sh && Scripts/e2e.sh
 ```
 
-- Running tests regenerates `default.profraw` (tracked). Restore it with `git checkout -- default.profraw`; never commit it.
+- Running tests regenerates `default.profraw`; it's gitignored (`*.profraw`) — never commit one.
 - UI tests need the controlling terminal to hold **Automation → Xcode** and **Accessibility** TCC grants; "Timed out while enabling automation mode" means the grant is missing, not a bug.
 - For local development build/run, use the **LokalBot Dev** scheme (see Targets below).
 - The first build runs `Scripts/fetch-llama.sh` / `fetch-sherpa.sh` pre-build phases, vendoring pinned native runtimes into `Vendor/` (llama.cpp pinned to `b9844`).
