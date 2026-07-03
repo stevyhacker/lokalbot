@@ -32,27 +32,8 @@ private struct ChatContent: View {
         if model.messages.isEmpty {
             emptyState
         } else {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        ForEach(model.messages) { message in
-                            ChatBubble(message: message).id(message.id)
-                        }
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .accessibilityIdentifier("chat.messages")
-                .onChange(of: model.messages.count) { scrollToEnd(proxy) }
-                .onChange(of: model.messages.last?.text) { scrollToEnd(proxy) }
-                .onChange(of: model.messages.last?.activity.count) { scrollToEnd(proxy) }
-            }
+            ChatTranscriptView(model: model)
         }
-    }
-
-    private func scrollToEnd(_ proxy: ScrollViewProxy) {
-        guard let last = model.messages.last?.id else { return }
-        withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(last, anchor: .bottom) }
     }
 
     private var emptyState: some View {
@@ -116,48 +97,123 @@ private struct ChatContent: View {
     }
 }
 
-// MARK: - Bubble
+// MARK: - Editorial transcript
 
-private struct ChatBubble: View {
+/// The conversation transcript, restyled from chat bubbles to an editorial
+/// layout (spec §2.3): user turns as compact teal-tinted rows, assistant
+/// turns as full-width flat text with tool activity collapsed to one
+/// "worked: …" line. Embedded by the Ask surface.
+struct ChatTranscriptView: View {
+    @ObservedObject var model: ChatViewModel
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    ForEach(model.messages) { message in
+                        EditorialTurn(message: message).id(message.id)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .accessibilityIdentifier("chat.messages")
+            .onChange(of: model.messages.count) { scrollToEnd(proxy) }
+            .onChange(of: model.messages.last?.text) { scrollToEnd(proxy) }
+            .onChange(of: model.messages.last?.activity.count) { scrollToEnd(proxy) }
+        }
+    }
+
+    private func scrollToEnd(_ proxy: ScrollViewProxy) {
+        guard let last = model.messages.last?.id else { return }
+        withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(last, anchor: .bottom) }
+    }
+}
+
+private struct EditorialTurn: View {
     let message: ChatMessage
 
     var body: some View {
-        HStack {
-            if message.role == .user { Spacer(minLength: 48) }
-            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
-                if !message.activity.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(message.activity) { ActivityRow(activity: $0) }
-                    }
-                }
-                content
-            }
-            if message.role == .assistant { Spacer(minLength: 48) }
+        Group {
+            if message.role == .user { userRow } else { assistantBlock }
         }
-        .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
-        .accessibilityIdentifier(message.role == .user ? "chat.message.user" : "chat.message.assistant")
+        .accessibilityIdentifier(message.role == .user ? "chat.message.user"
+                                                       : "chat.message.assistant")
     }
 
-    @ViewBuilder private var content: some View {
-        if message.role == .user {
+    private var userRow: some View {
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(Brand.teal)
+                .frame(width: 3)
             Text(message.text)
+                .font(.callout.weight(.medium))
                 .textSelection(.enabled)
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(.tint, in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
-        } else if message.isPending && message.text.isEmpty {
-            TypingIndicator()
-                .padding(.horizontal, 12).padding(.vertical, 11)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
-        } else {
-            MarkdownText(message.text)
-                .textSelection(.enabled)
-                .foregroundStyle(message.isError ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
-                .padding(.horizontal, 12).padding(.vertical, 9)
-                .background(message.isError
-                            ? AnyShapeStyle(Color.red.opacity(0.08))
-                            : AnyShapeStyle(.quaternary.opacity(0.5)),
-                            in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(Brand.teal.opacity(0.08),
+                    in: RoundedRectangle(cornerRadius: Brand.Radius.control))
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var assistantBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !message.activity.isEmpty {
+                WorkedLine(activities: message.activity)
+            }
+            if message.isPending && message.text.isEmpty {
+                TypingIndicator()
+            } else {
+                MarkdownText(message.text)
+                    .textSelection(.enabled)
+                    .foregroundStyle(message.isError ? AnyShapeStyle(.red)
+                                                     : AnyShapeStyle(.primary))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Tool activity collapsed to a single caption line ("worked: searched
+/// transcripts · read summary"); expands to the per-step rows on click.
+/// While a step is in flight it shows that step with a spinner instead.
+private struct WorkedLine: View {
+    let activities: [ChatMessage.Activity]
+    @State private var expanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var inFlight: ChatMessage.Activity? { activities.first { !$0.done } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                    expanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    if let current = inFlight {
+                        ProgressView().controlSize(.small).scaleEffect(0.7)
+                            .frame(width: 12, height: 12)
+                        Text(current.text)
+                    } else {
+                        Image(systemName: "checkmark.circle").font(.caption2)
+                        Text("worked: " + activities.map(\.text).joined(separator: " · "))
+                            .lineLimit(1)
+                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                            .font(.caption2)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(activities) { ActivityRow(activity: $0) }
+                }
+            }
         }
     }
 }
