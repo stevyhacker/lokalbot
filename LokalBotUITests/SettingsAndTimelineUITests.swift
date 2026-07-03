@@ -11,9 +11,9 @@ final class SettingsUITests: XCTestCase {
         let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "Settings")
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
-        // Seeded activity → Capture opens in Day scope, so wait on the scope
-        // control rather than the meeting list.
-        XCTAssertTrue(app.descendants(matching: .any)["capture.scope"]
+        // Timeline is the default section; with seeded activity the hour
+        // track renders, so wait on it rather than the meeting list.
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
             .waitForExistence(timeout: 10), "main window never rendered")
     }
 
@@ -90,14 +90,14 @@ final class SettingsUITests: XCTestCase {
             settingsJSON: settingsJSON)
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
-        XCTAssertTrue(app.descendants(matching: .any)["capture.scope"]
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
             .waitForExistence(timeout: 10), "main window never rendered after relaunch")
     }
 }
 
-/// Capture against a fixture with no activity blocks — pins the scope
-/// policy's no-activity default and the meetings-as-blocks track.
-final class CaptureDefaultScopeUITests: XCTestCase {
+/// Timeline against a fixture with no activity blocks — pins the
+/// meetings-as-blocks track (meetings alone populate the day track).
+final class TimelineWithoutActivityUITests: XCTestCase {
     private var fixture: SyntheticFixture.Library!
     private var app: XCUIApplication!
     private var defaultsSuiteName: String?
@@ -105,11 +105,11 @@ final class CaptureDefaultScopeUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         fixture = try SyntheticFixture.plant(includeActivity: false)
-        let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "CaptureDefaultScope")
+        let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "TimelineWithoutActivity")
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
-        XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 10),
-                      "main window never rendered")
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
+            .waitForExistence(timeout: 10), "main window never rendered")
     }
 
     override func tearDownWithError() throws {
@@ -118,28 +118,20 @@ final class CaptureDefaultScopeUITests: XCTestCase {
         UITestHarness.cleanUp(defaultsSuiteName: defaultsSuiteName)
     }
 
-    /// With no activity blocks seeded, Capture defaults to Library scope
-    /// (spec open question 2 — resolved yes): the meeting list is the launch
-    /// surface and no phantom track renders. Switching to Day still shows
-    /// the seeded meetings as first-class track blocks (spec §2.2) rather
-    /// than the empty state.
-    func testCaptureWithoutActivityDefaultsToLibrary() {
-        XCTAssertTrue(app.outlines["meeting.list"].exists,
-                      "Library scope (meeting list) should be the no-activity default")
-        XCTAssertFalse(app.descendants(matching: .any)["timeline.track"].exists,
-                       "activity track should not render in Library scope")
-
-        let picker = app.descendants(matching: .any)["capture.scope"]
-        XCTAssertTrue(picker.waitForExistence(timeout: 6), "capture scope control missing")
-        let daySegment = picker.buttons["Day"].exists
-            ? picker.buttons["Day"] : picker.radioButtons["Day"]
-        daySegment.click()
-
-        // Meetings alone still populate the day track (meetings-as-blocks).
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
-            .waitForExistence(timeout: 6),
+    /// With no activity blocks seeded, the seeded meetings still render as
+    /// first-class track blocks (spec §2.2) rather than the empty state,
+    /// and the Meetings section shows the grouped list.
+    func testTimelineWithoutActivityShowsMeetingBlocks() {
+        // Meetings alone populate the day track (meetings-as-blocks).
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"].exists,
                       "day track with meeting blocks missing")
         XCTAssertFalse(UITestHarness.staticText(containing: "No activity recorded", in: app).exists,
                        "empty state shown despite seeded meetings in the track")
+
+        UITestHarness.clickSidebar("sidebar.meetings", in: app)
+        XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 6),
+                      "meeting list did not render in Meetings")
+        XCTAssertFalse(app.descendants(matching: .any)["timeline.track"].exists,
+                       "activity track should not render in Meetings")
     }
 }

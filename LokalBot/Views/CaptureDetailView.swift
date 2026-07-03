@@ -1,12 +1,12 @@
 import SwiftUI
 import AppKit
 
-/// The Capture detail pane — a selection-driven inspector (spec §2.2): a
-/// selected meeting opens the unchanged `MeetingDetailView`, a selected
-/// activity block gets its card + per-app context + block-scoped
+/// The Timeline/Meetings detail pane — a selection-driven inspector (spec
+/// §2.2): a selected meeting opens the unchanged `MeetingDetailView`, a
+/// selected activity block gets its card + per-app context + block-scoped
 /// screenshots, and no selection shows the day overview (stat tiles,
-/// per-app proportion bar + totals, digest) in Day scope or the
-/// getting-started card in Library scope.
+/// per-app proportion bar + totals, digest) in Timeline or the
+/// getting-started card in Meetings.
 struct CaptureDetailView: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var model: CaptureModel
@@ -43,10 +43,10 @@ struct CaptureDetailView: View {
         }
     }
 
-    /// Library keeps the getting-started card as its empty state (it is the
-    /// new-user landing surface); Day shows the day overview.
+    /// Meetings keeps the getting-started card as its empty state (it is the
+    /// new-user landing surface); Timeline shows the day overview.
     @ViewBuilder private var noSelection: some View {
-        if (app.captureScope ?? .library) == .day {
+        if app.navSection == .timeline {
             dayOverview
         } else {
             GettingStartedCard()

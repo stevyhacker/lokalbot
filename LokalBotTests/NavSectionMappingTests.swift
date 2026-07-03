@@ -7,7 +7,8 @@ import XCTest
 final class NavSectionMappingTests: XCTestCase {
 
     func testCaptureNamesMapToTheirSections() {
-        XCTAssertEqual(AppState.NavSection(captureName: "capture"), .capture)
+        XCTAssertEqual(AppState.NavSection(captureName: "timeline"), .timeline)
+        XCTAssertEqual(AppState.NavSection(captureName: "meetings"), .meetings)
         XCTAssertEqual(AppState.NavSection(captureName: "type"), .type)
         XCTAssertEqual(AppState.NavSection(captureName: "ask"), .ask)
         XCTAssertEqual(AppState.NavSection(captureName: "settings"), .settings)
@@ -30,9 +31,10 @@ final class NavSectionMappingTests: XCTestCase {
         XCTAssertNil(AppState.SettingsTab(captureName: "capture"))
     }
 
-    func testLegacyMeetingsAndTimelineNamesMapToCapture() {
-        XCTAssertEqual(AppState.NavSection(captureName: "meetings"), .capture)
-        XCTAssertEqual(AppState.NavSection(captureName: "Timeline"), .capture)
+    /// The pre-split merged "capture" section name lands on Timeline.
+    func testLegacyCaptureNameMapsToTimeline() {
+        XCTAssertEqual(AppState.NavSection(captureName: "capture"), .timeline)
+        XCTAssertEqual(AppState.NavSection(captureName: "Capture"), .timeline)
     }
 
     func testLegacyTypeNamesMapToType() {

@@ -76,14 +76,24 @@ struct MainWindowView: View {
         }
     }
 
-    /// Master/detail sections (Capture, Ask) use the native three-column
-    /// split; single-surface sections (forms) use two.
+    /// Master/detail sections (Timeline, Meetings, Ask) use the native
+    /// three-column split; single-surface sections (forms) use two.
     @ViewBuilder private var navigation: some View {
-        if app.navSection == .capture {
+        if app.navSection == .timeline {
             NavigationSplitView {
                 sidebar
             } content: {
-                CaptureContentView(model: capture, pendingDelete: $pendingDelete)
+                TimelineContentView(model: capture)
+                    .navigationSplitViewColumnWidth(min: 300, ideal: 380)
+            } detail: {
+                CaptureDetailView(model: capture, pendingDelete: $pendingDelete)
+            }
+        } else if app.navSection == .meetings {
+            NavigationSplitView {
+                sidebar
+            } content: {
+                MeetingListView(pendingDelete: $pendingDelete)
+                    .navigationTitle("Meetings")
                     .navigationSplitViewColumnWidth(min: 300, ideal: 380)
             } detail: {
                 CaptureDetailView(model: capture, pendingDelete: $pendingDelete)
@@ -115,9 +125,12 @@ struct MainWindowView: View {
     private var sidebar: some View {
         List(selection: sidebarSelection) {
             Section("Library") {
-                Label("Capture", systemImage: "waveform.circle")
-                    .tag(AppState.NavSection.capture)
-                    .accessibilityIdentifier("sidebar.capture")
+                Label("Timeline", systemImage: "calendar.day.timeline.left")
+                    .tag(AppState.NavSection.timeline)
+                    .accessibilityIdentifier("sidebar.timeline")
+                Label("Meetings", systemImage: "waveform.circle")
+                    .tag(AppState.NavSection.meetings)
+                    .accessibilityIdentifier("sidebar.meetings")
                 Label("Ask", systemImage: "sparkle.magnifyingglass")
                     .tag(AppState.NavSection.ask)
                     .accessibilityIdentifier("sidebar.ask")
@@ -137,7 +150,7 @@ struct MainWindowView: View {
     }
 
     private var sidebarSelection: Binding<AppState.NavSection?> {
-        Binding(get: { app.navSection }, set: { app.navSection = $0 ?? .capture })
+        Binding(get: { app.navSection }, set: { app.navSection = $0 ?? .timeline })
     }
 
 }
@@ -733,8 +746,7 @@ struct GettingStartedCard: View {
                     stepRow(done: nil) {
                         HStack(spacing: 8) {
                             Button("Turn on day tracking") {
-                                app.captureScope = .day
-                                app.navSection = .capture
+                                app.navSection = .timeline
                             }
                                 .buttonStyle(.bordered).controlSize(.small)
                             Text("to see where your time goes.")

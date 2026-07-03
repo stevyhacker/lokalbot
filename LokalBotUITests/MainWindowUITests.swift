@@ -19,12 +19,12 @@ final class MainWindowUITests: XCTestCase {
         let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "MainWindow")
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
-        // Wait until the main window has rendered the Capture scope control —
+        // Wait until the main window has rendered the Timeline's hour track —
         // every test starts from a known surface, otherwise XCUITest races
-        // the initial `loadMeetings()` + reindex sweep. (With seeded activity
-        // the default scope is Day, so the meeting list is NOT on screen yet.)
-        XCTAssertTrue(app.descendants(matching: .any)["capture.scope"]
-            .waitForExistence(timeout: 10), "capture scope control never rendered")
+        // the initial `loadMeetings()` + reindex sweep. (Timeline is the
+        // default section, so the meeting list is NOT on screen yet.)
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
+            .waitForExistence(timeout: 10), "timeline track never rendered")
     }
 
     override func tearDownWithError() throws {
@@ -68,10 +68,10 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Relaunch"].waitForExistence(timeout: 4),
                       "permissions section missing from Settings")
 
-        clickSidebar("sidebar.capture")
-        XCTAssertTrue(app.descendants(matching: .any)["capture.scope"]
+        clickSidebar("sidebar.timeline")
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
             .waitForExistence(timeout: 4),
-                      "capture section did not come back")
+                      "timeline section did not come back")
     }
 
     /// The Models tab of Settings (spec §2.5) renders its role cards —
@@ -99,20 +99,19 @@ final class MainWindowUITests: XCTestCase {
                       "embeddings model card identifier missing")
     }
 
-    // MARK: - Capture (Day scope)
+    // MARK: - Timeline
 
-    /// Capture's Day scope renders the merged surface from the seeded
+    /// The Timeline section renders the day surface from the seeded
     /// `activity_blocks` + meetings: the hour track (with a seeded block
     /// title and a meeting block in the teal lane) on the left, and the day
     /// overview's per-app totals in the detail pane — the old inspector's
     /// four-tab control is gone (spec §2.2).
-    func testCaptureDayRendersTrackAndOverview() {
-        clickSidebar("sidebar.capture")
-        // Seeded activity → the scope policy defaults to Day.
+    func testTimelineRendersTrackAndOverview() {
+        clickSidebar("sidebar.timeline")
         XCTAssertTrue(textWithContent("Time by app").firstMatch.waitForExistence(timeout: 6),
                       "day-overview totals headline missing — seeded activity did not load")
         XCTAssertTrue(textWithContent("Xcode").firstMatch.exists,
-                      "seeded activity app 'Xcode' missing from Capture")
+                      "seeded activity app 'Xcode' missing from Timeline")
         XCTAssertFalse(textWithContent("No activity recorded").firstMatch.exists,
                        "empty state shown despite seeded activity blocks")
         XCTAssertTrue(app.descendants(matching: .any)["timeline.track"].exists,
@@ -129,24 +128,20 @@ final class MainWindowUITests: XCTestCase {
                        "legacy inspector segmented control should be removed")
     }
 
-    /// The Day⇄Library scope control swaps the Capture content column both
-    /// ways: Day shows the hour track, Library shows the grouped meeting
-    /// list (spec §6: "Capture Day⇄Library toggle").
-    func testCaptureScopeTogglesBetweenDayAndLibrary() {
-        clickSidebar("sidebar.capture")
+    /// The sidebar swaps the content column between Timeline (hour track)
+    /// and Meetings (grouped meeting list) both ways.
+    func testSidebarTogglesBetweenTimelineAndMeetings() {
+        clickSidebar("sidebar.timeline")
         XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
-            .waitForExistence(timeout: 6), "Day scope should be the default with seeded activity")
+            .waitForExistence(timeout: 6), "hour track missing in Timeline")
 
         openLibrary()
         XCTAssertFalse(app.descendants(matching: .any)["timeline.track"].exists,
-                       "hour track should leave the screen in Library scope")
+                       "hour track should leave the screen in Meetings")
 
-        let picker = app.descendants(matching: .any)["capture.scope"]
-        let daySegment = picker.buttons["Day"].exists
-            ? picker.buttons["Day"] : picker.radioButtons["Day"]
-        daySegment.click()
+        clickSidebar("sidebar.timeline")
         XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
-            .waitForExistence(timeout: 4), "hour track did not come back in Day scope")
+            .waitForExistence(timeout: 4), "hour track did not come back in Timeline")
     }
 
     // MARK: - Detail tabs
@@ -355,17 +350,12 @@ final class MainWindowUITests: XCTestCase {
         UITestHarness.clickSidebar(identifier, in: app)
     }
 
-    /// Switch Capture to Library scope and wait for the meeting list —
+    /// Open the Meetings section and wait for the meeting list —
     /// the precondition for every list/detail/delete test.
     private func openLibrary() {
-        clickSidebar("sidebar.capture")
-        let picker = app.descendants(matching: .any)["capture.scope"]
-        XCTAssertTrue(picker.waitForExistence(timeout: 6), "capture scope control missing")
-        let segment = picker.buttons["Library"].exists
-            ? picker.buttons["Library"] : picker.radioButtons["Library"]
-        segment.click()
-        XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 4),
-                      "meeting list did not render in Library scope")
+        clickSidebar("sidebar.meetings")
+        XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 6),
+                      "meeting list did not render in Meetings")
     }
 
     private func selectMeeting(_ meeting: SyntheticFixture.Meeting) {

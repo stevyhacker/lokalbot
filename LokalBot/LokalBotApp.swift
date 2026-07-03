@@ -112,16 +112,17 @@ struct LokalBotApp: App {
 final class AppState: ObservableObject {
 
     enum NavSection: Hashable {
-        case capture, type, ask, settings
+        case timeline, meetings, type, ask, settings
 
         /// Section names accepted from the UI-test capture environment and
-        /// deep links. Legacy pre-merge names keep working: "meetings" and
-        /// "timeline" land on the merged Capture section, "dictation" and
-        /// "cotyping" on Type, "search"/"chat" on Ask (spec §2.1), and
-        /// "models" on Settings, which absorbed it as a tab (spec §2.5).
+        /// deep links. Legacy names keep working: "capture" (the pre-split
+        /// merged section) lands on Timeline, "dictation" and "cotyping" on
+        /// Type, "search"/"chat" on Ask (spec §2.1), and "models" on
+        /// Settings, which absorbed it as a tab (spec §2.5).
         init?(captureName: String) {
             switch captureName.lowercased() {
-            case "capture", "meetings", "timeline": self = .capture
+            case "timeline", "capture": self = .timeline
+            case "meetings": self = .meetings
             case "type", "dictation", "cotyping": self = .type
             case "ask", "search", "chat": self = .ask
             case "settings", "models": self = .settings
@@ -202,16 +203,11 @@ final class AppState: ObservableObject {
 
     // Navigation (main window): sidebar section, selected meeting, and a
     // pending "jump to timestamp" handed from search to the detail player.
-    @Published var navSection: NavSection = .capture
+    @Published var navSection: NavSection = .timeline
     @Published var typeTab: TypeTab = .dictation
     @Published var settingsTab: SettingsTab = .general
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []
     @Published var pendingSeek: TimeInterval?
-
-    /// Capture's Day⇄Library scope. Nil until first resolved by
-    /// `CaptureScopePolicy` (Day when the day has activity, else Library);
-    /// deep links force `.library` so the meeting list is visible.
-    @Published var captureScope: CaptureScope?
 
     /// A query handed to the Ask section by another surface (⌘K palette).
     /// AskView consumes and clears it on appear/change.
@@ -235,19 +231,18 @@ final class AppState: ObservableObject {
     }
 
     /// Navigate to the Ask section, optionally pre-filling the query and/or
-    /// scoping it to a day (Capture's "Ask about this day").
+    /// scoping it to a day (Timeline's "Ask about this day").
     func openAsk(query: String = "", dayScope: Date? = nil) {
         askPrefill = query.isEmpty ? nil : query
         askDayScope = dayScope
         navSection = .ask
     }
 
-    /// Open one meeting in Capture's Library scope — the deep-link target
+    /// Open one meeting in the Meetings section — the deep-link target
     /// for search hits, menu-bar recents, and palette recents.
     func openMeeting(_ id: Meeting.ID) {
         selectedMeetingIDs = [id]
-        captureScope = .library
-        navSection = .capture
+        navSection = .meetings
     }
 
     /// The meeting shown in the detail pane (single selection only).

@@ -2,12 +2,11 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-/// The Capture pillar — Meetings and Timeline merged into one chronological
-/// surface (spec §2.2). The content column carries a Day⇄Library scope
-/// toggle: Day is the hour-indexed track with meetings rendered as
-/// first-class teal blocks beside app-colored activity blocks; Library is
-/// the unchanged grouped-by-day meeting list. Both columns share
-/// `CaptureModel`; the detail pane (`CaptureDetailView`) is selection-driven.
+/// The Timeline section — the hour-indexed day track with meetings rendered
+/// as first-class teal blocks beside app-colored activity blocks. Meetings
+/// live in their own sidebar section (`MeetingListView`); both share
+/// `CaptureModel`, and the detail pane (`CaptureDetailView`) is
+/// selection-driven.
 @MainActor
 final class CaptureModel: ObservableObject {
     @Published var day = Date()
@@ -34,8 +33,6 @@ final class CaptureModel: ObservableObject {
         digest = try? String(contentsOf: journalURL(app: app), encoding: .utf8)
         digestError = nil
         selection = nil
-        app.captureScope = CaptureScopePolicy.resolve(current: app.captureScope,
-                                                      hasBlocks: !blocks.isEmpty)
     }
 
     /// The selected day's meetings, live recording included, for the track
@@ -105,36 +102,20 @@ enum CaptureStyle {
     }
 }
 
-// MARK: - Content column — scope toggle over Day track / Library list
+// MARK: - Content column — the day track
 
-struct CaptureContentView: View {
+struct TimelineContentView: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var model: CaptureModel
-    @Binding var pendingDelete: Set<Meeting.ID>?
 
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("Scope", selection: scope) {
-                ForEach(CaptureScope.allCases) { Text($0.rawValue).tag($0) }
+        CaptureDayView(model: model)
+            .navigationTitle("Timeline")
+            .task(id: model.day.formatted(date: .numeric, time: .omitted)) {
+                model.reload(app: app)
             }
-            .pickerStyle(.segmented).labelsHidden()
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .accessibilityIdentifier("capture.scope")
-            Divider()
-            switch scope.wrappedValue {
-            case .day:
-                CaptureDayView(model: model)
-            case .library:
-                MeetingListView(pendingDelete: $pendingDelete)
-            }
-        }
-        .navigationTitle("Capture")
-        .task(id: model.day.formatted(date: .numeric, time: .omitted)) {
-            model.reload(app: app)
-        }
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                if scope.wrappedValue == .day {
+            .toolbar {
+                ToolbarItemGroup(placement: .primaryAction) {
                     Button {
                         app.sampler.isPaused.toggle()
                     } label: {
@@ -148,12 +129,6 @@ struct CaptureContentView: View {
                     }
                 }
             }
-        }
-    }
-
-    private var scope: Binding<CaptureScope> {
-        Binding(get: { app.captureScope ?? .library },
-                set: { app.captureScope = $0 })
     }
 }
 
