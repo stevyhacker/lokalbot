@@ -81,7 +81,7 @@ struct SettingsView: View {
     @ViewBuilder private func sections(for tab: AppState.SettingsTab) -> some View {
         switch tab {
         case .general:
-            generalSection; permissionsSection; storageSection; updatesSection
+            generalSection; cotypingSection; permissionsSection; storageSection; updatesSection
         case .recording:
             meetingsSection; processingSection; summarizationSection; dayTrackingSection
         case .models:
@@ -97,9 +97,9 @@ struct SettingsView: View {
     /// query shows every matching section regardless of the selected tab,
     /// plus a jump row into the Models tab when its keywords match.
     @ViewBuilder private var searchResults: some View {
-        generalSection; permissionsSection; meetingsSection; processingSection
-        summarizationSection; dayTrackingSection; privacySection; storageSection
-        updatesSection; systemSection; agentCLISection
+        generalSection; cotypingSection; permissionsSection; meetingsSection
+        processingSection; summarizationSection; dayTrackingSection; privacySection
+        storageSection; updatesSection; systemSection; agentCLISection
         if shows("Models", ["model", "models", "transcription", "summarization",
                             "cotyping", "embeddings", "llm", "whisper", "download",
                             "gguf", "hugging face", "ollama", "engine", "backend"]) {
@@ -135,6 +135,22 @@ struct SettingsView: View {
                 }
             }
 
+    }
+
+    /// The one everyday cotyping knob kept in Settings; the feature's full
+    /// form (enable, model, exclusions, advanced) lives in Type → Cotyping.
+    /// Both bind the same setting, so they can never disagree.
+    @ViewBuilder private var cotypingSection: some View {
+        if shows("Cotyping", ["cotyping", "autocomplete", "suggestion", "suggestions",
+                              "length", "words", "max words", "ghost", "inline",
+                              "completion", "typing"]) {
+            Section("Cotyping") {
+                Stepper("Suggestion length: up to \(app.settings.cotypingMaxWords) words",
+                        value: $app.settings.cotypingMaxWords, in: 2...50)
+                Text("How much text one inline suggestion may add. Everything else about cotyping is in Type → Cotyping.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 
     @ViewBuilder private var permissionsSection: some View {
