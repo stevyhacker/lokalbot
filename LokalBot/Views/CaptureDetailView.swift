@@ -14,7 +14,8 @@ struct CaptureDetailView: View {
 
     var body: some View {
         switch CaptureInspectorState.resolve(meetingIDs: app.selectedMeetingIDs,
-                                             blockSelection: model.selection) {
+                                             blockSelection: model.selection,
+                                             allowsBlockSelection: app.navSection == .timeline) {
         case .meeting:
             if let meeting = app.selectedMeeting {
                 MeetingDetailView(meeting: meeting)
