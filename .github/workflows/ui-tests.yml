@@ -51,6 +51,13 @@ jobs:
           fi
           xcodegen --version
 
+      # project.yml lists Vendor/llama-cpp and Vendor/sherpa-onnx as folder
+      # references, and XcodeGen validates those paths exist before it will
+      # generate. Empty dirs satisfy generation; the contents arrive via the
+      # cache/fetch steps below and the pre-build fetch phases.
+      - name: Create vendor dirs for XcodeGen
+        run: mkdir -p Vendor/llama-cpp Vendor/sherpa-onnx
+
       - name: Generate project
         run: xcodegen generate
 
