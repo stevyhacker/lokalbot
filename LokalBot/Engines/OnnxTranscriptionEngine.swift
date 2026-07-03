@@ -67,10 +67,13 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
         // VAD speech regions give real per-utterance timing; fall back to the
         // whole track as a single region when VAD is unavailable.
         let spans = try await SpeechActivity.shared.spans(in: url, maxSegmentSeconds: nil)
+        let reader = try SpanAudioReader(url: url)
         var regions: [(start: TimeInterval, end: TimeInterval, wav: URL)] = []
         for (index, span) in spans.enumerated() {
+            let samples = try reader.samples(from: span.start, to: span.end)
+            guard !samples.isEmpty else { continue }
             let wav = work.appendingPathComponent("\(index).wav")
-            try Self.writeWav(span.samples, to: wav)
+            try Self.writeWav(samples, to: wav)
             regions.append((span.start, span.end, wav))
         }
 

@@ -1,12 +1,13 @@
 import Foundation
 import FluidAudio
 
-/// A timestamped run of speech samples (16 kHz mono), produced by VAD
-/// splitting — the unit the per-span transcription engines consume.
-struct SpeechSpan: Sendable {
+/// A timestamped run of speech on the track timeline, produced by VAD
+/// splitting — timings only. Engines decode each span's samples on demand
+/// with `SpanAudioReader`, so a whole decoded track (~230 MB per recorded
+/// hour) is never resident during transcription.
+struct SpeechSpan: Sendable, Equatable {
     let start: TimeInterval
     let end: TimeInterval
-    let samples: [Float]
 }
 
 /// Shared VAD-split → timestamped-span pipeline for the engines that
@@ -18,49 +19,46 @@ extension SpeechActivity {
     static let spanSampleRate = 16_000
 
     /// Speech spans for `url`, each capped at `maxSegmentSeconds` when given
-    /// (nil keeps whole VAD regions). Falls back to the whole decoded track
-    /// (split the same way) when VAD is unavailable or finds no speech.
-    /// Throws only when the audio itself cannot be decoded.
+    /// (nil keeps whole VAD regions). Falls back to the whole track (split the
+    /// same way) when VAD is unavailable or finds no speech. Throws only when
+    /// the audio itself cannot be opened.
     func spans(in url: URL, maxSegmentSeconds: Double?) async throws -> [SpeechSpan] {
         if let spans = await vadSpans(in: url, maxSegmentSeconds: maxSegmentSeconds) {
             return spans
         }
-        let samples = try AudioConverter().resampleAudioFile(url)
-        return Self.split(samples: samples, start: 0, end: samples.count,
-                          maxSegmentSeconds: maxSegmentSeconds)
+        let duration = try SpanAudioReader(url: url).duration
+        return Self.split(start: 0, end: duration, maxSegmentSeconds: maxSegmentSeconds)
     }
 
     /// VAD-only spans, or nil when VAD is unavailable or found no speech —
     /// for engines that need a distinct whole-track fallback (Cohere).
     func vadSpans(in url: URL, maxSegmentSeconds: Double?) async -> [SpeechSpan]? {
-        guard let analysis = await speechRegions(in: url), !analysis.segments.isEmpty else {
+        guard let segments = await speechSegments(in: url), !segments.isEmpty else {
             return nil
         }
         var spans: [SpeechSpan] = []
-        for segment in analysis.segments {
-            let start = max(0, segment.startSample(sampleRate: Self.spanSampleRate))
-            let end = min(analysis.samples.count, segment.endSample(sampleRate: Self.spanSampleRate))
-            guard end > start else { continue }
+        for segment in segments {
+            let start = max(0, segment.startTime)
+            guard segment.endTime > start else { continue }
             spans.append(contentsOf: Self.split(
-                samples: analysis.samples, start: start, end: end,
+                start: start, end: segment.endTime,
                 maxSegmentSeconds: maxSegmentSeconds))
         }
         return spans.isEmpty ? nil : spans
     }
 
-    private static func split(samples: [Float], start: Int, end: Int,
-                              maxSegmentSeconds: Double?) -> [SpeechSpan] {
+    /// Pure ≤N-second splitting on the time axis. Internal (not private) so
+    /// the boundary arithmetic is unit-testable without audio files.
+    static func split(start: TimeInterval, end: TimeInterval,
+                      maxSegmentSeconds: Double?) -> [SpeechSpan] {
         guard end > start else { return [] }
-        let rate = Double(spanSampleRate)
-        let maxSamples = maxSegmentSeconds.map { max(1, Int($0 * rate)) } ?? (end - start)
+        let minLength = 1.0 / Double(spanSampleRate)
+        let maxLength = maxSegmentSeconds.map { max($0, minLength) } ?? (end - start)
         var spans: [SpeechSpan] = []
         var cursor = start
         while cursor < end {
-            let next = min(cursor + maxSamples, end)
-            spans.append(.init(
-                start: Double(cursor) / rate,
-                end: Double(next) / rate,
-                samples: Array(samples[cursor..<next])))
+            let next = min(cursor + maxLength, end)
+            spans.append(.init(start: cursor, end: next))
             cursor = next
         }
         return spans

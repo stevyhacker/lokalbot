@@ -6,27 +6,39 @@ import Foundation
 /// Conforms to `CotypingCompleting`, so `CotypingCoordinator` is unchanged.
 @MainActor
 final class CotypingEngineSelector: CotypingCompleting {
+    /// How long completions stay on HTTP after an in-process failure before
+    /// the local engine is rebuilt and retried. Long enough that a persistent
+    /// failure doesn't reload the ~6.66 GB weights on every keystroke, short
+    /// enough that a transient one (memory pressure passing) recovers soon.
+    static let localRetryCooldown: TimeInterval = 60
+
     private let http: CotypingCompleting
     private let makeLocal: (String) -> CotypingCompleting
     private let settings: () -> AppSettings
     private let storage: StorageManager
+    private let now: () -> Date
     private var local: CotypingCompleting?
     private var localModelPath: String?
     /// Set after the first in-process failure so the HTTP fallback is logged
     /// once per failure episode (spec §13), not on every keystroke. Reset on a
     /// successful local generation or a model-path change.
     private var didLogLocalFailure = false
+    /// Non-nil while a failure cooldown is active: `localIfEligible()` routes
+    /// to HTTP (without rebuilding the local engine) until this instant.
+    private var retryLocalAt: Date?
 
     init(
         http: CotypingCompleting,
         makeLocal: @escaping (String) -> CotypingCompleting,
         settings: @escaping () -> AppSettings,
-        storage: StorageManager
+        storage: StorageManager,
+        now: @escaping () -> Date = { Date() }
     ) {
         self.http = http
         self.makeLocal = makeLocal
         self.settings = settings
         self.storage = storage
+        self.now = now
     }
 
     static var isAppleSilicon: Bool {
@@ -58,6 +70,9 @@ final class CotypingEngineSelector: CotypingCompleting {
         // is behavior-identical to gating in `shouldUseLocal` — which still returns
         // false in exactly these cases — we just avoid resolving the path first.
         guard s.cotypingInProcessRuntime, Self.isAppleSilicon else { dropLocalEngine(); return nil }
+        // Failure cooldown: the engine was already dropped (weights freed) in
+        // handleLocalFailure, so just route to HTTP until the retry instant.
+        if let retryLocalAt, now() < retryLocalAt { return nil }
         guard let url = resolvedModelURL(s),
               Self.shouldUseLocal(settings: s, modelURL: url, isAppleSilicon: Self.isAppleSilicon)
         else { dropLocalEngine(); return nil }
@@ -108,10 +123,10 @@ final class CotypingEngineSelector: CotypingCompleting {
         guard let engine = localIfEligible() else { return try await http.generate(request) }
         do {
             let result = try await engine.generate(request)
-            didLogLocalFailure = false
+            noteLocalSuccess()
             return result
         } catch let error as LlamaRuntimeError {
-            logLocalFallback(error)
+            handleLocalFailure(error)
             return try await http.generate(request)
         }
     }
@@ -125,21 +140,34 @@ final class CotypingEngineSelector: CotypingCompleting {
         }
         do {
             let result = try await engine.generateStreaming(request, onPartial: onPartial)
-            didLogLocalFailure = false
+            noteLocalSuccess()
             return result
         } catch let error as LlamaRuntimeError {
-            logLocalFallback(error)
+            handleLocalFailure(error)
             return try await http.generateStreaming(request, onPartial: onPartial)
         }
     }
 
-    /// Logs the in-process→HTTP fallback once per failure episode (spec §13).
-    /// The local engine is kept (not torn down) so a transient failure — e.g. a
-    /// memory-pressure unload (Task 8) — recovers on a later completion, and the
-    /// log does not repeat on every keystroke.
-    private func logLocalFallback(_ error: LlamaRuntimeError) {
-        guard !didLogLocalFailure else { return }
-        didLogLocalFailure = true
-        NSLog("Cotyping: in-process runtime unavailable (\(error)); using HTTP fallback (will keep retrying).")
+    private func noteLocalSuccess() {
+        didLogLocalFailure = false
+        retryLocalAt = nil
+    }
+
+    /// In-process→HTTP fallback. The HTTP path runs the same GGUF in its own
+    /// `llama-server` process, so keeping the failed local engine loaded would
+    /// leave TWO ~6.66 GB copies of the weights resident. Instead: free the
+    /// local model immediately and route to HTTP for `localRetryCooldown`, then
+    /// rebuild and retry local (a cold reload, but at most once per cooldown —
+    /// never per keystroke). Logged once per failure episode (spec §13).
+    private func handleLocalFailure(_ error: LlamaRuntimeError) {
+        if !didLogLocalFailure {
+            didLogLocalFailure = true
+            NSLog("""
+            Cotyping: in-process runtime failed (\(error)); freeing the local model and using \
+            the HTTP fallback for \(Int(Self.localRetryCooldown))s before retrying.
+            """)
+        }
+        retryLocalAt = now().addingTimeInterval(Self.localRetryCooldown)
+        dropLocalEngine()
     }
 }

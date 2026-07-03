@@ -105,6 +105,54 @@ final class CotypingEngineSelectorTests: XCTestCase {
                        "the returned result must be the HTTP engine's output")
     }
 
+    /// The HTTP fallback runs the SAME GGUF in its own llama-server process, so
+    /// a failed in-process engine must not stay loaded beside it (two ~6.66 GB
+    /// copies resident). A failure must (1) unload the local engine's weights,
+    /// (2) route to HTTP without rebuilding local for `localRetryCooldown`, and
+    /// (3) rebuild + retry local once the cooldown passes.
+    func testLocalFailureFreesModelAndCoolsDownBeforeRetry() throws {
+        try XCTSkipUnless(CotypingEngineSelector.isAppleSilicon,
+                          "Selector routes to local only on Apple Silicon.")
+        let env = try GGUFFixture()
+        defer { env.tearDown() }
+
+        var clock = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        let http = RecordingHTTPEngine()
+        var locals: [ThrowingLocalEngine] = []
+        let selector = CotypingEngineSelector(
+            http: http,
+            makeLocal: { _ in
+                let engine = ThrowingLocalEngine(error: .decodeFailed)
+                locals.append(engine)
+                return engine
+            },
+            settings: { env.settings },
+            storage: env.storage,
+            now: { clock })
+
+        let request = makeMinimalRequestExpectingNoServer()
+
+        // Failure → HTTP fallback + the failed engine's weights are freed.
+        _ = try awaitGenerate(selector, request)
+        XCTAssertEqual(locals.count, 1)
+        XCTAssertEqual(http.generateCalls, 1, "the failed completion must land on HTTP")
+        drainMainQueue()
+        XCTAssertEqual(locals[0].unloadCalls, 1,
+                       "a local failure must unload the in-process weights, not keep them resident")
+
+        // Inside the cooldown: straight to HTTP, no local rebuild (no reload thrash).
+        clock += CotypingEngineSelector.localRetryCooldown - 1
+        _ = try awaitGenerate(selector, request)
+        XCTAssertEqual(locals.count, 1, "no rebuild while the failure cooldown is active")
+        XCTAssertEqual(http.generateCalls, 2)
+
+        // Past the cooldown: rebuild a fresh local engine and retry it.
+        clock += 2
+        _ = try awaitGenerate(selector, request)
+        XCTAssertEqual(locals.count, 2, "cooldown expiry must rebuild and retry the local engine")
+        XCTAssertEqual(http.generateCalls, 3, "the retried engine failed again, so HTTP serves it")
+    }
+
     func testExplicitUnloadAwaitsLocalEngineAndRebuilds() throws {
         try XCTSkipUnless(CotypingEngineSelector.isAppleSilicon,
                           "Selector routes to local only on Apple Silicon.")
@@ -209,6 +257,16 @@ final class CotypingEngineSelectorTests: XCTestCase {
         return try captured.get()
     }
 
+    /// `dropLocalEngine` fires `unload()` in an unstructured Task; pump the
+    /// main actor a few times so that task has run before we assert on it.
+    private func drainMainQueue(hops: Int = 5) {
+        for _ in 0..<hops {
+            let exp = expectation(description: "drain")
+            Task { @MainActor in exp.fulfill() }
+            wait(for: [exp], timeout: 5)
+        }
+    }
+
     private func awaitUnload(_ selector: CotypingEngineSelector) {
         let exp = expectation(description: "unload")
         Task { @MainActor in
@@ -255,12 +313,15 @@ private final class RecordingLocalEngine: CotypingCompleting {
 }
 
 /// A local-engine fake that always throws a `LlamaRuntimeError`, used to prove
-/// the selector's HTTP fallback fires on a decode failure (Fix 2).
+/// the selector's HTTP fallback fires on a decode failure (Fix 2). Records
+/// unloads so tests can assert the failed engine's weights were freed.
 @MainActor
 private final class ThrowingLocalEngine: CotypingCompleting {
     let error: LlamaRuntimeError
+    private(set) var unloadCalls = 0
     init(error: LlamaRuntimeError) { self.error = error }
     func generate(_ request: CotypingRequest) async throws -> CotypingNormalizationResult {
         throw error
     }
+    func unload() async { unloadCalls += 1 }
 }

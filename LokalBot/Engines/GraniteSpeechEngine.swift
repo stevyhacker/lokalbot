@@ -34,13 +34,16 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         let started = Date()
         let regions = try await SpeechActivity.shared.spans(
             in: url, maxSegmentSeconds: Self.maxSegmentSeconds)
+        let reader = try SpanAudioReader(url: url)
         let work = try Self.makeWorkDir()
         defer { try? FileManager.default.removeItem(at: work) }
 
         var segments: [Transcript.Segment] = []
         for (index, region) in regions.enumerated() {
+            let samples = try reader.samples(from: region.start, to: region.end)
+            guard !samples.isEmpty else { continue }
             let wav = work.appendingPathComponent("\(index).wav")
-            try OnnxTranscriptionEngine.writeWav(region.samples, to: wav)
+            try OnnxTranscriptionEngine.writeWav(samples, to: wav)
             let text = try await transcribeWav(wav)
             let normalized = Transcript.normalizedText(text)
             guard !normalized.isEmpty else { continue }

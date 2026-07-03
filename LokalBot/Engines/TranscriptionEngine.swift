@@ -370,11 +370,14 @@ actor CohereEngine: TranscriptionEngine {
         // (≤14 s) on its own and stamp it with the region's real start/end —
         // real per-utterance timing without forced alignment. Falls back to one
         // whole-track segment if VAD is unavailable or finds no regions.
-        if let spans = await SpeechActivity.shared.vadSpans(in: url, maxSegmentSeconds: nil) {
+        if let spans = await SpeechActivity.shared.vadSpans(in: url, maxSegmentSeconds: nil),
+           let reader = try? SpanAudioReader(url: url) {
             let started = Date()
             var segments: [Transcript.Segment] = []
             for span in spans {
-                let result = try await pipeline.transcribe(audio: span.samples, models: models, language: lang)
+                let samples = try reader.samples(from: span.start, to: span.end)
+                guard !samples.isEmpty else { continue }
+                let result = try await pipeline.transcribe(audio: samples, models: models, language: lang)
                 let text = Transcript.normalizedText(result.text)
                 if !text.isEmpty {
                     segments.append(.init(start: span.start, end: span.end,
@@ -430,31 +433,34 @@ actor SpeechActivity {
 
     private var manager: VadManager?
     private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.unload() }
-    /// Single-entry analysis cache. The pipeline gates each track on
-    /// `speechSeconds` and the engine immediately re-requests `speechRegions`
-    /// for the same file — without this, every track is decoded and VAD-swept
-    /// twice. Keyed on path + mtime + size; released with the idle unload.
-    private var cachedAnalysis: (key: String, samples: [Float], segments: [VadSegment])?
+    /// Single-entry segments cache. The pipeline gates each track on
+    /// `speechSeconds` and the engine immediately re-requests the segments for
+    /// the same file — without this, every track is decoded and VAD-swept
+    /// twice. Deliberately segments-only: the decoded track (~230 MB per
+    /// recorded hour) is released the moment the VAD sweep finishes, and
+    /// transcription re-reads each span's window on demand (`SpanAudioReader`).
+    /// Keyed on path + mtime + size; released with the idle unload.
+    private var cachedSegments: (key: String, segments: [VadSegment])?
 
-    /// Decode `url` to 16 kHz mono and split it into ≤14 s speech regions
-    /// (Silero VAD, ASR-tuned `.default` config). Returns the samples plus the
-    /// timed regions, or nil when VAD is unavailable. Each region carries a real
-    /// `startTime`/`endTime`, which lets timestamp-less engines (Cohere) emit
-    /// per-region segments instead of one block per track.
-    func speechRegions(in url: URL) async -> (samples: [Float], segments: [VadSegment])? {
+    /// Decode `url` to 16 kHz mono (transiently) and split it into ≤14 s
+    /// speech regions (Silero VAD, ASR-tuned `.default` config), or nil when
+    /// VAD is unavailable. Each region carries a real `startTime`/`endTime`,
+    /// which lets timestamp-less engines (Cohere) emit per-region segments
+    /// instead of one block per track.
+    func speechSegments(in url: URL) async -> [VadSegment]? {
         let key = Self.cacheKey(for: url)
-        if let cachedAnalysis, cachedAnalysis.key == key {
+        if let cachedSegments, cachedSegments.key == key {
             await idle.bump()
-            return (cachedAnalysis.samples, cachedAnalysis.segments)
+            return cachedSegments.segments
         }
         do {
             try await prepare()
             guard let manager else { return nil }
             let samples = try AudioConverter().resampleAudioFile(url)
             let segments = try await manager.segmentSpeech(samples)
-            cachedAnalysis = (key, samples, segments)
+            cachedSegments = (key, segments)
             await idle.bump()
-            return (samples, segments)
+            return segments
         } catch {
             lokalbotLog("vad unavailable — transcribing without it: \(error.localizedDescription)")
             return nil
@@ -464,7 +470,7 @@ actor SpeechActivity {
     /// Total seconds of detected speech in `url`, or nil when VAD is
     /// unavailable — in which case the caller should transcribe anyway.
     func speechSeconds(in url: URL) async -> Double? {
-        await speechRegions(in: url)?.segments.reduce(0.0) { $0 + $1.duration }
+        await speechSegments(in: url)?.reduce(0.0) { $0 + $1.duration }
     }
 
     private nonisolated static func cacheKey(for url: URL) -> String {
@@ -481,6 +487,6 @@ actor SpeechActivity {
 
     private func unload() {
         manager = nil
-        cachedAnalysis = nil
+        cachedSegments = nil
     }
 }

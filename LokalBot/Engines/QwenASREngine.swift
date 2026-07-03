@@ -68,13 +68,16 @@ actor QwenASREngine: TranscriptionEngine {
         let started = Date()
         let spans = try await SpeechActivity.shared.spans(
             in: url, maxSegmentSeconds: Self.maxSegmentSeconds)
+        let reader = try SpanAudioReader(url: url)
         var segments: [Transcript.Segment] = []
         for span in spans {
+            let samples = try reader.samples(from: span.start, to: span.end)
+            guard !samples.isEmpty else { continue }
             let text = model.transcribe(
-                audio: span.samples,
+                audio: samples,
                 sampleRate: Self.sampleRate,
                 language: Self.qwenLanguage(language),
-                maxTokens: Self.maxTokens(for: span.samples.count))
+                maxTokens: Self.maxTokens(for: samples.count))
             let normalized = Transcript.normalizedText(text)
             guard !normalized.isEmpty else { continue }
             segments.append(.init(
