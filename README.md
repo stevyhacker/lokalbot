@@ -108,10 +108,10 @@ Engines (Settings → Transcription; CoreML/MLX, in-process, Neural Engine/Metal
 | **Qwen3-ASR 1.7B** (MLX, ~3.2 GB) | 52 languages/dialects | best Qwen accuracy tier for harder recordings |
 | **Qwen3-ASR 0.6B** (MLX, ~0.7 GB) | global coverage | compact tier |
 | **Whisper large-v3 turbo** (WhisperKit, ~1.6 GB) | 99 languages | word timestamps; wide-language fallback |
-| **Cohere Transcribe** (2B) | 14 languages | no auto language detection, timestamps, or diarization |
 | **SenseVoice / GigaAM** (ONNX) | CJK/Cantonese/English, Russian | specialist coverage |
+| **Cohere Transcribe** (2B) | 14 languages | legacy — hidden unless already installed (no language detection, timestamps, or diarization) |
 
-Models auto-download from Hugging Face on first use and are cached under Application Support. Listed but not yet runnable: **Voxtral Mini 4B Realtime** (live subtitles) and **Nemotron 3.5 ASR 0.6B** (watchlist).
+Models auto-download from Hugging Face on first use and are cached under Application Support.
 
 - **Speaker attribution:** mic track = **Me**, system track = **Them**, merged by timestamp into `transcript.json` + `transcript.md`.
 - **Neural diarization:** Settings → "Split Them by speaker" runs FluidAudio's offline pyannote-community-1 pipeline on `system.m4a` after transcription and relabels segments "Them 1 / Them 2 / …" (threshold 0.70, step ratio 0.15, min segment 0.3 s). Enabled by default; first run downloads ~100 MB of CoreML models.

@@ -7,7 +7,7 @@ import Foundation
 /// reads it without linking WhisperKit / FluidAudio. The transcription engines
 /// fill it in, but it's just a data shape — no engine dependency.
 struct Transcript: Codable {
-    struct Segment: Codable {
+    struct Segment: Codable, Equatable {
         var start: TimeInterval
         var end: TimeInterval
         var speaker: String      // "me" | "them" | diarized label

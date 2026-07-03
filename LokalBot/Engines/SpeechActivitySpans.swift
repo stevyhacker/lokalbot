@@ -64,3 +64,49 @@ extension SpeechActivity {
         return spans
     }
 }
+
+/// The per-span transcription loop the span-based engines (Qwen, Granite,
+/// Cohere, sherpa-onnx) each used to carry a private copy of: decode one
+/// span's window at a time (`SpanAudioReader`), hand the samples to the
+/// engine, and keep non-empty normalized text stamped with the span's real
+/// start/end. One implementation so the skip-empty-window and
+/// drop-empty-text rules cannot drift between engines.
+enum SpanTranscription {
+
+    /// Sequential per-span decoding (Qwen, Granite, Cohere). `transcribe`
+    /// receives the span's 16 kHz mono samples plus the span's index (Granite
+    /// names its temp wavs by index); spans whose window decodes empty are
+    /// skipped without calling it.
+    static func segments(
+        in url: URL,
+        spans: [SpeechSpan],
+        speaker: String = "speaker",
+        transcribe: (_ samples: [Float], _ index: Int) async throws -> String
+    ) async throws -> [Transcript.Segment] {
+        let reader = try SpanAudioReader(url: url)
+        var segments: [Transcript.Segment] = []
+        for (index, span) in spans.enumerated() {
+            let samples = try reader.samples(from: span.start, to: span.end)
+            guard !samples.isEmpty else { continue }
+            let normalized = Transcript.normalizedText(try await transcribe(samples, index))
+            guard !normalized.isEmpty else { continue }
+            segments.append(.init(start: span.start, end: span.end,
+                                  speaker: speaker, text: normalized, confidence: nil))
+        }
+        return segments
+    }
+
+    /// Batch pairing (sherpa-onnx decodes all wavs in one subprocess call):
+    /// stamp each returned text with its span. Extra spans without a text —
+    /// the binary can return fewer results than inputs — are dropped, like
+    /// empty texts.
+    static func segments(pairing spans: [SpeechSpan], with texts: [String],
+                         speaker: String = "speaker") -> [Transcript.Segment] {
+        zip(spans, texts).compactMap { span, text in
+            let normalized = Transcript.normalizedText(text)
+            guard !normalized.isEmpty else { return nil }
+            return .init(start: span.start, end: span.end,
+                         speaker: speaker, text: normalized, confidence: nil)
+        }
+    }
+}

@@ -48,7 +48,7 @@ struct ModelsView: View {
     private var transcriptionCard: some View {
         ModelCard(icon: "waveform", title: "Transcription",
                   subtitle: "Speech → text for meeting audio") {
-            ForEach(TranscriptionModelChoice.allCases) { choice in
+            ForEach(visibleTranscriptionChoices) { choice in
                 TranscriptionModelRow(
                     choice: choice,
                     preparing: preparingTranscriptionModelID == choice.id,
@@ -75,6 +75,17 @@ struct ModelsView: View {
                 .font(.caption).foregroundStyle(.secondary)
         }
         .accessibilityIdentifier("models.transcription")
+    }
+
+    /// Legacy choices are hidden unless this install already uses them
+    /// (selected or downloaded) — existing users keep their model and the
+    /// Delete button; new users never see the superseded option.
+    private var visibleTranscriptionChoices: [TranscriptionModelChoice] {
+        TranscriptionModelChoice.allCases.filter { choice in
+            !choice.isLegacy
+                || choice == app.settings.transcriptionModel
+                || downloadedTranscriptionModelIDs.contains(choice.id)
+        }
     }
 
     private var summarizationCard: some View {
@@ -392,6 +403,11 @@ struct ModelsView: View {
                             Text("RECOMMENDED").font(.system(size: 8.5, weight: .bold))
                                 .padding(.horizontal, 4).padding(.vertical, 1)
                                 .background(Color.accentColor.opacity(0.18), in: Capsule())
+                        }
+                        if choice.isLegacy {
+                            Text("LEGACY").font(.system(size: 8.5, weight: .bold))
+                                .padding(.horizontal, 4).padding(.vertical, 1)
+                                .background(.orange.opacity(0.18), in: Capsule())
                         }
                         if ready {
                             Text("READY").font(.system(size: 8.5, weight: .bold))

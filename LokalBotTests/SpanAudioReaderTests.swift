@@ -101,6 +101,44 @@ final class SpanAudioReaderTests: XCTestCase {
         XCTAssertTrue(SpeechActivity.split(start: 5, end: 5, maxSegmentSeconds: 14).isEmpty)
         XCTAssertTrue(SpeechActivity.split(start: 9, end: 5, maxSegmentSeconds: nil).isEmpty)
     }
+
+    // MARK: - SpanTranscription (the shared per-span engine loop)
+
+    func testSpanTranscriptionStampsSpansAndDropsEmptyResults() async throws {
+        let rate = 16_000
+        let url = tempDir.appendingPathComponent("speech.wav")
+        try OnnxTranscriptionEngine.writeWav([Float](repeating: 0.1, count: rate), to: url)
+
+        let spans = [
+            SpeechSpan(start: 0.0, end: 0.25),
+            SpeechSpan(start: 0.25, end: 0.5),
+            SpeechSpan(start: 0.5, end: 0.5),
+        ]
+        var transcribedIndexes: [Int] = []
+        let segments = try await SpanTranscription.segments(in: url, spans: spans) { samples, index in
+            transcribedIndexes.append(index)
+            XCTAssertEqual(samples.count, rate / 4)
+            return index == 0 ? "  hello   there " : "   "
+        }
+
+        XCTAssertEqual(transcribedIndexes, [0, 1],
+                       "the zero-width span must be skipped without calling the engine")
+        XCTAssertEqual(segments, [
+            Transcript.Segment(start: 0.0, end: 0.25, speaker: "speaker",
+                               text: "hello there", confidence: nil),
+        ], "whitespace-only text must not become a segment; kept text is normalized")
+    }
+
+    func testSpanTranscriptionPairsBatchTextsWithSpans() {
+        let spans = [SpeechSpan(start: 0, end: 1),
+                     SpeechSpan(start: 2, end: 3),
+                     SpeechSpan(start: 4, end: 5)]
+        let segments = SpanTranscription.segments(pairing: spans, with: ["one", "   "])
+        XCTAssertEqual(segments, [
+            Transcript.Segment(start: 0, end: 1, speaker: "speaker",
+                               text: "one", confidence: nil),
+        ], "empty texts and spans past the batch's result count are dropped")
+    }
 }
 
 private func XCTAssertEqual(_ value: Int, _ expected: Int, accuracy: Int,

@@ -34,25 +34,13 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         let started = Date()
         let regions = try await SpeechActivity.shared.spans(
             in: url, maxSegmentSeconds: Self.maxSegmentSeconds)
-        let reader = try SpanAudioReader(url: url)
         let work = try Self.makeWorkDir()
         defer { try? FileManager.default.removeItem(at: work) }
 
-        var segments: [Transcript.Segment] = []
-        for (index, region) in regions.enumerated() {
-            let samples = try reader.samples(from: region.start, to: region.end)
-            guard !samples.isEmpty else { continue }
+        let segments = try await SpanTranscription.segments(in: url, spans: regions) { samples, index in
             let wav = work.appendingPathComponent("\(index).wav")
             try OnnxTranscriptionEngine.writeWav(samples, to: wav)
-            let text = try await transcribeWav(wav)
-            let normalized = Transcript.normalizedText(text)
-            guard !normalized.isEmpty else { continue }
-            segments.append(.init(
-                start: region.start,
-                end: region.end,
-                speaker: "speaker",
-                text: normalized,
-                confidence: nil))
+            return try await self.transcribeWav(wav)
         }
 
         let elapsed = Date().timeIntervalSince(started)

@@ -68,13 +68,13 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
         // whole track as a single region when VAD is unavailable.
         let spans = try await SpeechActivity.shared.spans(in: url, maxSegmentSeconds: nil)
         let reader = try SpanAudioReader(url: url)
-        var regions: [(start: TimeInterval, end: TimeInterval, wav: URL)] = []
+        var regions: [(span: SpeechSpan, wav: URL)] = []
         for (index, span) in spans.enumerated() {
             let samples = try reader.samples(from: span.start, to: span.end)
             guard !samples.isEmpty else { continue }
             let wav = work.appendingPathComponent("\(index).wav")
             try Self.writeWav(samples, to: wav)
-            regions.append((span.start, span.end, wav))
+            regions.append((span, wav))
         }
 
         let started = Date()
@@ -82,17 +82,11 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
             runtime: runtime, modelFile: modelFile, tokens: tokens,
             model: model, language: language, wavs: regions.map(\.wav))
         let elapsed = Date().timeIntervalSince(started)
-        let total = regions.last?.end ?? 0
+        let total = regions.last?.span.end ?? 0
         lokalbotLog(
             "onnx profile model=\(model.folderName) regions=\(regions.count) results=\(texts.count) elapsed=\(String(format: "%.2fs", elapsed)) rtfx=\(String(format: "%.1fx", elapsed > 0 ? total / elapsed : 0))")
 
-        var segments: [Transcript.Segment] = []
-        for (index, region) in regions.enumerated() where index < texts.count {
-            let text = Transcript.normalizedText(texts[index])
-            guard !text.isEmpty else { continue }
-            segments.append(.init(start: region.start, end: region.end,
-                                  speaker: "speaker", text: text, confidence: nil))
-        }
+        let segments = SpanTranscription.segments(pairing: regions.map(\.span), with: texts)
         return Transcript(segments: segments, engine: "\(model.folderName) (sherpa-onnx)")
     }
 

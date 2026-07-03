@@ -46,11 +46,17 @@ enum TranscriptionModelChoice: String, Codable, CaseIterable, Identifiable {
     case qwenASR06B = "qwen3-asr-0.6b"
     case graniteSpeech = "granite-speech"
     case whisperLarge = "whisper-large-v3-turbo"
-    case cohere = "cohere-transcribe"
     case senseVoice = "sense-voice"
     case gigaamRussian = "gigaam-russian"
+    case cohere = "cohere-transcribe"
     var id: String { rawValue }
     static let recommended: Self = .graniteSpeech
+
+    /// Superseded choices. They stay decodable (a persisted selection keeps
+    /// working) and deletable, but the Models UI hides them from new users —
+    /// every language Cohere covers is served better by Granite/Qwen/Whisper,
+    /// which add language detection, timestamps, and diarization support.
+    var isLegacy: Bool { self == .cohere }
 
     var displayName: String {
         switch self {
@@ -89,7 +95,7 @@ enum TranscriptionModelChoice: String, Codable, CaseIterable, Identifiable {
         case .qwenASR06B: "0.7 GB · MLX, 52 languages/dialects, compact global tier"
         case .graniteSpeech: "2B params · Apache-2.0, recommended local ASR via llama.cpp"
         case .whisperLarge: "1.6 GB · 99 languages, word timestamps, wide-language legacy fallback"
-        case .cohere: "2B params · 14 languages, no auto language detection, timestamps, or diarization"
+        case .cohere: "2B params · legacy — no auto language detection, timestamps, or diarization"
         case .senseVoice: "Chinese · Japanese · Korean · Cantonese · English (ONNX, downloaded on first use)"
         case .gigaamRussian: "Russian — high accuracy (ONNX, downloaded on first use)"
         }
@@ -370,19 +376,11 @@ actor CohereEngine: TranscriptionEngine {
         // (≤14 s) on its own and stamp it with the region's real start/end —
         // real per-utterance timing without forced alignment. Falls back to one
         // whole-track segment if VAD is unavailable or finds no regions.
-        if let spans = await SpeechActivity.shared.vadSpans(in: url, maxSegmentSeconds: nil),
-           let reader = try? SpanAudioReader(url: url) {
+        if let spans = await SpeechActivity.shared.vadSpans(in: url, maxSegmentSeconds: nil) {
             let started = Date()
-            var segments: [Transcript.Segment] = []
-            for span in spans {
-                let samples = try reader.samples(from: span.start, to: span.end)
-                guard !samples.isEmpty else { continue }
-                let result = try await pipeline.transcribe(audio: samples, models: models, language: lang)
-                let text = Transcript.normalizedText(result.text)
-                if !text.isEmpty {
-                    segments.append(.init(start: span.start, end: span.end,
-                                          speaker: "speaker", text: text, confidence: nil))
-                }
+            let segments = try await SpanTranscription.segments(in: url, spans: spans) { samples, _ in
+                try await self.pipeline.transcribe(
+                    audio: samples, models: models, language: lang).text
             }
             if !segments.isEmpty {
                 let total = spans.last?.end ?? 0
