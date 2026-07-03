@@ -264,10 +264,16 @@ struct SettingsView: View {
                                       "ocr", "window", "accessibility", "retention", "private",
                                       "excluded apps", "never capture"]) {
                 Section("Day tracking") {
+                    // Screenshots ride on the activity sampler (ScreenshotService
+                    // captures on its block boundaries and guards on BOTH flags),
+                    // so the toggles stay coupled the same way onboarding couples
+                    // them: screenshots on ⇒ tracking on, tracking off ⇒
+                    // screenshots off. Otherwise "on" here would capture nothing.
                     Toggle("Track app & window activity", isOn: Binding(
                         get: { app.settings.trackingEnabled },
                         set: { app.settings.trackingEnabled = $0
                                if $0 { PermissionManager.shared.requestIfNeeded(.accessibility) }
+                               else { app.settings.screenshotsEnabled = false }
                                app.applyTrackingSetting() }))
                     LabeledContent("Window titles") {
                         if ActivitySampler.hasAccessibility {
@@ -282,8 +288,11 @@ struct SettingsView: View {
                     Toggle("Screen context capture (on app/window switch, OCR'd locally, encrypted at rest)", isOn: Binding(
                         get: { app.settings.screenshotsEnabled },
                         set: { app.settings.screenshotsEnabled = $0
-                               if $0 { PermissionManager.shared.requestIfNeeded(.screenRecording) }
-                               app.screenshots.restart() }))
+                               if $0 {
+                                   app.settings.trackingEnabled = true
+                                   PermissionManager.shared.requestIfNeeded(.screenRecording)
+                               }
+                               app.applyTrackingSetting() }))
                     if app.settings.screenshotsEnabled {
                         Slider(value: Binding(
                             get: { app.settings.screenshotIntervalMinutes },
