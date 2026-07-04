@@ -213,6 +213,10 @@ final class AppState: ObservableObject {
     /// AskView consumes and clears it on appear/change.
     @Published var askPrefill: String?
 
+    /// Set by the menu bar's "Live transcript & notes" — MeetingListView
+    /// consumes and clears it to open the live panel popover.
+    @Published var livePanelRequested = false
+
     /// A day handed to the Ask section (the old Timeline "Ask" tab, spec
     /// §2.2): rendered as a removable chip, and prepended to escalated
     /// queries so the assistant scopes its answer to that day.
@@ -389,10 +393,19 @@ final class AppState: ObservableObject {
             cotyping.meetingRecordingStateChanged(active: active)
         }
         if active, let meeting = recording.currentMeeting {
-            liveTranscriber.start(folder: meeting.folderURL(in: storage))
+            liveTranscriber.prepare(folder: meeting.folderURL(in: storage))
         } else {
             liveTranscriber.stop()
         }
+    }
+
+    /// Menu-bar path to the live panel: land on the library and let
+    /// `MeetingListView` pop the panel over the recording capsule.
+    func requestLivePanel() {
+        guard isRecording else { return }
+        navSection = .meetings
+        WindowAccess.shared.open("main")
+        livePanelRequested = true
     }
 
     init() {
@@ -412,6 +425,7 @@ final class AppState: ObservableObject {
             }
         }
         meetings = loaded
+        LiveMeetingTranscriber.sweepOrphanedSnapshots(storageRoot: storage.rootURL)
         // Views observe AppState only; forward pipeline / recording /
         // audio-monitor / calendar change notifications so MainWindowView
         // refreshes when those sub-ObservableObjects publish.

@@ -167,6 +167,7 @@ struct MeetingDetailView: View {
 
     @State private var tab: Tab = .summary
     @State private var summary: String?
+    @State private var notes: String?
     @State private var outcomes: MeetingOutcomes?
     @State private var transcript: Transcript?
     @State private var speakerNameHints: [String] = []
@@ -378,15 +379,22 @@ struct MeetingDetailView: View {
     // MARK: Tabs
 
     @ViewBuilder private var summaryTab: some View {
-        if let summary {
+        // Notes render even before the summary exists — the user typed them,
+        // they shouldn't be hostage to the pipeline.
+        if summary != nil || notes != nil {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    if let notes {
+                        notesSection(notes)
+                    }
                     if let outcomes {
                         MeetingOutcomesSection(outcomes: outcomes)
                     }
-                    MarkdownText(summary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
+                    if let summary {
+                        MarkdownText(summary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -399,6 +407,22 @@ struct MeetingDetailView: View {
                     ? "Use Process → Transcribe & summarize. Summaries are written to summary.md."
                     : "Working on it…"))
         }
+    }
+
+    /// The user's own quick notes from the live panel (notes.md).
+    private func notesSection(_ notes: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Your notes", systemImage: "square.and.pencil")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            MarkdownText(notes)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("detail.notes")
     }
 
     @ViewBuilder private var transcriptTab: some View {
@@ -501,6 +525,7 @@ struct MeetingDetailView: View {
 
     private func loadFiles() {
         summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8)
+        notes = MeetingNotes.load(from: folder)
         outcomes = MeetingOutcomes.load(from: folder).flatMap { $0.isEmpty ? nil : $0 }
         transcript = try? app.pipeline.loadTranscript(from: folder)
         speakerNameHints = app.speakerNameHints(for: meeting)

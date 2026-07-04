@@ -19,7 +19,10 @@ struct LiveMeetingPanel: View {
             notesPad
         }
         .frame(width: 380, height: 460)
-        .onAppear(perform: loadNotes)
+        .onAppear {
+            transcriber.activate()   // opting in starts the ASR passes
+            loadNotes()
+        }
         .onDisappear {
             saveTask?.cancel()
             saveNotes()

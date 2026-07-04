@@ -9,8 +9,13 @@ import Foundation
 /// engine, and publishes timestamped lines for the live panel.
 ///
 /// This is a preview: the authoritative transcript is still produced by the
-/// full pipeline (with diarization) after the recording stops. Started and
-/// stopped by `AppState` from the recording status.
+/// full pipeline (with diarization) after the recording stops.
+///
+/// Lifecycle: `AppState` calls `prepare(folder:)` when a recording starts and
+/// `stop()` when it ends, but transcription only actually runs after
+/// `activate()` — the live panel calls it on first open, so meetings whose
+/// panel is never opened cost zero ASR cycles. Once activated, the opt-in
+/// carries across calendar-handoff splits (a fresh `prepare` resumes).
 @MainActor
 final class LiveMeetingTranscriber: ObservableObject {
 
@@ -33,28 +38,60 @@ final class LiveMeetingTranscriber: ObservableObject {
     private let settings: () -> AppSettings
     private var task: Task<Void, Never>?
     private var generation = 0
+    private var pendingFolder: URL?
+    private var hasTranscribedOnce = false
     /// Keep the panel bounded on very long meetings.
     private static let maxLines = 400
     private static let maxConsecutiveFailures = 3
+
+    static let scratchDirectoryName = "live-previews"
 
     init(storageRoot: URL, settings: @escaping () -> AppSettings) {
         self.storageRoot = storageRoot
         self.settings = settings
     }
 
-    func start(folder: URL) {
-        stop()
-        generation += 1
-        let session = generation
+    /// Snapshots are deleted per-use, but a crash mid-chunk orphans them —
+    /// call once at launch to reclaim the scratch directory.
+    static func sweepOrphanedSnapshots(storageRoot: URL) {
+        try? FileManager.default.removeItem(
+            at: storageRoot.appendingPathComponent(scratchDirectoryName, isDirectory: true))
+    }
+
+    /// A recording started (or split to a new meeting folder). Doesn't
+    /// transcribe yet — that costs ASR passes for the whole meeting — but if
+    /// the user had already opened the panel this session, resume seamlessly.
+    func prepare(folder: URL) {
+        let resume = isRunning
+        cancelWork()
+        pendingFolder = folder
         lines = []
         statusMessage = nil
+        if resume { activate() }
+    }
+
+    /// The live panel was opened: actually start transcribing. Idempotent
+    /// while running; a no-op when no recording is prepared.
+    func activate() {
+        guard !isRunning, let folder = pendingFolder else { return }
+        generation += 1
+        let session = generation
+        hasTranscribedOnce = false
         isRunning = true
         task = Task { [weak self] in
             await self?.run(folder: folder, session: session)
         }
     }
 
+    /// The recording ended.
     func stop() {
+        cancelWork()
+        pendingFolder = nil
+        lines = []
+        statusMessage = nil
+    }
+
+    private func cancelWork() {
         task?.cancel()
         task = nil
         generation += 1
@@ -156,12 +193,19 @@ final class LiveMeetingTranscriber: ObservableObject {
         try writeChunk(samples, format: reader.processingFormat, to: chunk)
 
         isWorking = true
+        // The first pass may block on model load for a while — say so instead
+        // of leaving the panel on a bare "Listening…".
+        if !hasTranscribedOnce {
+            statusMessage = "Preparing the transcription model…"
+        }
         let config = settings()
         let transcript = try await config.transcriptionModel.engine.transcribe(
             audio: chunk,
             language: config.transcriptionLanguage.code)
         try Task.checkCancellation()
         guard generation == session else { return nil }
+        hasTranscribedOnce = true
+        statusMessage = nil
 
         let offset = Double(range.lowerBound) / sampleRate
         let fresh = transcript.segments.compactMap { segment -> Line? in
@@ -176,7 +220,7 @@ final class LiveMeetingTranscriber: ObservableObject {
     }
 
     private func scratchDirectory() throws -> URL {
-        let dir = storageRoot.appendingPathComponent("live-previews", isDirectory: true)
+        let dir = storageRoot.appendingPathComponent(Self.scratchDirectoryName, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }

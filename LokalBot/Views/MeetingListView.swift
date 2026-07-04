@@ -40,12 +40,16 @@ struct MeetingListView: View {
                         StatusDot(color: Brand.recording, size: 7)
                         Text("recording…").font(.caption)
                         LiveWaveform(barCount: 5, barWidth: 2.5, maxHeight: 10)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.secondary)
                     }
                     .padding(.horizontal, 10).padding(.vertical, 5)
                     .hudCapsule()
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("live.badge")
+                .help("Live transcript and notes")
                 .padding(10)
                 .popover(isPresented: $showLivePanel, arrowEdge: .bottom) {
                     LiveMeetingPanel(
@@ -62,6 +66,11 @@ struct MeetingListView: View {
         }
         .onDeleteCommand {
             if !app.selectedMeetingIDs.isEmpty { pendingDelete = app.selectedMeetingIDs }
+        }
+        .onChange(of: app.livePanelRequested) {
+            guard app.livePanelRequested else { return }
+            app.livePanelRequested = false
+            if app.isRecording { showLivePanel = true }
         }
     }
 

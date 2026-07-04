@@ -121,6 +121,16 @@ struct MenuBarView: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .tint((app.isRecording || app.dictation.state.isRecording) ? .red : .accentColor)
+
+                if app.isRecording {
+                    Button {
+                        app.requestLivePanel()
+                    } label: {
+                        Label("Live transcript & notes", systemImage: "text.bubble")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
         }
         .overlay(
