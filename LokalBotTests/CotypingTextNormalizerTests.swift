@@ -125,6 +125,68 @@ final class CotypingTextNormalizerTests: XCTestCase {
             for: request(prefix: "Let's ", maxWords: 8))
         XCTAssertEqual(result, "one two three four five six seven eight")
     }
+
+    private func wordPrefixRequest(
+        prefix: String,
+        trailing: String = "",
+        wordPrefix: String,
+        isValidWord: Bool,
+        force: Bool = false
+    ) -> CotypingRequest {
+        CotypingRequest(
+            prompt: CotypingPromptRenderer.prompt(prefixText: prefix),
+            prefixText: prefix, trailingText: trailing, isMultiLine: false,
+            maxTokens: 24, maxWords: 6, temperature: 0.1, topP: 0.7, topK: 20, minP: 0.08,
+            repeatPenalty: 1.05, seed: 0, generation: 0, forceWordContinuation: force,
+            wordPrefixAtCaret: wordPrefix, wordPrefixIsValidWord: isValidWord)
+    }
+
+    func testSuppressesWhitespaceLeadingCompletionAfterInvalidFragment() {
+        // "follo" is not a standalone word; " up on that" would insert
+        // "follo up on that" — broken text the guard must reject.
+        let detailed = CotypingTextNormalizer.normalizeDetailed(
+            " up on that",
+            for: wordPrefixRequest(prefix: "I wanted to follo", wordPrefix: "follo", isValidWord: false))
+        XCTAssertEqual(detailed.text, "")
+        XCTAssertEqual(detailed.suppression, .wordCompletionMismatch)
+    }
+
+    func testKeepsCompletionThatExtendsTheFragment() {
+        let detailed = CotypingTextNormalizer.normalizeDetailed(
+            "w up on that",
+            for: wordPrefixRequest(prefix: "I wanted to follo", wordPrefix: "follo", isValidWord: false))
+        XCTAssertEqual(detailed.text, "w up on that")
+        XCTAssertNil(detailed.suppression)
+    }
+
+    func testValidWordFragmentMayBeFollowedBySpace() {
+        // "the" is a complete word in its own right — the model may legitimately
+        // treat it as finished and continue with a new word.
+        let detailed = CotypingTextNormalizer.normalizeDetailed(
+            " meeting",
+            for: wordPrefixRequest(prefix: "I will attend the", wordPrefix: "the", isValidWord: true))
+        XCTAssertEqual(detailed.text, " meeting")
+        XCTAssertNil(detailed.suppression)
+    }
+
+    func testGuardNeverFiresWithoutFragmentAtCaret() {
+        let detailed = CotypingTextNormalizer.normalizeDetailed(
+            " up on that",
+            for: wordPrefixRequest(prefix: "I wanted to ", wordPrefix: "", isValidWord: false))
+        XCTAssertEqual(detailed.text, "up on that")
+        XCTAssertNil(detailed.suppression)
+    }
+
+    func testForceWordContinuationPathUnchangedByWordPrefixFields() {
+        // Strictly inside a word the force path already strips the leading
+        // space and validates the tail; the new guard must stay out of its way.
+        let detailed = CotypingTextNormalizer.normalizeDetailed(
+            " ord",
+            for: wordPrefixRequest(
+                prefix: "rec", trailing: "ord", wordPrefix: "rec", isValidWord: false, force: true))
+        XCTAssertEqual(detailed.text, "ord")
+        XCTAssertNil(detailed.suppression)
+    }
 }
 
 // MARK: - Trailing duplication filter

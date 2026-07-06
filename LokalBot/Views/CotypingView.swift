@@ -402,7 +402,7 @@ private struct CotypingContent: View {
 
     private var benchmarkSection: some View {
         Section("Quality check") {
-            Text("Runs a small email/chat/browser/mid-word scenario set through the active cotyping engine and reports safety plus latency.")
+            Text("Runs email/chat/browser continuations, mid-word word completions, and safety scenarios through the active cotyping engine and reports safety, word-completion parity, and latency.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack(spacing: 8) {
@@ -430,6 +430,14 @@ private struct CotypingContent: View {
                 LabeledContent("Expected-term hints") {
                     Text("\(benchmarkSummary.keywordHits)/\(benchmarkSummary.keywordTotal)")
                         .foregroundStyle(.secondary)
+                }
+                if benchmarkSummary.wordCompletionTotal > 0 {
+                    LabeledContent("Word completions") {
+                        Text("\(benchmarkSummary.wordCompletionPassed)/\(benchmarkSummary.wordCompletionTotal) extend the typed word")
+                            .foregroundStyle(
+                                benchmarkSummary.wordCompletionPassed == benchmarkSummary.wordCompletionTotal
+                                    ? AnyShapeStyle(.green) : AnyShapeStyle(.orange))
+                    }
                 }
                 ForEach(benchmarkSummary.results.indices, id: \.self) { index in
                     CotypingBenchmarkResultRow(result: benchmarkSummary.results[index])

@@ -38,13 +38,15 @@ final class LocalLlamaCotypingEngine: CotypingCompleting {
     }
 
     /// Best-effort prompt KV prefill for the focused field. A real generation
-    /// cancels this so it does not sit behind obsolete warmup work.
+    /// cancels this so it does not sit behind obsolete warmup work. Prefills
+    /// the HEALED prompt so a mid-word generation's KV-reuse probe hits.
     func prewarm(for request: CotypingRequest) async throws {
         inflightPrewarmTask?.cancel()
+        let prompt = Self.healedGeneration(for: request).prompt
         let task = Task { [runtime, modelPath] in
             do {
                 try await runtime.loadIfNeeded(modelPath: modelPath)
-                let promptTokens = await runtime.tokenize(request.prompt, addBOS: true)
+                let promptTokens = await runtime.tokenize(prompt, addBOS: true)
                 guard !promptTokens.isEmpty else { return }
                 try Task.checkCancellation()
                 try await withTaskCancellationHandler {
@@ -84,7 +86,8 @@ final class LocalLlamaCotypingEngine: CotypingCompleting {
         inflightPrewarmTask?.cancel()
         inflightPrewarmTask = nil
         try await runtime.loadIfNeeded(modelPath: modelPath)
-        let promptTokens = await runtime.tokenize(request.prompt, addBOS: true)
+        let healed = Self.healedGeneration(for: request)
+        let promptTokens = await runtime.tokenize(healed.prompt, addBOS: true)
         guard !promptTokens.isEmpty else {
             return CotypingNormalizationResult(text: "", suppression: .emptyGeneration)
         }
@@ -107,7 +110,11 @@ final class LocalLlamaCotypingEngine: CotypingCompleting {
             try await runtime.generate(
                 promptTokens: promptTokens,
                 maxTokens: request.maxTokens,
-                samplerSpecs: specs
+                samplerSpecs: specs,
+                requiredPrefixUTF8: healed.requiredPrefixUTF8,
+                // A fragment that is not a valid standalone word must keep
+                // being spelled across the caret, not merely reach it.
+                preferWordExtendingOvershoot: !request.wordPrefixIsValidWord
             ) { piece in
                 if Task.isCancelled { return false }
                 accumulator.append(piece)
@@ -127,6 +134,20 @@ final class LocalLlamaCotypingEngine: CotypingCompleting {
 
         if Task.isCancelled { throw CancellationError() }
         return CotypingTextNormalizer.normalizeDetailed(raw, for: request)
+    }
+
+    /// The healed (prompt, required-prefix) pair for a request. Healing applies
+    /// only when the request carries a word fragment at the caret — the same
+    /// signal the typo gate and normalizer key off — so boundary caret
+    /// positions keep today's prompt byte-for-byte.
+    static func healedGeneration(
+        for request: CotypingRequest
+    ) -> (prompt: String, requiredPrefixUTF8: [UInt8]) {
+        guard !request.wordPrefixAtCaret.isEmpty,
+              let split = CotypingTokenHealing.split(prompt: request.prompt) else {
+            return (request.prompt, [])
+        }
+        return (split.healedPrompt, Array(split.requiredPrefix.utf8))
     }
 }
 

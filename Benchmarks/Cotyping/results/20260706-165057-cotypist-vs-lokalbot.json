@@ -1,0 +1,455 @@
+{
+  "manifest": "/tmp/cotyping-cotypist-20260706-165057/prompts.tsv",
+  "totals": {
+    "cotypist": {
+      "suggested": 0,
+      "wc_ok": 0,
+      "wc_total": 0,
+      "captured": 0
+    },
+    "lokalbot": {
+      "suggested": 0,
+      "wc_ok": 0,
+      "wc_total": 0,
+      "captured": 0
+    }
+  },
+  "rows": [
+    {
+      "slug": "01-follow-up",
+      "kind": "next-word",
+      "prompt": "Hi Sarah, thanks for sending this over. I wanted to follow",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "02-take-ownership",
+      "kind": "next-word",
+      "prompt": "Sounds good, I can take",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "03-tradeoff",
+      "kind": "next-word",
+      "prompt": "The main tradeoff is",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "04-quick-update",
+      "kind": "next-word",
+      "prompt": "Hi team, just a quick update on the",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "05-scheduling",
+      "kind": "next-word",
+      "prompt": "Could we move our call to",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "06-support-reply",
+      "kind": "next-word",
+      "prompt": "Sorry for the trouble — I have reset your account and you should",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "07-question",
+      "kind": "next-word",
+      "prompt": "Could you send over the final version before",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "08-comma-clause",
+      "kind": "next-word",
+      "prompt": "If the numbers hold up through Friday,",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "09-sentence-start",
+      "kind": "next-word",
+      "prompt": "The rollout went smoothly overall. ",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "10-wc-follo",
+      "kind": "word-completion",
+      "prompt": "Hi Sarah, thanks for sending this over. I wanted to follo",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "11-wc-conversati",
+      "kind": "word-completion",
+      "prompt": "Great catching up today — let us continue this conversati",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "12-wc-tomorro",
+      "kind": "word-completion",
+      "prompt": "I will send over the final report tomorro",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "13-wc-recei",
+      "kind": "word-completion",
+      "prompt": "Please let me know as soon as you recei",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "14-wc-producti",
+      "kind": "word-completion",
+      "prompt": "Thanks everyone, that was a really producti",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "15-wc-schedu",
+      "kind": "word-completion",
+      "prompt": "Let me double-check my schedu",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "16-wc-importa",
+      "kind": "word-completion",
+      "prompt": "One more thing — this part is really importa",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "17-wc-weeke",
+      "kind": "word-completion",
+      "prompt": "Sounds great, have a lovely weeke",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "18-wc-aro",
+      "kind": "word-completion",
+      "prompt": "The budget for Q3 lands somewhere aro",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "19-wc-unterstuet",
+      "kind": "word-completion",
+      "prompt": "Hallo Jonas, vielen Dank für deine Unterstüt",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "20-wc-revie",
+      "kind": "word-completion",
+      "prompt": "Thanks for pulling the launch numbers together so quickly. The conversion funnel looks stronger than last quarter and the retention curve is finally flattening. Before we share this with the wider team, could you please revie",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "21-vf-the",
+      "kind": "valid-fragment",
+      "prompt": "I think we should discuss the",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "22-vf-can",
+      "kind": "valid-fragment",
+      "prompt": "Absolutely, we can",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "23-vf-don",
+      "kind": "valid-fragment",
+      "prompt": "I am sure we will figure it out, don",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "24-typo-recieve",
+      "kind": "typo",
+      "prompt": "Please make sure you recieve",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    },
+    {
+      "slug": "25-typo-teh",
+      "kind": "typo",
+      "prompt": "Quick reminder about teh",
+      "apps": {
+        "cotypist": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        },
+        "lokalbot": {
+          "insertion": null,
+          "suggested": null,
+          "word_completion_ok": null
+        }
+      }
+    }
+  ],
+  "engine_summary": {
+    "averageLatencyMs": 471,
+    "keywordHits": 13,
+    "keywordTotal": 64,
+    "p95LatencyMs": 1798,
+    "passed": 25,
+    "safetyPassed": 28,
+    "total": 28,
+    "wordCompletionPassed": 12,
+    "wordCompletionTotal": 13
+  }
+}

@@ -54,6 +54,46 @@ final class CotypingAutocorrectTests: XCTestCase {
         XCTAssertEqual(decision, .proceed)
     }
 
+    func testTypoGateProceedsForCompletableMidWordFragment() {
+        // "follo" is flagged by the spell checker but is a live prefix of
+        // "follow": it is an unfinished word, so the LLM continuation must run
+        // (Cotypist's core mid-word behavior) instead of an autocorrect offer.
+        let decision = CotypingTypoGate.resolve(
+            precedingText: "I wanted to follo", enabled: true,
+            isTypo: { $0 == "follo" },
+            bestCorrection: { _ in "folio" },
+            isCompletableWordPrefix: { $0 == "follo" })
+        XCTAssertEqual(decision, .proceed)
+    }
+
+    func testTypoGateStillCorrectsUncompletableMidWordFragment() {
+        // No dictionary word starts with "recieve" — mid-word or not, this is a
+        // real typo and the correction must be offered.
+        let decision = CotypingTypoGate.resolve(
+            precedingText: "I did not recieve", enabled: true,
+            isTypo: { $0 == "recieve" },
+            bestCorrection: { $0 == "recieve" ? "receive" : nil },
+            isCompletableWordPrefix: { _ in false })
+        XCTAssertEqual(decision, .offerCorrection(word: "recieve", correctedWord: "receive"))
+    }
+
+    func testTypoGateIgnoresCompletabilityOnceWordIsFinished() {
+        // A trailing space means the word is done: even a fragment that would
+        // be completable mid-word ("follo" → follow) must be corrected, and the
+        // completability check must not even be consulted.
+        var consulted = false
+        let decision = CotypingTypoGate.resolve(
+            precedingText: "I wanted to follo ", enabled: true,
+            isTypo: { $0 == "follo" },
+            bestCorrection: { $0 == "follo" ? "follow" : nil },
+            isCompletableWordPrefix: { _ in
+                consulted = true
+                return true
+            })
+        XCTAssertEqual(decision, .offerCorrection(word: "follo", correctedWord: "follow"))
+        XCTAssertFalse(consulted)
+    }
+
     func testCorrectionPlan() {
         let plan = CotypingCorrectionPlan.plan(
             precedingText: "I want to teh", expectedTypo: "teh", correctedWord: "the")

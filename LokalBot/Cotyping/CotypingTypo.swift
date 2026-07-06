@@ -85,17 +85,28 @@ enum CotypingTypoDecision: Equatable {
 }
 
 enum CotypingTypoGate {
-    /// `isTypo` / `bestCorrection` are injected (production: `CotypingSpellChecker`;
-    /// tests: stubs) so this stays pure.
+    /// `isTypo` / `bestCorrection` / `isCompletableWordPrefix` are injected
+    /// (production: `CotypingSpellChecker`; tests: stubs) so this stays pure.
+    ///
+    /// A word still being typed (no trailing space yet) that is a live prefix
+    /// of a real word ("follo" → follow) is NOT a typo — it is an unfinished
+    /// word, and the LLM continuation must run so it can complete it inline
+    /// (Cotypist's core mid-word behavior). Only a fragment that no dictionary
+    /// word starts with ("recieve") is treated as a typo mid-word. Once the
+    /// word is finished (trailing space), completability no longer applies.
     static func resolve(
         precedingText: String,
         enabled: Bool,
         isTypo: (String) -> Bool,
-        bestCorrection: (String) -> String?
+        bestCorrection: (String) -> String?,
+        isCompletableWordPrefix: (String) -> Bool = { _ in false }
     ) -> CotypingTypoDecision {
         guard enabled else { return .proceed }
         guard let current = CotypingWord.extractTrailingWord(from: precedingText) else { return .proceed }
         guard isTypo(current.result.word) else { return .proceed }
+        if current.trailingSpaceCount == 0, isCompletableWordPrefix(current.result.word) {
+            return .proceed
+        }
         guard let corrected = bestCorrection(current.result.word) else { return .suppress }
         return .offerCorrection(word: current.result.word, correctedWord: corrected)
     }

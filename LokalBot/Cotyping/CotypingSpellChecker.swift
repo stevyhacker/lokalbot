@@ -32,4 +32,21 @@ final class CotypingSpellChecker {
         guard let candidate else { return nil }
         return CotypingCaseTransfer.applying(caseOf: word, to: candidate)
     }
+
+    /// True when the partial word the caret sits in can still become a real
+    /// word (native word-completion list is non-empty). Distinguishes an
+    /// unfinished word ("follo" → follow…) from a genuine typo ("recieve"),
+    /// which has no completions. Mirrors Cotypist's mid-word behavior: keep
+    /// completing while the fragment is a live word prefix.
+    func isCompletableWordPrefix(_ word: String) -> Bool {
+        guard !word.isEmpty else { return false }
+        let range = NSRange(location: 0, length: (word as NSString).length)
+        let completions = NSSpellChecker.shared.completions(
+            forPartialWordRange: range, in: word, language: nil,
+            inSpellDocumentWithTag: documentTag) ?? []
+        return completions.contains { completion in
+            completion.count > word.count
+                && completion.lowercased().hasPrefix(word.lowercased())
+        }
+    }
 }

@@ -17,6 +17,9 @@ enum CotypingSuppressionReason: String, Sendable, Equatable {
     case placeholderText
     case questionContinuation
     case unsafeToInsert
+    /// Caret sits at the end of a non-word fragment and the completion began
+    /// with whitespace instead of extending it ("follo" + " up on that").
+    case wordCompletionMismatch
 }
 
 struct CotypingNormalizationResult: Equatable, Sendable {
@@ -81,6 +84,17 @@ enum CotypingTextNormalizer {
             if !isPlausibleMidWordContinuation(normalized, trailingText: request.trailingText) {
                 return CotypingNormalizationResult(text: "", suppression: .unsafeToInsert)
             }
+        }
+        // Caret at the end of a partial word (nothing word-like after it): when
+        // the fragment is not a valid standalone word, a whitespace-leading
+        // continuation would leave broken text ("follo" + " up on that") — reject
+        // it. The in-process runtime's required-prefix decode can't produce this;
+        // the HTTP fallback and misbehaving models can.
+        if !request.forceWordContinuation,
+           request.wordPrefixAtCaret.count >= 2,
+           !request.wordPrefixIsValidWord,
+           let first = normalized.first, first.isWhitespace {
+            return CotypingNormalizationResult(text: "", suppression: .wordCompletionMismatch)
         }
 
         if !request.forceWordContinuation, CotypingTrailingDuplicationFilter.duplicatesTrailingText(

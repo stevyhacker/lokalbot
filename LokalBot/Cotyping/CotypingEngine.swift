@@ -27,7 +27,8 @@ enum CotypingRequestBuilder {
         personalization: CotypingPersonalization,
         generation: UInt64,
         clipboardContext: String? = nil,
-        learnedExamples: [String] = []
+        learnedExamples: [String] = [],
+        wordPrefixIsValidWord: Bool = true
     ) -> CotypingRequest? {
         guard CotypingPrefixWindow.shouldGenerate(for: field.precedingText) else { return nil }
         let prefix = CotypingPrefixWindow.truncatedPrefix(
@@ -69,7 +70,9 @@ enum CotypingRequestBuilder {
             seed: config.seed,
             generation: generation,
             forceWordContinuation: CotypingMidWord.shouldForceContinuation(
-                precedingText: field.precedingText, trailingText: field.trailingText))
+                precedingText: field.precedingText, trailingText: field.trailingText),
+            wordPrefixAtCaret: CotypingMidWord.currentPartialWord(in: prefix),
+            wordPrefixIsValidWord: wordPrefixIsValidWord)
     }
 }
 

@@ -63,4 +63,21 @@ final class CotypingRequestBuilderTests: XCTestCase {
         XCTAssertTrue(request.prompt.hasPrefix("Written by Sam."))
         XCTAssertTrue(request.isMultiLine)
     }
+
+    func testCapturesWordPrefixAtCaretWithSpellVerdict() throws {
+        // The fragment at the caret plus the injected spell-checker verdict are
+        // what arm the normalizer's word-completion mismatch guard downstream.
+        let request = try XCTUnwrap(CotypingRequestBuilder.build(
+            field: field(preceding: "I want to rec"), config: .standard,
+            personalization: .none, generation: 0, wordPrefixIsValidWord: false))
+        XCTAssertEqual(request.wordPrefixAtCaret, "rec")
+        XCTAssertFalse(request.wordPrefixIsValidWord)
+    }
+
+    func testWordPrefixIsEmptyAtWordBoundary() throws {
+        let request = try XCTUnwrap(CotypingRequestBuilder.build(
+            field: field(preceding: "I want to "), config: .standard,
+            personalization: .none, generation: 0))
+        XCTAssertEqual(request.wordPrefixAtCaret, "")
+    }
 }

@@ -50,20 +50,60 @@ Parity defaults:
   acceptance stops at sentence/newline boundaries and CJK clause punctuation;
   ASCII commas stay inside the phrase.
 
+## Mid-Word Word Completion (Cotypist parity)
+
+Cotypist's signature behavior — "keep typing and it snaps to the word you
+meant" — is a *required-prefix constrained decode* (its binary calls it
+`requiredPrefix`/`remainingRequiredPrefix`). LokalBot reproduces it with three
+cooperating layers:
+
+- **Typo gate**: a word still being typed (no trailing space) that is a live
+  prefix of a real word ("follo") is an unfinished word, not a typo — the gate
+  returns `.proceed` so the LLM can complete it. Only fragments no dictionary
+  word starts with ("recieve") get the inline correction / suppression
+  (`CotypingTypoGate` + `CotypingSpellChecker.isCompletableWordPrefix`).
+- **Token healing** (in-process runtime): the prompt is cut back to the last
+  word boundary and the cut bytes (separator + fragment) become a decode
+  constraint. Generation must re-produce them through naturally tokenized
+  pieces — typically one boundary-merging token like " follow" against
+  " follo" — then continues free. Only the text past the constraint is
+  emitted, so the ghost extends the word (`CotypingTokenHealing`,
+  `LlamaCotypingRuntime.generate(requiredPrefixUTF8:)`).
+- **Normalizer guard**: on the HTTP fallback (no byte-level constraint), a
+  whitespace-leading completion after a non-word fragment ("follo" + " up")
+  is suppressed as `wordCompletionMismatch` rather than shown broken.
+
+Note: Cotypist ships the *base* Gemma 4 E4B GGUF (`gemma-4-E4B-UD-Q5_K_XL`);
+LokalBot uses the instruct variant (`gemma-4-E4B-it-UD-Q5_K_XL`). Base models
+are stronger raw continuers; if completions still trail Cotypist in tone,
+trialing the base GGUF as the cotyping model is the next lever.
+
 ## Automated Check
 
-Run the in-app Cotyping tab's "Run cotyping check" action after selecting the intended model. It exercises the default benchmark scenarios in `CotypingBenchmarkScenario.defaults`:
+Run the in-app Cotyping tab's "Run cotyping check" action after selecting the
+intended model, or headless:
 
-- Email follow-up
-- Chat ownership
-- Browser prose
-- Mid-word safety
+```bash
+"/Applications/LokalBot.app/Contents/MacOS/LokalBot" --cotyping-bench > bench.json
+```
+
+It exercises the 28 scenarios in `CotypingBenchmarkScenario.defaults`, in four
+groups:
+
+- Next-word continuations (email, chat, browser, scheduling, lists)
+- **Word completions** — the caret ends on a fragment no dictionary word
+  equals ("follo", "conversati", "Unterstüt"); the suggestion must begin with
+  a word character and the expected tail (`expectedCompletionPrefixes`)
+- Strictly-inside-word safety (text after the caret)
+- Context/format robustness (questions, bullet lists, German, comma clauses)
 
 Passing target:
 
 - Normal scenarios return non-empty safe text.
-- Safety scenarios may suppress when the model proposes an unsafe mid-word join
-  or trailing-text duplication.
+- Word-completion scenarios extend the typed word (`wordCompletionPassed ==
+  wordCompletionTotal` in the JSON/UI summary; 12/13 minimum observed on
+  Gemma 4 E4B Q5 XL).
+- Safety scenarios may suppress with an allowed reason.
 - p95 latency is at or below 2000 ms.
 - Expected-term hits are reviewed as a quality signal, not a hard pass/fail.
 
@@ -78,14 +118,14 @@ Passing target:
 
 ## Manual Side-by-Side
 
-Use the same prompts in Cotypist and LokalBot with Gemma 4 E4B Q5 XL active in LokalBot. Qwen3.5 2B and LFM2.5 1.2B remain useful latency comparison points:
+The shared prompt set lives in `Benchmarks/Cotyping/prompts.tsv` — 25 prompts
+across next-word, word-completion, valid-fragment, and typo groups, mirroring
+the in-app benchmark scenarios. Both apps are driven by the same manifest, so
+differences are pipeline differences, not prompt differences. Word-completion
+prompts (`10-wc-*` … `20-wc-*`) are the Cotypist parity core: the accepted
+insertion must begin with a word character that completes the typed fragment.
 
-1. Mail: `Hi Sarah,\nThanks for sending this over. I wanted to follow`
-2. Slack: `Sounds good, I can take`
-3. Browser comment box: `The main tradeoff is`
-4. Mid-word: preceding `Please rec`, trailing `eive the files when ready.`
-
-Record:
+Record (per prompt, and overall):
 
 - Time from pause to visible first suggestion.
 - Whether the suggestion is grammatically valid.
@@ -113,12 +153,15 @@ Record:
   rather than rendering the whole preview at the same strength.
 - Whether it avoids code editors, terminals, secure fields, and excluded domains.
 
-For repeatable screenshot capture:
+For the repeatable capture + merged report:
 
 ```bash
-Scripts/compare-cotyping.sh cotabby /tmp/cotyping-cotabby
-Scripts/compare-cotyping.sh cotypist /tmp/cotyping-cotypist
-Scripts/compare-cotyping.sh lokalbot /tmp/cotyping-lokalbot
+COTYPING_COMPARE_ACCEPT=1 Scripts/compare-cotyping.sh cotypist /tmp/cotyping-cotypist
+COTYPING_COMPARE_ACCEPT=1 Scripts/compare-cotyping.sh lokalbot /tmp/cotyping-lokalbot
+"/Applications/LokalBot.app/Contents/MacOS/LokalBot" --cotyping-bench > /tmp/bench.json
+Benchmarks/Cotyping/side_by_side.py \
+  --cotypist-dir /tmp/cotyping-cotypist --lokalbot-dir /tmp/cotyping-lokalbot \
+  --engine-json /tmp/bench.json --output Benchmarks/Cotyping/results/<date>.md
 ```
 
 The script opens TextEdit, clicks into the document, types each prompt as real

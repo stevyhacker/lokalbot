@@ -16,6 +16,7 @@ enum HeadlessCommand: Equatable {
     case shotTest
     case digest
     case chat(question: String)
+    case cotypingBench
 
     /// Set by `LokalBotMain.main()`; consumed by `AppState.init`.
     @MainActor static var requested: HeadlessCommand?
@@ -34,6 +35,7 @@ enum HeadlessCommand: Equatable {
         }
         if args.contains("--shot-test") { return .shotTest }
         if args.contains("--digest") { return .digest }
+        if args.contains("--cotyping-bench") { return .cotypingBench }
         if let flag = args.firstIndex(of: "--chat"), args.count > flag + 1 {
             return .chat(question: args[flag + 1])
         }
@@ -56,6 +58,7 @@ struct HeadlessCommandRunner {
         case .shotTest: runShotTest()
         case .digest: runDigest()
         case .chat(let question): runChat(question: question)
+        case .cotypingBench: runCotypingBench()
         }
     }
 
@@ -181,6 +184,20 @@ struct HeadlessCommandRunner {
                 await LlamaServer.embedder.stop()
                 exit(1)
             }
+        }
+    }
+
+    /// `LokalBot --cotyping-bench`: run the cotyping quality benchmark headless
+    /// against the real engine and print one JSON document — the scriptable
+    /// face of the in-app "Run cotyping check" (same scenarios, same criteria).
+    /// Exit 0 when every scenario passes its safety contract, 1 otherwise.
+    private func runCotypingBench() {
+        Task { @MainActor in
+            let summary = await app.cotyping.runQualityBenchmark()
+            print(summary.jsonReport())
+            await app.cotypingEngine.unload()
+            await LlamaServer.shared.stop()
+            exit(summary.results.allSatisfy(\.passedSafety) ? 0 : 1)
         }
     }
 

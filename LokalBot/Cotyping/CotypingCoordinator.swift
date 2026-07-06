@@ -621,7 +621,8 @@ final class CotypingCoordinator: ObservableObject {
             field: field, config: cfg,
             personalization: settings.cotypingPersonalization, generation: generation,
             clipboardContext: clipboardSnippet,
-            learnedExamples: learnedExamples)
+            learnedExamples: learnedExamples,
+            wordPrefixIsValidWord: wordPrefixIsValidWord(for: field.precedingText))
     }
 
     private func pinnedClipboardContext(
@@ -915,7 +916,17 @@ final class CotypingCoordinator: ObservableObject {
         CotypingTypoGate.resolve(
             precedingText: precedingText, enabled: enabled,
             isTypo: { spellChecker.isTypo($0) },
-            bestCorrection: { spellChecker.bestCorrection(for: $0) })
+            bestCorrection: { spellChecker.bestCorrection(for: $0) },
+            isCompletableWordPrefix: { spellChecker.isCompletableWordPrefix($0) })
+    }
+
+    /// Whether the word fragment at the caret is a valid standalone word — the
+    /// normalizer's signal for accepting a whitespace-leading continuation
+    /// after a fragment ("the" may be complete; "follo" must be extended).
+    private func wordPrefixIsValidWord(for precedingText: String) -> Bool {
+        let partial = CotypingMidWord.currentPartialWord(in: precedingText)
+        guard partial.count >= 2 else { return true }
+        return !spellChecker.isTypo(partial)
     }
 
     /// Bundles the caret-geometry + mid-line + preference signals the overlay
@@ -1242,7 +1253,8 @@ final class CotypingCoordinator: ObservableObject {
         guard let request = CotypingRequestBuilder.build(
             field: field, config: cfg,
             personalization: settings.cotypingPersonalization, generation: 0,
-            learnedExamples: learnedExamples) else {
+            learnedExamples: learnedExamples,
+            wordPrefixIsValidWord: wordPrefixIsValidWord(for: precedingText)) else {
             return ""
         }
         return try await engine.generate(request).text

@@ -198,10 +198,31 @@ OSA
   fi
 }
 
-run_prompt "01-follow-up" "I wanted to follow" "$first_wait_seconds"
-run_prompt "02-take-ownership" "I can take" "$wait_seconds"
-run_prompt "03-tradeoff" "The main tradeoff is" "$wait_seconds"
-run_prompt "04-when-ready" "Please receive the files when" "$wait_seconds"
+# Prompts come from the shared manifest so Cotypist and LokalBot are driven by
+# the exact same inputs the in-app benchmark mirrors. Tab-separated:
+# slug<TAB>kind<TAB>prompt. Override with COTYPING_COMPARE_PROMPTS.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+manifest="${COTYPING_COMPARE_PROMPTS:-$script_dir/../Benchmarks/Cotyping/prompts.tsv}"
+if [[ ! -f "$manifest" ]]; then
+  printf 'Prompt manifest not found: %s\n' "$manifest" >&2
+  exit 66
+fi
+cp "$manifest" "$out_dir/prompts.tsv"
+
+first_prompt=1
+while IFS=$'\t' read -r slug kind prompt; do
+  [[ -z "$slug" || "$slug" == \#* ]] && continue
+  if [[ -z "$prompt" ]]; then
+    printf 'Skipping malformed manifest row: %s\n' "$slug" >&2
+    continue
+  fi
+  if [[ "$first_prompt" == 1 ]]; then
+    run_prompt "$slug" "$prompt" "$first_wait_seconds"
+    first_prompt=0
+  else
+    run_prompt "$slug" "$prompt" "$wait_seconds"
+  fi
+done < "$manifest"
 
 cat > "$out_dir/README.md" <<EOF
 # Cotyping Comparison

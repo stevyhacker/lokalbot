@@ -160,6 +160,19 @@ struct CotypingRequest: Sendable, Equatable {
     /// Enforced at the output layer by `CotypingTextNormalizer`.
     var forceWordContinuation: Bool = false
 
+    /// The run of word characters immediately before the caret ("" at a word
+    /// boundary). When non-empty the user is mid-word and the completion should
+    /// extend this fragment: the in-process runtime heals the prompt at the
+    /// word boundary and decodes with this as a required prefix; the normalizer
+    /// uses it to reject continuations that ignore the fragment.
+    var wordPrefixAtCaret: String = ""
+
+    /// Whether `wordPrefixAtCaret` is itself a valid standalone word (per the
+    /// native spell checker). A valid word ("the") may legitimately be followed
+    /// by a space; an invalid fragment ("follo") must be extended, so a
+    /// whitespace-leading completion is rejected. Defaults permissive.
+    var wordPrefixIsValidWord: Bool = true
+
     /// `true` when the caret prefix ends on whitespace, so the normalizer drops
     /// a leading space the model may add (deterministic space management).
     var precedingEndsWithWhitespace: Bool {

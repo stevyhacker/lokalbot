@@ -246,16 +246,19 @@ actor LlamaCotypingRuntime {
     }
 
     private func piece(for token: Int32) -> String {
-        guard let vocab else { return "" }
+        String(decoding: pieceBytes(for: token), as: UTF8.self)
+    }
+
+    private func pieceBytes(for token: Int32) -> [UInt8] {
+        guard let vocab else { return [] }
         var buf = [CChar](repeating: 0, count: 64)
         var n = llama_token_to_piece(vocab, token, &buf, Int32(buf.count), 0, false)
         if n < 0 {
             buf = [CChar](repeating: 0, count: Int(-n))
             n = llama_token_to_piece(vocab, token, &buf, Int32(buf.count), 0, false)
         }
-        guard n > 0 else { return "" }
-        let bytes = buf.prefix(Int(n)).map { UInt8(bitPattern: $0) }
-        return String(decoding: bytes, as: UTF8.self)
+        guard n > 0 else { return [] }
+        return buf.prefix(Int(n)).map { UInt8(bitPattern: $0) }
     }
 
     // MARK: - Decode
@@ -312,11 +315,27 @@ actor LlamaCotypingRuntime {
 
     // MARK: - Generate
 
+    /// - Parameters:
+    ///   - requiredPrefixUTF8: token-healing constraint. When non-empty,
+    ///     generation must first re-produce exactly these bytes (the whitespace +
+    ///     word fragment cut from the prompt tail by `CotypingTokenHealing`) via
+    ///     naturally tokenized pieces, then continue freely. Only the text AFTER
+    ///     the constraint (including the overshoot of a boundary-merging token
+    ///     like " follow" against " follo") is emitted and returned — it is the
+    ///     ghost text that extends the word the user is typing.
+    ///   - preferWordExtendingOvershoot: when the fragment is NOT a valid
+    ///     standalone word, a candidate that merely lands exactly on the caret
+    ///     leaves the model in the same awkward mid-word state healing exists to
+    ///     avoid (free decode after "…tomorro" can emit "ow."). Prefer a
+    ///     boundary-crossing candidate that keeps spelling the word — Cotypist's
+    ///     transition-expansion behavior.
     func generate(
         promptTokens: [Int32],
         maxTokens: Int,
         samplerSpecs: [LlamaSamplerSpec],
         stopAtArgmaxEOG: Bool = true,
+        requiredPrefixUTF8: [UInt8] = [],
+        preferWordExtendingOvershoot: Bool = false,
         onToken: @Sendable (String) -> Bool
     ) throws -> String {
         guard let ctx, let vocab, !promptTokens.isEmpty else { return "" }
@@ -374,6 +393,39 @@ actor LlamaCotypingRuntime {
 
         var output = ""
         var pos = Int32(promptTokens.count)
+
+        // Constrained phase: force-decode the healed word fragment. Each step
+        // consumes >=1 byte, so the loop terminates in <=count steps.
+        var remaining = requiredPrefixUTF8[...]
+        var constraintStopped = false
+        while !remaining.isEmpty {
+            try Task.checkCancellation()
+            guard let tok = constrainedToken(
+                matching: remaining,
+                vocab: vocab,
+                preferWordExtendingOvershoot: preferWordExtendingOvershoot) else {
+                // No vocab token can extend the constraint (pathological bytes).
+                // Surface nothing rather than a suggestion that skips the fragment.
+                return ""
+            }
+            llama_sampler_accept(sampler, tok)
+            switch CotypingRequiredPrefixMatcher.match(
+                pieceBytes: pieceBytes(for: tok), remaining: remaining) {
+            case .consumes(let count):
+                remaining = remaining.dropFirst(count)
+            case .overshoots(let extraBytes):
+                remaining = remaining.dropFirst(remaining.count)
+                let text = String(decoding: extraBytes, as: UTF8.self)
+                output += text
+                if !onToken(text) { constraintStopped = true }
+            case .mismatch:
+                return ""   // constrainedToken guarantees a match; defensive.
+            }
+            try decodeOrThrow([tok], startPos: pos, logitsLastOnly: true)
+            pos += 1
+        }
+        if constraintStopped { return output }
+
         for _ in 0..<maxTokens {
             try Task.checkCancellation()
             if stopAtArgmaxEOG, argmaxTokenIsEOG(ctx: ctx, vocab: vocab) {
@@ -420,6 +472,63 @@ actor LlamaCotypingRuntime {
             }
         }
         return bestToken
+    }
+
+    /// How many top-logit candidates to try before falling back to canonical
+    /// tokenization. Natural text puts a compatible piece in the top few.
+    private static let constrainedCandidateScanLimit = 64
+
+    /// Highest-logit vocab token whose piece extends the remaining required
+    /// prefix (token healing). Scans candidates in descending logit order on a
+    /// copied logit buffer; when none of the top candidates match, falls back
+    /// to the canonical tokenization of the remaining bytes, whose first token
+    /// matches by construction (correct, just not logit-optimal).
+    ///
+    /// With `preferWordExtendingOvershoot`, a candidate that consumes the
+    /// remaining bytes EXACTLY is parked while the scan continues for one whose
+    /// piece crosses the caret with a word character ("… tomorrow" beating
+    /// "… tomorro"); the parked candidate is used when no such token exists.
+    private func constrainedToken(
+        matching remaining: ArraySlice<UInt8>,
+        vocab: OpaquePointer,
+        preferWordExtendingOvershoot: Bool = false
+    ) -> Int32? {
+        let vocabularySize = llama_vocab_n_tokens(vocab)
+        var exactBoundaryFallback: Int32?
+        if let ctx, let logits = llama_get_logits_ith(ctx, -1), vocabularySize > 0 {
+            var scores = Array(UnsafeBufferPointer(start: logits, count: Int(vocabularySize)))
+            for _ in 0..<Self.constrainedCandidateScanLimit {
+                let candidate: Int32? = scores.withUnsafeBufferPointer {
+                    Self.argmaxToken(in: $0.baseAddress, vocabularySize: vocabularySize)
+                }
+                guard let candidate else { break }
+                if !llama_vocab_is_eog(vocab, candidate) {
+                    switch CotypingRequiredPrefixMatcher.match(
+                        pieceBytes: pieceBytes(for: candidate), remaining: remaining) {
+                    case .consumes(let count):
+                        if preferWordExtendingOvershoot, count == remaining.count {
+                            // Lands exactly on the caret: park it, keep looking
+                            // for a token that keeps spelling the word.
+                            if exactBoundaryFallback == nil { exactBoundaryFallback = candidate }
+                        } else {
+                            return candidate
+                        }
+                    case .overshoots(let extraBytes):
+                        if !preferWordExtendingOvershoot
+                            || CotypingRequiredPrefixMatcher.extendsWord(extraBytes: extraBytes) {
+                            return candidate
+                        }
+                        if exactBoundaryFallback == nil { exactBoundaryFallback = candidate }
+                    case .mismatch:
+                        break
+                    }
+                }
+                scores[Int(candidate)] = -.infinity
+            }
+        }
+        if let exactBoundaryFallback { return exactBoundaryFallback }
+        let text = String(decoding: remaining, as: UTF8.self)
+        return tokenize(text, addBOS: false).first
     }
 
     private func makeSampler(_ specs: [LlamaSamplerSpec]) -> UnsafeMutablePointer<llama_sampler>? {
