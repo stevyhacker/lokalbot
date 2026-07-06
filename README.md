@@ -4,9 +4,9 @@
 
 # LokalBot
 
-**A private AI workspace for your Mac.**
+**Private AI meeting notes for your Mac — plus inline autocomplete, dictation, and a day timeline.**
 
-Record your meetings, autocomplete your writing, dictate into any app, and see where your day went — all on-device. No account, no API keys, no cloud.
+Records both sides of the call, writes the recap, and never uploads a byte — everything runs on-device. No account, no API keys, no cloud.
 
 ![macOS 15.0+](https://img.shields.io/badge/macOS-15.0%2B-000000?logo=apple&logoColor=white)
 ![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-required-1f6feb)
@@ -21,7 +21,7 @@ Record your meetings, autocomplete your writing, dictate into any app, and see w
 
 ---
 
-LokalBot is a strictly-local AI workspace for macOS. It records both sides of a call, transcribes and summarizes it, indexes everything for search, tracks how you spend your day, and — with **Cotyping** — suggests text inline as you type in any app. **Dictation** turns a held **⌥ Space** into on-device speech-to-text wherever your cursor is. Every model runs **on-device** on Apple Silicon, so your audio, transcripts, and notes never touch a server.
+LokalBot records both sides of your calls — no bot joining — then transcribes, summarizes, and indexes them for search, entirely on your Mac. Around that core it grew into a strictly-local AI workspace: **Cotyping** suggests text inline as you type in any app, **Dictation** turns a held **⌥ Space** into on-device speech-to-text wherever your cursor is, and a private timeline shows where your day went. Every model runs **on-device** on Apple Silicon — the only network call LokalBot ever makes is the one-time model download. Don't trust that claim; check it: point Little Snitch (or `lsof -i`) at it through a full meeting and watch the graph stay flat.
 
 <div align="center">
 
@@ -49,8 +49,11 @@ LokalBot is a strictly-local AI workspace for macOS. It records both sides of a 
 | --- | --- |
 | **Your whole workday** | Meetings, notes, search, day tracking, and inline autocomplete, all in one app. |
 | **100% on-device** | Audio, transcripts, summaries, and models stay on your Mac. The only network calls are optional (downloading a model once). |
+| **Check, don't trust** | Run Little Snitch or `lsof -i` through a full record → transcribe → summarize cycle: zero connections. |
 | **Free, no API keys** | Pick the best local model for each job and download it once. |
 | **Open source** | Read every line, or build it yourself. |
+
+**Switching from a cloud notetaker?** If you're leaving Granola, Otter, Rewind, or Superwhisper — or your company just banned cloud notetakers — the difference that matters is where the AI runs and where your audio ends up: [vs Granola](https://www.lokalbot.com/lokalbot-vs-granola) · [vs Rewind](https://www.lokalbot.com/lokalbot-vs-rewind) · [vs Superwhisper](https://www.lokalbot.com/lokalbot-vs-superwhisper) · [vs Hyprnote](https://www.lokalbot.com/lokalbot-vs-hyprnote)
 
 ## See it in action
 

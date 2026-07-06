@@ -645,6 +645,8 @@ kbd {
   gap: 56px;
   align-items: center;
 }
+/* let columns shrink below content width so wide children (the proof terminal) scroll inside */
+.spotlight > * { min-width: 0; }
 
 /* day-timeline mock image */
 .daytrack { display: block; width: 100%; height: auto; border-radius: var(--radius); box-shadow: var(--glass-shadow); }
@@ -860,6 +862,13 @@ kbd {
   .bento > :nth-child(4) { grid-column: span 4; }
   .bento > :nth-child(5) { grid-column: span 4; }
   .bento > :nth-child(6) { grid-column: span 12; grid-template-columns: 1fr 1.2fr; align-items: center; }
+}
+/* bento--quad: an even 2×2 variant (who-it's-for) — overrides the featured spans above */
+@media (min-width: 600px) {
+  .bento--quad > :nth-child(n) { grid-column: span 1; }
+}
+@media (min-width: 960px) {
+  .bento--quad > :nth-child(n) { grid-column: span 6; }
 }
 
 @media (max-width: 880px) {

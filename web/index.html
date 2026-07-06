@@ -3,22 +3,22 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>LokalBot: a private AI workspace for your Mac</title>
-  <meta name="description" content="A private AI workspace for your Mac. Record your meetings, autocomplete your writing, dictate into any app, and see where your day went — all on-device. No account, no API keys, no cloud." />
+  <title>LokalBot — Private AI Meeting Notes for Mac | 100% On-Device, Open Source</title>
+  <meta name="description" content="AI meeting notes that never leave your Mac. LokalBot records both sides of the call, transcribes, and writes the recap 100% on-device — plus dictation, autocomplete, and a private day timeline. Free, open source, no account." />
   <meta name="theme-color" content="#0b1119" />
 
   <link rel="canonical" href="https://www.lokalbot.com/" />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://www.lokalbot.com/" />
-  <meta property="og:title" content="LokalBot — a private AI workspace for your Mac" />
-  <meta property="og:description" content="Meetings, notes, dictation, and autocomplete — on-device. No account, no API keys, no cloud." />
+  <meta property="og:title" content="LokalBot — AI meeting notes that never leave your Mac" />
+  <meta property="og:description" content="Records both sides of the call, transcribes, and writes the recap — 100% on-device. Plus dictation, autocomplete, and a day timeline. Free, open source, no account." />
   <meta property="og:image" content="https://www.lokalbot.com/assets/og-image.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="LokalBot — a private AI workspace for your Mac. 100% on-device, no API keys, open source." />
+  <meta property="og:image:alt" content="LokalBot — AI meeting notes that never leave your Mac. 100% on-device, open source, free." />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="LokalBot — a private AI workspace for your Mac" />
-  <meta name="twitter:description" content="Meetings, notes, dictation, and autocomplete — on-device. No account, no API keys, no cloud." />
+  <meta name="twitter:title" content="LokalBot — AI meeting notes that never leave your Mac" />
+  <meta name="twitter:description" content="Records both sides of the call, transcribes, and writes the recap — 100% on-device. Plus dictation, autocomplete, and a day timeline. Free, open source, no account." />
   <meta name="twitter:image" content="https://www.lokalbot.com/assets/og-image.png" />
 
   <link rel="icon" href="assets/lokalbot-icon.svg" type="image/svg+xml" />
@@ -61,8 +61,9 @@
     </a>
     <nav class="nav__links" aria-label="Primary">
       <a href="#features">Features</a>
+      <a href="#proof">Privacy</a>
       <a href="#how">How it works</a>
-      <a href="#privacy">Privacy</a>
+      <a href="#compare">Compare</a>
     </nav>
     <div class="nav__actions">
       <a class="icon-link" href="https://github.com/stevyhacker/lokalbot" aria-label="LokalBot on GitHub" target="_blank" rel="noopener">
@@ -76,15 +77,15 @@
     <!-- ───────────────────────── HERO ───────────────────────── -->
     <section class="hero hero--centered">
       <div class="hero__copy reveal">
-        <p class="eyebrow">On-device. No API keys.</p>
-        <h1 class="hero__title">A private AI workspace for your Mac.</h1>
-        <p class="hero__sub">Record your meetings, autocomplete your writing, dictate into any app, and see where your day went — all on your Mac. No account, no API keys, no cloud.</p>
+        <p class="eyebrow">100% on-device &middot; Open source &middot; Free</p>
+        <h1 class="hero__title">AI meeting notes that never leave your Mac.</h1>
+        <p class="hero__sub">LokalBot records both sides of the call — no bot joining — transcribes it, and writes the recap, entirely on your Mac. Then it keeps going: autocomplete in any app, voice typing, and a private timeline of your day. No account, no cloud, no subscription.</p>
         <div class="hero__cta">
           <a class="btn btn--primary" href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">
             <i class="ph ph-apple-logo" aria-hidden="true"></i>
             Download for macOS
           </a>
-          <a class="btn btn--ghost" href="#how">See how it works</a>
+          <a class="btn btn--ghost" href="#proof">Prove it's private</a>
         </div>
         <p class="hero__meta">Free, for macOS 15.0 and later on Apple Silicon.</p>
       </div>
@@ -121,6 +122,57 @@
           <strong>Source on GitHub</strong>
           <span>Read every line, or build it yourself.</span>
         </div>
+      </div>
+    </section>
+
+    <!-- ───────────────────────── PROOF: VERIFY IT ───────────────────────── -->
+    <section class="section spotlight" id="proof">
+      <div class="spotlight__demo reveal">
+        <pre class="code" aria-label="Terminal session: checking LokalBot's network connections after a full meeting"><span class="c-prompt">$</span> <span class="c-op"># record → transcribe → summarize, then:</span>
+<span class="c-prompt">$</span> sudo lsof -i -nP <span class="c-op">|</span> grep LokalBot
+<span class="c-prompt">$</span> <span class="c-op"># no output. zero connections.</span></pre>
+      </div>
+      <div class="spotlight__copy reveal">
+        <p class="eyebrow">Prove it</p>
+        <h2 class="section__title">Don't take our word for it.</h2>
+        <p class="section__lead">Every notetaker claims to care about privacy. LokalBot's claim is checkable: run Little Snitch or <code>lsof</code> through an entire meeting — record, transcribe, summarize — and watch the network graph stay flat.</p>
+        <ul class="checklist">
+          <li><i class="ph ph-check" aria-hidden="true"></i> The only network call is a one-time model download</li>
+          <li><i class="ph ph-check" aria-hidden="true"></i> Open source — read the network code yourself</li>
+          <li><i class="ph ph-check" aria-hidden="true"></i> The bundled llama.cpp server binds to localhost only</li>
+          <li><i class="ph ph-check" aria-hidden="true"></i> No account, no telemetry, nothing to opt out of</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───────────────────────── WHO IT'S FOR ───────────────────────── -->
+    <section class="section" id="who">
+      <header class="section__head reveal">
+        <p class="eyebrow">Who it's for</p>
+        <h2 class="section__title">Built for conversations that can't leak.</h2>
+        <p class="section__lead">If your calls are privileged, regulated, or under NDA, a cloud notetaker isn't a preference — it's a policy question. LokalBot removes the question: there is no third party.</p>
+      </header>
+      <div class="bento bento--quad">
+        <article class="tile reveal">
+          <i class="ph ph-scales tile__icon" aria-hidden="true"></i>
+          <h3>Lawyers &amp; consultants</h3>
+          <p>Privileged calls stay privileged. No vendor agreement to chase, no processor to disclose — the audio never leaves your machine.</p>
+        </article>
+        <article class="tile reveal">
+          <i class="ph ph-heartbeat tile__icon" aria-hidden="true"></i>
+          <h3>Therapists &amp; clinicians</h3>
+          <p>Session notes without shipping a word to a transcription vendor. There's no third-party processor to vet, because there isn't one.</p>
+        </article>
+        <article class="tile reveal">
+          <i class="ph ph-briefcase tile__icon" aria-hidden="true"></i>
+          <h3>Founders &amp; dealmakers</h3>
+          <p>Board calls, fundraising, M&amp;A, unreleased products. The notes live on the laptop they were spoken into.</p>
+        </article>
+        <article class="tile reveal">
+          <i class="ph ph-shield-check tile__icon" aria-hidden="true"></i>
+          <h3>Teams that banned notetakers</h3>
+          <p>Legal departments increasingly block cloud notetakers. LokalBot gives yours nothing to review — nothing is uploaded.</p>
+        </article>
       </div>
     </section>
 
@@ -311,6 +363,59 @@
       </div>
     </section>
 
+    <!-- ───────────────────────── COMPARE ───────────────────────── -->
+    <section class="section" id="compare">
+      <header class="section__head reveal">
+        <p class="eyebrow">Compare</p>
+        <h2 class="section__title">Same notes, different destination.</h2>
+        <p class="section__lead">Cloud notetakers are polished products with one structural problem: your conversations end up on their servers. LokalBot's answer isn't a policy — it's an architecture.</p>
+      </header>
+      <div class="compare-wrap reveal">
+        <table class="compare">
+          <thead>
+            <tr>
+              <th scope="col">Feature</th>
+              <th scope="col">LokalBot</th>
+              <th scope="col">Cloud notetakers</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Where the AI runs</th>
+              <td>On your Mac — Neural Engine + local llama.cpp</td>
+              <td>Vendor servers, often via third-party AI providers</td>
+            </tr>
+            <tr>
+              <th scope="row">Your audio &amp; transcripts</th>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Never leave the device</td>
+              <td>Uploaded and processed in the cloud</td>
+            </tr>
+            <tr>
+              <th scope="row">Account required</th>
+              <td><i class="ph ph-x" aria-hidden="true"></i>None</td>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Account, usually a subscription</td>
+            </tr>
+            <tr>
+              <th scope="row">Price</th>
+              <td>Free, open source (GPLv3)</td>
+              <td><span class="dim">Free tiers, then roughly $8–35 per user / month</span></td>
+            </tr>
+            <tr>
+              <th scope="row">Source code</th>
+              <td><i class="ph ph-check" aria-hidden="true"></i>Public — read every line</td>
+              <td><i class="ph ph-x" aria-hidden="true"></i>Closed</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <nav class="compare-more reveal" aria-label="Detailed comparisons">
+        <a href="lokalbot-vs-granola.html">LokalBot vs Granola</a>
+        <a href="lokalbot-vs-rewind.html">LokalBot vs Rewind</a>
+        <a href="lokalbot-vs-superwhisper.html">LokalBot vs Superwhisper</a>
+        <a href="lokalbot-vs-hyprnote.html">LokalBot vs Hyprnote</a>
+      </nav>
+    </section>
+
     <!-- ───────────────────────── DOWNLOAD ───────────────────────── -->
     <section class="section download" id="download">
       <div class="download__panel reveal">
@@ -383,7 +488,7 @@
         <img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="30" height="30" />
         <span class="brand__name">LokalBot</span>
       </a>
-      <p>A private, on-device AI workspace for macOS — meetings, dictation, notes, and autocomplete.</p>
+      <p>Private AI meeting notes for macOS — plus dictation, autocomplete, and a day timeline. Nothing leaves your Mac.</p>
       <p class="footer__meta">Apple Silicon &middot; macOS 15.0+</p>
     </div>
     <nav class="footer__col" aria-label="Product">
