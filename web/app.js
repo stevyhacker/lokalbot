@@ -19,25 +19,15 @@
     reveals.forEach(function (el) { io.observe(el); });
   }
 
-  /* ---------- hero demo video: honor reduced motion, pause offscreen ---------- */
+  /* ---------- hero demo video: never autoplay; pause if the user scrolls away ---------- */
   var heroDemo = $(".hero__demo");
-  if (heroDemo) {
-    if (reduce) {
-      heroDemo.removeAttribute("autoplay");
-      heroDemo.pause();
-    } else if ("IntersectionObserver" in window) {
-      var heroIO = new IntersectionObserver(function (entries) {
-        entries.forEach(function (e) {
-          if (e.isIntersecting) {
-            var p = heroDemo.play();
-            if (p && p.catch) { p.catch(function () {}); }
-          } else {
-            heroDemo.pause();
-          }
-        });
-      }, { threshold: 0.1 });
-      heroIO.observe(heroDemo);
-    }
+  if (heroDemo && "IntersectionObserver" in window) {
+    var heroIO = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting) { heroDemo.pause(); }
+      });
+    }, { threshold: 0.05 });
+    heroIO.observe(heroDemo);
   }
 
   /* ---------- waveform: randomize bar timing for an organic pulse ---------- */
@@ -96,59 +86,17 @@
       var L = input.value.length;
       try { input.setSelectionRange(L, L); } catch (_) {}
     });
-    input.addEventListener("focus", function () { stopAuto(); if (cotype) cotype.classList.add("is-focused"); });
+    input.addEventListener("focus", function () { if (cotype) cotype.classList.add("is-focused"); });
     input.addEventListener("blur", function () { if (cotype) cotype.classList.remove("is-focused"); });
-    input.addEventListener("input", function () { dismissed = false; stopAuto(); render(); });
+    input.addEventListener("input", function () { dismissed = false; render(); });
     input.addEventListener("keydown", function (e) {
       if (e.key === "Tab" && ghostFor(input.value)) {
         e.preventDefault();
-        stopAuto();
         acceptWord();
       } else if (e.key === "Escape") {
         dismissed = true;
         render();
       }
     });
-
-    /* autoplay loop, only while in view and motion is allowed */
-    var timers = [];
-    var stopped = false;
-    function stopAuto() {
-      stopped = true;
-      timers.forEach(clearTimeout);
-      timers = [];
-    }
-    function at(fn, ms) {
-      var t = setTimeout(function () { if (!stopped) fn(); }, ms);
-      timers.push(t);
-    }
-    function runAuto() {
-      if (stopped) return;
-      var prefix = "Following up on";
-      input.value = "";
-      render();
-      var d = 420;
-      for (var i = 1; i <= prefix.length; i++) {
-        (function (n, delay) { at(function () { input.value = prefix.slice(0, n); render(); }, delay); })(i, d);
-        d += 65;
-      }
-      d += 520;
-      (function step() {
-        at(function () {
-          if (acceptWord()) { step(); }
-          else { at(function () { runAuto(); }, 1900); }
-        }, d);
-        d = 360;
-      })();
-    }
-
-    if (!reduce && "IntersectionObserver" in window) {
-      var demoIO = new IntersectionObserver(function (entries) {
-        entries.forEach(function (e) {
-          if (e.isIntersecting && !stopped) { runAuto(); demoIO.disconnect(); }
-        });
-      }, { threshold: 0.5 });
-      demoIO.observe(cotype || field);
-    }
   }
 })();
