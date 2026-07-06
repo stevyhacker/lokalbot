@@ -204,20 +204,16 @@ final class SystemAudioRecorder {
         //    audio thread — copy the samples, then hop to a serial queue.
         err = AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggregateID, nil) { [weak self] _, inInputData, _, _, _ in
             guard let self, let fmt = self.tapFormat,
+                  fmt.commonFormat == .pcmFormatFloat32,
                   let src = AVAudioPCMBuffer(pcmFormat: fmt,
                                              bufferListNoCopy: inInputData,
                                              deallocator: nil),
                   src.frameLength > 0,
                   let copy = AVAudioPCMBuffer(pcmFormat: fmt,
-                                              frameCapacity: src.frameLength),
-                  let srcChannels = src.floatChannelData,
-                  let dstChannels = copy.floatChannelData
+                                              frameCapacity: src.frameLength)
             else { return }
             copy.frameLength = src.frameLength
-            let rmsLevel = Self.copyAndMeasureRMS(source: srcChannels,
-                                                  destination: dstChannels,
-                                                  channelCount: Int(fmt.channelCount),
-                                                  frameLength: Int(src.frameLength))
+            let rmsLevel = Self.copyAndMeasureRMS(from: src, into: copy)
             // Snapshot the file ref on the audio thread (atomic class read);
             // strongly retained by the dispatched block until the write returns.
             let fileRef = self.file
@@ -329,23 +325,40 @@ final class SystemAudioRecorder {
             && lhs.isInterleaved == rhs.isInterleaved
     }
 
-    private static func copyAndMeasureRMS(source: UnsafePointer<UnsafeMutablePointer<Float>>,
-                                          destination: UnsafePointer<UnsafeMutablePointer<Float>>,
-                                          channelCount: Int,
-                                          frameLength: Int) -> Float {
-        guard channelCount > 0, frameLength > 0 else { return 0 }
-        let bytes = frameLength * MemoryLayout<Float>.size
+    /// Copies `source`'s samples into `destination` buffer-by-buffer via the
+    /// `AudioBufferList` (layout-agnostic) and returns the RMS across all
+    /// channels. `destination.frameLength` must already equal
+    /// `source.frameLength` so its buffer byte sizes are final.
+    ///
+    /// Do NOT rewrite this as per-channel `memcpy`s over `floatChannelData`:
+    /// the process tap delivers *interleaved* stereo, where the channel
+    /// pointers overlap (`data`, `data+1`, stride 2). A contiguous
+    /// `frameLength * 4`-byte copy per channel then moves only the first half
+    /// of each buffer's frames and leaves the second half silent — chopping
+    /// the track at sampleRate/frames Hz (93.75 Hz for 512-frame buffers),
+    /// which plays back as a robotic buzz. Shipped twice; measured on real
+    /// recordings as a 40× level drop in the back half of every 512 frames.
+    static func copyAndMeasureRMS(from source: AVAudioPCMBuffer,
+                                  into destination: AVAudioPCMBuffer) -> Float {
+        let sourceBuffers = UnsafeMutableAudioBufferListPointer(
+            UnsafeMutablePointer(mutating: source.audioBufferList))
+        let destinationBuffers = UnsafeMutableAudioBufferListPointer(
+            destination.mutableAudioBufferList)
         var sumSquares = 0.0
-        for channel in 0..<channelCount {
-            let sourceChannel = source[channel]
-            let destinationChannel = destination[channel]
-            memcpy(destinationChannel, sourceChannel, bytes)
-            for frame in 0..<frameLength {
-                let sample = Double(sourceChannel[frame])
+        var sampleCount = 0
+        for (src, dst) in zip(sourceBuffers, destinationBuffers) {
+            guard let srcData = src.mData, let dstData = dst.mData else { continue }
+            let bytes = Int(min(src.mDataByteSize, dst.mDataByteSize))
+            memcpy(dstData, srcData, bytes)
+            let samples = srcData.assumingMemoryBound(to: Float.self)
+            let count = bytes / MemoryLayout<Float>.size
+            for index in 0..<count {
+                let sample = Double(samples[index])
                 sumSquares += sample * sample
             }
+            sampleCount += count
         }
-        let sampleCount = channelCount * frameLength
+        guard sampleCount > 0 else { return 0 }
         return Float(sqrt(sumSquares / Double(sampleCount)))
     }
 }
