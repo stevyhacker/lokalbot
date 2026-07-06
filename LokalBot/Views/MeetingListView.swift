@@ -2,12 +2,12 @@ import SwiftUI
 
 /// The meeting library list — live recording first, then finished meetings
 /// grouped by day. Capture's Library scope (spec §2.2: unchanged behavior —
-/// multi-select, delete, the live-recording overlay). Deletion is confirmed
-/// by the host window's dialog via `pendingDelete`.
+/// multi-select, delete). The live row routes to `LiveMeetingDetailView`
+/// via the shared selection. Deletion is confirmed by the host window's
+/// dialog via `pendingDelete`.
 struct MeetingListView: View {
     @EnvironmentObject var app: AppState
     @Binding var pendingDelete: Set<Meeting.ID>?
-    @State private var showLivePanel = false
 
     var body: some View {
         List(selection: $app.selectedMeetingIDs) {
@@ -31,33 +31,6 @@ struct MeetingListView: View {
                 )
             }
         }
-        .overlay(alignment: .topTrailing) {
-            if app.isRecording {
-                Button {
-                    showLivePanel.toggle()
-                } label: {
-                    HStack(spacing: 6) {
-                        StatusDot(color: Brand.recording, size: 7)
-                        Text("recording…").font(.caption)
-                        LiveWaveform(barCount: 5, barWidth: 2.5, maxHeight: 10)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .hudCapsule()
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("live.badge")
-                .help("Live transcript and notes")
-                .padding(10)
-                .popover(isPresented: $showLivePanel, arrowEdge: .bottom) {
-                    LiveMeetingPanel(
-                        transcriber: app.liveTranscriber,
-                        notesFolder: app.currentMeeting?.folderURL(in: app.storage))
-                }
-            }
-        }
         .contextMenu(forSelectionType: Meeting.ID.self) { ids in
             Button("Delete \(ids.count > 1 ? "\(ids.count) meetings" : "meeting")…",
                    role: .destructive) {
@@ -66,11 +39,6 @@ struct MeetingListView: View {
         }
         .onDeleteCommand {
             if !app.selectedMeetingIDs.isEmpty { pendingDelete = app.selectedMeetingIDs }
-        }
-        .onChange(of: app.livePanelRequested) {
-            guard app.livePanelRequested else { return }
-            app.livePanelRequested = false
-            if app.isRecording { showLivePanel = true }
         }
     }
 
@@ -101,6 +69,10 @@ struct MeetingListView: View {
             HStack(spacing: 6) {
                 if live { StatusDot(color: Brand.recording, size: 9) }
                 Text(meeting.title).font(.headline)
+                if live {
+                    Spacer(minLength: 6)
+                    LiveWaveform(barCount: 5, barWidth: 2.5, maxHeight: 10)
+                }
             }
             Text("\(meeting.appName) · \(time) · \(duration)")
                 .font(.caption).foregroundStyle(.secondary)

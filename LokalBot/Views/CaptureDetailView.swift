@@ -18,8 +18,13 @@ struct CaptureDetailView: View {
                                              allowsBlockSelection: app.navSection == .timeline) {
         case .meeting:
             if let meeting = app.selectedMeeting {
-                MeetingDetailView(meeting: meeting)
-                    .id(meeting.id)
+                if meeting.endedAt == nil {
+                    LiveMeetingDetailView(meeting: meeting)
+                        .id(meeting.id)
+                } else {
+                    MeetingDetailView(meeting: meeting)
+                        .id(meeting.id)
+                }
             } else {
                 noSelection
             }
@@ -44,11 +49,16 @@ struct CaptureDetailView: View {
         }
     }
 
-    /// Meetings keeps the getting-started card as its empty state (it is the
-    /// new-user landing surface); Timeline shows the day overview.
+    /// Meetings shows the in-progress recording by default while one is
+    /// running (the live view is the whole point of opening the app
+    /// mid-meeting), the getting-started card otherwise (it is the new-user
+    /// landing surface); Timeline shows the day overview.
     @ViewBuilder private var noSelection: some View {
         if app.navSection == .timeline {
             dayOverview
+        } else if let live = app.currentMeeting {
+            LiveMeetingDetailView(meeting: live)
+                .id(live.id)
         } else {
             GettingStartedCard()
         }

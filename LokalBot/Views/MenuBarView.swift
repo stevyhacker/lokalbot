@@ -124,7 +124,7 @@ struct MenuBarView: View {
 
                 if app.isRecording {
                     Button {
-                        app.requestLivePanel()
+                        app.showLiveMeeting()
                     } label: {
                         Label("Live transcript & notes", systemImage: "text.bubble")
                             .frame(maxWidth: .infinity)

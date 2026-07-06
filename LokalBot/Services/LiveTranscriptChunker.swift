@@ -51,15 +51,69 @@ enum LiveTranscriptChunker {
         return quietestStart + window / 2
     }
 
-    /// Whole-chunk silence gate: RMS below `threshold` means nothing worth
-    /// sending to the ASR engine (the tee also captures the room between
-    /// utterances).
-    static func isSilent(_ samples: [Float], threshold: Float = 0.001) -> Bool {
-        guard !samples.isEmpty else { return true }
-        var sumSquares = 0.0
-        for sample in samples {
-            sumSquares += Double(sample) * Double(sample)
+    // MARK: - Speech gate
+
+    /// Windowing for the speech gate: RMS is measured over 200 ms windows
+    /// hopped every 100 ms, so each active window accounts for ~100 ms of
+    /// speech time.
+    static let gateWindowSeconds = 0.2
+    static let gateHopSeconds = 0.1
+    /// Ignore anything below ≈ −50 dBFS outright — even hot input gain puts
+    /// real speech well above this.
+    static let gateAbsoluteFloor: Float = 0.003
+    /// An active window must rise ≥ 10 dB (≈ 3.16×) above the chunk's noise
+    /// floor. Speech is bursty — syllables swing far above the pauses between
+    /// them — while room tone, fans, and hum are stationary and never clear
+    /// this margin no matter how loud they are.
+    static let gateActiveMargin: Float = 3.16
+    /// Total active time required before a chunk is worth an ASR pass.
+    static let gateMinActiveSeconds = 0.4
+
+    /// Whether a candidate chunk contains speech-like audio worth sending to
+    /// the ASR engine. A call app's "mute" only stops the app transmitting —
+    /// the physical mic keeps feeding our tee, so a muted participant's track
+    /// is room tone, keyboard, and fan noise. Whisper-family models
+    /// hallucinate fluent sentences on exactly that kind of non-speech audio
+    /// (in random languages when auto-detecting), which surfaced as "Me"
+    /// lines the user never said. A single whole-chunk RMS threshold can't
+    /// separate hot room tone from quiet speech, so this gate keys on
+    /// dynamics instead: the noise floor is a low-percentile window RMS, and
+    /// the chunk passes only when enough total time rises both `gateActiveMargin`
+    /// above that floor and above `gateAbsoluteFloor`.
+    static func hasSpeech(_ samples: [Float], sampleRate: Double) -> Bool {
+        guard sampleRate > 0, !samples.isEmpty else { return false }
+        let window = Int(gateWindowSeconds * sampleRate)
+        let hop = Int(gateHopSeconds * sampleRate)
+        guard window > 0, hop > 0 else { return false }
+
+        // Chunk shorter than one window: fall back to a plain RMS check.
+        guard samples.count >= window else {
+            return rms(samples, 0, samples.count) > gateAbsoluteFloor
         }
-        return Float(sqrt(sumSquares / Double(samples.count))) < threshold
+
+        var windowRMS: [Float] = []
+        windowRMS.reserveCapacity(samples.count / hop + 1)
+        var start = 0
+        while start + window <= samples.count {
+            windowRMS.append(rms(samples, start, window))
+            start += hop
+        }
+
+        // Noise floor: the 20th-percentile window — quiet parts of the chunk.
+        let sorted = windowRMS.sorted()
+        let floor = sorted[sorted.count / 5]
+        let threshold = max(gateAbsoluteFloor, floor * gateActiveMargin)
+
+        let activeSeconds = Double(windowRMS.count(where: { $0 > threshold })) * gateHopSeconds
+        return activeSeconds >= gateMinActiveSeconds
+    }
+
+    private static func rms(_ samples: [Float], _ start: Int, _ count: Int) -> Float {
+        var sumSquares = 0.0
+        for i in start..<(start + count) {
+            let sample = Double(samples[i])
+            sumSquares += sample * sample
+        }
+        return Float(sqrt(sumSquares / Double(count)))
     }
 }

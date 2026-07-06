@@ -213,10 +213,6 @@ final class AppState: ObservableObject {
     /// AskView consumes and clears it on appear/change.
     @Published var askPrefill: String?
 
-    /// Set by the menu bar's "Live transcript & notes" — MeetingListView
-    /// consumes and clears it to open the live panel popover.
-    @Published var livePanelRequested = false
-
     /// A day handed to the Ask section (the old Timeline "Ask" tab, spec
     /// §2.2): rendered as a removable chip, and prepended to escalated
     /// queries so the assistant scopes its answer to that day.
@@ -249,9 +245,13 @@ final class AppState: ObservableObject {
         navSection = .meetings
     }
 
-    /// The meeting shown in the detail pane (single selection only).
+    /// The meeting shown in the detail pane (single selection only). The
+    /// in-progress recording is a first-class citizen here: selecting its
+    /// row resolves to `currentMeeting`, which `CaptureDetailView` routes
+    /// to the live view.
     var selectedMeeting: Meeting? {
         guard selectedMeetingIDs.count == 1, let id = selectedMeetingIDs.first else { return nil }
+        if let live = currentMeeting, live.id == id { return live }
         return meetings.first { $0.id == id }
     }
 
@@ -399,13 +399,14 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Menu-bar path to the live panel: land on the library and let
-    /// `MeetingListView` pop the panel over the recording capsule.
-    func requestLivePanel() {
-        guard isRecording else { return }
+    /// Menu-bar path to the live meeting: land on the library with the
+    /// in-progress recording selected, so the detail pane shows the live
+    /// transcript and notes.
+    func showLiveMeeting() {
+        guard let live = currentMeeting else { return }
         navSection = .meetings
+        selectedMeetingIDs = [live.id]
         WindowAccess.shared.open("main")
-        livePanelRequested = true
     }
 
     init() {

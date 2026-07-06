@@ -6,15 +6,15 @@ import Foundation
 /// `system.live.caf`, see `AudioPreviewTee`); this poller snapshots each tee,
 /// cuts the unprocessed audio into small chunks at quiet points
 /// (`LiveTranscriptChunker`), transcribes them with the user's selected ASR
-/// engine, and publishes timestamped lines for the live panel.
+/// engine, and publishes timestamped lines for the live meeting view.
 ///
 /// This is a preview: the authoritative transcript is still produced by the
 /// full pipeline (with diarization) after the recording stops.
 ///
 /// Lifecycle: `AppState` calls `prepare(folder:)` when a recording starts and
 /// `stop()` when it ends, but transcription only actually runs after
-/// `activate()` — the live panel calls it on first open, so meetings whose
-/// panel is never opened cost zero ASR cycles. Once activated, the opt-in
+/// `activate()` — the live meeting view calls it on first show, so meetings
+/// nobody watches cost zero ASR cycles. Once activated, the opt-in
 /// carries across calendar-handoff splits (a fresh `prepare` resumes).
 @MainActor
 final class LiveMeetingTranscriber: ObservableObject {
@@ -70,7 +70,7 @@ final class LiveMeetingTranscriber: ObservableObject {
         if resume { activate() }
     }
 
-    /// The live panel was opened: actually start transcribing. Idempotent
+    /// The live meeting view appeared: actually start transcribing. Idempotent
     /// while running; a no-op when no recording is prepared.
     func activate() {
         guard !isRunning, let folder = pendingFolder else { return }
@@ -185,8 +185,10 @@ final class LiveMeetingTranscriber: ObservableObject {
         guard !samples.isEmpty else { return nil }
         let chunkEnd = range.lowerBound + Int64(samples.count)
 
-        // Nothing but room tone: advance silently, no ASR pass needed.
-        if LiveTranscriptChunker.isSilent(samples) { return chunkEnd }
+        // No speech-like audio (room tone, hum, a muted participant's mic):
+        // advance silently. Skipping the ASR pass here is also what keeps
+        // Whisper-family models from hallucinating text on non-speech audio.
+        guard LiveTranscriptChunker.hasSpeech(samples, sampleRate: sampleRate) else { return chunkEnd }
 
         let chunk = scratch.appendingPathComponent("chunk-\(UUID().uuidString).caf")
         defer { try? FileManager.default.removeItem(at: chunk) }
