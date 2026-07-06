@@ -19,7 +19,7 @@ final class CotypingSettingsTests: XCTestCase {
         settings.cotypingStreamSuggestionsWhileGenerating = true
         settings.cotypingFadeInSuggestions = false
         settings.cotypingFadeInDurationSeconds = 0.25
-        settings.cotypingShowAcceptKeyHint = false
+        settings.cotypingShowAcceptKeyHint = true
         settings.cotypingAcceptGranularity = .phrase
         settings.cotypingFullAcceptKey = .rightArrow
         settings.cotypingAutoAcceptTrailingPunctuation = false
@@ -41,7 +41,7 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertTrue(decoded.cotypingStreamSuggestionsWhileGenerating)
         XCTAssertFalse(decoded.cotypingFadeInSuggestions)
         XCTAssertEqual(decoded.cotypingFadeInDurationSeconds, 0.25, accuracy: 0.0001)
-        XCTAssertFalse(decoded.cotypingShowAcceptKeyHint)
+        XCTAssertTrue(decoded.cotypingShowAcceptKeyHint)
         XCTAssertEqual(decoded.cotypingAcceptGranularity, .phrase)
         XCTAssertEqual(decoded.cotypingFullAcceptKey, .rightArrow)
         XCTAssertFalse(decoded.cotypingAutoAcceptTrailingPunctuation)
@@ -109,7 +109,7 @@ final class CotypingSettingsTests: XCTestCase {
             settings.cotypingFadeInDurationSeconds,
             AppSettings.defaultCotypingFadeInDurationSeconds,
             accuracy: 0.0001)
-        XCTAssertTrue(settings.cotypingShowAcceptKeyHint)
+        XCTAssertFalse(settings.cotypingShowAcceptKeyHint)
         XCTAssertTrue(settings.cotypingAutoAcceptTrailingPunctuation)
         XCTAssertFalse(settings.cotypingAddSpaceAfterAccept)
         XCTAssertTrue(settings.cotypingUseLocalLearning)
@@ -143,7 +143,7 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertFalse(settings.cotypingStreamSuggestionsWhileGenerating)
         XCTAssertTrue(settings.cotypingFadeInSuggestions)
         XCTAssertEqual(settings.cotypingFadeInDurationSeconds, 0.15, accuracy: 0.0001)
-        XCTAssertTrue(settings.cotypingShowAcceptKeyHint)
+        XCTAssertFalse(settings.cotypingShowAcceptKeyHint)
         XCTAssertTrue(settings.cotypingAutoAcceptTrailingPunctuation)
         XCTAssertFalse(settings.cotypingAddSpaceAfterAccept)
         XCTAssertEqual(settings.cotypingMaxResponseTokens, 26)

@@ -57,7 +57,11 @@ final class CotypingBenchmarkTests: XCTestCase {
         XCTAssertTrue(result.passedSafety)
         XCTAssertTrue(result.metLatencyTarget)
         XCTAssertTrue(result.passed)
-        XCTAssertFalse(result.expectedVisibleSuggestion)
+        // Mid-word is a word-completion scenario since the Cotypist-parity
+        // work: an allowed suppression still passes safety, but does not
+        // count as a completion hit.
+        XCTAssertTrue(result.expectedWordCompletion)
+        XCTAssertFalse(result.wordCompletionHit)
         XCTAssertTrue(result.allowedSuppression)
     }
 

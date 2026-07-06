@@ -156,9 +156,10 @@ struct AppSettings: Codable {
     var cotypingFadeInSuggestions: Bool = true
     /// Duration of the ghost-text fade-in ramp, in seconds.
     var cotypingFadeInDurationSeconds: Double = AppSettings.defaultCotypingFadeInDurationSeconds
-    /// Show the primary accept key beside the ghost text, like Cotabby's keycap
-    /// hint. The label follows the configured accept key.
-    var cotypingShowAcceptKeyHint: Bool = true
+    /// Show the primary accept key beside the ghost text as a keycap hint. Off
+    /// by default — Cotypist-style bare ghost text; the shortcut is discoverable
+    /// in Settings. The label follows the configured accept key.
+    var cotypingShowAcceptKeyHint: Bool = false
     /// How much the primary accept key takes (the full-accept key always takes all).
     var cotypingAcceptGranularity: CotypingAcceptGranularity = .word
     /// Primary accept key (next word/phrase) and the full-accept key (whole tail).

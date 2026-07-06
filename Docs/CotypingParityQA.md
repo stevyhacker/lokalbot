@@ -14,9 +14,11 @@ Parity defaults:
   presentation. The fade only runs on a true first appearance, never on streamed
   updates or accepted-word reanchors, and the system Reduce Motion setting
   suppresses it.
-- Ghost text shows the configured accept key as a small keycap badge by default,
-  matching Cotabby's acceptance cue. Turning off "Show accept-key badge" restores
-  bare ghost text.
+- Ghost text is bare by default, matching Cotypist's understated inline
+  presentation — the accept shortcut is configured (and discoverable) in
+  Settings, not displayed beside every suggestion. Turning on "Show accept-key
+  badge" adds a small keycap with the configured accept key, like Cotabby's
+  acceptance cue.
 - Popup/mirror suggestions highlight the next word-sized accept chunk at stronger
   weight/contrast, matching Cotabby's preview card cue for what the next accept
   keypress will insert.
@@ -147,8 +149,9 @@ Record (per prompt, and overall):
 - Whether the first visible suggestion fades in once, while streamed updates,
   word-by-word acceptance, and post-accept reanchors do not flicker or restart
   the fade.
-- Whether the keycap badge shows the configured accept key, remains legible next
-  to inline and popup suggestions, and disappears when disabled in Settings.
+- Whether ghost text stays bare by default, and enabling "Show accept-key
+  badge" shows the configured accept key legibly next to inline and popup
+  suggestions.
 - Whether popup/mirror suggestions visually emphasize the next accept chunk
   rather than rendering the whole preview at the same strength.
 - Whether it avoids code editors, terminals, secure fields, and excluded domains.

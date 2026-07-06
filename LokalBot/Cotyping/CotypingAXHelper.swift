@@ -129,6 +129,8 @@ enum CotypingAXHelper {
         let (caretRect, exact) = caretRect(
             element,
             caretLocation: caret,
+            fieldText: value,
+            isRightToLeft: CotypingTextDirectionDetector.isRightToLeft(preceding),
             allowBoundsForRange: !usesMarkerSelection)
         let inputFrameRect = elementFrame(element).map { cocoaRect(fromAX: $0) }
         // App/window context — only read when actually building a suggestion (it
@@ -715,6 +717,8 @@ enum CotypingAXHelper {
     private static func caretRect(
         _ element: AXUIElement,
         caretLocation: Int,
+        fieldText: String,
+        isRightToLeft: Bool,
         allowBoundsForRange: Bool = true
     ) -> (rect: CGRect, exact: Bool) {
         if allowBoundsForRange,
@@ -729,6 +733,21 @@ enum CotypingAXHelper {
            rect.width.isFinite, rect.height.isFinite, rect.height > 0 {
             return (cocoaRect(fromAX: rect), true)
         }
+        // Chromium/Electron return zero-size rects from both queries above for
+        // a collapsed caret (measured in Chrome and Discord), but Blink still
+        // exposes each text run as an AXStaticText child with a tight frame:
+        // with the caret at the end of the text, the last run's trailing edge
+        // is the caret. This is what fixes inline ghost placement in Discord.
+        if CotypingTextLeafCaret.caretIsAtTextEnd(fieldText: fieldText, caretLocation: caretLocation),
+           let frame = elementFrame(element),
+           let rect = CotypingTextLeafCaret.caretRect(
+               elementFrame: frame,
+               leaves: staticTextLeaves(element),
+               fieldText: fieldText,
+               caretLocation: caretLocation,
+               isRightToLeft: isRightToLeft) {
+            return (cocoaRect(fromAX: rect), true)
+        }
         // Fallback: estimate a thin caret at the element's leading edge.
         if let frame = elementFrame(element) {
             let estimate = CGRect(x: frame.minX + 4, y: frame.minY,
@@ -736,6 +755,36 @@ enum CotypingAXHelper {
             return (cocoaRect(fromAX: estimate), false)
         }
         return (.zero, false)
+    }
+
+    /// AXStaticText descendants of an editable in tree order — Blink's
+    /// text-run boxes. Bounded walk: web composers keep this subtree tiny,
+    /// and it only runs after both precise caret queries have failed.
+    private static func staticTextLeaves(
+        _ element: AXUIElement,
+        maxNodes: Int = 200,
+        maxDepth: Int = 8
+    ) -> [CotypingTextLeafCaret.Leaf] {
+        var leaves: [CotypingTextLeafCaret.Leaf] = []
+        var budget = maxNodes
+        func walk(_ node: AXUIElement, depth: Int) {
+            guard depth < maxDepth, budget > 0,
+                  let raw = copyAttribute(node, kAXChildrenAttribute as String),
+                  let children = raw as? [AXUIElement] else { return }
+            for child in children {
+                guard budget > 0 else { return }
+                budget -= 1
+                if stringAttribute(child, kAXRoleAttribute as String) == kAXStaticTextRole as String {
+                    guard let frame = elementFrame(child) else { continue }
+                    let text = stringAttribute(child, kAXValueAttribute as String) ?? ""
+                    leaves.append(CotypingTextLeafCaret.Leaf(frame: frame, text: text))
+                } else {
+                    walk(child, depth: depth + 1)
+                }
+            }
+        }
+        walk(element, depth: 0)
+        return leaves
     }
 
     private static func boundsForRange(_ element: AXUIElement, location: Int, length: Int) -> CGRect? {
