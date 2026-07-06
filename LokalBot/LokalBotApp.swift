@@ -84,6 +84,7 @@ struct LokalBotApp: App {
         MenuBarExtra {
             MenuBarView()
                 .environmentObject(app)
+                .brandTinted()
         } label: {
             MenuBarLabel(app: app)
         }
@@ -93,6 +94,7 @@ struct LokalBotApp: App {
         Settings {
             SettingsView()
                 .environmentObject(app)
+                .brandTinted()
         }
     }
 
