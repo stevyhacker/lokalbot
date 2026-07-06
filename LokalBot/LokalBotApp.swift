@@ -245,9 +245,13 @@ final class AppState: ObservableObject {
         navSection = .meetings
     }
 
-    /// The meeting shown in the detail pane (single selection only).
+    /// The meeting shown in the detail pane (single selection only). The
+    /// in-progress recording is a first-class citizen here: selecting its
+    /// row resolves to `currentMeeting`, which `CaptureDetailView` routes
+    /// to the live view.
     var selectedMeeting: Meeting? {
         guard selectedMeetingIDs.count == 1, let id = selectedMeetingIDs.first else { return nil }
+        if let live = currentMeeting, live.id == id { return live }
         return meetings.first { $0.id == id }
     }
 
@@ -321,7 +325,16 @@ final class AppState: ObservableObject {
     private(set) lazy var cotyping = CotypingCoordinator(
         engine: cotypingEngine,
         settingsProvider: { [store = settingsStore] in store.current },
-        learningStore: cotypingLearning)
+        learningStore: cotypingLearning,
+        isMeetingRecordingActive: { [weak self] in
+            guard let self else { return false }
+            return self.recording.isRecording || self.recording.isStarting
+        })
+    /// Rolling live transcript of the recording in progress (preview only —
+    /// the pipeline's post-meeting transcript stays authoritative).
+    private(set) lazy var liveTranscriber = LiveMeetingTranscriber(
+        storageRoot: storage.rootURL,
+        settings: { [store = settingsStore] in store.current })
 
     @MainActor
     func prepareRecommendedCotypingModel() {
@@ -349,6 +362,7 @@ final class AppState: ObservableObject {
 
     private var pipelineObserver: AnyCancellable?
     private var recordingObserver: AnyCancellable?
+    private var recordingStatusObserver: AnyCancellable?
     private var audioMonitorObserver: AnyCancellable?
     private var audioMonitorChangeForwarder: AnyCancellable?
     private var calendarObserver: AnyCancellable?
@@ -371,6 +385,30 @@ final class AppState: ObservableObject {
         recording.stop(process: process)
     }
 
+    /// Recording started, stopped, or split to a new meeting: quiet cotyping
+    /// and (re)point the live transcriber at the active meeting folder.
+    private func meetingRecordingStateDidChange(active: Bool) {
+        guard interactive else { return }
+        if settings.cotypingEnabled {
+            cotyping.meetingRecordingStateChanged(active: active)
+        }
+        if active, let meeting = recording.currentMeeting {
+            liveTranscriber.prepare(folder: meeting.folderURL(in: storage))
+        } else {
+            liveTranscriber.stop()
+        }
+    }
+
+    /// Menu-bar path to the live meeting: land on the library with the
+    /// in-progress recording selected, so the detail pane shows the live
+    /// transcript and notes.
+    func showLiveMeeting() {
+        guard let live = currentMeeting else { return }
+        navSection = .meetings
+        selectedMeetingIDs = [live.id]
+        WindowAccess.shared.open("main")
+    }
+
     init() {
         AppLog.bootstrap()
         settings = settingsStore.current
@@ -388,6 +426,7 @@ final class AppState: ObservableObject {
             }
         }
         meetings = loaded
+        LiveMeetingTranscriber.sweepOrphanedSnapshots(storageRoot: storage.rootURL)
         // Views observe AppState only; forward pipeline / recording /
         // audio-monitor / calendar change notifications so MainWindowView
         // refreshes when those sub-ObservableObjects publish.
@@ -397,6 +436,19 @@ final class AppState: ObservableObject {
         recordingObserver = recording.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
+        // React to recording start/stop (and calendar-handoff splits, which
+        // change the meeting ID mid-recording): pause cotyping and run the
+        // live transcriber against the active meeting folder.
+        recordingStatusObserver = recording.$status
+            .map { status -> UUID? in
+                if case .recording(let meetingID) = status { return meetingID }
+                return nil
+            }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] meetingID in
+                self?.meetingRecordingStateDidChange(active: meetingID != nil)
+            }
         audioMonitorChangeForwarder = audioMonitor.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
@@ -602,6 +654,15 @@ final class AppState: ObservableObject {
             pendingSeek = hit.start
         }
         openMeeting(hit.meetingID)
+    }
+
+    /// Chat citation marker → open the cited meeting; timed markers seek the player.
+    func openCitation(_ citation: ChatCitation) {
+        guard let meeting = ((try? SessionLookup.find(id: citation.meetingID, in: meetings)) ?? nil) else { return }
+        if let seconds = citation.seconds {
+            pendingSeek = seconds
+        }
+        openMeeting(meeting.id)
     }
 
     /// Permanently removes meetings: audio folder, list entry, both indexes.

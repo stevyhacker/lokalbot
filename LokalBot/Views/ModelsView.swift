@@ -26,6 +26,7 @@ struct ModelsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                ModelMemoryBanner()
                 transcriptionCard
                 summarizationCard
                 cotypingCard
@@ -44,6 +45,37 @@ struct ModelsView: View {
     }
 
     // MARK: - Cards
+
+    /// Live model-memory line fed by `ModelResidency`: which weights are
+    /// resident right now, their approximate RAM, and the eviction budget.
+    private struct ModelMemoryBanner: View {
+        @ObservedObject private var residency = ModelResidency.shared
+
+        var body: some View {
+            HStack(spacing: 8) {
+                Image(systemName: "memorychip")
+                    .foregroundStyle(.tint)
+                if residency.residents.isEmpty {
+                    Text("No models in memory — weights load on demand and are evicted "
+                        + "least-recently-used past \(gigabytes(residency.budgetBytes)).")
+                } else {
+                    Text("Models in memory: **\(gigabytes(residency.totalBytes))** of "
+                        + "\(gigabytes(residency.budgetBytes)) budget — "
+                        + residency.residents.map(\.label).joined(separator: ", "))
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityIdentifier("models.residency")
+        }
+
+        private func gigabytes(_ bytes: Int64) -> String {
+            String(format: "%.1f GB", Double(bytes) / 1_073_741_824)
+        }
+    }
 
     private var transcriptionCard: some View {
         ModelCard(icon: "waveform", title: "Transcription",

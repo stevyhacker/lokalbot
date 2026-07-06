@@ -133,9 +133,18 @@ enum ChatPrompt {
         final answer in plain language — no JSON, no tool call.
         • Prefer search_meetings for questions about what was said or decided. Use \
         get_meeting to read a specific meeting's summary or transcript. Use \
-        list_meetings to enumerate meetings. Use search_screen for things the user \
+        list_meetings to enumerate meetings. Use get_action_items for to-dos, \
+        decisions, or follow-ups. Use search_screen for things the user \
         read or saw on screen (docs, sites, code, messages). Use activity_summary \
         for how a day was spent across apps.
+        """)
+        lines.append("")
+        lines.append("""
+        Citing meetings:
+        • When part of your final answer comes from a specific meeting, append a \
+        citation marker right after that sentence: [meeting:ID], or [meeting:ID@HH:MM:SS] \
+        to point at a moment in the transcript. Use the exact meeting id a tool returned \
+        — never invent one. The app renders markers as links; don't explain them.
         """)
         if !libraryOverview.isEmpty {
             lines.append("")
@@ -176,6 +185,53 @@ enum ChatPrompt {
 
     static let fallbackAnswer =
         "I couldn't find enough information in your meetings to answer that."
+
+    /// True when a turn that did NOT parse into a tool call still looks like
+    /// the model was attempting one — wrapper tokens, a `{"tool": …` fragment
+    /// that never balanced, or a bare call form with a misspelled name. The
+    /// agent answers this with one schema-constrained retry instead of
+    /// surfacing the garbled attempt as the answer.
+    static func looksLikeToolAttempt(_ output: String) -> Bool {
+        let cleaned = strippingReasoning(output).trimmingCharacters(in: .whitespacesAndNewlines)
+        let stripped = stripToolTokens(cleaned)
+        // Wrapper tokens around nothing usable. (Tokens around plain prose stay
+        // an answer — some models wrap their answer in stray tokens.)
+        if stripped.isEmpty, !cleaned.isEmpty { return true }
+        // Balanced JSON carrying a tool-name key (parse() already rejected it,
+        // so the name must be unknown — e.g. "search_meeting" for "search_meetings").
+        if let object = jsonObject(in: stripped), toolName(in: object) != nil { return true }
+        // Truncated JSON: an opening brace plus a tool-name key that never closed.
+        if stripped.contains("{"),
+           stripped.range(of: #""(tool|tool_name|action)"\s*:"#, options: .regularExpression) != nil {
+            return true
+        }
+        return looksLikeBareToolCall(stripped)
+    }
+
+    /// JSON schema forcing exactly one valid tool call, used for the
+    /// constrained retry: anyOf over per-tool shapes (exact name + that tool's
+    /// declared arguments, required ones required). llama-server compiles this
+    /// to a grammar, so a retried turn cannot come back unparseable.
+    static func toolCallSchema(_ tools: [ChatToolSpec]) -> [String: Any] {
+        let variants: [[String: Any]] = tools.map { tool in
+            var properties: [String: Any] = [:]
+            for argument in tool.arguments {
+                properties[argument.name] = ["type": "string", "description": argument.description]
+            }
+            var argumentsSchema: [String: Any] = ["type": "object", "properties": properties]
+            let required = tool.arguments.filter(\.required).map(\.name)
+            if !required.isEmpty { argumentsSchema["required"] = required }
+            return [
+                "type": "object",
+                "properties": [
+                    "tool": ["type": "string", "const": tool.name],
+                    "arguments": argumentsSchema,
+                ],
+                "required": ["tool", "arguments"],
+            ]
+        }
+        return ["anyOf": variants]
+    }
 
     // MARK: Parsing helpers (pure)
 
@@ -398,7 +454,23 @@ struct ChatAgent {
             let output = try await engine.generate(system: system, prompt: directive, context: transcript)
             try Task.checkCancellation()
 
-            switch ChatPrompt.parse(output, tools: toolNames) {
+            var action = ChatPrompt.parse(output, tools: toolNames)
+            // Garbled tool attempt → one retry with decode-time constraints.
+            // Backends without grammar support fall back to a plain generate,
+            // so this stays a best-effort second chance, never a hard gate.
+            if case .answer = action, ChatPrompt.looksLikeToolAttempt(output) {
+                let retried = try await engine.generate(
+                    system: system,
+                    prompt: "Your previous reply was not a valid tool call. Reply with exactly one JSON object of the form {\"tool\": \"…\", \"arguments\": { … }} for the tool you meant to call.",
+                    context: transcript,
+                    schema: ChatPrompt.toolCallSchema(runner.specs))
+                try Task.checkCancellation()
+                if case .call(let call) = ChatPrompt.parse(retried, tools: toolNames) {
+                    action = .call(call)
+                }
+            }
+
+            switch action {
             case .answer(let text):
                 return text
             case .call(let call):

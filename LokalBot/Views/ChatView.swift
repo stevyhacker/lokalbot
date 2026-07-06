@@ -68,6 +68,7 @@ private struct EditorialTurn: View {
     }
 
     @ViewBuilder private var assistantBlock: some View {
+        let parsed = ChatCitationParser.extract(message.text)
         VStack(alignment: .leading, spacing: 6) {
             if !message.activity.isEmpty {
                 WorkedLine(activities: message.activity)
@@ -75,13 +76,53 @@ private struct EditorialTurn: View {
             if message.isPending && message.text.isEmpty {
                 TypingIndicator()
             } else {
-                MarkdownText(message.text)
+                MarkdownText(parsed.display)
                     .textSelection(.enabled)
                     .foregroundStyle(message.isError ? AnyShapeStyle(.red)
                                                      : AnyShapeStyle(.primary))
+                if !parsed.citations.isEmpty {
+                    CitationRow(citations: parsed.citations)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Source chips parsed from the assistant's `[meeting:ID@HH:MM:SS]` citation
+/// markers. Each chip deep-links into the cited meeting; timed citations seek
+/// the player to the cited moment.
+private struct CitationRow: View {
+    @EnvironmentObject var app: AppState
+    let citations: [ChatCitation]
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(citations) { citation in
+                    Button {
+                        app.openCitation(citation)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "quote.opening").font(.caption2)
+                            Text(label(for: citation)).font(.caption).lineLimit(1)
+                        }
+                        .foregroundStyle(.secondary)
+                        .chipChrome()
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open this meeting")
+                    .accessibilityIdentifier("chat.citation.\(citation.meetingID)")
+                }
+            }
+        }
+    }
+
+    private func label(for citation: ChatCitation) -> String {
+        let meeting = (try? SessionLookup.find(id: citation.meetingID, in: app.meetings)) ?? nil
+        let title = meeting?.title ?? "Meeting \(citation.meetingID)"
+        guard let stamp = citation.stampText else { return title }
+        return "\(title) · \(stamp)"
     }
 }
 

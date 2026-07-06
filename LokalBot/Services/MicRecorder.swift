@@ -12,6 +12,7 @@ final class MicRecorder {
     private var engine = AVAudioEngine()
     private var file: AVAudioFile?
     private var converter: AVAudioConverter?
+    private var previewTee: AudioPreviewTee?
     private var recordingFormat: AVAudioFormat?
     private var isRecording = false
     private var reconfigurationTask: Task<Void, Never>?
@@ -56,7 +57,9 @@ final class MicRecorder {
         }
     }
 
-    func start(writingTo url: URL) throws {
+    /// `previewTee` mirrors the capture into a snapshot-safe PCM `.caf` for
+    /// the live meeting transcript — best-effort, never fails the recording.
+    func start(writingTo url: URL, previewTee previewURL: URL? = nil) throws {
         reconfigurationTask?.cancel()
         reconfigurationTask = nil
         isRecording = false
@@ -80,6 +83,7 @@ final class MicRecorder {
                                commonFormat: recordingFormat.commonFormat,
                                interleaved: recordingFormat.isInterleaved)
         self.recordingFormat = recordingFormat
+        previewTee = previewURL.flatMap { AudioPreviewTee(url: $0, sourceFormat: recordingFormat) }
         resetCaptureHealth(sampleRate: recordingFormat.sampleRate)
 
         do {
@@ -88,6 +92,8 @@ final class MicRecorder {
             file = nil
             self.recordingFormat = nil
             converter = nil
+            previewTee?.close()
+            previewTee = nil
             resetCaptureHealth(sampleRate: 0)
             throw error
         }
@@ -118,6 +124,8 @@ final class MicRecorder {
         converter = nil
         recordingFormat = nil
         file = nil   // closes the file
+        previewTee?.close()
+        previewTee = nil
     }
 
     func captureHealth() -> CaptureHealth {
@@ -293,6 +301,7 @@ final class MicRecorder {
         guard let file else { return }
         guard let converter, let recordingFormat else {
             try file.write(from: buffer)
+            previewTee?.write(buffer)
             noteWrittenAudio(buffer)
             return
         }
@@ -320,6 +329,7 @@ final class MicRecorder {
         }
         if output.frameLength > 0 {
             try file.write(from: output)
+            previewTee?.write(output)
             noteWrittenAudio(output)
         }
     }

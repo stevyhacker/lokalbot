@@ -7,6 +7,14 @@ protocol TextEngine {
     var displayName: String { get }
     func generate(system: String, prompt: String, context: [String]) async throws -> String
 
+    /// JSON-schema-constrained generation. Backends with decode-time
+    /// constraints guarantee the reply parses against `schema` (llama-server
+    /// compiles it to a GBNF grammar; Ollama takes it as `format`). The
+    /// default ignores the schema, so callers must keep their tolerant-parse
+    /// fallback for backends that can't constrain (Apple Intelligence).
+    func generate(system: String, prompt: String, context: [String],
+                  schema: [String: Any]) async throws -> String
+
     /// Low-latency raw text continuation for cotyping (inline autocomplete).
     /// The default delegates to `generate` with an autocomplete instruction so
     /// every backend works; `OpenAICompatibleEngine` overrides it to hit raw
@@ -113,6 +121,12 @@ func cotypingParseSSEDelta(_ line: String) -> String? {
 }
 
 extension TextEngine {
+    /// Unconstrained fallback for backends without decode-time grammar support.
+    func generate(system: String, prompt: String, context: [String],
+                  schema: [String: Any]) async throws -> String {
+        try await generate(system: system, prompt: prompt, context: context)
+    }
+
     /// Chat-backend fallback: ask the model to continue the text and emit only
     /// the continuation. Used by Ollama / Apple Intelligence; the built-in
     /// llama-server (OpenAI-compatible) overrides this with the raw endpoint.
@@ -139,13 +153,24 @@ struct OllamaEngine: TextEngine {
     var displayName: String { "Ollama — \(model)" }
 
     func generate(system: String, prompt: String, context: [String]) async throws -> String {
+        try await chat(system: system, prompt: prompt, context: context, schema: nil)
+    }
+
+    /// Ollama enforces JSON schemas natively via the `format` field.
+    func generate(system: String, prompt: String, context: [String],
+                  schema: [String: Any]) async throws -> String {
+        try await chat(system: system, prompt: prompt, context: context, schema: schema)
+    }
+
+    private func chat(system: String, prompt: String, context: [String],
+                      schema: [String: Any]?) async throws -> String {
         guard !model.isEmpty else { throw TextEngineError.noModel }
         var request = URLRequest(url: baseURL.appendingPathComponent("api/chat"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let user = (context + [prompt]).joined(separator: "\n\n")
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": model,
             "stream": false,
             "messages": [
@@ -153,6 +178,7 @@ struct OllamaEngine: TextEngine {
                 ["role": "user", "content": user],
             ],
         ]
+        if let schema { body["format"] = schema }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await send(request, base: baseURL)
@@ -192,6 +218,19 @@ struct OpenAICompatibleEngine: TextEngine {
     var displayName: String { displayNameOverride ?? "OpenAI-compatible — \(model)" }
 
     func generate(system: String, prompt: String, context: [String]) async throws -> String {
+        try await chat(system: system, prompt: prompt, context: context, schema: nil)
+    }
+
+    /// OpenAI-standard structured output: llama-server compiles the schema to
+    /// a GBNF grammar and constrains decoding; LM Studio / vllm honour the
+    /// same `response_format` shape.
+    func generate(system: String, prompt: String, context: [String],
+                  schema: [String: Any]) async throws -> String {
+        try await chat(system: system, prompt: prompt, context: context, schema: schema)
+    }
+
+    private func chat(system: String, prompt: String, context: [String],
+                      schema: [String: Any]?) async throws -> String {
         guard !model.isEmpty else { throw TextEngineError.noModel }
         var request = URLRequest(url: baseURL.appendingPathComponent("chat/completions"))
         request.httpMethod = "POST"
@@ -208,6 +247,12 @@ struct OpenAICompatibleEngine: TextEngine {
                 ["role": "user", "content": user],
             ],
         ]
+        if let schema {
+            body["response_format"] = [
+                "type": "json_schema",
+                "json_schema": ["name": "response", "strict": true, "schema": schema],
+            ]
+        }
         body.merge(extraBody) { _, new in new }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 

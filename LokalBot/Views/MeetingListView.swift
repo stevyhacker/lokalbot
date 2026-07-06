@@ -2,8 +2,9 @@ import SwiftUI
 
 /// The meeting library list — live recording first, then finished meetings
 /// grouped by day. Capture's Library scope (spec §2.2: unchanged behavior —
-/// multi-select, delete, the live-recording overlay). Deletion is confirmed
-/// by the host window's dialog via `pendingDelete`.
+/// multi-select, delete). The live row routes to `LiveMeetingDetailView`
+/// via the shared selection. Deletion is confirmed by the host window's
+/// dialog via `pendingDelete`.
 struct MeetingListView: View {
     @EnvironmentObject var app: AppState
     @Binding var pendingDelete: Set<Meeting.ID>?
@@ -28,18 +29,6 @@ struct MeetingListView: View {
                     systemImage: "waveform.circle",
                     description: Text("LokalBot detects meeting apps and records automatically — or press Record in the menu bar.")
                 )
-            }
-        }
-        .overlay(alignment: .topTrailing) {
-            if app.isRecording {
-                HStack(spacing: 6) {
-                    StatusDot(color: Brand.recording, size: 7)
-                    Text("recording…").font(.caption)
-                    LiveWaveform(barCount: 5, barWidth: 2.5, maxHeight: 10)
-                }
-                .padding(.horizontal, 10).padding(.vertical, 5)
-                .hudCapsule()
-                .padding(10)
             }
         }
         .contextMenu(forSelectionType: Meeting.ID.self) { ids in
@@ -80,6 +69,10 @@ struct MeetingListView: View {
             HStack(spacing: 6) {
                 if live { StatusDot(color: Brand.recording, size: 9) }
                 Text(meeting.title).font(.headline)
+                if live {
+                    Spacer(minLength: 6)
+                    LiveWaveform(barCount: 5, barWidth: 2.5, maxHeight: 10)
+                }
             }
             Text("\(meeting.appName) · \(time) · \(duration)")
                 .font(.caption).foregroundStyle(.secondary)

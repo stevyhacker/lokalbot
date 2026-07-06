@@ -27,6 +27,8 @@ final class CotypingCoordinator: ObservableObject {
     private let engine: CotypingCompleting
     private let learningStore: CotypingLearningStore
     private let settingsProvider: () -> AppSettings
+    /// Live flag from AppState — cotyping stays quiet while a meeting records.
+    private let isMeetingRecordingActive: () -> Bool
     private let selfBundleID: String?
 
     private var config = CotypingConfiguration.standard
@@ -64,11 +66,13 @@ final class CotypingCoordinator: ObservableObject {
         engine: CotypingCompleting,
         settingsProvider: @escaping () -> AppSettings,
         learningStore: CotypingLearningStore,
+        isMeetingRecordingActive: @escaping () -> Bool = { false },
         selfBundleID: String? = Bundle.main.bundleIdentifier
     ) {
         self.engine = engine
         self.learningStore = learningStore
         self.settingsProvider = settingsProvider
+        self.isMeetingRecordingActive = isMeetingRecordingActive
         self.selfBundleID = selfBundleID
         self.focusTracker = CotypingFocusTracker()
         let suppressionController = CotypingInputSuppressionController()
@@ -115,6 +119,20 @@ final class CotypingCoordinator: ObservableObject {
         inputMonitor.stop()
         isRunning = false
         if let reason { state = .disabled(reason) } else { state = .idle }
+    }
+
+    /// Called by AppState when a meeting recording starts or stops. Pausing
+    /// drops any live ghost text immediately; the per-generation gate in
+    /// `generate(work:)` keeps new suggestions from appearing while active.
+    func meetingRecordingStateChanged(active: Bool) {
+        guard isRunning else { return }
+        if active {
+            cancelPendingGenerationWork()
+            clearSuggestion()
+        }
+        if let next = CotypingMeetingPause.transition(recordingActive: active, current: state) {
+            state = next
+        }
     }
 
     private func wireIfNeeded() {
@@ -192,6 +210,7 @@ final class CotypingCoordinator: ObservableObject {
 
     private func scheduleFocusPrewarm(for focus: CotypingFocus) {
         guard isRunning,
+              !isMeetingRecordingActive(),
               case .supported = focus.capability,
               let field = focus.field else {
             focusPrewarmTask?.cancel()
@@ -423,6 +442,11 @@ final class CotypingCoordinator: ObservableObject {
     private func generate(work: UInt64) async {
         guard work == generation, isRunning else { return }
         let settings = settingsProvider()
+        if isMeetingRecordingActive() {
+            clearSuggestion()
+            state = .disabled(CotypingMeetingPause.reason)
+            return
+        }
         let focus = refreshFocusForPrediction(settings: settings)
 
         if let reason = CotypingAvailability.disabledReason(

@@ -114,7 +114,72 @@ final class ChatAgentTests: XCTestCase {
         XCTAssertEqual(answer, "Here is your answer.")
     }
 
+    // MARK: - Malformed-attempt detection + constrained retry
+
+    func testLooksLikeToolAttemptDetection() {
+        // Balanced JSON with a misspelled tool name.
+        XCTAssertTrue(ChatPrompt.looksLikeToolAttempt(#"{"tool":"search_meeting","arguments":{}}"#))
+        // Truncated tool-call JSON that never balanced.
+        XCTAssertTrue(ChatPrompt.looksLikeToolAttempt(#"{"tool": "get_meeting", "arguments": {"id": "ab"#))
+        // Wrapper tokens around nothing usable.
+        XCTAssertTrue(ChatPrompt.looksLikeToolAttempt("<|tool_call_start|><|tool_call_end|>"))
+        // Bare call form with an unknown name.
+        XCTAssertTrue(ChatPrompt.looksLikeToolAttempt("search_meeting(query='x')"))
+        // Plain prose stays an answer.
+        XCTAssertFalse(ChatPrompt.looksLikeToolAttempt("We decided to adopt Redis."))
+        // Tokens around prose stay an answer (models wrap answers in stray tokens).
+        XCTAssertFalse(ChatPrompt.looksLikeToolAttempt("<|tool_call_start|>Here you go.<|tool_call_end|>"))
+        // JSON quoted inside prose without a tool-name key.
+        XCTAssertFalse(ChatPrompt.looksLikeToolAttempt(#"The config is {"retries": 3}."#))
+    }
+
+    func testToolCallSchemaEnumeratesToolsAndRequiredArgs() throws {
+        let specs = [
+            ChatToolSpec(name: "search_meetings", summary: "s",
+                         arguments: [.init(name: "query", description: "q", required: true),
+                                     .init(name: "limit", description: "l", required: false)]),
+            ChatToolSpec(name: "list_meetings", summary: "l", arguments: []),
+        ]
+        let schema = ChatPrompt.toolCallSchema(specs)
+        let variants = try XCTUnwrap(schema["anyOf"] as? [[String: Any]])
+        XCTAssertEqual(variants.count, 2)
+        let properties = try XCTUnwrap(variants[0]["properties"] as? [String: Any])
+        let tool = try XCTUnwrap(properties["tool"] as? [String: Any])
+        XCTAssertEqual(tool["const"] as? String, "search_meetings")
+        let arguments = try XCTUnwrap(properties["arguments"] as? [String: Any])
+        XCTAssertEqual(arguments["required"] as? [String], ["query"])
+        XCTAssertNotNil((arguments["properties"] as? [String: Any])?["limit"])
+        // Must serialise — it's sent verbatim as the response_format schema.
+        XCTAssertNoThrow(try JSONSerialization.data(withJSONObject: schema))
+    }
+
+    func testMalformedToolAttemptRetriesWithConstrainedDecode() async throws {
+        let engine = ScriptedEngine([
+            #"{"tool": "search_meetings", "arguments": {"query": "redis""#,       // truncated
+            #"{"tool": "search_meetings", "arguments": {"query": "redis"}}"#,     // constrained retry
+            "We picked Redis.",
+        ])
+        let runner = FakeRunner(
+            specs: [ChatToolSpec(name: "search_meetings", summary: "search",
+                                 arguments: [.init(name: "query", description: "q", required: true)])],
+            overview: "",
+            results: ["search_meetings": ChatToolResult(text: "Hit: Redis", summary: "1 match")])
+        let agent = ChatAgent(engine: engine, runner: runner)
+
+        let answer = try await agent.respond(history: [], latest: "what did we pick?") { _ in }
+        XCTAssertEqual(answer, "We picked Redis.")
+        XCTAssertEqual(runner.calls.map(\.name), ["search_meetings"])
+        // Exactly one engine call carried the constraining schema.
+        XCTAssertEqual(engine.schemas.compactMap { $0 }.count, 1)
+    }
+
     // MARK: - System prompt
+
+    func testSystemPromptIncludesCitationInstructions() {
+        let prompt = ChatPrompt.systemPrompt(tools: [], libraryOverview: "")
+        XCTAssertTrue(prompt.contains("[meeting:ID]"))
+        XCTAssertTrue(prompt.contains("[meeting:ID@HH:MM:SS]"))
+    }
 
     func testSystemPromptListsToolsAndLibrary() {
         let prompt = ChatPrompt.systemPrompt(
@@ -483,6 +548,8 @@ final class ChatAgentTests: XCTestCase {
 private final class ScriptedEngine: TextEngine {
     private var outputs: [String]
     private(set) var prompts: [(system: String, prompt: String, context: [String])] = []
+    /// One entry per generate call: the constraining schema, or nil for plain calls.
+    private(set) var schemas: [[String: Any]?] = []
 
     init(_ outputs: [String]) { self.outputs = outputs }
 
@@ -490,6 +557,14 @@ private final class ScriptedEngine: TextEngine {
 
     func generate(system: String, prompt: String, context: [String]) async throws -> String {
         prompts.append((system, prompt, context))
+        schemas.append(nil)
+        return outputs.isEmpty ? "" : outputs.removeFirst()
+    }
+
+    func generate(system: String, prompt: String, context: [String],
+                  schema: [String: Any]) async throws -> String {
+        prompts.append((system, prompt, context))
+        schemas.append(schema)
         return outputs.isEmpty ? "" : outputs.removeFirst()
     }
 }
