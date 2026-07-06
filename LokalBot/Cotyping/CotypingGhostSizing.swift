@@ -1,27 +1,5 @@
 import AppKit
 
-/// Decides whether a fresh ghost-text panel presentation should fade in.
-/// Updates to an already-visible overlay must not animate, or streamed tokens
-/// and post-accept reanchors would visibly flicker on every paint.
-nonisolated enum CotypingSuggestionFadeInPolicy {
-    static let minimumDurationSeconds: Double = 0.05
-    static let maximumDurationSeconds: Double = 0.30
-    static let defaultDurationSeconds: Double = 0.15
-
-    static func shouldFadeIn(
-        isEnabled: Bool,
-        overlayWasVisible: Bool,
-        reduceMotionEnabled: Bool
-    ) -> Bool {
-        isEnabled && !overlayWasVisible && !reduceMotionEnabled
-    }
-
-    static func clampedDurationSeconds(_ seconds: Double) -> Double {
-        guard seconds.isFinite else { return defaultDurationSeconds }
-        return min(maximumDurationSeconds, max(minimumDurationSeconds, seconds))
-    }
-}
-
 nonisolated enum CotypingGhostFontSizing {
     static let minimumGhostFontSize: CGFloat = 14
     static let maximumGhostFontSize: CGFloat = 24

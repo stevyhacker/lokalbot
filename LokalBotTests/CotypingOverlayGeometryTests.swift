@@ -5,30 +5,6 @@ import XCTest
 final class CotypingOverlayGeometryTests: XCTestCase {
     private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
 
-    func testAcceptanceHintAddsKeycapWidthToOverlayBudget() {
-        let textSize = CGSize(width: 72, height: 16)
-        let hinted = CotypingAcceptanceHintLayout.reservedSize(for: textSize, label: "Tab")
-
-        XCTAssertGreaterThan(hinted.width, textSize.width + CotypingAcceptanceHintLayout.spacing)
-        XCTAssertGreaterThanOrEqual(hinted.height, textSize.height)
-        XCTAssertEqual(CotypingAcceptanceHintLayout.reservedSize(for: textSize, label: nil), textSize)
-    }
-
-    func testInlineFrameUsesAcceptanceHintBudget() {
-        let baseTextSize = CGSize(width: 60, height: 16)
-        let hintedTextSize = CotypingAcceptanceHintLayout.reservedSize(
-            for: baseTextSize,
-            label: "Right Arrow")
-        let frame = CotypingOverlayGeometry.inlineFrame(
-            caret: CGRect(x: 100, y: 500, width: 0, height: 16),
-            textSize: hintedTextSize,
-            lineHeight: 16,
-            visible: screen)
-
-        XCTAssertEqual(frame.width, hintedTextSize.width, accuracy: 0.5)
-        XCTAssertGreaterThan(frame.width, baseTextSize.width)
-    }
-
     /// The core consistency property: two AX providers reporting the same line
     /// center with different caret heights (AppKit line box vs WebKit marker
     /// bounds) must place the ghost at the identical vertical center and height.
@@ -204,7 +180,7 @@ final class CotypingOverlayGeometryTests: XCTestCase {
             style: CotypingFieldStyle(fontName: NSFont.systemFont(ofSize: 13).fontName, fontPointSize: 13)))
     }
 
-    func testInlineLayoutWrapsInsideInputFrameAndKeepsKeycapOnLastLine() {
+    func testInlineLayoutWrapsInsideInputFrame() {
         let font = NSFont.systemFont(ofSize: 13)
         let inputFrame = CGRect(x: 40, y: 480, width: 240, height: 28)
         let caret = CGRect(x: 178, y: 492, width: 1, height: 16)
@@ -214,18 +190,14 @@ final class CotypingOverlayGeometryTests: XCTestCase {
             inputFrameRect: inputFrame,
             font: font,
             visible: screen,
-            acceptanceHintLabel: "Tab",
             isRightToLeft: false)
 
         XCTAssertGreaterThan(layout.lines.count, 1)
         XCTAssertGreaterThan(layout.lines[0].leadingIndent, 0)
-        XCTAssertEqual(layout.lines.dropLast().contains(where: \.showsKeycap), false)
-        XCTAssertEqual(layout.lines.last?.showsKeycap, true)
 
         let contentSize = CotypingInlineGhostLayout.estimatedContentSize(
             for: layout,
-            style: CotypingFieldStyle(fontName: font.fontName, fontPointSize: font.pointSize),
-            acceptanceHintLabel: "Tab")
+            style: CotypingFieldStyle(fontName: font.fontName, fontPointSize: font.pointSize))
         let frame = layout.panelFrame(for: contentSize, caretRect: caret, visible: screen)
         XCTAssertGreaterThanOrEqual(frame.minX, inputFrame.minX + 8 - 0.5)
         XCTAssertLessThanOrEqual(frame.maxX, inputFrame.maxX - 8 + 0.5)
@@ -241,33 +213,32 @@ final class CotypingOverlayGeometryTests: XCTestCase {
             inputFrameRect: inputFrame,
             font: font,
             visible: screen,
-            acceptanceHintLabel: "Tab",
             isRightToLeft: false)
 
         XCTAssertLessThan(layout.topLineCenterOffsetFromCaret, 0)
         XCTAssertEqual(layout.lines.first?.leadingIndent, 0)
-        XCTAssertEqual(layout.lines.last?.showsKeycap, true)
     }
 
     func testInlineLayoutMirrorsAnchorForRTLText() {
         let font = NSFont.systemFont(ofSize: 13)
         let inputFrame = CGRect(x: 40, y: 480, width: 260, height: 28)
         let caret = CGRect(x: 158, y: 492, width: 1, height: 16)
+        // Long enough to exceed the ~104pt first-line budget so the layout
+        // exercises the wrap path, where the mirrored anchor produces indent.
+        let words = "\u{05d0}\u{05d1}\u{05d2} \u{05d3}\u{05d4}\u{05d5} \u{05d6}\u{05d7}\u{05d8} \u{05d9}\u{05da}\u{05db}"
         let layout = CotypingInlineGhostLayout.make(
-            text: "\u{05d0}\u{05d1}\u{05d2} \u{05d3}\u{05d4}\u{05d5} \u{05d6}\u{05d7}\u{05d8} \u{05d9}\u{05da}\u{05db}",
+            text: "\(words) \(words)",
             caretRect: caret,
             inputFrameRect: inputFrame,
             font: font,
             visible: screen,
-            acceptanceHintLabel: "Tab",
             isRightToLeft: true)
 
         XCTAssertTrue(layout.isRightToLeft)
         XCTAssertGreaterThan(layout.lines[0].leadingIndent, 0)
         let contentSize = CotypingInlineGhostLayout.estimatedContentSize(
             for: layout,
-            style: CotypingFieldStyle(fontName: font.fontName, fontPointSize: font.pointSize),
-            acceptanceHintLabel: "Tab")
+            style: CotypingFieldStyle(fontName: font.fontName, fontPointSize: font.pointSize))
         let frame = layout.panelFrame(for: contentSize, caretRect: caret, visible: screen)
         XCTAssertLessThanOrEqual(frame.maxX, inputFrame.maxX - 8 + 0.5)
     }

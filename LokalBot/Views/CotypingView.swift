@@ -233,26 +233,6 @@ private struct CotypingContent: View {
             Toggle("Match the app\u{2019}s font and text color", isOn: $app.settings.cotypingMatchHostStyle)
             Text("Ghost text mimics the field you\u{2019}re typing in (font family and a dimmed version of its text color) instead of a fixed style. Read locally via Accessibility; cached per field.")
                 .font(.caption).foregroundStyle(.secondary)
-            Toggle("Show accept-key badge", isOn: $app.settings.cotypingShowAcceptKeyHint)
-            Text("Shows the current accept key beside the suggestion so the cue stays correct when you rebind it.")
-                .font(.caption).foregroundStyle(.secondary)
-            Toggle("Fade in new suggestions", isOn: $app.settings.cotypingFadeInSuggestions)
-            Text("Only first appearances fade; updates and accepted-word reanchors stay steady. Follows the system Reduce Motion setting.")
-                .font(.caption).foregroundStyle(.secondary)
-            if app.settings.cotypingFadeInSuggestions {
-                LabeledContent("Fade duration") {
-                    Text(String(format: "%.2f s", app.settings.cotypingFadeInDurationSeconds))
-                        .foregroundStyle(.secondary)
-                }
-                Slider(value: Binding(
-                    get: { app.settings.cotypingFadeInDurationSeconds },
-                    set: {
-                        app.settings.cotypingFadeInDurationSeconds =
-                            AppSettings.clampedCotypingFadeInDurationSeconds($0)
-                    }),
-                    in: AppSettings.minimumCotypingFadeInDurationSeconds...AppSettings.maximumCotypingFadeInDurationSeconds,
-                    step: 0.05)
-            }
             Picker("Show suggestions", selection: $app.settings.cotypingMirrorPreference) {
                 ForEach(CotypingMirrorPreference.allCases) { Text($0.label).tag($0) }
             }

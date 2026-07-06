@@ -944,7 +944,6 @@ final class CotypingCoordinator: ObservableObject {
         placement: CotypingOverlayPlacement? = nil,
         acceptanceText: String? = nil
     ) {
-        let settings = settingsProvider()
         overlay.show(
             text: text,
             caretRect: field.caretRect,
@@ -952,11 +951,8 @@ final class CotypingCoordinator: ObservableObject {
             focusIdentityKey: field.focusIdentityKey,
             style: field.fieldStyle,
             placement: placement ?? self.placement(for: field),
-            acceptanceHintLabel: settings.cotypingShowAcceptKeyHint ? settings.cotypingAcceptKey.label : nil,
             acceptanceText: acceptanceText,
-            isRightToLeft: CotypingTextDirectionDetector.isRightToLeft(field.precedingText),
-            fadeIn: settings.cotypingFadeInSuggestions,
-            fadeDurationSeconds: settings.cotypingFadeInDurationSeconds)
+            isRightToLeft: CotypingTextDirectionDetector.isRightToLeft(field.precedingText))
     }
 
     // MARK: - Acceptance (called synchronously from the accept tap)

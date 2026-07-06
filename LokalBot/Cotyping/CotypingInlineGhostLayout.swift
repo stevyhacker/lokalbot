@@ -8,7 +8,6 @@ nonisolated struct CotypingInlineGhostLayout: Equatable {
         let index: Int
         let text: String
         let leadingIndent: CGFloat
-        let showsKeycap: Bool
 
         var id: Int { index }
     }
@@ -37,7 +36,6 @@ nonisolated struct CotypingInlineGhostLayout: Equatable {
         inputFrameRect: CGRect?,
         style: CotypingFieldStyle?,
         visible: CGRect?,
-        acceptanceHintLabel: String?,
         isRightToLeft: Bool
     ) -> CotypingInlineGhostLayout {
         let font = CotypingGhostStyle.resolvedFont(from: style)
@@ -47,7 +45,6 @@ nonisolated struct CotypingInlineGhostLayout: Equatable {
             inputFrameRect: inputFrameRect,
             font: font,
             visible: visible,
-            acceptanceHintLabel: acceptanceHintLabel,
             isRightToLeft: isRightToLeft)
     }
 
@@ -57,16 +54,10 @@ nonisolated struct CotypingInlineGhostLayout: Equatable {
         inputFrameRect: CGRect?,
         font: NSFont,
         visible: CGRect?,
-        acceptanceHintLabel: String?,
         isRightToLeft: Bool
     ) -> CotypingInlineGhostLayout {
         let normalizedText = normalizedDisplayText(text)
         let lineHeight = ceil(max(font.ascender - font.descender, font.pointSize * Metrics.lineHeightMultiplier))
-        let keycapSize = CotypingAcceptanceHintLayout.keycapSize(label: acceptanceHintLabel)
-        let showsAcceptanceHint = keycapSize.width > 0
-        let keycapReservation = showsAcceptanceHint
-            ? keycapSize.width + CotypingAcceptanceHintLayout.spacing
-            : 0
         let visibleFrame = visible ?? fallbackVisibleFrame(around: caretRect)
         let usableFrame = usableTextFrame(
             caretRect: caretRect,
@@ -80,22 +71,22 @@ nonisolated struct CotypingInlineGhostLayout: Equatable {
             firstLineAnchor = min(
                 max(caretRect.minX - Metrics.caretGap, usableFrame.minX),
                 usableFrame.maxX)
-            firstLineBudget = max(0, firstLineAnchor - usableFrame.minX - keycapReservation)
+            firstLineBudget = max(0, firstLineAnchor - usableFrame.minX)
         } else {
             firstLineAnchor = min(
                 max(caretRect.maxX + Metrics.caretGap, usableFrame.minX),
                 usableFrame.maxX)
-            firstLineBudget = max(0, usableFrame.maxX - firstLineAnchor - keycapReservation)
+            firstLineBudget = max(0, usableFrame.maxX - firstLineAnchor)
         }
 
-        let overflowBudget = max(Metrics.minimumLineWidth, usableFrame.width - keycapReservation)
+        let overflowBudget = max(Metrics.minimumLineWidth, usableFrame.width)
         let singleLineFits = !normalizedText.contains("\n")
             && measuredWidth(normalizedText, font: font) <= firstLineBudget
 
         if singleLineFits {
             return CotypingInlineGhostLayout(
                 lines: [
-                    Line(index: 0, text: normalizedText, leadingIndent: 0, showsKeycap: showsAcceptanceHint)
+                    Line(index: 0, text: normalizedText, leadingIndent: 0)
                 ],
                 panelOriginX: firstLineAnchor,
                 lineHeight: lineHeight,
@@ -139,8 +130,7 @@ nonisolated struct CotypingInlineGhostLayout: Equatable {
             Line(
                 index: offset,
                 text: rawLine.text,
-                leadingIndent: rawLine.leadingIndent,
-                showsKeycap: showsAcceptanceHint && offset == rawLines.count - 1)
+                leadingIndent: rawLine.leadingIndent)
         }
 
         return CotypingInlineGhostLayout(
@@ -180,16 +170,11 @@ nonisolated struct CotypingInlineGhostLayout: Equatable {
 
     static func estimatedContentSize(
         for layout: CotypingInlineGhostLayout,
-        style: CotypingFieldStyle?,
-        acceptanceHintLabel: String?
+        style: CotypingFieldStyle?
     ) -> CGSize {
         let font = CotypingGhostStyle.resolvedFont(from: style)
-        let keycap = CotypingAcceptanceHintLayout.keycapSize(label: acceptanceHintLabel)
         let widest = layout.lines.map { line -> CGFloat in
-            let keycapWidth = line.showsKeycap && keycap.width > 0
-                ? CotypingAcceptanceHintLayout.spacing + keycap.width
-                : 0
-            return line.leadingIndent + measuredWidth(line.text, font: font) + keycapWidth
+            line.leadingIndent + measuredWidth(line.text, font: font)
         }.max() ?? Metrics.minimumLineWidth
         return CGSize(
             width: ceil(max(widest, Metrics.minimumLineWidth)),

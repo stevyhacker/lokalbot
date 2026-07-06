@@ -2,47 +2,6 @@ import AppKit
 import XCTest
 @testable import LokalBot
 
-// MARK: - Overlay geometry
-
-final class CotypingSuggestionFadeInPolicyTests: XCTestCase {
-    func testFadesOnlyOnFreshAppearanceWhenEnabledAndMotionAllowed() {
-        XCTAssertTrue(CotypingSuggestionFadeInPolicy.shouldFadeIn(
-            isEnabled: true,
-            overlayWasVisible: false,
-            reduceMotionEnabled: false))
-        XCTAssertFalse(CotypingSuggestionFadeInPolicy.shouldFadeIn(
-            isEnabled: true,
-            overlayWasVisible: true,
-            reduceMotionEnabled: false))
-    }
-
-    func testDisabledAndReduceMotionBothSuppressFade() {
-        XCTAssertFalse(CotypingSuggestionFadeInPolicy.shouldFadeIn(
-            isEnabled: false,
-            overlayWasVisible: false,
-            reduceMotionEnabled: false))
-        XCTAssertFalse(CotypingSuggestionFadeInPolicy.shouldFadeIn(
-            isEnabled: true,
-            overlayWasVisible: false,
-            reduceMotionEnabled: true))
-    }
-
-    func testFadeDurationClampUsesCotypistBand() {
-        XCTAssertEqual(
-            CotypingSuggestionFadeInPolicy.clampedDurationSeconds(0.001),
-            CotypingSuggestionFadeInPolicy.minimumDurationSeconds,
-            accuracy: 0.0001)
-        XCTAssertEqual(
-            CotypingSuggestionFadeInPolicy.clampedDurationSeconds(2),
-            CotypingSuggestionFadeInPolicy.maximumDurationSeconds,
-            accuracy: 0.0001)
-        XCTAssertEqual(
-            CotypingSuggestionFadeInPolicy.clampedDurationSeconds(.infinity),
-            CotypingSuggestionFadeInPolicy.defaultDurationSeconds,
-            accuracy: 0.0001)
-    }
-}
-
 final class CotypingGhostHighlightTests: XCTestCase {
     func testHighlightsNextAcceptedLatinChunk() {
         XCTAssertEqual(CotypingGhostHighlight.acceptancePrefix(in: "hello world"), "hello")

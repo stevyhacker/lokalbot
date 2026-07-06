@@ -8,7 +8,6 @@ struct CotypingGhostView: View {
     let text: String
     var style: CotypingFieldStyle?
     var showsChrome = false
-    var acceptanceHintLabel: String?
     var inlineLayout: CotypingInlineGhostLayout?
     /// Average luminance (0…1) of the host pixels behind the ghost, sampled from
     /// the screen when available; lets the color contrast with the real
@@ -67,42 +66,23 @@ struct CotypingGhostView: View {
     }
 
     private var singleTextView: some View {
-        HStack(alignment: .firstTextBaseline, spacing: acceptanceHintLabel == nil ? 0 : 6) {
-            Text(attributedText)
-                .multilineTextAlignment(.leading)
-                .lineLimit(showsChrome ? nil : 1)
-                .truncationMode(.tail)
-                .fixedSize(horizontal: true, vertical: true)
-
-            if let acceptanceHintLabel {
-                CotypingGhostKeycap(label: acceptanceHintLabel)
-            }
-        }
-        .fixedSize(horizontal: true, vertical: true)
+        Text(attributedText)
+            .multilineTextAlignment(.leading)
+            .lineLimit(showsChrome ? nil : 1)
+            .truncationMode(.tail)
+            .fixedSize(horizontal: true, vertical: true)
     }
 
     private func inlineTextView(layout: CotypingInlineGhostLayout) -> some View {
         let alignment: HorizontalAlignment = layout.isRightToLeft ? .trailing : .leading
         return VStack(alignment: alignment, spacing: 0) {
             ForEach(layout.lines) { line in
-                let showsKeycap = line.showsKeycap && acceptanceHintLabel != nil
-                HStack(alignment: .firstTextBaseline, spacing: showsKeycap ? CotypingAcceptanceHintLayout.spacing : 0) {
-                    if layout.isRightToLeft, showsKeycap, let acceptanceHintLabel {
-                        CotypingGhostKeycap(label: acceptanceHintLabel)
-                    }
-
-                    Text(line.text)
-                        .font(font)
-                        .foregroundStyle(color)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: true)
-
-                    if !layout.isRightToLeft, showsKeycap, let acceptanceHintLabel {
-                        CotypingGhostKeycap(label: acceptanceHintLabel)
-                    }
-                }
-                .padding(layout.isRightToLeft ? .trailing : .leading, line.leadingIndent)
-                .fixedSize(horizontal: true, vertical: true)
+                Text(line.text)
+                    .font(font)
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: true)
+                    .padding(layout.isRightToLeft ? .trailing : .leading, line.leadingIndent)
             }
         }
         .fixedSize(horizontal: true, vertical: true)
@@ -132,68 +112,6 @@ struct CotypingGhostView: View {
         attributed[range].foregroundColor = .primary
         attributed[range].font = .system(size: CotypingGhostStyle.clampedPointSize(style?.fontPointSize), weight: .semibold)
         return attributed
-    }
-}
-
-private struct CotypingGhostKeycap: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let label: String
-
-    private var textColor: Color {
-        colorScheme == .dark ? Color(white: 0.65) : Color(white: 0.45)
-    }
-
-    private var backgroundColor: Color {
-        colorScheme == .dark ? Color(white: 0.18) : Color(white: 0.95)
-    }
-
-    private var borderColor: Color {
-        colorScheme == .dark ? Color(white: 0.30) : Color(white: 0.80)
-    }
-
-    var body: some View {
-        Text(label)
-            .font(.system(size: 10, weight: .medium, design: .rounded))
-            .foregroundStyle(textColor)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(backgroundColor)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(borderColor, lineWidth: 1)
-            )
-            .fixedSize(horizontal: true, vertical: true)
-    }
-}
-
-nonisolated enum CotypingAcceptanceHintLayout {
-    static let spacing: CGFloat = 6
-    static let horizontalPadding: CGFloat = 10
-    static let verticalPadding: CGFloat = 4
-
-    static func keycapSize(label: String?) -> CGSize {
-        guard let label,
-              !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return .zero
-        }
-        let font = NSFont.systemFont(ofSize: 10, weight: .medium)
-        let textSize = (label as NSString).size(withAttributes: [.font: font])
-        return CGSize(
-            width: ceil(textSize.width + horizontalPadding),
-            height: ceil(textSize.height + verticalPadding))
-    }
-
-    static func reservedSize(for textSize: CGSize, label: String?) -> CGSize {
-        let keycap = keycapSize(label: label)
-        guard keycap.width > 0 else {
-            return textSize
-        }
-        return CGSize(
-            width: textSize.width + spacing + keycap.width,
-            height: max(textSize.height, keycap.height))
     }
 }
 

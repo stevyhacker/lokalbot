@@ -1,5 +1,4 @@
 import AppKit
-import QuartzCore
 import SwiftUI
 
 /// The floating ghost text. Trimmed port of Cotabby's `OverlayController`: one
@@ -23,7 +22,6 @@ final class CotypingOverlayController {
         var frame: CGRect
         var sourceStyle: CotypingFieldStyle?
         var renderStyle: CotypingFieldStyle?
-        var acceptanceHintLabel: String?
         var lineHeight: CGFloat
         var lineCount: Int
         var visibleFrame: CGRect?
@@ -39,11 +37,8 @@ final class CotypingOverlayController {
         focusIdentityKey: String? = nil,
         style: CotypingFieldStyle? = nil,
         placement: CotypingOverlayPlacement = .inlineDefault,
-        acceptanceHintLabel: String? = nil,
         acceptanceText: String? = nil,
-        isRightToLeft: Bool = false,
-        fadeIn: Bool = true,
-        fadeDurationSeconds: Double = CotypingSuggestionFadeInPolicy.defaultDurationSeconds
+        isRightToLeft: Bool = false
     ) {
         guard !text.isEmpty,
               caretRect.origin.x.isFinite, caretRect.origin.y.isFinite,
@@ -53,11 +48,6 @@ final class CotypingOverlayController {
         }
         let panel = ensurePanel()
         guard let hosting else { return }
-        let shouldFadeIn = CotypingSuggestionFadeInPolicy.shouldFadeIn(
-            isEnabled: fadeIn,
-            overlayWasVisible: isVisible,
-            reduceMotionEnabled: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
-        panel.alphaValue = shouldFadeIn ? 0 : 1
 
         let mode = placement.mode
         sampleGeneration += 1
@@ -84,7 +74,6 @@ final class CotypingOverlayController {
                 inputFrameRect: inputFrameRect,
                 style: renderStyle,
                 visible: visible,
-                acceptanceHintLabel: acceptanceHintLabel,
                 isRightToLeft: isRightToLeft)
             : nil
         let displayText = mirrorLayout?.displayText ?? text
@@ -93,15 +82,12 @@ final class CotypingOverlayController {
         let cachedLuminance = mode.isMirror ? nil : sampler.cachedLuminance(forApp: bundleID)
         hosting.rootView = CotypingGhostView(
             text: displayText, style: renderStyle, showsChrome: mode.isMirror,
-            acceptanceHintLabel: acceptanceHintLabel, inlineLayout: inlineLayout,
+            inlineLayout: inlineLayout,
             backgroundLuminance: cachedLuminance)
         hosting.layoutSubtreeIfNeeded()
 
         let fitting = hosting.fittingSize
         let measured = CotypingGhostStyle.measuredTextSize(text, style: renderStyle)
-        let measuredWithHint = CotypingAcceptanceHintLayout.reservedSize(
-            for: measured,
-            label: acceptanceHintLabel)
 
         // Inline placement tracks the ghost text's own line box centered on the
         // caret's vertical center — never the host caret height, which differs
@@ -116,8 +102,7 @@ final class CotypingOverlayController {
             if let inlineLayout {
                 let estimatedContent = CotypingInlineGhostLayout.estimatedContentSize(
                     for: inlineLayout,
-                    style: renderStyle,
-                    acceptanceHintLabel: acceptanceHintLabel)
+                    style: renderStyle)
                 let contentSize = CGSize(
                     width: max(fitting.width, estimatedContent.width),
                     height: max(fitting.height, estimatedContent.height))
@@ -127,27 +112,24 @@ final class CotypingOverlayController {
                     visible: visible)
             } else {
                 let textSize = CGSize(
-                    width: max(fitting.width, measuredWithHint.width),
-                    height: max(fitting.height, measuredWithHint.height))
+                    width: max(fitting.width, measured.width),
+                    height: max(fitting.height, measured.height))
                 frame = CotypingOverlayGeometry.inlineFrame(
                     caret: caretRect, textSize: textSize,
                     lineHeight: lineHeight, visible: visible)
             }
             lastInlineRender = InlineRenderState(
                 text: text, frame: frame.integral, sourceStyle: style, renderStyle: renderStyle,
-                acceptanceHintLabel: acceptanceHintLabel, lineHeight: lineHeight,
+                lineHeight: lineHeight,
                 lineCount: inlineLayout?.lines.count ?? 1,
                 visibleFrame: visible, inputFrameRect: inputFrameRect,
                 caretIsExact: placement.caretIsExact,
                 backgroundLuminance: cachedLuminance)
         case .mirror:
             let mirrorSize = mirrorLayout?.textSize ?? measured
-            let mirrorSizeWithHint = CotypingAcceptanceHintLayout.reservedSize(
-                for: mirrorSize,
-                label: acceptanceHintLabel)
             let content = CGSize(
-                width: max(fitting.width, mirrorSizeWithHint.width + 16),
-                height: max(fitting.height, mirrorSizeWithHint.height + 8))
+                width: max(fitting.width, mirrorSize.width + 16),
+                height: max(fitting.height, mirrorSize.height + 8))
             frame = CotypingOverlayGeometry.mirrorFrame(
                 caret: caretRect, content: content, visible: visible)
             lastInlineRender = nil
@@ -159,9 +141,6 @@ final class CotypingOverlayController {
         panel.orderFrontRegardless()
         isVisible = true
         self.acceptanceText = acceptanceText ?? text
-        if shouldFadeIn {
-            fadeInPanel(durationSeconds: fadeDurationSeconds)
-        }
         // First suggestion in this app (no cached luminance): sample the real
         // background asynchronously and refine the color. The generation token
         // drops stale captures; the in-flight guard avoids a capture storm.
@@ -175,7 +154,7 @@ final class CotypingOverlayController {
                       let hosting = self.hosting, let luminance else { return }
                 hosting.rootView = CotypingGhostView(
                     text: text, style: renderStyle, showsChrome: false,
-                    acceptanceHintLabel: acceptanceHintLabel, inlineLayout: inlineLayout,
+                    inlineLayout: inlineLayout,
                     backgroundLuminance: luminance)
                 self.lastInlineRender?.backgroundLuminance = luminance
             }
@@ -210,16 +189,12 @@ final class CotypingOverlayController {
             height: renderedInsertedSize.height)
         hosting.rootView = CotypingGhostView(
             text: remainingText, style: render.renderStyle, showsChrome: false,
-            acceptanceHintLabel: render.acceptanceHintLabel,
             backgroundLuminance: render.backgroundLuminance)
         hosting.layoutSubtreeIfNeeded()
         let remainingMeasured = CotypingGhostStyle.measuredTextSize(remainingText, style: render.renderStyle)
-        let remainingWithHint = CotypingAcceptanceHintLayout.reservedSize(
-            for: remainingMeasured,
-            label: render.acceptanceHintLabel)
         let remainingSize = CGSize(
-            width: max(hosting.fittingSize.width, remainingWithHint.width),
-            height: max(hosting.fittingSize.height, remainingWithHint.height))
+            width: max(hosting.fittingSize.width, remainingMeasured.width),
+            height: max(hosting.fittingSize.height, remainingMeasured.height))
         guard let advancedFrame = CotypingOverlayGeometry.advancedInlineFrame(
             from: render.frame, insertedTextSize: insertedSize,
             remainingTextSize: remainingSize, lineHeight: render.lineHeight,
@@ -263,12 +238,10 @@ final class CotypingOverlayController {
             inputFrameRect: inputFrameRect,
             style: render.renderStyle,
             visible: visible,
-            acceptanceHintLabel: render.acceptanceHintLabel,
             isRightToLeft: isRightToLeft)
         let targetSize = CotypingInlineGhostLayout.estimatedContentSize(
             for: layout,
-            style: render.renderStyle,
-            acceptanceHintLabel: render.acceptanceHintLabel)
+            style: render.renderStyle)
         let target = layout.panelFrame(
             for: targetSize,
             caretRect: caretRect,
@@ -331,14 +304,6 @@ final class CotypingOverlayController {
         self.panel = panel
         self.hosting = hosting
         return panel
-    }
-
-    private func fadeInPanel(durationSeconds: Double) {
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = CotypingSuggestionFadeInPolicy.clampedDurationSeconds(durationSeconds)
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            panel?.animator().alphaValue = 1
-        }
     }
 }
 

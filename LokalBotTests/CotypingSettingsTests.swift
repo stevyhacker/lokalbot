@@ -17,9 +17,6 @@ final class CotypingSettingsTests: XCTestCase {
         settings.cotypingMultiLine = true
         settings.cotypingDebounceMs = 500
         settings.cotypingStreamSuggestionsWhileGenerating = true
-        settings.cotypingFadeInSuggestions = false
-        settings.cotypingFadeInDurationSeconds = 0.25
-        settings.cotypingShowAcceptKeyHint = true
         settings.cotypingAcceptGranularity = .phrase
         settings.cotypingFullAcceptKey = .rightArrow
         settings.cotypingAutoAcceptTrailingPunctuation = false
@@ -39,9 +36,6 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertTrue(decoded.cotypingMultiLine)
         XCTAssertEqual(decoded.cotypingDebounceMs, 500)
         XCTAssertTrue(decoded.cotypingStreamSuggestionsWhileGenerating)
-        XCTAssertFalse(decoded.cotypingFadeInSuggestions)
-        XCTAssertEqual(decoded.cotypingFadeInDurationSeconds, 0.25, accuracy: 0.0001)
-        XCTAssertTrue(decoded.cotypingShowAcceptKeyHint)
         XCTAssertEqual(decoded.cotypingAcceptGranularity, .phrase)
         XCTAssertEqual(decoded.cotypingFullAcceptKey, .rightArrow)
         XCTAssertFalse(decoded.cotypingAutoAcceptTrailingPunctuation)
@@ -104,12 +98,6 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertEqual(
             settings.cotypingStreamSuggestionsWhileGenerating,
             AppSettings().cotypingStreamSuggestionsWhileGenerating)
-        XCTAssertTrue(settings.cotypingFadeInSuggestions)
-        XCTAssertEqual(
-            settings.cotypingFadeInDurationSeconds,
-            AppSettings.defaultCotypingFadeInDurationSeconds,
-            accuracy: 0.0001)
-        XCTAssertFalse(settings.cotypingShowAcceptKeyHint)
         XCTAssertTrue(settings.cotypingAutoAcceptTrailingPunctuation)
         XCTAssertFalse(settings.cotypingAddSpaceAfterAccept)
         XCTAssertTrue(settings.cotypingUseLocalLearning)
@@ -141,26 +129,9 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertEqual(settings.cotypingMaxWords, 20)
         XCTAssertEqual(settings.cotypingDebounceMs, 20)
         XCTAssertFalse(settings.cotypingStreamSuggestionsWhileGenerating)
-        XCTAssertTrue(settings.cotypingFadeInSuggestions)
-        XCTAssertEqual(settings.cotypingFadeInDurationSeconds, 0.15, accuracy: 0.0001)
-        XCTAssertFalse(settings.cotypingShowAcceptKeyHint)
         XCTAssertTrue(settings.cotypingAutoAcceptTrailingPunctuation)
         XCTAssertFalse(settings.cotypingAddSpaceAfterAccept)
         XCTAssertEqual(settings.cotypingMaxResponseTokens, 26)
-    }
-
-    func testFadeDurationClampsToCotypistBand() throws {
-        let tooLow = #"{"cotypingFadeInDurationSeconds":0.001}"#.data(using: .utf8)!
-        XCTAssertEqual(
-            try JSONDecoder().decode(AppSettings.self, from: tooLow).cotypingFadeInDurationSeconds,
-            AppSettings.minimumCotypingFadeInDurationSeconds,
-            accuracy: 0.0001)
-
-        let tooHigh = #"{"cotypingFadeInDurationSeconds":2.0}"#.data(using: .utf8)!
-        XCTAssertEqual(
-            try JSONDecoder().decode(AppSettings.self, from: tooHigh).cotypingFadeInDurationSeconds,
-            AppSettings.maximumCotypingFadeInDurationSeconds,
-            accuracy: 0.0001)
     }
 
     func testMaxResponseTokensMirrorCotypistBudget() {

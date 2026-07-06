@@ -10,15 +10,10 @@ Parity defaults:
 - Suggestion length defaults to 20 words, matching Cotypist/Cotabby's 12-20 word preset upper bound.
 - Debounce defaults to 20 ms.
 - Streaming partial suggestions default off, matching Cotypist/Cotabby.
-- New suggestions fade in over 0.15 s by default, matching Cotabby's shipped
-  presentation. The fade only runs on a true first appearance, never on streamed
-  updates or accepted-word reanchors, and the system Reduce Motion setting
-  suppresses it.
-- Ghost text is bare by default, matching Cotypist's understated inline
-  presentation — the accept shortcut is configured (and discoverable) in
-  Settings, not displayed beside every suggestion. Turning on "Show accept-key
-  badge" adds a small keycap with the configured accept key, like Cotabby's
-  acceptance cue.
+- Suggestions appear instantly with no fade-in animation, and ghost text is
+  always bare, matching Cotypist's understated inline presentation — the accept
+  shortcut is configured (and discoverable) in Settings, never displayed beside
+  the suggestion.
 - Popup/mirror suggestions highlight the next word-sized accept chunk at stronger
   weight/contrast, matching Cotabby's preview card cue for what the next accept
   keypress will insert.
@@ -146,11 +141,9 @@ Record (per prompt, and overall):
 - Whether copied terminal/Markdown output is cleaned into prose-like context
   instead of leaking symbols such as `$`, backticks, fences, or ANSI escapes
   into suggestions.
-- Whether the first visible suggestion fades in once, while streamed updates,
-  word-by-word acceptance, and post-accept reanchors do not flicker or restart
-  the fade.
-- Whether ghost text stays bare by default, and enabling "Show accept-key
-  badge" shows the configured accept key legibly next to inline and popup
+- Whether suggestions appear steadily, and streamed updates, word-by-word
+  acceptance, and post-accept reanchors do not flicker.
+- Whether ghost text stays bare — no keycap badge next to inline or popup
   suggestions.
 - Whether popup/mirror suggestions visually emphasize the next accept chunk
   rather than rendering the whole preview at the same strength.
