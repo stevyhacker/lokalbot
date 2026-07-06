@@ -175,6 +175,7 @@ struct StatTile: View {
             Text(value).font(.callout.weight(.semibold).monospacedDigit())
             Text(label).font(.caption).foregroundStyle(.secondary)
         }
+        .fixedSize()
         .chipChrome()
     }
 }
