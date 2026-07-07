@@ -12,6 +12,7 @@ final class MicRecorder {
     private var engine = AVAudioEngine()
     private var file: AVAudioFile?
     private var converter: AVAudioConverter?
+    private var converterInputFormat: AVAudioFormat?
     private var previewTee: AudioPreviewTee?
     private var recordingFormat: AVAudioFormat?
     private var isRecording = false
@@ -92,6 +93,7 @@ final class MicRecorder {
             file = nil
             self.recordingFormat = nil
             converter = nil
+            converterInputFormat = nil
             previewTee?.close()
             previewTee = nil
             resetCaptureHealth(sampleRate: 0)
@@ -122,6 +124,7 @@ final class MicRecorder {
         // second isn't lost; without this, every recording is truncated.
         drainConverter()
         converter = nil
+        converterInputFormat = nil
         recordingFormat = nil
         file = nil   // closes the file
         previewTee?.close()
@@ -165,17 +168,16 @@ final class MicRecorder {
     /// Builds the converter (only when input ≠ recording format), installs
     /// the tap, and starts the engine. Shared by `start()` and the
     /// configuration-change reinstall.
-    private func installTapAndStart(inputFormat: AVAudioFormat,
+    private func installTapAndStart(inputFormat _: AVAudioFormat,
                                     recordingFormat: AVAudioFormat) throws {
-        if inputFormat == recordingFormat {
-            converter = nil
-        } else if let conv = AVAudioConverter(from: inputFormat, to: recordingFormat) {
-            converter = conv
-        } else {
-            throw RecorderError.unsupportedInputFormat
-        }
+        converter = nil
+        converterInputFormat = nil
         let input = engine.inputNode
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+        // Let AVAudioEngine choose the current hardware format. During a live
+        // device switch, `outputFormat(forBus:)` can briefly report a stale
+        // client format while the input unit has already moved to the new
+        // hardware rate, and passing that stale format makes installTap raise.
+        input.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
             do {
                 try self?.write(buffer)
             } catch {
@@ -189,6 +191,7 @@ final class MicRecorder {
         } catch {
             input.removeTap(onBus: 0)
             converter = nil
+            converterInputFormat = nil
             throw error
         }
     }
@@ -214,28 +217,14 @@ final class MicRecorder {
     }
 
     /// Posted asynchronously when the audio device changes. The engine has
-    /// already stopped itself; rebuild the tap + converter for the new input
-    /// format (keeping the original on-disk format) and restart, so the same
-    /// `mic.m4a` continues across the swap instead of truncating.
+    /// already stopped itself; remove the old tap and let the retry loop rebuild
+    /// the graph after Core Audio has settled. Reinstalling immediately can hit
+    /// AVAudioEngine's transient "config change pending" state.
     private func handleConfigurationChange() {
         guard isRecording else { return }
-        guard let recordingFormat else { return }
         engine.inputNode.removeTap(onBus: 0)
-        let newInputFormat = engine.inputNode.outputFormat(forBus: 0)
-        guard newInputFormat.sampleRate > 0, newInputFormat.channelCount > 0 else {
-            NSLog("MicRecorder reconfig: no usable input device after change")
-            scheduleReconfigurationRetry()
-            return
-        }
-        do {
-            try installTapAndStart(inputFormat: newInputFormat,
-                                   recordingFormat: recordingFormat)
-            reconfigurationTask?.cancel()
-            reconfigurationTask = nil
-        } catch {
-            NSLog("MicRecorder reconfig failed: \(error.localizedDescription)")
-            scheduleReconfigurationRetry()
-        }
+        engine.stop()
+        scheduleReconfigurationRetry()
     }
 
     private func scheduleReconfigurationRetry() {
@@ -299,12 +288,28 @@ final class MicRecorder {
 
     private func write(_ buffer: AVAudioPCMBuffer) throws {
         guard let file else { return }
-        guard let converter, let recordingFormat else {
+        guard let recordingFormat else {
             try file.write(from: buffer)
             previewTee?.write(buffer)
             noteWrittenAudio(buffer)
             return
         }
+        guard buffer.format != recordingFormat else {
+            converter = nil
+            converterInputFormat = nil
+            try file.write(from: buffer)
+            previewTee?.write(buffer)
+            noteWrittenAudio(buffer)
+            return
+        }
+        if converter == nil || converterInputFormat != buffer.format {
+            guard let newConverter = AVAudioConverter(from: buffer.format, to: recordingFormat) else {
+                throw RecorderError.unsupportedInputFormat
+            }
+            converter = newConverter
+            converterInputFormat = buffer.format
+        }
+        guard let converter else { return }
         let sampleRateRatio = recordingFormat.sampleRate / buffer.format.sampleRate
         let frameCapacity = AVAudioFrameCount(Double(buffer.frameLength) * sampleRateRatio) + 16
         guard let output = AVAudioPCMBuffer(pcmFormat: recordingFormat,
