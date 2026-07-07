@@ -905,15 +905,17 @@ final class CotypingCoordinator: ObservableObject {
     }
 
     private func seamVerdict(precedingText: String, completion: String) -> CotypingSeamGuard.Verdict {
-        CotypingSeamGuard.verdict(
+        let verdictsApply = spellChecker.verdictsApply(context: precedingText)
+        return CotypingSeamGuard.verdict(
             precedingText: precedingText,
             completion: completion,
-            isKnownWord: { !spellChecker.isTypo($0) })
+            isKnownWord: { verdictsApply ? !spellChecker.isTypo($0) : true })
     }
 
     /// Resolves the typo gate for the trailing word using the native spell checker.
     private func typoDecision(for precedingText: String, enabled: Bool) -> CotypingTypoDecision {
-        CotypingTypoGate.resolve(
+        guard spellChecker.verdictsApply(context: precedingText) else { return .proceed }
+        return CotypingTypoGate.resolve(
             precedingText: precedingText, enabled: enabled,
             isTypo: { spellChecker.isTypo($0) },
             bestCorrection: { spellChecker.bestCorrection(for: $0) },
@@ -926,6 +928,7 @@ final class CotypingCoordinator: ObservableObject {
     private func wordPrefixIsValidWord(for precedingText: String) -> Bool {
         let partial = CotypingMidWord.currentPartialWord(in: precedingText)
         guard partial.count >= 2 else { return true }
+        guard spellChecker.verdictsApply(context: precedingText) else { return true }
         return !spellChecker.isTypo(partial)
     }
 

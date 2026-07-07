@@ -10,6 +10,16 @@ import Foundation
 final class CotypingSpellChecker {
     private let documentTag = NSSpellChecker.uniqueSpellDocumentTag()
 
+    /// Whether typo/known-word verdicts are meaningful for the text at the
+    /// caret. False when the context is confidently in a language macOS has no
+    /// dictionary for (Serbian, Croatian, Montenegrin, …) — every spell-gated
+    /// policy must stand down instead of flagging the whole language.
+    func verdictsApply(context: String) -> Bool {
+        CotypingSpellLanguageGate.spellVerdictsApply(
+            context: context,
+            availableLanguages: NSSpellChecker.shared.availableLanguages)
+    }
+
     /// True when the whole word is misspelled (range must start at 0 and span the
     /// entire word, so partly-flagged tokens like `I'm` don't misfire).
     func isTypo(_ word: String) -> Bool {

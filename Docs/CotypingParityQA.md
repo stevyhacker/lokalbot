@@ -36,6 +36,13 @@ Parity defaults:
 - Terminal gating matches Cotabby's default: standalone terminal apps are never
   assisted, and xterm.js integrated terminals are suppressed unless explicitly
   enabled in Settings.
+- Spell-based guards (typo gate, seam guard, word-prefix validity) only apply
+  when the caret context is confidently in a language macOS has a spell
+  dictionary for. Text in Serbian, Croatian, Montenegrin, or any other
+  unsupported language runs the continuation pipeline ungated
+  (`CotypingSpellLanguageGate`) — otherwise every word would be flagged as a
+  "typo" by whichever dictionary is active and cotyping would silently go dark
+  for the whole language, while Cotypist keeps completing.
 - Accepted continuation text follows Cotabby's IME-safe path: while a composing
   input source is active, the accept path uses paste instead of a synthetic
   Unicode keystroke so marked-text input methods do not swallow the commit.
@@ -145,6 +152,10 @@ Record (per prompt, and overall):
   acceptance, and post-accept reanchors do not flicker.
 - Whether ghost text stays bare — no keycap badge next to inline or popup
   suggestions.
+- Whether suggestions keep flowing in a language without a macOS spell
+  dictionary (Serbian/Montenegrin Latin is the reference case): mid-word
+  fragments must complete, next-word continuations must appear after finished
+  words, and no bogus wrong-language "corrections" are offered.
 - Whether popup/mirror suggestions visually emphasize the next accept chunk
   rather than rendering the whole preview at the same strength.
 - Whether it avoids code editors, terminals, secure fields, and excluded domains.
