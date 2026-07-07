@@ -60,6 +60,52 @@ final class CotypingWordAcceptanceTests: XCTestCase {
             " world")
     }
 
+    func testInsertionChunkPrefixesMissingSpaceAfterSentencePunctuation() {
+        XCTAssertEqual(
+            CotypingAcceptanceChunker.insertionChunk(
+                forAcceptedChunk: "Next",
+                precedingText: "done."),
+            " Next")
+        XCTAssertEqual(
+            CotypingAcceptanceChunker.insertionChunk(
+                forAcceptedChunk: "Next",
+                precedingText: "done!"),
+            " Next")
+        XCTAssertEqual(
+            CotypingAcceptanceChunker.insertionChunk(
+                forAcceptedChunk: "Next",
+                precedingText: "done?"),
+            " Next")
+        XCTAssertEqual(
+            CotypingAcceptanceChunker.insertionChunk(
+                forAcceptedChunk: " Next",
+                precedingText: "done."),
+            " Next")
+    }
+
+    func testInsertionChunkKeepsCompactDotTokensAttached() {
+        XCTAssertEqual(
+            CotypingAcceptanceChunker.insertionChunk(
+                forAcceptedChunk: "2",
+                precedingText: "version 1."),
+            "2")
+        XCTAssertEqual(
+            CotypingAcceptanceChunker.insertionChunk(
+                forAcceptedChunk: "S",
+                precedingText: "U."),
+            "S")
+        XCTAssertEqual(
+            CotypingAcceptanceChunker.insertionChunk(
+                forAcceptedChunk: "com",
+                precedingText: "example."),
+            "com")
+        XCTAssertEqual(
+            CotypingAcceptanceChunker.insertionChunk(
+                forAcceptedChunk: "env",
+                precedingText: "."),
+            "env")
+    }
+
     func testFinalAddSpaceAppendsOnlyAfterCompletedWords() {
         let session = CotypingSession(
             field: CotypingField(

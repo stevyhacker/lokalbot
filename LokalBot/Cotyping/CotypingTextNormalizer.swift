@@ -106,6 +106,8 @@ enum CotypingTextNormalizer {
         normalized = stripEchoPrefix(normalized, precedingText: request.prefixText)
         let collapsedByEcho = !beforeEchoStrip.isEmpty && normalized.isEmpty
 
+        normalized = strippingStylisticEllipses(from: normalized)
+
         // Space management AFTER echo stripping (which can expose a leading space).
         if request.precedingEndsWithWhitespace {
             normalized = String(normalized.drop(while: { $0.isWhitespace }))
@@ -150,12 +152,33 @@ enum CotypingTextNormalizer {
             if character == "." || character == "!" || character == "?" {
                 let next = text.index(after: index)
                 if next < text.endIndex, text[next].isWhitespace {
+                    if character == ".", isNonTerminalSentencePeriod(in: text, at: index) {
+                        index = next
+                        continue
+                    }
                     return index
                 }
             }
             index = text.index(after: index)
         }
         return nil
+    }
+
+    private static func isNonTerminalSentencePeriod(in text: String, at periodIndex: String.Index) -> Bool {
+        guard periodIndex > text.startIndex else { return false }
+        let beforeIndex = text.index(before: periodIndex)
+        let beforeCharacter = text[beforeIndex]
+        if beforeCharacter.isNumber { return true }
+        if beforeCharacter.isLetter {
+            let priorIsLetter = beforeIndex > text.startIndex
+                && text[text.index(before: beforeIndex)].isLetter
+            if !priorIsLetter { return true }
+            if nonTerminalPeriodAbbreviations.contains(
+                trailingLetters(in: text, endingBefore: periodIndex).lowercased()) {
+                return true
+            }
+        }
+        return false
     }
 
     private static func limitWords(_ text: String, maxWords: Int) -> String {
@@ -220,6 +243,84 @@ enum CotypingTextNormalizer {
             }
         }
         return String(text[..<end])
+    }
+
+    private static func strippingStylisticEllipses(from text: String) -> String {
+        let leadingStripped = strippingLeadingStylisticEllipsis(from: text)
+        return strippingTrailingStylisticEllipsis(from: leadingStripped)
+    }
+
+    private static func strippingLeadingStylisticEllipsis(from text: String) -> String {
+        var cursor = text.startIndex
+        while cursor < text.endIndex, text[cursor] == " " || text[cursor] == "\t" {
+            cursor = text.index(after: cursor)
+        }
+        guard let ellipsisEnd = stylisticEllipsisEnd(at: cursor, in: text),
+              ellipsisEnd == text.endIndex || text[ellipsisEnd].isWhitespace else {
+            return text
+        }
+
+        var restStart = ellipsisEnd
+        if cursor > text.startIndex {
+            while restStart < text.endIndex, text[restStart].isWhitespace {
+                restStart = text.index(after: restStart)
+            }
+        }
+        return String(text[..<cursor]) + String(text[restStart...])
+    }
+
+    private static func strippingTrailingStylisticEllipsis(from text: String) -> String {
+        var end = text.endIndex
+        while end > text.startIndex, text[text.index(before: end)].isWhitespace {
+            end = text.index(before: end)
+        }
+        guard end > text.startIndex,
+              let ellipsisStart = trailingStylisticEllipsisStart(endingBefore: end, in: text) else {
+            return text
+        }
+
+        var trimmedEnd = ellipsisStart
+        while trimmedEnd > text.startIndex, text[text.index(before: trimmedEnd)].isWhitespace {
+            trimmedEnd = text.index(before: trimmedEnd)
+        }
+        return String(text[..<trimmedEnd])
+    }
+
+    private static func stylisticEllipsisEnd(at index: String.Index, in text: String) -> String.Index? {
+        guard index < text.endIndex else { return nil }
+        if text[index] == "…" {
+            return text.index(after: index)
+        }
+        guard text[index] == "." else { return nil }
+        var cursor = index
+        var count = 0
+        while cursor < text.endIndex, text[cursor] == "." {
+            count += 1
+            cursor = text.index(after: cursor)
+        }
+        return count >= 3 ? cursor : nil
+    }
+
+    private static func trailingStylisticEllipsisStart(
+        endingBefore end: String.Index,
+        in text: String
+    ) -> String.Index? {
+        let previous = text.index(before: end)
+        if text[previous] == "…" {
+            return previous
+        }
+        guard text[previous] == "." else { return nil }
+        var cursor = end
+        var start = previous
+        var count = 0
+        while cursor > text.startIndex {
+            let before = text.index(before: cursor)
+            guard text[before] == "." else { break }
+            count += 1
+            start = before
+            cursor = before
+        }
+        return count >= 3 ? start : nil
     }
 
     private static func insertingMissingSentenceBoundarySpaces(in text: String) -> String {
@@ -342,9 +443,28 @@ enum CotypingTextNormalizer {
     }
 
     private static let likelyDomainOrFileSuffixes: Set<String> = [
-        "ai", "app", "co", "com", "dev", "edu", "gov", "io", "js", "me",
-        "net", "org", "py", "rs", "swift", "ts", "uk", "us"
+        "ai", "app", "co", "com", "css", "dev", "edu", "env", "gov",
+        "html", "io", "js", "json", "jsx", "local", "lock", "md", "me",
+        "net", "org", "py", "rs", "swift", "toml", "ts", "tsx", "txt",
+        "uk", "us", "yaml", "yml"
     ]
+
+    private static let nonTerminalPeriodAbbreviations: Set<String> = [
+        "mr", "mrs", "ms", "dr", "st", "vs", "eg", "ie", "etc", "no",
+        "fig", "approx", "inc", "ltd"
+    ]
+
+    private static func trailingLetters(in text: String, endingBefore index: String.Index) -> String {
+        var letters: [Character] = []
+        var cursor = index
+        while cursor > text.startIndex {
+            let previous = text.index(before: cursor)
+            guard text[previous].isLetter else { break }
+            letters.append(text[previous])
+            cursor = previous
+        }
+        return String(letters.reversed())
+    }
 
     private static func containsPlaceholderText(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

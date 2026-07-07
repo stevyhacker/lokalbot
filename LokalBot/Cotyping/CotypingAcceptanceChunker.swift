@@ -76,11 +76,16 @@ enum CotypingAcceptanceChunker {
     ) -> String {
         guard let lastScalar = precedingText.unicodeScalars.last,
               CharacterSet.whitespaces.contains(lastScalar) else {
-            return chunk
+            return insertionChunkPrefixingSentenceBoundarySpace(
+                chunk,
+                precedingText: precedingText)
         }
-        return String(chunk.drop(while: { character in
+        let trimmed = String(chunk.drop(while: { character in
             character.unicodeScalars.allSatisfy { CharacterSet.whitespaces.contains($0) }
         }))
+        return insertionChunkPrefixingSentenceBoundarySpace(
+            trimmed,
+            precedingText: precedingText)
     }
 
     static func insertionTextApplyingAutoSpace(
@@ -220,6 +225,110 @@ enum CotypingAcceptanceChunker {
         }
         return true
     }
+
+    private static func insertionChunkPrefixingSentenceBoundarySpace(
+        _ chunk: String,
+        precedingText: String
+    ) -> String {
+        guard let first = chunk.first,
+              first.cotypingIsAcceptanceWordCharacter,
+              !first.isWhitespace,
+              !first.cotypingBeginsSpacelessScriptWord,
+              let last = precedingText.last,
+              last == "." || last == "!" || last == "?" else {
+            return chunk
+        }
+        if last == ".", shouldKeepDotAttached(precedingText: precedingText, next: first, chunk: chunk) {
+            return chunk
+        }
+        return " " + chunk
+    }
+
+    private static func shouldKeepDotAttached(
+        precedingText: String,
+        next: Character,
+        chunk: String
+    ) -> Bool {
+        guard let dotIndex = precedingText.indices.last,
+              precedingText[dotIndex] == "." else {
+            return false
+        }
+        if dotIndex > precedingText.startIndex {
+            let beforeDotIndex = precedingText.index(before: dotIndex)
+            let beforeDot = precedingText[beforeDotIndex]
+            if beforeDot.isNumber && next.isNumber { return true }
+            if isDottedInitialismContinuation(precedingText: precedingText, dotIndex: dotIndex, next: next) {
+                return true
+            }
+        }
+        return isLikelyURLDomainOrFileContinuation(precedingText: precedingText, chunk: chunk)
+    }
+
+    private static func isDottedInitialismContinuation(
+        precedingText: String,
+        dotIndex: String.Index,
+        next: Character
+    ) -> Bool {
+        guard next.isUppercase else { return false }
+        let segmentStart = letterSegmentStart(endingAt: dotIndex, in: precedingText)
+        return precedingText[segmentStart..<dotIndex].count == 1
+    }
+
+    private static func letterSegmentStart(endingAt end: String.Index, in text: String) -> String.Index {
+        var cursor = end
+        while cursor > text.startIndex {
+            let previous = text.index(before: cursor)
+            guard text[previous].isLetter else { break }
+            cursor = previous
+        }
+        return cursor
+    }
+
+    private static func isLikelyURLDomainOrFileContinuation(
+        precedingText: String,
+        chunk: String
+    ) -> Bool {
+        let token = urlLikeTokenSuffix(in: precedingText) + urlLikeTokenPrefix(in: chunk)
+        guard token.contains(".") else { return false }
+        let lowercased = token.lowercased()
+        if lowercased.contains("://") || lowercased.contains("@") || lowercased.contains("/") {
+            return true
+        }
+        guard lowercased == token,
+              let suffix = lowercased.split(separator: ".").last else {
+            return false
+        }
+        return likelyDomainOrFileSuffixes.contains(String(suffix))
+    }
+
+    private static func urlLikeTokenSuffix(in text: String) -> String {
+        var start = text.endIndex
+        while start > text.startIndex {
+            let previous = text.index(before: start)
+            guard isURLLikeTokenCharacter(text[previous]) else { break }
+            start = previous
+        }
+        return String(text[start..<text.endIndex])
+    }
+
+    private static func urlLikeTokenPrefix(in text: String) -> String {
+        var end = text.startIndex
+        while end < text.endIndex, isURLLikeTokenCharacter(text[end]) {
+            end = text.index(after: end)
+        }
+        return String(text[text.startIndex..<end])
+    }
+
+    private static func isURLLikeTokenCharacter(_ character: Character) -> Bool {
+        character.isLetter || character.isNumber || ".:/@_+-~%#?=&".contains(character)
+    }
+
+    private static let likelyDomainOrFileSuffixes: Set<String> = [
+        "ai", "app", "co", "com", "css", "dev", "edu", "env", "gov",
+        "html", "io", "js", "json", "jsx", "local", "lock", "md", "me",
+        "net", "org", "py", "rs", "swift", "toml", "ts", "tsx", "txt",
+        "uk", "us", "yaml", "yml"
+    ]
 
     private static let terminalPeriodAbbreviations: Set<String> = [
         "mr", "mrs", "ms", "dr", "st", "vs", "eg", "ie", "etc", "no", "fig", "approx", "inc", "ltd"

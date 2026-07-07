@@ -33,6 +33,45 @@ final class CotypingTextNormalizerTests: XCTestCase {
         XCTAssertEqual(result, "brown")
     }
 
+    func testSuppressesStandaloneEllipsisSuggestions() {
+        let ascii = CotypingTextNormalizer.normalizeDetailed(
+            "...",
+            for: request(prefix: "I think"))
+        XCTAssertEqual(ascii.text, "")
+        XCTAssertEqual(ascii.suppression, .normalizedToEmpty)
+
+        let unicode = CotypingTextNormalizer.normalizeDetailed(
+            "…",
+            for: request(prefix: "I think"))
+        XCTAssertEqual(unicode.text, "")
+        XCTAssertEqual(unicode.suppression, .normalizedToEmpty)
+    }
+
+    func testStripsStylisticEllipsesFromUsefulSuggestion() {
+        XCTAssertEqual(
+            CotypingTextNormalizer.normalize(
+                "… probably fine",
+                for: request(prefix: "This is ")),
+            "probably fine")
+        XCTAssertEqual(
+            CotypingTextNormalizer.normalize(
+                " probably fine...",
+                for: request(prefix: "This is")),
+            " probably fine")
+        XCTAssertEqual(
+            CotypingTextNormalizer.normalize(
+                "probably fine…",
+                for: request(prefix: "This is ")),
+            "probably fine")
+    }
+
+    func testEllipsisStrippingPreservesInternalDotRuns() {
+        let result = CotypingTextNormalizer.normalize(
+            "version 1...5 stays compact",
+            for: request(prefix: "Use ", maxWords: 8))
+        XCTAssertEqual(result, "version 1...5 stays compact")
+    }
+
     func testStripsThinkBlock() {
         let result = CotypingTextNormalizer.normalize("<think>reasoning here</think>delicious", for: request(prefix: "It tastes "))
         XCTAssertEqual(result, "delicious")
@@ -108,7 +147,7 @@ final class CotypingTextNormalizerTests: XCTestCase {
         let result = CotypingTextNormalizer.normalize(
             "done.Next",
             for: request(prefix: "Status: ", maxWords: 8))
-        XCTAssertEqual(result, "done. Next")
+        XCTAssertEqual(result, "done.")
     }
 
     func testMissingSentenceSpaceRepairPreservesNonProseDots() {
