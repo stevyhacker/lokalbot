@@ -3,7 +3,7 @@ import XCTest
 @testable import LokalBot
 
 final class CotypingDebounceTests: XCTestCase {
-    func testCotypistParityFloorIsTwentyMilliseconds() {
+    func testMinimumStillAllowsExplicitLowLatencyTuning() {
         XCTAssertEqual(CotypingDebouncePolicy.minimumMilliseconds, 20)
         XCTAssertEqual(CotypingDebouncePolicy.milliseconds(lastLatencyMilliseconds: nil, configured: 20), 20)
     }

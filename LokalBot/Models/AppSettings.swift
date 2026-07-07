@@ -143,9 +143,9 @@ struct AppSettings: Codable {
     /// Soft length target; drives the per-request token budget. The default
     /// mirrors Cotypist/Cotabby's longest shipped preset (12-20 words).
     var cotypingMaxWords: Int = 20
-    /// Idle time after the last keystroke before asking the model. Low so the
-    /// suggestion feels near-instant and matches Cotypist/Cotabby's shipped
-    /// debounce window.
+    /// Idle time after the last keystroke before asking the model. Low enough
+    /// to feel interactive, but high enough that normal typing does not pile
+    /// cancelled model requests onto the runtime.
     var cotypingDebounceMs: Int = Self.defaultCotypingDebounceMs
     /// Paint partial suggestions token-by-token while the model is decoding.
     /// Off by default to match Cotypist/Cotabby's shipped behavior: suggestions
@@ -221,11 +221,12 @@ struct AppSettings: Codable {
     static let legacyDefaultStopDebounceSeconds: TimeInterval = 60
     static let minimumStopDebounceSeconds: TimeInterval = 5
     static let maximumStopDebounceSeconds: TimeInterval = 120
-    static let currentCotypingSettingsVersion: Int = 2
+    static let currentCotypingSettingsVersion: Int = 3
     static let legacyPreviewCotypingSettingsVersion: Int = 0
     static let legacyPreviewCotypingMaxWords: Int = 2
     static let legacyPreviewCotypingDebounceMs: Int = 150
-    static let defaultCotypingDebounceMs: Int = 20
+    static let lowLatencyCotypingDebounceMs: Int = 20
+    static let defaultCotypingDebounceMs: Int = 160
     static let legacyDefaultCotypingDebounceMs: Int = 350
     static let maximumCotypingDebounceMs: Int = 1_000
 
@@ -247,6 +248,10 @@ struct AppSettings: Codable {
         }
         if decodedSettingsVersion < currentCotypingSettingsVersion,
            clamped == legacyDefaultCotypingDebounceMs {
+            return defaultCotypingDebounceMs
+        }
+        if decodedSettingsVersion < currentCotypingSettingsVersion,
+           milliseconds == lowLatencyCotypingDebounceMs {
             return defaultCotypingDebounceMs
         }
         return clamped

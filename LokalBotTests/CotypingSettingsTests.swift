@@ -63,11 +63,18 @@ final class CotypingSettingsTests: XCTestCase {
     }
 
     func testVersionedShortCustomCotypingValuesArePreserved() throws {
-        let data = #"{"cotypingSettingsVersion":2,"cotypingDebounceMs":150,"cotypingMaxWords":2}"#.data(using: .utf8)!
+        let data = #"{"cotypingSettingsVersion":3,"cotypingDebounceMs":120,"cotypingMaxWords":2}"#.data(using: .utf8)!
         let settings = try JSONDecoder().decode(AppSettings.self, from: data)
 
-        XCTAssertEqual(settings.cotypingDebounceMs, 150)
+        XCTAssertEqual(settings.cotypingDebounceMs, 120)
         XCTAssertEqual(settings.cotypingMaxWords, 2)
+    }
+
+    func testPreviousLowLatencyDefaultMigratesToCurrentResourceFriendlyDefault() throws {
+        let data = #"{"cotypingSettingsVersion":2,"cotypingDebounceMs":20}"#.data(using: .utf8)!
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertEqual(settings.cotypingDebounceMs, AppSettings.defaultCotypingDebounceMs)
     }
 
     func testLegacyCustomDebounceIsPreservedWithinSupportedRange() throws {
@@ -124,10 +131,10 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertTrue(decoded.cotypingInProcessRuntime)
     }
 
-    func testDefaultsMirrorCotypistLengthAndDebounce() {
+    func testDefaultsKeepCotypingResponsiveWithoutAggressiveModelChurn() {
         let settings = AppSettings()
         XCTAssertEqual(settings.cotypingMaxWords, 20)
-        XCTAssertEqual(settings.cotypingDebounceMs, 20)
+        XCTAssertEqual(settings.cotypingDebounceMs, 160)
         XCTAssertFalse(settings.cotypingStreamSuggestionsWhileGenerating)
         XCTAssertTrue(settings.cotypingAutoAcceptTrailingPunctuation)
         XCTAssertFalse(settings.cotypingAddSpaceAfterAccept)

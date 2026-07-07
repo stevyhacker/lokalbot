@@ -8,7 +8,8 @@ Parity defaults:
   dedicated model on a separate `llama-server` instance — there is no option to
   reuse the summarization model, and no fallback to the bundled tiny model.
 - Suggestion length defaults to 20 words, matching Cotypist/Cotabby's 12-20 word preset upper bound.
-- Debounce defaults to 20 ms.
+- Debounce defaults to 160 ms; users can still tune it down to 20 ms when they
+  prefer maximum eagerness over lower background model churn.
 - Streaming partial suggestions default off, matching Cotypist/Cotabby.
 - Suggestions appear instantly with no fade-in animation, and ghost text is
   always bare, matching Cotypist's understated inline presentation — the accept
@@ -19,7 +20,7 @@ Parity defaults:
   keypress will insert.
 - Completion token budget follows Cotypist/Cotabby's English baseline: `ceil(words * 1.3)`, floor 5, doubled for multi-line up to 120.
 - The dedicated cotyping `llama-server` launches with a 2048-token context window, matching Cotypist/Cotabby's local llama runtime configuration.
-- Focus polling uses a Cotabby-style 50 ms active cadence, then stretches after
+- Focus polling uses a 200 ms active cadence, then stretches after
   sustained no-change captures so idle Accessibility reads back off without
   making post-keystroke suggestions feel delayed.
 - Generation start and result apply reuse a focus snapshot only when the last

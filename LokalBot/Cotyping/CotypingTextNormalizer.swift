@@ -110,6 +110,7 @@ enum CotypingTextNormalizer {
         if request.precedingEndsWithWhitespace {
             normalized = String(normalized.drop(while: { $0.isWhitespace }))
         }
+        normalized = insertingMissingSentenceBoundarySpaces(in: normalized)
 
         if beginsNewQuestion(normalized, prefixText: request.prefixText) {
             return CotypingNormalizationResult(text: "", suppression: .questionContinuation)
@@ -220,6 +221,130 @@ enum CotypingTextNormalizer {
         }
         return String(text[..<end])
     }
+
+    private static func insertingMissingSentenceBoundarySpaces(in text: String) -> String {
+        guard text.contains(".") || text.contains("!") || text.contains("?") else { return text }
+        var repaired = ""
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            repaired.append(character)
+            let next = text.index(after: index)
+            if next < text.endIndex,
+               shouldInsertSentenceBoundarySpace(after: character, at: index, next: next, in: text) {
+                repaired.append(" ")
+            }
+            index = next
+        }
+        return repaired
+    }
+
+    private static func shouldInsertSentenceBoundarySpace(
+        after character: Character,
+        at index: String.Index,
+        next: String.Index,
+        in text: String
+    ) -> Bool {
+        let nextCharacter = text[next]
+        guard !nextCharacter.isWhitespace,
+              nextCharacter.isLetter || nextCharacter.isNumber else {
+            return false
+        }
+        if character == "!" || character == "?" { return true }
+        guard character == "." else { return false }
+        guard index > text.startIndex else { return true }
+
+        let previous = text.index(before: index)
+        let previousCharacter = text[previous]
+        if previousCharacter.isNumber && nextCharacter.isNumber { return false }
+        if previousCharacter == "." || nextCharacter == "." { return false }
+        if isContinuingDottedInitialism(in: text, periodIndex: index, nextIndex: next) { return false }
+        if isLikelyURLDomainOrFileToken(around: index, in: text) { return false }
+        return true
+    }
+
+    private static func isContinuingDottedInitialism(
+        in text: String,
+        periodIndex: String.Index,
+        nextIndex: String.Index
+    ) -> Bool {
+        guard periodIndex > text.startIndex,
+              text[text.index(before: periodIndex)].isLetter,
+              text[nextIndex].isLetter else {
+            return false
+        }
+        let segmentStart = letterSegmentStart(endingAt: periodIndex, in: text)
+        let segment = text[segmentStart..<periodIndex]
+        guard segment.count == 1 else { return false }
+        let afterNext = text.index(after: nextIndex)
+        if afterNext < text.endIndex, text[afterNext] == "." {
+            return true
+        }
+        return text[nextIndex].isUppercase && dottedLetterRunPrecedes(segmentStart, in: text)
+    }
+
+    private static func letterSegmentStart(endingAt end: String.Index, in text: String) -> String.Index {
+        var cursor = end
+        while cursor > text.startIndex {
+            let previous = text.index(before: cursor)
+            guard text[previous].isLetter else { break }
+            cursor = previous
+        }
+        return cursor
+    }
+
+    private static func dottedLetterRunPrecedes(_ index: String.Index, in text: String) -> Bool {
+        guard index > text.startIndex else { return false }
+        var cursor = index
+        var sawDot = false
+        while cursor > text.startIndex {
+            let previous = text.index(before: cursor)
+            let character = text[previous]
+            if character.isWhitespace { break }
+            if character == "." {
+                sawDot = true
+            } else if !character.isLetter {
+                break
+            }
+            cursor = previous
+        }
+        return sawDot
+    }
+
+    private static func isLikelyURLDomainOrFileToken(around index: String.Index, in text: String) -> Bool {
+        let token = tokenAround(index: index, in: text)
+        guard token.contains(".") else { return false }
+        let lowercased = token.lowercased()
+        if lowercased.contains("://") || lowercased.contains("@") || lowercased.contains("/") {
+            return true
+        }
+        guard lowercased == token else { return false }
+        guard let suffix = lowercased.split(separator: ".").last else { return false }
+        return likelyDomainOrFileSuffixes.contains(String(suffix))
+    }
+
+    private static func tokenAround(index: String.Index, in text: String) -> String {
+        var start = index
+        while start > text.startIndex {
+            let previous = text.index(before: start)
+            guard isURLLikeTokenCharacter(text[previous]) else { break }
+            start = previous
+        }
+        var end = text.index(after: index)
+        while end < text.endIndex, isURLLikeTokenCharacter(text[end]) {
+            end = text.index(after: end)
+        }
+        return String(text[start..<end])
+    }
+
+    private static func isURLLikeTokenCharacter(_ character: Character) -> Bool {
+        character.isLetter || character.isNumber || ".:/@_+-~%#?=&".contains(character)
+    }
+
+    private static let likelyDomainOrFileSuffixes: Set<String> = [
+        "ai", "app", "co", "com", "dev", "edu", "gov", "io", "js", "me",
+        "net", "org", "py", "rs", "swift", "ts", "uk", "us"
+    ]
 
     private static func containsPlaceholderText(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

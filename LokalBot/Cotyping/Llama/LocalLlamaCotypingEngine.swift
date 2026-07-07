@@ -85,9 +85,12 @@ final class LocalLlamaCotypingEngine: CotypingCompleting {
     ) async throws -> CotypingNormalizationResult {
         inflightPrewarmTask?.cancel()
         inflightPrewarmTask = nil
+        try Task.checkCancellation()
         try await runtime.loadIfNeeded(modelPath: modelPath)
+        try Task.checkCancellation()
         let healed = Self.healedGeneration(for: request)
         let promptTokens = await runtime.tokenize(healed.prompt, addBOS: true)
+        try Task.checkCancellation()
         guard !promptTokens.isEmpty else {
             return CotypingNormalizationResult(text: "", suppression: .emptyGeneration)
         }

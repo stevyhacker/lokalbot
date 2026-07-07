@@ -13,8 +13,8 @@ final class CotypingFocusPollBackoffTests: XCTestCase {
         return backoff
     }
 
-    func testFocusTrackerDefaultCadenceMatchesCoTabbyResponsiveness() {
-        XCTAssertEqual(CotypingFocusTracker.defaultIntervalMs, 50)
+    func testFocusTrackerDefaultCadenceAvoidsAggressiveIdleAXPolling() {
+        XCTAssertEqual(CotypingFocusTracker.defaultIntervalMs, 200)
     }
 
     func testRecentActivityStaysAtFullCadence() {

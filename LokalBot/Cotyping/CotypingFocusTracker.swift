@@ -21,7 +21,7 @@ final class CotypingFocusTracker: ObservableObject {
     private var capabilityFlickerGate = CotypingFocusCapabilityFlickerGate()
     private var lastCaptureUptimeNanoseconds: UInt64?
 
-    nonisolated static let defaultIntervalMs = 50
+    nonisolated static let defaultIntervalMs = 200
 
     init(intervalMs: Int = defaultIntervalMs) {
         self.baseIntervalMs = intervalMs

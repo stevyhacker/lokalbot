@@ -97,6 +97,38 @@ final class CotypingTextNormalizerTests: XCTestCase {
         XCTAssertEqual(result, "care of that.")
     }
 
+    func testInsertsMissingSpaceAfterSentencePeriod() {
+        let result = CotypingTextNormalizer.normalize(
+            "care of that.Next step is review",
+            for: request(prefix: "I can take ", maxWords: 8))
+        XCTAssertEqual(result, "care of that.")
+    }
+
+    func testInsertsMissingSpaceAfterSentencePunctuationInsideSuggestion() {
+        let result = CotypingTextNormalizer.normalize(
+            "done.Next",
+            for: request(prefix: "Status: ", maxWords: 8))
+        XCTAssertEqual(result, "done. Next")
+    }
+
+    func testMissingSentenceSpaceRepairPreservesNonProseDots() {
+        XCTAssertEqual(
+            CotypingTextNormalizer.normalize(
+                "version 1.2 ships",
+                for: request(prefix: "Use ", maxWords: 8)),
+            "version 1.2 ships")
+        XCTAssertEqual(
+            CotypingTextNormalizer.normalize(
+                "example.com works",
+                for: request(prefix: "Open ", maxWords: 8)),
+            "example.com works")
+        XCTAssertEqual(
+            CotypingTextNormalizer.normalize(
+                "e.g.this case",
+                for: request(prefix: "For example ", maxWords: 8)),
+            "e.g. this case")
+    }
+
     func testSuppressesNewQuestionContinuation() {
         let detailed = CotypingTextNormalizer.normalizeDetailed(
             "What would you like me to do next?",
