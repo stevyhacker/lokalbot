@@ -188,28 +188,42 @@ actor KokoroSpeechEngine {
 
     private nonisolated static func run(runtime: (binary: URL, libDir: URL),
                                         args: [String]) async throws {
-        try await Task.detached(priority: .userInitiated) {
-            let process = Process()
-            process.executableURL = runtime.binary
-            process.arguments = args
-            var env = ProcessInfo.processInfo.environment
-            env["DYLD_LIBRARY_PATH"] = runtime.libDir.path
-            process.environment = env
+        let cancellation = ProcessCancellationController()
+        try await withTaskCancellationHandler {
+            try await Task.detached(priority: .userInitiated) {
+                try Task.checkCancellation()
 
-            let out = Pipe()
-            let err = Pipe()
-            process.standardOutput = out
-            process.standardError = err
-            try process.run()
-            let stdout = out.fileHandleForReading.readDataToEndOfFile()
-            let stderr = err.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else {
-                let message = String(decoding: stderr, as: UTF8.self)
-                    + String(decoding: stdout, as: UTF8.self)
-                throw SpeechError.synthesisFailed(Int(process.terminationStatus), message)
-            }
-        }.value
+                let process = Process()
+                process.executableURL = runtime.binary
+                process.arguments = args
+                var env = ProcessInfo.processInfo.environment
+                env["DYLD_LIBRARY_PATH"] = runtime.libDir.path
+                process.environment = env
+
+                let out = Pipe()
+                let err = Pipe()
+                process.standardOutput = out
+                process.standardError = err
+                try process.run()
+                cancellation.track(process)
+                defer { cancellation.clear(process) }
+
+                if Task.isCancelled {
+                    cancellation.cancel()
+                }
+                let stdout = out.fileHandleForReading.readDataToEndOfFile()
+                let stderr = err.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                try Task.checkCancellation()
+                guard process.terminationStatus == 0 else {
+                    let message = String(decoding: stderr, as: UTF8.self)
+                        + String(decoding: stdout, as: UTF8.self)
+                    throw SpeechError.synthesisFailed(Int(process.terminationStatus), message)
+                }
+            }.value
+        } onCancel: {
+            cancellation.cancel()
+        }
     }
 
     private struct ModelConfig {
@@ -240,6 +254,45 @@ actor KokoroSpeechEngine {
                     ? "Kokoro exited with code \(code)."
                     : "Kokoro exited with code \(code): \(trimmed)"
             }
+        }
+    }
+}
+
+private final class ProcessCancellationController: @unchecked Sendable {
+    private let lock = NSLock()
+    private var process: Process?
+    private var cancelled = false
+
+    func track(_ process: Process) {
+        var shouldTerminate = false
+        lock.lock()
+        if cancelled {
+            shouldTerminate = true
+        } else {
+            self.process = process
+        }
+        lock.unlock()
+        if shouldTerminate, process.isRunning {
+            process.terminate()
+        }
+    }
+
+    func clear(_ process: Process) {
+        lock.lock()
+        if self.process === process {
+            self.process = nil
+        }
+        lock.unlock()
+    }
+
+    func cancel() {
+        let active: Process?
+        lock.lock()
+        cancelled = true
+        active = process
+        lock.unlock()
+        if active?.isRunning == true {
+            active?.terminate()
         }
     }
 }

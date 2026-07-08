@@ -47,6 +47,9 @@ private struct EditorialTurn: View {
     @State private var speechPlayer: AVAudioPlayer?
     @State private var speechError: String?
     @State private var preparingSpeech = false
+    @State private var readingSpeech = false
+    @State private var speechTask: Task<Void, Never>?
+    @State private var speechSessionID: UUID?
 
     var body: some View {
         Group {
@@ -54,6 +57,9 @@ private struct EditorialTurn: View {
         }
         .accessibilityIdentifier(message.role == .user ? "chat.message.user"
                                                        : "chat.message.assistant")
+        .onDisappear {
+            stopAssistantSpeech(clearError: false)
+        }
     }
 
     private var userRow: some View {
@@ -84,14 +90,13 @@ private struct EditorialTurn: View {
                 if !parsed.display.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     HStack(spacing: 6) {
                         Button {
-                            readAssistantTurn(parsed.display)
+                            toggleAssistantSpeech(parsed.display)
                         } label: {
-                            Image(systemName: preparingSpeech ? "hourglass" : "speaker.wave.2")
+                            Image(systemName: assistantSpeechIcon)
                         }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
-                        .disabled(preparingSpeech)
-                        .help("Read aloud")
+                        .help(readingSpeech ? "Stop reading aloud" : "Read aloud")
                         if let speechError {
                             Text(speechError)
                                 .font(.caption2)
@@ -113,25 +118,79 @@ private struct EditorialTurn: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var assistantSpeechIcon: String {
+        if readingSpeech { return "stop.fill" }
+        if preparingSpeech { return "hourglass" }
+        return "speaker.wave.2"
+    }
+
+    private func toggleAssistantSpeech(_ text: String) {
+        if readingSpeech {
+            stopAssistantSpeech()
+        } else {
+            readAssistantTurn(text)
+        }
+    }
+
     private func readAssistantTurn(_ text: String) {
+        stopAssistantSpeech(clearError: false)
         speechError = nil
+        let sessionID = UUID()
+        speechSessionID = sessionID
         preparingSpeech = true
-        Task {
-            defer { preparingSpeech = false }
+        readingSpeech = true
+        speechTask = Task {
+            defer { finishAssistantSpeech(sessionID) }
             do {
                 let url = try await KokoroSpeechEngine.shared.synthesize(.init(
                     text: text,
                     voice: app.settings.speechVoice,
                     speed: app.settings.speechSpeed,
                     outputURL: nil))
+                try Task.checkCancellation()
                 let player = try AVAudioPlayer(contentsOf: url)
                 player.prepareToPlay()
+                guard speechSessionID == sessionID else { return }
                 speechPlayer = player
-                player.play()
+                preparingSpeech = false
+                guard player.play() else {
+                    throw NSError(
+                        domain: "LokalBot.SpeechPlayback",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Could not start speech playback."])
+                }
+                try await Task.sleep(
+                    nanoseconds: UInt64(max(player.duration, 0.1) * 1_000_000_000))
+            } catch is CancellationError {
             } catch {
-                speechError = error.localizedDescription
+                if speechSessionID == sessionID {
+                    speechError = error.localizedDescription
+                }
             }
         }
+    }
+
+    private func stopAssistantSpeech(clearError: Bool = true) {
+        speechSessionID = nil
+        speechTask?.cancel()
+        speechTask = nil
+        speechPlayer?.stop()
+        speechPlayer = nil
+        preparingSpeech = false
+        readingSpeech = false
+        if clearError {
+            speechError = nil
+        }
+    }
+
+    private func finishAssistantSpeech(_ sessionID: UUID) {
+        guard speechSessionID == sessionID else { return }
+        speechSessionID = nil
+        speechTask = nil
+        speechPlayer?.stop()
+        speechPlayer = nil
+        preparingSpeech = false
+        readingSpeech = false
     }
 }
 
