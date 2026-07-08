@@ -56,7 +56,7 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
     static let sampleRate = 16_000
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
-        let runtime = try Self.installedRuntime()
+        let runtime = try SherpaOnnxRuntime.installedRuntime(executableName: "sherpa-onnx-offline")
         let modelDir = try await preparedModelDir()
         let modelFile = try Self.locateModel(in: modelDir)
         let tokens = modelDir.appendingPathComponent("tokens.txt")
@@ -94,7 +94,7 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
     /// `URLSession.download` gives no granular fraction here, so we surface
     /// status text (the model row shows it).
     func prepare(progress: ModelPreparationProgressHandler? = nil) async throws {
-        _ = try Self.installedRuntime()
+        _ = try SherpaOnnxRuntime.installedRuntime(executableName: "sherpa-onnx-offline")
         report(.init(fractionCompleted: nil, status: "Downloading model..."), to: progress)
         _ = try await preparedModelDir()
         report(.init(fractionCompleted: 1, status: "Ready"), to: progress)
@@ -119,7 +119,7 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
         try FileManager.default.moveItem(at: tmp, to: archive)
         defer { try? FileManager.default.removeItem(at: archive) }
 
-        try Self.extractTar(archive, into: Self.modelsRoot)
+        try ArchiveExtractor.extractBzip2Tar(archive, into: Self.modelsRoot)
         guard (try? Self.locateModel(in: dir)) != nil else { throw EngineError.modelUnavailable }
         return dir
     }
@@ -139,34 +139,6 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
             if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
         }
         throw EngineError.modelUnavailable
-    }
-
-    /// Copy the bundled `sherpa-onnx` runtime (binary + dylibs) out to
-    /// Application Support on first run — never execute from inside the bundle
-    /// (mirrors `LlamaServer`). Returns the binary + its directory, the latter
-    /// used as `DYLD_LIBRARY_PATH` so the onnxruntime dylibs resolve.
-    private static func installedRuntime() throws -> (binary: URL, libDir: URL) {
-        guard let bundled = Bundle.main.resourceURL?
-            .appendingPathComponent("sherpa-onnx", isDirectory: true),
-              FileManager.default.fileExists(
-                atPath: bundled.appendingPathComponent("sherpa-onnx-offline").path)
-        else { throw EngineError.runtimeMissing }
-
-        let installed = appSupport.appendingPathComponent("sherpa-onnx", isDirectory: true)
-        let binary = installed.appendingPathComponent("sherpa-onnx-offline")
-
-        let bundledSize = (try? FileManager.default.attributesOfItem(
-            atPath: bundled.appendingPathComponent("sherpa-onnx-offline").path)[.size] as? Int) ?? 0
-        let installedSize = (try? FileManager.default.attributesOfItem(
-            atPath: binary.path)[.size] as? Int) ?? -1
-        if bundledSize != installedSize {
-            try? FileManager.default.removeItem(at: installed)
-            try FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: bundled, to: installed)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o755],
-                                                   ofItemAtPath: binary.path)
-        }
-        return (binary, installed)
     }
 
     private static func makeWorkDir() throws -> URL {
@@ -240,15 +212,6 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
         case "zh", "en", "ja", "ko", "yue": return language!
         default: return "auto"
         }
-    }
-
-    private static func extractTar(_ archive: URL, into dir: URL) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-        process.arguments = ["-xjf", archive.path, "-C", dir.path]
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { throw EngineError.modelUnavailable }
     }
 
     // MARK: - WAV writer (16 kHz mono 16-bit PCM, what sherpa-onnx expects)

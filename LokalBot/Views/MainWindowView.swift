@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import AVFoundation
 import UniformTypeIdentifiers
 
 struct MainWindowView: View {
@@ -173,8 +174,15 @@ struct MeetingDetailView: View {
     @State private var speakerNameHints: [String] = []
     @State private var speakerRenameDraft: SpeakerRenameDraft?
     @State private var isExportingAudio = false
+    @State private var isPreparingSpeech = false
+    @State private var isReadingSummarySpeech = false
+    @State private var isExportingSpeech = false
     @State private var exportError: String?
+    @State private var speechError: String?
     @State private var transcriptError: String?
+    @State private var speechPlayer: AVAudioPlayer?
+    @State private var speechTask: Task<Void, Never>?
+    @State private var speechSessionID: UUID?
     @StateObject private var player = MeetingPlayer()
 
     private var stage: ProcessingPipeline.Stage? { app.pipeline.stages[meeting.id] }
@@ -235,9 +243,26 @@ struct MeetingDetailView: View {
             }
         }
 #endif
-        .onDisappear { player.stop() }
+        .onDisappear {
+            player.stop()
+            stopSpokenSummary(clearError: false)
+        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    toggleSummarySpeech()
+                } label: {
+                    Label(summarySpeechButtonTitle,
+                          systemImage: isReadingSummarySpeech ? "stop.fill" : "speaker.wave.2")
+                }
+                .disabled(!isReadingSummarySpeech && spokenSummaryText == nil)
+                Button {
+                    exportSpokenSummary()
+                } label: {
+                    Label(isExportingSpeech ? "Exporting Speech" : "Export Spoken Summary",
+                          systemImage: "waveform")
+                }
+                .disabled(isExportingSpeech || spokenSummaryText == nil)
                 Button {
                     exportAudioRecording()
                 } label: {
@@ -349,8 +374,21 @@ struct MeetingDetailView: View {
                 Text("Exporting audio…").font(.callout).foregroundStyle(.secondary)
             }
         }
+        if isPreparingSpeech || isExportingSpeech {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(isExportingSpeech ? "Exporting spoken summary…" : "Preparing speech…")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+        }
         if let exportError {
             Label(exportError, systemImage: "exclamationmark.triangle")
+                .font(.callout)
+                .foregroundStyle(.orange)
+                .textSelection(.enabled)
+        }
+        if let speechError {
+            Label(speechError, systemImage: "exclamationmark.triangle")
                 .font(.callout)
                 .foregroundStyle(.orange)
                 .textSelection(.enabled)
@@ -523,6 +561,18 @@ struct MeetingDetailView: View {
 
     private var folder: URL { meeting.folderURL(in: app.storage) }
 
+    private var spokenSummaryText: String? {
+        guard let summary = summary?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !summary.isEmpty else { return nil }
+        return summary
+    }
+
+    private var summarySpeechButtonTitle: String {
+        if isPreparingSpeech { return "Stop Preparing Speech" }
+        if isReadingSummarySpeech { return "Stop Summary" }
+        return "Read Summary"
+    }
+
     private func loadFiles() {
         summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8)
         notes = MeetingNotes.load(from: folder)
@@ -578,6 +628,105 @@ struct MeetingDetailView: View {
                 exportError = error.localizedDescription
             }
         }
+    }
+
+    private func toggleSummarySpeech() {
+        if isReadingSummarySpeech {
+            stopSpokenSummary()
+        } else {
+            readSummaryAloud()
+        }
+    }
+
+    private func readSummaryAloud() {
+        guard let text = spokenSummaryText else { return }
+        stopSpokenSummary(clearError: false)
+        speechError = nil
+        let sessionID = UUID()
+        speechSessionID = sessionID
+        isPreparingSpeech = true
+        isReadingSummarySpeech = true
+        speechTask = Task {
+            defer { finishSpeechSession(sessionID) }
+            do {
+                let url = try await synthesizeSpeech(text: text, outputURL: nil)
+                try Task.checkCancellation()
+                let player = try AVAudioPlayer(contentsOf: url)
+                player.prepareToPlay()
+                guard speechSessionID == sessionID else { return }
+                speechPlayer = player
+                isPreparingSpeech = false
+                guard player.play() else {
+                    throw NSError(
+                        domain: "LokalBot.SpeechPlayback",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Could not start speech playback."])
+                }
+                try await Task.sleep(
+                    nanoseconds: UInt64(max(player.duration, 0.1) * 1_000_000_000))
+            } catch is CancellationError {
+            } catch {
+                if speechSessionID == sessionID {
+                    speechError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func stopSpokenSummary(clearError: Bool = true) {
+        speechSessionID = nil
+        speechTask?.cancel()
+        speechTask = nil
+        speechPlayer?.stop()
+        speechPlayer = nil
+        isPreparingSpeech = false
+        isReadingSummarySpeech = false
+        if clearError {
+            speechError = nil
+        }
+    }
+
+    private func finishSpeechSession(_ sessionID: UUID) {
+        guard speechSessionID == sessionID else { return }
+        speechSessionID = nil
+        speechTask = nil
+        speechPlayer?.stop()
+        speechPlayer = nil
+        isPreparingSpeech = false
+        isReadingSummarySpeech = false
+    }
+
+    private func exportSpokenSummary() {
+        guard let text = spokenSummaryText else { return }
+        speechError = nil
+
+        let panel = NSSavePanel()
+        panel.title = "Export Spoken Summary"
+        panel.nameFieldStringValue = "\(StorageManager.slugify(meeting.title))-spoken-summary.wav"
+        panel.canCreateDirectories = true
+        if let wav = UTType(filenameExtension: "wav") {
+            panel.allowedContentTypes = [wav]
+        }
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        isExportingSpeech = true
+        Task {
+            defer { isExportingSpeech = false }
+            do {
+                _ = try await synthesizeSpeech(text: text, outputURL: url)
+            } catch {
+                speechError = error.localizedDescription
+            }
+        }
+    }
+
+    private func synthesizeSpeech(text: String, outputURL: URL?) async throws -> URL {
+        try await KokoroSpeechEngine.shared.synthesize(.init(
+            text: text,
+            voice: app.settings.speechVoice,
+            speed: app.settings.speechSpeed,
+            outputURL: outputURL))
     }
 
     struct SpeakerRenameDraft: Identifiable {

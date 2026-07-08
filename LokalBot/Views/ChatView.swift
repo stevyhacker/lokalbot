@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 // The assistant's conversation surfaces: the editorial transcript embedded
 // by the Ask section (spec §2.3), and the saved-conversation list shown in
@@ -41,7 +42,11 @@ struct ChatTranscriptView: View {
 }
 
 private struct EditorialTurn: View {
+    @EnvironmentObject var app: AppState
     let message: ChatMessage
+    @State private var speechPlayer: AVAudioPlayer?
+    @State private var speechError: String?
+    @State private var preparingSpeech = false
 
     var body: some View {
         Group {
@@ -76,6 +81,26 @@ private struct EditorialTurn: View {
             if message.isPending && message.text.isEmpty {
                 TypingIndicator()
             } else {
+                if !parsed.display.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    HStack(spacing: 6) {
+                        Button {
+                            readAssistantTurn(parsed.display)
+                        } label: {
+                            Image(systemName: preparingSpeech ? "hourglass" : "speaker.wave.2")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .disabled(preparingSpeech)
+                        .help("Read aloud")
+                        if let speechError {
+                            Text(speechError)
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                    }
+                }
                 MarkdownText(parsed.display)
                     .textSelection(.enabled)
                     .foregroundStyle(message.isError ? AnyShapeStyle(.red)
@@ -86,6 +111,27 @@ private struct EditorialTurn: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func readAssistantTurn(_ text: String) {
+        speechError = nil
+        preparingSpeech = true
+        Task {
+            defer { preparingSpeech = false }
+            do {
+                let url = try await KokoroSpeechEngine.shared.synthesize(.init(
+                    text: text,
+                    voice: app.settings.speechVoice,
+                    speed: app.settings.speechSpeed,
+                    outputURL: nil))
+                let player = try AVAudioPlayer(contentsOf: url)
+                player.prepareToPlay()
+                speechPlayer = player
+                player.play()
+            } catch {
+                speechError = error.localizedDescription
+            }
+        }
     }
 }
 

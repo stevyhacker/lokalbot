@@ -1,14 +1,15 @@
 #!/bin/bash
-# Fetches the pinned sherpa-onnx offline-ASR CLI (+ its onnxruntime dylibs)
+# Fetches the pinned sherpa-onnx offline CLIs (+ onnxruntime dylibs)
 # into Vendor/sherpa-onnx/, which the Xcode build copies into the app bundle.
 # This is the ONNX-runtime path for SenseVoice (CJK) and GigaAM (Russian) —
-# models WhisperKit/FluidAudio don't cover well. Run as an Xcode pre-build
-# phase, mirroring fetch-llama.sh; idempotent and safe to run manually.
+# models WhisperKit/FluidAudio don't cover well — and Kokoro TTS. Run as an
+# Xcode pre-build phase, mirroring fetch-llama.sh; idempotent and safe to run
+# manually.
 #
 # Integration model (same as the bundled llama-server): we bundle the
-# `sherpa-onnx-offline` binary + its dylibs, copy them out of the bundle on
-# first run, and invoke the binary as a subprocess per audio track — no
-# C++/ONNX linking into the Swift app, no notarization-of-linked-lib dance.
+# `sherpa-onnx-offline`/`sherpa-onnx-offline-tts` binaries + dylibs, copy them
+# out of the bundle on first run, and invoke them as subprocesses — no C++/ONNX
+# linking into the Swift app, no notarization-of-linked-lib dance.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -21,7 +22,7 @@ URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/$VERSION/$ARTIFACT"
 ARCHIVE_SHA256=d67b1a77ca252a4dbe0480255c61eeadc951708d15ac840c12308864496b134d
 DEST=Vendor/sherpa-onnx
 
-if [ -x "$DEST/sherpa-onnx-offline" ]; then
+if [ -x "$DEST/sherpa-onnx-offline" ] && [ -x "$DEST/sherpa-onnx-offline-tts" ]; then
   echo "fetch-sherpa: vendor already present"
   exit 0
 fi
@@ -40,12 +41,14 @@ tar -xjf "$tmp/sherpa.tar.bz2" -C "$tmp"
 src="$tmp/sherpa-onnx-$VERSION-osx-arm64-shared"
 
 mkdir -p "$DEST"
-# Only the offline (file-based) recogniser + its dylibs — the microphone,
-# TTS, websocket, and other tools aren't needed. Flat layout; the app spawns
-# the binary with DYLD_LIBRARY_PATH pointed at this directory.
+# Only the offline file-based recogniser, offline TTS, and dylibs. Microphone,
+# websocket, and other tools aren't needed. Flat layout; the app spawns the
+# binary with DYLD_LIBRARY_PATH pointed at this directory.
 cp "$src/bin/sherpa-onnx-offline" "$DEST/"
+cp "$src/bin/sherpa-onnx-offline-tts" "$DEST/"
 cp "$src"/lib/*.dylib "$DEST/"
 chmod +x "$DEST/sherpa-onnx-offline"
+chmod +x "$DEST/sherpa-onnx-offline-tts"
 rm -rf "$tmp"
 
 echo "fetch-sherpa: vendor ready ($(du -sh "$DEST" | cut -f1))"

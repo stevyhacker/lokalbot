@@ -18,6 +18,11 @@ struct ModelsView: View {
     @State private var transcriptionModelErrors: [String: String] = [:]
     @State private var transcriptionModelProgress: [String: Double] = [:]
     @State private var transcriptionModelStatus: [String: String] = [:]
+    @State private var speechModelDownloaded = false
+    @State private var preparingSpeechModel = false
+    @State private var speechModelError: String?
+    @State private var speechModelStatus: String?
+    @State private var speechModelProgress: Double?
     @StateObject private var hfSearch = HuggingFaceSearchService()
     @State private var showingHFBrowse = false
     @State private var hfSelectedModel: String?
@@ -29,6 +34,7 @@ struct ModelsView: View {
                 ModelMemoryBanner()
                 transcriptionCard
                 summarizationCard
+                speechCard
                 cotypingCard
                 embeddingsCard
             }
@@ -38,9 +44,13 @@ struct ModelsView: View {
         }
         .task {
             refreshTranscriptionDownloads()
+            refreshSpeechModel()
             await refreshOllama()
         }
-        .onAppear { refreshTranscriptionDownloads() }
+        .onAppear {
+            refreshTranscriptionDownloads()
+            refreshSpeechModel()
+        }
         .sheet(isPresented: $showingHFBrowse) { huggingFaceBrowser }
     }
 
@@ -193,6 +203,69 @@ struct ModelsView: View {
             }
         }
         .accessibilityIdentifier("models.summarization")
+    }
+
+    private var speechCard: some View {
+        ModelCard(icon: "speaker.wave.2", title: "Speech",
+                  subtitle: "Read summaries and answers aloud") {
+            Picker("Voice", selection: $app.settings.speechVoice) {
+                ForEach(KokoroVoice.allCases) { voice in
+                    Text(voice.displayName).tag(voice)
+                }
+            }
+            .frame(maxWidth: 260)
+
+            HStack(spacing: 10) {
+                Text("Speed")
+                Slider(
+                    value: Binding(
+                        get: { app.settings.speechSpeed },
+                        set: { app.settings.speechSpeed = AppSettings.clampedSpeechSpeed($0) }),
+                    in: AppSettings.minimumSpeechSpeed...AppSettings.maximumSpeechSpeed,
+                    step: 0.05)
+                Text("\(String(format: "%.2g", app.settings.speechSpeed))x")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 38, alignment: .trailing)
+            }
+            .frame(maxWidth: 320)
+
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text("Kokoro 82M").font(.system(size: 12.5, weight: .medium))
+                        if speechModelDownloaded {
+                            Text("READY").font(.system(size: 8.5, weight: .bold))
+                                .padding(.horizontal, 4).padding(.vertical, 1)
+                                .background(.green.opacity(0.2), in: Capsule())
+                        }
+                    }
+                    Text("Local neural TTS via sherpa-onnx. Downloads Kokoro once, then runs offline.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    if let speechModelError {
+                        Text(speechModelError).font(.caption2).foregroundStyle(.orange)
+                    }
+                }
+                Spacer()
+                if preparingSpeechModel {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        if let speechModelProgress {
+                            ProgressView(value: speechModelProgress).frame(width: 84)
+                        } else {
+                            ProgressView().progressViewStyle(.linear).frame(width: 84)
+                        }
+                        Text(speechModelStatus ?? "Preparing...")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                } else if speechModelDownloaded {
+                    Button("Delete") { deleteSpeechModel() }.controlSize(.mini)
+                } else {
+                    Button("Download") { Task { await prepareSpeechModel() } }
+                        .controlSize(.small)
+                }
+            }
+        }
+        .accessibilityIdentifier("models.speech")
     }
 
     private var cotypingCard: some View {
@@ -482,6 +555,10 @@ struct ModelsView: View {
         downloadedTranscriptionModelIDs = TranscriptionModelStore.downloadedChoices()
     }
 
+    private func refreshSpeechModel() {
+        speechModelDownloaded = KokoroSpeechEngine.isModelDownloaded
+    }
+
     private func prepareTranscriptionModel(_ choice: TranscriptionModelChoice) async {
         guard preparingTranscriptionModelID == nil else { return }
         let id = choice.id
@@ -517,6 +594,39 @@ struct ModelsView: View {
             transcriptionModelStatus[choice.id] = nil
         } catch {
             transcriptionModelErrors[choice.id] = error.localizedDescription
+        }
+    }
+
+    private func prepareSpeechModel() async {
+        guard !preparingSpeechModel else { return }
+        preparingSpeechModel = true
+        speechModelError = nil
+        speechModelStatus = "Preparing..."
+        speechModelProgress = nil
+        defer {
+            preparingSpeechModel = false
+            speechModelProgress = nil
+            speechModelStatus = nil
+        }
+        let progressHandler: ModelPreparationProgressHandler = { update in
+            speechModelProgress = update.fractionCompleted
+            speechModelStatus = update.status
+        }
+        do {
+            try await KokoroSpeechEngine.shared.prepare(progress: progressHandler)
+            speechModelDownloaded = true
+        } catch {
+            speechModelError = error.localizedDescription
+        }
+    }
+
+    private func deleteSpeechModel() {
+        do {
+            try KokoroSpeechEngine.deleteModel()
+            speechModelDownloaded = false
+            speechModelError = nil
+        } catch {
+            speechModelError = error.localizedDescription
         }
     }
 

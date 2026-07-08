@@ -51,6 +51,8 @@ struct AppSettings: Codable {
     var transcriptionLanguage: TranscriptionLanguage = .auto
     var autoTranscribe: Bool = true
     var autoSummarize: Bool = true
+    var speechVoice: KokoroVoice = .heart
+    var speechSpeed: Double = 1.0
 
     // MARK: - Dictation
 
@@ -229,6 +231,8 @@ struct AppSettings: Codable {
     static let defaultCotypingDebounceMs: Int = 160
     static let legacyDefaultCotypingDebounceMs: Int = 350
     static let maximumCotypingDebounceMs: Int = 1_000
+    static let minimumSpeechSpeed: Double = 0.5
+    static let maximumSpeechSpeed: Double = 2.0
 
     static func migratedCotypingMaxWords(_ words: Int, decodedSettingsVersion: Int) -> Int {
         if decodedSettingsVersion == legacyPreviewCotypingSettingsVersion,
@@ -266,6 +270,11 @@ struct AppSettings: Codable {
             return defaultStopDebounceSeconds
         }
         return clamped
+    }
+
+    static func clampedSpeechSpeed(_ speed: Double) -> Double {
+        guard speed.isFinite else { return AppSettings().speechSpeed }
+        return min(maximumSpeechSpeed, max(minimumSpeechSpeed, speed))
     }
 
     var cotypingExcludedAppList: [String] {
@@ -341,6 +350,8 @@ struct AppSettings: Codable {
         case languageHint // legacy key used by builds before typed language selection
         case autoTranscribe
         case autoSummarize
+        case speechVoice
+        case speechSpeed
         case dictationEnabled
         case dictationTriggerMode
         case dictationOutputMode
@@ -431,6 +442,8 @@ struct AppSettings: Codable {
         try c.encode(transcriptionLanguage, forKey: .transcriptionLanguage)
         try c.encode(autoTranscribe, forKey: .autoTranscribe)
         try c.encode(autoSummarize, forKey: .autoSummarize)
+        try c.encode(speechVoice, forKey: .speechVoice)
+        try c.encode(Self.clampedSpeechSpeed(speechSpeed), forKey: .speechSpeed)
         try c.encode(dictationEnabled, forKey: .dictationEnabled)
         try c.encode(dictationTriggerMode, forKey: .dictationTriggerMode)
         try c.encode(dictationOutputMode, forKey: .dictationOutputMode)
@@ -514,6 +527,9 @@ struct AppSettings: Codable {
         }
         autoTranscribe = (try? c.decode(Bool.self, forKey: .autoTranscribe)) ?? defaults.autoTranscribe
         autoSummarize = (try? c.decode(Bool.self, forKey: .autoSummarize)) ?? defaults.autoSummarize
+        speechVoice = (try? c.decode(KokoroVoice.self, forKey: .speechVoice)) ?? defaults.speechVoice
+        speechSpeed = Self.clampedSpeechSpeed(
+            (try? c.decode(Double.self, forKey: .speechSpeed)) ?? defaults.speechSpeed)
         dictationEnabled = (try? c.decode(Bool.self, forKey: .dictationEnabled)) ?? defaults.dictationEnabled
         dictationTriggerMode = (try? c.decode(DictationTriggerMode.self, forKey: .dictationTriggerMode)) ?? defaults.dictationTriggerMode
         dictationOutputMode = (try? c.decode(DictationOutputMode.self, forKey: .dictationOutputMode)) ?? defaults.dictationOutputMode

@@ -40,6 +40,25 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(settings.dictationRetainAudio)
     }
 
+    func testSpeechDefaultsUseKokoroHeartAtNormalSpeed() {
+        let settings = AppSettings()
+
+        XCTAssertEqual(settings.speechVoice, .heart)
+        XCTAssertEqual(settings.speechSpeed, 1.0)
+    }
+
+    func testSpeechSettingsRoundTripAndClampSpeed() throws {
+        var settings = AppSettings()
+        settings.speechVoice = .fable
+        settings.speechSpeed = 3.5
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertEqual(decoded.speechVoice, .fable)
+        XCTAssertEqual(decoded.speechSpeed, AppSettings.maximumSpeechSpeed)
+    }
+
     /// Settings written before TranscriptionModelChoice raw values were
     /// stabilized persisted the display strings — they must keep decoding so
     /// an update never silently resets a user's model choice.
