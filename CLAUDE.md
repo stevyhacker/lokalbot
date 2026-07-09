@@ -69,6 +69,4 @@ The app binary doubles as a headless test harness: `LokalBotApp.swift` + `Headle
 
 Privacy constraints that shape code: password fields and user-excluded apps are never read (Cotyping and screenshots both); screenshot/OCR retention is user-configurable in the Privacy settings pane with deletion as the default posture.
 
-## Website (`web/`)
-
-Static site deployed to Vercel at https://www.lokalbot.com — no build step. `vercel.json` at the **repo root** (not in `web/`) points Vercel at `web/` (`outputDirectory`) with `cleanUrls: true`, so pages are served extensionless (`/lokalbot-vs-granola`). Inter-page links use literal `.html` paths (e.g. `lokalbot-vs-granola.html`) and subpages link back via `index.html#anchor` — Vercel redirects those to the clean URL, and they keep `file://` preview working. Design system lives in `styles.css` (glass panels via `--glass-*` CSS vars, `.reveal` scroll animations); `app.js` is dependency-free and null-safe so any page can include it. New surface styles should be added to both the `prefers-reduced-transparency` and no-`backdrop-filter` fallback lists.
+Website conventions (`web/`) now live in `web/CLAUDE.md`, loaded automatically when working with files under `web/`.
