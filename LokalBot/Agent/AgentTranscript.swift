@@ -1,0 +1,131 @@
+import Foundation
+
+enum AgentToolStatus: Equatable {
+    case running, succeeded, failed
+}
+
+enum AgentTranscriptItem: Equatable, Identifiable {
+    case user(id: String, text: String)
+    case assistant(id: String, text: String, isStreaming: Bool)
+    case tool(id: String, name: String, argsJSON: String, output: String, status: AgentToolStatus)
+    case approval(id: String, tool: String, argsJSON: String)
+    case notice(id: String, text: String, isError: Bool)
+
+    var id: String {
+        switch self {
+        case .user(let id, _), .assistant(let id, _, _), .tool(let id, _, _, _, _),
+             .approval(let id, _, _), .notice(let id, _, _):
+            return id
+        }
+    }
+}
+
+/// Folds the PiEvent stream into a display-ready transcript. Pure state
+/// machine — no async, no UI — so every folding rule is unit-testable
+/// (same decomposition philosophy as the Cotyping policy types).
+struct AgentTranscriptFolder: Equatable {
+    private(set) var items: [AgentTranscriptItem] = []
+    private(set) var isAgentRunning = false
+    private var streamingAssistantIndex: Int?
+    private var counter = 0
+
+    // MARK: - Local inserts (not driven by pi events)
+
+    mutating func noteUserPrompt(_ text: String) {
+        items.append(.user(id: nextID("user"), text: text))
+    }
+
+    mutating func appendNotice(_ text: String, isError: Bool = false) {
+        items.append(.notice(id: nextID("notice"), text: text, isError: isError))
+    }
+
+    mutating func addApproval(requestID: String, tool: String, argsJSON: String) {
+        items.append(.approval(id: requestID, tool: tool, argsJSON: argsJSON))
+    }
+
+    mutating func resolveApproval(requestID: String) {
+        items.removeAll {
+            if case .approval(let id, _, _) = $0 { return id == requestID }
+            return false
+        }
+    }
+
+    // MARK: - Event folding
+
+    mutating func fold(_ event: PiEvent) {
+        switch event {
+        case .agentStart:
+            isAgentRunning = true
+        case .agentSettled:
+            isAgentRunning = false
+            finishStreamingAssistant()
+        case .messageStart(let role):
+            guard role == "assistant" else { return }
+            items.append(.assistant(id: nextID("assistant"), text: "", isStreaming: true))
+            streamingAssistantIndex = items.count - 1
+        case .messageUpdate(.textDelta(let delta)):
+            appendToStreamingAssistant(delta)
+        case .messageEnd(let role, let text):
+            guard role == "assistant" else { return }
+            defer { streamingAssistantIndex = nil }
+            if let index = streamingAssistantIndex,
+               case .assistant(let id, let streamed, _) = items[index] {
+                let final = text.isEmpty ? streamed : text
+                if final.isEmpty {
+                    items.remove(at: index)   // tool-call-only turn: drop the empty bubble
+                } else {
+                    items[index] = .assistant(id: id, text: final, isStreaming: false)
+                }
+            } else if !text.isEmpty {
+                items.append(.assistant(id: nextID("assistant"), text: text, isStreaming: false))
+            }
+        case .toolExecutionStart(let callID, let name, let argsJSON):
+            items.append(.tool(id: callID, name: name, argsJSON: argsJSON, output: "", status: .running))
+        case .toolExecutionUpdate(let callID, let output):
+            updateTool(callID) { _, _ in (output, .running) }
+        case .toolExecutionEnd(let callID, let output, let isError):
+            updateTool(callID) { _, _ in (output, isError ? .failed : .succeeded) }
+        case .extensionError(let message):
+            appendNotice(message, isError: true)
+        case .agentEnd, .messageUpdate, .response, .extensionUIRequest, .unknown:
+            break
+        }
+    }
+
+    // MARK: - Helpers
+
+    private mutating func nextID(_ prefix: String) -> String {
+        counter += 1
+        return "\(prefix)-\(counter)"
+    }
+
+    private mutating func appendToStreamingAssistant(_ delta: String) {
+        if streamingAssistantIndex == nil {
+            items.append(.assistant(id: nextID("assistant"), text: "", isStreaming: true))
+            streamingAssistantIndex = items.count - 1
+        }
+        if let index = streamingAssistantIndex,
+           case .assistant(let id, let text, _) = items[index] {
+            items[index] = .assistant(id: id, text: text + delta, isStreaming: true)
+        }
+    }
+
+    private mutating func finishStreamingAssistant() {
+        defer { streamingAssistantIndex = nil }
+        guard let index = streamingAssistantIndex,
+              case .assistant(let id, let text, _) = items[index] else { return }
+        if text.isEmpty {
+            items.remove(at: index)
+        } else {
+            items[index] = .assistant(id: id, text: text, isStreaming: false)
+        }
+    }
+
+    private mutating func updateTool(_ callID: String,
+                                     _ transform: (String, AgentToolStatus) -> (String, AgentToolStatus)) {
+        guard let index = items.firstIndex(where: { $0.id == callID }),
+              case .tool(let id, let name, let args, let output, let status) = items[index] else { return }
+        let (newOutput, newStatus) = transform(output, status)
+        items[index] = .tool(id: id, name: name, argsJSON: args, output: newOutput, status: newStatus)
+    }
+}
