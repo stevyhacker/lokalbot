@@ -24,7 +24,7 @@ final class AgentTranscriptTests: XCTestCase {
         XCTAssertFalse(folder.isAgentRunning)
         XCTAssertEqual(folder.items.count, 1)
         guard case .assistant(_, let final, let stillStreaming) = folder.items[0] else {
-            return XCTFail()
+            return XCTFail("expected finalized assistant item, got \(folder.items)")
         }
         XCTAssertEqual(final, "Hello world!", "message_end text wins over accumulated deltas")
         XCTAssertFalse(stillStreaming)
@@ -33,7 +33,9 @@ final class AgentTranscriptTests: XCTestCase {
     func testDeltaWithoutMessageStartCreatesBubble() {
         var folder = AgentTranscriptFolder()
         folder.fold(.messageUpdate(.textDelta("hi")))
-        guard case .assistant(_, "hi", true) = folder.items[0] else { return XCTFail() }
+        guard case .assistant(_, "hi", true) = folder.items[0] else {
+            return XCTFail("expected streaming assistant item, got \(folder.items)")
+        }
     }
 
     func testEmptyAssistantBubbleIsDroppedOnMessageEnd() {
@@ -63,7 +65,9 @@ final class AgentTranscriptTests: XCTestCase {
         var folder = AgentTranscriptFolder()
         folder.fold(.toolExecutionStart(callID: "call_2", name: "write", argsJSON: "{}"))
         folder.fold(.toolExecutionEnd(callID: "call_2", output: "denied", isError: true))
-        guard case .tool(_, _, _, _, .failed) = folder.items[0] else { return XCTFail() }
+        guard case .tool(_, _, _, _, .failed) = folder.items[0] else {
+            return XCTFail("expected failed tool item, got \(folder.items)")
+        }
     }
 
     func testApprovalAddAndResolve() {
@@ -101,14 +105,18 @@ final class AgentTranscriptTests: XCTestCase {
         folder.appendNotice("Denied bash", isError: false)
         folder.fold(.extensionError(message: "boom"))
         XCTAssertEqual(folder.items.count, 3)
-        guard case .notice(_, "boom", true) = folder.items[2] else { return XCTFail() }
+        guard case .notice(_, "boom", true) = folder.items[2] else {
+            return XCTFail("expected error notice, got \(folder.items)")
+        }
     }
 
     func testAgentSettledFinishesStreamingBubble() {
         var folder = AgentTranscriptFolder()
         folder.fold(.messageUpdate(.textDelta("partial answer")))
         folder.fold(.agentSettled)   // e.g. user aborted mid-stream: no message_end
-        guard case .assistant(_, "partial answer", false) = folder.items[0] else { return XCTFail() }
+        guard case .assistant(_, "partial answer", false) = folder.items[0] else {
+            return XCTFail("expected settled assistant item, got \(folder.items)")
+        }
     }
 
     private func approvalRequest(id: String, command: String) -> AgentApprovalRequest {

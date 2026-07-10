@@ -58,7 +58,9 @@ final class PiRPCMessagesTests: XCTestCase {
 
     func testResponsePreservesDataForSessionRestoration() {
         let event = PiEvent.decode(line: #"{"id":"h1","type":"response","command":"get_messages","success":true,"data":{"messages":[{"role":"user","content":"Hi"}]}}"#)
-        guard case .response(let response) = event else { return XCTFail() }
+        guard case .response(let response) = event else {
+            return XCTFail("expected response event, got \(String(describing: event))")
+        }
         XCTAssertEqual(response.dataJSON, #"{"messages":[{"content":"Hi","role":"user"}]}"#)
     }
 

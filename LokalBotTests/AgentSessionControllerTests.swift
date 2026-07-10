@@ -33,7 +33,9 @@ final class AgentSessionControllerTests: XCTestCase {
     func testUnsupportedBackendFailsWithoutSpawning() async throws {
         let controller = makeController(backend: .appleIntelligence)
         await controller.start()
-        guard case .failed(let reason) = controller.state else { return XCTFail() }
+        guard case .failed(let reason) = controller.state else {
+            return XCTFail("expected failed state, got \(controller.state)")
+        }
         XCTAssertTrue(reason.contains("Apple Intelligence"))
         XCTAssertEqual(controller.recoveryAction, .openModels)
     }
@@ -65,7 +67,9 @@ final class AgentSessionControllerTests: XCTestCase {
         transport.inject(#"{"type":"agent_settled"}"#)
         try await pump()
         XCTAssertEqual(controller.state, .ready)
-        guard case .assistant(_, let final, let stillStreaming) = controller.items.last else { return XCTFail() }
+        guard case .assistant(_, let final, let stillStreaming) = controller.items.last else {
+            return XCTFail("expected final assistant item, got \(controller.items)")
+        }
         XCTAssertEqual(final, "Hi there!")
         XCTAssertFalse(stillStreaming)
     }
@@ -136,7 +140,9 @@ final class AgentSessionControllerTests: XCTestCase {
         XCTAssertTrue(transport.sentLines.contains {
             $0.contains(#""id":"u3""#) && $0.contains(#""cancelled":true"#)
         })
-        guard case .notice(_, let text, _) = controller.items.last else { return XCTFail() }
+        guard case .notice(_, let text, _) = controller.items.last else {
+            return XCTFail("expected unsupported-request notice, got \(controller.items)")
+        }
         XCTAssertTrue(text.contains("unsupported"))
     }
 
@@ -146,7 +152,9 @@ final class AgentSessionControllerTests: XCTestCase {
         transport.close()
         try await pump()
         guard case .failed = controller.state else { return XCTFail("\(controller.state)") }
-        guard case .notice(_, _, let isError) = controller.items.last else { return XCTFail() }
+        guard case .notice(_, _, let isError) = controller.items.last else {
+            return XCTFail("expected transport failure notice, got \(controller.items)")
+        }
         XCTAssertTrue(isError)
     }
 

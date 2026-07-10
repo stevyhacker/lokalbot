@@ -33,8 +33,13 @@ enum PiCommand: Equatable {
         case .uiCancelResponse(let requestID):
             dict = ["type": "extension_ui_response", "id": requestID, "cancelled": true]
         }
-        let data = try! JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys])
-        return String(data: data, encoding: .utf8)!
+        guard JSONSerialization.isValidJSONObject(dict),
+              let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]),
+              let line = String(data: data, encoding: .utf8) else {
+            assertionFailure("PiCommand must encode as a UTF-8 JSON object")
+            return "{}"
+        }
+        return line
     }
 }
 

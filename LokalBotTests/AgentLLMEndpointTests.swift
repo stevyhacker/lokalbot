@@ -19,7 +19,9 @@ final class AgentLLMEndpointTests: XCTestCase {
 
     func testAppleIntelligenceIsUnsupportedWithGuidance() {
         let resolution = AgentLLMEndpointResolver.resolve(settings: settings(.appleIntelligence))
-        guard case .unsupported(let reason) = resolution else { return XCTFail() }
+        guard case .unsupported(let reason) = resolution else {
+            return XCTFail("expected unsupported resolution, got \(resolution)")
+        }
         XCTAssertTrue(reason.contains("Apple Intelligence"))
         XCTAssertTrue(reason.contains("Built-in"))
     }
@@ -28,7 +30,7 @@ final class AgentLLMEndpointTests: XCTestCase {
         var s = settings(.ollama)
         s.ollamaModel = ""
         guard case .unsupported(let reason) = AgentLLMEndpointResolver.resolve(settings: s) else {
-            return XCTFail()
+            return XCTFail("expected unsupported resolution for missing Ollama model")
         }
         XCTAssertTrue(reason.contains("Ollama"))
     }
@@ -37,7 +39,7 @@ final class AgentLLMEndpointTests: XCTestCase {
         var s = settings(.ollama)
         s.ollamaModel = "qwen3:8b"
         guard case .ready(let endpoint) = AgentLLMEndpointResolver.resolve(settings: s) else {
-            return XCTFail()
+            return XCTFail("expected ready Ollama endpoint")
         }
         XCTAssertEqual(endpoint.baseURL.absoluteString, "http://localhost:11434/v1")
         XCTAssertEqual(endpoint.model, "qwen3:8b")
@@ -50,7 +52,7 @@ final class AgentLLMEndpointTests: XCTestCase {
         s.openAIBaseURL = "http://localhost:1234/v1"
         s.openAIModel = "my-model"
         guard case .ready(let endpoint) = AgentLLMEndpointResolver.resolve(settings: s) else {
-            return XCTFail()
+            return XCTFail("expected ready OpenAI-compatible endpoint")
         }
         XCTAssertEqual(endpoint.baseURL.absoluteString, "http://localhost:1234/v1")
         XCTAssertEqual(endpoint.model, "my-model")
@@ -59,6 +61,8 @@ final class AgentLLMEndpointTests: XCTestCase {
     func testOpenAICompatibleRequiresModel() {
         var s = settings(.openAICompatible)
         s.openAIModel = ""
-        guard case .unsupported = AgentLLMEndpointResolver.resolve(settings: s) else { return XCTFail() }
+        guard case .unsupported = AgentLLMEndpointResolver.resolve(settings: s) else {
+            return XCTFail("expected unsupported resolution for missing OpenAI-compatible model")
+        }
     }
 }
