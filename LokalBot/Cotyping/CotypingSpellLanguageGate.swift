@@ -16,11 +16,17 @@ nonisolated enum CotypingSpellLanguageGate {
     /// Below this the recognizer is guessing (a lone short fragment), so spell
     /// checking stays on — identical behavior to before this gate existed.
     static let minimumConfidence = 0.5
+    /// Language-recognizer confidence varies between macOS releases for a
+    /// single token, which is never enough evidence to disable spell checks.
+    static let minimumWordCount = 2
 
     static func spellVerdictsApply(context: String, availableLanguages: [String]) -> Bool {
         let window = String(context.suffix(contextWindowCharacters))
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !window.isEmpty else { return true }
+        guard window.split(whereSeparator: { $0.isWhitespace }).count >= minimumWordCount else {
+            return true
+        }
         let recognizer = NLLanguageRecognizer()
         recognizer.processString(window)
         guard let (language, confidence) = recognizer.languageHypotheses(withMaximum: 1).first,
