@@ -56,7 +56,9 @@ targetTemplates:
     type: application
     platform: macOS
     sources:
-      - LokalBot
+      - path: LokalBot
+        excludes:
+          - Resources/pi
       - path: Vendor/llama-cpp
         type: folder
         buildPhase: resources
