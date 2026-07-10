@@ -151,9 +151,12 @@ Mirrors `ProcessingPipeline.makeTextEngine(_:server:)` switching on `settings.su
 **Sidebar:** new `NavSection.agent` ("Agent"), mounted in `MainWindowView` alongside Ask.
 
 **Pane layout:**
-- **Header** — workspace picker ("Meeting Library" default, recents, "Choose…"), session picker
-  (new/resume), health dot (runtime installed · pi alive · LLM reachable), and the per-session
-  **auto-approve toggle** (off by default).
+- **Session tabs** — each tab owns an independent `AgentSessionController` and pi subprocess, so
+  work continues when another tab is selected. The plus button starts a concurrent session and
+  every tab has its own close button; closing one tab shuts down only that process.
+- **Header** — workspace picker ("Meeting Library" default, recents, "Choose…"), health dot
+  (runtime installed · pi alive · LLM reachable), and the per-session **auto-approve toggle**
+  (off by default).
 - **Transcript** — native rendering in `ChatTranscriptView`'s editorial style. Tool cards
   collapsed by default; expand for full output/diff. Live-streaming bash output while running.
 - **Approval cards** — inline in the transcript on the pending tool card: **Allow once /
@@ -221,7 +224,6 @@ Each failure mode gets a specific pane state, not a generic error:
 ## Out of scope (v1)
 
 - Floating overlay / global hotkey summon (revisit after the pane ships).
-- Multiple concurrent agent sessions.
 - Encrypting pi session files at rest.
 - pi model switching UI beyond the Main LLM engine selection (pi's `/model` surface is unused).
 - Pruning unused provider SDKs from the pi bundle (~40 MB of the 165 MB installed; risky against

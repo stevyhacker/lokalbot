@@ -363,12 +363,15 @@ final class AppState: ObservableObject {
             settings: { [store = settingsStore] in store.current }),
         store: ChatStore(rootURL: storage.rootURL))
 
-    // Agent Mode (pi). Installer is cheap; the controller spawns nothing
-    // until AgentView calls start().
+    // Agent Mode (pi). Installer and tab manager are cheap; each tab lazily
+    // spawns its own controller/process when AgentView mounts it.
     let agentInstaller = AgentRuntimeInstaller()
-    private(set) lazy var agentController = AgentSessionController(
+    private(set) lazy var agentSessions = AgentSessionTabs(
         settings: { [store = settingsStore] in store.current },
         storage: storage)
+    var agentController: AgentSessionController {
+        agentSessions.ensureSelectedController()
+    }
 
     private var pipelineObserver: AnyCancellable?
     private var recordingObserver: AnyCancellable?
@@ -550,6 +553,7 @@ final class AppState: ObservableObject {
             chat.stop()
             dictation.stop()
             cotyping.stop()
+            await agentSessions.shutdownAll()
             await cotypingEngine.unload()
             await LlamaServer.shared.stop()
             await LlamaServer.embedder.stop()

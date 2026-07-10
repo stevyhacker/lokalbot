@@ -1,24 +1,38 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
-/// The Agent Mode pane: install card when the runtime is missing, otherwise
-/// header (workspace + session controls) / transcript / composer. All agent
-/// state lives in AgentSessionController; this file is rendering only.
+/// Agent Mode root: global runtime setup followed by a desktop tab strip.
+/// Each live tab owns an independent AgentSessionController and pi process.
 struct AgentView: View {
-    @ObservedObject var controller: AgentSessionController
+    @ObservedObject var sessions: AgentSessionTabs
     @ObservedObject var installer: AgentRuntimeInstaller
-    @State private var draft = ""
-    @State private var pickingFolder = false
 
     var body: some View {
         Group {
             if installer.phase == .installed {
-                sessionBody
+                sessionTabs
             } else {
                 installCard
             }
         }
         .navigationTitle("Agent")
+    }
+
+    private var sessionTabs: some View {
+        VStack(spacing: 0) {
+            AgentSessionTabBar(sessions: sessions)
+            Divider()
+            ZStack {
+                // Keep every tab mounted so its draft, scroll position, task,
+                // approvals, and live process continue while another is shown.
+                ForEach(sessions.tabs) { tab in
+                    AgentSessionView(controller: tab.controller)
+                        .opacity(sessions.selectedID == tab.id ? 1 : 0)
+                        .allowsHitTesting(sessions.selectedID == tab.id)
+                        .accessibilityHidden(sessions.selectedID != tab.id)
+                        .zIndex(sessions.selectedID == tab.id ? 1 : 0)
+                }
+            }
+        }
     }
 
     // MARK: - Install card
@@ -57,207 +71,111 @@ struct AgentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
 
-    // MARK: - Session
+private struct AgentSessionTabBar: View {
+    @ObservedObject var sessions: AgentSessionTabs
 
-    private var sessionBody: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            transcript
-            Divider()
-            composer
-        }
-        .task { await controller.start() }
-        // No .onDisappear shutdown: the controller lives on AppState, so the
-        // session (and any running work) survives switching sidebar tabs.
-    }
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            Button {
-                pickingFolder = true
-            } label: {
-                Label(controller.workspace.lastPathComponent.isEmpty
-                      ? controller.workspace.path : controller.workspace.lastPathComponent,
-                      systemImage: "folder")
-            }
-            .help(controller.workspace.path)
-            .fileImporter(isPresented: $pickingFolder,
-                          allowedContentTypes: [.folder]) { result in
-                if case .success(let url) = result {
-                    controller.workspace = url
-                    Task { await controller.shutdown(); await controller.start() }
-                }
-            }
-            .accessibilityIdentifier("agent.workspace")
-
-            statusBadge
-            if case .failed = controller.state {
-                Button("Restart") {
-                    Task { await controller.shutdown(); await controller.start() }
-                }
-                .accessibilityIdentifier("agent.restart")
-            }
-            Spacer()
-            Toggle("Auto-approve", isOn: $controller.autoApproveSession)
-                .toggleStyle(.switch).controlSize(.small)
-                .help("Approve every file edit and shell command this session without asking")
-                .accessibilityIdentifier("agent.autoApprove")
-            Button("New Session") { Task { await controller.newSession() } }
-                .disabled(controller.state == .starting)
-                .accessibilityIdentifier("agent.newSession")
-        }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-    }
-
-    @ViewBuilder private var statusBadge: some View {
-        switch controller.state {
-        case .idle, .starting:
-            HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("Starting…") }
-                .font(.caption).foregroundStyle(.secondary)
-        case .ready:
-            Label("Ready", systemImage: "circle.fill")
-                .font(.caption).foregroundStyle(.green)
-        case .running:
-            HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("Working…") }
-                .font(.caption).foregroundStyle(.secondary)
-        case .failed(let message):
-            Label(message, systemImage: "exclamationmark.triangle.fill")
-                .font(.caption).foregroundStyle(.orange)
-                .lineLimit(1).help(message)
-        }
-    }
-
-    private var transcript: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    ForEach(controller.items) { item in
-                        row(for: item).id(item.id)
+    var body: some View {
+        HStack(spacing: 8) {
+            ScrollView(.horizontal) {
+                HStack(spacing: 5) {
+                    ForEach(sessions.tabs) { tab in
+                        AgentSessionTabItem(
+                            tab: tab,
+                            isSelected: sessions.selectedID == tab.id,
+                            select: { sessions.select(tab.id) },
+                            close: { Task { await sessions.close(tab.id) } })
                     }
                 }
-                .padding(12)
             }
-            .onChange(of: controller.items.count) {
-                if let last = controller.items.last {
-                    proxy.scrollTo(last.id, anchor: .bottom)
-                }
+            .scrollIndicators(.hidden)
+            .accessibilityIdentifier("agent.tabs")
+
+            Button {
+                sessions.addSession()
+            } label: {
+                Image(systemName: "plus")
+                    .frame(width: 20, height: 20)
             }
+            .buttonStyle(.borderless)
+            .help("New Agent Session")
+            .accessibilityLabel("New Agent Session")
+            .accessibilityIdentifier("agent.newSession")
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("agent.transcript")
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(.regularMaterial)
+    }
+}
+
+private struct AgentSessionTabItem: View {
+    let tab: AgentSessionTabs.Tab
+    let isSelected: Bool
+    let select: () -> Void
+    let close: () -> Void
+
+    @ObservedObject private var controller: AgentSessionController
+
+    init(tab: AgentSessionTabs.Tab,
+         isSelected: Bool,
+         select: @escaping () -> Void,
+         close: @escaping () -> Void) {
+        self.tab = tab
+        self.isSelected = isSelected
+        self.select = select
+        self.close = close
+        _controller = ObservedObject(wrappedValue: tab.controller)
     }
 
-    @ViewBuilder private func row(for item: AgentTranscriptItem) -> some View {
-        switch item {
-        case .user(_, let text):
-            Text(text)
-                .padding(10)
-                .background(.blue.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
-                .frame(maxWidth: .infinity, alignment: .trailing)
-        case .assistant(_, let text, let isStreaming):
-            VStack(alignment: .leading, spacing: 4) {
-                Text(LocalizedStringKey(text))   // renders markdown
-                    .textSelection(.enabled)
-                if isStreaming {
-                    ProgressView().controlSize(.mini)
+    var body: some View {
+        HStack(spacing: 2) {
+            Button(action: select) {
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 7, height: 7)
+                    Text(tab.title)
+                        .font(.callout)
+                        .lineLimit(1)
                 }
+                .padding(.leading, 9)
+                .padding(.trailing, 5)
+                .frame(minHeight: 26)
+                .contentShape(Rectangle())
             }
-            .padding(10)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
-            .frame(maxWidth: .infinity, alignment: .leading)
-        case .tool(_, let name, let argsJSON, let output, let status):
-            toolCard(name: name, argsJSON: argsJSON, output: output, status: status)
-        case .approval(let id, let tool, let argsJSON):
-            approvalCard(id: id, tool: tool, argsJSON: argsJSON)
-        case .notice(_, let text, let isError):
-            Label(text, systemImage: isError ? "exclamationmark.triangle" : "info.circle")
-                .font(.caption)
-                .foregroundStyle(isError ? .orange : .secondary)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open \(tab.title)")
+            .accessibilityIdentifier("agent.tab.\(tab.id.uuidString)")
+
+            Button(action: close) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Close \(tab.title)")
+            .accessibilityLabel("Close \(tab.title)")
+            .accessibilityIdentifier("agent.tab.close.\(tab.id.uuidString)")
+        }
+        .padding(.vertical, 2)
+        .padding(.trailing, 3)
+        .background(isSelected ? Color.accentColor.opacity(0.16) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 7))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(isSelected ? Color.accentColor.opacity(0.32) : Color.secondary.opacity(0.16))
         }
     }
 
-    private func toolCard(name: String, argsJSON: String, output: String, status: AgentToolStatus) -> some View {
-        DisclosureGroup {
-            VStack(alignment: .leading, spacing: 6) {
-                if !argsJSON.isEmpty {
-                    Text(argsJSON).font(.caption.monospaced()).textSelection(.enabled)
-                        .lineLimit(12)
-                }
-                if !output.isEmpty {
-                    Text(output).font(.caption.monospaced()).textSelection(.enabled)
-                        .lineLimit(30)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } label: {
-            HStack(spacing: 6) {
-                switch status {
-                case .running: ProgressView().controlSize(.mini)
-                case .succeeded: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                case .failed: Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
-                }
-                Text(name).font(.callout.weight(.medium).monospaced())
-            }
+    private var statusColor: Color {
+        switch controller.state {
+        case .idle, .starting: return .secondary
+        case .ready: return .green
+        case .running: return .blue
+        case .failed: return .orange
         }
-        .padding(8)
-        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func approvalCard(id: String, tool: String, argsJSON: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("The agent wants to run \(tool)", systemImage: "hand.raised.fill")
-                .font(.callout.weight(.semibold))
-            if !argsJSON.isEmpty {
-                Text(argsJSON).font(.caption.monospaced())
-                    .lineLimit(8).textSelection(.enabled)
-            }
-            HStack {
-                Button("Allow Once") {
-                    Task { await controller.respondToApproval(id: id, approved: true, scope: .once) }
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("agent.approve.once")
-                Button("Allow \(tool) This Session") {
-                    Task { await controller.respondToApproval(id: id, approved: true, scope: .session) }
-                }
-                .accessibilityIdentifier("agent.approve.session")
-                Button("Deny", role: .destructive) {
-                    Task { await controller.respondToApproval(id: id, approved: false, scope: .once) }
-                }
-                .accessibilityIdentifier("agent.approve.deny")
-            }
-        }
-        .padding(10)
-        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.orange.opacity(0.4)))
-    }
-
-    private var composer: some View {
-        HStack(spacing: 8) {
-            TextField("Ask the agent…", text: $draft, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1...5)
-                .onSubmit(submit)
-                .accessibilityIdentifier("agent.composer")
-            if controller.state == .running {
-                Button("Stop") { Task { await controller.abort() } }
-                    .accessibilityIdentifier("agent.stop")
-            }
-            Button("Send", action: submit)
-                .buttonStyle(.borderedProminent)
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                          || !(controller.state == .ready || controller.state == .running))
-                .accessibilityIdentifier("agent.send")
-        }
-        .padding(12)
-    }
-
-    private func submit() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        draft = ""
-        Task { await controller.send(prompt: text) }
     }
 }

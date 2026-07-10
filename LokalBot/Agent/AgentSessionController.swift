@@ -30,6 +30,10 @@ final class AgentSessionController: ObservableObject {
     private var process: PiProcess?
     private var eventTask: Task<Void, Never>?
     private var nextRequestID = 0
+    /// Invalidates an in-flight start when its tab is closed or restarted.
+    /// Without this, a close during model warm-up could finish spawning pi
+    /// after shutdown() had already returned.
+    private var lifecycleGeneration = 0
 
     init(settings: @escaping () -> AppSettings,
          storage: StorageManager,
@@ -46,30 +50,45 @@ final class AgentSessionController: ObservableObject {
 
     func start() async {
         guard state == .idle || isFailed else { return }
+        lifecycleGeneration += 1
+        let generation = lifecycleGeneration
         state = .starting
         do {
             let endpoint = try await resolveEndpoint()
+            guard generation == lifecycleGeneration else { return }
             let plan = makePlan(endpoint: endpoint)
             let transport: PiLineTransport
+            var spawnedProcess: PiProcess?
             if let makeTransport {
                 transport = try await makeTransport(plan)
             } else {
                 let piProcess = PiProcess(plan: plan)
                 try await piProcess.start()
-                process = piProcess
+                spawnedProcess = piProcess
                 transport = piProcess
             }
+            guard generation == lifecycleGeneration else {
+                await spawnedProcess?.stop()
+                return
+            }
+            process = spawnedProcess
             let rpc = PiRPCClient(transport: transport)
             await rpc.run()
+            guard generation == lifecycleGeneration else {
+                await spawnedProcess?.stop()
+                return
+            }
             client = rpc
             consumeEvents(from: rpc)
             state = .ready
         } catch {
+            guard generation == lifecycleGeneration else { return }
             state = .failed(Self.message(for: error))
         }
     }
 
     func shutdown() async {
+        lifecycleGeneration += 1
         eventTask?.cancel()
         eventTask = nil
         await process?.stop()

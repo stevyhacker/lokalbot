@@ -118,7 +118,7 @@ struct MainWindowView: View {
             NavigationSplitView {
                 sidebar
             } detail: {
-                AgentView(controller: app.agentController, installer: app.agentInstaller)
+                AgentView(sessions: app.agentSessions, installer: app.agentInstaller)
             }
         } else {
             NavigationSplitView {
