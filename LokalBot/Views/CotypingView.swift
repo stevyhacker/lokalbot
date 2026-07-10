@@ -130,7 +130,7 @@ private struct CotypingContent: View {
                     Text(entry.displayName).tag(entry.id)
                 }
             }
-            Text("Cotyping runs its own dedicated model, separate from summarization. Gemma 4 · E4B is the recommended quality target; Qwen 3.5 2B and LFM2.5 1.2B are smaller latency options.")
+            Text("Cotyping runs its own dedicated model, separate from the Main LLM engine. Gemma 4 · E4B is the recommended quality target; Qwen 3.5 2B and LFM2.5 1.2B are smaller latency options.")
                 .font(.caption).foregroundStyle(.secondary)
             CotypingModelPreparationView(compact: true)
         }

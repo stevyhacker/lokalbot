@@ -111,7 +111,7 @@ struct SettingsView: View {
                     settingsQuery = ""
                     app.settingsTab = .models
                 }
-                Text("Transcription, summarization, cotyping, and embedding models live in the Models tab.")
+                Text("Transcription, main LLM, cotyping, and embedding models live in the Models tab.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -228,7 +228,7 @@ struct SettingsView: View {
                 Section("Processing") {
                     Toggle("Transcribe automatically after each meeting", isOn: $app.settings.autoTranscribe)
                     Toggle("Summarize automatically after transcription", isOn: $app.settings.autoSummarize)
-                    Text("Choose transcription and summarization models in the Models tab.")
+                    Text("Choose transcription and main LLM models in the Models tab.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }

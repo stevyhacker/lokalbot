@@ -131,8 +131,8 @@ struct ModelsView: View {
     }
 
     private var summarizationCard: some View {
-        ModelCard(icon: "doc.text", title: "Summarization",
-                  subtitle: "Meeting summaries, day digests, chat Q&A") {
+        ModelCard(icon: "brain", title: "Main LLM engine",
+                  subtitle: "Used for questions, meeting summaries, and Agent Mode") {
             Picker("Backend", selection: $app.settings.summarizerBackend) {
                 ForEach(AppSettings.SummarizerBackend.allCases) { backend in
                     Text(backend.displayName).tag(backend)
@@ -278,7 +278,7 @@ struct ModelsView: View {
                 }
             }
             .frame(maxWidth: 360)
-            Text("Cotyping runs on a dedicated llama.cpp runtime, separate from summarization. Gemma 4 · E4B is the recommended quality target; Qwen 3.5 2B and LFM2.5 1.2B are smaller latency options.")
+            Text("Cotyping runs on a dedicated llama.cpp runtime, separate from the Main LLM engine. Gemma 4 · E4B is the recommended quality target; Qwen 3.5 2B and LFM2.5 1.2B are smaller latency options.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .accessibilityIdentifier("models.cotyping")

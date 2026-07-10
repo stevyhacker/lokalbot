@@ -42,7 +42,7 @@ enum TextEngineError: LocalizedError {
         case .badResponse(let detail):
             "LLM server error: \(detail)"
         case .noModel:
-            "No summarization model selected. Pick one in Settings → Models."
+            "No model selected for the Main LLM engine. Pick one in Settings → Models."
         case .unavailable(let detail):
             detail
         }
