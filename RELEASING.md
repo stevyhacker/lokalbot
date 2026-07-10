@@ -243,7 +243,13 @@ gh release create v1.0.0 \
 Pre-release tags (a hyphen suffix, e.g. `v1.0.0-beta`) are marked **Pre-release**
 on GitHub and won't become "Latest"; tag without a suffix for a stable release.
 
-- Agent runtime asset: if `Scripts/build-pi-bundle.sh` changed (pi or Bun version bump), run it and upload `dist/lokalbot-pi-bundle-<version>.tar.gz` to the `agent-runtime-<version>` GitHub release tag, then update the sha256 in `AgentRuntimeManifest.current`.
+- Agent runtime: no separate pi GitHub asset is published. The app downloads
+  checksum-pinned Bun, then installs pi from the public npm registry using
+  `LokalBot/Resources/pi/runtime/package.json` + `bun.lock`. When bumping pi,
+  first verify the chosen release is at least seven days old, pin the matching
+  `pi-agent-core`, `pi-ai`, and `pi-tui` overrides, regenerate the lockfile with
+  the Bun version in `AgentRuntimeManifest`, and verify a clean
+  `bun install --production --frozen-lockfile --ignore-scripts` before release.
 
 ---
 

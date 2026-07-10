@@ -12,9 +12,17 @@ final class AgentSessionController: ObservableObject {
         case failed(String)
     }
 
+    enum RecoveryAction: Equatable {
+        case openModels
+        case restart
+    }
+
     @Published private(set) var state: SessionState = .idle
     @Published private(set) var items: [AgentTranscriptItem] = []
+    @Published private(set) var recoveryAction: RecoveryAction?
+    @Published private(set) var sessionTitle: String?
     @Published var workspace: URL
+    @Published var draft = ""
     @Published var autoApproveSession = false {
         didSet { policy.autoApproveAll = autoApproveSession }
     }
@@ -22,6 +30,7 @@ final class AgentSessionController: ObservableObject {
     private let settings: () -> AppSettings
     private let storage: StorageManager
     private let runtimeRoot: URL
+    private let sessionsDirectory: URL
     private let makeTransport: ((PiLaunchPlan) async throws -> PiLineTransport)?
 
     private var policy = AgentApprovalPolicy()
@@ -30,6 +39,7 @@ final class AgentSessionController: ObservableObject {
     private var process: PiProcess?
     private var eventTask: Task<Void, Never>?
     private var nextRequestID = 0
+    private var launchMode: LaunchMode = .fresh
     /// Invalidates an in-flight start when its tab is closed or restarted.
     /// Without this, a close during model warm-up could finish spawning pi
     /// after shutdown() had already returned.
@@ -38,10 +48,12 @@ final class AgentSessionController: ObservableObject {
     init(settings: @escaping () -> AppSettings,
          storage: StorageManager,
          runtimeRoot: URL = AgentRuntimeLayout.defaultRoot,
+         sessionsDirectory: URL = AgentRuntimeLayout.sessionsDirectory,
          makeTransport: ((PiLaunchPlan) async throws -> PiLineTransport)? = nil) {
         self.settings = settings
         self.storage = storage
         self.runtimeRoot = runtimeRoot
+        self.sessionsDirectory = sessionsDirectory
         self.makeTransport = makeTransport
         self.workspace = storage.rootURL
     }
@@ -53,6 +65,7 @@ final class AgentSessionController: ObservableObject {
         lifecycleGeneration += 1
         let generation = lifecycleGeneration
         state = .starting
+        recoveryAction = nil
         do {
             let endpoint = try await resolveEndpoint()
             guard generation == lifecycleGeneration else { return }
@@ -80,10 +93,13 @@ final class AgentSessionController: ObservableObject {
             }
             client = rpc
             consumeEvents(from: rpc)
+            if launchMode == .continueRecent {
+                await restorePreviousMessages(using: rpc)
+            }
             state = .ready
         } catch {
             guard generation == lifecycleGeneration else { return }
-            state = .failed(Self.message(for: error))
+            setFailure(error)
         }
     }
 
@@ -101,6 +117,9 @@ final class AgentSessionController: ObservableObject {
 
     func send(prompt: String) async {
         guard let client, state == .ready || state == .running else { return }
+        if sessionTitle == nil {
+            sessionTitle = Self.makeSessionTitle(from: prompt)
+        }
         folder.noteUserPrompt(prompt)
         publish()
         let behavior = state == .running ? "followUp" : nil
@@ -127,6 +146,9 @@ final class AgentSessionController: ObservableObject {
             _ = try await client.request(.newSession(id: freshID("n")))
             folder = AgentTranscriptFolder()
             policy.resetSession()
+            launchMode = .fresh
+            sessionTitle = nil
+            draft = ""
             publish()
             state = .ready
         } catch {
@@ -134,15 +156,32 @@ final class AgentSessionController: ObservableObject {
         }
     }
 
+    func resumePreviousSession() async {
+        guard canResumePreviousSession else { return }
+        await shutdown()
+        folder = AgentTranscriptFolder()
+        policy.resetSession()
+        autoApproveSession = false
+        sessionTitle = nil
+        draft = ""
+        publish()
+        launchMode = .continueRecent
+        await start()
+    }
+
     // MARK: - Approvals
 
     func respondToApproval(id: String, approved: Bool, scope: ApprovalScope) async {
         guard let client else { return }
+        let tool = pendingApprovalTool(requestID: id)
         if approved, scope == .session,
-           let tool = pendingApprovalTool(requestID: id) {
+           let tool {
             policy.allowForSession(tool: tool)
         }
         folder.resolveApproval(requestID: id)
+        if !approved {
+            folder.appendNotice("You denied this \(tool ?? "tool") request. Nothing changed.")
+        }
         publish()
         try? await client.sendResponse(.uiConfirmResponse(requestID: id, confirmed: approved))
     }
@@ -152,7 +191,7 @@ final class AgentSessionController: ObservableObject {
     private func consumeEvents(from client: PiRPCClient) {
         eventTask = Task { [weak self] in
             guard let self else { return }
-            for await event in await client.events {
+            for await event in client.events {
                 guard !Task.isCancelled else { return }
                 await self.handle(event)
             }
@@ -185,12 +224,12 @@ final class AgentSessionController: ObservableObject {
             try? await client.sendResponse(.uiCancelResponse(requestID: request.id))
             return
         }
-        let (tool, summary) = Self.parseApprovalPayload(request)
-        switch policy.verdict(tool: tool) {
+        let approval = Self.parseApprovalPayload(request)
+        switch policy.verdict(tool: approval.tool) {
         case .allow:
             try? await client.sendResponse(.uiConfirmResponse(requestID: request.id, confirmed: true))
         case .ask:
-            folder.addApproval(requestID: request.id, tool: tool, argsJSON: summary)
+            folder.addApproval(approval)
         }
     }
 
@@ -204,6 +243,7 @@ final class AgentSessionController: ObservableObject {
         folder.appendNotice(detail, isError: true)
         publish()
         state = .failed(detail)
+        recoveryAction = .restart
     }
 
     // MARK: - Endpoint + plan
@@ -216,7 +256,7 @@ final class AgentSessionController: ObservableObject {
             guard let entry = ModelCatalog.entry(id: modelID, custom: settings().customBuiltInModels)
                     ?? ModelCatalog.entry(id: modelID),
                   let modelURL = ModelCatalog.localURL(for: entry, storage: storage) else {
-                throw StartError.notReady("The built-in model isn't downloaded yet. Download it under Settings → Models.")
+                throw StartError.modelConfiguration("The built-in model isn't downloaded yet. Download it under Settings → Models.")
             }
             try await LlamaServer.shared.ensureRunning(modelAt: modelURL)
             return AgentLLMEndpoint(baseURL: LlamaServer.shared.baseURL,
@@ -224,7 +264,7 @@ final class AgentSessionController: ObservableObject {
                                     contextTokens: AgentLLMEndpoint.defaultContextTokens,
                                     apiKey: nil)
         case .unsupported(let reason):
-            throw StartError.notReady(reason)
+            throw StartError.modelConfiguration(reason)
         }
     }
 
@@ -235,7 +275,7 @@ final class AgentSessionController: ObservableObject {
         let skillDir = resources?.appendingPathComponent("pi/lokalbot-cli-skill")
         let skillExists = skillDir.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
         let helpers = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers")
-        let sessions = AgentRuntimeLayout.sessionsDirectory
+        let sessions = sessionsDirectory
         try? FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
         return PiLaunchPlanner.plan(
             bun: AgentRuntimeLayout.bunBinary(under: runtimeRoot),
@@ -245,7 +285,8 @@ final class AgentSessionController: ObservableObject {
             sessionDirectory: sessions,
             workspace: workspace,
             endpoint: endpoint,
-            helpersDirectory: FileManager.default.fileExists(atPath: helpers.path) ? helpers : nil)
+            helpersDirectory: FileManager.default.fileExists(atPath: helpers.path) ? helpers : nil,
+            continuePreviousSession: launchMode == .continueRecent)
     }
 
     // MARK: - Helpers
@@ -265,7 +306,7 @@ final class AgentSessionController: ObservableObject {
 
     private func pendingApprovalTool(requestID: String) -> String? {
         for item in folder.items {
-            if case .approval(let id, let tool, _) = item, id == requestID { return tool }
+            if case .approval(let request) = item, request.id == requestID { return request.tool }
         }
         return nil
     }
@@ -275,26 +316,182 @@ final class AgentSessionController: ObservableObject {
         folder.appendNotice(message, isError: true)
         publish()
         state = .failed(message)
+        recoveryAction = .restart
     }
 
-    /// Our extension (Task 12) sends title "lokalbot_tool_approval" with a JSON
-    /// message {"tool": "...", "summary": "..."}. Anything else (a foreign confirm)
-    /// falls back to displaying the title/message verbatim.
-    static func parseApprovalPayload(_ request: PiUIRequest) -> (tool: String, summary: String) {
+    private func setFailure(_ error: Error) {
+        state = .failed(Self.message(for: error))
+        if case StartError.modelConfiguration = error {
+            recoveryAction = .openModels
+        } else {
+            recoveryAction = .restart
+        }
+    }
+
+    /// Our extension sends title "lokalbot_tool_approval" with exact structured
+    /// fields. Older payloads containing only `summary` remain readable.
+    static func parseApprovalPayload(_ request: PiUIRequest) -> AgentApprovalRequest {
         if request.title == "lokalbot_tool_approval",
            let data = request.message?.data(using: .utf8),
-           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let tool = obj["tool"] as? String {
-            return (tool, obj["summary"] as? String ?? "")
+           let payload = try? JSONDecoder().decode(ApprovalPayload.self, from: data) {
+            return AgentApprovalRequest(
+                id: request.id,
+                tool: payload.tool,
+                workspace: payload.workspace,
+                path: payload.path,
+                command: payload.command,
+                content: payload.content,
+                edits: (payload.edits ?? []).map {
+                    AgentApprovalRequest.Edit(oldText: $0.oldText, newText: $0.newText)
+                },
+                summary: payload.summary,
+                isTruncated: payload.truncated ?? false)
         }
-        return (request.title ?? "action", request.message ?? "")
+        return AgentApprovalRequest(
+            id: request.id,
+            tool: request.title ?? "action",
+            workspace: nil,
+            path: nil,
+            command: nil,
+            content: nil,
+            edits: [],
+            summary: request.message,
+            isTruncated: false)
     }
 
-    enum StartError: Error { case notReady(String) }
+    var workspaceDisplayName: String {
+        if workspace.standardizedFileURL == storage.rootURL.standardizedFileURL {
+            return "Meeting Library"
+        }
+        return workspace.lastPathComponent.isEmpty ? workspace.path : workspace.lastPathComponent
+    }
+
+    var requiresCloseConfirmation: Bool {
+        state == .running
+            || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !items.isEmpty
+    }
+
+    var canResumePreviousSession: Bool {
+        Self.hasResumableSession(in: sessionsDirectory, workspace: workspace)
+    }
+
+    var sessionStorageDirectory: URL { sessionsDirectory }
+
+    static func hasResumableSession(in directory: URL, workspace: URL) -> Bool {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]) else { return false }
+        let expectedCWD = workspace.standardizedFileURL.path
+        for file in files where file.pathExtension == "jsonl" {
+            guard let handle = try? FileHandle(forReadingFrom: file) else { continue }
+            defer { try? handle.close() }
+            guard let data = try? handle.read(upToCount: 16 * 1024),
+                  let firstLine = data.split(separator: 0x0A).first,
+                  let header = try? JSONSerialization.jsonObject(with: Data(firstLine)) as? [String: Any],
+                  header["type"] as? String == "session",
+                  let cwd = header["cwd"] as? String else { continue }
+            if URL(fileURLWithPath: cwd).standardizedFileURL.path == expectedCWD {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func makeSessionTitle(from prompt: String) -> String {
+        let firstLine = prompt.split(whereSeparator: { $0.isNewline }).first.map(String.init) ?? prompt
+        let trimmed = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 36 else { return trimmed }
+        let prefix = String(trimmed.prefix(35))
+        let wordBoundary = prefix.lastIndex(of: " ").map { String(prefix[..<$0]) } ?? prefix
+        return wordBoundary.trimmingCharacters(in: .whitespaces) + "…"
+    }
+
+    private struct ApprovalPayload: Decodable {
+        struct Edit: Decodable {
+            let oldText: String
+            let newText: String
+        }
+
+        let tool: String
+        let workspace: String?
+        let path: String?
+        let command: String?
+        let content: String?
+        let edits: [Edit]?
+        let summary: String?
+        let truncated: Bool?
+    }
+
+    private enum LaunchMode {
+        case fresh
+        case continueRecent
+    }
+
+    private func restorePreviousMessages(using client: PiRPCClient) async {
+        do {
+            let response = try await client.request(.getMessages(id: freshID("history")))
+            guard response.success else {
+                folder.appendNotice(response.error ?? "Couldn't restore the previous session.", isError: true)
+                publish()
+                return
+            }
+            let messages = Self.historyMessages(from: response.dataJSON)
+            guard !messages.isEmpty else {
+                folder.appendNotice("No previous conversation was found for this working folder.")
+                publish()
+                return
+            }
+            folder = AgentTranscriptFolder()
+            for message in messages {
+                switch message.role {
+                case "user":
+                    if sessionTitle == nil { sessionTitle = Self.makeSessionTitle(from: message.text) }
+                    folder.noteUserPrompt(message.text)
+                case "assistant":
+                    folder.appendAssistantMessage(message.text)
+                default:
+                    break
+                }
+            }
+            folder.appendNotice("Resumed the most recent session for this working folder.")
+            publish()
+        } catch {
+            folder.appendNotice("Couldn't restore the previous session: \(Self.message(for: error))",
+                                isError: true)
+            publish()
+        }
+    }
+
+    private static func historyMessages(from dataJSON: String?) -> [(role: String, text: String)] {
+        guard let dataJSON,
+              let data = dataJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let messages = object["messages"] as? [[String: Any]] else { return [] }
+        return messages.compactMap { message in
+            guard let role = message["role"] as? String,
+                  role == "user" || role == "assistant" else { return nil }
+            let text: String
+            if let content = message["content"] as? String {
+                text = content
+            } else if let blocks = message["content"] as? [[String: Any]] {
+                text = blocks.compactMap { block in
+                    block["type"] as? String == "text" ? block["text"] as? String : nil
+                }.joined()
+            } else {
+                return nil
+            }
+            guard !text.isEmpty else { return nil }
+            return (role, text)
+        }
+    }
+
+    enum StartError: Error { case modelConfiguration(String) }
 
     private static func message(for error: Error) -> String {
         switch error {
-        case StartError.notReady(let reason): return reason
+        case StartError.modelConfiguration(let reason): return reason
         case PiProcessError.executableNotFound:
             return "The agent runtime isn't installed. Enable Agent Mode to download it."
         case PiRPCError.transportClosed:

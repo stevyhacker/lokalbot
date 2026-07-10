@@ -41,6 +41,7 @@ final class PiRPCMessagesTests: XCTestCase {
             (.abort(id: "a"), "abort"),
             (.newSession(id: "a"), "new_session"),
             (.getState(id: "a"), "get_state"),
+            (.getMessages(id: "a"), "get_messages"),
         ] {
             let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(command.jsonLine.utf8)) as? [String: Any])
             XCTAssertEqual(obj["type"] as? String, type)
@@ -51,7 +52,14 @@ final class PiRPCMessagesTests: XCTestCase {
 
     func testDecodesResponse() {
         let event = PiEvent.decode(line: #"{"id": "req-1", "type": "response", "command": "prompt", "success": true}"#)
-        XCTAssertEqual(event, .response(PiResponse(id: "req-1", command: "prompt", success: true, error: nil)))
+        XCTAssertEqual(event, .response(PiResponse(
+            id: "req-1", command: "prompt", success: true, error: nil, dataJSON: nil)))
+    }
+
+    func testResponsePreservesDataForSessionRestoration() {
+        let event = PiEvent.decode(line: #"{"id":"h1","type":"response","command":"get_messages","success":true,"data":{"messages":[{"role":"user","content":"Hi"}]}}"#)
+        guard case .response(let response) = event else { return XCTFail() }
+        XCTAssertEqual(response.dataJSON, #"{"messages":[{"content":"Hi","role":"user"}]}"#)
     }
 
     func testDecodesLifecycleEvents() {

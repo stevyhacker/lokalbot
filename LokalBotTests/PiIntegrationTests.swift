@@ -1,9 +1,9 @@
 import XCTest
 @testable import LokalBot
 
-/// End-to-end: real Bun, real pi 0.80.5, our real extension, talking to a
+/// End-to-end: real Bun, real pinned pi runtime, our real extension, talking to a
 /// stub OpenAI server. Skips when the vendored runtime isn't installed
-/// (run `Scripts/build-pi-bundle.sh --install-local` once to enable).
+/// (enable Agent Mode in the app once to install it).
 final class PiIntegrationTests: XCTestCase {
 
     private var stub: Process?
@@ -17,7 +17,7 @@ final class PiIntegrationTests: XCTestCase {
     private func requireRuntime() throws -> URL {
         let root = AgentRuntimeLayout.defaultRoot
         guard AgentRuntimeLayout.isInstalled(under: root) else {
-            throw XCTSkip("agent runtime not installed; run Scripts/build-pi-bundle.sh --install-local")
+            throw XCTSkip("agent runtime not installed; enable Agent Mode in the app once")
         }
         return root
     }

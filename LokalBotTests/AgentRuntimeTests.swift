@@ -46,11 +46,9 @@ final class AgentRuntimeTests: XCTestCase {
     func testManifestPinsExpectedVersions() {
         let manifest = AgentRuntimeManifest.current
         XCTAssertEqual(AgentRuntimeManifest.bunVersion, "1.3.14")
-        XCTAssertEqual(AgentRuntimeManifest.piVersion, "0.80.5")
+        XCTAssertEqual(AgentRuntimeManifest.piVersion, "0.80.3")
         XCTAssertTrue(manifest.bun.url.absoluteString.contains("bun-v1.3.14/bun-darwin-aarch64.zip"))
         XCTAssertEqual(manifest.bun.sha256.count, 64)
-        XCTAssertEqual(manifest.piBundle.sha256.count, 64)
         XCTAssertEqual(manifest.bun.archiveKind, .zip)
-        XCTAssertEqual(manifest.piBundle.archiveKind, .tarGz)
     }
 }

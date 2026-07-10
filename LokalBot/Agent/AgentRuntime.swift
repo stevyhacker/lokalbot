@@ -12,27 +12,21 @@ struct AgentRuntimeArtifact: Equatable {
     let archiveKind: AgentArchiveKind
 }
 
-/// Pinned, checksum-verified runtime downloads for Agent Mode. Versions are
-/// deliberate (see the 2026-07-09 spec); bump Bun and pi together and
-/// refresh both checksums via Scripts/build-pi-bundle.sh + RELEASING.md.
+/// Pinned runtime components for Agent Mode. Bun is downloaded as a
+/// checksum-verified release archive. pi is installed from the public npm
+/// registry using the frozen lockfile bundled with LokalBot.
 struct AgentRuntimeManifest: Equatable {
     let bun: AgentRuntimeArtifact
-    let piBundle: AgentRuntimeArtifact
 
     static let bunVersion = "1.3.14"
-    static let piVersion = "0.80.5"
+    static let piVersion = "0.80.3"
 
     static let current = AgentRuntimeManifest(
         bun: AgentRuntimeArtifact(
             name: "Bun \(bunVersion)",
             url: URL(string: "https://github.com/oven-sh/bun/releases/download/bun-v\(bunVersion)/bun-darwin-aarch64.zip")!,
             sha256: "d8b96221828ad6f97ac7ac0ab7e95872341af763001e8803e8267652c2652620",
-            archiveKind: .zip),
-        piBundle: AgentRuntimeArtifact(
-            name: "pi \(piVersion)",
-            url: URL(string: "https://github.com/stevyhacker/lokalbot/releases/download/agent-runtime-\(piVersion)/lokalbot-pi-bundle-\(piVersion).tar.gz")!,
-            sha256: "89730d862e06d0a38c8b71f3accf7b13d639d9e6eb468af28ab6c6962f291ba4",
-            archiveKind: .tarGz))
+            archiveKind: .zip))
 }
 
 /// On-disk layout of the installed runtime. Lives in Application Support

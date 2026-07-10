@@ -8,6 +8,7 @@ enum PiCommand: Equatable {
     case abort(id: String)
     case newSession(id: String)
     case getState(id: String)
+    case getMessages(id: String)
     case uiConfirmResponse(requestID: String, confirmed: Bool)
     case uiCancelResponse(requestID: String)
 
@@ -25,6 +26,8 @@ enum PiCommand: Equatable {
             dict = ["type": "new_session", "id": id]
         case .getState(let id):
             dict = ["type": "get_state", "id": id]
+        case .getMessages(let id):
+            dict = ["type": "get_messages", "id": id]
         case .uiConfirmResponse(let requestID, let confirmed):
             dict = ["type": "extension_ui_response", "id": requestID, "confirmed": confirmed]
         case .uiCancelResponse(let requestID):
@@ -40,6 +43,7 @@ struct PiResponse: Equatable {
     let command: String
     let success: Bool
     let error: String?
+    let dataJSON: String?
 }
 
 struct PiUIRequest: Equatable {
@@ -83,7 +87,8 @@ enum PiEvent: Equatable {
                 id: obj["id"] as? String,
                 command: obj["command"] as? String ?? "",
                 success: obj["success"] as? Bool ?? false,
-                error: obj["error"] as? String))
+                error: obj["error"] as? String,
+                dataJSON: compactJSON(obj["data"])))
         case "agent_start": return .agentStart
         case "agent_end": return .agentEnd
         case "agent_settled": return .agentSettled

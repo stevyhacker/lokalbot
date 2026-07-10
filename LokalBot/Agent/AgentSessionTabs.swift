@@ -10,7 +10,7 @@ final class AgentSessionTabs: ObservableObject {
         let number: Int
         let controller: AgentSessionController
 
-        var title: String { "Session \(number)" }
+        @MainActor var title: String { controller.sessionTitle ?? "Session \(number)" }
     }
 
     @Published private(set) var tabs: [Tab]
@@ -83,5 +83,23 @@ final class AgentSessionTabs: ObservableObject {
         for controller in controllers {
             await controller.shutdown()
         }
+    }
+
+    /// Privacy control used by the tab-strip menu. Active processes stop first
+    /// so pi cannot append to a session file while its history is removed.
+    func clearSavedHistory() async throws {
+        let directory = selectedTab?.controller.sessionStorageDirectory
+            ?? AgentRuntimeLayout.sessionsDirectory
+        await shutdownAll()
+        do {
+            if FileManager.default.fileExists(atPath: directory.path) {
+                try FileManager.default.removeItem(at: directory)
+            }
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            _ = addSession()
+            throw error
+        }
+        _ = addSession()
     }
 }

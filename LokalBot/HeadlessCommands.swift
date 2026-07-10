@@ -199,7 +199,7 @@ struct HeadlessCommandRunner {
     private func runAgent(prompt: String) {
         Task { @MainActor in
             guard AgentRuntimeLayout.isInstalled() else {
-                print("LokalBot --agent: SKIP (agent runtime not installed; run Scripts/build-pi-bundle.sh --install-local)")
+                print("LokalBot --agent: SKIP (agent runtime not installed; enable Agent Mode in the app once)")
                 exit(3)
             }
             let controller = app.agentController

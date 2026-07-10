@@ -1,12 +1,16 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// One live Agent Mode tab. Its local draft and view state stay mounted while
-/// another tab is selected; its controller owns the independent pi process.
+/// One live Agent Mode tab. Every tab stays mounted while hidden so its
+/// transcript, draft, approvals, and independent pi process remain intact.
 struct AgentSessionView: View {
+    @EnvironmentObject private var app: AppState
     @ObservedObject var controller: AgentSessionController
-    @State private var draft = ""
+    let isSelected: Bool
+
     @State private var pickingFolder = false
+    @State private var confirmingAutoApprove = false
+    @FocusState private var composerFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,7 +20,24 @@ struct AgentSessionView: View {
             Divider()
             composer
         }
-        .task { await controller.start() }
+        .task {
+            await controller.start()
+            focusComposerWhenReady()
+        }
+        .onChange(of: isSelected) {
+            focusComposerWhenReady()
+        }
+        .onChange(of: controller.state) {
+            focusComposerWhenReady()
+        }
+        .alert("Allow every change this session?", isPresented: $confirmingAutoApprove) {
+            Button("Allow All Changes", role: .destructive) {
+                controller.autoApproveSession = true
+            }
+            Button("Keep Asking", role: .cancel) {}
+        } message: {
+            Text("The agent will be able to edit files and run shell commands without showing each request first. This resets when the session closes.")
+        }
     }
 
     private var header: some View {
@@ -24,34 +45,40 @@ struct AgentSessionView: View {
             Button {
                 pickingFolder = true
             } label: {
-                Label(controller.workspace.lastPathComponent.isEmpty
-                      ? controller.workspace.path : controller.workspace.lastPathComponent,
-                      systemImage: "folder")
+                Label(controller.workspaceDisplayName, systemImage: "folder")
             }
             .help(controller.workspace.path)
             .fileImporter(isPresented: $pickingFolder,
                           allowedContentTypes: [.folder]) { result in
                 if case .success(let url) = result {
                     controller.workspace = url
-                    Task { await controller.shutdown(); await controller.start() }
+                    Task {
+                        await controller.shutdown()
+                        await controller.start()
+                    }
                 }
             }
             .accessibilityIdentifier("agent.workspace")
 
             statusBadge
-            if case .failed = controller.state {
-                Button("Restart") {
-                    Task { await controller.shutdown(); await controller.start() }
-                }
-                .accessibilityIdentifier("agent.restart")
-            }
             Spacer()
-            Toggle("Auto-approve", isOn: $controller.autoApproveSession)
-                .toggleStyle(.switch).controlSize(.small)
-                .help("Approve every file edit and shell command this session without asking")
+            Toggle("Allow all changes", isOn: Binding(
+                get: { controller.autoApproveSession },
+                set: { enabled in
+                    if enabled {
+                        confirmingAutoApprove = true
+                    } else {
+                        controller.autoApproveSession = false
+                    }
+                }))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .help("Skip approval cards for file edits and shell commands in this session")
+                .accessibilityHint("When enabled, edits and commands run without individual confirmation")
                 .accessibilityIdentifier("agent.autoApprove")
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     @ViewBuilder private var statusBadge: some View {
@@ -66,9 +93,9 @@ struct AgentSessionView: View {
             HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("Working…") }
                 .font(.caption).foregroundStyle(.secondary)
         case .failed(let message):
-            Label(message, systemImage: "exclamationmark.triangle.fill")
+            Label("Needs attention", systemImage: "exclamationmark.triangle.fill")
                 .font(.caption).foregroundStyle(.orange)
-                .lineLimit(1).help(message)
+                .help(message)
         }
     }
 
@@ -76,11 +103,13 @@ struct AgentSessionView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
+                    transcriptLead
                     ForEach(controller.items) { item in
                         row(for: item).id(item.id)
                     }
                 }
                 .padding(12)
+                .frame(maxWidth: .infinity, minHeight: 320, alignment: .topLeading)
             }
             .onChange(of: controller.items.count) {
                 if let last = controller.items.last {
@@ -92,6 +121,100 @@ struct AgentSessionView: View {
         .accessibilityIdentifier("agent.transcript")
     }
 
+    @ViewBuilder private var transcriptLead: some View {
+        switch controller.state {
+        case .failed(let message):
+            recoveryCard(message: message)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, controller.items.isEmpty ? 52 : 4)
+        case .ready where controller.items.isEmpty:
+            emptyState
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 52)
+        case .idle where controller.items.isEmpty,
+             .starting where controller.items.isEmpty:
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Starting your local agent…").foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 72)
+        default:
+            EmptyView()
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 30))
+                .foregroundStyle(.secondary)
+            VStack(spacing: 5) {
+                Text("What should the agent help with?")
+                    .font(.title3.weight(.semibold))
+                Text("It can read your Meeting Library now. File changes and commands ask first. Session history stays on this Mac.")
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            if controller.canResumePreviousSession {
+                Button {
+                    Task { await controller.resumePreviousSession() }
+                } label: {
+                    Label("Resume Most Recent Session", systemImage: "clock.arrow.circlepath")
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("agent.resumePrevious")
+            }
+            VStack(spacing: 7) {
+                starterButton("Summarize my most recent meeting")
+                starterButton("Find meetings with unresolved action items")
+                starterButton("List the main topics in my Meeting Library")
+            }
+            .frame(maxWidth: 340)
+        }
+    }
+
+    private func starterButton(_ prompt: String) -> some View {
+        Button(prompt) {
+            controller.draft = prompt
+            submit()
+        }
+        .buttonStyle(.bordered)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func recoveryCard(message: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 28))
+                .foregroundStyle(.orange)
+            Text("Agent Mode needs attention")
+                .font(.title3.weight(.semibold))
+            Text(message)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .textSelection(.enabled)
+                .frame(maxWidth: 460)
+            HStack {
+                if controller.recoveryAction == .openModels {
+                    Button("Open Models") {
+                        app.openSettings(tab: .models)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("agent.openModels")
+                }
+                Button("Try Again") {
+                    Task {
+                        await controller.shutdown()
+                        await controller.start()
+                    }
+                }
+                .accessibilityIdentifier("agent.restart")
+            }
+        }
+        .padding(16)
+    }
+
     @ViewBuilder private func row(for item: AgentTranscriptItem) -> some View {
         switch item {
         case .user(_, let text):
@@ -101,7 +224,7 @@ struct AgentSessionView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
         case .assistant(_, let text, let isStreaming):
             VStack(alignment: .leading, spacing: 4) {
-                Text(LocalizedStringKey(text))   // renders markdown
+                Text(LocalizedStringKey(text))
                     .textSelection(.enabled)
                 if isStreaming {
                     ProgressView().controlSize(.mini)
@@ -112,8 +235,8 @@ struct AgentSessionView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         case .tool(_, let name, let argsJSON, let output, let status):
             toolCard(name: name, argsJSON: argsJSON, output: output, status: status)
-        case .approval(let id, let tool, let argsJSON):
-            approvalCard(id: id, tool: tool, argsJSON: argsJSON)
+        case .approval(let request):
+            approvalCard(request)
         case .notice(_, let text, let isError):
             Label(text, systemImage: isError ? "exclamationmark.triangle" : "info.circle")
                 .font(.caption)
@@ -148,40 +271,108 @@ struct AgentSessionView: View {
         .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private func approvalCard(id: String, tool: String, argsJSON: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("The agent wants to run \(tool)", systemImage: "hand.raised.fill")
+    private func approvalCard(_ request: AgentApprovalRequest) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Approval required: \(request.tool)", systemImage: "hand.raised.fill")
                 .font(.callout.weight(.semibold))
-            if !argsJSON.isEmpty {
-                Text(argsJSON).font(.caption.monospaced())
-                    .lineLimit(8).textSelection(.enabled)
+
+            if let path = request.path {
+                approvalText(label: "File", value: path)
             }
+            if let command = request.command {
+                approvalCode(label: "Command", value: command)
+            }
+            if let content = request.content {
+                approvalCode(label: "Content to write", value: content)
+            }
+            ForEach(Array(request.edits.enumerated()), id: \.offset) { index, edit in
+                VStack(alignment: .leading, spacing: 6) {
+                    if request.edits.count > 1 {
+                        Text("Edit \(index + 1)").font(.caption.weight(.semibold))
+                    }
+                    approvalCode(label: "Remove", value: edit.oldText, tint: .red)
+                    approvalCode(label: "Replace with", value: edit.newText, tint: .green)
+                }
+            }
+            if let workspace = request.workspace {
+                approvalText(label: "Working folder", value: workspace)
+            }
+            if !request.hasStructuredDetails, let summary = request.summary, !summary.isEmpty {
+                approvalCode(label: "Request details", value: summary)
+            }
+            if request.isTruncated {
+                Label("Preview shortened because the requested change is very large.",
+                      systemImage: "ellipsis.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             HStack {
-                Button("Allow Once") {
-                    Task { await controller.respondToApproval(id: id, approved: true, scope: .once) }
+                Button("Deny") {
+                    Task {
+                        await controller.respondToApproval(
+                            id: request.id, approved: false, scope: .once)
+                    }
                 }
                 .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("agent.approve.once")
-                Button("Allow \(tool) This Session") {
-                    Task { await controller.respondToApproval(id: id, approved: true, scope: .session) }
-                }
-                .accessibilityIdentifier("agent.approve.session")
-                Button("Deny", role: .destructive) {
-                    Task { await controller.respondToApproval(id: id, approved: false, scope: .once) }
-                }
+                .keyboardShortcut(.cancelAction)
                 .accessibilityIdentifier("agent.approve.deny")
+
+                Spacer()
+
+                Button("Allow \(request.tool) for Session") {
+                    Task {
+                        await controller.respondToApproval(
+                            id: request.id, approved: true, scope: .session)
+                    }
+                }
+                .help("Automatically allow future \(request.tool) requests until this session closes")
+                .accessibilityIdentifier("agent.approve.session")
+
+                Button("Allow Once") {
+                    Task {
+                        await controller.respondToApproval(
+                            id: request.id, approved: true, scope: .once)
+                    }
+                }
+                .accessibilityIdentifier("agent.approve.once")
             }
         }
-        .padding(10)
-        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .padding(12)
+        .background(.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.orange.opacity(0.4)))
+    }
+
+    private func approvalText(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Text(value).font(.caption.monospaced()).textSelection(.enabled)
+        }
+    }
+
+    private func approvalCode(label: String, value: String, tint: Color = .gray) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            ScrollView([.horizontal, .vertical]) {
+                Text(value.isEmpty ? "(empty)" : value)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(7)
+            }
+            .frame(minHeight: 34, maxHeight: 170)
+            .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(tint.opacity(0.18)))
+        }
     }
 
     private var composer: some View {
         HStack(spacing: 8) {
-            TextField("Ask the agent…", text: $draft, axis: .vertical)
+            TextField("Ask the agent…", text: $controller.draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...5)
+                .focused($composerFocused)
                 .onSubmit(submit)
                 .accessibilityIdentifier("agent.composer")
             if controller.state == .running {
@@ -190,7 +381,7 @@ struct AgentSessionView: View {
             }
             Button("Send", action: submit)
                 .buttonStyle(.borderedProminent)
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                .disabled(controller.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                           || !(controller.state == .ready || controller.state == .running))
                 .accessibilityIdentifier("agent.send")
         }
@@ -198,9 +389,17 @@ struct AgentSessionView: View {
     }
 
     private func submit() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = controller.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        draft = ""
+        controller.draft = ""
         Task { await controller.send(prompt: text) }
+    }
+
+    private func focusComposerWhenReady() {
+        guard isSelected, controller.state == .ready else { return }
+        Task { @MainActor in
+            await Task.yield()
+            composerFocused = true
+        }
     }
 }

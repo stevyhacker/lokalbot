@@ -25,6 +25,7 @@ enum PiLaunchPlanner {
                      workspace: URL,
                      endpoint: AgentLLMEndpoint,
                      helpersDirectory: URL?,
+                     continuePreviousSession: Bool = false,
                      baseEnvironment: [String: String] = ProcessInfo.processInfo.environment) -> PiLaunchPlan {
         var arguments = [
             piCLI.path,
@@ -34,6 +35,9 @@ enum PiLaunchPlanner {
             "--no-extensions", "-e", extensionDirectory.path,
             "--no-skills",
         ]
+        if continuePreviousSession {
+            arguments.append("--continue")
+        }
         if let skillDirectory {
             arguments += ["--skill", skillDirectory.path]
         }
@@ -52,6 +56,9 @@ enum PiLaunchPlanner {
             environment["LOKALBOT_LLM_API_KEY"] = apiKey
         }
         environment["PI_SKIP_VERSION_CHECK"] = "1"
+        environment["PI_TELEMETRY"] = "0"
+        environment["PI_CODING_AGENT_DIR"] = sessionDirectory.deletingLastPathComponent()
+            .appendingPathComponent("pi-config", isDirectory: true).path
         if let helpersDirectory {
             // lokalbot-cli lives in Contents/Helpers; the bundled skill
             // invokes it by name, so it must be on the agent's PATH.

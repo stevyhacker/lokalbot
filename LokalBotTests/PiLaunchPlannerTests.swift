@@ -11,7 +11,8 @@ final class PiLaunchPlannerTests: XCTestCase {
 
     private func makePlan(apiKey: String? = nil,
                           skill: URL? = URL(fileURLWithPath: "/app/Resources/pi/lokalbot-cli-skill"),
-                          helpers: URL? = URL(fileURLWithPath: "/app/Contents/Helpers")) -> PiLaunchPlan {
+                          helpers: URL? = URL(fileURLWithPath: "/app/Contents/Helpers"),
+                          continuePrevious: Bool = false) -> PiLaunchPlan {
         PiLaunchPlanner.plan(
             bun: URL(fileURLWithPath: "/rt/bun/bun"),
             piCLI: URL(fileURLWithPath: "/rt/pi/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"),
@@ -22,6 +23,7 @@ final class PiLaunchPlannerTests: XCTestCase {
             endpoint: AgentLLMEndpoint(baseURL: endpoint.baseURL, model: endpoint.model,
                                        contextTokens: endpoint.contextTokens, apiKey: apiKey),
             helpersDirectory: helpers,
+            continuePreviousSession: continuePrevious,
             baseEnvironment: ["PATH": "/usr/bin:/bin", "HOME": "/Users/x"])
     }
 
@@ -47,6 +49,8 @@ final class PiLaunchPlannerTests: XCTestCase {
         XCTAssertEqual(env["LOKALBOT_LLM_CTX"], "16384")
         XCTAssertNil(env["LOKALBOT_LLM_API_KEY"])
         XCTAssertEqual(env["PI_SKIP_VERSION_CHECK"], "1")
+        XCTAssertEqual(env["PI_TELEMETRY"], "0")
+        XCTAssertEqual(env["PI_CODING_AGENT_DIR"], "/store/agent/pi-config")
         XCTAssertEqual(env["PATH"], "/app/Contents/Helpers:/usr/bin:/bin")
         XCTAssertEqual(env["HOME"], "/Users/x", "base environment is preserved")
     }
@@ -70,5 +74,10 @@ final class PiLaunchPlannerTests: XCTestCase {
     func testNoContextFilesFlagIsDeliberatelyAbsent() {
         XCTAssertFalse(makePlan().arguments.contains("--no-context-files"),
                        "project AGENTS.md/CLAUDE.md context stays enabled by design")
+    }
+
+    func testContinueFlagOnlyAppearsForResumeLaunches() {
+        XCTAssertFalse(makePlan().arguments.contains("--continue"))
+        XCTAssertTrue(makePlan(continuePrevious: true).arguments.contains("--continue"))
     }
 }

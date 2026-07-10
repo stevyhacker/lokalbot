@@ -25,7 +25,9 @@ struct AgentView: View {
                 // Keep every tab mounted so its draft, scroll position, task,
                 // approvals, and live process continue while another is shown.
                 ForEach(sessions.tabs) { tab in
-                    AgentSessionView(controller: tab.controller)
+                    AgentSessionView(
+                        controller: tab.controller,
+                        isSelected: sessions.selectedID == tab.id)
                         .opacity(sessions.selectedID == tab.id ? 1 : 0)
                         .allowsHitTesting(sessions.selectedID == tab.id)
                         .accessibilityHidden(sessions.selectedID != tab.id)
@@ -42,7 +44,7 @@ struct AgentView: View {
             Image(systemName: "wand.and.sparkles").font(.system(size: 36))
                 .foregroundStyle(.secondary)
             Text("Agent Mode").font(.title2.bold())
-            Text("An on-device coding and file agent (pi) powered by your Main LLM engine. It runs entirely on this Mac — the one-time ~50 MB runtime download below is the only network access the agent itself ever makes. Commands you approve run with your full permissions and can do anything you could — including accessing the network.")
+            Text("An on-device coding and file agent powered by your Main LLM engine. Setup downloads about 50 MB and uses about 225 MB after installation. Agent sessions stay local; commands you approve run with your Mac user permissions and may access files or the network.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 420)
@@ -75,6 +77,9 @@ struct AgentView: View {
 
 private struct AgentSessionTabBar: View {
     @ObservedObject var sessions: AgentSessionTabs
+    @State private var pendingClose: UUID?
+    @State private var confirmingHistoryClear = false
+    @State private var historyClearError: String?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -85,7 +90,7 @@ private struct AgentSessionTabBar: View {
                             tab: tab,
                             isSelected: sessions.selectedID == tab.id,
                             select: { sessions.select(tab.id) },
-                            close: { Task { await sessions.close(tab.id) } })
+                            close: { requestClose(tab) })
                     }
                 }
             }
@@ -96,16 +101,80 @@ private struct AgentSessionTabBar: View {
                 sessions.addSession()
             } label: {
                 Image(systemName: "plus")
-                    .frame(width: 20, height: 20)
+                    .frame(width: 28, height: 28)
             }
             .buttonStyle(.borderless)
             .help("New Agent Session")
             .accessibilityLabel("New Agent Session")
             .accessibilityIdentifier("agent.newSession")
+
+            Menu {
+                Button("Clear Saved Agent History…", role: .destructive) {
+                    confirmingHistoryClear = true
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .frame(width: 28, height: 28)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Agent session options")
+            .accessibilityLabel("Agent session options")
+            .accessibilityIdentifier("agent.sessionOptions")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(.regularMaterial)
+        .confirmationDialog(
+            "Close \(pendingTab?.title ?? "this session")?",
+            isPresented: Binding(
+                get: { pendingClose != nil },
+                set: { if !$0 { pendingClose = nil } })) {
+            Button("Close Session", role: .destructive) {
+                guard let id = pendingClose else { return }
+                pendingClose = nil
+                Task { await sessions.close(id) }
+            }
+            Button("Cancel", role: .cancel) { pendingClose = nil }
+        } message: {
+            Text("Its conversation, pending work, and unsent draft will be discarded.")
+        }
+        .confirmationDialog(
+            "Clear all saved Agent history?",
+            isPresented: $confirmingHistoryClear) {
+            Button("Clear History", role: .destructive) {
+                Task {
+                    do {
+                        try await sessions.clearSavedHistory()
+                    } catch {
+                        historyClearError = error.localizedDescription
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This closes every Agent session and permanently removes their local conversations and drafts. Your meeting library is not affected.")
+        }
+        .alert("Couldn’t Clear Agent History", isPresented: Binding(
+            get: { historyClearError != nil },
+            set: { if !$0 { historyClearError = nil } })) {
+            Button("OK") { historyClearError = nil }
+        } message: {
+            Text(historyClearError ?? "Unknown error")
+        }
+    }
+
+    private var pendingTab: AgentSessionTabs.Tab? {
+        sessions.tabs.first { $0.id == pendingClose }
+    }
+
+    private func requestClose(_ tab: AgentSessionTabs.Tab) {
+        if tab.controller.requiresCloseConfirmation {
+            pendingClose = tab.id
+        } else {
+            Task { await sessions.close(tab.id) }
+        }
     }
 }
 
@@ -145,14 +214,14 @@ private struct AgentSessionTabItem: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Open \(tab.title)")
+            .accessibilityLabel("Open \(tab.title), \(statusLabel)")
             .accessibilityIdentifier("agent.tab.\(tab.id.uuidString)")
 
             Button(action: close) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 22, height: 22)
+                    .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -176,6 +245,15 @@ private struct AgentSessionTabItem: View {
         case .ready: return .green
         case .running: return .blue
         case .failed: return .orange
+        }
+    }
+
+    private var statusLabel: String {
+        switch controller.state {
+        case .idle, .starting: return "starting"
+        case .ready: return "ready"
+        case .running: return "working"
+        case .failed: return "needs attention"
         }
     }
 }

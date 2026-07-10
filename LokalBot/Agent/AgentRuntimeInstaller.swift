@@ -1,13 +1,13 @@
 import Foundation
 
-/// Downloads, verifies, and installs the Agent Mode runtime (Bun + the pi
-/// bundle) into `AgentRuntimeLayout`. Both artifacts are pinned by SHA256
-/// in `AgentRuntimeManifest.current`; a mismatch aborts the install — no
-/// unverified code ever lands on disk. Assembly happens in a staging
-/// directory that is swapped into place at the end, so a failed install
+/// Downloads and verifies Bun, then uses the frozen lockfile bundled with the
+/// app to install pi from the public npm registry. Assembly happens in a
+/// staging directory that is swapped into place at the end, so a failed setup
 /// leaves nothing half-written.
 @MainActor
 final class AgentRuntimeInstaller: ObservableObject {
+
+    typealias PackageInstaller = (_ bun: URL, _ template: URL, _ destination: URL) async throws -> Void
 
     enum Phase: Equatable {
         case idle
@@ -21,10 +21,19 @@ final class AgentRuntimeInstaller: ObservableObject {
 
     private let root: URL
     private let session: URLSession
+    private let runtimeTemplate: URL
+    private let packageInstaller: PackageInstaller
 
-    init(root: URL = AgentRuntimeLayout.defaultRoot, session: URLSession = .shared) {
+    init(root: URL = AgentRuntimeLayout.defaultRoot,
+         session: URLSession = .shared,
+         runtimeTemplate: URL? = nil,
+         packageInstaller: @escaping PackageInstaller = AgentRuntimeInstaller.installPackages) {
         self.root = root
         self.session = session
+        self.runtimeTemplate = runtimeTemplate
+            ?? Bundle.main.resourceURL?.appendingPathComponent("pi/runtime", isDirectory: true)
+            ?? URL(fileURLWithPath: "pi/runtime", isDirectory: true)
+        self.packageInstaller = packageInstaller
         if AgentRuntimeLayout.isInstalled(under: root) { phase = .installed }
     }
 
@@ -40,7 +49,6 @@ final class AgentRuntimeInstaller: ObservableObject {
             try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
 
             let bunArchive = try await download(manifest.bun, into: staging)
-            let piArchive = try await download(manifest.piBundle, into: staging)
 
             phase = .installing(name: manifest.bun.name)
             let bunStage = staging.appendingPathComponent("bun-extract", isDirectory: true)
@@ -49,10 +57,12 @@ final class AgentRuntimeInstaller: ObservableObject {
             guard FileManager.default.fileExists(atPath: bunBinary.path) else {
                 throw InstallError.layout("bun binary missing from archive")
             }
+            try FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                                  ofItemAtPath: bunBinary.path)
 
-            phase = .installing(name: manifest.piBundle.name)
-            let piStage = staging.appendingPathComponent("pi-extract", isDirectory: true)
-            try Self.unpack(piArchive, kind: manifest.piBundle.archiveKind, into: piStage)
+            phase = .installing(name: "pi \(AgentRuntimeManifest.piVersion)")
+            let piStage = staging.appendingPathComponent("pi-install", isDirectory: true)
+            try await packageInstaller(bunBinary, runtimeTemplate, piStage)
             let stagedCLI = piStage.appendingPathComponent(
                 "node_modules/@earendil-works/pi-coding-agent/dist/cli.js")
             guard FileManager.default.fileExists(atPath: stagedCLI.path) else {
@@ -81,6 +91,57 @@ final class AgentRuntimeInstaller: ObservableObject {
             phase = .installed
         } catch {
             phase = .failed(Self.userMessage(for: error))
+        }
+    }
+
+    // MARK: - Frozen package install
+
+    static func installPackages(bun: URL, template: URL, destination: URL) async throws {
+        let packageJSON = template.appendingPathComponent("package.json")
+        let lockfile = template.appendingPathComponent("bun.lock")
+        guard FileManager.default.fileExists(atPath: packageJSON.path),
+              FileManager.default.fileExists(atPath: lockfile.path) else {
+            throw InstallError.layout("the bundled pi package manifest is missing")
+        }
+
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: packageJSON,
+                                         to: destination.appendingPathComponent("package.json"))
+        try FileManager.default.copyItem(at: lockfile,
+                                         to: destination.appendingPathComponent("bun.lock"))
+
+        let logURL = destination.appendingPathComponent("install.log")
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        let log = try FileHandle(forWritingTo: logURL)
+        defer {
+            try? log.close()
+            try? FileManager.default.removeItem(at: logURL)
+        }
+
+        let process = Process()
+        process.executableURL = bun
+        process.arguments = ["install", "--production", "--frozen-lockfile", "--ignore-scripts"]
+        process.currentDirectoryURL = destination
+        process.standardOutput = log
+        process.standardError = log
+
+        let status: Int32 = try await withCheckedThrowingContinuation { continuation in
+            process.terminationHandler = { finished in
+                continuation.resume(returning: finished.terminationStatus)
+            }
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+        try log.synchronize()
+        guard status == 0 else {
+            let data = (try? Data(contentsOf: logURL)) ?? Data()
+            let fullDetail = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let detail = fullDetail.map { String($0.suffix(2_000)) }
+            throw InstallError.packageInstall(detail?.isEmpty == false ? detail! : "exit \(status)")
         }
     }
 
@@ -146,6 +207,7 @@ final class AgentRuntimeInstaller: ObservableObject {
         case checksum(String)
         case unpack(String, Int32)
         case layout(String)
+        case packageInstall(String)
     }
 
     private static func userMessage(for error: Error) -> String {
@@ -157,7 +219,9 @@ final class AgentRuntimeInstaller: ObservableObject {
         case InstallError.unpack(let file, let code):
             return "Couldn't unpack \(file) (exit \(code))."
         case InstallError.layout(let detail):
-            return "The downloaded archive didn't have the expected layout: \(detail)."
+            return "Agent setup couldn't find the expected files: \(detail)."
+        case InstallError.packageInstall(let detail):
+            return "Couldn't install pi from the public package registry. Check your connection and try again.\n\(detail)"
         default:
             return "Setup failed: \(error.localizedDescription)"
         }

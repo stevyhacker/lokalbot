@@ -68,15 +68,16 @@ final class AgentTranscriptTests: XCTestCase {
 
     func testApprovalAddAndResolve() {
         var folder = AgentTranscriptFolder()
-        folder.addApproval(requestID: "uuid-1", tool: "bash", argsJSON: #"{"command":"rm x"}"#)
-        XCTAssertEqual(folder.items, [.approval(id: "uuid-1", tool: "bash", argsJSON: #"{"command":"rm x"}"#)])
+        let request = approvalRequest(id: "uuid-1", command: "rm x")
+        folder.addApproval(request)
+        XCTAssertEqual(folder.items, [.approval(request)])
         folder.resolveApproval(requestID: "uuid-1")
         XCTAssertTrue(folder.items.isEmpty)
     }
 
     func testResolveApprovalKeepsStreamingDeltasOnTheRightBubble() {
         var folder = AgentTranscriptFolder()
-        folder.addApproval(requestID: "uuid-1", tool: "bash", argsJSON: #"{"command":"ls"}"#)
+        folder.addApproval(approvalRequest(id: "uuid-1", command: "ls"))
         folder.fold(.messageStart(role: "assistant"))
         folder.fold(.messageUpdate(.textDelta("Hello")))
         // Removing the card shifts the array under the streaming bubble; the
@@ -108,5 +109,18 @@ final class AgentTranscriptTests: XCTestCase {
         folder.fold(.messageUpdate(.textDelta("partial answer")))
         folder.fold(.agentSettled)   // e.g. user aborted mid-stream: no message_end
         guard case .assistant(_, "partial answer", false) = folder.items[0] else { return XCTFail() }
+    }
+
+    private func approvalRequest(id: String, command: String) -> AgentApprovalRequest {
+        AgentApprovalRequest(
+            id: id,
+            tool: "bash",
+            workspace: "/tmp",
+            path: nil,
+            command: command,
+            content: nil,
+            edits: [],
+            summary: nil,
+            isTruncated: false)
     }
 }

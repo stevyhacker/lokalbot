@@ -98,15 +98,37 @@ final class AgentSessionTabsTests: XCTestCase {
         XCTAssertEqual(first.controller.state, .idle)
         XCTAssertEqual(second.controller.state, .idle)
     }
+
+    func testClearSavedHistoryStopsSessionsRemovesFilesAndCreatesFreshTab() async throws {
+        let factory = Factory(root: root)
+        try FileManager.default.createDirectory(
+            at: factory.sessionsDirectory, withIntermediateDirectories: true)
+        try Data("history".utf8).write(
+            to: factory.sessionsDirectory.appendingPathComponent("saved.jsonl"))
+        let sessions = AgentSessionTabs { factory.makeController() }
+        let original = sessions.tabs[0]
+        await original.controller.start()
+
+        try await sessions.clearSavedHistory()
+
+        XCTAssertEqual(original.controller.state, .idle)
+        XCTAssertEqual(sessions.tabs.count, 1)
+        XCTAssertNotEqual(sessions.tabs[0].id, original.id)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(
+            at: factory.sessionsDirectory,
+            includingPropertiesForKeys: nil), [])
+    }
 }
 
 @MainActor
 private final class Factory {
     let storage: StorageManager
+    let sessionsDirectory: URL
     private(set) var transports: [FakeTransport] = []
 
     init(root: URL) {
         storage = StorageManager(rootURL: root)
+        sessionsDirectory = root.appendingPathComponent("agent-sessions", isDirectory: true)
     }
 
     func makeController() -> AgentSessionController {
@@ -119,6 +141,7 @@ private final class Factory {
         return AgentSessionController(
             settings: { settings },
             storage: storage,
+            sessionsDirectory: sessionsDirectory,
             makeTransport: { _ in transport })
     }
 }

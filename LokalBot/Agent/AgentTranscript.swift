@@ -4,18 +4,44 @@ enum AgentToolStatus: Equatable {
     case running, succeeded, failed
 }
 
+/// App-owned, structured description of a mutating tool request. Keeping the
+/// fields separate lets the approval surface show the exact command/content
+/// instead of trusting a model-authored one-line summary.
+struct AgentApprovalRequest: Equatable, Identifiable {
+    struct Edit: Equatable {
+        let oldText: String
+        let newText: String
+    }
+
+    let id: String
+    let tool: String
+    let workspace: String?
+    let path: String?
+    let command: String?
+    let content: String?
+    let edits: [Edit]
+    let summary: String?
+    let isTruncated: Bool
+
+    var hasStructuredDetails: Bool {
+        workspace != nil || path != nil || command != nil || content != nil || !edits.isEmpty
+    }
+}
+
 enum AgentTranscriptItem: Equatable, Identifiable {
     case user(id: String, text: String)
     case assistant(id: String, text: String, isStreaming: Bool)
     case tool(id: String, name: String, argsJSON: String, output: String, status: AgentToolStatus)
-    case approval(id: String, tool: String, argsJSON: String)
+    case approval(AgentApprovalRequest)
     case notice(id: String, text: String, isError: Bool)
 
     var id: String {
         switch self {
         case .user(let id, _), .assistant(let id, _, _), .tool(let id, _, _, _, _),
-             .approval(let id, _, _), .notice(let id, _, _):
+             .notice(let id, _, _):
             return id
+        case .approval(let request):
+            return request.id
         }
     }
 }
@@ -42,17 +68,21 @@ struct AgentTranscriptFolder: Equatable {
         items.append(.user(id: nextID("user"), text: text))
     }
 
+    mutating func appendAssistantMessage(_ text: String) {
+        items.append(.assistant(id: nextID("assistant"), text: text, isStreaming: false))
+    }
+
     mutating func appendNotice(_ text: String, isError: Bool = false) {
         items.append(.notice(id: nextID("notice"), text: text, isError: isError))
     }
 
-    mutating func addApproval(requestID: String, tool: String, argsJSON: String) {
-        items.append(.approval(id: requestID, tool: tool, argsJSON: argsJSON))
+    mutating func addApproval(_ request: AgentApprovalRequest) {
+        items.append(.approval(request))
     }
 
     mutating func resolveApproval(requestID: String) {
         items.removeAll {
-            if case .approval(let id, _, _) = $0 { return id == requestID }
+            if case .approval(let request) = $0 { return request.id == requestID }
             return false
         }
     }
