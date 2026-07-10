@@ -8,8 +8,8 @@
 #
 # Hermetic: the whole suite runs against a throwaway library under a temp
 # LOKALBOT_STORAGE_ROOT, so it never touches the user's real meetings,
-# indexes, or journal. Model caches are intentionally shared with the real
-# install (they live outside the storage root), so nothing re-downloads.
+# indexes, or journal. The real install's models/ directory is symlinked
+# into the temp root so multi-GB GGUFs are shared, not re-downloaded.
 set -uo pipefail
 
 BIN="${LOKALBOT_APP:-/Applications/LokalBot.app}/Contents/MacOS/LokalBot"
@@ -17,6 +17,14 @@ BIN="${LOKALBOT_APP:-/Applications/LokalBot.app}/Contents/MacOS/LokalBot"
 
 ROOT=$(mktemp -d /tmp/lokalbot-e2e.XXXXXX)
 export LOKALBOT_STORAGE_ROOT="$ROOT"
+
+# Catalog GGUFs download under <storage root>/models (ModelCatalog.localURL),
+# so a bare hermetic root would re-fetch them from scratch. Share the real
+# install's downloads instead. Cleanup stays safe: `rm -rf` deletes the
+# symlink itself, never the target directory's contents.
+REAL_MODELS="$HOME/Library/Application Support/me.dotenv.LokalBot/models"
+mkdir -p "$REAL_MODELS"
+ln -s "$REAL_MODELS" "$ROOT/models"
 
 P=0; F=0; S=0
 pass() { echo "  ✅ $1"; P=$((P+1)); }
