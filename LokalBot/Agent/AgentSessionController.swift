@@ -137,6 +137,9 @@ final class AgentSessionController: ObservableObject {
                 guard !Task.isCancelled else { return }
                 await self.handle(event)
             }
+            // shutdown() cancels this task and only later sets .idle; a
+            // cancelled iteration ending must not fold a spurious failure.
+            guard !Task.isCancelled else { return }
             await self.handleStreamEnd()
         }
     }

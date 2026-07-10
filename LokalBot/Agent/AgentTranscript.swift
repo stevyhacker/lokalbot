@@ -26,8 +26,15 @@ enum AgentTranscriptItem: Equatable, Identifiable {
 struct AgentTranscriptFolder: Equatable {
     private(set) var items: [AgentTranscriptItem] = []
     private(set) var isAgentRunning = false
-    private var streamingAssistantIndex: Int?
+    private var streamingAssistantID: String?
     private var counter = 0
+
+    /// Resolved fresh on every use so removals elsewhere in the array
+    /// (e.g. resolveApproval) can never leave a stale index behind.
+    private var streamingAssistantIndex: Int? {
+        guard let streamingAssistantID else { return nil }
+        return items.firstIndex { $0.id == streamingAssistantID }
+    }
 
     // MARK: - Local inserts (not driven by pi events)
 
@@ -61,13 +68,14 @@ struct AgentTranscriptFolder: Equatable {
             finishStreamingAssistant()
         case .messageStart(let role):
             guard role == "assistant" else { return }
-            items.append(.assistant(id: nextID("assistant"), text: "", isStreaming: true))
-            streamingAssistantIndex = items.count - 1
+            let id = nextID("assistant")
+            items.append(.assistant(id: id, text: "", isStreaming: true))
+            streamingAssistantID = id
         case .messageUpdate(.textDelta(let delta)):
             appendToStreamingAssistant(delta)
         case .messageEnd(let role, let text):
             guard role == "assistant" else { return }
-            defer { streamingAssistantIndex = nil }
+            defer { streamingAssistantID = nil }
             if let index = streamingAssistantIndex,
                case .assistant(let id, let streamed, _) = items[index] {
                 let final = text.isEmpty ? streamed : text
@@ -101,8 +109,9 @@ struct AgentTranscriptFolder: Equatable {
 
     private mutating func appendToStreamingAssistant(_ delta: String) {
         if streamingAssistantIndex == nil {
-            items.append(.assistant(id: nextID("assistant"), text: "", isStreaming: true))
-            streamingAssistantIndex = items.count - 1
+            let id = nextID("assistant")
+            items.append(.assistant(id: id, text: "", isStreaming: true))
+            streamingAssistantID = id
         }
         if let index = streamingAssistantIndex,
            case .assistant(let id, let text, _) = items[index] {
@@ -111,7 +120,7 @@ struct AgentTranscriptFolder: Equatable {
     }
 
     private mutating func finishStreamingAssistant() {
-        defer { streamingAssistantIndex = nil }
+        defer { streamingAssistantID = nil }
         guard let index = streamingAssistantIndex,
               case .assistant(let id, let text, _) = items[index] else { return }
         if text.isEmpty {

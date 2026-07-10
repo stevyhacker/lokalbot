@@ -74,6 +74,26 @@ final class AgentTranscriptTests: XCTestCase {
         XCTAssertTrue(folder.items.isEmpty)
     }
 
+    func testResolveApprovalKeepsStreamingDeltasOnTheRightBubble() {
+        var folder = AgentTranscriptFolder()
+        folder.addApproval(requestID: "uuid-1", tool: "bash", argsJSON: #"{"command":"ls"}"#)
+        folder.fold(.messageStart(role: "assistant"))
+        folder.fold(.messageUpdate(.textDelta("Hello")))
+        // Removing the card shifts the array under the streaming bubble; the
+        // assistant is now the LAST item, so a stale raw index would be out
+        // of range on the next delta.
+        folder.resolveApproval(requestID: "uuid-1")
+        folder.fold(.messageUpdate(.textDelta(" world")))
+        XCTAssertEqual(folder.items.count, 1)
+        guard case .assistant(_, "Hello world", true) = folder.items[0] else {
+            return XCTFail("expected one streaming assistant bubble, got \(folder.items)")
+        }
+        folder.fold(.messageEnd(role: "assistant", text: ""))
+        guard case .assistant(_, "Hello world", false) = folder.items[0] else {
+            return XCTFail("expected finalized bubble, got \(folder.items)")
+        }
+    }
+
     func testUserPromptAndNotices() {
         var folder = AgentTranscriptFolder()
         folder.noteUserPrompt("do the thing")
