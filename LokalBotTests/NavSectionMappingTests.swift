@@ -60,3 +60,12 @@ final class NavSectionMappingTests: XCTestCase {
         XCTAssertNil(AppState.TypeTab(captureName: "capture"))
     }
 }
+
+/// Agent Mode's sidebar section (Task 16): the "agent" capture name resolves
+/// to its NavSection so deep links and the UI-test host can land on it.
+final class NavSectionAgentTests: XCTestCase {
+    func testAgentSectionRoundTripsCaptureName() {
+        XCTAssertEqual(AppState.NavSection(captureName: "agent"), .agent)
+        XCTAssertEqual(AppState.NavSection(captureName: "Agent"), .agent)
+    }
+}

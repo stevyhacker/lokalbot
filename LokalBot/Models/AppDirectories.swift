@@ -16,10 +16,13 @@ enum AppDirectories {
     /// The app's real Application Support home:
     /// `~/Library/Application Support/me.dotenv.LokalBot`.
     ///
-    /// Deliberately NOT redirected by the storage-root override: model caches,
-    /// the installed llama-server binary, and server PID markers live here even
-    /// under `LOKALBOT_STORAGE_ROOT` isolation, so hermetic test runs share
-    /// multi-GB model downloads with the real install instead of re-fetching.
+    /// Deliberately NOT redirected by the storage-root override: the installed
+    /// llama-server binary, its PID markers, transcription model stores, and
+    /// the agent runtime live here even under `LOKALBOT_STORAGE_ROOT`
+    /// isolation, so hermetic test runs share them with the real install.
+    /// Catalog GGUFs are the exception — they download under the overridable
+    /// library root (`ModelCatalog.localURL`); `Scripts/e2e.sh` symlinks the
+    /// real models/ into its temp root to keep those shared too.
     static var applicationSupport: URL {
         userApplicationSupport.appendingPathComponent(AppIdentifiers.bundleID, isDirectory: true)
     }

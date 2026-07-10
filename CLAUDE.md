@@ -63,9 +63,11 @@ On-disk library (rooted at the bundle id, overridable with `LOKALBOT_STORAGE_ROO
 └── lokalbotv3.sqlite
 ```
 
-The app binary doubles as a headless test harness: `LokalBotApp.swift` + `HeadlessCommands.swift` parse flags (`--process <meeting-folder>`, `--search`, `--record <s>`, `--digest`, `--chat`, `--shot-test`) and exit — `Scripts/e2e.sh` is built on these; flows needing ungranted permissions skip rather than fail.
+The app binary doubles as a headless test harness: `LokalBotApp.swift` + `HeadlessCommands.swift` parse flags (`--process <meeting-folder>`, `--search`, `--record <s>`, `--digest`, `--chat`, `--agent "<prompt>"`, `--shot-test`) and exit — `Scripts/e2e.sh` is built on these; flows needing ungranted permissions skip rather than fail.
 
 **Cotyping** (`LokalBot/Cotyping/`, the largest subsystem) is system-wide inline autocomplete: `CotypingCoordinator` orchestrates an AX focus tracker, a CGEventTap input monitor, a ghost-text overlay window, insertion strategies, and its own in-process llama.cpp runtime (`Cotyping/Llama/`). It's deliberately decomposed into many small single-purpose policy types (debounce, seam guard, acceptance chunker, field identity, mid-word handling…) so each is unit-testable without AX — follow that pattern when extending it.
+
+**Agent Mode** (`LokalBot/Agent/`) embeds the pi coding agent as a `--mode rpc` subprocess under a vendored Bun runtime (downloaded on first enable, never bundled), preconnected to the Main LLM engine via an OpenAI-compatible provider extension; `write`/`edit`/`bash` tool calls are gated behind native approval cards. pi runs with `--offline` + `PI_SKIP_VERSION_CHECK=1` — the nothing-leaves-the-Mac invariant applies to it fully.
 
 Privacy constraints that shape code: password fields and user-excluded apps are never read (Cotyping and screenshots both); screenshot/OCR retention is user-configurable in the Privacy settings pane with deletion as the default posture.
 

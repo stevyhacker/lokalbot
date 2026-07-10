@@ -12,11 +12,11 @@ final class StorageManager {
 
     let rootURL: URL
 
-    init() {
+    init(rootURL: URL = AppDirectories.libraryRoot) {
         // UI-test isolation hook: when the env var points at a directory,
         // every read/write goes there instead of the user's real library.
         // Production launches never set it, so default behaviour is unchanged.
-        rootURL = AppDirectories.libraryRoot
+        self.rootURL = rootURL
         try? FileManager.default.createDirectory(at: rootURL.appendingPathComponent("meetings"),
                                                  withIntermediateDirectories: true)
     }

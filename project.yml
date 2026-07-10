@@ -56,11 +56,16 @@ targetTemplates:
     type: application
     platform: macOS
     sources:
-      - LokalBot
+      - path: LokalBot
+        excludes:
+          - Resources/pi
       - path: Vendor/llama-cpp
         type: folder
         buildPhase: resources
       - path: Vendor/sherpa-onnx
+        type: folder
+        buildPhase: resources
+      - path: LokalBot/Resources/pi
         type: folder
         buildPhase: resources
       # Bundle SKILL.md inside the app at Contents/Resources/lokalbot-cli/
@@ -116,8 +121,8 @@ targetTemplates:
       properties:
         CFBundleDisplayName: LokalBot
         CFBundleIconFile: AppIcon
-        CFBundleShortVersionString: "0.1.4"
-        CFBundleVersion: "5"
+        CFBundleShortVersionString: "0.1.5"
+        CFBundleVersion: "6"
         NSMicrophoneUsageDescription: >-
           LokalBot records your side of meetings from the microphone.
           Audio never leaves this Mac.
@@ -205,7 +210,12 @@ targets:
     type: bundle.unit-test
     platform: macOS
     sources:
-      - LokalBotTests
+      - path: LokalBotTests
+        excludes:
+          - Fixtures
+      - path: LokalBotTests/Fixtures
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: LokalBot
     settings:

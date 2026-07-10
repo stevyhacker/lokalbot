@@ -87,8 +87,8 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(textWithContent("Transcription").firstMatch
             .waitForExistence(timeout: 6),
                       "Models pane did not render the Transcription card")
-        XCTAssertTrue(textWithContent("Summarization").firstMatch.exists,
-                      "Models pane missing the Summarization card")
+        XCTAssertTrue(textWithContent("Main LLM engine").firstMatch.exists,
+                      "Models pane missing the Main LLM engine card")
         XCTAssertTrue(app.descendants(matching: .any)["models.transcription"].exists,
                       "transcription model card identifier missing")
         XCTAssertTrue(app.descendants(matching: .any)["models.summarization"].exists,

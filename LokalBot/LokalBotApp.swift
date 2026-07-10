@@ -114,7 +114,7 @@ struct LokalBotApp: App {
 final class AppState: ObservableObject {
 
     enum NavSection: Hashable {
-        case timeline, meetings, type, ask, settings
+        case timeline, meetings, type, ask, agent, settings
 
         /// Section names accepted from the UI-test capture environment and
         /// deep links. Legacy names keep working: "capture" (the pre-split
@@ -127,6 +127,7 @@ final class AppState: ObservableObject {
             case "meetings": self = .meetings
             case "type", "dictation", "cotyping": self = .type
             case "ask", "search", "chat": self = .ask
+            case "agent": self = .agent
             case "settings", "models": self = .settings
             default: return nil
             }
@@ -362,6 +363,16 @@ final class AppState: ObservableObject {
             settings: { [store = settingsStore] in store.current }),
         store: ChatStore(rootURL: storage.rootURL))
 
+    // Agent Mode (pi). Installer and tab manager are cheap; each tab lazily
+    // spawns its own controller/process when AgentView mounts it.
+    let agentInstaller = AgentRuntimeInstaller()
+    private(set) lazy var agentSessions = AgentSessionTabs(
+        settings: { [store = settingsStore] in store.current },
+        storage: storage)
+    var agentController: AgentSessionController {
+        agentSessions.ensureSelectedController()
+    }
+
     private var pipelineObserver: AnyCancellable?
     private var recordingObserver: AnyCancellable?
     private var recordingStatusObserver: AnyCancellable?
@@ -542,6 +553,7 @@ final class AppState: ObservableObject {
             chat.stop()
             dictation.stop()
             cotyping.stop()
+            await agentSessions.shutdownAll()
             await cotypingEngine.unload()
             await LlamaServer.shared.stop()
             await LlamaServer.embedder.stop()

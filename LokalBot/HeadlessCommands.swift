@@ -16,6 +16,7 @@ enum HeadlessCommand: Equatable {
     case shotTest
     case digest
     case chat(question: String)
+    case agent(prompt: String)
     case cotypingBench
 
     /// Set by `LokalBotMain.main()`; consumed by `AppState.init`.
@@ -39,6 +40,9 @@ enum HeadlessCommand: Equatable {
         if let flag = args.firstIndex(of: "--chat"), args.count > flag + 1 {
             return .chat(question: args[flag + 1])
         }
+        if let flag = args.firstIndex(of: "--agent"), args.count > flag + 1 {
+            return .agent(prompt: args[flag + 1])
+        }
         return nil
     }
 }
@@ -58,6 +62,7 @@ struct HeadlessCommandRunner {
         case .shotTest: runShotTest()
         case .digest: runDigest()
         case .chat(let question): runChat(question: question)
+        case .agent(let prompt): runAgent(prompt: prompt)
         case .cotypingBench: runCotypingBench()
         }
     }
@@ -184,6 +189,61 @@ struct HeadlessCommandRunner {
                 await LlamaServer.embedder.stop()
                 exit(1)
             }
+        }
+    }
+
+    /// `LokalBot --agent "<prompt>"`: one Agent Mode turn against the real
+    /// runtime + Main LLM engine, auto-approved, printing each transcript
+    /// item. Exit 0 ok / 3 skip (runtime not installed) / 1 fail. Test hook
+    /// for Agent Mode, same spirit as --chat.
+    private func runAgent(prompt: String) {
+        Task { @MainActor in
+            guard AgentRuntimeLayout.isInstalled() else {
+                print("LokalBot --agent: SKIP (agent runtime not installed; enable Agent Mode in the app once)")
+                exit(3)
+            }
+            let controller = app.agentController
+            controller.autoApproveSession = true
+            await controller.start()
+            if case .failed(let reason) = controller.state {
+                print("LokalBot --agent: FAILED to start — \(reason)")
+                exit(1)
+            }
+            await controller.send(prompt: prompt)
+            // send() returns after the prompt is accepted; work streams in as
+            // events. Immediately after send() the state may still read .ready
+            // (agent_start hasn't arrived yet), so first wait for .running,
+            // THEN wait for it to leave .running. Otherwise the settle loop
+            // exits before any work happened.
+            for _ in 0..<100 where controller.state != .running {   // 10s to start
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            for _ in 0..<600 where controller.state == .running {   // 60s to settle
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            for item in controller.items {
+                switch item {
+                case .user(_, let text): print("LokalBot --agent: > \(text)")
+                case .assistant(_, let text, _): print("LokalBot --agent: \(text)")
+                case .tool(_, let name, _, _, let status): print("LokalBot --agent: tool \(name) [\(status)]")
+                case .approval: break   // auto-approve means none surface
+                case .notice(_, let text, let isError): print("LokalBot --agent: \(isError ? "ERROR" : "note") \(text)")
+                }
+            }
+            let replied = controller.items.contains {
+                if case .assistant = $0 { return true } else { return false }
+            }
+            let ok = controller.state == .ready && replied
+            await controller.shutdown()
+            await LlamaServer.shared.stop()
+            if ok {
+                print("LokalBot --agent: done")
+            } else if replied {
+                print("LokalBot --agent: FAILED — turn did not settle in 60s")
+            } else {
+                print("LokalBot --agent: FAILED — no assistant reply")
+            }
+            exit(ok ? 0 : 1)
         }
     }
 

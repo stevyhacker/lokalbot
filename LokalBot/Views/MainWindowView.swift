@@ -114,6 +114,12 @@ struct MainWindowView: View {
             } detail: {
                 AskView()
             }
+        } else if app.navSection == .agent {
+            NavigationSplitView {
+                sidebar
+            } detail: {
+                AgentView(sessions: app.agentSessions, installer: app.agentInstaller)
+            }
         } else {
             NavigationSplitView {
                 sidebar
@@ -140,6 +146,9 @@ struct MainWindowView: View {
                 Label("Type", systemImage: "keyboard")
                     .tag(AppState.NavSection.type)
                     .accessibilityIdentifier("sidebar.type")
+                Label("Agent", systemImage: "wand.and.sparkles")
+                    .tag(AppState.NavSection.agent)
+                    .accessibilityIdentifier("sidebar.agent")
             }
             Section("Configure") {
                 Label("Settings", systemImage: "gearshape")

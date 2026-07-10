@@ -31,8 +31,8 @@ final class CotypingSpellLanguageGateTests: XCTestCase {
     }
 
     func testAmbiguousShortContextKeepsVerdicts() {
-        // Single short fragments identify with low confidence; the gate must
-        // not stand down on a guess.
+        // Recognizer confidence for one-word fragments varies by macOS model;
+        // the gate must not stand down without multi-word language evidence.
         XCTAssertTrue(CotypingSpellLanguageGate.spellVerdictsApply(
             context: "sasta", availableLanguages: stockLanguages))
         XCTAssertTrue(CotypingSpellLanguageGate.spellVerdictsApply(
