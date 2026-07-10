@@ -243,6 +243,8 @@ gh release create v1.0.0 \
 Pre-release tags (a hyphen suffix, e.g. `v1.0.0-beta`) are marked **Pre-release**
 on GitHub and won't become "Latest"; tag without a suffix for a stable release.
 
+- Agent runtime asset: if `Scripts/build-pi-bundle.sh` changed (pi or Bun version bump), run it and upload `dist/lokalbot-pi-bundle-<version>.tar.gz` to the `agent-runtime-<version>` GitHub release tag, then update the sha256 in `AgentRuntimeManifest.current`.
+
 ---
 
 ## CI release

@@ -128,6 +128,16 @@ else
   fail "chat agent answer missing expected content: $(echo "$CHAT" | tail -1)"
 fi
 
+echo "== T10: agent mode (pi RPC, auto-approved) =="
+AG=$("$BIN" --agent "Reply with the single word pong." 2>/dev/null); RC=$?
+if [ "$RC" -eq 3 ]; then
+  skip "agent runtime not installed"
+elif [[ "$AG" == *"--agent: done"* ]]; then
+  pass "agent replied"
+else
+  fail "agent: $(echo "$AG" | tail -1)"
+fi
+
 echo
 echo "passed: $P · failed: $F · skipped: $S"
 [ "$F" -eq 0 ]
