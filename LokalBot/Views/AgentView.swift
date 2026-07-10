@@ -28,7 +28,7 @@ struct AgentView: View {
             Image(systemName: "wand.and.sparkles").font(.system(size: 36))
                 .foregroundStyle(.secondary)
             Text("Agent Mode").font(.title2.bold())
-            Text("An on-device coding and file agent (pi) powered by your Main LLM engine. It runs entirely on this Mac — the one-time ~50 MB runtime download below is the only network access it ever gets.")
+            Text("An on-device coding and file agent (pi) powered by your Main LLM engine. It runs entirely on this Mac — the one-time ~50 MB runtime download below is the only network access the agent itself ever makes. Commands you approve run with your full permissions and can do anything you could — including accessing the network.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 420)
@@ -50,6 +50,7 @@ struct AgentView: View {
                 Text(message).font(.caption).foregroundStyle(.red)
                     .frame(maxWidth: 420)
                 Button("Try Again") { Task { await installer.installIfNeeded() } }
+                    .accessibilityIdentifier("agent.installRetry")
             case .installed:
                 EmptyView()
             }
@@ -92,6 +93,12 @@ struct AgentView: View {
             .accessibilityIdentifier("agent.workspace")
 
             statusBadge
+            if case .failed = controller.state {
+                Button("Restart") {
+                    Task { await controller.shutdown(); await controller.start() }
+                }
+                .accessibilityIdentifier("agent.restart")
+            }
             Spacer()
             Toggle("Auto-approve", isOn: $controller.autoApproveSession)
                 .toggleStyle(.switch).controlSize(.small)
@@ -138,6 +145,7 @@ struct AgentView: View {
                 }
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent.transcript")
     }
 
@@ -214,6 +222,7 @@ struct AgentView: View {
                 Button("Allow \(tool) This Session") {
                     Task { await controller.respondToApproval(id: id, approved: true, scope: .session) }
                 }
+                .accessibilityIdentifier("agent.approve.session")
                 Button("Deny", role: .destructive) {
                     Task { await controller.respondToApproval(id: id, approved: false, scope: .once) }
                 }

@@ -226,3 +226,8 @@ Each failure mode gets a specific pane state, not a generic error:
 - pi model switching UI beyond the Main LLM engine selection (pi's `/model` surface is unused).
 - Pruning unused provider SDKs from the pi bundle (~40 MB of the 165 MB installed; risky against
   pi's shrinkwrap — reconsider only if size complaints materialize).
+
+**Amendment (2026-07-10, recorded at final review):** v1 also shipped without these spec'd
+features — session resume/picker, workspace recents, the Agent Mode settings group (runtime
+status/remove), Privacy-pane disclosure copy, collapsible thinking blocks, provider compat
+flags, and orphan-pi PID reclamation (tracked follow-up).

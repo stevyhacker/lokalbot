@@ -152,7 +152,9 @@ enum PiEvent: Equatable {
 
     private static func compactJSON(_ value: Any?) -> String? {
         guard let value, JSONSerialization.isValidJSONObject(value),
-              let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) else { return nil }
+              let data = try? JSONSerialization.data(
+                withJSONObject: value,
+                options: [.sortedKeys, .withoutEscapingSlashes]) else { return nil }
         return String(data: data, encoding: .utf8)
     }
 }

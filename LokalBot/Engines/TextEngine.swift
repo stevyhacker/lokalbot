@@ -1,8 +1,9 @@
 import Foundation
 
-/// Summarization / day digests / Q&A (design doc §5). Both backends speak
-/// HTTP to localhost only — the model itself runs in Ollama, LM Studio, or
-/// any OpenAI-compatible server the user points us at.
+/// The Main LLM engine's text generation: summaries, day digests, Q&A
+/// (design doc §5). Both backends speak HTTP to localhost only — the model
+/// itself runs in Ollama, LM Studio, or any OpenAI-compatible server the
+/// user points us at.
 protocol TextEngine {
     var displayName: String { get }
     func generate(system: String, prompt: String, context: [String]) async throws -> String

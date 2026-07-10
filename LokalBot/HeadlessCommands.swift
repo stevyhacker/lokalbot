@@ -230,12 +230,19 @@ struct HeadlessCommandRunner {
                 case .notice(_, let text, let isError): print("LokalBot --agent: \(isError ? "ERROR" : "note") \(text)")
                 }
             }
-            let ok = controller.state == .ready && controller.items.contains {
+            let replied = controller.items.contains {
                 if case .assistant = $0 { return true } else { return false }
             }
+            let ok = controller.state == .ready && replied
             await controller.shutdown()
             await LlamaServer.shared.stop()
-            print("LokalBot --agent: \(ok ? "done" : "FAILED — no assistant reply")")
+            if ok {
+                print("LokalBot --agent: done")
+            } else if replied {
+                print("LokalBot --agent: FAILED — turn did not settle in 60s")
+            } else {
+                print("LokalBot --agent: FAILED — no assistant reply")
+            }
             exit(ok ? 0 : 1)
         }
     }

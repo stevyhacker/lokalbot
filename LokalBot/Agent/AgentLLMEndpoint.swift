@@ -21,10 +21,11 @@ enum AgentLLMResolution: Equatable {
 }
 
 /// Pure settings → endpoint resolution for Agent Mode. Mirrors the backend
-/// switch in ProcessingPipeline.makeTextEngine, with two deliberate
-/// differences: no async work here (server startup is the caller's job),
-/// and Ollama requires an explicit model because pi registers the model id
-/// statically at launch.
+/// switch in ProcessingPipeline.makeTextEngine, with deliberate differences:
+/// no async work here (server startup is the caller's job); Ollama and the
+/// OpenAI-compatible server each require an explicit model because pi
+/// registers the model id statically at launch; and an empty API key
+/// resolves to nil.
 enum AgentLLMEndpointResolver {
 
     static func resolve(settings: AppSettings) -> AgentLLMResolution {

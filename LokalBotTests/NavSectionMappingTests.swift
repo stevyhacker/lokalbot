@@ -66,5 +66,6 @@ final class NavSectionMappingTests: XCTestCase {
 final class NavSectionAgentTests: XCTestCase {
     func testAgentSectionRoundTripsCaptureName() {
         XCTAssertEqual(AppState.NavSection(captureName: "agent"), .agent)
+        XCTAssertEqual(AppState.NavSection(captureName: "Agent"), .agent)
     }
 }

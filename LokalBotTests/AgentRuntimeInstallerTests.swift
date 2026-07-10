@@ -70,6 +70,11 @@ final class AgentRuntimeInstallerTests: XCTestCase {
         XCTAssertTrue(AgentRuntimeLayout.isInstalled(under: root))
         XCTAssertTrue(FileManager.default.isExecutableFile(
             atPath: AgentRuntimeLayout.bunBinary(under: root).path))
+        let markerData = try Data(contentsOf: AgentRuntimeLayout.versionMarker(under: root))
+        let versions = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: markerData) as? [String: String])
+        XCTAssertEqual(versions, ["bun": AgentRuntimeManifest.bunVersion,
+                                  "pi": AgentRuntimeManifest.piVersion])
     }
 
     func testChecksumMismatchFailsAndInstallsNothing() async throws {

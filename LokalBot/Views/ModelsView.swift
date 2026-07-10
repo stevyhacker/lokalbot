@@ -2,9 +2,9 @@ import SwiftUI
 import AppKit
 
 /// The Models tab of Settings (spec §2.5). All model selection and management
-/// lives here, a dedicated card-per-role surface: Transcription, Summarization,
-/// Cotyping, and Embeddings each pick and manage their own model. Downloads
-/// come from the local catalog or Hugging Face.
+/// lives here, a dedicated card-per-role surface: Transcription, Main LLM
+/// engine, Cotyping, and Embeddings each pick and manage their own model.
+/// Downloads come from the local catalog or Hugging Face.
 struct ModelsView: View {
     @EnvironmentObject var app: AppState
 

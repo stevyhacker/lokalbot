@@ -57,6 +57,12 @@ enum AgentRuntimeLayout {
             && FileManager.default.fileExists(atPath: piCLI(under: root).path)
     }
 
+    /// Written at install time with the manifest's Bun and pi versions.
+    /// Data for a future update path; `isInstalled` stays an existence check.
+    static func versionMarker(under root: URL) -> URL {
+        root.appendingPathComponent("version.json")
+    }
+
     /// pi session JSONL trees live under the storage root so they follow
     /// LOKALBOT_STORAGE_ROOT (hermetic in e2e/UI tests) and land next to
     /// the rest of the user's library.

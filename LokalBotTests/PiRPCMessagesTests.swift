@@ -79,6 +79,13 @@ final class PiRPCMessagesTests: XCTestCase {
         XCTAssertEqual(end, .toolExecutionEnd(callID: "call_abc123", output: "total 48", isError: false))
     }
 
+    /// Displayed tool args keep paths readable: "/Users/…", not "\/Users\/…".
+    func testToolArgsDoNotEscapeSlashes() {
+        let start = PiEvent.decode(line: #"{"type":"tool_execution_start","toolCallId":"call_1","toolName":"read","args":{"path":"/Users/me/notes.md"}}"#)
+        XCTAssertEqual(start, .toolExecutionStart(callID: "call_1", name: "read",
+                                                  argsJSON: #"{"path":"/Users/me/notes.md"}"#))
+    }
+
     func testDecodesExtensionUIConfirmRequest() {
         let line = #"{"type":"extension_ui_request","id":"uuid-2","method":"confirm","title":"lokalbot_tool_approval","message":"{\"tool\":\"bash\"}"}"#
         XCTAssertEqual(PiEvent.decode(line: line), .extensionUIRequest(PiUIRequest(

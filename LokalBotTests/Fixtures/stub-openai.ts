@@ -2,6 +2,7 @@
 // assistant message for any /v1/chat/completions request. Prints the
 // chosen port on stdout as its first line.
 const server = Bun.serve({
+  hostname: "127.0.0.1",
   port: 0,
   async fetch(req) {
     const url = new URL(req.url);

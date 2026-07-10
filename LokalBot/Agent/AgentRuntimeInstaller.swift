@@ -68,6 +68,12 @@ final class AgentRuntimeInstaller: ObservableObject {
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installedBun.path)
             try FileManager.default.moveItem(at: piStage, to: assembled.appendingPathComponent("pi"))
 
+            let marker = try JSONSerialization.data(
+                withJSONObject: ["bun": AgentRuntimeManifest.bunVersion,
+                                 "pi": AgentRuntimeManifest.piVersion],
+                options: [.sortedKeys])
+            try marker.write(to: AgentRuntimeLayout.versionMarker(under: assembled))
+
             try? FileManager.default.removeItem(at: root)
             try FileManager.default.createDirectory(at: root.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
@@ -107,7 +113,7 @@ final class AgentRuntimeInstaller: ObservableObject {
         try handle.write(contentsOf: chunk)
         try handle.close()
 
-        guard try SHA256Verifier.hexDigest(of: destination) == artifact.sha256 else {
+        guard try SHA256Verifier.hexDigest(of: destination).lowercased() == artifact.sha256.lowercased() else {
             throw InstallError.checksum(artifact.name)
         }
         return destination
