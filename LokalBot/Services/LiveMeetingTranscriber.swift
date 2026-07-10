@@ -1,6 +1,163 @@
 import AVFoundation
 import Foundation
 
+struct LiveMeetingPreparedAudioChunk: Equatable, Sendable {
+    let url: URL
+    let processedFrames: Int64
+    let startTime: TimeInterval
+}
+
+enum LiveMeetingAudioPreparation: Equatable, Sendable {
+    case noWork
+    case advance(toFrame: Int64)
+    case ready(LiveMeetingPreparedAudioChunk)
+}
+
+/// Serializes the filesystem and PCM work for both live meeting tracks away
+/// from the main actor. `prepareNextChunk` has no suspension points, so one
+/// track's snapshot/read/cut/VAD/write transaction cannot interleave with the
+/// other track's temporary files or audio buffers.
+actor LiveMeetingAudioPreparationWorker {
+    private let storageRoot: URL
+
+    init(storageRoot: URL) {
+        self.storageRoot = storageRoot
+    }
+
+    func prepareNextChunk(source: URL, processedFrames: Int64) throws
+        -> LiveMeetingAudioPreparation {
+        try Task.checkCancellation()
+        guard FileManager.default.fileExists(atPath: source.path) else { return .noWork }
+
+        // Opening the append-only CAF just long enough to inspect its current
+        // readable frame count is much cheaper than copying the whole growing
+        // recording every time the poller wakes before four fresh seconds are
+        // available. If the live header is momentarily unreadable, fall back to
+        // the established snapshot path rather than treating it as a failure.
+        if let availability = try? Self.availableAudio(at: source),
+           LiveTranscriptChunker.nextChunk(
+               processedFrames: processedFrames,
+               totalFrames: availability.frames,
+               sampleRate: availability.sampleRate) == nil {
+            return .noWork
+        }
+
+        try Task.checkCancellation()
+        let scratch = try scratchDirectory()
+        let snapshot = scratch.appendingPathComponent("snap-\(UUID().uuidString).caf")
+        try FileManager.default.copyItem(at: source, to: snapshot)
+        defer { try? FileManager.default.removeItem(at: snapshot) }
+
+        try Task.checkCancellation()
+        let reader = try AVAudioFile(forReading: snapshot)
+        let sampleRate = reader.fileFormat.sampleRate
+        guard let range = LiveTranscriptChunker.nextChunk(
+            processedFrames: processedFrames,
+            totalFrames: reader.length,
+            sampleRate: sampleRate) else {
+            return .noWork
+        }
+
+        try Task.checkCancellation()
+        let frames = AVAudioFrameCount(range.upperBound - range.lowerBound)
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: reader.processingFormat,
+            frameCapacity: frames) else {
+            return .noWork
+        }
+        reader.framePosition = range.lowerBound
+        try reader.read(into: buffer, frameCount: frames)
+        try Task.checkCancellation()
+        guard buffer.frameLength > 0, let channel = buffer.floatChannelData?[0] else {
+            return .noWork
+        }
+        var samples = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
+
+        let searchCount = min(
+            samples.count,
+            Int(LiveTranscriptChunker.cutSearchSeconds * sampleRate))
+        if searchCount > 0 {
+            let tail = Array(samples.suffix(searchCount))
+            let cut = LiveTranscriptChunker.refinedCutOffset(tail: tail, sampleRate: sampleRate)
+            samples.removeLast(searchCount - cut)
+        }
+        guard !samples.isEmpty else { return .noWork }
+        let chunkEnd = range.lowerBound + Int64(samples.count)
+
+        try Task.checkCancellation()
+        guard LiveTranscriptChunker.hasSpeech(samples, sampleRate: sampleRate) else {
+            return .advance(toFrame: chunkEnd)
+        }
+
+        let chunk = scratch.appendingPathComponent("chunk-\(UUID().uuidString).caf")
+        var keepChunk = false
+        defer {
+            if !keepChunk { try? FileManager.default.removeItem(at: chunk) }
+        }
+        try Self.writeChunk(samples, format: reader.processingFormat, to: chunk)
+        try Task.checkCancellation()
+        keepChunk = true
+        return .ready(LiveMeetingPreparedAudioChunk(
+            url: chunk,
+            processedFrames: chunkEnd,
+            startTime: Double(range.lowerBound) / sampleRate))
+    }
+
+    func removePreparedChunk(at url: URL) {
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    private struct AvailableAudio {
+        let frames: Int64
+        let sampleRate: Double
+    }
+
+    private static func availableAudio(at source: URL) throws -> AvailableAudio {
+        let reader = try AVAudioFile(forReading: source)
+        return AvailableAudio(frames: reader.length, sampleRate: reader.fileFormat.sampleRate)
+    }
+
+    private func scratchDirectory() throws -> URL {
+        let dir = storageRoot.appendingPathComponent(
+            LiveMeetingTranscriber.scratchDirectoryName,
+            isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private static func writeChunk(
+        _ samples: [Float],
+        format: AVAudioFormat,
+        to url: URL
+    ) throws {
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: format.sampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: true,
+        ]
+        let file = try AVAudioFile(
+            forWriting: url,
+            settings: settings,
+            commonFormat: .pcmFormatFloat32,
+            interleaved: false)
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: file.processingFormat,
+            frameCapacity: AVAudioFrameCount(samples.count)),
+              let channel = buffer.floatChannelData?[0] else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        samples.withUnsafeBufferPointer { pointer in
+            channel.update(from: pointer.baseAddress!, count: samples.count)
+        }
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        try file.write(from: buffer)
+    }
+}
+
 /// Rolling transcript of the meeting being recorded right now. The recorders
 /// mirror their audio into snapshot-safe PCM tees (`mic.live.caf` /
 /// `system.live.caf`, see `AudioPreviewTee`); this poller snapshots each tee,
@@ -34,8 +191,8 @@ final class LiveMeetingTranscriber: ObservableObject {
     /// Surfaced in the panel when transcription keeps failing.
     @Published private(set) var statusMessage: String?
 
-    private let storageRoot: URL
     private let settings: () -> AppSettings
+    private let audioPreparationWorker: LiveMeetingAudioPreparationWorker
     private var task: Task<Void, Never>?
     private var generation = 0
     private var pendingFolder: URL?
@@ -44,11 +201,11 @@ final class LiveMeetingTranscriber: ObservableObject {
     private static let maxLines = 400
     private static let maxConsecutiveFailures = 3
 
-    static let scratchDirectoryName = "live-previews"
+    nonisolated static let scratchDirectoryName = "live-previews"
 
     init(storageRoot: URL, settings: @escaping () -> AppSettings) {
-        self.storageRoot = storageRoot
         self.settings = settings
+        self.audioPreparationWorker = LiveMeetingAudioPreparationWorker(storageRoot: storageRoot)
     }
 
     /// Snapshots are deleted per-use, but a crash mid-chunk orphans them —
@@ -146,54 +303,40 @@ final class LiveMeetingTranscriber: ObservableObject {
         }
     }
 
-    /// Snapshot one tee, transcribe its next chunk, and append the lines.
+    /// Prepare one tee's next chunk off-main, transcribe it, and append lines.
     /// Returns the new processed-frame position, or nil when there's nothing
     /// new to do (tee missing, or not enough fresh audio yet).
     private func transcribeNextChunk(of track: TrackState, folder: URL,
                                      session: Int) async throws -> Int64? {
         let source = folder.appendingPathComponent(track.fileName)
-        guard FileManager.default.fileExists(atPath: source.path) else { return nil }
-
-        let scratch = try scratchDirectory()
-        let snapshot = scratch.appendingPathComponent("snap-\(UUID().uuidString).caf")
-        try FileManager.default.copyItem(at: source, to: snapshot)
-        defer { try? FileManager.default.removeItem(at: snapshot) }
-
-        let reader = try AVAudioFile(forReading: snapshot)
-        let sampleRate = reader.fileFormat.sampleRate
-        guard let range = LiveTranscriptChunker.nextChunk(processedFrames: track.processedFrames,
-                                                          totalFrames: reader.length,
-                                                          sampleRate: sampleRate) else {
+        let preparation = try await audioPreparationWorker.prepareNextChunk(
+            source: source,
+            processedFrames: track.processedFrames)
+        switch preparation {
+        case .noWork:
             return nil
+        case .advance(let frame):
+            return frame
+        case .ready(let prepared):
+            do {
+                let advanced = try await transcribePreparedChunk(
+                    prepared,
+                    track: track,
+                    session: session)
+                await audioPreparationWorker.removePreparedChunk(at: prepared.url)
+                return advanced
+            } catch {
+                await audioPreparationWorker.removePreparedChunk(at: prepared.url)
+                throw error
+            }
         }
+    }
 
-        let frames = AVAudioFrameCount(range.upperBound - range.lowerBound)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: reader.processingFormat,
-                                            frameCapacity: frames) else { return nil }
-        reader.framePosition = range.lowerBound
-        try reader.read(into: buffer, frameCount: frames)
-        guard buffer.frameLength > 0, let channel = buffer.floatChannelData?[0] else { return nil }
-        var samples = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
-
-        // Prefer to end the chunk in a pause instead of mid-word.
-        let searchCount = min(samples.count, Int(LiveTranscriptChunker.cutSearchSeconds * sampleRate))
-        if searchCount > 0 {
-            let tail = Array(samples.suffix(searchCount))
-            let cut = LiveTranscriptChunker.refinedCutOffset(tail: tail, sampleRate: sampleRate)
-            samples.removeLast(searchCount - cut)
-        }
-        guard !samples.isEmpty else { return nil }
-        let chunkEnd = range.lowerBound + Int64(samples.count)
-
-        // No speech-like audio (room tone, hum, a muted participant's mic):
-        // advance silently. Skipping the ASR pass here is also what keeps
-        // Whisper-family models from hallucinating text on non-speech audio.
-        guard LiveTranscriptChunker.hasSpeech(samples, sampleRate: sampleRate) else { return chunkEnd }
-
-        let chunk = scratch.appendingPathComponent("chunk-\(UUID().uuidString).caf")
-        defer { try? FileManager.default.removeItem(at: chunk) }
-        try writeChunk(samples, format: reader.processingFormat, to: chunk)
-
+    private func transcribePreparedChunk(
+        _ prepared: LiveMeetingPreparedAudioChunk,
+        track: TrackState,
+        session: Int
+    ) async throws -> Int64? {
         isWorking = true
         // The first pass may block on model load for a while — say so instead
         // of leaving the panel on a bare "Listening…".
@@ -202,52 +345,24 @@ final class LiveMeetingTranscriber: ObservableObject {
         }
         let config = settings()
         let transcript = try await config.transcriptionModel.engine.transcribe(
-            audio: chunk,
+            audio: prepared.url,
             language: config.transcriptionLanguage.code)
         try Task.checkCancellation()
         guard generation == session else { return nil }
         hasTranscribedOnce = true
         statusMessage = nil
 
-        let offset = Double(range.lowerBound) / sampleRate
         let fresh = transcript.segments.compactMap { segment -> Line? in
             let text = segment.displayText
             guard !text.isEmpty else { return nil }
-            return Line(time: offset + segment.start, speaker: track.speaker, text: text)
+            return Line(
+                time: prepared.startTime + segment.start,
+                speaker: track.speaker,
+                text: text)
         }
         if !fresh.isEmpty {
             lines = Array(((lines + fresh).sorted { $0.time < $1.time }).suffix(Self.maxLines))
         }
-        return chunkEnd
-    }
-
-    private func scratchDirectory() throws -> URL {
-        let dir = storageRoot.appendingPathComponent(Self.scratchDirectoryName, isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
-    private func writeChunk(_ samples: [Float], format: AVAudioFormat, to url: URL) throws {
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: format.sampleRate,
-            AVNumberOfChannelsKey: 1,
-            AVLinearPCMBitDepthKey: 32,
-            AVLinearPCMIsFloatKey: true,
-            AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsNonInterleaved: true,
-        ]
-        let file = try AVAudioFile(forWriting: url, settings: settings,
-                                   commonFormat: .pcmFormatFloat32, interleaved: false)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
-                                            frameCapacity: AVAudioFrameCount(samples.count)),
-              let channel = buffer.floatChannelData?[0] else {
-            throw CocoaError(.fileWriteUnknown)
-        }
-        samples.withUnsafeBufferPointer { pointer in
-            channel.update(from: pointer.baseAddress!, count: samples.count)
-        }
-        buffer.frameLength = AVAudioFrameCount(samples.count)
-        try file.write(from: buffer)
+        return prepared.processedFrames
     }
 }

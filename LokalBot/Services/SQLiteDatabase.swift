@@ -19,8 +19,9 @@ final class SQLiteDatabase {
         sqlite3_close(db)
     }
 
-    func exec(_ sql: String) {
-        sqlite3_exec(db, sql, nil, nil, nil)
+    @discardableResult
+    func exec(_ sql: String) -> Bool {
+        sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK
     }
 
     /// Rowid of the most recent successful INSERT on this connection.
@@ -28,10 +29,33 @@ final class SQLiteDatabase {
         sqlite3_last_insert_rowid(db)
     }
 
-    func run(_ sql: String, bind values: [Any] = []) {
-        withStatement(sql, bind: values) { statement in
-            sqlite3_step(statement)
+    @discardableResult
+    func run(_ sql: String, bind values: [Any] = []) -> Bool {
+        withStatement(sql) { statement in
+            run(statement, bind: values)
+        } ?? false
+    }
+
+    /// Executes an already-prepared statement, resetting and rebinding it so
+    /// callers can reuse the same statement for a batch of rows.
+    @discardableResult
+    func run(_ statement: OpaquePointer, bind values: [Any] = []) -> Bool {
+        guard sqlite3_reset(statement) == SQLITE_OK else { return false }
+        sqlite3_clear_bindings(statement)
+        guard bind(values, to: statement) else { return false }
+        return sqlite3_step(statement) == SQLITE_DONE
+    }
+
+    /// Runs a group of writes atomically. Returning `false` from `body` rolls
+    /// the transaction back, including when a prepared statement fails.
+    @discardableResult
+    func transaction(_ body: () -> Bool) -> Bool {
+        guard exec("BEGIN IMMEDIATE TRANSACTION") else { return false }
+        guard body(), exec("COMMIT") else {
+            exec("ROLLBACK")
+            return false
         }
+        return true
     }
 
     func query<T>(_ sql: String, bind values: [Any] = [], row: (OpaquePointer) -> T?) -> [T] {
@@ -64,30 +88,34 @@ final class SQLiteDatabase {
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK,
               let statement else { return nil }
         defer { sqlite3_finalize(statement) }
-        bind(values, to: statement)
+        guard bind(values, to: statement) else { return nil }
         return body(statement)
     }
 
-    private func bind(_ values: [Any], to statement: OpaquePointer) {
+    private func bind(_ values: [Any], to statement: OpaquePointer) -> Bool {
         for (index, value) in values.enumerated() {
             let position = Int32(index + 1)
+            let result: Int32
             switch value {
             case let text as String:
-                sqlite3_bind_text(statement, position, text, -1, Self.transient)
+                result = sqlite3_bind_text(statement, position, text, -1, Self.transient)
             case let number as Double:
-                sqlite3_bind_double(statement, position, number)
+                result = sqlite3_bind_double(statement, position, number)
             case let number as Int:
-                sqlite3_bind_int64(statement, position, sqlite3_int64(number))
+                result = sqlite3_bind_int64(statement, position, sqlite3_int64(number))
             case let number as Int64:
-                sqlite3_bind_int64(statement, position, sqlite3_int64(number))
+                result = sqlite3_bind_int64(statement, position, sqlite3_int64(number))
             case let data as Data:
-                _ = data.withUnsafeBytes { bytes in
+                result = data.withUnsafeBytes { bytes in
                     sqlite3_bind_blob(statement, position, bytes.baseAddress,
                                       Int32(data.count), Self.transient)
                 }
             default:
                 assertionFailure("SQLiteDatabase: unsupported bind type \(type(of: value))")
+                return false
             }
+            guard result == SQLITE_OK else { return false }
         }
+        return true
     }
 }

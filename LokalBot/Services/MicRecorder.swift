@@ -27,6 +27,14 @@ final class MicRecorder {
     /// Without this, the engine silently stops itself and `mic.m4a` truncates.
     private var configChangeObserver: NSObjectProtocol?
 
+    /// Audio taps run on a real-time Core Audio thread. Keep that callback to
+    /// one bounded PCM copy, then serialize conversion, AAC encoding, preview
+    /// resampling, and filesystem writes here.
+    private let ioQueue = DispatchQueue(label: "lokalbot.microphone.write",
+                                        qos: .userInitiated)
+    private let pendingWriteSlots = DispatchSemaphore(value: 16)
+    private var droppedBufferCount = 0
+
     enum RecorderError: LocalizedError {
         case inputUnavailable
         case unsupportedInputFormat
@@ -48,6 +56,7 @@ final class MicRecorder {
         let duration: TimeInterval
         let lastAudioWriteAt: Date?
         let isEngineRunning: Bool
+        let droppedBufferCount: Int
     }
 
     static func requestPermission() async -> Bool {
@@ -79,23 +88,33 @@ final class MicRecorder {
         }
 
         let settings = Self.fileSettings(for: url, recordingFormat: recordingFormat)
-        file = try AVAudioFile(forWriting: url,
-                               settings: settings,
-                               commonFormat: recordingFormat.commonFormat,
-                               interleaved: recordingFormat.isInterleaved)
-        self.recordingFormat = recordingFormat
-        previewTee = previewURL.flatMap { AudioPreviewTee(url: $0, sourceFormat: recordingFormat) }
+        let newFile = try AVAudioFile(forWriting: url,
+                                      settings: settings,
+                                      commonFormat: recordingFormat.commonFormat,
+                                      interleaved: recordingFormat.isInterleaved)
+        let newPreviewTee = previewURL.flatMap {
+            AudioPreviewTee(url: $0, sourceFormat: recordingFormat)
+        }
+        ioQueue.sync {
+            file = newFile
+            self.recordingFormat = recordingFormat
+            previewTee = newPreviewTee
+            converter = nil
+            converterInputFormat = nil
+        }
         resetCaptureHealth(sampleRate: recordingFormat.sampleRate)
 
         do {
             try installTapAndStart(inputFormat: inputFormat, recordingFormat: recordingFormat)
         } catch {
-            file = nil
-            self.recordingFormat = nil
-            converter = nil
-            converterInputFormat = nil
-            previewTee?.close()
-            previewTee = nil
+            ioQueue.sync {
+                file = nil
+                self.recordingFormat = nil
+                converter = nil
+                converterInputFormat = nil
+                previewTee?.close()
+                previewTee = nil
+            }
             resetCaptureHealth(sampleRate: 0)
             throw error
         }
@@ -120,15 +139,17 @@ final class MicRecorder {
         }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        // Drain the converter's internal buffer so the last fraction of a
-        // second isn't lost; without this, every recording is truncated.
-        drainConverter()
-        converter = nil
-        converterInputFormat = nil
-        recordingFormat = nil
-        file = nil   // closes the file
-        previewTee?.close()
-        previewTee = nil
+        // Draining the queue first preserves callback order. Then flush the
+        // converter's tail before closing either output.
+        ioQueue.sync {
+            drainConverter()
+            converter = nil
+            converterInputFormat = nil
+            recordingFormat = nil
+            file = nil   // closes the file
+            previewTee?.close()
+            previewTee = nil
+        }
     }
 
     func captureHealth() -> CaptureHealth {
@@ -137,10 +158,12 @@ final class MicRecorder {
             ? Double(framesWritten) / recordingSampleRate
             : 0
         let lastAudioWriteAt = self.lastAudioWriteAt
+        let droppedBufferCount = self.droppedBufferCount
         healthLock.unlock()
         return CaptureHealth(duration: duration,
                              lastAudioWriteAt: lastAudioWriteAt,
-                             isEngineRunning: engine.isRunning)
+                             isEngineRunning: engine.isRunning,
+                             droppedBufferCount: droppedBufferCount)
     }
 
     func restartCapture() throws {
@@ -170,19 +193,37 @@ final class MicRecorder {
     /// configuration-change reinstall.
     private func installTapAndStart(inputFormat _: AVAudioFormat,
                                     recordingFormat: AVAudioFormat) throws {
-        converter = nil
-        converterInputFormat = nil
+        ioQueue.sync {
+            // A device switch can leave resampler output buffered. Emit it
+            // before replacing the converter for the new hardware format.
+            drainConverter()
+            converter = nil
+            converterInputFormat = nil
+        }
         let input = engine.inputNode
         // Let AVAudioEngine choose the current hardware format. During a live
         // device switch, `outputFormat(forBus:)` can briefly report a stale
         // client format while the input unit has already moved to the new
         // hardware rate, and passing that stale format makes installTap raise.
         input.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
-            do {
-                try self?.write(buffer)
-            } catch {
-                // Don't crash the audio thread; surface once via NSLog.
-                NSLog("MicRecorder write failed: \(error.localizedDescription)")
+            guard let self else { return }
+            guard self.pendingWriteSlots.wait(timeout: .now()) == .success else {
+                self.noteDroppedBuffer()
+                return
+            }
+            guard let copy = Self.copyBuffer(buffer) else {
+                self.pendingWriteSlots.signal()
+                self.noteDroppedBuffer()
+                return
+            }
+            let writeSlot = self.pendingWriteSlots
+            self.ioQueue.async { [weak self, writeSlot] in
+                defer { writeSlot.signal() }
+                do {
+                    try self?.write(copy)
+                } catch {
+                    NSLog("MicRecorder write failed: \(error.localizedDescription)")
+                }
             }
         }
         do {
@@ -190,8 +231,10 @@ final class MicRecorder {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
-            converter = nil
-            converterInputFormat = nil
+            ioQueue.sync {
+                converter = nil
+                converterInputFormat = nil
+            }
             throw error
         }
     }
@@ -339,12 +382,48 @@ final class MicRecorder {
         }
     }
 
+    /// Makes the tap buffer safe to retain after the callback returns. Copying
+    /// through `AudioBufferList` handles both interleaved and planar layouts.
+    static func copyBuffer(_ source: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard source.frameLength > 0,
+              let destination = AVAudioPCMBuffer(
+                pcmFormat: source.format,
+                frameCapacity: source.frameLength)
+        else { return nil }
+        destination.frameLength = source.frameLength
+
+        let sourceBuffers = UnsafeMutableAudioBufferListPointer(
+            UnsafeMutablePointer(mutating: source.audioBufferList))
+        let destinationBuffers = UnsafeMutableAudioBufferListPointer(
+            destination.mutableAudioBufferList)
+        guard sourceBuffers.count == destinationBuffers.count else { return nil }
+        for (src, dst) in zip(sourceBuffers, destinationBuffers) {
+            guard src.mDataByteSize <= dst.mDataByteSize,
+                  let srcData = src.mData,
+                  let dstData = dst.mData
+            else { return nil }
+            memcpy(dstData, srcData, Int(src.mDataByteSize))
+        }
+        return destination
+    }
+
     private func resetCaptureHealth(sampleRate: Double) {
         healthLock.lock()
         framesWritten = 0
         recordingSampleRate = sampleRate
         lastAudioWriteAt = nil
+        droppedBufferCount = 0
         healthLock.unlock()
+    }
+
+    private func noteDroppedBuffer() {
+        healthLock.lock()
+        droppedBufferCount += 1
+        let count = droppedBufferCount
+        healthLock.unlock()
+        if count == 1 || count.isMultiple(of: 100) {
+            NSLog("MicRecorder dropped \(count) buffer(s): writer queue saturated")
+        }
     }
 
     private func noteWrittenAudio(_ buffer: AVAudioPCMBuffer) {

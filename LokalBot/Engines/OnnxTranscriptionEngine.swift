@@ -48,6 +48,7 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
     static let gigaamRussian = OnnxTranscriptionEngine(model: .gigaamRussian)
 
     let model: Model
+    private let preparation = AsyncSingleFlight()
     private init(model: Model) { self.model = model }
 
     nonisolated var displayName: String { model.displayName }
@@ -112,6 +113,19 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
         let dir = Self.modelsRoot.appendingPathComponent(model.folderName, isDirectory: true)
         if (try? Self.locateModel(in: dir)) != nil { return dir }
 
+        try await preparation.run { [weak self] in
+            guard let self else { return }
+            try await self.installModel(in: dir)
+        }
+        guard (try? Self.locateModel(in: dir)) != nil else { throw EngineError.modelUnavailable }
+        return dir
+    }
+
+    private func installModel(in dir: URL) async throws {
+        // A waiter may enter after the first caller finished but before it
+        // observed the result; keep this operation idempotent as well.
+        if (try? Self.locateModel(in: dir)) != nil { return }
+
         try FileManager.default.createDirectory(at: Self.modelsRoot, withIntermediateDirectories: true)
         let (tmp, _) = try await URLSession.shared.download(from: model.archiveURL)
         let archive = Self.modelsRoot.appendingPathComponent("\(model.folderName).tar.bz2")
@@ -121,7 +135,6 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
 
         try ArchiveExtractor.extractBzip2Tar(archive, into: Self.modelsRoot)
         guard (try? Self.locateModel(in: dir)) != nil else { throw EngineError.modelUnavailable }
-        return dir
     }
 
     // MARK: - Paths
@@ -174,6 +187,11 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
         let binary = runtime.binary
         let libDir = runtime.libDir
         let stdout = try await Task.detached(priority: .userInitiated) { () throws -> String in
+            let runtimeID = "transcription:onnx:\(model.modelType):\(UUID().uuidString)"
+            let estimatedBytes = ModelRuntimeRegistry.fileBytes(at: modelFile)
+            await ModelRuntimeRegistry.shared.reserve(
+                id: runtimeID, role: "Transcription", label: model.displayName,
+                estimatedBytes: estimatedBytes)
             let process = Process()
             process.executableURL = binary
             process.arguments = args
@@ -183,14 +201,18 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
             let out = Pipe()
             process.standardOutput = out
             process.standardError = FileHandle.nullDevice   // verbose logging — discard
-            try process.run()
-            let runtimeID = "transcription:onnx:\(model.modelType):\(UUID().uuidString)"
+            do {
+                try process.run()
+            } catch {
+                await ModelRuntimeRegistry.shared.unregister(id: runtimeID)
+                throw error
+            }
             let processUsage = SystemResourceSampler.processUsage(for: process.processIdentifier)
             await ModelRuntimeRegistry.shared.register(
                 id: runtimeID,
                 role: "Transcription",
                 label: model.displayName,
-                estimatedBytes: ModelRuntimeRegistry.fileBytes(at: modelFile),
+                estimatedBytes: estimatedBytes,
                 processIdentifier: processUsage?.processIdentifier,
                 processStartTime: processUsage?.startTime
             )

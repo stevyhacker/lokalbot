@@ -121,4 +121,49 @@ final class TranscriptTests: XCTestCase {
         XCTAssertEqual(merged.segments.map(\.text), ["First", "Second"])
         XCTAssertEqual(merged.engine, "system")
     }
+
+    func testDisplayIndexCachesNormalizedVisibleTextAndSpeakerPresentation() {
+        let transcript = Transcript(
+            segments: [
+                .init(start: 3, end: 4, speaker: "them 1",
+                      text: "<|0.00|>  Ship   it. <|1.00|>", confidence: nil),
+                .init(start: 4, end: 5, speaker: "me",
+                      text: "<|0.00|>...<|1.00|>", confidence: nil),
+                .init(start: 1, end: 2, speaker: " me ",
+                      text: " Earlier update ", confidence: nil),
+            ],
+            engine: "test",
+            speakerAliases: ["them 1": "Ana"])
+
+        let display = Transcript.DisplayIndex(transcript: transcript)
+
+        XCTAssertEqual(display.segments.map(\.id), [0, 2],
+                       "Filtering must retain source-order identities")
+        XCTAssertEqual(display.segments.map(\.text), ["Ship it.", "Earlier update"])
+        XCTAssertEqual(display.segments.map(\.speakerLabel), ["Ana", "Me"])
+        XCTAssertEqual(display.segments.map(\.hasSpeakerAlias), [true, false])
+        XCTAssertEqual(display.segments.map(\.speakerKey), ["them 1", "me"])
+    }
+
+    func testDisplayIndexFindsActiveOverlapsWithoutReorderingRows() {
+        let transcript = Transcript(
+            segments: [
+                .init(start: 5, end: 6, speaker: "them", text: "Short overlap", confidence: nil),
+                .init(start: 0, end: 10, speaker: "me", text: "Long segment", confidence: nil),
+                .init(start: 11, end: 11.1, speaker: "them", text: "Brief", confidence: nil),
+            ],
+            engine: "test")
+        let display = Transcript.DisplayIndex(transcript: transcript)
+
+        XCTAssertEqual(display.segments.map(\.id), [0, 1, 2])
+        XCTAssertEqual(display.activeSegmentIDs(at: -0.1), [])
+        XCTAssertEqual(display.activeSegmentIDs(at: 5.5), [0, 1])
+        XCTAssertEqual(display.activeSegmentIDs(at: 7), [1],
+                       "An expired newer segment must not hide an older overlap")
+        XCTAssertEqual(display.activeSegmentIDs(at: 10), [],
+                       "Segment ends remain exclusive")
+        XCTAssertEqual(display.activeSegmentIDs(at: 11.4), [2],
+                       "Existing half-second minimum highlight remains intact")
+        XCTAssertEqual(display.activeSegmentIDs(at: 11.5), [])
+    }
 }

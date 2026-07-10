@@ -69,7 +69,7 @@ struct LiveMeetingDetailView: View {
                     StatusDot(color: Brand.recording, size: 7, pulses: true)
                     Text("recording").font(.caption)
                     LiveWaveform(barCount: 5, barWidth: 2.5, maxHeight: 10)
-                    Text(app.menuBarTimer)
+                    MeetingRecordingTimerText(recording: app.recording)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }

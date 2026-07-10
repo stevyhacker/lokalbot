@@ -75,6 +75,81 @@ struct DictationLiveTranscript: Equatable, Sendable {
     }
 }
 
+struct DictationPreviewAudioRange: Equatable, Sendable {
+    let start: TimeInterval
+    let end: TimeInterval
+}
+
+/// Pure planning for the rolling dictation preview. Each pass starts slightly
+/// before the last completed pass so the ASR model hears enough context to
+/// finish a word that crossed the boundary, without decoding the whole growing
+/// recording again.
+enum DictationPreviewWindowPlanner {
+    static let defaultOverlapSeconds: TimeInterval = 2.5
+
+    static func range(previousEnd: TimeInterval,
+                      currentEnd: TimeInterval) -> DictationPreviewAudioRange? {
+        range(previousEnd: previousEnd,
+              currentEnd: currentEnd,
+              overlapSeconds: defaultOverlapSeconds)
+    }
+
+    static func range(previousEnd: TimeInterval,
+                      currentEnd: TimeInterval,
+                      overlapSeconds: TimeInterval) -> DictationPreviewAudioRange? {
+        let previous = max(0, previousEnd)
+        guard currentEnd > previous else { return nil }
+        return .init(
+            start: max(0, previous - max(0, overlapSeconds)),
+            end: currentEnd
+        )
+    }
+}
+
+/// Deterministically joins overlapping ASR windows. The newest window replaces
+/// the matched suffix so revised capitalization or punctuation at the boundary
+/// wins, while a window with no trustworthy two-word overlap is appended rather
+/// than risking the loss of already-visible speech.
+enum DictationPreviewTextStitcher {
+    static func stitch(previous: String,
+                       incoming: String,
+                       maximumOverlapWords: Int = 32,
+                       minimumOverlapWords: Int = 2) -> String {
+        let oldText = Transcript.normalizedText(previous)
+        let newText = Transcript.normalizedText(incoming)
+        guard !oldText.isEmpty else { return newText }
+        guard !newText.isEmpty else { return oldText }
+
+        let oldWords = oldText.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let newWords = newText.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let upperBound = min(max(0, maximumOverlapWords), oldWords.count, newWords.count)
+        let lowerBound = max(1, minimumOverlapWords)
+
+        if upperBound >= lowerBound {
+            for count in stride(from: upperBound, through: lowerBound, by: -1) {
+                let oldStart = oldWords.count - count
+                let matches = (0..<count).allSatisfy { offset in
+                    wordKey(oldWords[oldStart + offset]) == wordKey(newWords[offset])
+                        && !wordKey(newWords[offset]).isEmpty
+                }
+                if matches {
+                    return (oldWords.dropLast(count) + newWords).joined(separator: " ")
+                }
+            }
+        }
+
+        return oldText + " " + newText
+    }
+
+    private static func wordKey(_ word: String) -> String {
+        word
+            .folding(options: [.caseInsensitive, .diacriticInsensitive],
+                     locale: Locale(identifier: "en_US_POSIX"))
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .joined()
+    }
+}
+
 struct DictationShortcut: Equatable, Sendable {
     var keyCode: CGKeyCode
     var modifiers: CGEventFlags

@@ -39,15 +39,23 @@ final class EmbeddingIndex {
             CREATE TABLE IF NOT EXISTS embedded_meetings (
                 meeting_id TEXT PRIMARY KEY, source_mtime REAL NOT NULL,
                 model_id TEXT NOT NULL DEFAULT '');
+            CREATE INDEX IF NOT EXISTS idx_embeddings_meeting_id
+                ON embeddings(meeting_id);
             """)
         database?.exec("ALTER TABLE embedded_meetings ADD COLUMN model_id TEXT NOT NULL DEFAULT '';")
-        database?.run("""
-            DELETE FROM embeddings
-            WHERE meeting_id IN (
-                SELECT meeting_id FROM embedded_meetings WHERE model_id != ?1
-            )
-            """, bind: [Self.modelID])
-        database?.run("DELETE FROM embedded_meetings WHERE model_id != ?1", bind: [Self.modelID])
+        if let database {
+            database.transaction {
+                database.run("""
+                DELETE FROM embeddings
+                WHERE meeting_id IN (
+                    SELECT meeting_id FROM embedded_meetings WHERE model_id != ?1
+                )
+                """, bind: [Self.modelID])
+                    && database.run(
+                    "DELETE FROM embedded_meetings WHERE model_id != ?1",
+                    bind: [Self.modelID])
+            }
+        }
     }
 
     // MARK: - Indexing
@@ -91,24 +99,50 @@ final class EmbeddingIndex {
 
         let vectors = try await Self.embed(chunks.map(\.text), prefix: Self.documentPrefix,
                                            storage: storage)
-        database?.run("DELETE FROM embeddings WHERE meeting_id = ?1", bind: [meeting.id.uuidString])
-        for (chunk, vector) in zip(chunks, vectors) {
+        guard vectors.count == chunks.count else {
+            throw TextEngineError.badResponse(
+                "embedding response contained \(vectors.count) vectors for \(chunks.count) chunks")
+        }
+        let rows = zip(chunks, vectors).map { chunk, vector in
             let vectorData = vector.withUnsafeBufferPointer { buffer -> Data in
                 guard let baseAddress = buffer.baseAddress else { return Data() }
                 return Data(bytes: baseAddress, count: buffer.count * MemoryLayout<Float>.stride)
             }
-            database?.run(
-                "INSERT INTO embeddings (meeting_id, start, text, vec) VALUES (?1, ?2, ?3, ?4)",
-                bind: [meeting.id.uuidString, chunk.start, String(chunk.text.prefix(300)), vectorData])
+            return (start: chunk.start, text: String(chunk.text.prefix(300)), vectorData: vectorData)
         }
-        database?.run(
-            "INSERT OR REPLACE INTO embedded_meetings (meeting_id, source_mtime, model_id) VALUES (?1, ?2, ?3)",
-            bind: [meeting.id.uuidString, mtime, Self.modelID])
+
+        guard let database else { return }
+        let meetingID = meeting.id.uuidString
+        database.transaction {
+            guard database.run(
+                "DELETE FROM embeddings WHERE meeting_id = ?1",
+                bind: [meetingID]) else { return false }
+            let inserted = database.withStatement(
+                "INSERT INTO embeddings (meeting_id, start, text, vec) VALUES (?1, ?2, ?3, ?4)"
+            ) { statement in
+                for row in rows {
+                    guard database.run(statement, bind: [
+                        meetingID, row.start, row.text, row.vectorData,
+                    ]) else { return false }
+                }
+                return true
+            } ?? false
+            guard inserted else { return false }
+            return database.run(
+                "INSERT OR REPLACE INTO embedded_meetings (meeting_id, source_mtime, model_id) VALUES (?1, ?2, ?3)",
+                bind: [meetingID, mtime, Self.modelID])
+        }
     }
 
     func remove(_ meetingID: UUID) {
-        database?.run("DELETE FROM embeddings WHERE meeting_id = ?1", bind: [meetingID.uuidString])
-        database?.run("DELETE FROM embedded_meetings WHERE meeting_id = ?1", bind: [meetingID.uuidString])
+        guard let database else { return }
+        let id = meetingID.uuidString
+        database.transaction {
+            database.run("DELETE FROM embeddings WHERE meeting_id = ?1", bind: [id])
+                && database.run(
+                    "DELETE FROM embedded_meetings WHERE meeting_id = ?1",
+                    bind: [id])
+        }
     }
 
     // MARK: - Query

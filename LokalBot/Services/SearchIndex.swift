@@ -8,6 +8,8 @@ import SQLite3
 @MainActor
 final class SearchIndex {
 
+    private static let documentRowsMigration = "search-document-rows-v1"
+
     enum Kind: String {
         case title, segment, summary
     }
@@ -45,7 +47,17 @@ final class SearchIndex {
                 speaker UNINDEXED,
                 tokenize='unicode61 remove_diacritics 2'
             );
+            CREATE TABLE IF NOT EXISTS search_document_rows (
+                doc_rowid INTEGER PRIMARY KEY,
+                meeting_id TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_search_document_rows_meeting_id
+                ON search_document_rows(meeting_id);
+            CREATE TABLE IF NOT EXISTS search_index_migrations (
+                name TEXT PRIMARY KEY
+            );
             """)
+        Self.backfillDocumentRowsIfNeeded(in: database)
     }
 
     // MARK: - Indexing
@@ -60,29 +72,64 @@ final class SearchIndex {
         let mtime = Self.latestMtime(in: folder)
         if let indexed = indexedMtime(of: meeting.id), indexed >= mtime { return }
 
-        database?.run("DELETE FROM docs WHERE meeting_id = ?1", bind: [meeting.id.uuidString])
-        insert(text: "\(meeting.title) \(meeting.appName)", meeting: meeting.id,
-               kind: .title, start: 0, speaker: "")
+        var documents = [Document(text: "\(meeting.title) \(meeting.appName)",
+                                  kind: .title, start: 0, speaker: "")]
 
         if let data = try? Data(contentsOf: folder.appendingPathComponent("transcript.json")),
            let transcript = try? JSONDecoder().decode(Transcript.self, from: data) {
             for segment in transcript.segments {
-                insert(text: segment.text, meeting: meeting.id, kind: .segment,
-                       start: segment.start, speaker: transcript.displaySpeaker(for: segment.speaker))
+                documents.append(Document(
+                    text: segment.text,
+                    kind: .segment,
+                    start: segment.start,
+                    speaker: transcript.displaySpeaker(for: segment.speaker)))
             }
         }
         if let summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"),
                                      encoding: .utf8) {
-            insert(text: summary, meeting: meeting.id, kind: .summary, start: 0, speaker: "")
+            documents.append(Document(text: summary, kind: .summary, start: 0, speaker: ""))
         }
-        database?.run(
-            "INSERT OR REPLACE INTO indexed_meetings (meeting_id, source_mtime) VALUES (?1, ?2)",
-            bind: [meeting.id.uuidString, mtime])
+        documents = documents.compactMap { document in
+            let text = document.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? nil : Document(text: text, kind: document.kind,
+                                                 start: document.start, speaker: document.speaker)
+        }
+
+        guard let database else { return }
+        let meetingID = meeting.id.uuidString
+        database.transaction {
+            guard Self.deleteDocuments(for: meetingID, in: database) else { return false }
+            let inserted = database.withStatement(
+                "INSERT INTO docs (text, meeting_id, kind, start, speaker) VALUES (?1, ?2, ?3, ?4, ?5)"
+            ) { documentStatement in
+                database.withStatement(
+                    "INSERT INTO search_document_rows (doc_rowid, meeting_id) VALUES (?1, ?2)"
+                ) { mappingStatement in
+                    for document in documents {
+                        guard database.run(documentStatement, bind: [
+                            document.text, meetingID, document.kind.rawValue,
+                            document.start, document.speaker,
+                        ]), database.run(mappingStatement, bind: [
+                            database.lastInsertRowID(), meetingID,
+                        ]) else { return false }
+                    }
+                    return true
+                } ?? false
+            } ?? false
+            guard inserted else { return false }
+            return database.run(
+                "INSERT OR REPLACE INTO indexed_meetings (meeting_id, source_mtime) VALUES (?1, ?2)",
+                bind: [meetingID, mtime])
+        }
     }
 
     func remove(_ meetingID: UUID) {
-        database?.run("DELETE FROM docs WHERE meeting_id = ?1", bind: [meetingID.uuidString])
-        database?.run("DELETE FROM indexed_meetings WHERE meeting_id = ?1", bind: [meetingID.uuidString])
+        guard let database else { return }
+        let id = meetingID.uuidString
+        database.transaction {
+            Self.deleteDocuments(for: id, in: database)
+                && database.run("DELETE FROM indexed_meetings WHERE meeting_id = ?1", bind: [id])
+        }
     }
 
     // MARK: - Query
@@ -165,13 +212,41 @@ final class SearchIndex {
 
     // MARK: - Plumbing
 
-    private func insert(text: String, meeting: UUID, kind: Kind,
-                        start: TimeInterval, speaker: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        database?.run(
-            "INSERT INTO docs (text, meeting_id, kind, start, speaker) VALUES (?1, ?2, ?3, ?4, ?5)",
-            bind: [trimmed, meeting.uuidString, kind.rawValue, start, speaker])
+    private struct Document {
+        let text: String
+        let kind: Kind
+        let start: TimeInterval
+        let speaker: String
+    }
+
+    private static func backfillDocumentRowsIfNeeded(in database: SQLiteDatabase) {
+        guard !database.hasRow(
+            "SELECT 1 FROM search_index_migrations WHERE name = ?1",
+            bind: [documentRowsMigration]) else { return }
+        database.transaction {
+            database.run("DELETE FROM search_document_rows")
+                && database.run("""
+                    INSERT INTO search_document_rows (doc_rowid, meeting_id)
+                    SELECT rowid, meeting_id FROM docs
+                    WHERE meeting_id IS NOT NULL AND meeting_id != ''
+                    """)
+                && database.run(
+                    "INSERT INTO search_index_migrations (name) VALUES (?1)",
+                    bind: [documentRowsMigration])
+        }
+    }
+
+    private static func deleteDocuments(for meetingID: String,
+                                        in database: SQLiteDatabase) -> Bool {
+        database.run("""
+            DELETE FROM docs
+            WHERE rowid IN (
+                SELECT doc_rowid FROM search_document_rows WHERE meeting_id = ?1
+            )
+            """, bind: [meetingID])
+            && database.run(
+                "DELETE FROM search_document_rows WHERE meeting_id = ?1",
+                bind: [meetingID])
     }
 
     private func indexedMtime(of meetingID: UUID) -> TimeInterval? {

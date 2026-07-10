@@ -167,6 +167,40 @@ actor IdleTimer {
     }
 }
 
+/// Coalesces overlapping async setup calls. Swift actors are reentrant at
+/// every `await`, so a simple `guard model == nil` does not prevent two callers
+/// from downloading or loading the same model concurrently.
+actor AsyncSingleFlight {
+    private var task: Task<Void, Error>?
+    private var generation = 0
+
+    func run(_ operation: @escaping @Sendable () async throws -> Void) async throws {
+        if let task {
+            try await task.value
+            return
+        }
+
+        generation += 1
+        let scheduledGeneration = generation
+        let task = Task { try await operation() }
+        self.task = task
+        do {
+            try await task.value
+            clearIfCurrent(scheduledGeneration)
+        } catch {
+            clearIfCurrent(scheduledGeneration)
+            throw error
+        }
+    }
+
+    var isRunning: Bool { task != nil }
+
+    private func clearIfCurrent(_ scheduledGeneration: Int) {
+        guard generation == scheduledGeneration else { return }
+        task = nil
+    }
+}
+
 
 /// Parakeet TDT 0.6B via FluidAudio — CoreML, in-process, runs on the
 /// Neural Engine (~190x realtime on M4). v3 = 25 European languages,
@@ -189,6 +223,7 @@ actor ParakeetEngine: TranscriptionEngine {
 
     private let variant: Variant
     private var manager: AsrManager?
+    private let preparation = AsyncSingleFlight()
     private var activeUses = 0
     private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.unload() }
 
@@ -199,26 +234,44 @@ actor ParakeetEngine: TranscriptionEngine {
         guard manager == nil else { return }
         reportPreparationUpdate(.init(fractionCompleted: nil, status: "Checking..."),
                                 to: progress)
-        let models = try await AsrModels.downloadAndLoad(
-            version: variant.modelVersion,
-            progressHandler: downloadProgressHandler(progress))
-        reportPreparationUpdate(.init(fractionCompleted: nil, status: "Loading..."),
-                                to: progress)
-        let m = AsrManager(config: .default)
-        try await m.loadModels(models)
-        manager = m
-        await ModelRuntimeRegistry.shared.register(
-            id: variant == .v3 ? "transcription:parakeet-v3" : "transcription:parakeet-v2",
-            role: "Transcription",
-            label: variant == .v3 ? "Parakeet TDT 0.6B v3" : "Parakeet TDT 0.6B v2",
-            estimatedBytes: ModelRuntimeRegistry.gibibytes(0.6)
-        )
+        try await preparation.run { [weak self] in
+            guard let self else { return }
+            try await self.performPreparation(progress: progress)
+        }
         reportPreparationUpdate(.init(fractionCompleted: 1, status: "Ready"), to: progress)
+    }
+
+    private func performPreparation(progress: ModelPreparationProgressHandler?) async throws {
+        guard manager == nil else { return }
+        let runtimeID = variant == .v3
+            ? "transcription:parakeet-v3" : "transcription:parakeet-v2"
+        let runtimeLabel = variant == .v3
+            ? "Parakeet TDT 0.6B v3" : "Parakeet TDT 0.6B v2"
+        let estimatedBytes = ModelRuntimeRegistry.gibibytes(0.6)
+        await ModelRuntimeRegistry.shared.reserve(
+            id: runtimeID, role: "Transcription", label: runtimeLabel,
+            estimatedBytes: estimatedBytes)
+        do {
+            let models = try await AsrModels.downloadAndLoad(
+                version: variant.modelVersion,
+                progressHandler: downloadProgressHandler(progress))
+            reportPreparationUpdate(.init(fractionCompleted: nil, status: "Loading..."),
+                                    to: progress)
+            let m = AsrManager(config: .default)
+            try await m.loadModels(models)
+            manager = m
+            await ModelRuntimeRegistry.shared.register(
+                id: runtimeID, role: "Transcription", label: runtimeLabel,
+                estimatedBytes: estimatedBytes)
+        } catch {
+            await ModelRuntimeRegistry.shared.unregister(id: runtimeID)
+            throw error
+        }
     }
 
     /// Free the loaded model after an idle period (driven by `idle`).
     private func unload() async {
-        guard activeUses == 0 else { return }
+        guard activeUses == 0, !(await preparation.isRunning) else { return }
         manager = nil
         await ModelRuntimeRegistry.shared.unregister(
             id: variant == .v3 ? "transcription:parakeet-v3" : "transcription:parakeet-v2"
@@ -311,6 +364,7 @@ actor WhisperEngine: TranscriptionEngine {
     nonisolated let supportsStreaming = false
 
     private var pipe: WhisperKit?
+    private let preparation = AsyncSingleFlight()
     private var activeUses = 0
     private let modelName = "large-v3-v20240930"
     private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.unload() }
@@ -319,29 +373,44 @@ actor WhisperEngine: TranscriptionEngine {
         guard pipe == nil else { return }
         reportPreparationUpdate(.init(fractionCompleted: nil, status: "Checking..."),
                                 to: progress)
-        let modelFolder = try await WhisperKit.download(variant: modelName) { download in
-            reportPreparationUpdate(
-                .init(fractionCompleted: download.fractionCompleted,
-                      status: "Downloading..."),
-                to: progress)
+        try await preparation.run { [weak self] in
+            guard let self else { return }
+            try await self.performPreparation(progress: progress)
         }
-        reportPreparationUpdate(.init(fractionCompleted: nil, status: "Loading..."),
-                                to: progress)
-        pipe = try await WhisperKit(WhisperKitConfig(
-            model: modelName,
-            modelFolder: modelFolder.path(percentEncoded: false),
-            download: false))
-        await ModelRuntimeRegistry.shared.register(
-            id: "transcription:whisper-large-v3-turbo",
-            role: "Transcription",
-            label: "Whisper large-v3 turbo",
-            estimatedBytes: ModelRuntimeRegistry.gibibytes(1.6)
-        )
         reportPreparationUpdate(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
+    private func performPreparation(progress: ModelPreparationProgressHandler?) async throws {
+        guard pipe == nil else { return }
+        let runtimeID = "transcription:whisper-large-v3-turbo"
+        let estimatedBytes = ModelRuntimeRegistry.gibibytes(1.6)
+        await ModelRuntimeRegistry.shared.reserve(
+            id: runtimeID, role: "Transcription", label: "Whisper large-v3 turbo",
+            estimatedBytes: estimatedBytes)
+        do {
+            let modelFolder = try await WhisperKit.download(variant: modelName) { download in
+                reportPreparationUpdate(
+                    .init(fractionCompleted: download.fractionCompleted,
+                          status: "Downloading..."),
+                    to: progress)
+            }
+            reportPreparationUpdate(.init(fractionCompleted: nil, status: "Loading..."),
+                                    to: progress)
+            pipe = try await WhisperKit(WhisperKitConfig(
+                model: modelName,
+                modelFolder: modelFolder.path(percentEncoded: false),
+                download: false))
+            await ModelRuntimeRegistry.shared.register(
+                id: runtimeID, role: "Transcription", label: "Whisper large-v3 turbo",
+                estimatedBytes: estimatedBytes)
+        } catch {
+            await ModelRuntimeRegistry.shared.unregister(id: runtimeID)
+            throw error
+        }
+    }
+
     private func unload() async {
-        guard activeUses == 0 else { return }
+        guard activeUses == 0, !(await preparation.isRunning) else { return }
         pipe = nil
         await ModelRuntimeRegistry.shared.unregister(
             id: "transcription:whisper-large-v3-turbo"
@@ -381,6 +450,7 @@ actor CohereEngine: TranscriptionEngine {
     nonisolated let supportsStreaming = false
 
     private var models: CoherePipeline.LoadedModels?
+    private let preparation = AsyncSingleFlight()
     private var activeUses = 0
     private let pipeline = CoherePipeline()
     private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.unload() }
@@ -389,30 +459,45 @@ actor CohereEngine: TranscriptionEngine {
         guard models == nil else { return }
         reportPreparationUpdate(.init(fractionCompleted: nil, status: "Checking..."),
                                 to: progress)
-        let base = AppDirectories.fluidAudioRoot
-        let repoDir = base.appendingPathComponent(Repo.cohereTranscribeCoreml.folderName)
-        if !FileManager.default.fileExists(
-            atPath: repoDir.appendingPathComponent(ModelNames.CohereTranscribe.encoderCompiledFile).path) {
-            try await DownloadUtils.downloadRepo(
-                .cohereTranscribeCoreml,
-                to: base,
-                progressHandler: downloadProgressHandler(progress))
+        try await preparation.run { [weak self] in
+            guard let self else { return }
+            try await self.performPreparation(progress: progress)
         }
-        reportPreparationUpdate(.init(fractionCompleted: nil, status: "Loading..."),
-                                to: progress)
-        models = try await CoherePipeline.loadModels(
-            encoderDir: repoDir, decoderDir: repoDir, vocabDir: repoDir)
-        await ModelRuntimeRegistry.shared.register(
-            id: "transcription:cohere",
-            role: "Transcription",
-            label: "Cohere Transcribe",
-            estimatedBytes: ModelRuntimeRegistry.gibibytes(2.1)
-        )
         reportPreparationUpdate(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
+    private func performPreparation(progress: ModelPreparationProgressHandler?) async throws {
+        guard models == nil else { return }
+        let runtimeID = "transcription:cohere"
+        let estimatedBytes = ModelRuntimeRegistry.gibibytes(2.1)
+        await ModelRuntimeRegistry.shared.reserve(
+            id: runtimeID, role: "Transcription", label: "Cohere Transcribe",
+            estimatedBytes: estimatedBytes)
+        do {
+            let base = AppDirectories.fluidAudioRoot
+            let repoDir = base.appendingPathComponent(Repo.cohereTranscribeCoreml.folderName)
+            if !FileManager.default.fileExists(
+                atPath: repoDir.appendingPathComponent(ModelNames.CohereTranscribe.encoderCompiledFile).path) {
+                try await DownloadUtils.downloadRepo(
+                    .cohereTranscribeCoreml,
+                    to: base,
+                    progressHandler: downloadProgressHandler(progress))
+            }
+            reportPreparationUpdate(.init(fractionCompleted: nil, status: "Loading..."),
+                                    to: progress)
+            models = try await CoherePipeline.loadModels(
+                encoderDir: repoDir, decoderDir: repoDir, vocabDir: repoDir)
+            await ModelRuntimeRegistry.shared.register(
+                id: runtimeID, role: "Transcription", label: "Cohere Transcribe",
+                estimatedBytes: estimatedBytes)
+        } catch {
+            await ModelRuntimeRegistry.shared.unregister(id: runtimeID)
+            throw error
+        }
+    }
+
     private func unload() async {
-        guard activeUses == 0 else { return }
+        guard activeUses == 0, !(await preparation.isRunning) else { return }
         models = nil
         await ModelRuntimeRegistry.shared.unregister(id: "transcription:cohere")
     }
@@ -487,6 +572,7 @@ actor SpeechActivity {
     static let shared = SpeechActivity()
 
     private var manager: VadManager?
+    private let preparation = AsyncSingleFlight()
     private var activeUses = 0
     private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.unload() }
     /// Single-entry segments cache. The pipeline gates each track on
@@ -538,17 +624,31 @@ actor SpeechActivity {
 
     private func prepare() async throws {
         guard manager == nil else { return }
-        manager = try await VadManager()
-        await ModelRuntimeRegistry.shared.register(
-            id: "voice-activity:silero-vad",
-            role: "Voice activity",
-            label: "Silero VAD",
-            estimatedBytes: 1_048_576
-        )
+        try await preparation.run { [weak self] in
+            guard let self else { return }
+            try await self.performPreparation()
+        }
+    }
+
+    private func performPreparation() async throws {
+        guard manager == nil else { return }
+        let runtimeID = "voice-activity:silero-vad"
+        await ModelRuntimeRegistry.shared.reserve(
+            id: runtimeID, role: "Voice activity", label: "Silero VAD",
+            estimatedBytes: 1_048_576)
+        do {
+            manager = try await VadManager()
+            await ModelRuntimeRegistry.shared.register(
+                id: runtimeID, role: "Voice activity", label: "Silero VAD",
+                estimatedBytes: 1_048_576)
+        } catch {
+            await ModelRuntimeRegistry.shared.unregister(id: runtimeID)
+            throw error
+        }
     }
 
     private func unload() async {
-        guard activeUses == 0 else { return }
+        guard activeUses == 0, !(await preparation.isRunning) else { return }
         manager = nil
         cachedSegments = nil
         await ModelRuntimeRegistry.shared.unregister(id: "voice-activity:silero-vad")
