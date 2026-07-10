@@ -150,7 +150,7 @@ targetTemplates:
         CODE_SIGN_STYLE: Automatic
         # Stable signature so TCC grants (Accessibility, Screen Recording)
         # survive rebuilds — ad-hoc signing invalidates them every build.
-        DEVELOPMENT_TEAM: K96P3M3997
+        DEVELOPMENT_TEAM: 3N8B4562P4
         GENERATE_INFOPLIST_FILE: NO
         # In-process libllama: link the vendored dylib (-lllama resolves the
         # libllama.dylib symlink in Vendor/llama-cpp) and make its @rpath install
@@ -285,7 +285,7 @@ targets:
         PRODUCT_NAME: lokalbot-cli
         PRODUCT_MODULE_NAME: lokalbot_cli
         CODE_SIGN_IDENTITY: "-"
-        DEVELOPMENT_TEAM: K96P3M3997
+        DEVELOPMENT_TEAM: 3N8B4562P4
         ENABLE_HARDENED_RUNTIME: NO  # flip ON in notarised release builds
         GENERATE_INFOPLIST_FILE: YES
         # Embedded into LokalBot.app/Contents/Helpers rather than installed

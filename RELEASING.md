@@ -28,7 +28,7 @@ notarization and stapling, with no further edits to the DMG.
 
 ## Current config
 
-- Product: **LokalBot** · bundle id `me.dotenv.LokalBot` · team `K96P3M3997`
+- Product: **LokalBot** · bundle id `me.dotenv.LokalBot` · team `3N8B4562P4`
 - Xcode project `LokalBot.xcodeproj` · schemes `LokalBot` (prod), `LokalBot Dev` (dev)
 - Sparkle feed (`SUFeedURL`):
   `https://github.com/stevyhacker/lokalbot/releases/latest/download/appcast.xml`
@@ -102,7 +102,34 @@ A mismatch makes every installed copy reject the update silently.
 > wiring) is separate from this runbook; this document covers building, signing,
 > and publishing the release artifacts.
 
-### 4. Store notarization credentials
+### 4. Create the Developer ID Application certificate
+
+For direct distribution outside the Mac App Store, create a **Developer ID
+Application** certificate for team `3N8B4562P4`. The simplest route is Xcode:
+
+1. Open Xcode → Settings → Accounts.
+2. Select the Apple ID and the `Stevan Bogosavljevic` team.
+3. Open **Manage Certificates…**, click `+`, and choose
+   **Developer ID Application**.
+
+Verify that the certificate and its private key are available locally:
+
+```sh
+security find-identity -p codesigning -v
+```
+
+The output must include `Developer ID Application` with team `3N8B4562P4`.
+`Apple Development`, `Apple Distribution`, and `Developer ID Installer` are
+different certificate types and do not replace it for this DMG flow.
+
+For GitHub Actions, export the Developer ID Application certificate **with its
+private key** from Keychain Access as a password-protected `.p12`. Never commit
+the `.p12` or its password.
+
+An App Store Connect app record and a Mac App Store provisioning profile are
+not required for this direct-distribution path.
+
+### 5. Store notarization credentials
 
 Create an app-specific password at <https://appleid.apple.com>, then cache it as
 a notarytool keychain profile so the release commands stay credential-free:
@@ -110,7 +137,7 @@ a notarytool keychain profile so the release commands stay credential-free:
 ```sh
 xcrun notarytool store-credentials "LokalBot-notary" \
   --apple-id "you@example.com" \
-  --team-id "K96P3M3997" \
+  --team-id "3N8B4562P4" \
   --password "<app-specific-password>"
 ```
 
@@ -156,7 +183,7 @@ Create `build/exportOptions.plist`:
 <plist version="1.0">
 <dict>
   <key>method</key><string>developer-id</string>
-  <key>teamID</key><string>K96P3M3997</string>
+  <key>teamID</key><string>3N8B4562P4</string>
   <key>signingStyle</key><string>automatic</string>
 </dict>
 </plist>
@@ -265,6 +292,23 @@ for `sign_update`, run `generate_appcast.py`, and upload `LokalBot.dmg` +
 - `NOTARY_APPLE_ID`, `NOTARY_APPLE_TEAM_ID`, `NOTARY_APPLE_PWD`
 - `SPARKLE_PRIVATE_KEY` (the base64 Ed25519 private key; written to a temp file
   and passed to `generate_appcast.py --ed-key-file`)
+
+Set the certificate and credential secrets without pasting them into source or
+shell history. `gh secret set NAME` prompts for the value securely:
+
+```sh
+base64 -i /path/to/Developer-ID-Application.p12 | \
+  gh secret set MACOS_CERTIFICATE --repo stevyhacker/lokalbot
+gh secret set MACOS_CERTIFICATE_PWD --repo stevyhacker/lokalbot
+gh secret set KEYCHAIN_PWD --repo stevyhacker/lokalbot
+gh secret set NOTARY_APPLE_ID --repo stevyhacker/lokalbot
+gh secret set NOTARY_APPLE_TEAM_ID --repo stevyhacker/lokalbot --body 3N8B4562P4
+gh secret set NOTARY_APPLE_PWD --repo stevyhacker/lokalbot
+gh secret set SPARKLE_PRIVATE_KEY --repo stevyhacker/lokalbot
+```
+
+`NOTARY_APPLE_PWD` is an app-specific password for the Apple ID, not the
+account's normal password.
 
 CI passes `--repo "$GITHUB_REPOSITORY"`, so the `OWNER/REPO` placeholder is
 resolved automatically there.

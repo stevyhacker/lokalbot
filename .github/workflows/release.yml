@@ -12,7 +12,7 @@
 #   MACOS_CERTIFICATE_PWD  the .p12 passphrase
 #   KEYCHAIN_PWD           throwaway password for the temp keychain
 #   NOTARY_APPLE_ID        Apple ID used for notarytool
-#   NOTARY_APPLE_TEAM_ID   team ID (K96P3M3997)
+#   NOTARY_APPLE_TEAM_ID   team ID (3N8B4562P4)
 #   NOTARY_APPLE_PWD       app-specific password for notarytool
 #   SPARKLE_PRIVATE_KEY    base64 Ed25519 private key; written to a temp file
 #                          and passed to generate_appcast.py --ed-key-file.
@@ -58,6 +58,30 @@ jobs:
             exit 1
           fi
 
+      - name: Validate release secrets
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          KEYCHAIN_PWD: ${{ secrets.KEYCHAIN_PWD }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_APPLE_TEAM_ID: ${{ secrets.NOTARY_APPLE_TEAM_ID }}
+          NOTARY_APPLE_PWD: ${{ secrets.NOTARY_APPLE_PWD }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          missing=()
+          for name in \
+            MACOS_CERTIFICATE MACOS_CERTIFICATE_PWD KEYCHAIN_PWD \
+            NOTARY_APPLE_ID NOTARY_APPLE_TEAM_ID NOTARY_APPLE_PWD \
+            SPARKLE_PRIVATE_KEY; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} )); then
+            printf '::error::Missing required release secret: %s\n' "${missing[@]}"
+            exit 1
+          fi
+
       # Developer ID signing needs the certificate in a keychain codesign can
       # reach. A dedicated temp keychain keeps the runner's login keychain out
       # of the picture and is deleted in the always() cleanup step below.
@@ -78,6 +102,11 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s \
             -k "$KEYCHAIN_PWD" "$keychain" > /dev/null
           security list-keychains -d user -s "$keychain" login.keychain-db
+          if ! security find-identity -v -p codesigning "$keychain" | \
+            grep -F 'Developer ID Application'; then
+            echo '::error::The imported .p12 does not contain a usable Developer ID Application identity.' >&2
+            exit 1
+          fi
 
       - name: Install XcodeGen
         run: |
@@ -109,23 +138,30 @@ jobs:
       # OFF (project.yml) so local dev builds stay fast. Overriding here is the
       # release-time flip RELEASING.md step 2 documents.
       - name: Archive (Release, Hardened Runtime ON)
+        env:
+          APPLE_TEAM_ID: ${{ secrets.NOTARY_APPLE_TEAM_ID }}
         run: |
           xcodebuild archive \
             -project LokalBot.xcodeproj \
             -scheme LokalBot \
             -configuration Release \
             -archivePath build/LokalBot.xcarchive \
-            ENABLE_HARDENED_RUNTIME=YES
+            ENABLE_HARDENED_RUNTIME=YES \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Developer ID Application"
 
       - name: Export Developer ID app
+        env:
+          APPLE_TEAM_ID: ${{ secrets.NOTARY_APPLE_TEAM_ID }}
         run: |
-          cat > build/exportOptions.plist <<'PLIST'
+          cat > build/exportOptions.plist <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
             <key>method</key><string>developer-id</string>
-            <key>teamID</key><string>K96P3M3997</string>
+            <key>teamID</key><string>$APPLE_TEAM_ID</string>
             <key>signingStyle</key><string>automatic</string>
           </dict>
           </plist>

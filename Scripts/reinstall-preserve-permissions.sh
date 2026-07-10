@@ -17,7 +17,7 @@ PROJECT="LokalBot.xcodeproj"
 SCHEME="LokalBot"
 CONFIGURATION="${CONFIGURATION:-Debug}"
 EXPECTED_BUNDLE_ID="${EXPECTED_BUNDLE_ID:-me.dotenv.LokalBot}"
-EXPECTED_TEAM_ID="${EXPECTED_TEAM_ID:-K96P3M3997}"
+EXPECTED_TEAM_ID="${EXPECTED_TEAM_ID:-3N8B4562P4}"
 INSTALLED_APP="${LOKALBOT_APP:-/Applications/LokalBot.app}"
 
 TMP_ROOT="/private/tmp"
@@ -36,7 +36,7 @@ Environment:
   CONFIGURATION        Xcode configuration to build. Default: Debug
   LOKALBOT_APP         Installed app path. Default: /Applications/LokalBot.app
   EXPECTED_BUNDLE_ID   Expected bundle id. Default: me.dotenv.LokalBot
-  EXPECTED_TEAM_ID     Expected Apple Team ID. Default: K96P3M3997
+  EXPECTED_TEAM_ID     Expected Apple Team ID. Default: 3N8B4562P4
 EOF
 }
 
