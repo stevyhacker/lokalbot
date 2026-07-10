@@ -184,8 +184,19 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
             process.standardOutput = out
             process.standardError = FileHandle.nullDevice   // verbose logging — discard
             try process.run()
+            let runtimeID = "transcription:onnx:\(model.modelType):\(UUID().uuidString)"
+            let processUsage = SystemResourceSampler.processUsage(for: process.processIdentifier)
+            await ModelRuntimeRegistry.shared.register(
+                id: runtimeID,
+                role: "Transcription",
+                label: model.displayName,
+                estimatedBytes: ModelRuntimeRegistry.fileBytes(at: modelFile),
+                processIdentifier: processUsage?.processIdentifier,
+                processStartTime: processUsage?.startTime
+            )
             let data = out.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
+            await ModelRuntimeRegistry.shared.unregister(id: runtimeID)
             guard process.terminationStatus == 0 else {
                 throw EngineError.transcriptionFailed(Int(process.terminationStatus))
             }

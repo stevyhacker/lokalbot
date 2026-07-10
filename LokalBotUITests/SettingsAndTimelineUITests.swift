@@ -42,6 +42,25 @@ final class SettingsUITests: XCTestCase {
                       "relaunch affordance missing")
     }
 
+    func testResourceMonitorRendersUsageAndModelState() {
+        UITestHarness.clickSidebar("sidebar.settings", in: app)
+        let tabs = app.descendants(matching: .any)["settings.tab"]
+        XCTAssertTrue(tabs.waitForExistence(timeout: 8), "settings tab strip missing")
+        let segment = tabs.buttons["Advanced"].exists
+            ? tabs.buttons["Advanced"] : tabs.radioButtons["Advanced"]
+        XCTAssertTrue(segment.waitForExistence(timeout: 4), "Advanced segment missing")
+        segment.click()
+
+        XCTAssertTrue(app.descendants(matching: .any)["settings.resourceMonitor.cpu"]
+            .waitForExistence(timeout: 6), "resource monitor CPU metric missing")
+        XCTAssertTrue(app.descendants(matching: .any)["settings.resourceMonitor.memory"].exists,
+                      "resource monitor memory metric missing")
+        XCTAssertTrue(app.descendants(matching: .any)["settings.resourceMonitor.models"].exists,
+                      "resource monitor model count missing")
+        XCTAssertTrue(app.descendants(matching: .any)["settings.resourceMonitor.modelMemory"].exists,
+                      "resource monitor model memory metric missing")
+    }
+
     func testCalendarDependentOptionsHiddenWhenCalendarDetectionIsOff() {
         UITestHarness.clickSidebar("sidebar.settings", in: app)
         XCTAssertTrue(app.descendants(matching: .any)["settings.form"]

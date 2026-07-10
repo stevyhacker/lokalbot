@@ -102,7 +102,7 @@ actor KokoroSpeechEngine {
             text,
         ]
 
-        try await Self.run(runtime: runtime, args: args)
+        try await Self.run(runtime: runtime, args: args, modelAt: config.model)
         guard FileManager.default.fileExists(atPath: output.path) else {
             throw SpeechError.missingOutput
         }
@@ -187,7 +187,7 @@ actor KokoroSpeechEngine {
     }
 
     private nonisolated static func run(runtime: (binary: URL, libDir: URL),
-                                        args: [String]) async throws {
+                                        args: [String], modelAt modelURL: URL) async throws {
         let cancellation = ProcessCancellationController()
         try await withTaskCancellationHandler {
             try await Task.detached(priority: .userInitiated) {
@@ -208,12 +208,25 @@ actor KokoroSpeechEngine {
                 cancellation.track(process)
                 defer { cancellation.clear(process) }
 
+                let runtimeID = "speech:kokoro:\(UUID().uuidString)"
+                let processUsage = SystemResourceSampler.processUsage(
+                    for: process.processIdentifier)
+                await ModelRuntimeRegistry.shared.register(
+                    id: runtimeID,
+                    role: "Speech synthesis",
+                    label: "Kokoro 82M",
+                    estimatedBytes: ModelRuntimeRegistry.fileBytes(at: modelURL),
+                    processIdentifier: processUsage?.processIdentifier,
+                    processStartTime: processUsage?.startTime
+                )
+
                 if Task.isCancelled {
                     cancellation.cancel()
                 }
                 let stdout = out.fileHandleForReading.readDataToEndOfFile()
                 let stderr = err.fileHandleForReading.readDataToEndOfFile()
                 process.waitUntilExit()
+                await ModelRuntimeRegistry.shared.unregister(id: runtimeID)
                 try Task.checkCancellation()
                 guard process.terminationStatus == 0 else {
                     let message = String(decoding: stderr, as: UTF8.self)

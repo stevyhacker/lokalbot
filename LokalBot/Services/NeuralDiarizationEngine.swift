@@ -54,6 +54,12 @@ final class NeuralDiarizationEngine: ObservableObject {
             try await diarizer.prepareModels()
             isReady = true
             statusMessage = "Speaker models ready"
+            ModelRuntimeRegistry.shared.register(
+                id: "diarization:pyannote-community-1",
+                role: "Speaker diarization",
+                label: "Pyannote Community-1",
+                estimatedBytes: ModelRuntimeRegistry.gibibytes(0.1)
+            )
         } catch {
             statusMessage = "Speaker model load failed: \(error.localizedDescription)"
             logger.error("prepareModels failed: \(error.localizedDescription)")

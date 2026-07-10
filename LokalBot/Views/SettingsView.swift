@@ -92,7 +92,7 @@ struct SettingsView: View {
         case .privacy:
             privacySection
         case .advanced:
-            systemSection; agentCLISection
+            resourceMonitorSection; systemSection; agentCLISection
         }
     }
 
@@ -102,7 +102,7 @@ struct SettingsView: View {
     @ViewBuilder private var searchResults: some View {
         generalSection; cotypingSection; permissionsSection; meetingsSection
         processingSection; summarizationSection; dayTrackingSection; privacySection
-        storageSection; updatesSection; systemSection; agentCLISection
+        storageSection; updatesSection; resourceMonitorSection; systemSection; agentCLISection
         if shows("Models", ["model", "models", "transcription", "summarization",
                             "cotyping", "embeddings", "llm", "whisper", "download",
                             "gguf", "hugging face", "ollama", "engine", "backend"]) {
@@ -118,6 +118,14 @@ struct SettingsView: View {
     }
 
     // MARK: - Sections
+
+    @ViewBuilder private var resourceMonitorSection: some View {
+        if shows("Resource Monitor", ["resource", "usage", "cpu", "memory", "ram",
+                                      "footprint", "models", "loaded", "running",
+                                      "performance", "diagnostics"]) {
+            ResourceMonitorSection()
+        }
+    }
 
     @ViewBuilder private var generalSection: some View {
         if shows("General", ["launch", "login", "startup", "open at login", "auto start",

@@ -189,6 +189,7 @@ actor ParakeetEngine: TranscriptionEngine {
 
     private let variant: Variant
     private var manager: AsrManager?
+    private var activeUses = 0
     private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.unload() }
 
     private init(variant: Variant) { self.variant = variant }
@@ -206,13 +207,27 @@ actor ParakeetEngine: TranscriptionEngine {
         let m = AsrManager(config: .default)
         try await m.loadModels(models)
         manager = m
+        await ModelRuntimeRegistry.shared.register(
+            id: variant == .v3 ? "transcription:parakeet-v3" : "transcription:parakeet-v2",
+            role: "Transcription",
+            label: variant == .v3 ? "Parakeet TDT 0.6B v3" : "Parakeet TDT 0.6B v2",
+            estimatedBytes: ModelRuntimeRegistry.gibibytes(0.6)
+        )
         reportPreparationUpdate(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
     /// Free the loaded model after an idle period (driven by `idle`).
-    private func unload() { manager = nil }
+    private func unload() async {
+        guard activeUses == 0 else { return }
+        manager = nil
+        await ModelRuntimeRegistry.shared.unregister(
+            id: variant == .v3 ? "transcription:parakeet-v3" : "transcription:parakeet-v2"
+        )
+    }
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
+        activeUses += 1
+        defer { finishUse() }
         try await prepare()
         guard let manager else { throw TranscriptionEngineError.notLoaded }
         var state = try TdtDecoderState()
@@ -220,8 +235,13 @@ actor ParakeetEngine: TranscriptionEngine {
         let result = try await manager.transcribe(url, decoderState: &state, language: hint)
         let transcript = Transcript(segments: Self.segments(from: result, speaker: "speaker"),
                                     engine: "\(variant == .v2 ? "parakeet-tdt-0.6b-v2" : "parakeet-tdt-0.6b-v3") (FluidAudio)")
-        await idle.bump()
         return transcript
+    }
+
+    private func finishUse() {
+        activeUses -= 1
+        guard activeUses == 0 else { return }
+        Task { await idle.bump() }
     }
 
     // MARK: - Token timings → readable segments
@@ -291,6 +311,7 @@ actor WhisperEngine: TranscriptionEngine {
     nonisolated let supportsStreaming = false
 
     private var pipe: WhisperKit?
+    private var activeUses = 0
     private let modelName = "large-v3-v20240930"
     private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.unload() }
 
@@ -310,12 +331,26 @@ actor WhisperEngine: TranscriptionEngine {
             model: modelName,
             modelFolder: modelFolder.path(percentEncoded: false),
             download: false))
+        await ModelRuntimeRegistry.shared.register(
+            id: "transcription:whisper-large-v3-turbo",
+            role: "Transcription",
+            label: "Whisper large-v3 turbo",
+            estimatedBytes: ModelRuntimeRegistry.gibibytes(1.6)
+        )
         reportPreparationUpdate(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
-    private func unload() { pipe = nil }
+    private func unload() async {
+        guard activeUses == 0 else { return }
+        pipe = nil
+        await ModelRuntimeRegistry.shared.unregister(
+            id: "transcription:whisper-large-v3-turbo"
+        )
+    }
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
+        activeUses += 1
+        defer { finishUse() }
         try await prepare()
         guard let pipe else { throw TranscriptionEngineError.notLoaded }
         let options = DecodingOptions(language: language, detectLanguage: language == nil)
@@ -326,8 +361,13 @@ actor WhisperEngine: TranscriptionEngine {
                                text: Transcript.normalizedText(seg.text),
                                confidence: nil)
         }.filter { !$0.text.isEmpty }
-        await idle.bump()
         return Transcript(segments: segments, engine: "whisper-large-v3-turbo (WhisperKit)")
+    }
+
+    private func finishUse() {
+        activeUses -= 1
+        guard activeUses == 0 else { return }
+        Task { await idle.bump() }
     }
 }
 
@@ -341,6 +381,7 @@ actor CohereEngine: TranscriptionEngine {
     nonisolated let supportsStreaming = false
 
     private var models: CoherePipeline.LoadedModels?
+    private var activeUses = 0
     private let pipeline = CoherePipeline()
     private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.unload() }
 
@@ -361,12 +402,24 @@ actor CohereEngine: TranscriptionEngine {
                                 to: progress)
         models = try await CoherePipeline.loadModels(
             encoderDir: repoDir, decoderDir: repoDir, vocabDir: repoDir)
+        await ModelRuntimeRegistry.shared.register(
+            id: "transcription:cohere",
+            role: "Transcription",
+            label: "Cohere Transcribe",
+            estimatedBytes: ModelRuntimeRegistry.gibibytes(2.1)
+        )
         reportPreparationUpdate(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
-    private func unload() { models = nil }
+    private func unload() async {
+        guard activeUses == 0 else { return }
+        models = nil
+        await ModelRuntimeRegistry.shared.unregister(id: "transcription:cohere")
+    }
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
+        activeUses += 1
+        defer { finishUse() }
         try await prepare()
         guard let models else { throw TranscriptionEngineError.notLoaded }
         let lang = language.flatMap { CohereAsrConfig.Language(rawValue: $0) } ?? .english
@@ -387,7 +440,6 @@ actor CohereEngine: TranscriptionEngine {
                 let elapsed = Date().timeIntervalSince(started)
                 lokalbotLog(
                     "cohere profile mode=vad-segmented duration=\(Self.formatSeconds(total)) regions=\(spans.count) segments=\(segments.count) elapsed=\(Self.formatSeconds(elapsed)) rtfx=\(Self.formatMultiplier(elapsed > 0 ? total / elapsed : 0)) language=\(lang.rawValue)")
-                await idle.bump()
                 return Transcript(segments: segments,
                                   engine: "cohere-transcribe-03-2026 (FluidAudio, vad-segmented)")
             }
@@ -405,11 +457,16 @@ actor CohereEngine: TranscriptionEngine {
         let rtfx = totalSeconds > 0 ? duration / totalSeconds : 0
         lokalbotLog(
             "cohere profile mode=whole-track duration=\(Self.formatSeconds(duration)) convert=\(Self.formatSeconds(conversionSeconds)) pipeline=\(Self.formatSeconds(pipelineSeconds)) encoder=\(Self.formatSeconds(result.encoderSeconds)) decoder=\(Self.formatSeconds(result.decoderSeconds)) total=\(Self.formatSeconds(totalSeconds)) rtfx=\(Self.formatMultiplier(rtfx)) language=\(lang.rawValue)")
-        await idle.bump()
         return Transcript(
             segments: ParakeetEngine.singleSegment(text: result.text, duration: duration,
                                                    speaker: "speaker"),
             engine: "cohere-transcribe-03-2026 (FluidAudio)")
+    }
+
+    private func finishUse() {
+        activeUses -= 1
+        guard activeUses == 0 else { return }
+        Task { await idle.bump() }
     }
 
     private nonisolated static func formatSeconds(_ seconds: TimeInterval) -> String {
@@ -430,6 +487,7 @@ actor SpeechActivity {
     static let shared = SpeechActivity()
 
     private var manager: VadManager?
+    private var activeUses = 0
     private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.unload() }
     /// Single-entry segments cache. The pipeline gates each track on
     /// `speechSeconds` and the engine immediately re-requests the segments for
@@ -446,9 +504,10 @@ actor SpeechActivity {
     /// which lets timestamp-less engines (Cohere) emit per-region segments
     /// instead of one block per track.
     func speechSegments(in url: URL) async -> [VadSegment]? {
+        activeUses += 1
+        defer { finishUse() }
         let key = Self.cacheKey(for: url)
         if let cachedSegments, cachedSegments.key == key {
-            await idle.bump()
             return cachedSegments.segments
         }
         do {
@@ -457,7 +516,6 @@ actor SpeechActivity {
             let samples = try AudioConverter().resampleAudioFile(url)
             let segments = try await manager.segmentSpeech(samples)
             cachedSegments = (key, segments)
-            await idle.bump()
             return segments
         } catch {
             lokalbotLog("vad unavailable — transcribing without it: \(error.localizedDescription)")
@@ -481,10 +539,24 @@ actor SpeechActivity {
     private func prepare() async throws {
         guard manager == nil else { return }
         manager = try await VadManager()
+        await ModelRuntimeRegistry.shared.register(
+            id: "voice-activity:silero-vad",
+            role: "Voice activity",
+            label: "Silero VAD",
+            estimatedBytes: 1_048_576
+        )
     }
 
-    private func unload() {
+    private func unload() async {
+        guard activeUses == 0 else { return }
         manager = nil
         cachedSegments = nil
+        await ModelRuntimeRegistry.shared.unregister(id: "voice-activity:silero-vad")
+    }
+
+    private func finishUse() {
+        activeUses -= 1
+        guard activeUses == 0 else { return }
+        Task { await idle.bump() }
     }
 }

@@ -63,14 +63,19 @@ final class ModelResidencyTests: XCTestCase {
 
     func testRegisterUpsertsTouchAndUnregister() {
         let residency = ModelResidency(budgetBytes: .max)
-        residency.register(id: "a", label: "model-a", bytes: 100, unload: {})
+        residency.register(id: "a", label: "model-a", bytes: 100,
+                           processIdentifier: 123, processStartTime: 456, unload: {})
         residency.register(id: "b", label: "model-b", bytes: 50, unload: {})
         XCTAssertEqual(residency.totalBytes, 150)
+        XCTAssertEqual(residency.residents.first { $0.id == "a" }?.processIdentifier, 123)
+        XCTAssertEqual(residency.residents.first { $0.id == "a" }?.processStartTime, 456)
 
         residency.register(id: "a", label: "model-a2", bytes: 70, unload: {})
         XCTAssertEqual(residency.residents.count, 2)
         XCTAssertEqual(residency.totalBytes, 120)
         XCTAssertEqual(residency.residents.first { $0.id == "a" }?.label, "model-a2")
+        XCTAssertNil(residency.residents.first { $0.id == "a" }?.processIdentifier)
+        XCTAssertNil(residency.residents.first { $0.id == "a" }?.processStartTime)
 
         let before = residency.residents.first { $0.id == "b" }!.lastUsed
         residency.touch(id: "b")
@@ -95,5 +100,21 @@ final class ModelResidencyTests: XCTestCase {
         // The incoming runtime registers itself after its load completes.
         residency.register(id: "incoming", label: "incoming", bytes: 5, unload: {})
         XCTAssertEqual(residency.totalBytes, 8)
+    }
+
+    func testStaleGenerationCannotUnregisterReplacement() {
+        let residency = ModelResidency(budgetBytes: .max)
+        let oldGeneration = UUID()
+        let replacementGeneration = UUID()
+        residency.register(id: "server", label: "old", bytes: 100,
+                           generation: oldGeneration, unload: {})
+        residency.register(id: "server", label: "replacement", bytes: 200,
+                           generation: replacementGeneration, unload: {})
+
+        residency.unregister(id: "server", ifGenerationMatches: oldGeneration)
+        XCTAssertEqual(residency.residents.map(\.label), ["replacement"])
+
+        residency.unregister(id: "server", ifGenerationMatches: replacementGeneration)
+        XCTAssertTrue(residency.residents.isEmpty)
     }
 }

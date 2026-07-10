@@ -37,6 +37,7 @@ actor QwenASREngine: TranscriptionEngine {
 
     private let variant: Variant
     private var model: Qwen3ASRModel?
+    private var activeUses = 0
     private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.unload() }
 
     private init(variant: Variant) {
@@ -58,10 +59,20 @@ actor QwenASREngine: TranscriptionEngine {
                 progress?(.init(fractionCompleted: fraction, status: status))
             }
         }
+        await ModelRuntimeRegistry.shared.register(
+            id: variant == .accuracy ? "transcription:qwen-1.7b" : "transcription:qwen-0.6b",
+            role: "Transcription",
+            label: variant.displayName,
+            estimatedBytes: ModelRuntimeRegistry.gibibytes(
+                variant == .accuracy ? 3.2 : 0.7
+            )
+        )
         report(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
+        activeUses += 1
+        defer { finishUse() }
         try await prepare()
         guard let model else { throw EngineError.notLoaded }
 
@@ -79,12 +90,21 @@ actor QwenASREngine: TranscriptionEngine {
         let duration = spans.last?.end ?? 0
         lokalbotLog(
             "qwen-asr profile model=\(variant.modelID) spans=\(spans.count) elapsed=\(String(format: "%.2fs", elapsed)) rtfx=\(String(format: "%.1fx", elapsed > 0 ? duration / elapsed : 0))")
-        await idle.bump()
         return Transcript(segments: segments, engine: "\(variant.modelID) (Qwen3ASR MLX)")
     }
 
-    private func unload() {
+    private func unload() async {
+        guard activeUses == 0 else { return }
         model = nil
+        await ModelRuntimeRegistry.shared.unregister(
+            id: variant == .accuracy ? "transcription:qwen-1.7b" : "transcription:qwen-0.6b"
+        )
+    }
+
+    private func finishUse() {
+        activeUses -= 1
+        guard activeUses == 0 else { return }
+        Task { await idle.bump() }
     }
 
     private nonisolated func report(_ update: ModelPreparationUpdate,

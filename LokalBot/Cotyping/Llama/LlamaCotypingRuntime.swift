@@ -55,6 +55,7 @@ actor LlamaCotypingRuntime {
     private var ctx: OpaquePointer?
     private var vocab: OpaquePointer?
     private var loadedModelPath: String?
+    private var residencyGeneration: UUID?
     /// The prompt most recently prefilled into the context (basis for the
     /// incremental KV-reuse probe against the next prompt).
     private var cachedTokens: [Int32] = []
@@ -131,10 +132,13 @@ actor LlamaCotypingRuntime {
         // would emit a dylib stderr warning on every call for recurrent models.
         supportsPartialReuse = !llama_model_is_recurrent(m) && !llama_model_is_hybrid(m)
         warmup()
+        let generation = UUID()
+        residencyGeneration = generation
         await ModelResidency.shared.register(
             id: Self.residencyID,
             label: URL(fileURLWithPath: modelPath).lastPathComponent + " · in-process",
             bytes: ModelResidency.weightBytes(at: URL(fileURLWithPath: modelPath)),
+            generation: generation,
             unload: { [weak self] in await self?.unload() })
     }
 
@@ -195,6 +199,8 @@ actor LlamaCotypingRuntime {
     }
 
     func unload() {
+        let generation = residencyGeneration
+        residencyGeneration = nil
         if let c = ctx { llama_free(c) }
         if let m = model { llama_model_free(m) }
         ctx = nil
@@ -203,9 +209,16 @@ actor LlamaCotypingRuntime {
         loadedModelPath = nil
         cachedTokens = []
         supportsPartialReuse = false
-        // Fire-and-forget: unload() stays synchronous for the memory-pressure
-        // path, and unregister is idempotent (evictions already dropped us).
-        Task { @MainActor in ModelResidency.shared.unregister(id: Self.residencyID) }
+        // Keep this path synchronous for memory pressure, but only remove the
+        // generation that was actually freed. A reload may register before
+        // this main-actor task gets its turn.
+        if let generation {
+            Task { @MainActor in
+                ModelResidency.shared.unregister(
+                    id: Self.residencyID,
+                    ifGenerationMatches: generation)
+            }
+        }
     }
 
     /// Frees the model + context under memory pressure. The next `generate`

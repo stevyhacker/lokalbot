@@ -66,10 +66,10 @@ struct ModelsView: View {
                 Image(systemName: "memorychip")
                     .foregroundStyle(.tint)
                 if residency.residents.isEmpty {
-                    Text("No models in memory — weights load on demand and are evicted "
+                    Text("No GGUF weights in memory — weights load on demand and are evicted "
                         + "least-recently-used past \(gigabytes(residency.budgetBytes)).")
                 } else {
-                    Text("Models in memory: **\(gigabytes(residency.totalBytes))** of "
+                    Text("GGUF weights in memory: **\(gigabytes(residency.totalBytes))** of "
                         + "\(gigabytes(residency.budgetBytes)) budget — "
                         + residency.residents.map(\.label).joined(separator: ", "))
                 }

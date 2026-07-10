@@ -29,6 +29,7 @@ actor LlamaServer {
 
     private var process: Process?
     private var loadedModelPath: String?
+    private var residencyGeneration: UUID?
 
     enum ServerError: LocalizedError {
         case binaryMissing
@@ -46,7 +47,7 @@ actor LlamaServer {
     func ensureRunning(modelAt url: URL) async throws {
         if let process, process.isRunning, loadedModelPath == url.path,
            await healthy(), await healthyServingExpectedConfiguration(modelAt: url) {
-            await ModelResidency.shared.touch(id: residencyID)
+            await registerResidency(modelAt: url)
             return
         }
         if await healthyServingExpectedConfiguration(modelAt: url) {
@@ -63,11 +64,42 @@ actor LlamaServer {
     private nonisolated var residencyID: String { "llama-server:\(port)" }
 
     private func registerResidency(modelAt url: URL) async {
+        // Diagnostics must never gate inference. When libproc cannot provide a
+        // stable process identity, retain the model row with its weight-size
+        // estimate and let a later successful registration add live telemetry.
+        let identity = activeProcessIdentity(modelAt: url)
+        let generation = UUID()
+        residencyGeneration = generation
         await ModelResidency.shared.register(
             id: residencyID,
             label: url.lastPathComponent,
             bytes: ModelResidency.weightBytes(at: url),
+            processIdentifier: identity?.processIdentifier,
+            processStartTime: identity?.startTime,
+            generation: generation,
             unload: { [weak self] in await self?.stop() })
+    }
+
+    private func activeProcessIdentity(
+        modelAt url: URL
+    ) -> SystemResourceSampler.ProcessIdentity? {
+        if let process, process.isRunning,
+           loadedModelPath == url.path,
+           let usage = SystemResourceSampler.processUsage(for: process.processIdentifier) {
+            return usage.identity
+        }
+        // A healthy server from a prior app process is adopted through its
+        // validated marker and is no longer in our child tree.
+        guard let marker = readPidMarker(),
+              marker.port == port,
+              marker.modelPath == url.path,
+              marker.contextTokens == Optional(contextTokens),
+              marker.extraArgs == Optional(extraArgs),
+              kill(marker.pid, 0) == 0,
+              Self.processPath(for: marker.pid) == marker.binaryPath,
+              let usage = SystemResourceSampler.processUsage(for: marker.pid)
+        else { return nil }
+        return usage.identity
     }
 
     private func start(modelAt url: URL) async throws {
@@ -110,6 +142,10 @@ actor LlamaServer {
         ] + extraArgs
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { [weak self] process in
+            let processIdentifier = process.processIdentifier
+            Task { await self?.processDidTerminate(processIdentifier) }
+        }
         try process.run()
         self.process = process
         loadedModelPath = url.path
@@ -135,50 +171,78 @@ actor LlamaServer {
 
     func stop() async {
         let old = process
+        let generation = residencyGeneration
         process = nil
         loadedModelPath = nil
-        // Fire-and-forget so stop() never awaits the main actor — it runs on
-        // app-termination paths that may be blocking the main thread.
-        let id = residencyID
-        Task { @MainActor in ModelResidency.shared.unregister(id: id) }
-        guard let old else { return }
-        removePidMarker()
-        guard old.isRunning else { return }
-        old.terminate()
-        for _ in 0..<40 {
-            if !old.isRunning { return }
-            try? await Task.sleep(for: .milliseconds(50))
+        residencyGeneration = nil
+        if let old {
+            removePidMarker(ifMatching: old.processIdentifier)
+            if old.isRunning {
+                old.terminate()
+                for _ in 0..<40 {
+                    if !old.isRunning { break }
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                if old.isRunning {
+                    kill(old.processIdentifier, SIGKILL)
+                }
+            }
+        } else {
+            // A healthy server can be adopted from a previous app process. It
+            // has a validated PID marker but no Foundation `Process` handle;
+            // still terminate it so eviction and the resource ledger reflect
+            // real memory residency instead of only hiding the row.
+            if let expectedBinary = try? installedBinary() {
+                await stopRecordedServerIfOwned(expectedBinary: expectedBinary)
+            }
         }
-        if old.isRunning {
-            kill(old.processIdentifier, SIGKILL)
+        if let generation {
+            await ModelResidency.shared.unregister(
+                id: residencyID,
+                ifGenerationMatches: generation)
+        }
+    }
+
+    private func processDidTerminate(_ processIdentifier: pid_t) async {
+        guard process?.processIdentifier == processIdentifier else { return }
+        let generation = residencyGeneration
+        process = nil
+        loadedModelPath = nil
+        residencyGeneration = nil
+        removePidMarker(ifMatching: processIdentifier)
+        if let generation {
+            await ModelResidency.shared.unregister(
+                id: residencyID,
+                ifGenerationMatches: generation)
         }
     }
 
     private func stopRecordedServerIfOwned(expectedBinary: URL) async {
-        guard let marker = readPidMarker(), marker.port == port else {
-            removePidMarker()
+        guard let marker = readPidMarker() else { return }
+        let pid = marker.pid
+        guard marker.port == port else {
+            removePidMarker(ifMatching: pid)
             return
         }
-        let pid = marker.pid
         guard kill(pid, 0) == 0 else {
-            removePidMarker()
+            removePidMarker(ifMatching: pid)
             return
         }
         guard marker.binaryPath == expectedBinary.path,
               Self.processPath(for: pid) == expectedBinary.path else {
-            removePidMarker()
+            removePidMarker(ifMatching: pid)
             return
         }
         kill(pid, SIGTERM)
         for _ in 0..<40 {
             if kill(pid, 0) != 0 {
-                removePidMarker()
+                removePidMarker(ifMatching: pid)
                 return
             }
             try? await Task.sleep(for: .milliseconds(50))
         }
         if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
-        removePidMarker()
+        removePidMarker(ifMatching: pid)
     }
 
     private func readPidMarker() -> ServerPidMarker? {
@@ -198,7 +262,8 @@ actor LlamaServer {
         }
     }
 
-    private func removePidMarker() {
+    private func removePidMarker(ifMatching processIdentifier: pid_t) {
+        guard readPidMarker()?.pid == processIdentifier else { return }
         try? FileManager.default.removeItem(at: pidMarkerURL)
     }
 

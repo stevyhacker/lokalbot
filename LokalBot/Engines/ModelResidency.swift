@@ -20,6 +20,13 @@ final class ModelResidency: ObservableObject {
         let id: String
         var label: String
         var bytes: Int64
+        /// Present for out-of-process runtimes so diagnostics can report the
+        /// helper's live footprint. In-process models leave this nil because the
+        /// app footprint cannot be attributed to one model accurately.
+        var processIdentifier: pid_t?
+        /// Paired with the PID so a stale row can never be mistaken for an
+        /// unrelated process after macOS reuses that identifier.
+        var processStartTime: UInt64?
         var lastUsed: Date
     }
 
@@ -27,6 +34,10 @@ final class ModelResidency: ObservableObject {
     /// Unload hooks by resident id, kept out of `Resident` so it stays a
     /// plain Equatable value for the UI.
     private var unloaders: [String: () async -> Void] = [:]
+    /// A runtime can stop and restart while an older shutdown task is still
+    /// finishing. Generations keep that stale task from unregistering the
+    /// replacement model that now occupies the same logical residency id.
+    private var registrationGenerations: [String: UUID] = [:]
 
     /// Weights budget: half of physical RAM by default, leaving the other
     /// half for the app, transcription engines, and everything else.
@@ -39,9 +50,20 @@ final class ModelResidency: ObservableObject {
     var totalBytes: Int64 { residents.reduce(0) { $0 + $1.bytes } }
 
     func register(id: String, label: String, bytes: Int64,
+                  processIdentifier: pid_t? = nil,
+                  processStartTime: UInt64? = nil,
+                  generation: UUID = UUID(),
                   unload: @escaping () async -> Void) {
         unloaders[id] = unload
-        let entry = Resident(id: id, label: label, bytes: bytes, lastUsed: Date())
+        registrationGenerations[id] = generation
+        let entry = Resident(
+            id: id,
+            label: label,
+            bytes: bytes,
+            processIdentifier: processIdentifier,
+            processStartTime: processStartTime,
+            lastUsed: Date()
+        )
         if let index = residents.firstIndex(where: { $0.id == id }) {
             residents[index] = entry
         } else {
@@ -56,7 +78,16 @@ final class ModelResidency: ObservableObject {
 
     func unregister(id: String) {
         unloaders[id] = nil
+        registrationGenerations[id] = nil
         residents.removeAll { $0.id == id }
+    }
+
+    /// Removes a row only if it is still the registration created by the
+    /// caller. Used by subprocess shutdown paths, which can finish after a
+    /// replacement process has already registered under the same id.
+    func unregister(id: String, ifGenerationMatches generation: UUID) {
+        guard registrationGenerations[id] == generation else { return }
+        unregister(id: id)
     }
 
     /// Evict least-recently-used residents (never `id` itself — a model swap
