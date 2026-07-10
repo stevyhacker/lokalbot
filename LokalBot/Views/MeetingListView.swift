@@ -59,11 +59,22 @@ struct MeetingListView: View {
         return "\(day.formatted(.dateTime.weekday(.wide)).uppercased()) — \(datePart)"
     }
 
+    @ViewBuilder
     private func meetingRow(_ meeting: Meeting) -> some View {
+        if meeting.endedAt == nil {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                meetingRowContent(meeting, now: context.date)
+            }
+        } else {
+            meetingRowContent(meeting, now: Date())
+        }
+    }
+
+    private func meetingRowContent(_ meeting: Meeting, now: Date) -> some View {
         let live = meeting.endedAt == nil
         let time = live ? "in progress"
                         : meeting.startedAt.formatted(date: .omitted, time: .shortened)
-        let duration = live ? "\(max(1, Int(Date().timeIntervalSince(meeting.startedAt) / 60))) min"
+        let duration = live ? "\(max(1, Int(now.timeIntervalSince(meeting.startedAt) / 60))) min"
                             : meeting.durationLabel
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {

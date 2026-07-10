@@ -19,14 +19,22 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     private static let serverPort = 17_875
 
     private var server: LlamaServer?
+    private let preparation = AsyncSingleFlight()
     private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.stop() }
 
     func prepare(progress: ModelPreparationProgressHandler? = nil) async throws {
         report(.init(fractionCompleted: nil, status: "Checking..."), to: progress)
+        try await preparation.run { [weak self] in
+            guard let self else { return }
+            try await self.performPreparation(progress: progress)
+        }
+        report(.init(fractionCompleted: 1, status: "Ready"), to: progress)
+    }
+
+    private func performPreparation(progress: ModelPreparationProgressHandler?) async throws {
         let paths = try await preparedPaths(progress: progress)
         report(.init(fractionCompleted: nil, status: "Starting local server..."), to: progress)
         try await server(for: paths).ensureRunning(modelAt: paths.model)
-        report(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
@@ -56,12 +64,15 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         let instance = LlamaServer(
             port: Self.serverPort,
             contextTokens: 4_096,
-            extraArgs: ["--mmproj", paths.projector.path])
+            extraArgs: ["--mmproj", paths.projector.path,
+                        "--parallel", "1", "--cache-ram", "256"],
+            runtimeAllowanceBytes: 768 * 1_048_576)
         server = instance
         return instance
     }
 
     private func stop() async {
+        guard !(await preparation.isRunning) else { return }
         await server?.stop()
         server = nil
     }

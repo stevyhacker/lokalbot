@@ -10,6 +10,8 @@ import Foundation
 /// to the prompt's format instructions plus the tolerant parse here.
 enum OutcomesExtractor {
 
+    static let transcriptCharacterLimit = 24_000
+
     static let systemPrompt = """
         You extract structured outcomes from meeting notes. Reply with ONLY a JSON \
         object of this exact shape:
@@ -56,7 +58,7 @@ enum OutcomesExtractor {
     /// prompt (same 24k threshold as `ProcessingPipeline.summarize`), else the
     /// already-condensed summary body.
     static func prompt(transcriptMarkdown: String, summary: String) -> String {
-        let source = transcriptMarkdown.count > 24_000 ? summary : transcriptMarkdown
+        let source = transcriptMarkdown.count > transcriptCharacterLimit ? summary : transcriptMarkdown
         return "Extract the outcomes from these meeting notes:\n\n" + source
     }
 

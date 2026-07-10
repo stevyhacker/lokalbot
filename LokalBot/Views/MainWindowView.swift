@@ -180,6 +180,7 @@ struct MeetingDetailView: View {
     @State private var notes: String?
     @State private var outcomes: MeetingOutcomes?
     @State private var transcript: Transcript?
+    @State private var transcriptDisplay = Transcript.DisplayIndex()
     @State private var speakerNameHints: [String] = []
     @State private var speakerRenameDraft: SpeakerRenameDraft?
     @State private var isExportingAudio = false
@@ -473,7 +474,10 @@ struct MeetingDetailView: View {
     }
 
     @ViewBuilder private var transcriptTab: some View {
-        let visibleSegments = transcript?.segments.filter { !$0.displayText.isEmpty } ?? []
+        let visibleSegments = transcriptDisplay.segments
+        let activeSegmentIDs = player.isLoaded
+            ? transcriptDisplay.activeSegmentIDs(at: player.currentTime)
+            : Set<Int>()
         if !visibleSegments.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 if let engine = transcript?.engine, !engine.isEmpty {
@@ -481,8 +485,8 @@ struct MeetingDetailView: View {
                 }
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 4) {
-                        ForEach(Array(visibleSegments.enumerated()), id: \.offset) { _, segment in
-                            segmentRow(segment)
+                        ForEach(visibleSegments) { segment in
+                            segmentRow(segment, isCurrent: activeSegmentIDs.contains(segment.id))
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -519,16 +523,13 @@ struct MeetingDetailView: View {
         .accessibilityIdentifier("transcript.model")
     }
 
-    private func segmentRow(_ segment: Transcript.Segment) -> some View {
-        let isCurrent = player.isLoaded
-            && player.currentTime >= segment.start
-            && player.currentTime < max(segment.end, segment.start + 0.5)
-        return HStack(alignment: .top, spacing: 10) {
-            Text(Transcript.stamp(segment.start))
+    private func segmentRow(_ display: Transcript.DisplaySegment, isCurrent: Bool) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(Transcript.stamp(display.segment.start))
                 .font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
                 .frame(width: 62, alignment: .trailing)
-            speakerChip(for: segment.speaker)
-            Text(segment.displayText).font(.body)
+            speakerChip(for: display)
+            Text(display.text).font(.body)
                 .textSelection(.enabled)
         }
         .padding(.vertical, 4).padding(.horizontal, 6)
@@ -536,36 +537,35 @@ struct MeetingDetailView: View {
         .background(isCurrent ? Color.accentColor.opacity(0.10) : .clear,
                     in: RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
-        .onTapGesture { player.play(at: segment.start) }   // click a sentence → jump audio
+        .onTapGesture { player.play(at: display.segment.start) }   // click a sentence → jump audio
     }
 
-    private func speakerChip(for speaker: String) -> some View {
-        let label = transcript?.displaySpeaker(for: speaker)
-            ?? Transcript.defaultSpeakerName(for: speaker)
-        let hasAlias = transcript?.speakerAlias(for: speaker) != nil
-        return Text(label)
+    private func speakerChip(for display: Transcript.DisplaySegment) -> some View {
+        Text(display.speakerLabel)
             .font(.caption.bold())
             .padding(.horizontal, 7).padding(.vertical, 2)
-            .background(Transcript.canonicalSpeakerKey(speaker) == "me"
+            .background(display.speakerKey == "me"
                         ? Color.accentColor.opacity(0.18)
                         : Color.secondary.opacity(0.15),
                         in: Capsule())
             .contentShape(Capsule())
-            .onTapGesture { beginRenameSpeaker(speaker) }
+            .onTapGesture { beginRenameSpeaker(display.segment.speaker) }
             .contextMenu {
-                Button("Rename Speaker...") { beginRenameSpeaker(speaker) }
-                if hasAlias {
-                    Button("Reset Speaker Name") { saveSpeakerAlias(nil, for: speaker) }
+                Button("Rename Speaker...") { beginRenameSpeaker(display.segment.speaker) }
+                if display.hasSpeakerAlias {
+                    Button("Reset Speaker Name") {
+                        saveSpeakerAlias(nil, for: display.segment.speaker)
+                    }
                 }
                 if !speakerNameHints.isEmpty {
                     Divider()
                     ForEach(speakerNameHints.prefix(8), id: \.self) { hint in
-                        Button(hint) { saveSpeakerAlias(hint, for: speaker) }
+                        Button(hint) { saveSpeakerAlias(hint, for: display.segment.speaker) }
                     }
                 }
             }
             .help("Rename speaker")
-            .accessibilityIdentifier("speaker.chip.\(Transcript.canonicalSpeakerKey(speaker))")
+            .accessibilityIdentifier("speaker.chip.\(display.speakerKey)")
     }
 
     private var folder: URL { meeting.folderURL(in: app.storage) }
@@ -586,8 +586,13 @@ struct MeetingDetailView: View {
         summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8)
         notes = MeetingNotes.load(from: folder)
         outcomes = MeetingOutcomes.load(from: folder).flatMap { $0.isEmpty ? nil : $0 }
-        transcript = try? app.pipeline.loadTranscript(from: folder)
+        setTranscript(try? app.pipeline.loadTranscript(from: folder))
         speakerNameHints = app.speakerNameHints(for: meeting)
+    }
+
+    private func setTranscript(_ updated: Transcript?) {
+        transcript = updated
+        transcriptDisplay = Transcript.DisplayIndex(transcript: updated)
     }
 
     private func beginRenameSpeaker(_ speaker: String) {
@@ -603,7 +608,7 @@ struct MeetingDetailView: View {
         updated.setSpeakerAlias(alias, for: speaker)
         do {
             try app.saveTranscript(updated, for: meeting)
-            transcript = updated
+            setTranscript(updated)
             transcriptError = nil
             speakerRenameDraft = nil
         } catch {

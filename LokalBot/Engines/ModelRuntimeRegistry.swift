@@ -19,6 +19,23 @@ final class ModelRuntimeRegistry: ObservableObject {
 
     @Published private(set) var residents: [Resident] = []
 
+    var totalEstimatedBytes: UInt64 {
+        residents.reduce(0) { partial, resident in
+            let result = partial.addingReportingOverflow(resident.estimatedBytes ?? 0)
+            return result.overflow ? UInt64.max : result.partialValue
+        }
+    }
+
+    /// Account for a retained in-process model before its download/load
+    /// suspends. The placeholder makes concurrent preparations and the next
+    /// GGUF admission see it. Retained runtimes remain non-evictable until
+    /// their established idle-unload path, so admission cannot interrupt
+    /// active inference.
+    func reserve(id: String, role: String, label: String,
+                 estimatedBytes: UInt64?) async {
+        register(id: id, role: role, label: label, estimatedBytes: estimatedBytes)
+    }
+
     func register(id: String, role: String, label: String,
                   estimatedBytes: UInt64?,
                   processIdentifier: pid_t? = nil,

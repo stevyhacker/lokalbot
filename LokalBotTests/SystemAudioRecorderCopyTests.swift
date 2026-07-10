@@ -177,6 +177,37 @@ final class SystemAudioRecorderCopyTests: XCTestCase {
         assertLosslessCopy(interleaved: false)
     }
 
+    func testMicrophoneTapCopyPreservesInterleavedSamples() throws {
+        try assertLosslessMicrophoneCopy(interleaved: true)
+    }
+
+    func testMicrophoneTapCopyPreservesPlanarSamples() throws {
+        try assertLosslessMicrophoneCopy(interleaved: false)
+    }
+
+    private func assertLosslessMicrophoneCopy(
+        interleaved: Bool,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let format = makeFormat(interleaved: interleaved)
+        let source = makeBuffer(format: format, frames: frameCount)
+        fillDeterministicRamp(source)
+
+        let destination = try XCTUnwrap(MicRecorder.copyBuffer(source), file: file, line: line)
+        XCTAssertEqual(destination.frameLength, source.frameLength, file: file, line: line)
+        let sourceList = UnsafeMutableAudioBufferListPointer(
+            UnsafeMutablePointer(mutating: source.audioBufferList))
+        let destinationList = UnsafeMutableAudioBufferListPointer(
+            destination.mutableAudioBufferList)
+        XCTAssertEqual(destinationList.count, sourceList.count, file: file, line: line)
+        for (src, dst) in zip(sourceList, destinationList) {
+            XCTAssertEqual(dst.mDataByteSize, src.mDataByteSize, file: file, line: line)
+            XCTAssertEqual(memcmp(src.mData!, dst.mData!, Int(src.mDataByteSize)), 0,
+                           file: file, line: line)
+        }
+    }
+
     // MARK: - RMS
 
     func testRMSOfConstantHalfAmplitudeInterleaved() {

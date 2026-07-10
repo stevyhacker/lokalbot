@@ -38,6 +38,8 @@ final class AgentSessionController: ObservableObject {
     private var client: PiRPCClient?
     private var process: PiProcess?
     private var eventTask: Task<Void, Never>?
+    private var deltaFlushTask: Task<Void, Never>?
+    private var pendingTextDelta = ""
     private var nextRequestID = 0
     private var launchMode: LaunchMode = .fresh
     /// Invalidates an in-flight start when its tab is closed or restarted.
@@ -107,6 +109,7 @@ final class AgentSessionController: ObservableObject {
         lifecycleGeneration += 1
         eventTask?.cancel()
         eventTask = nil
+        discardPendingTextDelta()
         await process?.stop()
         process = nil
         client = nil
@@ -144,6 +147,7 @@ final class AgentSessionController: ObservableObject {
         guard let client else { return }
         do {
             _ = try await client.request(.newSession(id: freshID("n")))
+            discardPendingTextDelta()
             folder = AgentTranscriptFolder()
             policy.resetSession()
             launchMode = .fresh
@@ -159,6 +163,7 @@ final class AgentSessionController: ObservableObject {
     func resumePreviousSession() async {
         guard canResumePreviousSession else { return }
         await shutdown()
+        discardPendingTextDelta()
         folder = AgentTranscriptFolder()
         policy.resetSession()
         autoApproveSession = false
@@ -203,6 +208,15 @@ final class AgentSessionController: ObservableObject {
     }
 
     private func handle(_ event: PiEvent) async {
+        // Pi can emit hundreds of token deltas per second. Fold and publish
+        // those as one string at display cadence; structural events flush the
+        // pending text first so message/tool/approval ordering stays exact.
+        if case .messageUpdate(.textDelta(let delta)) = event {
+            enqueueTextDelta(delta)
+            return
+        }
+        flushPendingTextDelta()
+
         switch event {
         case .agentStart:
             state = .running
@@ -235,6 +249,7 @@ final class AgentSessionController: ObservableObject {
 
     private func handleStreamEnd() async {
         guard state != .idle else { return }
+        flushPendingTextDelta()
         var detail = "The agent process exited unexpectedly."
         if let process {
             let tail = await process.stderrTail
@@ -299,6 +314,32 @@ final class AgentSessionController: ObservableObject {
         items = folder.items
     }
 
+    private func enqueueTextDelta(_ delta: String) {
+        pendingTextDelta.append(delta)
+        guard deltaFlushTask == nil else { return }
+        deltaFlushTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(33))
+            guard !Task.isCancelled else { return }
+            self?.flushPendingTextDelta()
+        }
+    }
+
+    private func flushPendingTextDelta() {
+        deltaFlushTask?.cancel()
+        deltaFlushTask = nil
+        guard !pendingTextDelta.isEmpty else { return }
+        let delta = pendingTextDelta
+        pendingTextDelta = ""
+        folder.fold(.messageUpdate(.textDelta(delta)))
+        publish()
+    }
+
+    private func discardPendingTextDelta() {
+        deltaFlushTask?.cancel()
+        deltaFlushTask = nil
+        pendingTextDelta = ""
+    }
+
     private func freshID(_ prefix: String) -> String {
         nextRequestID += 1
         return "\(prefix)\(nextRequestID)"
@@ -312,6 +353,7 @@ final class AgentSessionController: ObservableObject {
     }
 
     private func fail(with error: Error) {
+        flushPendingTextDelta()
         let message = Self.message(for: error)
         folder.appendNotice(message, isError: true)
         publish()

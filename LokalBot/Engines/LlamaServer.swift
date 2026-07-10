@@ -7,29 +7,41 @@ import Darwin
 actor LlamaServer {
 
     /// Chat/completions instance (summaries, digests, Q&A).
-    static let shared = LlamaServer(port: 17872, contextTokens: 16_384, extraArgs: [])
+    static let shared = LlamaServer(
+        port: 17872, contextTokens: 16_384,
+        extraArgs: ["--cache-ram", "2048"],
+        runtimeAllowanceBytes: 3 * 1_073_741_824)
     /// Embeddings instance (semantic search) — small model, second port.
     static let embedder = LlamaServer(port: 17873, contextTokens: 2_048,
-                                      extraArgs: ["--embeddings", "--pooling", "mean"])
+                                      extraArgs: ["--embeddings", "--pooling", "mean",
+                                                  "--parallel", "1", "--cache-ram", "256"],
+                                      runtimeAllowanceBytes: 384 * 1_048_576)
     /// Cotyping instance — an optional separate (typically smaller/faster)
     /// model on a third port, so inline suggestions never contend with the
     /// summarizer for the shared server (no model-reload thrash).
-    static let cotyping = LlamaServer(port: 17874, contextTokens: 2_048, extraArgs: [])
+    static let cotyping = LlamaServer(
+        port: 17874, contextTokens: 2_048,
+        extraArgs: ["--parallel", "1", "--cache-ram", "512"],
+        runtimeAllowanceBytes: 768 * 1_048_576)
 
     nonisolated let port: Int
     nonisolated let contextTokens: Int
     private let extraArgs: [String]
+    private let runtimeAllowanceBytes: Int64
     nonisolated var baseURL: URL { URL(string: "http://127.0.0.1:\(port)/v1")! }
 
-    init(port: Int, contextTokens: Int, extraArgs: [String]) {
+    init(port: Int, contextTokens: Int, extraArgs: [String],
+         runtimeAllowanceBytes: Int64 = 512 * 1_048_576) {
         self.port = port
         self.contextTokens = contextTokens
         self.extraArgs = extraArgs
+        self.runtimeAllowanceBytes = runtimeAllowanceBytes
     }
 
     private var process: Process?
     private var loadedModelPath: String?
     private var residencyGeneration: UUID?
+    private let startup = AsyncSingleFlight()
 
     enum ServerError: LocalizedError {
         case binaryMissing
@@ -45,18 +57,38 @@ actor LlamaServer {
     }
 
     func ensureRunning(modelAt url: URL) async throws {
+        while true {
+            if let process, process.isRunning, loadedModelPath == url.path,
+               await healthy(), await healthyServingExpectedConfiguration(modelAt: url) {
+                await registerResidency(modelAt: url)
+                return
+            }
+            try await startup.run { [weak self] in
+                guard let self else {
+                    throw ServerError.failedToStart("server was released during startup")
+                }
+                try await self.ensureRunningOnce(modelAt: url)
+            }
+            // A caller for a different model may have owned the flight we just
+            // awaited. Loop so this request starts one replacement flight;
+            // callers for the same model return together without duplicate
+            // subprocess starts or health polling.
+            guard loadedModelPath == url.path else { continue }
+            await registerResidency(modelAt: url)
+            return
+        }
+    }
+
+    private func ensureRunningOnce(modelAt url: URL) async throws {
         if let process, process.isRunning, loadedModelPath == url.path,
            await healthy(), await healthyServingExpectedConfiguration(modelAt: url) {
-            await registerResidency(modelAt: url)
             return
         }
         if await healthyServingExpectedConfiguration(modelAt: url) {
             loadedModelPath = url.path
-            await registerResidency(modelAt: url)
             return
         }
         try await start(modelAt: url)
-        await registerResidency(modelAt: url)
     }
 
     /// This server's row in the app-wide model-memory ledger. Adopted healthy
@@ -73,7 +105,7 @@ actor LlamaServer {
         await ModelResidency.shared.register(
             id: residencyID,
             label: url.lastPathComponent,
-            bytes: ModelResidency.weightBytes(at: url),
+            bytes: estimatedResidentBytes(modelAt: url),
             processIdentifier: identity?.processIdentifier,
             processStartTime: identity?.startTime,
             generation: generation,
@@ -128,8 +160,11 @@ actor LlamaServer {
         }
         // Make room before the subprocess mmaps the weights: evict the
         // least-recently-used other models if this one would bust the budget.
-        await ModelResidency.shared.willLoad(id: residencyID,
-                                             bytes: ModelResidency.weightBytes(at: url))
+        let nonEvictableBytes = await ModelRuntimeRegistry.shared.totalEstimatedBytes
+        await ModelResidency.shared.willLoad(
+            id: residencyID,
+            bytes: estimatedResidentBytes(modelAt: url),
+            reservedBytes: Int64(clamping: nonEvictableBytes))
         let process = Process()
         process.executableURL = binary
         process.arguments = [
@@ -167,6 +202,26 @@ actor LlamaServer {
         }
         await stop()
         throw ServerError.failedToStart("server did not become healthy in time")
+    }
+
+    /// Weight files are not the whole llama footprint: prompt cache, KV, and
+    /// multimodal projector allocations can be several GiB. Keep an explicit
+    /// per-role allowance and include any `--mmproj` file in admission.
+    private func estimatedResidentBytes(modelAt url: URL) -> Int64 {
+        var total = ModelResidency.weightBytes(at: url)
+        if let projectorFlag = extraArgs.firstIndex(of: "--mmproj"),
+           extraArgs.indices.contains(projectorFlag + 1) {
+            total = Self.saturatingAdd(
+                total,
+                ModelResidency.weightBytes(
+                    at: URL(fileURLWithPath: extraArgs[projectorFlag + 1])))
+        }
+        return Self.saturatingAdd(total, max(0, runtimeAllowanceBytes))
+    }
+
+    private nonisolated static func saturatingAdd(_ lhs: Int64, _ rhs: Int64) -> Int64 {
+        let result = lhs.addingReportingOverflow(rhs)
+        return result.overflow ? .max : result.partialValue
     }
 
     func stop() async {

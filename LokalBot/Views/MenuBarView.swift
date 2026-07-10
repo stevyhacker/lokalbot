@@ -19,7 +19,10 @@ struct MenuBarLabel: View {
 
     @ViewBuilder private var glyph: some View {
         if app.isRecording {
-            Text("\(Image(systemName: "record.circle.fill")) \(app.menuBarTimer)")
+            HStack(spacing: 3) {
+                Image(systemName: "record.circle.fill")
+                MeetingRecordingTimerText(recording: app.recording)
+            }
                 .monospacedDigit()
         } else if app.dictation.state.isRecording {
             Text("\(Image(systemName: "mic.circle.fill")) \(app.dictation.menuBarLabel)")
@@ -98,7 +101,7 @@ struct MenuBarView: View {
                 }
 
                 if app.isRecording || app.dictation.state.isWorking {
-                    Text(primaryTimerLabel)
+                    primaryTimer
                         .font(.system(size: 30, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(.white)
@@ -176,12 +179,15 @@ struct MenuBarView: View {
         }
     }
 
-    private var primaryTimerLabel: String {
-        if app.isRecording { return app.menuBarTimer }
-        switch app.dictation.state {
-        case .idle: return "00:00"
-        case .recording: return app.dictation.timerLabel
-        case .transcribing: return "..."
+    @ViewBuilder private var primaryTimer: some View {
+        if app.isRecording {
+            MeetingRecordingTimerText(recording: app.recording)
+        } else {
+            switch app.dictation.state {
+            case .idle: Text("00:00")
+            case .recording: Text(app.dictation.timerLabel)
+            case .transcribing: Text("...")
+            }
         }
     }
 
@@ -323,5 +329,15 @@ struct MenuBarView: View {
         guard title.count > limit else { return title }
         let end = title.index(title.startIndex, offsetBy: limit - 3)
         return String(title[..<end]) + "..."
+    }
+}
+
+/// The recording clock is intentionally observed below AppState so its 1 Hz
+/// tick updates only this tiny label instead of every app surface.
+struct MeetingRecordingTimerText: View {
+    @ObservedObject var recording: RecordingController
+
+    var body: some View {
+        Text(recording.menuBarTimer).monospacedDigit()
     }
 }

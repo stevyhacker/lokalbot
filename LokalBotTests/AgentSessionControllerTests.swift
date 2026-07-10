@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import LokalBot
 
@@ -72,6 +73,30 @@ final class AgentSessionControllerTests: XCTestCase {
         }
         XCTAssertEqual(final, "Hi there!")
         XCTAssertFalse(stillStreaming)
+    }
+
+    func testBurstTextDeltasArePublishedInDisplaySizedBatches() async throws {
+        let controller = makeController()
+        await controller.start()
+        var streamedTextPublications = 0
+        let observation = controller.$items.dropFirst().sink { items in
+            guard case .assistant(_, let text, true) = items.last, !text.isEmpty else { return }
+            streamedTextPublications += 1
+        }
+        defer { observation.cancel() }
+
+        transport.inject(#"{"type":"message_start","message":{"role":"assistant"}}"#)
+        for _ in 0..<50 {
+            transport.inject(#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"x"}}"#)
+        }
+        try await pump()
+
+        guard case .assistant(_, let text, true) = controller.items.last else {
+            return XCTFail("expected streaming assistant item, got \(controller.items)")
+        }
+        XCTAssertEqual(text, String(repeating: "x", count: 50))
+        XCTAssertLessThan(streamedTextPublications, 10,
+                          "a burst should not publish once per token")
     }
 
     func testConfirmRequestRaisesApprovalCardAndReplies() async throws {

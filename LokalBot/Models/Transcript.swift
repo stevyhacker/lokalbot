@@ -14,6 +14,104 @@ struct Transcript: Codable {
         var text: String
         var confidence: Double?
     }
+
+    /// Immutable, UI-ready segment data. Building this value performs the
+    /// control-token/whitespace normalization once when a transcript changes,
+    /// instead of once per row on every playback timer tick.
+    struct DisplaySegment: Equatable, Identifiable {
+        let id: Int
+        let segment: Segment
+        let text: String
+        let speakerLabel: String
+        let speakerKey: String
+        let hasSpeakerAlias: Bool
+    }
+
+    /// Cached transcript presentation plus a chronological interval index for
+    /// playback highlighting. `segments` deliberately remains in source order;
+    /// only the private lookup is sorted, so malformed/legacy files do not
+    /// silently reorder what the user sees.
+    struct DisplayIndex {
+        let segments: [DisplaySegment]
+
+        private struct Interval {
+            let id: Int
+            let start: TimeInterval
+            let end: TimeInterval
+        }
+
+        private let intervals: [Interval]
+        /// Maximum effective end among `intervals[0...index]`. This lets an
+        /// active-segment query stop as soon as no earlier interval can overlap.
+        private let prefixMaximumEnds: [TimeInterval]
+
+        init(transcript: Transcript? = nil) {
+            guard let transcript else {
+                segments = []
+                intervals = []
+                prefixMaximumEnds = []
+                return
+            }
+
+            segments = transcript.segments.enumerated().compactMap { index, segment in
+                let text = segment.displayText
+                guard !text.isEmpty else { return nil }
+                let speakerKey = Transcript.canonicalSpeakerKey(segment.speaker)
+                return DisplaySegment(
+                    id: index,
+                    segment: segment,
+                    text: text,
+                    speakerLabel: transcript.displaySpeaker(for: segment.speaker),
+                    speakerKey: speakerKey,
+                    hasSpeakerAlias: transcript.speakerAliases[speakerKey] != nil)
+            }
+
+            intervals = segments.map { display in
+                Interval(
+                    id: display.id,
+                    start: display.segment.start,
+                    end: max(display.segment.end, display.segment.start + 0.5))
+            }.sorted {
+                if $0.start == $1.start { return $0.id < $1.id }
+                return $0.start < $1.start
+            }
+
+            var maximumEnd = -TimeInterval.infinity
+            prefixMaximumEnds = intervals.map { interval in
+                maximumEnd = max(maximumEnd, interval.end)
+                return maximumEnd
+            }
+        }
+
+        /// IDs of all visible segments containing `time`. A binary search skips
+        /// future segments, and the prefix maxima bound the backwards overlap
+        /// scan. Returning every overlap preserves simultaneous-speaker
+        /// highlighting from the previous per-row comparison.
+        func activeSegmentIDs(at time: TimeInterval) -> Set<Int> {
+            var lowerBound = 0
+            var upperBound = intervals.count
+            while lowerBound < upperBound {
+                let middle = lowerBound + (upperBound - lowerBound) / 2
+                if intervals[middle].start <= time {
+                    lowerBound = middle + 1
+                } else {
+                    upperBound = middle
+                }
+            }
+
+            var active: Set<Int> = []
+            var index = lowerBound - 1
+            while index >= 0, prefixMaximumEnds[index] > time {
+                let interval = intervals[index]
+                if time < interval.end {
+                    active.insert(interval.id)
+                }
+                index -= 1
+            }
+            return active
+        }
+    }
+
     var segments: [Segment]
     var engine: String
     /// Per-meeting display-name overrides keyed by the stable speaker label

@@ -7,10 +7,11 @@ import Foundation
 /// never silently stacks a summarizer, an embedder, and a cotyping model past
 /// what the machine can hold.
 ///
-/// Bytes are the model file's size — GGUF weights are mmapped and fully
-/// resident under Metal, so file size is an honest approximation. Eviction
-/// choices live in `ModelResidencyPolicy` (pure, unit-tested); this class
-/// owns the mutable ledger and the `@Published` mirror the Models pane shows.
+/// GGUF rows include weights plus a role-specific cache/KV allowance. Retained
+/// CoreML/MLX reservations are supplied as non-evictable bytes by
+/// `ModelRuntimeRegistry`, so every local model load consults one RAM budget.
+/// Eviction choices live in `ModelResidencyPolicy` (pure, unit-tested); this
+/// class owns the mutable GGUF ledger and the `@Published` UI mirror.
 @MainActor
 final class ModelResidency: ObservableObject {
 
@@ -93,10 +94,11 @@ final class ModelResidency: ObservableObject {
     /// Evict least-recently-used residents (never `id` itself — a model swap
     /// on the same runtime replaces in place) until `bytes` fits the budget.
     /// Call right before loading new weights.
-    func willLoad(id: String, bytes: Int64) async {
+    func willLoad(id: String, bytes: Int64, reservedBytes: Int64 = 0) async {
         let victims = ModelResidencyPolicy.evictions(
             residents: residents.map { .init(id: $0.id, bytes: $0.bytes, lastUsed: $0.lastUsed) },
-            incomingID: id, incomingBytes: bytes, budgetBytes: budgetBytes)
+            incomingID: id, incomingBytes: bytes, reservedBytes: reservedBytes,
+            budgetBytes: budgetBytes)
         for victim in victims {
             let unload = unloaders[victim]
             let label = residents.first { $0.id == victim }?.label ?? victim
@@ -130,9 +132,14 @@ enum ModelResidencyPolicy {
     /// evicted and the load proceeds best-effort — refusing to load would
     /// break the feature the user just asked for.
     static func evictions(residents: [Entry], incomingID: String,
-                          incomingBytes: Int64, budgetBytes: Int64) -> [String] {
+                          incomingBytes: Int64, reservedBytes: Int64 = 0,
+                          budgetBytes: Int64) -> [String] {
         let kept = residents.filter { $0.id != incomingID }
-        var total = kept.reduce(0) { $0 + $1.bytes } + incomingBytes
+        var total = kept.reduce(0) { $0 + $1.bytes }
+        total = total.addingReportingOverflow(max(0, incomingBytes)).overflow
+            ? .max : total + max(0, incomingBytes)
+        total = total.addingReportingOverflow(max(0, reservedBytes)).overflow
+            ? .max : total + max(0, reservedBytes)
         guard total > budgetBytes else { return [] }
         var victims: [String] = []
         for entry in kept.sorted(by: { $0.lastUsed < $1.lastUsed }) {

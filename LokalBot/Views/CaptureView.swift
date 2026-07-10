@@ -153,25 +153,35 @@ struct CaptureDayView: View {
             } else {
                 summaryRail(meetings: meetings)
                 Divider()
-                CaptureTrackView(
-                    items: CaptureTrackItem.items(blocks: model.blocks,
-                                                  meetings: meetings,
-                                                  now: Date()),
-                    blockSelection: model.selection,
-                    selectedMeetingIDs: app.selectedMeetingIDs,
-                    onSelectBlock: { id in
-                        model.selection = id
-                        if id != nil { app.selectedMeetingIDs = [] }
-                    },
-                    onSelectMeeting: { id in
-                        model.selection = nil
-                        app.selectedMeetingIDs = app.selectedMeetingIDs == [id] ? [] : [id]
-                    })
-                    .accessibilityIdentifier("timeline.track")
+                if meetings.contains(where: { $0.endedAt == nil }) {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        captureTrack(meetings: meetings, now: context.date)
+                    }
+                } else {
+                    captureTrack(meetings: meetings, now: Date())
+                }
             }
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func captureTrack(meetings: [Meeting], now: Date) -> some View {
+        CaptureTrackView(
+            items: CaptureTrackItem.items(blocks: model.blocks,
+                                          meetings: meetings,
+                                          now: now),
+            blockSelection: model.selection,
+            selectedMeetingIDs: app.selectedMeetingIDs,
+            onSelectBlock: { id in
+                model.selection = id
+                if id != nil { app.selectedMeetingIDs = [] }
+            },
+            onSelectMeeting: { id in
+                model.selection = nil
+                app.selectedMeetingIDs = app.selectedMeetingIDs == [id] ? [] : [id]
+            })
+            .accessibilityIdentifier("timeline.track")
     }
 
     private var header: some View {

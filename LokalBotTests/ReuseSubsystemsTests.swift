@@ -64,6 +64,57 @@ final class ReuseSubsystemsTests: XCTestCase {
         XCTAssertEqual(preview.tentative, "Next we should verify the install")
     }
 
+    func testDictationPreviewWindowKeepsConservativeOverlap() {
+        XCTAssertEqual(
+            DictationPreviewWindowPlanner.range(
+                previousEnd: 10,
+                currentEnd: 14,
+                overlapSeconds: 2.5),
+            .init(start: 7.5, end: 14))
+        XCTAssertEqual(
+            DictationPreviewWindowPlanner.range(
+                previousEnd: 1.5,
+                currentEnd: 3,
+                overlapSeconds: 2.5),
+            .init(start: 0, end: 3))
+        XCTAssertNil(DictationPreviewWindowPlanner.range(
+            previousEnd: 4,
+            currentEnd: 4,
+            overlapSeconds: 2.5))
+    }
+
+    func testDictationPreviewStitcherReplacesExactOverlap() {
+        XCTAssertEqual(
+            DictationPreviewTextStitcher.stitch(
+                previous: "We should ship the release notes today",
+                incoming: "release notes today before lunch"),
+            "We should ship the release notes today before lunch")
+    }
+
+    func testDictationPreviewStitcherIgnoresCasePunctuationAndDiacritics() {
+        XCTAssertEqual(
+            DictationPreviewTextStitcher.stitch(
+                previous: "We reviewed the résumé.",
+                incoming: "THE RESUME and approved it"),
+            "We reviewed THE RESUME and approved it")
+    }
+
+    func testDictationPreviewStitcherPreservesBothSidesWithoutSafeOverlap() {
+        XCTAssertEqual(
+            DictationPreviewTextStitcher.stitch(
+                previous: "First thought is complete.",
+                incoming: "A separate idea starts here"),
+            "First thought is complete. A separate idea starts here")
+    }
+
+    func testDictationPreviewStitcherDoesNotDuplicateFullyOverlappingWindow() {
+        XCTAssertEqual(
+            DictationPreviewTextStitcher.stitch(
+                previous: "We should ship the fix today",
+                incoming: "the fix today"),
+            "We should ship the fix today")
+    }
+
     // MARK: - ModelFit
 
     private func capability(gb: UInt64, appleSilicon: Bool = true) -> HardwareCapability {

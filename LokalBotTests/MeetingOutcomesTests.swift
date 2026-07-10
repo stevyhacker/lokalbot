@@ -78,6 +78,18 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertFalse(long.contains("xxxxx"))
     }
 
+    func testOnlyShortBuiltInOutcomesCanOverlapSummary() {
+        XCTAssertTrue(ProcessingPipeline.shouldExtractOutcomesConcurrently(
+            transcriptCharacterCount: OutcomesExtractor.transcriptCharacterLimit,
+            backend: .builtIn))
+        XCTAssertFalse(ProcessingPipeline.shouldExtractOutcomesConcurrently(
+            transcriptCharacterCount: OutcomesExtractor.transcriptCharacterLimit + 1,
+            backend: .builtIn))
+        XCTAssertFalse(ProcessingPipeline.shouldExtractOutcomesConcurrently(
+            transcriptCharacterCount: 1_000,
+            backend: .openAICompatible))
+    }
+
     // MARK: - Disk round trip
 
     func testWriteAndLoadRoundTrip() throws {

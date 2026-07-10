@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Combine
 import Foundation
 
@@ -336,6 +337,7 @@ final class DictationCoordinator: ObservableObject {
             }
         }
         var lastPreviewedDuration: TimeInterval = 0
+        var accumulatedPreviewText = ""
         do {
             try await Task.sleep(for: .milliseconds(1_200))
             while !Task.isCancelled {
@@ -348,32 +350,49 @@ final class DictationCoordinator: ObservableObject {
                     continue
                 }
 
-                let snapshot: URL
                 do {
-                    snapshot = try Self.copyLivePreviewSnapshot(
+                    let window = try await Self.makeIncrementalLivePreviewWindow(
                         from: audioURL,
-                        storageRoot: storageRoot)
-                } catch {
-                    try await Task.sleep(for: .milliseconds(700))
-                    continue
-                }
-                lastPreviewedDuration = duration
-                isLivePreviewWorking = true
-                livePreviewStatus = liveTranscript.isEmpty ? "Listening" : "Updating"
-                refreshOverlay()
-
-                do {
-                    let transcript = try await Self.transcribe(snapshot, config: config)
+                        storageRoot: storageRoot,
+                        previousEnd: lastPreviewedDuration)
+                    defer { try? FileManager.default.removeItem(at: window.url) }
                     try Task.checkCancellation()
-                    let text = Transcript.normalizedText(
-                        transcript.segments.map(\.displayText).joined(separator: " "))
-                    if generation == session, !text.isEmpty {
-                        liveTranscript = DictationLiveTranscript.preview(from: text)
-                        livePreviewStatus = "Live"
-                        refreshOverlay()
+                    guard generation == session, state.isRecording else { return }
+
+                    isLivePreviewWorking = true
+                    livePreviewStatus = liveTranscript.isEmpty ? "Listening" : "Updating"
+                    refreshOverlay()
+
+                    do {
+                        let transcript = try await Self.transcribe(window.url, config: config)
+                        try Task.checkCancellation()
+                        guard generation == session else { return }
+                        let text = Transcript.normalizedText(
+                            transcript.segments.map(\.displayText).joined(separator: " "))
+                        lastPreviewedDuration = window.endTime
+                        if !text.isEmpty {
+                            // While the overlap still reaches the recording's
+                            // beginning, this window is the complete prefix and
+                            // can replace the earlier preview outright.
+                            accumulatedPreviewText = window.startTime == 0
+                                ? text
+                                : DictationPreviewTextStitcher.stitch(
+                                    previous: accumulatedPreviewText,
+                                    incoming: text)
+                            liveTranscript = DictationLiveTranscript.preview(
+                                from: accumulatedPreviewText)
+                            livePreviewStatus = "Live"
+                            refreshOverlay()
+                        }
+                    } catch DictationError.noAudio {
+                        // A valid snapshot can still be a fraction shorter than
+                        // the recorder's health counter. Advance past that tiny
+                        // silent/short window rather than retrying it forever.
+                        lastPreviewedDuration = window.endTime
+                    } catch DictationError.noSpeech {
+                        lastPreviewedDuration = window.endTime
                     }
                 } catch is CancellationError {
-                    try? FileManager.default.removeItem(at: snapshot)
                     throw CancellationError()
                 } catch {
                     if generation == session {
@@ -381,7 +400,6 @@ final class DictationCoordinator: ObservableObject {
                         lokalbotLog("dictation live preview skipped: \(error.localizedDescription)")
                     }
                 }
-                try? FileManager.default.removeItem(at: snapshot)
                 guard generation == session, state.isRecording else { return }
                 isLivePreviewWorking = false
                 refreshOverlay()
@@ -416,7 +434,10 @@ final class DictationCoordinator: ObservableObject {
         min(4.0, max(1.4, duration / 8.0))
     }
 
-    private static func copyLivePreviewSnapshot(from audioURL: URL, storageRoot: URL) throws -> URL {
+    private nonisolated static func copyLivePreviewSnapshot(
+        from audioURL: URL,
+        storageRoot: URL
+    ) throws -> URL {
         let dir = storageRoot.appendingPathComponent("dictation-previews", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let ext = audioURL.pathExtension.isEmpty ? "caf" : audioURL.pathExtension
@@ -424,6 +445,93 @@ final class DictationCoordinator: ObservableObject {
             "\(audioURL.deletingPathExtension().lastPathComponent)-live-\(UUID().uuidString).\(ext)")
         try FileManager.default.copyItem(at: audioURL, to: destination)
         return destination
+    }
+
+    private struct IncrementalLivePreviewWindow: Sendable {
+        let url: URL
+        let startTime: TimeInterval
+        let endTime: TimeInterval
+    }
+
+    /// Copies the append-only CAF to get a stable header, then materializes only
+    /// the unprocessed suffix plus a short overlap. The full snapshot is deleted
+    /// before returning; the caller owns and removes the much smaller window.
+    private static func makeIncrementalLivePreviewWindow(
+        from audioURL: URL,
+        storageRoot: URL,
+        previousEnd: TimeInterval
+    ) async throws -> IncrementalLivePreviewWindow {
+        try await Task.detached(priority: .userInitiated) {
+            try makeIncrementalLivePreviewWindowSynchronously(
+                from: audioURL,
+                storageRoot: storageRoot,
+                previousEnd: previousEnd)
+        }.value
+    }
+
+    private nonisolated static func makeIncrementalLivePreviewWindowSynchronously(
+        from audioURL: URL,
+        storageRoot: URL,
+        previousEnd: TimeInterval
+    ) throws -> IncrementalLivePreviewWindow {
+        let snapshot = try copyLivePreviewSnapshot(from: audioURL, storageRoot: storageRoot)
+        defer { try? FileManager.default.removeItem(at: snapshot) }
+
+        let reader = try AVAudioFile(forReading: snapshot)
+        let format = reader.processingFormat
+        guard format.sampleRate > 0 else { throw DictationError.noAudio }
+        let currentEnd = Double(reader.length) / format.sampleRate
+        guard let range = DictationPreviewWindowPlanner.range(
+            previousEnd: previousEnd,
+            currentEnd: currentEnd) else {
+            throw DictationError.noAudio
+        }
+
+        let startFrame = min(
+            AVAudioFramePosition(range.start * format.sampleRate),
+            reader.length)
+        let endFrame = reader.length
+        guard endFrame > startFrame else { throw DictationError.noAudio }
+
+        let ext = snapshot.pathExtension.isEmpty ? "caf" : snapshot.pathExtension
+        let windowURL = snapshot.deletingLastPathComponent().appendingPathComponent(
+            "dictation-live-window-\(UUID().uuidString).\(ext)")
+        var keepWindow = false
+        defer {
+            if !keepWindow { try? FileManager.default.removeItem(at: windowURL) }
+        }
+
+        reader.framePosition = startFrame
+        do {
+            let writer = try AVAudioFile(
+                forWriting: windowURL,
+                settings: reader.fileFormat.settings,
+                commonFormat: format.commonFormat,
+                interleaved: format.isInterleaved)
+            let bufferCapacity: AVAudioFrameCount = 16_384
+            guard let buffer = AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: bufferCapacity) else {
+                throw DictationError.noAudio
+            }
+            var remaining = endFrame - startFrame
+            var written: AVAudioFramePosition = 0
+            while remaining > 0 {
+                let requested = AVAudioFrameCount(min(
+                    remaining,
+                    AVAudioFramePosition(bufferCapacity)))
+                try reader.read(into: buffer, frameCount: requested)
+                guard buffer.frameLength > 0 else { break }
+                try writer.write(from: buffer)
+                let count = AVAudioFramePosition(buffer.frameLength)
+                remaining -= count
+                written += count
+            }
+            guard written > 0 else { throw DictationError.noAudio }
+        }
+
+        keepWindow = true
+        return .init(url: windowURL, startTime: range.start, endTime: range.end)
     }
 
     private func startRecorder(writingTo audioURL: URL) async throws {

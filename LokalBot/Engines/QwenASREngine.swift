@@ -37,6 +37,7 @@ actor QwenASREngine: TranscriptionEngine {
 
     private let variant: Variant
     private var model: Qwen3ASRModel?
+    private let preparation = AsyncSingleFlight()
     private var activeUses = 0
     private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.unload() }
 
@@ -47,27 +48,42 @@ actor QwenASREngine: TranscriptionEngine {
     func prepare(progress: ModelPreparationProgressHandler? = nil) async throws {
         if model != nil { return }
         report(.init(fractionCompleted: 0, status: "Checking..."), to: progress)
-        let cacheDir = try Self.cacheDir(for: variant)
-        try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-
-        model = try await Qwen3ASRModel.fromPretrained(
-            modelId: variant.modelID,
-            cacheDir: cacheDir,
-            offlineMode: false
-        ) { fraction, status in
-            Task { @MainActor in
-                progress?(.init(fractionCompleted: fraction, status: status))
-            }
+        try await preparation.run { [weak self] in
+            guard let self else { return }
+            try await self.performPreparation(progress: progress)
         }
-        await ModelRuntimeRegistry.shared.register(
-            id: variant == .accuracy ? "transcription:qwen-1.7b" : "transcription:qwen-0.6b",
-            role: "Transcription",
-            label: variant.displayName,
-            estimatedBytes: ModelRuntimeRegistry.gibibytes(
-                variant == .accuracy ? 3.2 : 0.7
-            )
-        )
         report(.init(fractionCompleted: 1, status: "Ready"), to: progress)
+    }
+
+    private func performPreparation(progress: ModelPreparationProgressHandler?) async throws {
+        guard model == nil else { return }
+        let runtimeID = variant == .accuracy
+            ? "transcription:qwen-1.7b" : "transcription:qwen-0.6b"
+        let estimatedBytes = ModelRuntimeRegistry.gibibytes(
+            variant == .accuracy ? 3.2 : 0.7)
+        await ModelRuntimeRegistry.shared.reserve(
+            id: runtimeID, role: "Transcription", label: variant.displayName,
+            estimatedBytes: estimatedBytes)
+        do {
+            let cacheDir = try Self.cacheDir(for: variant)
+            try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+
+            model = try await Qwen3ASRModel.fromPretrained(
+                modelId: variant.modelID,
+                cacheDir: cacheDir,
+                offlineMode: false
+            ) { fraction, status in
+                Task { @MainActor in
+                    progress?(.init(fractionCompleted: fraction, status: status))
+                }
+            }
+            await ModelRuntimeRegistry.shared.register(
+                id: runtimeID, role: "Transcription", label: variant.displayName,
+                estimatedBytes: estimatedBytes)
+        } catch {
+            await ModelRuntimeRegistry.shared.unregister(id: runtimeID)
+            throw error
+        }
     }
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
@@ -94,7 +110,7 @@ actor QwenASREngine: TranscriptionEngine {
     }
 
     private func unload() async {
-        guard activeUses == 0 else { return }
+        guard activeUses == 0, !(await preparation.isRunning) else { return }
         model = nil
         await ModelRuntimeRegistry.shared.unregister(
             id: variant == .accuracy ? "transcription:qwen-1.7b" : "transcription:qwen-0.6b"

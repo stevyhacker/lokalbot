@@ -51,6 +51,7 @@ struct SpeechSynthesisRequest: Sendable {
 
 actor KokoroSpeechEngine {
     static let shared = KokoroSpeechEngine()
+    private let preparation = AsyncSingleFlight()
 
     private static let executableName = "sherpa-onnx-offline-tts"
     private static let modelFolderName = "kokoro-multi-lang-v1_0"
@@ -119,6 +120,17 @@ actor KokoroSpeechEngine {
         let dir = Self.modelDir
         if Self.hasRequiredFiles(in: dir) { return dir }
 
+        try await preparation.run { [weak self] in
+            guard let self else { return }
+            try await self.installModel(in: dir)
+        }
+        guard Self.hasRequiredFiles(in: dir) else { throw SpeechError.modelUnavailable }
+        return dir
+    }
+
+    private func installModel(in dir: URL) async throws {
+        if Self.hasRequiredFiles(in: dir) { return }
+
         try FileManager.default.createDirectory(at: Self.modelsRoot, withIntermediateDirectories: true)
         let (tmp, _) = try await URLSession.shared.download(from: Self.archiveURL)
         let archive = Self.modelsRoot.appendingPathComponent("\(Self.modelFolderName).tar.bz2")
@@ -128,7 +140,6 @@ actor KokoroSpeechEngine {
 
         try ArchiveExtractor.extractBzip2Tar(archive, into: Self.modelsRoot)
         guard Self.hasRequiredFiles(in: dir) else { throw SpeechError.modelUnavailable }
-        return dir
     }
 
     nonisolated static var isModelDownloaded: Bool {
@@ -193,6 +204,12 @@ actor KokoroSpeechEngine {
             try await Task.detached(priority: .userInitiated) {
                 try Task.checkCancellation()
 
+                let runtimeID = "speech:kokoro:\(UUID().uuidString)"
+                let estimatedBytes = ModelRuntimeRegistry.fileBytes(at: modelURL)
+                await ModelRuntimeRegistry.shared.reserve(
+                    id: runtimeID, role: "Speech synthesis", label: "Kokoro 82M",
+                    estimatedBytes: estimatedBytes)
+
                 let process = Process()
                 process.executableURL = runtime.binary
                 process.arguments = args
@@ -204,18 +221,22 @@ actor KokoroSpeechEngine {
                 let err = Pipe()
                 process.standardOutput = out
                 process.standardError = err
-                try process.run()
+                do {
+                    try process.run()
+                } catch {
+                    await ModelRuntimeRegistry.shared.unregister(id: runtimeID)
+                    throw error
+                }
                 cancellation.track(process)
                 defer { cancellation.clear(process) }
 
-                let runtimeID = "speech:kokoro:\(UUID().uuidString)"
                 let processUsage = SystemResourceSampler.processUsage(
                     for: process.processIdentifier)
                 await ModelRuntimeRegistry.shared.register(
                     id: runtimeID,
                     role: "Speech synthesis",
                     label: "Kokoro 82M",
-                    estimatedBytes: ModelRuntimeRegistry.fileBytes(at: modelURL),
+                    estimatedBytes: estimatedBytes,
                     processIdentifier: processUsage?.processIdentifier,
                     processStartTime: processUsage?.startTime
                 )

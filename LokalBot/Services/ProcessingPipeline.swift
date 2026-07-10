@@ -137,22 +137,45 @@ final class ProcessingPipeline: ObservableObject {
             if job.summarize {
                 stages[meeting.id] = .summarizing
                 let transcript = try loadTranscript(from: folder)
+                // The default built-in server supports continuous batching.
+                // For a short transcript, outcomes and summary are independent
+                // reads of the same source, so overlap their generation instead
+                // of paying two serial full-prefill passes. Long transcripts
+                // still wait because outcomes intentionally consume the summary.
+                let concurrentOutcomes = Self.shouldExtractOutcomesConcurrently(
+                    transcriptCharacterCount: transcript.markdown.count,
+                    backend: config.summarizerBackend)
+                let outcomesTask: Task<Void, Never>? = concurrentOutcomes
+                    ? Task { [weak self] in
+                        await self?.extractOutcomes(
+                            transcript: transcript, summary: "", folder: folder, config: config)
+                    }
+                    : nil
                 let summary: String
                 do {
-                    summary = try await summarize(transcript, meeting: meeting, config: config)
+                    do {
+                        summary = try await summarize(transcript, meeting: meeting, config: config)
+                    } catch {
+                        // One automatic retry: summarization failures are usually
+                        // transient (server still warming up, brief memory
+                        // pressure) and the expensive transcription work is
+                        // already safely on disk.
+                        lokalbotLog("summary retry after error=\(error.localizedDescription)")
+                        try await Task.sleep(nanoseconds: 2_000_000_000)
+                        summary = try await summarize(transcript, meeting: meeting, config: config)
+                    }
                 } catch {
-                    // One automatic retry: summarization failures are usually
-                    // transient (server still warming up, brief memory
-                    // pressure) and the expensive transcription work is
-                    // already safely on disk.
-                    lokalbotLog("summary retry after error=\(error.localizedDescription)")
-                    try await Task.sleep(nanoseconds: 2_000_000_000)
-                    summary = try await summarize(transcript, meeting: meeting, config: config)
+                    outcomesTask?.cancel()
+                    throw error
                 }
                 try summary.data(using: .utf8)?.write(
                     to: folder.appendingPathComponent("summary.md"), options: .atomic)
-                await extractOutcomes(transcript: transcript, summary: summary, folder: folder,
-                                      config: config)
+                if let outcomesTask {
+                    await outcomesTask.value
+                } else {
+                    await extractOutcomes(transcript: transcript, summary: summary, folder: folder,
+                                          config: config)
+                }
             }
             stages[meeting.id] = nil
             jobStore?.markCompleted(meetingID: meeting.id)
@@ -317,6 +340,14 @@ final class ProcessingPipeline: ObservableObject {
     }
 
     // MARK: - Summarization
+
+    nonisolated static func shouldExtractOutcomesConcurrently(
+        transcriptCharacterCount: Int,
+        backend: AppSettings.SummarizerBackend
+    ) -> Bool {
+        backend == .builtIn
+            && transcriptCharacterCount <= OutcomesExtractor.transcriptCharacterLimit
+    }
 
     private func summarize(_ transcript: Transcript, meeting: Meeting,
                            config: AppSettings) async throws -> String {

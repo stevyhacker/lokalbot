@@ -446,7 +446,13 @@ final class AppState: ObservableObject {
         pipelineObserver = pipeline.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
-        recordingObserver = recording.objectWillChange.sink { [weak self] in
+        // Forward lifecycle changes, but not RecordingController's one-second
+        // `now` tick. Timer labels observe the controller directly; rebroadcasting
+        // that tick through AppState invalidated the entire window hierarchy.
+        recordingObserver = Publishers.CombineLatest(
+            recording.$status,
+            recording.$currentMeeting
+        ).dropFirst().sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         // React to recording start/stop (and calendar-handoff splits, which

@@ -59,6 +59,15 @@ final class ModelResidencyTests: XCTestCase {
         XCTAssertEqual(Set(victims), ["a", "b"])
     }
 
+    func testNonEvictableRuntimeReservationsReduceAvailableBudget() {
+        let victims = ModelResidencyPolicy.evictions(
+            residents: [entry("old", gb: 3, age: 100), entry("new", gb: 2, age: 10)],
+            incomingID: "incoming", incomingBytes: 2 * 1_073_741_824,
+            reservedBytes: 4 * 1_073_741_824,
+            budgetBytes: 8 * 1_073_741_824)
+        XCTAssertEqual(victims, ["old"])
+    }
+
     // MARK: - Ledger
 
     func testRegisterUpsertsTouchAndUnregister() {

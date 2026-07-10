@@ -55,6 +55,129 @@ struct ScreenCapturePolicy {
     mutating func noteCheck(at now: Date = Date()) { lastCheck = now }
 }
 
+/// Immutable inputs passed across the main-actor/worker boundary. `CGImage` is
+/// an immutable Core Foundation value and is safe to read concurrently, but it
+/// is not annotated `Sendable` by every supported SDK, so the wrapper records
+/// that invariant explicitly.
+struct ScreenshotProcessingRequest: @unchecked Sendable {
+    let image: CGImage
+    let trigger: ScreenCaptureTrigger
+    let key: SymmetricKey
+    let fileURL: URL
+}
+
+/// Injectable image/file operations keep the serial worker deterministic under
+/// test without weakening the production path. Every closure runs only inside
+/// `ScreenshotProcessingWorker`.
+struct ScreenshotProcessingDependencies: @unchecked Sendable {
+    let contentHash: @Sendable (CGImage) -> Data
+    let heicData: @Sendable (CGImage) throws -> Data
+    let recognizeText: @Sendable (CGImage) -> String
+    let write: @Sendable (Data, URL) throws -> Void
+
+    static let live = ScreenshotProcessingDependencies(
+        contentHash: { image in ScreenshotImageProcessing.contentHash(of: image) },
+        heicData: { image in try ScreenshotImageProcessing.heicData(from: image) },
+        recognizeText: { image in ScreenshotImageProcessing.recognizeText(in: image) },
+        write: { data, url in
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+        })
+}
+
+/// CPU- and I/O-heavy screenshot processing. Actor isolation gives captures one
+/// total order, so the content hash always compares with the last image that was
+/// successfully encrypted and written. There are no suspension points inside
+/// `process`, preventing actor reentrancy from interleaving two capture writes.
+actor ScreenshotProcessingWorker {
+    enum Outcome: Sendable {
+        case unchanged
+        case stored(contentHash: Data, ocrText: String)
+    }
+
+    private let dependencies: ScreenshotProcessingDependencies
+    private var lastContentHash: Data?
+
+    init(dependencies: ScreenshotProcessingDependencies = .live) {
+        self.dependencies = dependencies
+    }
+
+    func process(_ request: ScreenshotProcessingRequest) throws -> Outcome {
+        let preparedImage = ScreenshotImageProcessing.downscale(request.image, maxWidth: 1500)
+        let contentHash = dependencies.contentHash(preparedImage)
+        if request.trigger != .manual, contentHash == lastContentHash {
+            return .unchanged
+        }
+
+        let heic = try dependencies.heicData(preparedImage)
+        let ocrText = dependencies.recognizeText(request.image)
+        let sealedBox = try AES.GCM.seal(heic, using: request.key)
+        guard let sealed = sealedBox.combined else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try dependencies.write(sealed, request.fileURL)
+        lastContentHash = contentHash
+        return .stored(contentHash: contentHash, ocrText: ocrText)
+    }
+}
+
+/// Pure image transforms used by the background worker. Keeping these outside
+/// the `@MainActor` service is what makes Vision, Core Graphics, and ImageIO run
+/// away from SwiftUI's executor.
+private enum ScreenshotImageProcessing {
+    /// Hash the downscaled pixels before HEIC/OCR. Unchanged frames therefore
+    /// skip both the encoder and Vision instead of paying an encode merely to
+    /// discover that the output bytes match the previous capture.
+    static func contentHash(of image: CGImage) -> Data {
+        var input = Data()
+        var width = UInt64(image.width).littleEndian
+        var height = UInt64(image.height).littleEndian
+        withUnsafeBytes(of: &width) { input.append(contentsOf: $0) }
+        withUnsafeBytes(of: &height) { input.append(contentsOf: $0) }
+        if let pixels = image.dataProvider?.data {
+            input.append(pixels as Data)
+        }
+        return Data(SHA256.hash(data: input))
+    }
+
+    static func recognizeText(in image: CGImage) -> String {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate   // .fast is useless on dense UI text
+        request.usesLanguageCorrection = false  // code/URLs shouldn't be "corrected"
+        try? VNImageRequestHandler(cgImage: image).perform([request])
+        return (request.results ?? [])
+            .compactMap { $0.topCandidates(1).first?.string }
+            .joined(separator: "\n")
+    }
+
+    static func downscale(_ image: CGImage, maxWidth: Int) -> CGImage {
+        guard image.width > maxWidth else { return image }
+        let scale = Double(maxWidth) / Double(image.width)
+        let height = Int(Double(image.height) * scale)
+        guard let context = CGContext(
+            data: nil, width: maxWidth, height: height, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return image }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: maxWidth, height: height))
+        return context.makeImage() ?? image
+    }
+
+    static func heicData(from image: CGImage) throws -> Data {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data, "public.heic" as CFString, 1, nil) else {
+            throw NSError(domain: "LokalBot", code: 5,
+                          userInfo: [NSLocalizedDescriptionKey: "HEIC encoder unavailable"])
+        }
+        CGImageDestinationAddImage(destination, image,
+            [kCGImageDestinationLossyCompressionQuality: 0.7] as CFDictionary)
+        CGImageDestinationFinalize(destination)
+        return data as Data
+    }
+}
+
 /// M5 (design doc §3.2/§3.4), now event-driven: capture the active display
 /// when the sampler sees an app/window switch (idle timer as fallback) →
 /// dedup identical frames → OCR (Vision, on-device) → AES-GCM encrypt → disk.
@@ -71,11 +194,9 @@ final class ScreenshotService: ObservableObject {
     private let settings: () -> AppSettings
     private let isMeetingRecordingActive: () -> Bool
     private let sampler: ActivitySampler
+    private let processingWorker = ScreenshotProcessingWorker()
     private var timer: Timer?
     private var policy = ScreenCapturePolicy()
-    /// SHA-256 of the last stored (downscaled) frame; identical frames are
-    /// skipped before OCR runs, which is where the CPU cost lives.
-    private var lastContentHash: Data?
 
     init(store: ActivityStore, storage: StorageManager, sampler: ActivitySampler,
          isMeetingRecordingActive: @escaping () -> Bool = { false },
@@ -185,34 +306,29 @@ final class ScreenshotService: ObservableObject {
 
         let timestamp = Date()
 
-        // Dedup BEFORE OCR: encode the downscaled frame and hash it. When the
-        // pixels are byte-identical to the last stored capture the screen
-        // hasn't changed, so skip the expensive Vision pass and the duplicate
-        // row entirely (Screenpipe's hash-early-exit, simplified). The check
-        // still arms the cooldown/idle clock — the screen was looked at.
-        let heic = try Self.heicData(from: Self.downscale(image, maxWidth: 1500))
-        let contentHash = Data(SHA256.hash(data: heic))
-        if trigger != .manual, contentHash == lastContentHash {
+        // The worker keeps the hash → dedup → OCR → encryption → atomic-write
+        // sequence serial and off the main actor. The check still arms the
+        // cooldown/idle clock when an unchanged frame is skipped.
+        let day = timestamp.formatted(.iso8601.year().month().day())
+        let file = storage.rootURL
+            .appendingPathComponent("activity/\(day)/shots", isDirectory: true)
+            .appendingPathComponent("\(Int(timestamp.timeIntervalSince1970)).heic.enc")
+        let outcome = try await processingWorker.process(ScreenshotProcessingRequest(
+            image: image,
+            trigger: trigger,
+            key: try Self.encryptionKey(),
+            fileURL: file))
+
+        guard case .stored(_, let ocrText) = outcome else {
             policy.noteCheck(at: timestamp)
             lokalbotLog("shot skip: unchanged frame (\(trigger.rawValue), app: \(frontApp))")
             return
         }
 
-        let ocrText = Self.recognizeText(in: image)
-
-        // Encrypt → activity/YYYY-MM-DD/shots/<epoch>.heic.enc
-        let sealed = try AES.GCM.seal(heic, using: Self.encryptionKey()).combined!
-        let day = timestamp.formatted(.iso8601.year().month().day())
-        let folder = storage.rootURL.appendingPathComponent("activity/\(day)/shots", isDirectory: true)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let file = folder.appendingPathComponent("\(Int(timestamp.timeIntervalSince1970)).heic.enc")
-        try sealed.write(to: file, options: .atomic)
-
         store.insertScreenshot(ts: timestamp, path: file.path, app: frontApp,
                                windowTitle: windowTitle, trigger: trigger.rawValue,
                                ocr: ocrText)
         policy.noteCheck(at: timestamp)
-        lastContentHash = contentHash
         lastCapture = timestamp
         lokalbotLog("shot ok: \(file.lastPathComponent) (\(ocrText.count) OCR chars, "
             + "app: \(frontApp), trigger: \(trigger.rawValue))")
@@ -262,42 +378,6 @@ final class ScreenshotService: ObservableObject {
         recordingActive: Bool
     ) -> Bool {
         !recordingActive || trigger == .manual
-    }
-
-    private static func recognizeText(in image: CGImage) -> String {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate   // .fast is useless on dense UI text
-        request.usesLanguageCorrection = false  // code/URLs shouldn't be "corrected"
-        try? VNImageRequestHandler(cgImage: image).perform([request])
-        return (request.results ?? [])
-            .compactMap { $0.topCandidates(1).first?.string }
-            .joined(separator: "\n")
-    }
-
-    private static func downscale(_ image: CGImage, maxWidth: Int) -> CGImage {
-        guard image.width > maxWidth else { return image }
-        let scale = Double(maxWidth) / Double(image.width)
-        let height = Int(Double(image.height) * scale)
-        guard let context = CGContext(
-            data: nil, width: maxWidth, height: height, bitsPerComponent: 8,
-            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return image }
-        context.interpolationQuality = .high
-        context.draw(image, in: CGRect(x: 0, y: 0, width: maxWidth, height: height))
-        return context.makeImage() ?? image
-    }
-
-    private static func heicData(from image: CGImage) throws -> Data {
-        let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(
-            data, "public.heic" as CFString, 1, nil) else {
-            throw NSError(domain: "LokalBot", code: 5,
-                          userInfo: [NSLocalizedDescriptionKey: "HEIC encoder unavailable"])
-        }
-        CGImageDestinationAddImage(destination, image,
-            [kCGImageDestinationLossyCompressionQuality: 0.7] as CFDictionary)
-        CGImageDestinationFinalize(destination)
-        return data as Data
     }
 
     /// Per-install AES-256 key in the user Keychain (design §3.4), via the
