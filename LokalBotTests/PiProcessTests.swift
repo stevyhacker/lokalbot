@@ -21,13 +21,15 @@ final class PiProcessTests: XCTestCase {
     }
 
     func testLinesStreamFinishesOnExit() async throws {
-        let process = PiProcess(plan: plan("/bin/sh", ["-c", "printf 'one\\ntwo\\n'"]))
-        try await process.start()
-        var collected: [String] = []
-        for await line in await process.lines { collected.append(line) }
-        XCTAssertEqual(collected, ["one", "two"])
-        let running = await process.isRunning
-        XCTAssertFalse(running)
+        for iteration in 1...25 {
+            let process = PiProcess(plan: plan("/bin/sh", ["-c", "printf 'one\\ntwo\\n'"]))
+            try await process.start()
+            var collected: [String] = []
+            for await line in await process.lines { collected.append(line) }
+            XCTAssertEqual(collected, ["one", "two"], "iteration \(iteration)")
+            let running = await process.isRunning
+            XCTAssertFalse(running, "iteration \(iteration)")
+        }
     }
 
     func testMissingExecutableThrows() async {

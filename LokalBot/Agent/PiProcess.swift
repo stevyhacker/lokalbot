@@ -21,6 +21,9 @@ actor PiProcess {
 
     private var splitter = PiJSONLFrameSplitter()
     private var linesContinuation: AsyncStream<String>.Continuation?
+    private var stdoutChunksContinuation: AsyncStream<Data>.Continuation?
+    private var stdoutTask: Task<Void, Never>?
+    private var stdoutReachedEOF = false
     private var started = false
     private var exited = false
     private(set) var stderrTail: [String] = []
@@ -48,9 +51,22 @@ actor PiProcess {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
-        stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+        let (chunks, chunksContinuation) = AsyncStream<Data>.makeStream()
+        stdoutChunksContinuation = chunksContinuation
+        stdoutTask = Task.detached { [weak self] in
+            for await data in chunks {
+                await self?.consumeStdout(data)
+            }
+            await self?.handleStdoutEOF()
+        }
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            Task { [weak self] in await self?.consumeStdout(data) }
+            if data.isEmpty {
+                chunksContinuation.finish()
+                handle.readabilityHandler = nil
+            } else {
+                chunksContinuation.yield(data)
+            }
         }
         stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
@@ -80,19 +96,22 @@ actor PiProcess {
             kill(process.processIdentifier, SIGKILL)
         }
         handleExit()
+        await stdoutTask?.value
     }
 
     // MARK: - Private
 
     private func consumeStdout(_ data: Data) {
-        if data.isEmpty {   // EOF
-            if let last = splitter.flush() { linesContinuation?.yield(last) }
-            stdoutPipe.fileHandleForReading.readabilityHandler = nil
-            return
-        }
         for frame in splitter.append(data) {
             linesContinuation?.yield(frame)
         }
+    }
+
+    private func handleStdoutEOF() {
+        guard !stdoutReachedEOF else { return }
+        stdoutReachedEOF = true
+        if let last = splitter.flush() { linesContinuation?.yield(last) }
+        finishLinesIfReady()
     }
 
     private func consumeStderr(_ text: String) {
@@ -103,11 +122,16 @@ actor PiProcess {
     private func handleExit() {
         guard !exited else { return }
         exited = true
-        if let last = splitter.flush() { linesContinuation?.yield(last) }
+        try? stdinPipe.fileHandleForWriting.close()
+        finishLinesIfReady()
+    }
+
+    private func finishLinesIfReady() {
+        guard exited, stdoutReachedEOF, linesContinuation != nil else { return }
         linesContinuation?.finish()
         linesContinuation = nil
-        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stdoutChunksContinuation?.finish()
+        stdoutChunksContinuation = nil
         stderrPipe.fileHandleForReading.readabilityHandler = nil
-        try? stdinPipe.fileHandleForWriting.close()
     }
 }
