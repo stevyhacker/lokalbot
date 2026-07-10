@@ -28,6 +28,11 @@ export default function lokalbotExtension(pi: ExtensionAPI) {
       {
         id: model,
         contextWindow,
+        // Required: pi's registerProvider path does NOT default `input`
+        // (unlike its models.json path), and pi-ai's openai-completions
+        // dereferences model.input unguarded — omitting this crashes every
+        // completion with "undefined is not an object".
+        input: ["text"],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       },
     ],

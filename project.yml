@@ -210,7 +210,12 @@ targets:
     type: bundle.unit-test
     platform: macOS
     sources:
-      - LokalBotTests
+      - path: LokalBotTests
+        excludes:
+          - Fixtures
+      - path: LokalBotTests/Fixtures
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: LokalBot
     settings:
