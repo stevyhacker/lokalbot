@@ -63,6 +63,9 @@ targetTemplates:
       - path: Vendor/sherpa-onnx
         type: folder
         buildPhase: resources
+      - path: LokalBot/Resources/pi
+        type: folder
+        buildPhase: resources
       # Bundle SKILL.md inside the app at Contents/Resources/lokalbot-cli/
       # so the installer can symlink it onto the user's PATH-adjacent skill
       # dirs without needing the source repo.
