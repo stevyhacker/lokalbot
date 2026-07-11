@@ -7,6 +7,34 @@ final class AgentSessionControllerTests: XCTestCase {
 
     private var transport: FakeTransport!
 
+    private actor BlockingBrokerEnsure {
+        private var didStart = false
+        private var didRelease = false
+        private var startWaiters: [CheckedContinuation<Void, Never>] = []
+        private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+        func block() async {
+            didStart = true
+            let waitingForStart = startWaiters
+            startWaiters.removeAll()
+            for waiter in waitingForStart { waiter.resume() }
+            guard !didRelease else { return }
+            await withCheckedContinuation { releaseWaiters.append($0) }
+        }
+
+        func waitUntilStarted() async {
+            if didStart { return }
+            await withCheckedContinuation { startWaiters.append($0) }
+        }
+
+        func release() {
+            didRelease = true
+            let waitingForRelease = releaseWaiters
+            releaseWaiters.removeAll()
+            for waiter in waitingForRelease { waiter.resume() }
+        }
+    }
+
     private func makeController(backend: AppSettings.SummarizerBackend = .openAICompatible) -> AgentSessionController {
         transport = FakeTransport()
         var settings = AppSettings()
@@ -39,6 +67,59 @@ final class AgentSessionControllerTests: XCTestCase {
         }
         XCTAssertTrue(reason.contains("Apple Intelligence"))
         XCTAssertEqual(controller.recoveryAction, .openModels)
+    }
+
+    func testShutdownDuringBuiltInEnsureReleasesLateLease() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agent-lease-race-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("models", isDirectory: true),
+            withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let entry = try XCTUnwrap(
+            ModelCatalog.entry(id: ModelCatalog.recommendedSummarizationID))
+        try Data("GGUF".utf8).write(
+            to: root.appendingPathComponent("models/\(entry.fileName)"))
+        var settings = AppSettings()
+        settings.summarizerBackend = .builtIn
+        settings.builtInModelID = entry.id
+
+        let blocker = BlockingBrokerEnsure()
+        var hooks: [InferenceRole: InferenceBroker.RuntimeHooks] = [:]
+        for role in InferenceRole.allCases {
+            hooks[role] = .init(
+                ensure: { _ in
+                    if role == .mainLLM { await blocker.block() }
+                },
+                stop: {})
+        }
+        let broker = InferenceBroker(hooks: hooks, leaseStateSink: { _, _ in })
+        var transportCalls = 0
+        let controller = AgentSessionController(
+            settings: { settings },
+            storage: StorageManager(rootURL: root),
+            broker: broker,
+            makeTransport: { _ in
+                transportCalls += 1
+                return FakeTransport()
+            })
+
+        let starting = Task { await controller.start() }
+        await blocker.waitUntilStarted()
+        await controller.shutdown()
+        await blocker.release()
+        await starting.value
+
+        var active = await broker.activeLeaseCount(.mainLLM)
+        let deadline = Date().addingTimeInterval(3)
+        while active != 0, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(25))
+            active = await broker.activeLeaseCount(.mainLLM)
+        }
+        XCTAssertEqual(active, 0)
+        XCTAssertEqual(controller.state, .idle)
+        XCTAssertEqual(transportCalls, 0, "a closed tab must not spawn pi after ensure returns")
     }
 
     func testSendFoldsUserAndStreamsAssistant() async throws {

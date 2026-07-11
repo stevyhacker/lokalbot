@@ -13,8 +13,8 @@ struct AgentLLMEndpoint: Equatable {
 }
 
 enum AgentLLMResolution: Equatable {
-    /// Caller must `LlamaServer.shared.ensureRunning(modelAt:)` first, then
-    /// build the endpoint from `LlamaServer.shared.baseURL` + this model id.
+    /// Caller resolves the model URL and holds an `InferenceBroker` Main LLM
+    /// lease before building the endpoint from the shared base URL + model id.
     case builtIn(modelID: String)
     case ready(AgentLLMEndpoint)
     case unsupported(reason: String)
@@ -22,7 +22,7 @@ enum AgentLLMResolution: Equatable {
 
 /// Pure settings → endpoint resolution for Agent Mode. Mirrors the backend
 /// switch in ProcessingPipeline.makeTextEngine, with deliberate differences:
-/// no async work here (server startup is the caller's job); Ollama and the
+/// no async work here (runtime acquisition is the caller's job); Ollama and the
 /// OpenAI-compatible server each require an explicit model because pi
 /// registers the model id statically at launch; and an empty API key
 /// resolves to nil.

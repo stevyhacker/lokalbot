@@ -107,6 +107,23 @@ final class AgentAccessManagerTests: XCTestCase {
         func count(of event: String) -> Int { events.filter { $0 == event }.count }
     }
 
+    private actor BlockingEnsure {
+        private var didRelease = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        func block() async {
+            if didRelease { return }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+
+        func release() {
+            didRelease = true
+            let waiting = waiters
+            waiters.removeAll()
+            for waiter in waiting { waiter.resume() }
+        }
+    }
+
     private func makeFakeBroker(recorder: BrokerHookRecorder) -> InferenceBroker {
         var hooks: [InferenceRole: InferenceBroker.RuntimeHooks] = [:]
         for role in InferenceRole.allCases {
@@ -154,5 +171,53 @@ final class AgentAccessManagerTests: XCTestCase {
             try await Task.sleep(nanoseconds: 25_000_000)
         }
         XCTAssertEqual(active, 0, "disabling agent access must release the wake lease")
+    }
+
+    func testDisableDuringWakeReleasesLeaseAcquiredAfterDisable() async throws {
+        let entry = try XCTUnwrap(
+            ModelCatalog.entry(id: ModelCatalog.recommendedSummarizationID))
+        let models = root.appendingPathComponent("models", isDirectory: true)
+        try FileManager.default.createDirectory(at: models, withIntermediateDirectories: true)
+        try Data("GGUF".utf8).write(to: models.appendingPathComponent(entry.fileName))
+        var settings = AppSettings()
+        settings.summarizerBackend = .builtIn
+        settings.builtInModelID = entry.id
+
+        let blocker = BlockingEnsure()
+        let ensureStarted = expectation(description: "broker ensure started")
+        var hooks: [InferenceRole: InferenceBroker.RuntimeHooks] = [:]
+        for role in InferenceRole.allCases {
+            hooks[role] = .init(
+                ensure: { _ in
+                    if role == .mainLLM {
+                        ensureStarted.fulfill()
+                        await blocker.block()
+                    }
+                },
+                stop: {})
+        }
+        let broker = InferenceBroker(hooks: hooks, leaseStateSink: { _, _ in })
+        let manager = AgentAccessManager(
+            storage: StorageManager(),
+            settings: { settings },
+            gate: gate,
+            startEngine: nil,
+            broker: broker)
+
+        manager.setEnabled(true)
+        try gate.touchWake()
+        await fulfillment(of: [ensureStarted], timeout: 5)
+        manager.setEnabled(false)
+        await blocker.release()
+
+        var active = await broker.activeLeaseCount(.mainLLM)
+        let deadline = Date().addingTimeInterval(3)
+        while active != 0, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(25))
+            active = await broker.activeLeaseCount(.mainLLM)
+        }
+        XCTAssertEqual(active, 0)
+        XCTAssertFalse(manager.isEnabled)
+        XCTAssertFalse(gate.isEnabled)
     }
 }

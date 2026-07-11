@@ -94,6 +94,13 @@ final class AgentAccessManager: ObservableObject {
             } else {
                 failure = await wakeMainLLM(settings: settings(), storage: storage)
             }
+            guard isEnabled else {
+                // Disable may race a suspended ensure and run before the fresh
+                // lease is assigned. Release again after the wake completes.
+                releaseAgentLease()
+                handlingWake = false
+                return
+            }
             if let failure {
                 gate.writeWakeError(failure)
             } else {

@@ -77,7 +77,12 @@ final class AgentSessionController: ObservableObject {
         recoveryAction = nil
         do {
             let endpoint = try await resolveEndpoint()
-            guard generation == lifecycleGeneration else { return }
+            guard generation == lifecycleGeneration else {
+                // shutdown() may have run while the broker was still ensuring,
+                // before resolveEndpoint had assigned the lease.
+                releaseLLMLease()
+                return
+            }
             let plan = makePlan(endpoint: endpoint)
             let transport: PiLineTransport
             var spawnedProcess: PiProcess?
