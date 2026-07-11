@@ -1,0 +1,89 @@
+import XCTest
+@testable import LokalBot
+
+final class MCPServerIntegrationTests: XCTestCase {
+    private var root: URL!
+
+    private var helperURL: URL {
+        Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/lokalbot-cli")
+    }
+
+    override func setUpWithError() throws {
+        guard FileManager.default.isExecutableFile(atPath: helperURL.path) else {
+            throw XCTSkip("no embedded lokalbot-cli in this build")
+        }
+        root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mcpserver-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try AgentAccessGate(root: root).enable()
+
+        try MeetingFixture.write([
+            .init(
+                id: UUID(uuidString: "AAAAAAAA-1111-4222-8333-444444444444")!,
+                title: "Cache planning",
+                startedAt: Date(timeIntervalSince1970: 1_780_000_000),
+                summary: "We chose Redis for the caching layer.",
+                transcriptLines: ["Redis wins because of pub sub."]),
+        ], under: root)
+    }
+
+    override func tearDown() {
+        if let root { try? FileManager.default.removeItem(at: root) }
+        super.tearDown()
+    }
+
+    private func runSession(_ lines: [String]) throws -> [String] {
+        let process = Process()
+        process.executableURL = helperURL
+        process.arguments = ["mcp"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["LOKALBOT_STORAGE_ROOT"] = root.path
+        process.environment = environment
+
+        let stdin = Pipe()
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardInput = stdin
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+
+        stdin.fileHandleForWriting.write(Data(
+            (lines.joined(separator: "\n") + "\n").utf8))
+        stdin.fileHandleForWriting.closeFile()
+        let output = stdout.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        return String(decoding: output, as: UTF8.self)
+            .split(separator: "\n")
+            .map(String.init)
+    }
+
+    func testGoldenSessionInitializeListCall() throws {
+        let output = try runSession([
+            #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"xctest","version":"1"}}}"#,
+            #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            #"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+            #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_meetings","arguments":{"query":"redis"}}}"#,
+        ])
+        XCTAssertEqual(output.count, 3)
+        XCTAssertTrue(output[0].contains(#""protocolVersion":"2025-06-18""#))
+        XCTAssertTrue(output[0].contains(#""name":"lokalbot""#))
+        for tool in ["list_meetings", "get_meeting", "search_meetings", "ask_library"] {
+            XCTAssertTrue(output[1].contains("\"\(tool)\""), tool)
+        }
+        XCTAssertTrue(output[2].lowercased().contains("redis"))
+        XCTAssertTrue(output[2].contains(#""isError":false"#))
+    }
+
+    func testToolsRefusedWithoutMarker() throws {
+        AgentAccessGate(root: root).disable()
+        let output = try runSession([
+            #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"xctest","version":"1"}}}"#,
+            #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_meetings","arguments":{}}}"#,
+        ])
+        XCTAssertEqual(output.count, 2)
+        XCTAssertTrue(output[1].contains("[access_disabled]"))
+        XCTAssertTrue(output[1].contains(#""isError":true"#))
+    }
+}

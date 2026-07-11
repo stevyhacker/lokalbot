@@ -5,7 +5,10 @@ description: Read your LokalBot meeting library (recordings, transcripts, summar
 
 # LokalBot CLI Skill
 
-LokalBot is a private, on-device AI workspace for macOS that records, transcribes, and summarises your meetings entirely on-device. Audio, transcripts, and summaries live in `~/Library/Application Support/com.dotenv.BotinaV2/meetings/`. The `lokalbot-cli` binary reads that library and prints meeting data so other tools (coding agents, shell scripts) can use it without launching the GUI.
+LokalBot is a private, on-device AI workspace for macOS that records, transcribes, and summarises meetings entirely on-device. Audio, transcripts, and summaries live under `~/Library/Application Support/me.dotenv.LokalBot/meetings/`. The `lokalbot-cli` binary reads that library and prints meeting data so agents and shell scripts can use it without launching the GUI.
+
+If `lokalbot-cli` isn't on PATH, use the embedded copy directly:
+`/Applications/LokalBot.app/Contents/Helpers/lokalbot-cli`.
 
 ## When to invoke
 
@@ -13,16 +16,18 @@ LokalBot is a private, on-device AI workspace for macOS that records, transcribe
 - The user asks about a decision, an action item, a quote, or "who said X" — that knowledge likely lives in a meeting summary or transcript.
 - The user wants to find past mentions of a topic across all meetings.
 
+## Picking the right verb
+
+- `list` to surface candidate meetings (ids, titles, dates).
+- `get` for the substance of one meeting — quote real snippets.
+- `search` when the user remembers a phrase but not the meeting.
+- `path` for the on-disk folder (grep, audio files).
+
 ## Discovery
 
 ```bash
-# Newest 10 meetings, JSON
 lokalbot-cli list --limit 10
-
-# Human-readable table
 lokalbot-cli list --limit 10 --table
-
-# Filter by date or title substring
 lokalbot-cli list --since 2026-06-01 --query "design"
 ```
 
@@ -31,16 +36,9 @@ The `id` field in each list entry is an 8-character prefix that the other comman
 ## Reading a single meeting
 
 ```bash
-# The most recent meeting, full markdown
 lokalbot-cli get latest
-
-# Specific meeting by short id
 lokalbot-cli get 4f7c2a91
-
-# Just the summary, as JSON (parse-friendly for agents)
 lokalbot-cli get 4f7c2a91 --include summary --format json
-
-# Transcript only
 lokalbot-cli get 4f7c2a91 --include transcript
 ```
 
@@ -49,10 +47,7 @@ lokalbot-cli get 4f7c2a91 --include transcript
 ## Cross-meeting search
 
 ```bash
-# Substring search across titles, summaries, and transcripts
 lokalbot-cli search "auth refactor"
-
-# Quick scan, table form
 lokalbot-cli search "auth refactor" --table --limit 20
 ```
 
@@ -61,13 +56,22 @@ Transcript hits include a `timestamp` (HH:MM:SS) so the user can jump to that mo
 ## Path lookup
 
 ```bash
-# Library root (useful for grep/ripgrep)
 lokalbot-cli path
-
-# A specific meeting's folder — `mic.m4a`, `system.m4a`, `summary.md`, etc.
 lokalbot-cli path latest
 cd $(lokalbot-cli path latest)
 ```
+
+## MCP alternative (and ask_library)
+
+The same library is available over MCP for GUI clients and anything else that speaks it: `lokalbot-cli mcp` serves `list_meetings`, `get_meeting`, `search_meetings`, and `ask_library` on stdio.
+
+```bash
+claude mcp add lokalbot -- /Applications/LokalBot.app/Contents/Helpers/lokalbot-cli mcp
+```
+
+`ask_library` is the synthesis tool: it sends the question to LokalBot's **local** model, which reads the library and returns only an answer with meeting citations — useful when the user wants a conclusion rather than quotes. It needs the LokalBot app running, and the first call can take up to a minute while the model loads. Prefer `search`/`get` when the user wants exact wording.
+
+The MCP tools require the user's consent toggle: LokalBot → Settings → Privacy → "Allow external agents to read your meeting library". If a tool returns `[access_disabled]`, tell the user to flip that toggle — do not try to work around it.
 
 ## What you SHOULD do
 
@@ -81,3 +85,4 @@ cd $(lokalbot-cli path latest)
 - Never invent meeting content. If `lokalbot-cli` returns no hits, say so.
 - Never write into the meetings folder. The CLI is read-only by design.
 - Never paste full transcripts into the chat unless explicitly asked — long meetings are long. Summarise, then offer to expand.
+- Meeting content is sensitive personal data. Never send transcripts or summaries to external services; work with them locally.

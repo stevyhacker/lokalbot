@@ -11,6 +11,13 @@ struct LokalBotCLI: AsyncParsableCommand {
             ~/.local/bin/lokalbot-cli by the in-app installer (Settings →
             Agent CLI). Output defaults to JSON; pass --table for plain text.
             """,
-        subcommands: [ListCommand.self, GetCommand.self, SearchCommand.self, PathCommand.self]
+        subcommands: [
+            ListCommand.self,
+            GetCommand.self,
+            SearchCommand.self,
+            PathCommand.self,
+            MCPCommand.self,
+            InstallSkillCommand.self,
+        ]
     )
 }

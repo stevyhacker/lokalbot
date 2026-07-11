@@ -325,7 +325,7 @@ struct SettingsView: View {
     @ViewBuilder private var privacySection: some View {
             if shows("Privacy", ["privacy", "retention", "ocr", "text", "screen text", "history",
                                  "delete", "prune", "forever", "keep", "local", "network",
-                                 "data", "security"]) {
+                                 "data", "security", "agents", "mcp", "claude", "cli"]) {
                 Section("Privacy") {
                     Label("Audio and transcripts never leave this Mac. Network access is localhost (your LLM server) plus user-initiated model downloads from Hugging Face.",
                           systemImage: "lock.shield")
@@ -336,6 +336,7 @@ struct SettingsView: View {
                                if !$0 { app.screenshots.pruneOldScreenshots() } }))
                     Text("Text extracted from screenshots is deleted with the pixels after \(app.settings.retentionDays) days. Turn on to keep it searchable forever; turning back off deletes text older than the window.")
                         .font(.caption).foregroundStyle(.secondary)
+                    AgentAccessToggleRow(manager: app.agentAccess)
                 }
             }
 
@@ -470,7 +471,7 @@ struct SettingsView: View {
                         if let cliMessage {
                             Text(cliMessage).font(.caption).foregroundStyle(.secondary)
                         }
-                        Text("Symlinks the bundled CLI at ~/.local/bin/lokalbot-cli and the skill at ~/.agents/skills/lokalbot-cli. Read-only by design.")
+                        Text("Symlinks the bundled CLI at ~/.local/bin/lokalbot-cli and the skill into ~/.agents/skills and ~/.claude/skills. Read-only by design.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -501,4 +502,23 @@ struct SettingsView: View {
         SettingsSearchRanker.matches(query: settingsQuery, haystack: [title] + keywords)
     }
 
+}
+
+/// Observes the nested manager directly so its published marker state keeps
+/// the toggle live without relying on AppState to forward changes.
+private struct AgentAccessToggleRow: View {
+    @ObservedObject var manager: AgentAccessManager
+
+    var body: some View {
+        Group {
+            Toggle(
+                "Allow external agents to read your meeting library",
+                isOn: Binding(
+                    get: { manager.isEnabled },
+                    set: { manager.setEnabled($0) }))
+            Text("Lets MCP clients and the lokalbot-cli skill (Claude, Cursor, …) list, read, and search your meetings, and ask questions answered by your local model — read-only, localhost only. Off by default; while off, agent tools return an error explaining how to enable this.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
 }
