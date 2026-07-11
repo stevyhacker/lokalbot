@@ -31,6 +31,7 @@ final class AgentSessionController: ObservableObject {
     private let storage: StorageManager
     private let runtimeRoot: URL
     private let sessionsDirectory: URL
+    private let broker: InferenceBroker
     private let makeTransport: ((PiLaunchPlan) async throws -> PiLineTransport)?
 
     private var policy = AgentApprovalPolicy()
@@ -46,16 +47,22 @@ final class AgentSessionController: ObservableObject {
     /// Without this, a close during model warm-up could finish spawning pi
     /// after shutdown() had already returned.
     private var lifecycleGeneration = 0
+    /// Held from resolveEndpoint (built-in engine only) until shutdown or
+    /// failure, so the Main LLM cannot be evicted mid-conversation by an
+    /// unrelated model load.
+    private var llmLease: InferenceLease?
 
     init(settings: @escaping () -> AppSettings,
          storage: StorageManager,
          runtimeRoot: URL = AgentRuntimeLayout.defaultRoot,
          sessionsDirectory: URL = AgentRuntimeLayout.sessionsDirectory,
+         broker: InferenceBroker = .shared,
          makeTransport: ((PiLaunchPlan) async throws -> PiLineTransport)? = nil) {
         self.settings = settings
         self.storage = storage
         self.runtimeRoot = runtimeRoot
         self.sessionsDirectory = sessionsDirectory
+        self.broker = broker
         self.makeTransport = makeTransport
         self.workspace = storage.rootURL
     }
@@ -113,6 +120,7 @@ final class AgentSessionController: ObservableObject {
         await process?.stop()
         process = nil
         client = nil
+        releaseLLMLease()
         state = .idle
     }
 
@@ -257,6 +265,7 @@ final class AgentSessionController: ObservableObject {
         }
         folder.appendNotice(detail, isError: true)
         publish()
+        releaseLLMLease()
         state = .failed(detail)
         recoveryAction = .restart
     }
@@ -273,7 +282,10 @@ final class AgentSessionController: ObservableObject {
                   let modelURL = ModelCatalog.localURL(for: entry, storage: storage) else {
                 throw StartError.modelConfiguration("The built-in model isn't downloaded yet. Download it under Settings → Models.")
             }
-            try await LlamaServer.shared.ensureRunning(modelAt: modelURL)
+            releaseLLMLease()
+            llmLease = try await broker.lease(.mainLLM, model: modelURL,
+                                              priority: .interactive,
+                                              purpose: "agent session")
             return AgentLLMEndpoint(baseURL: LlamaServer.shared.baseURL,
                                     model: entry.id,
                                     contextTokens: AgentLLMEndpoint.defaultContextTokens,
@@ -340,6 +352,15 @@ final class AgentSessionController: ObservableObject {
         pendingTextDelta = ""
     }
 
+    /// Fire-and-forget so the synchronous failure paths can call it; the
+    /// broker serializes the release internally.
+    private func releaseLLMLease() {
+        guard let lease = llmLease else { return }
+        llmLease = nil
+        let broker = self.broker
+        Task { await broker.release(lease) }
+    }
+
     private func freshID(_ prefix: String) -> String {
         nextRequestID += 1
         return "\(prefix)\(nextRequestID)"
@@ -357,11 +378,13 @@ final class AgentSessionController: ObservableObject {
         let message = Self.message(for: error)
         folder.appendNotice(message, isError: true)
         publish()
+        releaseLLMLease()
         state = .failed(message)
         recoveryAction = .restart
     }
 
     private func setFailure(_ error: Error) {
+        releaseLLMLease()
         state = .failed(Self.message(for: error))
         if case StartError.modelConfiguration = error {
             recoveryAction = .openModels
