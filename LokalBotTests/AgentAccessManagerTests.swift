@@ -21,13 +21,15 @@ final class AgentAccessManagerTests: XCTestCase {
     }
 
     private func makeManager(
-        startEngine: @escaping (AppSettings, StorageManager) async -> String? = { _, _ in nil }
+        startEngine: ((AppSettings, StorageManager) async -> String?)? = { _, _ in nil },
+        broker: InferenceBroker = .shared
     ) -> AgentAccessManager {
         AgentAccessManager(
             storage: StorageManager(),
             settings: { AppSettings() },
             gate: gate,
-            startEngine: startEngine)
+            startEngine: startEngine,
+            broker: broker)
     }
 
     func testToggleMirrorsMarkerFile() {
@@ -95,5 +97,62 @@ final class AgentAccessManagerTests: XCTestCase {
 
         try? gate.touchWake()
         await fulfillment(of: [woke], timeout: 1)
+    }
+
+    // MARK: - Wake lease
+
+    private actor BrokerHookRecorder {
+        private(set) var events: [String] = []
+        func record(_ event: String) { events.append(event) }
+        func count(of event: String) -> Int { events.filter { $0 == event }.count }
+    }
+
+    private func makeFakeBroker(recorder: BrokerHookRecorder) -> InferenceBroker {
+        var hooks: [InferenceRole: InferenceBroker.RuntimeHooks] = [:]
+        for role in InferenceRole.allCases {
+            hooks[role] = InferenceBroker.RuntimeHooks(
+                ensure: { _ in await recorder.record("ensure:\(role.rawValue)") },
+                stop: { await recorder.record("stop:\(role.rawValue)") })
+        }
+        return InferenceBroker(hooks: hooks, leaseStateSink: { _, _ in })
+    }
+
+    func testWakeLeaseEnsuresEveryTimeButNeverStacks() async {
+        let recorder = BrokerHookRecorder()
+        let broker = makeFakeBroker(recorder: recorder)
+        let manager = makeManager(startEngine: nil, broker: broker)
+        let modelURL = root.appendingPathComponent("fake-model.gguf")
+
+        let first = await manager.acquireOrRenewAgentLease(modelURL: modelURL)
+        XCTAssertNil(first)
+        let second = await manager.acquireOrRenewAgentLease(modelURL: modelURL)
+        XCTAssertNil(second)
+
+        let ensures = await recorder.count(of: "ensure:mainLLM")
+        XCTAssertEqual(ensures, 2, "every wake re-ensures, reviving a crashed server")
+        let active = await broker.activeLeaseCount(.mainLLM)
+        XCTAssertEqual(active, 1, "each wake replaces the previous lease; they never stack")
+    }
+
+    func testDisableReleasesTheAgentLease() async throws {
+        let recorder = BrokerHookRecorder()
+        let broker = makeFakeBroker(recorder: recorder)
+        let manager = makeManager(startEngine: nil, broker: broker)
+        let modelURL = root.appendingPathComponent("fake-model.gguf")
+
+        manager.setEnabled(true)
+        _ = await manager.acquireOrRenewAgentLease(modelURL: modelURL)
+        var active = await broker.activeLeaseCount(.mainLLM)
+        XCTAssertEqual(active, 1)
+
+        manager.setEnabled(false)
+        // releaseAgentLease is fire-and-forget from the MainActor; poll briefly.
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            active = await broker.activeLeaseCount(.mainLLM)
+            if active == 0 { break }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertEqual(active, 0, "disabling agent access must release the wake lease")
     }
 }
