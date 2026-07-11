@@ -451,7 +451,7 @@ final class ProcessingPipeline: ObservableObject {
             "\($0.start.formatted(date: .omitted, time: .shortened))–\($0.end.formatted(date: .omitted, time: .shortened)) \($0.app)\($0.title.isEmpty ? "" : ": \($0.title)") (\(Int($0.duration / 60))m)"
         }
         let meetingLines = meetings.map { "Meeting: \($0.title) (\($0.durationLabel))" }
-        let engine = try await makeTextEngine(config)
+        let engine = try await makeTextEngine(config, purpose: "day digest")
         let material = PromptContextSanitizer.sanitize(
             (meetingLines + lines).joined(separator: "\n"), maxCharacters: 24_000)
         let context = Self.digestContext(date: day, ocr: ocr)
@@ -481,7 +481,10 @@ final class ProcessingPipeline: ObservableObject {
         return context
     }
 
-    func makeTextEngine(_ config: AppSettings, server: LlamaServer = .shared) async throws -> TextEngine {
+    func makeTextEngine(_ config: AppSettings, server: LlamaServer = .shared,
+                        priority: InferencePriority = .background,
+                        purpose: String = "summary",
+                        broker: InferenceBroker = .shared) async throws -> TextEngine {
         switch config.summarizerBackend {
         case .builtIn:
             guard let entry = ModelCatalog.entry(id: config.builtInModelID,
@@ -492,14 +495,24 @@ final class ProcessingPipeline: ObservableObject {
             guard let modelURL = ModelCatalog.localURL(for: entry, storage: storage) else {
                 throw LlamaServer.ServerError.modelMissing(entry.displayName)
             }
-            try await server.ensureRunning(modelAt: modelURL)
-            return OpenAICompatibleEngine(
+            let engine = OpenAICompatibleEngine(
                 baseURL: server.baseURL,
                 model: entry.id,
                 apiKey: nil,
                 extraBody: entry.disablesThinking
                     ? ["chat_template_kwargs": ["enable_thinking": false]] : [:],
                 displayNameOverride: "Built-in — \(entry.displayName)")
+            guard let role = InferenceRole(serverPort: server.port) else {
+                // A LlamaServer outside the broker's three roles (never true
+                // today) keeps the legacy boot-at-creation path.
+                try await server.ensureRunning(modelAt: modelURL)
+                return engine
+            }
+            // The server boots on the first generate call, under a lease that
+            // pins it for the duration of each request.
+            return LeasedTextEngine(base: engine, broker: broker, role: role,
+                                    modelURL: modelURL, priority: priority,
+                                    purpose: purpose)
         case .appleIntelligence:
             if case .unavailable(let reason) = FoundationModelAvailability.current() {
                 throw TextEngineError.unavailable(reason)
