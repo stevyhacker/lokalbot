@@ -179,27 +179,29 @@ final class EmbeddingIndex {
     private static func embed(_ texts: [String], prefix: String,
                               storage: StorageManager) async throws -> [[Float]] {
         let modelPath = try await ensureModel(storage: storage)
-        try await LlamaServer.embedder.ensureRunning(modelAt: modelPath)
-
-        var request = URLRequest(url: LlamaServer.embedder.baseURL
-            .appendingPathComponent("embeddings"))
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 120
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "input": texts.map { prefix + $0 },
-            "model": Self.modelID,
-        ])
-        let (data, _) = try await URLSession.shared.data(for: request)
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let rows = json["data"] as? [[String: Any]] else {
-            throw TextEngineError.badResponse("unexpected /v1/embeddings payload")
-        }
-        return rows.compactMap { row -> [Float]? in
-            guard let values = row["embedding"] as? [Double] else { return nil }
-            let vector = values.map(Float.init)
-            let norm = sqrt(vector.reduce(0) { $0 + $1 * $1 })
-            return norm > 0 ? vector.map { $0 / norm } : vector
+        return try await InferenceBroker.shared.withLease(
+            .embedder, model: modelPath, priority: .background,
+            purpose: "embeddings") { () async throws -> [[Float]] in
+            var request = URLRequest(url: LlamaServer.embedder.baseURL
+                .appendingPathComponent("embeddings"))
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.timeoutInterval = 120
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "input": texts.map { prefix + $0 },
+                "model": Self.modelID,
+            ])
+            let (data, _) = try await URLSession.shared.data(for: request)
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let rows = json["data"] as? [[String: Any]] else {
+                throw TextEngineError.badResponse("unexpected /v1/embeddings payload")
+            }
+            return rows.compactMap { row -> [Float]? in
+                guard let values = row["embedding"] as? [Double] else { return nil }
+                let vector = values.map(Float.init)
+                let norm = sqrt(vector.reduce(0) { $0 + $1 * $1 })
+                return norm > 0 ? vector.map { $0 / norm } : vector
+            }
         }
     }
 
