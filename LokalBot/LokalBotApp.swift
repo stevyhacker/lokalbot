@@ -262,6 +262,10 @@ final class AppState: ObservableObject {
     private(set) lazy var cotypingLearning = CotypingLearningStore(storageRoot: storage.rootURL)
     let detector = MeetingDetector()
     let audioMonitor = AudioSourceMonitor()
+    /// External-agent access: Privacy marker plus the local-model wake watcher.
+    private(set) lazy var agentAccess = AgentAccessManager(
+        storage: storage,
+        settings: { [weak self] in self?.settings ?? AppSettings.load() })
     /// Read-only calendar access (EventKit): confirms meetings and titles
     /// recordings. Concrete type so the settings UI observes its permission
     /// state; handed to the detector as the `CalendarEventProviding` seam.
@@ -527,6 +531,8 @@ final class AppState: ObservableObject {
         // Start Sparkle (silent background check). No-op on dev builds and
         // until the appcast feed URL + public key are configured (RELEASING.md).
         AppUpdateManager.shared.start()
+        // Resume the wake watcher when the Privacy marker was left enabled.
+        agentAccess.start()
         // First-run check. A genuinely-new user with missing permissions gets
         // onboarding (windowed — see AppDelegate). We persist the flag in every
         // case so established/permissioned users are recognised next launch and

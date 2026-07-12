@@ -146,6 +146,44 @@ else
   fail "agent: $(echo "$AG" | tail -1)"
 fi
 
+echo "== T11: MCP server (stdio handshake + gated tools) =="
+CLI="${LOKALBOT_APP:-/Applications/LokalBot.app}/Contents/Helpers/lokalbot-cli"
+if [ ! -x "$CLI" ]; then
+  skip "embedded lokalbot-cli not present"
+else
+  mkdir -p "$ROOT/control"
+  touch "$ROOT/control/agent-access-enabled"
+  OUT=$(printf '%s\n' \
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"e2e","version":"0"}}}' \
+    '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_meetings","arguments":{"query":"redis"}}}' \
+    | "$CLI" mcp 2>/dev/null)
+  echo "$OUT" | head -1 | grep -q '"serverInfo"' \
+    && echo "$OUT" | tail -1 | grep -qi "redis" \
+    && pass "MCP handshake + search_meetings found the Redis discussion" \
+    || fail "MCP session output unexpected: $(echo "$OUT" | tail -1 | cut -c1-120)"
+
+  rm -f "$ROOT/control/agent-access-enabled"
+  OUT=$(printf '%s\n' \
+    '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_meetings","arguments":{}}}' \
+    | "$CLI" mcp 2>/dev/null)
+  echo "$OUT" | grep -q "access_disabled" \
+    && pass "tools refused while the Privacy toggle marker is absent" \
+    || fail "expected access_disabled, got: $(echo "$OUT" | cut -c1-120)"
+
+  if [ "$(curl -s -o /dev/null -w '%{http_code}' -m 2 http://127.0.0.1:17872/health 2>/dev/null)" = "200" ]; then
+    touch "$ROOT/control/agent-access-enabled"
+    OUT=$(printf '%s\n' \
+      '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ask_library","arguments":{"question":"Which datastore did we choose for caching?"}}}' \
+      | "$CLI" mcp 2>/dev/null)
+    echo "$OUT" | grep -qi "redis" \
+      && pass "ask_library answered from the meeting (mentions 'Redis')" \
+      || fail "ask_library answer missing expected content: $(echo "$OUT" | cut -c1-160)"
+    rm -f "$ROOT/control/agent-access-enabled"
+  else
+    skip "llama-server not serving on 17872 — ask_library round-trip skipped"
+  fi
+fi
+
 echo
 echo "passed: $P · failed: $F · skipped: $S"
 [ "$F" -eq 0 ]

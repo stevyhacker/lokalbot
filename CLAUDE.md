@@ -42,7 +42,7 @@ Scripts/install-app.sh && Scripts/e2e.sh
 
 `LokalBot` (prod) and `LokalBot Dev` build the **same sources** from one template and differ only in identity: the Dev target has its own bundle id (`me.dotenv.LokalBot.dev`) so its TCC grants (Mic, Screen Recording, Accessibility) never disturb the installed release app, and `LOKALBOT_DEV` compiles Sparkle's launch path out (kept under `settings.base` so Release-config dev builds stay inert too). `LokalBot UI Test Host` additionally sets `LOKALBOT_UI_TEST_HOST` and drops the menu-bar extra so XCUITest gets a normal window.
 
-`lokalbot-cli` is a standalone tool target that shares code by **direct source inclusion** (`LokalBot/CLISupport/` plus a few `Models/` files), not a framework. It's built first, embedded into `LokalBot.app/Contents/Helpers/`, and gives agents read-only access to the meeting library (`list`/`get`/`search`/`path`, JSON by default, `--table` for humans).
+`lokalbot-cli` is a standalone tool target that shares code by **direct source inclusion** (`LokalBot/CLISupport/` plus a few `Models/` files), not a framework. It's built first, embedded into `LokalBot.app/Contents/Helpers/`, and gives agents read-only access to the meeting library (`list`/`get`/`search`/`path`, JSON by default, `--table` for humans). It also serves MCP over stdio (`mcp` subcommand: `list_meetings`/`get_meeting`/`search_meetings`/`ask_library` — the last answers via the app's llama-server and, like all four, requires the Privacy toggle's `control/agent-access-enabled` marker under the storage root) and installs the agent skill + PATH symlinks (`install-skill`). `Scripts/build-mcpb.sh` wraps the same helper into a one-click `dist/LokalBot.mcpb` for GUI MCP clients.
 
 App Sandbox is **intentionally off** — Core Audio process taps don't work sandboxed. Distribution is Developer ID + notarization, not the App Store. Unit tests run hosted inside the prod app binary and link `libllama` themselves (`-bundle_loader` only resolves host-defined symbols; see the comment in `project.yml`).
 
@@ -59,6 +59,7 @@ On-disk library (rooted at the bundle id, overridable with `LOKALBOT_STORAGE_ROO
 ├── meetings/YYYY/MM/dd-slug/   # mic.m4a, system.m4a, meta.json, transcript.{json,md}, summary.md
 ├── journal/YYYY-MM-DD.md       # day digests
 ├── activity/YYYY-MM-DD/shots/  # <epoch>.heic.enc (AES-GCM sealed, per-install Keychain key, 14-day retention)
+├── control/                    # agent-access marker + wake files (Privacy toggle / MCP)
 ├── models/                     # downloaded GGUFs
 └── lokalbotv3.sqlite
 ```
