@@ -13,13 +13,19 @@ enum JSONValue: Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        if container.decodeNil() { self = .null }
-        else if let value = try? container.decode(Bool.self) { self = .bool(value) }
-        else if let value = try? container.decode(Double.self) { self = .number(value) }
-        else if let value = try? container.decode(String.self) { self = .string(value) }
-        else if let value = try? container.decode([JSONValue].self) { self = .array(value) }
-        else if let value = try? container.decode([String: JSONValue].self) { self = .object(value) }
-        else {
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([JSONValue].self) {
+            self = .array(value)
+        } else if let value = try? container.decode([String: JSONValue].self) {
+            self = .object(value)
+        } else {
             throw DecodingError.dataCorruptedError(
                 in: container,
                 debugDescription: "Not a JSON value")
@@ -68,8 +74,7 @@ enum JSONValue: Codable, Equatable {
 
 extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral,
     ExpressibleByBooleanLiteral, ExpressibleByArrayLiteral,
-    ExpressibleByDictionaryLiteral, ExpressibleByNilLiteral
-{
+    ExpressibleByDictionaryLiteral, ExpressibleByNilLiteral {
     init(stringLiteral value: String) { self = .string(value) }
     init(integerLiteral value: Int) { self = .number(Double(value)) }
     init(booleanLiteral value: Bool) { self = .bool(value) }
@@ -82,7 +87,7 @@ extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral,
 
 /// One decoded JSON-RPC 2.0 message from an MCP client.
 struct MCPRequest: Equatable {
-    enum ID: Equatable {
+    enum RequestID: Equatable {
         case number(Int)
         case string(String)
 
@@ -95,13 +100,13 @@ struct MCPRequest: Equatable {
     }
 
     /// nil means a notification and the server must not answer it.
-    var id: ID?
+    var id: RequestID?
     var method: String
     var params: JSONValue?
 
     enum ParseOutcome: Equatable {
         case request(MCPRequest)
-        case failure(code: Int, message: String, id: ID?)
+        case failure(code: Int, message: String, id: RequestID?)
     }
 
     static func parse(_ line: String) -> ParseOutcome {
@@ -110,7 +115,7 @@ struct MCPRequest: Equatable {
             return .failure(code: -32700, message: "Parse error", id: nil)
         }
 
-        let id: ID?
+        let id: RequestID?
         switch object["id"] {
         case .some(.number(let value)): id = .number(Int(value))
         case .some(.string(let value)): id = .string(value)
@@ -127,7 +132,7 @@ struct MCPRequest: Equatable {
 
 /// Encodes newline-delimited JSON-RPC 2.0 responses with deterministic keys.
 enum MCPResponse {
-    static func success(id: MCPRequest.ID?, result: JSONValue) -> String {
+    static func success(id: MCPRequest.RequestID?, result: JSONValue) -> String {
         encode(.object([
             "jsonrpc": "2.0",
             "id": id?.json ?? .null,
@@ -135,7 +140,7 @@ enum MCPResponse {
         ]))
     }
 
-    static func failure(id: MCPRequest.ID?, code: Int, message: String) -> String {
+    static func failure(id: MCPRequest.RequestID?, code: Int, message: String) -> String {
         encode(.object([
             "jsonrpc": "2.0",
             "id": id?.json ?? .null,

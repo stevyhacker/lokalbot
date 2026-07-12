@@ -108,12 +108,16 @@ jobs:
             exit 1
           fi
 
-      - name: Install XcodeGen
+      - name: Install build tools
         run: |
           if ! command -v xcodegen >/dev/null; then
             brew install xcodegen
           fi
+          if ! command -v cmake >/dev/null; then
+            brew install cmake
+          fi
           xcodegen --version
+          cmake --version
 
       # project.yml lists Vendor/llama-cpp and Vendor/sherpa-onnx as folder
       # references, and XcodeGen validates those paths exist before it will
@@ -171,6 +175,19 @@ jobs:
             -exportPath build/export \
             -exportOptionsPlist build/exportOptions.plist
 
+      - name: Verify exported signatures and secure timestamps
+        run: |
+          codesign --verify --deep --strict --verbose=2 build/export/LokalBot.app
+          missing_timestamp=0
+          while IFS= read -r -d '' item; do
+            file -b "$item" | grep -q 'Mach-O' || continue
+            if ! codesign --display --verbose=2 "$item" 2>&1 | grep -q '^Timestamp='; then
+              echo "::error::Missing secure timestamp: $item" >&2
+              missing_timestamp=1
+            fi
+          done < <(find build/export/LokalBot.app -type f \( -perm -111 -o -name '*.dylib' \) -print0)
+          if (( missing_timestamp )); then exit 1; fi
+
       # Staple the app itself (not just the DMG) so first launch succeeds
       # offline after drag-install.
       - name: Notarize + staple the app
@@ -186,10 +203,12 @@ jobs:
             --password "$NOTARY_APPLE_PWD" \
             --wait
           xcrun stapler staple build/export/LokalBot.app
+          xcrun stapler validate build/export/LokalBot.app
+          spctl --assess --type execute --verbose=2 build/export/LokalBot.app
 
       - name: Build styled DMG
         run: |
-          pip3 install --quiet dmgbuild
+          python3 -m pip install --quiet 'dmgbuild==1.6.7'
           python3 Scripts/build_release_dmg.py \
             --app build/export/LokalBot.app \
             --output build/LokalBot.dmg
@@ -200,12 +219,17 @@ jobs:
           NOTARY_APPLE_TEAM_ID: ${{ secrets.NOTARY_APPLE_TEAM_ID }}
           NOTARY_APPLE_PWD: ${{ secrets.NOTARY_APPLE_PWD }}
         run: |
+          codesign --force --sign "Developer ID Application" --timestamp build/LokalBot.dmg
+          codesign --verify --strict --verbose=2 build/LokalBot.dmg
           xcrun notarytool submit build/LokalBot.dmg \
             --apple-id "$NOTARY_APPLE_ID" \
             --team-id "$NOTARY_APPLE_TEAM_ID" \
             --password "$NOTARY_APPLE_PWD" \
             --wait
           xcrun stapler staple build/LokalBot.dmg
+          xcrun stapler validate build/LokalBot.dmg
+          spctl --assess --type open --context context:primary-signature \
+            --verbose=2 build/LokalBot.dmg
 
       # sign_update ships in Sparkle's release tarball; the SwiftPM checkout
       # used for the app build doesn't expose it on PATH. Same 2.9.1 pin as
@@ -214,6 +238,8 @@ jobs:
         run: |
           curl -fsSL -o "$RUNNER_TEMP/Sparkle.tar.xz" \
             https://github.com/sparkle-project/Sparkle/releases/download/2.9.1/Sparkle-2.9.1.tar.xz
+          echo 'c0dde519fd2a43ddfc6a1eb76aec284d7d888fe281414f9177de3164d98ba4c7  '"$RUNNER_TEMP/Sparkle.tar.xz" \
+            | shasum -a 256 --check
           mkdir -p "$RUNNER_TEMP/sparkle"
           tar -xJf "$RUNNER_TEMP/Sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle"
 

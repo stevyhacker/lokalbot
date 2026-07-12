@@ -29,7 +29,7 @@ sign_file() {
   /usr/bin/codesign \
     --force \
     --sign "$identity" \
-    --timestamp=none \
+    --timestamp \
     --options runtime \
     "$path"
 }

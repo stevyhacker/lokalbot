@@ -77,9 +77,13 @@ struct Conversation: Identifiable, Codable, Equatable {
 @MainActor
 final class ChatStore {
     private let dir: URL
+    private let encryptionKey: @MainActor () throws -> SymmetricKey
 
-    init(rootURL: URL) {
+    init(rootURL: URL, encryptionKey: @escaping @MainActor () throws -> SymmetricKey = {
+        try KeychainSecrets.symmetricKey(account: "chat-key")
+    }) {
         dir = rootURL.appendingPathComponent("chats", isDirectory: true)
+        self.encryptionKey = encryptionKey
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     }
 
@@ -95,8 +99,6 @@ final class ChatStore {
         return d
     }()
 
-    private static let keyAccount = "chat-key"
-
     private func fileURL(_ id: UUID) -> URL {
         dir.appendingPathComponent("\(id.uuidString).json.enc")
     }
@@ -104,7 +106,7 @@ final class ChatStore {
     func loadAll() -> [Conversation] {
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: dir, includingPropertiesForKeys: nil) else { return [] }
-        let key = try? KeychainSecrets.symmetricKey(account: Self.keyAccount)
+        let key = try? encryptionKey()
         var result: [Conversation] = []
         for file in files {
             switch file.pathExtension {
@@ -137,7 +139,7 @@ final class ChatStore {
     /// plaintext before its encrypted replacement exists.
     @discardableResult
     func save(_ conversation: Conversation) -> Bool {
-        guard let key = try? KeychainSecrets.symmetricKey(account: Self.keyAccount),
+        guard let key = try? encryptionKey(),
               let data = try? Self.encoder.encode(conversation),
               let combined = try? AES.GCM.seal(data, using: key).combined else { return false }
         do {

@@ -19,17 +19,17 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.5</string>
+	<string>0.2.0</string>
 	<key>CFBundleVersion</key>
-	<string>6</string>
+	<string>7</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>LokalBot records the meeting app's audio output so the other participants are captured. Audio never leaves this Mac.</string>
+	<string>LokalBot records the meeting app's audio output so the other participants are captured. Audio stays on this Mac; transcript text is sent off-device only if you explicitly approve a remote server.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>LokalBot reads your calendar to confirm meetings and title recordings. Calendar data never leaves this Mac.</string>
+	<string>LokalBot reads your calendar to confirm meetings and title recordings. Approved remote inference servers may receive meeting titles as context; LokalBot never sends calendar data otherwise.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>LokalBot records your side of meetings from the microphone. Audio never leaves this Mac.</string>
+	<string>LokalBot records your side of meetings from the microphone. Audio stays on this Mac; transcript text is sent off-device only if you explicitly approve a remote inference server.</string>
 	<key>SUEnableAutomaticChecks</key>
 	<false/>
 	<key>SUFeedURL</key>

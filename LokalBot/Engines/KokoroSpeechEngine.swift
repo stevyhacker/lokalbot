@@ -58,6 +58,8 @@ actor KokoroSpeechEngine {
     private static let archiveURL = URL(
         string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2"
     )!
+    private static let archiveBytes: Int64 = 349_418_188
+    private static let archiveSHA256 = "c133d26353d776da730870dac7da07dbfc9a5e3bc80cc5e8e83ab6e823be7046"
 
     nonisolated var displayName: String { "Kokoro 82M" }
 
@@ -136,7 +138,16 @@ actor KokoroSpeechEngine {
         let archive = Self.modelsRoot.appendingPathComponent("\(Self.modelFolderName).tar.bz2")
         try? FileManager.default.removeItem(at: archive)
         try FileManager.default.moveItem(at: tmp, to: archive)
-        defer { try? FileManager.default.removeItem(at: archive) }
+        defer { DownloadIntegrity.removeFileAndMarker(at: archive) }
+
+        do {
+            try await DownloadIntegrity.verifyDownloaded(
+                at: archive, expectedBytes: Self.archiveBytes,
+                expectedSHA256: Self.archiveSHA256)
+        } catch {
+            DownloadIntegrity.removeFileAndMarker(at: archive)
+            throw error
+        }
 
         try ArchiveExtractor.extractBzip2Tar(archive, into: Self.modelsRoot)
         guard Self.hasRequiredFiles(in: dir) else { throw SpeechError.modelUnavailable }

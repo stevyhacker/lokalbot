@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg viewBox="0 132 680 536" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ttl dsc" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
   <title id="ttl">LokalBot super-app map</title>
-  <desc id="dsc">One on-device language model at the center, connected to seven capabilities: meetings, cotyping autocomplete, chat, search, day timeline, agent CLI and bring-your-own models. Everything runs locally — nothing leaves the device.</desc>
+  <desc id="dsc">One on-device language model at the center, connected to seven capabilities. Built-in inference is local; approved remote inference is optional.</desc>
   <style>
     .lab{font-size:13px;font-weight:650;fill:#EEF4F7;}
     .sub{font-size:10.5px;font-weight:450;fill:#8BA0AD;}
@@ -107,5 +107,5 @@
 
   <!-- boundary tag -->
   <rect x="248" y="165" width="184" height="22" rx="11" fill="#0E141C" stroke="#23C4AE" stroke-opacity="0.5"/>
-  <text x="340" y="180" text-anchor="middle" font-size="10.5" letter-spacing="0.4" fill="#7FE6D5">nothing leaves your Mac</text>
+  <text x="340" y="180" text-anchor="middle" font-size="10.5" letter-spacing="0.4" fill="#7FE6D5">local by default</text>
 </svg>

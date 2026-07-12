@@ -61,6 +61,57 @@
     "Liberation Mono", monospace;
 }
 
+/* =========================================================================
+   privacy + support pages
+   ========================================================================= */
+.legal-page {
+  width: min(900px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 150px 0 80px;
+}
+.legal-page__head {
+  max-width: 760px;
+  margin-bottom: 36px;
+}
+.legal-page__head h1 {
+  margin: 10px 0 16px;
+  font-size: clamp(2.6rem, 8vw, 5rem);
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+}
+.legal-page__head > p:last-child {
+  color: var(--text-dim);
+  font-size: 1.15rem;
+  line-height: 1.7;
+}
+.legal-card {
+  padding: clamp(24px, 5vw, 52px);
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  background: var(--glass-tint);
+  box-shadow: var(--glass-shadow);
+}
+.legal-card h2 {
+  margin: 2.25rem 0 0.75rem;
+  font-size: clamp(1.3rem, 3vw, 1.7rem);
+}
+.legal-card h2:first-child { margin-top: 0; }
+.legal-card p,
+.legal-card li {
+  color: var(--text-dim);
+  line-height: 1.75;
+}
+.legal-card ul { padding-left: 1.3rem; }
+.legal-card li { list-style: disc; }
+.legal-card li + li { margin-top: 0.5rem; }
+.legal-card a:not(.btn) { color: var(--teal-bright); }
+.footer--legal { margin-top: 40px; }
+
+@media (max-width: 640px) {
+  .legal-page { width: min(100% - 24px, 900px); padding-top: 110px; }
+  .legal-card { border-radius: 20px; }
+}
+
 * { box-sizing: border-box; }
 
 html {

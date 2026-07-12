@@ -4,14 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>LokalBot vs Granola: the on-device, open-source alternative</title>
-  <meta name="description" content="Granola is a polished cloud AI notepad. LokalBot keeps the bot-free meeting workflow but runs transcription and summaries on your Mac — no account, no upload, free and GPLv3." />
+  <meta name="description" content="Granola is a polished cloud AI notepad. LokalBot keeps the bot-free workflow but runs transcription and summaries on your Mac by default — no account, free and GPLv3." />
   <meta name="theme-color" content="#0b1119" />
 
   <link rel="canonical" href="https://www.lokalbot.com/lokalbot-vs-granola.html" />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://www.lokalbot.com/lokalbot-vs-granola.html" />
   <meta property="og:title" content="LokalBot vs Granola — the on-device alternative" />
-  <meta property="og:description" content="Same bot-free meeting notes, zero cloud: transcription and summaries run on your Mac. Free, open source, no account." />
+  <meta property="og:description" content="Same bot-free meeting notes, with built-in transcription and summaries on your Mac. Free, open source, no account." />
   <meta property="og:image" content="https://www.lokalbot.com/assets/og-image.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
@@ -69,7 +69,7 @@
       <header class="section__head reveal">
         <p class="eyebrow">Compare</p>
         <h1 class="section__title">LokalBot vs Granola</h1>
-        <p class="section__lead">Granola is one of the most polished AI notepads around — bot-free capture, great templates, strong team features. The trade-off is that your meetings are processed in the cloud, under an account. LokalBot keeps the bot-free workflow but runs the AI on your Mac: no account, no upload, nothing to opt out of.</p>
+        <p class="section__lead">Granola is one of the most polished AI notepads around — bot-free capture, great templates, strong team features. The trade-off is that your meetings are processed in the cloud, under an account. LokalBot keeps the bot-free workflow but uses built-in AI on your Mac by default: no account, no LokalBot backend, and optional remote inference only when you approve its origin.</p>
         <p class="compare-updated">Last verified July 2026 · spot something outdated? <a href="https://github.com/stevyhacker/lokalbot/issues" target="_blank" rel="noopener">Open an issue</a>.</p>
       </header>
     </section>
@@ -108,7 +108,7 @@
             </tr>
             <tr>
               <th scope="row">Model training on your data</th>
-              <td>Nothing leaves the Mac, so there is nothing to opt out of</td>
+              <td>No LokalBot training pipeline or telemetry; approved remote servers have their own terms</td>
               <td><span class="dim">&ldquo;Opt out of model training any time&rdquo; is a listed plan feature</span></td>
             </tr>
             <tr>
@@ -181,11 +181,11 @@
       <div class="faq__list reveal">
         <details class="qa">
           <summary>Isn't bot-free capture the differentiator?<i class="ph ph-plus" aria-hidden="true"></i></summary>
-          <p>Not anymore — Granola and several others skip the meeting bot now. The differentiator is where processing happens. LokalBot transcribes and summarizes on the Mac itself; your audio and notes are never uploaded anywhere.</p>
+          <p>Not anymore — Granola and several others skip the meeting bot now. The differentiator is where processing happens. LokalBot transcribes and summarizes on the Mac with its built-in default; if you opt into a remote inference server, it receives the request context.</p>
         </details>
         <details class="qa">
           <summary>What does LokalBot send over the network?<i class="ph ph-plus" aria-hidden="true"></i></summary>
-          <p>A one-time model download and update checks. Meeting audio, transcripts, summaries, and screenshots never leave the machine — there is no backend to send them to.</p>
+          <p>Model downloads, update checks, optional Agent Mode setup, and remote inference origins you explicitly approve. Audio stays on the Mac; built-in inference keeps transcript and workday context there too.</p>
         </details>
         <details class="qa">
           <summary>Can I try LokalBot next to Granola?<i class="ph ph-plus" aria-hidden="true"></i></summary>
@@ -200,7 +200,7 @@
         <img class="download__icon" src="assets/lokalbot-icon.svg" alt="" width="80" height="80" />
         <p class="eyebrow">Download</p>
         <h2 class="section__title">Keep your meetings on your Mac.</h2>
-        <p class="section__lead">Free and open source. Models download on first run, then it works fully offline.</p>
+        <p class="section__lead">Free and open source. Models download on first use; built-in inference then works offline.</p>
         <a class="btn btn--primary btn--lg" href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">
           <i class="ph ph-download-simple" aria-hidden="true"></i>
           Download for macOS
@@ -248,8 +248,10 @@
       <a href="https://github.com/stevyhacker/lokalbot" target="_blank" rel="noopener">GitHub</a>
       <a href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">Releases</a>
       <a href="https://github.com/stevyhacker/lokalbot#build--run" target="_blank" rel="noopener">Build from source</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="support.html">Support</a>
     </nav>
-    <p class="footer__legal">Runs entirely on your Mac. Your meetings are yours.</p>
+    <p class="footer__legal">Local by default. Record with consent. Your meetings are yours.</p>
   </footer>
 </body>
 </html>

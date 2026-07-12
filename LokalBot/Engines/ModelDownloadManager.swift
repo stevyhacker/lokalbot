@@ -8,6 +8,16 @@ import Foundation
 @MainActor
 final class ModelDownloadManager: ObservableObject {
 
+    enum PreparationError: LocalizedError {
+        case failed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .failed(let message): message
+            }
+        }
+    }
+
     static let shared = ModelDownloadManager()
 
     @Published private(set) var progress: [String: Double] = [:]   // entry id → 0…1
@@ -30,7 +40,30 @@ final class ModelDownloadManager: ObservableObject {
 
     func download(_ entry: ModelCatalog.Entry, storage: StorageManager) {
         download(url: entry.url, fileName: entry.fileName, id: entry.id,
-                 expectedSizeGB: entry.sizeGB, storage: storage)
+                 expectedSizeGB: entry.sizeGB, expectedSHA256: entry.sha256,
+                 storage: storage)
+    }
+
+    /// Await the same single-flight download used by the Models UI. This keeps
+    /// first-use callers (meeting summaries, day digests, Agent Mode) from
+    /// racing a second download and turns preparation failures into actionable
+    /// pipeline errors instead of a generic "model missing" response.
+    func ensureAvailable(_ entry: ModelCatalog.Entry, storage: StorageManager) async throws -> URL {
+        if let existing = ModelCatalog.localURL(for: entry, storage: storage) {
+            return existing
+        }
+
+        download(entry, storage: storage)
+        while tasks[entry.id] != nil {
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(200))
+        }
+
+        if let downloaded = ModelCatalog.localURL(for: entry, storage: storage) {
+            return downloaded
+        }
+        throw PreparationError.failed(
+            errors[entry.id] ?? "Could not prepare \(entry.displayName). Check your connection and free disk space.")
     }
 
     /// Generic GGUF download keyed by an arbitrary id (catalog id, or a Hugging
@@ -38,7 +71,8 @@ final class ModelDownloadManager: ObservableObject {
     /// `expectedSizeGB` (when known) gates the download on free disk space up
     /// front instead of failing after gigabytes have moved.
     func download(url urlString: String, fileName: String, id: String,
-                  expectedSizeGB: Double? = nil, storage: StorageManager) {
+                  expectedSizeGB: Double? = nil, expectedSHA256: String? = nil,
+                  storage: StorageManager) {
         guard tasks[id] == nil, let url = URL(string: urlString) else { return }
         let folder = storage.rootURL.appendingPathComponent("models", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -68,6 +102,16 @@ final class ModelDownloadManager: ObservableObject {
                     from: url, session: session, stashDirectory: stashDirectory) { update in
                     Task { @MainActor [weak self] in
                         self?.publishProgress(id: id, fraction: update.fractionCompleted)
+                    }
+                }
+                if let expectedSHA256 {
+                    let digest = try await Task.detached(priority: .utility) {
+                        try SHA256Verifier.hexDigest(of: stashed)
+                    }.value
+                    guard digest.lowercased() == expectedSHA256.lowercased() else {
+                        DownloadFileRescuer.cleanup(stashed)
+                        throw PreparationError.failed(
+                            "The downloaded model failed its SHA-256 integrity check.")
                     }
                 }
                 self?.finish(id: id, destination: destination, stashed: stashed)

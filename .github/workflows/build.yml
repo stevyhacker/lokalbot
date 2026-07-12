@@ -45,12 +45,16 @@ jobs:
 
       # LokalBot.xcodeproj is gitignored (generated from project.yml), so it
       # must be regenerated before xcodebuild can see it.
-      - name: Install XcodeGen
+      - name: Install build tools
         run: |
           if ! command -v xcodegen >/dev/null; then
             brew install xcodegen
           fi
+          if ! command -v cmake >/dev/null; then
+            brew install cmake
+          fi
           xcodegen --version
+          cmake --version
 
       # project.yml lists Vendor/llama-cpp and Vendor/sherpa-onnx as folder
       # references, and XcodeGen validates those paths exist before it will
@@ -62,9 +66,9 @@ jobs:
       - name: Generate project
         run: xcodegen generate
 
-      # The pre-build phase Scripts/fetch-llama.sh downloads the pinned
-      # llama.cpp server into Vendor/. GGUF models are user-selected downloads,
-      # not bundled in CI artifacts.
+      # The pre-build phase Scripts/fetch-llama.sh builds checksum-pinned
+      # llama.cpp source for the app's deployment target into Vendor/. GGUF
+      # models are user-selected downloads, not bundled in CI artifacts.
       - name: Cache llama.cpp vendor
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

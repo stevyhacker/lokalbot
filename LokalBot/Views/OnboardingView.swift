@@ -223,12 +223,20 @@ private extension OnboardingView {
                 .onboardingReveal(1)
 
                 PrivacyCard(
+                    systemImage: "record.circle",
+                    tint: Brand.amber,
+                    title: "Record with consent",
+                    subtitle: "LokalBot starts in manual mode. Tell everyone when you record and follow the consent rules that apply to your meeting and location."
+                )
+                .onboardingReveal(2)
+
+                PrivacyCard(
                     systemImage: "network.slash",
                     tint: .purple,
                     title: "No account required",
-                    subtitle: "Model downloads are explicit. Optional custom backends are only used when you choose them."
+                    subtitle: "Downloads and update checks use the network. Remote model servers are blocked until you explicitly approve sending context to their host."
                 )
-                .onboardingReveal(2)
+                .onboardingReveal(3)
 
                 PrivacyCard(
                     systemImage: "menubar.rectangle",
@@ -236,7 +244,7 @@ private extension OnboardingView {
                     title: "Runs from the menu bar",
                     subtitle: "After setup, LokalBot can stay out of the way and keep working from the menu bar."
                 )
-                .onboardingReveal(3)
+                .onboardingReveal(4)
             }
         }
         .pagePadding()

@@ -18,8 +18,10 @@ final class EmbeddingIndex {
 
     private static let modelID = "qwen3-embedding-0.6b-q8"
     private static let modelFile = "Qwen3-Embedding-0.6B-Q8_0.gguf"
+    private static let modelBytes: Int64 = 639_150_592
+    private static let modelSHA256 = "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439"
     private static let modelURL =
-        "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf"
+        "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/370f27d7550e0def9b39c1f16d3fbaa13aa67728/Qwen3-Embedding-0.6B-Q8_0.gguf"
     private static let documentPrefix = "Document for meeting search: "
     private static let queryPrefix = """
         Instruct: Retrieve relevant meeting transcript and summary chunks for the user's query.
@@ -208,14 +210,28 @@ final class EmbeddingIndex {
     private static func ensureModel(storage: StorageManager) async throws -> URL {
         let folder = storage.rootURL.appendingPathComponent("models", isDirectory: true)
         let path = folder.appendingPathComponent(modelFile)
-        if FileManager.default.fileExists(atPath: path.path) { return path }
+        if ModelFileValidator.looksLikeGGUF(path),
+           await DownloadIntegrity.verifiedExisting(
+               at: path, expectedBytes: modelBytes, expectedSHA256: modelSHA256) {
+            return path
+        }
+        DownloadIntegrity.removeFileAndMarker(at: path)
         let stashed = try await ParallelRangeDownloader.download(
             from: URL(string: modelURL)!, session: .shared) { _ in }
-        guard ModelFileValidator.looksLikeGGUF(stashed) else {
+        do {
+            guard ModelFileValidator.looksLikeGGUF(stashed) else {
+                throw TextEngineError.badResponse("embedding model download was not a GGUF model")
+            }
+            try await DownloadIntegrity.verifyDownloaded(
+                at: stashed, expectedBytes: modelBytes, expectedSHA256: modelSHA256)
+        } catch {
             DownloadFileRescuer.cleanup(stashed)
-            throw TextEngineError.badResponse("embedding model download was not a GGUF model")
+            throw error
         }
         try DownloadFileRescuer.install(stashed: stashed, to: path)
+        DownloadIntegrity.removeFileAndMarker(at: stashed)
+        try DownloadIntegrity.markInstalled(
+            at: path, expectedBytes: modelBytes, expectedSHA256: modelSHA256)
         return path
     }
 

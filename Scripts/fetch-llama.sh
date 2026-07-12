@@ -1,21 +1,20 @@
 #!/bin/bash
-# Fetches the pinned llama.cpp server build into Vendor/, which the Xcode build
-# copies into the app bundle. GGUF models are intentionally user-selected and
-# downloaded into Application Support, not bundled with the DMG.
-# Idempotent: skips anything already present. Runs as an Xcode pre-build
-# phase; safe to run manually.
+# Builds a pinned llama.cpp server/runtime for the app's real deployment
+# target. Upstream release binaries currently declare macOS 26, so copying
+# them would make a nominally macOS 15 app fail at launch. Building from the
+# checksum-pinned source archive keeps the public minimum honest and avoids
+# host-specific CPU instructions (`GGML_NATIVE=OFF`).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-TAG=b9844   # pinned llama.cpp release (macOS arm64 tar.gz)
-# SHA-256 of the release artifact + each header at that tag. A tag or release
-# asset on GitHub can be replaced in place, so every fetched file is verified
-# before it enters the app bundle. Recompute when bumping TAG:
-#   shasum -a 256 <file>
-ARCHIVE_SHA256=0ca1c57a3f9656f02bc05215e52d6343054060196b0744946a174af925efa61c
+TAG=b9844
+BUILD_NUMBER=9844
+DEPLOYMENT_TARGET=15.0
+SOURCE_URL="https://github.com/ggml-org/llama.cpp/archive/refs/tags/$TAG.tar.gz"
+SOURCE_SHA256=5b35994c3cc2b3141e2731c526569eeb15a1423531c283cd0b0633b3be9d873d
 SERVER_DIR=Vendor/llama-cpp
+BUILD_MARKER="$TAG-macos$DEPLOYMENT_TARGET-arm64-generic-loader-rpath"
 
-# verify_sha256 <file> <expected> — hard-fails the build on mismatch.
 verify_sha256() {
   local actual
   actual=$(shasum -a 256 "$1" | cut -d' ' -f1)
@@ -27,65 +26,67 @@ verify_sha256() {
   fi
 }
 
-installed_tag=""
-if [ -x "$SERVER_DIR/llama-server" ]; then
-  installed_version=$("$SERVER_DIR/llama-server" --version 2>&1 | sed -n 's/^version: \([0-9][0-9]*\).*/\1/p' | head -n 1)
-  if [ -n "$installed_version" ]; then
-    installed_tag="b$installed_version"
-  fi
+if [ -x "$SERVER_DIR/llama-server" ] \
+   && [ "$(cat "$SERVER_DIR/.lokalbot-build" 2>/dev/null || true)" = "$BUILD_MARKER" ]; then
+  echo "fetch-llama: compatible vendor already present"
+  exit 0
 fi
 
-if [ "$installed_tag" != "$TAG" ]; then
-  echo "fetch-llama: downloading llama.cpp ${TAG}..."
-  tmp=$(mktemp -d)
-  curl -fsSL -o "$tmp/llama.tar.gz" \
-    "https://github.com/ggml-org/llama.cpp/releases/download/$TAG/llama-$TAG-bin-macos-arm64.tar.gz"
-  verify_sha256 "$tmp/llama.tar.gz" "$ARCHIVE_SHA256"
-  tar -xzf "$tmp/llama.tar.gz" -C "$tmp"
-  rm -rf "$SERVER_DIR"
-  mkdir -p "$SERVER_DIR"
-  # Only the server + its dylibs — the rest of the toolkit isn't needed.
-  cp "$tmp/llama-$TAG/llama-server" "$SERVER_DIR/"
-  cp "$tmp/llama-$TAG"/*.dylib "$SERVER_DIR/"
-  chmod +x "$SERVER_DIR/llama-server"
-  rm -rf "$tmp"
-fi
+command -v cmake >/dev/null || {
+  echo "fetch-llama: cmake is required (brew install cmake)" >&2
+  exit 1
+}
 
-# --- Public C headers for in-process libllama (LlamaCore module) ---
-# Fetched from the pinned source tag so the Swift module compiles against the
-# exact b9844 API the vendored dylib exports. Idempotent: skip if present.
-INCLUDE_DIR="$SERVER_DIR/include"
-RAW_BASE="https://raw.githubusercontent.com/ggml-org/llama.cpp/$TAG"
-# "repo-path sha256" pairs (bash 3.2 has no associative arrays).
-HEADERS=(
-  "include/llama.h 74381910d947f3796395e4bf7fab181165b0a33bcbeea0310447b9f0969c43e2"
-  "ggml/include/ggml.h 98c5fcf96279e16c09d42dcba482be1b03434839db723bba4b65518e424ba181"
-  "ggml/include/ggml-backend.h a620e815b43a44cc72d5f216629a3a91980335b61bc37eb6b2d0813368c3704f"
-  "ggml/include/ggml-alloc.h 94e4cd069b9313b2ceb35dacec901981e0bb478d8bb31035b7126be091998c23"
-  "ggml/include/ggml-cpu.h 1aafe97e576ea38c0da57517fb2492955d0b69c1a799842481fc069d6d9d28ef"
-  "ggml/include/ggml-metal.h 322f36cd30f3e9e7aad7b5b9bc63078012fd0b7706ac4e24f5721b604f3d8980"
-  "ggml/include/ggml-opt.h 3586de1bc8a934b5c72339e2b6937b0641e8f149b512231e666f67de0736eea2"
-  "ggml/include/gguf.h 2ddb276a5bece743433160ad863279473431c9d4c171d468bf860a3cda3fbf3f"
-)
-mkdir -p "$INCLUDE_DIR"
-for entry in "${HEADERS[@]}"; do
-  h=${entry% *}
-  sha=${entry##* }
-  dest="$INCLUDE_DIR/$(basename "$h")"
-  if [ ! -f "$dest" ]; then
-    echo "fetch-llama: downloading header $(basename "$h")"
-    # Download beside the destination and only move once verified, so a
-    # mismatch never leaves a file the next run's exists-check would skip.
-    curl -fsSL "$RAW_BASE/$h" -o "$dest.download"
-    verify_sha256 "$dest.download" "$sha"
-    mv "$dest.download" "$dest"
-  fi
+echo "fetch-llama: building llama.cpp $TAG for macOS $DEPLOYMENT_TARGET..."
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+curl -fsSL -o "$tmp/source.tar.gz" "$SOURCE_URL"
+verify_sha256 "$tmp/source.tar.gz" "$SOURCE_SHA256"
+mkdir -p "$tmp/source"
+tar -xzf "$tmp/source.tar.gz" -C "$tmp/source" --strip-components=1
+
+cmake -S "$tmp/source" -B "$tmp/build" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+  -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+  '-DCMAKE_INSTALL_RPATH=@loader_path' \
+  -DBUILD_SHARED_LIBS=ON \
+  -DGGML_NATIVE=OFF \
+  -DGGML_CCACHE=OFF \
+  -DLLAMA_BUILD_NUMBER="$BUILD_NUMBER" \
+  -DLLAMA_BUILD_COMMIT="$TAG" \
+  -DLLAMA_BUILD_TESTS=OFF \
+  -DLLAMA_BUILD_EXAMPLES=OFF \
+  -DLLAMA_BUILD_APP=OFF \
+  -DLLAMA_BUILD_TOOLS=ON \
+  -DLLAMA_BUILD_SERVER=ON \
+  -DLLAMA_BUILD_UI=OFF \
+  -DLLAMA_USE_PREBUILT_UI=OFF \
+  -DLLAMA_OPENSSL=OFF
+cmake --build "$tmp/build" --config Release --target llama-server --parallel
+
+rm -rf "$SERVER_DIR"
+mkdir -p "$SERVER_DIR/include"
+cp "$tmp/build/bin/llama-server" "$SERVER_DIR/"
+cp "$tmp/build/bin"/*.dylib "$SERVER_DIR/"
+cp "$tmp/source/LICENSE" "$SERVER_DIR/LICENSE.llama.cpp"
+chmod +x "$SERVER_DIR/llama-server"
+
+# Public C headers for the in-process libllama module. They come from the same
+# verified source archive as the binary, so API and runtime cannot drift.
+for header in \
+  include/llama.h \
+  ggml/include/ggml.h \
+  ggml/include/ggml-backend.h \
+  ggml/include/ggml-alloc.h \
+  ggml/include/ggml-cpu.h \
+  ggml/include/ggml-opt.h \
+  ggml/include/gguf.h; do
+  cp "$tmp/source/$header" "$SERVER_DIR/include/"
 done
 
-# Declare the LlamaCore Clang module over the fetched headers. Generated here
-# (not committed) so the whole Vendor/ tree stays reproducible and gitignored,
-# matching the dylibs/model. Rewritten every run so it tracks any HEADERS edit.
-cat > "$INCLUDE_DIR/module.modulemap" <<'EOF'
+cat > "$SERVER_DIR/include/module.modulemap" <<'EOF'
 module LlamaCore {
     header "llama.h"
     header "ggml.h"
@@ -98,4 +99,27 @@ module LlamaCore {
 }
 EOF
 
-echo "fetch-llama: vendor ready"
+printf '%s\n' "$BUILD_MARKER" > "$SERVER_DIR/.lokalbot-build"
+
+# Verify every runtime object advertises the same supported minimum before it
+# enters the app bundle. This fails closed if a future CMake change ignores the
+# deployment target.
+for file in "$SERVER_DIR/llama-server" "$SERVER_DIR"/*.dylib; do
+  minos=$(otool -l "$file" | awk '/minos/{print $2; exit}')
+  if [ "$minos" != "$DEPLOYMENT_TARGET" ]; then
+    echo "fetch-llama: $file has minimum macOS $minos, expected $DEPLOYMENT_TARGET" >&2
+    exit 1
+  fi
+
+  if ! otool -l "$file" | awk '
+    /cmd LC_RPATH/ { in_rpath = 1; next }
+    in_rpath && /path @loader_path / { found = 1 }
+    in_rpath && /path / { in_rpath = 0 }
+    END { exit found ? 0 : 1 }
+  '; then
+    echo "fetch-llama: $file does not use the bundle-relative @loader_path rpath" >&2
+    exit 1
+  fi
+done
+
+echo "fetch-llama: compatible vendor ready"

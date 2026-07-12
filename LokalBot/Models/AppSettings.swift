@@ -22,7 +22,9 @@ struct AppSettings: Codable {
         }
     }
 
-    var autoRecordMode: AutoRecordMode = .automatic
+    /// New installs start manually. Recording other people is a consequential
+    /// action, so automatic detection only records after the user opts in.
+    var autoRecordMode: AutoRecordMode = .manual
     /// Seconds the meeting app's own audio must be gone before a meeting counts
     /// as ended.
     var stopDebounceSeconds: TimeInterval = Self.defaultStopDebounceSeconds
@@ -103,6 +105,9 @@ struct AppSettings: Codable {
     var ollamaModel: String = ""
     var openAIBaseURL: String = "http://localhost:1234/v1"
     var openAIModel: String = ""
+    /// Origins the user explicitly approved for sending transcript, OCR, and
+    /// agent context off this Mac. Loopback endpoints never need approval.
+    var approvedRemoteInferenceOrigins: [String] = []
     var openAIAPIKey: String {
         get {
             KeychainSecrets.string(account: "openai-compatible-api-key") ?? ""
@@ -372,6 +377,7 @@ struct AppSettings: Codable {
         case ollamaModel
         case openAIBaseURL
         case openAIModel
+        case approvedRemoteInferenceOrigins
         case noteTemplate
         case summaryLanguage
         case multiSpeakerDiarization
@@ -464,6 +470,7 @@ struct AppSettings: Codable {
         try c.encode(ollamaModel, forKey: .ollamaModel)
         try c.encode(openAIBaseURL, forKey: .openAIBaseURL)
         try c.encode(openAIModel, forKey: .openAIModel)
+        try c.encode(approvedRemoteInferenceOrigins, forKey: .approvedRemoteInferenceOrigins)
         try c.encode(noteTemplate, forKey: .noteTemplate)
         try c.encode(summaryLanguage, forKey: .summaryLanguage)
         try c.encode(multiSpeakerDiarization, forKey: .multiSpeakerDiarization)
@@ -550,6 +557,9 @@ struct AppSettings: Codable {
         ollamaModel = (try? c.decode(String.self, forKey: .ollamaModel)) ?? defaults.ollamaModel
         openAIBaseURL = (try? c.decode(String.self, forKey: .openAIBaseURL)) ?? defaults.openAIBaseURL
         openAIModel = (try? c.decode(String.self, forKey: .openAIModel)) ?? defaults.openAIModel
+        approvedRemoteInferenceOrigins =
+            (try? c.decode([String].self, forKey: .approvedRemoteInferenceOrigins))
+            ?? defaults.approvedRemoteInferenceOrigins
         noteTemplate = (try? c.decode(NoteTemplate.self, forKey: .noteTemplate)) ?? defaults.noteTemplate
         summaryLanguage = (try? c.decode(SummaryLanguage.self, forKey: .summaryLanguage)) ?? defaults.summaryLanguage
         multiSpeakerDiarization = (try? c.decode(Bool.self, forKey: .multiSpeakerDiarization)) ?? defaults.multiSpeakerDiarization

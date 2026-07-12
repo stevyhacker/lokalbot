@@ -45,6 +45,11 @@ enum AgentLLMEndpointResolver {
             guard let base = URL(string: settings.ollamaBaseURL) else {
                 return .unsupported(reason: "The Ollama server URL under Settings → Models isn't a valid URL.")
             }
+            guard InferenceEndpointPolicy.isAllowed(
+                base, approvedOrigins: settings.approvedRemoteInferenceOrigins) else {
+                return .unsupported(
+                    reason: "Approve this remote Ollama server under Settings → Models before Agent Mode sends context to it.")
+            }
             guard !settings.ollamaModel.isEmpty else {
                 return .unsupported(reason: "Pick an Ollama model under Settings → Models — Agent Mode needs an explicit model.")
             }
@@ -57,6 +62,11 @@ enum AgentLLMEndpointResolver {
         case .openAICompatible:
             guard let base = URL(string: settings.openAIBaseURL) else {
                 return .unsupported(reason: "The server URL under Settings → Models isn't a valid URL.")
+            }
+            guard InferenceEndpointPolicy.isAllowed(
+                base, approvedOrigins: settings.approvedRemoteInferenceOrigins) else {
+                return .unsupported(
+                    reason: "Approve this remote inference server under Settings → Models before Agent Mode sends context to it.")
             }
             guard !settings.openAIModel.isEmpty else {
                 return .unsupported(reason: "Set a model name for the OpenAI-compatible server under Settings → Models.")

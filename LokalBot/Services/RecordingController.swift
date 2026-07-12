@@ -65,6 +65,7 @@ final class RecordingController: ObservableObject {
     /// stay live even with no window open. Nil when idle.
     private var recordingTick: AnyCancellable?
     private var transcriptionPrewarmTask: Task<Void, Never>?
+    private var summaryPrewarmTask: Task<Void, Never>?
 
     /// Synchronous re-entrancy latch: `status` only flips inside the async
     /// start task, so without this, rapid triggers (detector ticks, double
@@ -113,6 +114,8 @@ final class RecordingController: ObservableObject {
     func prepareForTermination() {
         transcriptionPrewarmTask?.cancel()
         transcriptionPrewarmTask = nil
+        summaryPrewarmTask?.cancel()
+        summaryPrewarmTask = nil
         if isRecording { stop(process: false) }
     }
 
@@ -199,6 +202,7 @@ final class RecordingController: ObservableObject {
                 if isInteractive() {
                     RecordingNotifier.shared.recordingStarted(title: meeting.title)
                     prewarmSelectedTranscriptionModel(reason: source)
+                    prewarmSelectedSummaryModel(reason: source)
                 }
             } catch {
                 onError("Could not start recording: \(error.localizedDescription)")
@@ -225,14 +229,12 @@ final class RecordingController: ObservableObject {
         let endedAt = Date()
         meeting.endedAt = endedAt
         let folder = meeting.folderURL(in: storage)
-        // The live-preview tees served their purpose; only the real tracks stay.
-        for name in [AudioPreviewTee.micFileName, AudioPreviewTee.systemFileName] {
-            try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
-        }
-        let micDuration = AudioFileInspector.duration(at: folder.appendingPathComponent("mic.m4a"))
-        let systemDuration = AudioFileInspector.duration(at: folder.appendingPathComponent("system.m4a"))
-        meeting.hasSystemTrack = AudioFileInspector.isTranscribableAudio(
-            at: folder.appendingPathComponent("system.m4a"))
+        // Only discard a preview tee after its finalized AAC track is known to
+        // decode. If finalization failed, the CAF may be the sole recovery copy.
+        MeetingAudioFiles.removeRedundantRecoveryFiles(in: folder)
+        let micDuration = MeetingAudioFiles.duration(for: .mic, in: folder)
+        let systemDuration = MeetingAudioFiles.duration(for: .system, in: folder)
+        meeting.hasSystemTrack = MeetingAudioFiles.transcribableURL(for: .system, in: folder) != nil
         // The wall-clock span can outlast the captured audio (e.g. a device
         // disruption truncates the tracks while the session stays live), so
         // store the actual playable length — the longest track — for the UI.
@@ -292,6 +294,33 @@ final class RecordingController: ObservableObject {
                 lokalbotLog("transcription prewarm FAILED model=\(choice.rawValue): \(error.localizedDescription)")
             }
             await MainActor.run { self?.transcriptionPrewarmTask = nil }
+        }
+    }
+
+    /// Start a missing built-in summary-model download while the meeting is in
+    /// progress. The pipeline still awaits the same single-flight preparation
+    /// after recording, so a short meeting cannot outrun the download and fail.
+    private func prewarmSelectedSummaryModel(reason: String) {
+        let config = settings
+        guard config.autoSummarize, config.summarizerBackend == .builtIn else { return }
+        guard summaryPrewarmTask == nil else { return }
+        summaryPrewarmTask = Task { [weak self, config, reason] in
+            let started = Date()
+            lokalbotLog("summary prewarm start model=\(config.builtInModelID) reason=\(reason)")
+            do {
+                try await self?.pipeline.prepareBuiltInModel(config)
+                let elapsed = Date().timeIntervalSince(started)
+                lokalbotLog(
+                    "summary prewarm ready model=\(config.builtInModelID) elapsed=\(String(format: "%.2fs", elapsed))")
+            } catch is CancellationError {
+                lokalbotLog("summary prewarm cancelled model=\(config.builtInModelID)")
+            } catch {
+                // Processing retries the same preparation and surfaces the
+                // error beside the meeting if the transient problem persists.
+                lokalbotLog(
+                    "summary prewarm FAILED model=\(config.builtInModelID): \(error.localizedDescription)")
+            }
+            await MainActor.run { self?.summaryPrewarmTask = nil }
         }
     }
 

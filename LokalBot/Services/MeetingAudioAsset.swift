@@ -124,21 +124,21 @@ enum MeetingAudioAsset {
     }
 
     private static func existingSources(folder: URL, hasSystemTrack: Bool) -> [Source] {
-        let mic = folder.appendingPathComponent("mic.m4a")
-        let system = folder.appendingPathComponent("system.m4a")
-        let hasMic = FileManager.default.fileExists(atPath: mic.path)
-        let hasSystem = hasSystemTrack && FileManager.default.fileExists(atPath: system.path)
+        let mic = MeetingAudioFiles.readableURL(for: .mic, in: folder)
+        let system = hasSystemTrack
+            ? MeetingAudioFiles.readableURL(for: .system, in: folder)
+            : nil
 
-        switch (hasMic, hasSystem) {
-        case (true, true):
+        switch (mic, system) {
+        case (.some(let mic), .some(let system)):
             // The mic track can contain speaker bleed; keep the clean system
             // track dominant and leave enough local voice to understand replies.
             return [Source(url: system, gain: 0.85), Source(url: mic, gain: 0.55)]
-        case (true, false):
+        case (.some(let mic), .none):
             return [Source(url: mic, gain: 1.0)]
-        case (false, true):
+        case (.none, .some(let system)):
             return [Source(url: system, gain: 1.0)]
-        case (false, false):
+        case (.none, .none):
             return []
         }
     }

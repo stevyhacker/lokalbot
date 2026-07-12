@@ -7,9 +7,12 @@ import Foundation
 @MainActor
 final class ProcessingPipeline: ObservableObject {
 
+    typealias BuiltInModelPreparer = (ModelCatalog.Entry, StorageManager) async throws -> URL
+
     enum Stage: Equatable {
         case queued
-        case preparingModel      // first run: selected model download from Hugging Face
+        case preparingTranscriptionModel
+        case preparingSummaryModel
         case transcribing
         case summarizing
         case failed(String)
@@ -17,7 +20,10 @@ final class ProcessingPipeline: ObservableObject {
         var label: String {
             switch self {
             case .queued: "Queued…"
-            case .preparingModel: "Preparing transcription model (download size depends on your selection)…"
+            case .preparingTranscriptionModel:
+                "Preparing transcription model (download size depends on your selection)…"
+            case .preparingSummaryModel:
+                "Preparing summary model (download size depends on your selection)…"
             case .transcribing: "Transcribing…"
             case .summarizing: "Summarizing…"
             case .failed(let message): "Failed: \(message)"
@@ -40,6 +46,7 @@ final class ProcessingPipeline: ObservableObject {
 
     private let storage: StorageManager
     private let settings: () -> AppSettings
+    private let builtInModelPreparer: BuiltInModelPreparer
     /// In-memory work list; `jobStore` mirrors it on disk so a crash mid-queue
     /// loses nothing — see `resumePending(meetings:)`.
     private var queue: [Job] = []
@@ -50,10 +57,14 @@ final class ProcessingPipeline: ObservableObject {
     var onArtifactsWritten: ((Meeting) -> Void)?
 
     init(storage: StorageManager, jobStore: PipelineJobStore? = nil,
-         settings: @escaping () -> AppSettings) {
+         settings: @escaping () -> AppSettings,
+         builtInModelPreparer: @escaping BuiltInModelPreparer = { entry, storage in
+             try await ModelDownloadManager.shared.ensureAvailable(entry, storage: storage)
+         }) {
         self.storage = storage
         self.jobStore = jobStore
         self.settings = settings
+        self.builtInModelPreparer = builtInModelPreparer
     }
 
     func enqueue(_ meeting: Meeting, transcribe: Bool = true, summarize: Bool = true) {
@@ -106,11 +117,6 @@ final class ProcessingPipeline: ObservableObject {
         let folder = meeting.folderURL(in: storage)
         let config = settings()
         jobStore?.markStarted(meetingID: meeting.id)
-        // Live-preview tees are deleted when a recording stops; sweep any a
-        // crash left behind so they don't sit next to the real tracks forever.
-        for name in [AudioPreviewTee.micFileName, AudioPreviewTee.systemFileName] {
-            try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
-        }
         do {
             if job.transcribe || !FileManager.default.fileExists(
                 atPath: folder.appendingPathComponent("transcript.json").path) {
@@ -119,7 +125,7 @@ final class ProcessingPipeline: ObservableObject {
                 // been produced by a different model. Only a crash resume
                 // trusts them.
                 if !job.resumed { clearCheckpoints(in: folder) }
-                stages[meeting.id] = .preparingModel
+                stages[meeting.id] = .preparingTranscriptionModel
                 let engine = config.transcriptionModel.engine   // engines prepare lazily inside transcribe
 
                 stages[meeting.id] = .transcribing
@@ -132,9 +138,17 @@ final class ProcessingPipeline: ObservableObject {
                 transcript = SpeakerAutoNamer.applyingAliases(
                     to: transcript, participantNames: meeting.participantNameHints ?? [])
                 try write(transcript, to: folder)
+                // A finalized AAC track makes its CAF duplicate redundant. A
+                // crash-recovery CAF remains when the AAC container is broken,
+                // preserving playable audio after the transcript is written.
+                MeetingAudioFiles.removeRedundantRecoveryFiles(in: folder)
                 clearCheckpoints(in: folder)
             }
             if job.summarize {
+                if config.summarizerBackend == .builtIn {
+                    stages[meeting.id] = .preparingSummaryModel
+                    _ = try await prepareBuiltInModel(config)
+                }
                 stages[meeting.id] = .summarizing
                 let transcript = try loadTranscript(from: folder)
                 // The default built-in server supports continuous batching.
@@ -196,7 +210,9 @@ final class ProcessingPipeline: ObservableObject {
         var tracks: [Transcript] = []
         var trackError: Error?
 
-        for (name, speaker) in [("mic", "me"), ("system", "them")] {
+        for (track, speaker) in [(MeetingAudioFiles.Track.mic, "me"),
+                                 (MeetingAudioFiles.Track.system, "them")] {
+            let name = track.rawValue
             // Per-track checkpoint: a finished track's transcript survives a
             // crash — and the *other* track failing — so a retry never redoes
             // an hour of completed transcription.
@@ -208,7 +224,10 @@ final class ProcessingPipeline: ObservableObject {
                 continue
             }
             do {
-                let url = folder.appendingPathComponent("\(name).m4a")
+                guard let url = MeetingAudioFiles.transcribableURL(for: track, in: folder) else {
+                    lokalbotLog("transcription track skipped track=\(name) reason=no-readable-audio")
+                    continue
+                }
                 if let transcript = try await transcribeTrack(name: name, url: url,
                                                               speaker: speaker, engine: engine,
                                                               language: language) {
@@ -291,8 +310,9 @@ final class ProcessingPipeline: ObservableObject {
                                 folder: URL,
                                 config: AppSettings) async -> Transcript {
         guard config.multiSpeakerDiarization else { return transcript }
-        let systemURL = folder.appendingPathComponent("system.m4a")
-        guard AudioFileInspector.isTranscribableAudio(at: systemURL) else { return transcript }
+        guard let systemURL = MeetingAudioFiles.transcribableURL(for: .system, in: folder) else {
+            return transcript
+        }
         await diarizer.prepareModels()
         let segments = await diarizer.diarize(url: systemURL)
         guard !segments.isEmpty else { return transcript }
@@ -492,9 +512,7 @@ final class ProcessingPipeline: ObservableObject {
                     ?? ModelCatalog.entry(id: ModelCatalog.recommendedSummarizationID) else {
                 throw PipelineError.badServerURL
             }
-            guard let modelURL = ModelCatalog.localURL(for: entry, storage: storage) else {
-                throw LlamaServer.ServerError.modelMissing(entry.displayName)
-            }
+            let modelURL = try await prepareBuiltInModel(config)
             let engine = OpenAICompatibleEngine(
                 baseURL: server.baseURL,
                 model: entry.id,
@@ -520,6 +538,8 @@ final class ProcessingPipeline: ObservableObject {
             return AppleIntelligenceEngine()
         case .ollama:
             guard let url = URL(string: config.ollamaBaseURL) else { throw PipelineError.badServerURL }
+            try InferenceEndpointPolicy.validate(
+                url, approvedOrigins: config.approvedRemoteInferenceOrigins)
             var model = config.ollamaModel
             if model.isEmpty {
                 // Zero-config: a running Ollama with any model just works.
@@ -528,9 +548,27 @@ final class ProcessingPipeline: ObservableObject {
             return OllamaEngine(baseURL: url, model: model)
         case .openAICompatible:
             guard let url = URL(string: config.openAIBaseURL) else { throw PipelineError.badServerURL }
+            try InferenceEndpointPolicy.validate(
+                url, approvedOrigins: config.approvedRemoteInferenceOrigins)
             return OpenAICompatibleEngine(baseURL: url, model: config.openAIModel,
                                           apiKey: config.openAIAPIKey)
         }
+    }
+
+    /// Ensure the selected built-in model is present before the first request.
+    /// `ModelDownloadManager` coalesces UI/prewarm/pipeline callers onto one
+    /// download, so the first recap waits for preparation instead of failing.
+    @discardableResult
+    func prepareBuiltInModel(_ config: AppSettings) async throws -> URL {
+        guard let entry = ModelCatalog.entry(id: config.builtInModelID,
+                                             custom: config.customBuiltInModels)
+                ?? ModelCatalog.entry(id: ModelCatalog.recommendedSummarizationID) else {
+            throw PipelineError.badServerURL
+        }
+        if let existing = ModelCatalog.localURL(for: entry, storage: storage) {
+            return existing
+        }
+        return try await builtInModelPreparer(entry, storage)
     }
 
     /// Split segments into ~12k-char chunks, never mid-segment.

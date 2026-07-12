@@ -70,15 +70,27 @@ final class StorageManager {
                 // Orphan repair: app killed mid-recording leaves endedAt nil
                 // forever ("in progress"). Close it at the audio's last write.
                 if meeting.endedAt == nil {
-                    let mic = url.deletingLastPathComponent().appendingPathComponent("mic.m4a")
-                    let mtime = (try? FileManager.default.attributesOfItem(atPath: mic.path))?[.modificationDate] as? Date
+                    let folder = url.deletingLastPathComponent()
+                    let audioURLs = MeetingAudioFiles.Track.allCases.flatMap { track in
+                        [MeetingAudioFiles.primaryURL(for: track, in: folder),
+                         MeetingAudioFiles.recoveryURL(for: track, in: folder)]
+                    }
+                    let mtime = audioURLs.compactMap { audioURL in
+                        (try? FileManager.default.attributesOfItem(atPath: audioURL.path))?[.modificationDate]
+                            as? Date
+                    }.max()
                     meeting.endedAt = mtime ?? meeting.startedAt
                     try? saveMeta(meeting)
                 }
-                let systemURL = url.deletingLastPathComponent().appendingPathComponent("system.m4a")
-                let hasSystemTrack = AudioFileInspector.isTranscribableAudio(at: systemURL)
+                let folder = url.deletingLastPathComponent()
+                let hasSystemTrack = MeetingAudioFiles.transcribableURL(for: .system, in: folder) != nil
                 if meeting.hasSystemTrack != hasSystemTrack {
                     meeting.hasSystemTrack = hasSystemTrack
+                    try? saveMeta(meeting)
+                }
+                if meeting.recordedDuration == nil,
+                   let recordedDuration = MeetingAudioFiles.longestDuration(in: folder) {
+                    meeting.recordedDuration = recordedDuration
                     try? saveMeta(meeting)
                 }
                 result.append(meeting)

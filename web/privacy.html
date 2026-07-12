@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy Policy — LokalBot</title>
+  <meta name="description" content="How LokalBot stores data locally, when it uses the network, and what changes when you approve a remote inference server." />
+  <meta name="theme-color" content="#0b1119" />
+  <link rel="canonical" href="https://www.lokalbot.com/privacy" />
+  <link rel="icon" href="assets/lokalbot-icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg-field" aria-hidden="true"></div>
+  <header class="nav" id="top">
+    <a class="brand" href="index.html" aria-label="LokalBot home">
+      <img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="32" height="32" />
+      <span class="brand__name">LokalBot</span>
+    </a>
+    <nav class="nav__links" aria-label="Primary">
+      <a href="index.html#features">Features</a>
+      <a href="privacy.html" aria-current="page">Privacy</a>
+      <a href="support.html">Support</a>
+    </nav>
+    <div class="nav__actions">
+      <a class="btn btn--primary btn--sm" href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">Download</a>
+    </div>
+  </header>
+
+  <main class="legal-page">
+    <header class="legal-page__head">
+      <p class="eyebrow">Effective July 12, 2026</p>
+      <h1>Privacy Policy</h1>
+      <p>LokalBot is local-first. It has no LokalBot account, analytics service, advertising SDK, telemetry backend, or hosted AI service.</p>
+    </header>
+
+    <article class="legal-card">
+      <h2>What stays on your Mac</h2>
+      <p>The project does not receive your recordings, transcripts, summaries, screenshots, prompts, files, calendar events, or usage history. LokalBot can store these in its Application Support directory:</p>
+      <ul>
+        <li>meeting microphone and system-audio tracks;</li>
+        <li>transcripts, summaries, notes, search indexes, and meeting metadata;</li>
+        <li>downloaded speech, embedding, and language models;</li>
+        <li>opt-in app/window activity, screenshots, and locally extracted text;</li>
+        <li>opt-in Agent Mode sessions and runtime files; and</li>
+        <li>preferences, diagnostic logs, and encryption keys.</li>
+      </ul>
+      <p>Screenshots are off by default, encrypted at rest, and deleted after 14 days by default. Their extracted text follows the same retention unless you explicitly keep it. Dictation scratch audio is deleted after transcription by default.</p>
+
+      <h2>When LokalBot uses the network</h2>
+      <ul>
+        <li><strong>Models:</strong> model metadata and files from Hugging Face or a publisher's download host. Selected first-use models can download automatically.</li>
+        <li><strong>Updates:</strong> the public GitHub Releases appcast and a signed update when you check or enable automatic checks.</li>
+        <li><strong>Optional remote inference:</strong> an Ollama or OpenAI-compatible URL you configure. Loopback stays on your Mac. A non-loopback origin must be explicitly approved before it receives meeting, workday, or agent context.</li>
+        <li><strong>Optional Agent Mode:</strong> setup downloads its pinned runtime. Commands you approve can access files or the network with your macOS user permissions.</li>
+      </ul>
+      <p>Those services receive ordinary connection metadata such as IP address and request headers. LokalBot adds no advertising identifier and does not use those requests for tracking. A remote server's operator controls its own privacy terms.</p>
+
+      <h2>Permissions and consent</h2>
+      <p>Microphone and system-audio permissions enable recording. Calendar access helps detect and title meetings. Accessibility enables browser-meeting detection, Cotyping, dictation insertion, and approved agent interaction. Screen Recording enables opt-in screen context.</p>
+      <p>Recording defaults to manual on a fresh install. You are responsible for obtaining any consent required before recording other people.</p>
+
+      <h2>External-agent access</h2>
+      <p>The bundled CLI and MCP interface are read-only and refuse library access until you enable Agent Access under Settings → Privacy. An enabled external tool runs as your macOS user, so connect only tools you trust.</p>
+
+      <h2>Deletion, security, and changes</h2>
+      <p>You can delete meetings in the app or remove LokalBot's Application Support directory. No software can promise absolute security. Report vulnerabilities through the private process in the <a href="https://github.com/stevyhacker/lokalbot/blob/master/SECURITY.md">security policy</a>. Material policy changes will update this date and appear in release notes.</p>
+
+      <h2>Contact</h2>
+      <p>Use the <a href="support.html">support page</a> for privacy questions. Never include recordings, transcripts, secrets, or other sensitive data in a public issue.</p>
+    </article>
+  </main>
+
+  <footer class="footer footer--legal">
+    <div class="footer__brand">
+      <a class="brand" href="index.html"><img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="30" height="30" /><span class="brand__name">LokalBot</span></a>
+      <p>Local-first AI meeting notes for macOS.</p>
+    </div>
+    <nav class="footer__col" aria-label="Project">
+      <h4>Project</h4>
+      <a href="https://github.com/stevyhacker/lokalbot">GitHub</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="support.html">Support</a>
+    </nav>
+    <p class="footer__legal">Local by default. Record with consent.</p>
+  </footer>
+</body>
+</html>

@@ -196,6 +196,8 @@ struct SettingsView: View {
                             Text(mode.rawValue).tag(mode)
                         }
                     }
+                    Text("Only record when everyone has been informed and you have any consent required for the meeting and location.")
+                        .font(.caption).foregroundStyle(.secondary)
                     LabeledContent("Detected apps") {
                         Text(Set(MeetingDetector.knownApps.values).sorted().joined(separator: ", ")
                              + " + browser meetings (Meet, Jitsi, Whereby)")
@@ -327,7 +329,7 @@ struct SettingsView: View {
                                  "delete", "prune", "forever", "keep", "local", "network",
                                  "data", "security", "agents", "mcp", "claude", "cli"]) {
                 Section("Privacy") {
-                    Label("Audio and transcripts never leave this Mac. Network access is localhost (your LLM server) plus user-initiated model downloads from Hugging Face.",
+                    Label("Audio stays on this Mac. Transcripts and other context leave only when you approve a remote inference origin. Other network access is for models, updates, and optional Agent Mode setup.",
                           systemImage: "lock.shield")
                         .foregroundStyle(.secondary)
                     Toggle("Keep screen text forever", isOn: Binding(
@@ -337,6 +339,11 @@ struct SettingsView: View {
                     Text("Text extracted from screenshots is deleted with the pixels after \(app.settings.retentionDays) days. Turn on to keep it searchable forever; turning back off deletes text older than the window.")
                         .font(.caption).foregroundStyle(.secondary)
                     AgentAccessToggleRow(manager: app.agentAccess)
+                    HStack(spacing: 16) {
+                        Link("Privacy Policy", destination: URL(string: "https://www.lokalbot.com/privacy")!)
+                        Link("Support", destination: URL(string: "https://www.lokalbot.com/support")!)
+                    }
+                    .font(.caption)
                 }
             }
 

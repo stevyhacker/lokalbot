@@ -30,11 +30,11 @@ struct CotypingGhostView: View {
             measuredLuminance: backgroundLuminance))
     }
 
-    /// Whether the system is in dark mode, read from the global setting rather
-    /// than the panel's own (unreliable) appearance. Only consulted when the host
-    /// field reports no colors to derive from.
+    /// Whether the system is in dark mode. The overlay panel's appearance can
+    /// lag the active app, so consult AppKit's effective system appearance when
+    /// the host field reports no colors to derive from.
     private static var prefersDarkEnvironment: Bool {
-        UserDefaults.standard.string(forKey: "AppleInterfaceStyle")?.lowercased() == "dark"
+        NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     }
 
     @ViewBuilder

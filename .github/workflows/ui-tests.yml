@@ -44,12 +44,16 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - name: Install XcodeGen
+      - name: Install build tools
         run: |
           if ! command -v xcodegen >/dev/null; then
             brew install xcodegen
           fi
+          if ! command -v cmake >/dev/null; then
+            brew install cmake
+          fi
           xcodegen --version
+          cmake --version
 
       # project.yml lists Vendor/llama-cpp and Vendor/sherpa-onnx as folder
       # references, and XcodeGen validates those paths exist before it will

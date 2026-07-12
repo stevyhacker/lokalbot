@@ -149,7 +149,7 @@ struct ModelsView: View {
                     }
                     Button("Browse Hugging Face…") { showingHFBrowse = true }
                         .controlSize(.small)
-                    Text("Runs on the included llama.cpp server (Metal). Download the model you want from Hugging Face.")
+                    Text("Runs on the included llama.cpp server (Metal). The selected model downloads automatically on first use; Download lets you prepare it earlier.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             case .appleIntelligence:
@@ -168,6 +168,7 @@ struct ModelsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             case .ollama:
                 TextField("Server", text: $app.settings.ollamaBaseURL)
+                remoteEndpointDisclosure(rawURL: app.settings.ollamaBaseURL)
                 LabeledContent("Status") {
                     HStack(spacing: 6) {
                         StatusDot(color: ollamaReachable ? .green : .red)
@@ -189,6 +190,7 @@ struct ModelsView: View {
                 TextField("Base URL (…/v1)", text: $app.settings.openAIBaseURL)
                 TextField("Model name", text: $app.settings.openAIModel)
                 SecureField("API key (optional)", text: $app.settings.openAIAPIKey)
+                remoteEndpointDisclosure(rawURL: app.settings.openAIBaseURL)
             }
 
             HStack(spacing: 8) {
@@ -203,6 +205,44 @@ struct ModelsView: View {
             }
         }
         .accessibilityIdentifier("models.summarization")
+    }
+
+    @ViewBuilder
+    private func remoteEndpointDisclosure(rawURL: String) -> some View {
+        if let url = URL(string: rawURL), InferenceEndpointPolicy.requiresApproval(url),
+           let origin = InferenceEndpointPolicy.origin(for: url) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Remote server: meeting transcripts, screen text, and agent context may leave this Mac.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                Toggle("Allow sending inference context to \(origin)",
+                       isOn: remoteApprovalBinding(rawURL: rawURL))
+                    .font(.caption)
+            }
+            .padding(8)
+            .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+        } else if let url = URL(string: rawURL), InferenceEndpointPolicy.isLoopback(url) {
+            Label("Loopback server: inference context stays on this Mac.",
+                  systemImage: "checkmark.shield.fill")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func remoteApprovalBinding(rawURL: String) -> Binding<Bool> {
+        Binding {
+            guard let url = URL(string: rawURL),
+                  let origin = InferenceEndpointPolicy.origin(for: url) else { return false }
+            return app.settings.approvedRemoteInferenceOrigins.contains(origin)
+        } set: { approved in
+            guard let url = URL(string: rawURL),
+                  let origin = InferenceEndpointPolicy.origin(for: url) else { return }
+            app.settings.approvedRemoteInferenceOrigins.removeAll { $0 == origin }
+            if approved {
+                app.settings.approvedRemoteInferenceOrigins.append(origin)
+            }
+        }
     }
 
     private var speechCard: some View {
@@ -423,6 +463,12 @@ struct ModelsView: View {
 
     private func refreshOllama() async {
         guard let url = URL(string: app.settings.ollamaBaseURL) else { return }
+        guard InferenceEndpointPolicy.isAllowed(
+            url, approvedOrigins: app.settings.approvedRemoteInferenceOrigins) else {
+            ollamaModels = []
+            ollamaReachable = false
+            return
+        }
         let models = await OllamaEngine.listModels(baseURL: url)
         ollamaModels = models
         ollamaReachable = !models.isEmpty
