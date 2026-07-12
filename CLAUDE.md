@@ -52,6 +52,8 @@ Dependency versions are pinned deliberately (FluidAudio exact — 0.x breaks API
 
 Meeting pipeline: `MeetingDetector`/`AudioSourceMonitor` (Core Audio) → `RecordingController` → `MicRecorder` + `SystemAudioRecorder` (process taps) → `ProcessingPipeline` → a `TranscriptionEngine` implementation (`WhisperKit` CoreML, `OnnxTranscriptionEngine` via sherpa-onnx, `QwenASREngine` MLX, `GraniteSpeechEngine`) + `NeuralDiarizationEngine` (FluidAudio) → summary via `TextEngine` (`LlamaServer` running the bundled llama.cpp server on localhost, or `AppleIntelligenceEngine`) → `StorageManager` (files) + `SQLiteDatabase` (FTS5 docs + embeddings via `EmbeddingIndex` + activity/OCR tables).
 
+The three shared llama-servers (main 17872, embeddings 17873, cotyping 17874) are lifecycle-managed by `InferenceBroker` (`LokalBot/Engines/InferenceBroker.swift`): consumers take per-request leases (which pin the model against `ModelResidency` eviction) instead of calling `ensureRunning` directly, and a server with no leases unloads after a linger. Agent Mode holds a session lease; external `ask_library` wakes hold a 600 s TTL lease. Granite's private ASR server and the in-process cotyping runtime stay outside the broker (step 2).
+
 On-disk library (rooted at the bundle id, overridable with `LOKALBOT_STORAGE_ROOT` — this is how e2e/UI tests stay hermetic):
 
 ```

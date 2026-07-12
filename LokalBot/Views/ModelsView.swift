@@ -635,7 +635,10 @@ struct ModelsView: View {
         testResult = nil
         defer { testing = false }
         do {
-            let engine = try await app.pipeline.makeTextEngine(app.settings)
+            let engine = try await app.pipeline.makeTextEngine(
+                app.settings,
+                priority: .interactive,
+                purpose: "model test")
             let reply = try await engine.generate(
                 system: PromptTemplates.connectivityTestSystem,
                 prompt: PromptTemplates.connectivityTestPrompt,

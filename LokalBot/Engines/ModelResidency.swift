@@ -32,6 +32,12 @@ final class ModelResidency: ObservableObject {
     }
 
     @Published private(set) var residents: [Resident] = []
+    /// Residency ids currently pinned by open inference leases (pushed by
+    /// `InferenceBroker`). Pinned rows are never eviction victims; they still
+    /// count toward the budget. Descriptions are dashboard strings per id,
+    /// e.g. "chat (interactive)".
+    @Published private(set) var pinnedIDs: Set<String> = []
+    @Published private(set) var leaseDescriptions: [String: [String]] = [:]
     /// Unload hooks by resident id, kept out of `Resident` so it stays a
     /// plain Equatable value for the UI.
     private var unloaders: [String: () async -> Void] = [:]
@@ -77,6 +83,11 @@ final class ModelResidency: ObservableObject {
         residents[index].lastUsed = Date()
     }
 
+    func setLeaseState(pinned: Set<String>, descriptions: [String: [String]]) {
+        pinnedIDs = pinned
+        leaseDescriptions = descriptions
+    }
+
     func unregister(id: String) {
         unloaders[id] = nil
         registrationGenerations[id] = nil
@@ -98,6 +109,7 @@ final class ModelResidency: ObservableObject {
         let victims = ModelResidencyPolicy.evictions(
             residents: residents.map { .init(id: $0.id, bytes: $0.bytes, lastUsed: $0.lastUsed) },
             incomingID: id, incomingBytes: bytes, reservedBytes: reservedBytes,
+            pinned: pinnedIDs,
             budgetBytes: budgetBytes)
         for victim in victims {
             let unload = unloaders[victim]
@@ -128,11 +140,15 @@ enum ModelResidencyPolicy {
 
     /// IDs to evict, least-recently-used first, so the surviving residents
     /// plus the incoming load fit `budgetBytes`. The incoming id is never a
-    /// victim. When the newcomer alone exceeds the budget, everything else is
-    /// evicted and the load proceeds best-effort — refusing to load would
-    /// break the feature the user just asked for.
+    /// victim, and neither is any pinned id — an open inference lease means a
+    /// request is running against those weights right now. Pinned bytes still
+    /// count toward the total, so admission stays honest. When the newcomer
+    /// alone exceeds the budget, everything unpinned is evicted and the load
+    /// proceeds best-effort — refusing to load would break the feature the
+    /// user just asked for.
     static func evictions(residents: [Entry], incomingID: String,
                           incomingBytes: Int64, reservedBytes: Int64 = 0,
+                          pinned: Set<String> = [],
                           budgetBytes: Int64) -> [String] {
         let kept = residents.filter { $0.id != incomingID }
         var total = kept.reduce(0) { $0 + $1.bytes }
@@ -142,7 +158,8 @@ enum ModelResidencyPolicy {
             ? .max : total + max(0, reservedBytes)
         guard total > budgetBytes else { return [] }
         var victims: [String] = []
-        for entry in kept.sorted(by: { $0.lastUsed < $1.lastUsed }) {
+        for entry in kept.sorted(by: { $0.lastUsed < $1.lastUsed })
+        where !pinned.contains(entry.id) {
             guard total > budgetBytes else { break }
             victims.append(entry.id)
             total -= entry.bytes

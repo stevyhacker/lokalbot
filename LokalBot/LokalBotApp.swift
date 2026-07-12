@@ -322,7 +322,9 @@ final class AppState: ObservableObject {
             guard let self else { throw TextEngineError.unavailable("LokalBot is shutting down.") }
             return try await self.pipeline.makeTextEngine(
                 self.settings.cotypingTextEngineSettings,
-                server: .cotyping)
+                server: .cotyping,
+                priority: .interactive,
+                purpose: "cotyping")
         }),
         makeLocal: { modelPath in
             LocalLlamaCotypingEngine(runtime: LlamaCotypingRuntime(), modelPath: modelPath)
@@ -356,7 +358,10 @@ final class AppState: ObservableObject {
     private(set) lazy var chat = ChatViewModel(
         makeEngine: { [weak self] in
             guard let self else { throw TextEngineError.unavailable("LokalBot is shutting down.") }
-            return try await self.pipeline.makeTextEngine(self.settings)
+            return try await self.pipeline.makeTextEngine(
+                self.settings,
+                priority: .interactive,
+                purpose: "chat")
         },
         tools: MeetingChatTools(
             meetings: { [weak self] in self?.meetings ?? [] },

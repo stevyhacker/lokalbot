@@ -68,6 +68,48 @@ final class ModelResidencyTests: XCTestCase {
         XCTAssertEqual(victims, ["old"])
     }
 
+    func testPinnedResidentIsNeverAVictim() {
+        let victims = ModelResidencyPolicy.evictions(
+            residents: [
+                entry("pinned-old", gb: 4, age: 500),
+                entry("unpinned-new", gb: 4, age: 10),
+            ],
+            incomingID: "incoming", incomingBytes: 4 * 1_073_741_824,
+            pinned: ["pinned-old"],
+            budgetBytes: 8 * 1_073_741_824)
+        XCTAssertEqual(victims, ["unpinned-new"],
+                       "the pinned LRU row must be skipped in favor of a fresher unpinned one")
+    }
+
+    func testOversizedIncomingSparesPinnedResidents() {
+        let victims = ModelResidencyPolicy.evictions(
+            residents: [
+                entry("pinned", gb: 2, age: 300),
+                entry("idle", gb: 2, age: 100),
+            ],
+            incomingID: "huge", incomingBytes: 32 * 1_073_741_824,
+            pinned: ["pinned"],
+            budgetBytes: 8 * 1_073_741_824)
+        XCTAssertEqual(victims, ["idle"],
+                       "best-effort oversized load still spares leased models")
+    }
+
+    func testPinnedBytesStillConsumeBudget() {
+        let fits = ModelResidencyPolicy.evictions(
+            residents: [entry("pinned", gb: 4, age: 100)],
+            incomingID: "incoming", incomingBytes: 4 * 1_073_741_824,
+            pinned: ["pinned"],
+            budgetBytes: 8 * 1_073_741_824)
+        XCTAssertEqual(fits, [])
+
+        let overflow = ModelResidencyPolicy.evictions(
+            residents: [entry("pinned", gb: 4, age: 100), entry("small", gb: 1, age: 10)],
+            incomingID: "incoming", incomingBytes: 4 * 1_073_741_824,
+            pinned: ["pinned"],
+            budgetBytes: 8 * 1_073_741_824)
+        XCTAssertEqual(overflow, ["small"])
+    }
+
     // MARK: - Ledger
 
     func testRegisterUpsertsTouchAndUnregister() {
@@ -109,6 +151,36 @@ final class ModelResidencyTests: XCTestCase {
         // The incoming runtime registers itself after its load completes.
         residency.register(id: "incoming", label: "incoming", bytes: 5, unload: {})
         XCTAssertEqual(residency.totalBytes, 8)
+    }
+
+    func testWillLoadHonorsPublishedPins() async {
+        let residency = ModelResidency(budgetBytes: 8 * 1_073_741_824)
+        final class Unloads { var ids: [String] = [] }
+        let unloads = Unloads()
+        residency.register(id: "pinned-old", label: "Pinned", bytes: 4 * 1_073_741_824,
+                           unload: { unloads.ids.append("pinned-old") })
+        residency.register(id: "idle-new", label: "Idle", bytes: 4 * 1_073_741_824,
+                           unload: { unloads.ids.append("idle-new") })
+        residency.touch(id: "idle-new")
+        residency.setLeaseState(pinned: ["pinned-old"], descriptions: [:])
+
+        await residency.willLoad(id: "incoming", bytes: 4 * 1_073_741_824)
+
+        XCTAssertEqual(unloads.ids, ["idle-new"])
+        XCTAssertEqual(residency.residents.map(\.id), ["pinned-old"])
+    }
+
+    func testSetLeaseStatePublishesPinsAndDescriptions() {
+        let residency = ModelResidency(budgetBytes: 8 * 1_073_741_824)
+        residency.setLeaseState(
+            pinned: ["llama-server:17872"],
+            descriptions: ["llama-server:17872": ["chat (interactive)"]])
+        XCTAssertEqual(residency.pinnedIDs, ["llama-server:17872"])
+        XCTAssertEqual(residency.leaseDescriptions["llama-server:17872"], ["chat (interactive)"])
+
+        residency.setLeaseState(pinned: [], descriptions: [:])
+        XCTAssertTrue(residency.pinnedIDs.isEmpty)
+        XCTAssertTrue(residency.leaseDescriptions.isEmpty)
     }
 
     func testStaleGenerationCannotUnregisterReplacement() {

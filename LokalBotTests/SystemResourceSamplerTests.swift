@@ -84,6 +84,12 @@ final class ResourceMonitorPresentationTests: XCTestCase {
     private typealias Usage = SystemResourceSampler.ProcessUsage
     private typealias Snapshot = SystemResourceSampler.UsageSnapshot
 
+    private func resident(_ id: String, label: String) -> ModelResidency.Resident {
+        ModelResidency.Resident(id: id, label: label, bytes: 1_073_741_824,
+                                processIdentifier: nil, processStartTime: nil,
+                                lastUsed: Date(timeIntervalSince1970: 1_000_000))
+    }
+
     func testModelsMergeRolesAndMeasuredAndEstimatedMemory() {
         let gibibyte = UInt64(1_073_741_824)
         let residency = ModelResidency.Resident(
@@ -202,6 +208,40 @@ final class ResourceMonitorPresentationTests: XCTestCase {
         XCTAssertTrue(ResourceMonitorPresentation.models(
             residency: [], runtimes: [runtime], snapshot: reusedPID
         ).isEmpty)
+    }
+
+    func testLeasedModelRowCarriesInUseNote() {
+        let models = ResourceMonitorPresentation.models(
+            residency: [resident("llama-server:17872", label: "Qwen 4B")],
+            runtimes: [],
+            snapshot: nil,
+            pinnedIDs: ["llama-server:17872"],
+            leaseDescriptions: ["llama-server:17872":
+                ["chat (interactive)", "summary (background)"]])
+        XCTAssertEqual(models.count, 1)
+        XCTAssertEqual(models[0].leaseNote,
+                       "in use — chat (interactive), summary (background)")
+    }
+
+    func testUnleasedModelRowHasNoNote() {
+        let models = ResourceMonitorPresentation.models(
+            residency: [resident("llama-server:17873", label: "EmbeddingGemma")],
+            runtimes: [],
+            snapshot: nil,
+            pinnedIDs: [],
+            leaseDescriptions: [:])
+        XCTAssertEqual(models.count, 1)
+        XCTAssertNil(models[0].leaseNote)
+    }
+
+    func testPinWithoutDescriptionsStillReadsInUse() {
+        let models = ResourceMonitorPresentation.models(
+            residency: [resident("llama-server:17872", label: "Qwen 4B")],
+            runtimes: [],
+            snapshot: nil,
+            pinnedIDs: ["llama-server:17872"],
+            leaseDescriptions: [:])
+        XCTAssertEqual(models[0].leaseNote, "in use")
     }
 }
 

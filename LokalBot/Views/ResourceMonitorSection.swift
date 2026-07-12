@@ -90,7 +90,9 @@ struct ResourceMonitorSection: View {
         ResourceMonitorPresentation.models(
             residency: residency.residents,
             runtimes: modelRuntimes.residents,
-            snapshot: monitor.snapshot
+            snapshot: monitor.snapshot,
+            pinnedIDs: residency.pinnedIDs,
+            leaseDescriptions: residency.leaseDescriptions
         )
     }
 
@@ -120,6 +122,12 @@ struct ResourceMonitorSection: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(model.label)
+                if let note = model.leaseNote {
+                    Text(note)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
             }
         }
         .accessibilityElement(children: .combine)
@@ -148,6 +156,9 @@ enum ResourceMonitorPresentation {
         let estimatedBytes: UInt64?
         let processIdentifier: pid_t?
         let processStartTime: UInt64?
+        /// "in use — chat (interactive)" while the broker holds leases on this
+        /// row; nil when idle. Only GGUF (residency) rows carry notes.
+        let leaseNote: String?
     }
 
     struct MemoryReading: Equatable {
@@ -157,7 +168,9 @@ enum ResourceMonitorPresentation {
 
     static func models(residency: [ModelResidency.Resident],
                        runtimes: [ModelRuntimeRegistry.Resident],
-                       snapshot: SystemResourceSampler.UsageSnapshot?) -> [Model] {
+                       snapshot: SystemResourceSampler.UsageSnapshot?,
+                       pinnedIDs: Set<String> = [],
+                       leaseDescriptions: [String: [String]] = [:]) -> [Model] {
         let ggufModels = residency.compactMap { resident -> Model? in
             if let processIdentifier = resident.processIdentifier,
                let snapshot {
@@ -171,7 +184,9 @@ enum ResourceMonitorPresentation {
                 label: resident.label,
                 estimatedBytes: resident.bytes > 0 ? UInt64(resident.bytes) : nil,
                 processIdentifier: resident.processIdentifier,
-                processStartTime: resident.processStartTime
+                processStartTime: resident.processStartTime,
+                leaseNote: leaseNote(for: resident.id, pinnedIDs: pinnedIDs,
+                                     leaseDescriptions: leaseDescriptions)
             )
         }
         let otherModels = runtimes.compactMap { runtime -> Model? in
@@ -187,7 +202,8 @@ enum ResourceMonitorPresentation {
                 label: runtime.label,
                 estimatedBytes: runtime.estimatedBytes,
                 processIdentifier: runtime.processIdentifier,
-                processStartTime: runtime.processStartTime
+                processStartTime: runtime.processStartTime,
+                leaseNote: nil
             )
         }
         return (ggufModels + otherModels).sorted {
@@ -196,6 +212,13 @@ enum ResourceMonitorPresentation {
             }
             return $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending
         }
+    }
+
+    private static func leaseNote(for id: String, pinnedIDs: Set<String>,
+                                  leaseDescriptions: [String: [String]]) -> String? {
+        guard pinnedIDs.contains(id) else { return nil }
+        let purposes = leaseDescriptions[id] ?? []
+        return purposes.isEmpty ? "in use" : "in use — " + purposes.joined(separator: ", ")
     }
 
     static func memoryReading(for model: Model,
