@@ -76,6 +76,23 @@ targetTemplates:
           copyFiles:
             destination: resources
             subpath: lokalbot-cli
+      # Ship the privacy and redistribution notices inside every app bundle so
+      # a downloaded DMG remains self-describing without a network connection.
+      - path: LICENSE
+        buildPhase:
+          copyFiles:
+            destination: resources
+            subpath: Legal
+      - path: PRIVACY.md
+        buildPhase:
+          copyFiles:
+            destination: resources
+            subpath: Legal
+      - path: THIRD_PARTY_NOTICES.md
+        buildPhase:
+          copyFiles:
+            destination: resources
+            subpath: Legal
     dependencies:
       - package: FluidAudio
       - package: WhisperKit
@@ -121,17 +138,20 @@ targetTemplates:
       properties:
         CFBundleDisplayName: LokalBot
         CFBundleIconFile: AppIcon
-        CFBundleShortVersionString: "0.1.5"
-        CFBundleVersion: "6"
+        CFBundleShortVersionString: "0.2.0"
+        CFBundleVersion: "7"
         NSMicrophoneUsageDescription: >-
           LokalBot records your side of meetings from the microphone.
-          Audio never leaves this Mac.
+          Audio stays on this Mac; transcript text is sent off-device only if
+          you explicitly approve a remote inference server.
         NSAudioCaptureUsageDescription: >-
           LokalBot records the meeting app's audio output so the other
-          participants are captured. Audio never leaves this Mac.
+          participants are captured. Audio stays on this Mac; transcript text
+          is sent off-device only if you explicitly approve a remote server.
         NSCalendarsFullAccessUsageDescription: >-
           LokalBot reads your calendar to confirm meetings and title
-          recordings. Calendar data never leaves this Mac.
+          recordings. Approved remote inference servers may receive meeting
+          titles as context; LokalBot never sends calendar data otherwise.
         LSApplicationCategoryType: public.app-category.productivity
         # Sparkle auto-update. SUFeedURL points at the appcast published with
         # each GitHub release; SUPublicEDKey is the ed25519 public key whose

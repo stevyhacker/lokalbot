@@ -12,8 +12,13 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     nonisolated let supportsStreaming = false
 
     private static let repo = "ibm-granite/granite-speech-4.1-2b-GGUF"
+    private static let revision = "8267dad2adc84209b0efd2702ec68a98356125eb"
     nonisolated static let modelFileName = "granite-speech-4.1-2b-Q4_K_M.gguf"
     nonisolated static let projectorFileName = "mmproj-model-f16.gguf"
+    private static let modelBytes: Int64 = 1_139_247_200
+    private static let modelSHA256 = "d18e3e79826c4f0fa6734eb05d2db3f06baccbcd5791a83653f946b3178b35d8"
+    private static let projectorBytes: Int64 = 1_159_354_752
+    private static let projectorSHA256 = "0d3615076cbe1d35c3f60c43a60a4047b3e2eeee1b2c233580be60186faab5c5"
     private static let prompt = "transcribe the speech with proper punctuation and capitalization."
     private static let maxSegmentSeconds = 30.0
     private static let serverPort = 17_875
@@ -126,6 +131,8 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         try await Self.downloadIfNeeded(
             fileName: Self.modelFileName,
             destination: model,
+            expectedBytes: Self.modelBytes,
+            expectedSHA256: Self.modelSHA256,
             status: "Downloading Granite model...",
             progress: progress)
 
@@ -133,6 +140,8 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         try await Self.downloadIfNeeded(
             fileName: Self.projectorFileName,
             destination: projector,
+            expectedBytes: Self.projectorBytes,
+            expectedSHA256: Self.projectorSHA256,
             status: "Downloading Granite projector...",
             progress: progress)
 
@@ -149,22 +158,38 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     private nonisolated static func downloadIfNeeded(
         fileName: String,
         destination: URL,
+        expectedBytes: Int64,
+        expectedSHA256: String,
         status: String,
         progress: ModelPreparationProgressHandler?
     ) async throws {
-        if ModelFileValidator.looksLikeGGUF(destination) { return }
-        try? FileManager.default.removeItem(at: destination)
+        if ModelFileValidator.looksLikeGGUF(destination),
+           await DownloadIntegrity.verifiedExisting(
+               at: destination, expectedBytes: expectedBytes,
+               expectedSHA256: expectedSHA256) {
+            return
+        }
+        DownloadIntegrity.removeFileAndMarker(at: destination)
         report(.init(fractionCompleted: 0, status: status), to: progress)
 
-        let url = URL(string: "https://huggingface.co/\(repo)/resolve/main/\(fileName)")!
+        let url = URL(string: "https://huggingface.co/\(repo)/resolve/\(revision)/\(fileName)")!
         let stashed = try await ParallelRangeDownloader.download(from: url, session: .shared) { update in
             report(.init(fractionCompleted: update.fractionCompleted, status: status), to: progress)
         }
-        guard ModelFileValidator.looksLikeGGUF(stashed) else {
+        do {
+            guard ModelFileValidator.looksLikeGGUF(stashed) else {
+                throw EngineError.modelUnavailable
+            }
+            try await DownloadIntegrity.verifyDownloaded(
+                at: stashed, expectedBytes: expectedBytes, expectedSHA256: expectedSHA256)
+        } catch {
             DownloadFileRescuer.cleanup(stashed)
-            throw EngineError.modelUnavailable
+            throw error
         }
         try DownloadFileRescuer.install(stashed: stashed, to: destination)
+        DownloadIntegrity.removeFileAndMarker(at: stashed)
+        try DownloadIntegrity.markInstalled(
+            at: destination, expectedBytes: expectedBytes, expectedSHA256: expectedSHA256)
     }
 
     private nonisolated static func report(_ update: ModelPreparationUpdate,

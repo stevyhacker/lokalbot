@@ -6,11 +6,11 @@
 
 **Private AI meeting notes for your Mac — plus inline autocomplete, dictation, and a day timeline.**
 
-Records both sides of the call, writes the recap, and never uploads a byte — everything runs on-device. No account, no API keys, no cloud.
+Records both sides of the call and writes the recap with on-device models by default. No account, no telemetry, and no LokalBot cloud.
 
 ![macOS 15.0+](https://img.shields.io/badge/macOS-15.0%2B-000000?logo=apple&logoColor=white)
 ![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-required-1f6feb)
-![100% on-device](https://img.shields.io/badge/100%25-on--device-2ea043)
+![Local-first](https://img.shields.io/badge/local--first-on--device-2ea043)
 ![Price](https://img.shields.io/badge/price-free-2ea043)
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-2ea043)](LICENSE)
 ![Swift](https://img.shields.io/badge/Swift-FA7343?logo=swift&logoColor=white)
@@ -21,17 +21,17 @@ Records both sides of the call, writes the recap, and never uploads a byte — e
 
 ---
 
-LokalBot records both sides of your calls — no bot joining — then transcribes, summarizes, and indexes them for search, entirely on your Mac. Around that core it grew into a strictly-local AI workspace: **Cotyping** suggests text inline as you type in any app, **Dictation** turns a held **⌥ Space** into on-device speech-to-text wherever your cursor is, and a private timeline shows where your day went. Every model runs **on-device** on Apple Silicon — the only network call LokalBot ever makes is the one-time model download. Don't trust that claim; check it: point Little Snitch (or `lsof -i`) at it through a full meeting and watch the graph stay flat.
+LokalBot records both sides of your calls — no bot joining — then transcribes, summarizes, and indexes them for search on your Mac by default. Around that core it grew into a local-first AI workspace: **Cotyping** suggests text inline as you type in any app, **Dictation** turns a held **⌥ Space** into on-device speech-to-text wherever your cursor is, and a private timeline shows where your day went. Built-in models run on Apple Silicon. Network access is limited to model downloads, update checks, optional Agent Mode setup, and remote inference origins you explicitly approve. There is no LokalBot account, telemetry endpoint, or hosted AI backend.
 
 <div align="center">
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="Assets/superapp-diagram.svg">
   <source media="(prefers-color-scheme: light)" srcset="Assets/superapp-diagram-light.svg">
-  <img alt="LokalBot — one on-device model powering meetings, Cotyping, chat, search, day timeline, agent CLI, and bring-your-own models. Nothing leaves the device." src="Assets/superapp-diagram-light.svg" width="620">
+  <img alt="LokalBot — one on-device model powering meetings, Cotyping, chat, search, day timeline, agent CLI, and bring-your-own models. Local by default, with optional approved remote inference." src="Assets/superapp-diagram-light.svg" width="620">
 </picture>
 
-<sub>One local model, your whole workday — nothing leaves the Mac.</sub>
+<sub>One local model, your whole workday — on-device by default.</sub>
 
 </div>
 
@@ -48,8 +48,8 @@ LokalBot records both sides of your calls — no bot joining — then transcribe
 | | |
 | --- | --- |
 | **Your whole workday** | Meetings, notes, search, day tracking, and inline autocomplete, all in one app. |
-| **100% on-device** | Audio, transcripts, summaries, and models stay on your Mac. The only network calls are optional (downloading a model once). |
-| **Check, don't trust** | Run Little Snitch or `lsof -i` through a full record → transcribe → summarize cycle: zero connections. |
+| **Local by default** | Audio remains on your Mac; built-in transcription, summaries, search, and writing tools run there too. |
+| **Check, don't trust** | Audit the source or network traffic. You will see model/update downloads and only the remote inference origins you approve. |
 | **Free, no API keys** | Pick the best local model for each job and download it once. |
 | **Open source** | Read every line, or build it yourself. |
 
@@ -124,7 +124,7 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 <details>
 <summary><strong>Summarization &amp; notes</strong> — backends, templates, pipeline</summary>
 
-- **Backends** (Settings → Summarization, all HTTP-to-localhost only): **Built-in** (included llama.cpp runtime; choose/download a GGUF model) · **Apple Intelligence** (FoundationModels, macOS 26+, gated so the app still builds/launches on 15.0) · **Ollama** · **any OpenAI-compatible server** (LM Studio, vllm-mlx, …).
+- **Backends** (Settings → Summarization): **Built-in** (included localhost llama.cpp runtime; choose/download a GGUF model) · **Apple Intelligence** (FoundationModels, macOS 26+, gated so the app still builds/launches on 15.0) · **Ollama** · **any OpenAI-compatible server** (LM Studio, vllm-mlx, …). Non-loopback endpoints require explicit origin approval before context is sent.
 - **Output:** `summary.md` with TL;DR / Key points / Decisions / Action items / Open questions. Map-reduce for long meetings; `<think>` reasoning blocks are stripped.
 - **Templates & language:** pick a notes template (Meeting / Lecture / Study guide / Podcast / Free-form) and a summary language (auto-detected via `NLLanguageRecognizer`, with Simplified / Traditional / Cantonese handling). Prompt budgeting (`TokenCountEstimator`, `PromptContextSanitizer`, `PromptSectionBudget`) keeps prompts within the model's context.
 - **Pipeline:** runs automatically when a recording stops (configurable); serial queue with per-meeting status in the UI, plus a Process menu for manual re-runs.
@@ -166,7 +166,7 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 <details>
 <summary><strong>Ask assistant</strong> — conversational Q&amp;A over your library</summary>
 
-- **Chat with your meetings:** pressing ↵ in the **Ask** section escalates your query to a conversational assistant over your library — ask what was decided, find action items, or search transcripts in natural language. A small ReAct agent (`ChatAgent`) reuses the **same** local `TextEngine` as summaries and calls tools to ground every answer; nothing leaves the Mac.
+- **Chat with your meetings:** pressing ↵ in the **Ask** section escalates your query to a conversational assistant over your library — ask what was decided, find action items, or search transcripts in natural language. A small ReAct agent (`ChatAgent`) reuses the selected `TextEngine` and calls tools to ground every answer. With the built-in default it stays on the Mac; an approved remote backend receives the prompt context needed to answer.
 - **Tools (pi-agent style, mirroring the CLI):** `search_meetings` (FTS5 keyword + optional semantic search), `list_meetings` (filter by title), and `get_meeting` (read a meeting's summary or transcript). The agent picks a tool, reads the observation, then answers — citing meeting titles and dates, and saying so plainly when nothing matches.
 - **Robust protocol:** tools are advertised in the system prompt with the recent-meeting list as ambient context; a tool call is parsed from a JSON object **or** a model's native `name(arg=…)` function-call form (smaller Qwen models emit the latter), with a tolerant fallback to a plain answer so a sloppy reply never hard-fails.
 - **Reuses the configured backend:** built-in llama-server by default, or Ollama / OpenAI-compatible / Apple Intelligence — the same Settings → Summarization choice.
@@ -187,7 +187,7 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 <summary><strong>Cotyping</strong> — inline AI autocomplete</summary>
 
 - **Ghost text everywhere:** as you type in almost any macOS text field, a gray suggestion appears next to the cursor; press **Tab** to accept (a word at a time, or the whole thing — Settings → Cotyping), or keep typing / press **Esc** to dismiss. Built on the same loop as [Cotabby](https://cotabby.app): an Accessibility poll resolves the focused field + caret, a `CGEventTap` watches keystrokes (and swallows the accept key only while a suggestion shows), a borderless click-through `NSPanel` renders the ghost at the caret, and accepted text is inserted as synthetic Unicode keystrokes.
-- **Its own dedicated on-device model:** cotyping decodes a dedicated model (recommended **Gemma 4 · E4B**) **in-process via libllama** for low latency, with the localhost `llama-server` as the fallback (non-GGUF backends, the in-process runtime toggled off, or on model load failure). The prompt treats the model as a pure text-continuer; raw output is cleaned by a shared normalizer (strips chat/`<think>` scaffolding, prompt echoes, and trailing-text duplication; collapses to one line). Nothing leaves the Mac.
+- **Its own dedicated on-device model:** cotyping decodes a dedicated model (recommended **Gemma 4 · E4B**) **in-process via libllama** for low latency, with the localhost `llama-server` as the fallback. The prompt treats the model as a pure text-continuer; raw output is cleaned by a shared normalizer (strips chat/`<think>` scaffolding, prompt echoes, and trailing-text duplication; collapses to one line).
 - **Opt-in & private:** off by default; needs **Accessibility** + **Input Monitoring**. Never reads password/secure fields; honors a per-user app exclusion list (preseeded with password managers and terminals).
 - **In-app preview:** the **Type** section has a live playground that runs the real pipeline on text typed *inside LokalBot* — try it with zero system permissions. Quick-toggle from the menu bar.
 
@@ -220,18 +220,18 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="Assets/architecture-diagram.svg">
   <source media="(prefers-color-scheme: light)" srcset="Assets/architecture-diagram-light.svg">
-  <img alt="LokalBot's on-device pipeline: capture (mic as Me via AVAudioEngine, system audio as Them via a Core Audio process tap) → transcribe on the Neural Engine (Parakeet / Whisper / Qwen) with pyannote diarization → summarize on a local llama.cpp server → index in SQLite (FTS5 + vector embeddings). Search, chat, replay, cotyping, and the day timeline all read locally; nothing leaves the device except an optional one-time model download." src="Assets/architecture-diagram-light.svg" width="880">
+  <img alt="LokalBot's local-first pipeline: capture (mic as Me via AVAudioEngine, system audio as Them via a Core Audio process tap) → transcribe on-device → summarize with the built-in local model or an explicitly approved server → index locally in SQLite. Model and update downloads use the network." src="Assets/architecture-diagram-light.svg" width="880">
 </picture>
 
 </div>
 
 1. **It notices the meeting.** LokalBot watches for calls and starts recording both sides on its own — or you start it from the menu bar.
 2. **It transcribes and summarizes.** On-device models turn the audio into a labeled transcript and a structured recap the moment the call ends.
-3. **It stays on your Mac.** Everything lands in a local library you can search, replay, and hand to your tools. Nothing is uploaded.
+3. **Your library stays on your Mac.** Everything lands in a local library you can search, replay, and hand to trusted tools. Only approved remote inference receives request context.
 
 ## Privacy
 
-Privacy is the architecture, not a setting. Audio, transcripts, summaries, embeddings, screenshots, and activity all live in a local SQLite database and files under your account. No account, no telemetry, nothing uploaded.
+Privacy is the architecture, not a slogan. Audio, transcripts, summaries, embeddings, screenshots, and activity live in local SQLite and files under your account. There is no account or telemetry. Audio is never sent to a LokalBot service; text context leaves only for a non-loopback inference origin you explicitly approve.
 
 The only outbound connections LokalBot ever makes:
 
@@ -244,7 +244,7 @@ Don't take our word for it: run Little Snitch (or `lsof -i -nP | grep LokalBot`)
 ## Download
 
 > [!NOTE]
-> Releases are published on GitHub. The download is a signed early-access `.dmg`; models download on first run, then the app works fully offline.
+> Releases are published on GitHub as a `.dmg`. Selected models download on first use; after preparation, built-in inference works offline. Update checks and optional remote/agent features still use the network when enabled.
 
 - **[Download the latest release](https://github.com/stevyhacker/lokalbot/releases/latest)** · [all releases and notes](https://github.com/stevyhacker/lokalbot/releases)
 
@@ -256,7 +256,7 @@ Don't take our word for it: run Little Snitch (or `lsof -i -nP | grep LokalBot`)
 
 ## Build from source
 
-You'll need **Xcode 16+** with a signing team and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
+You'll need **Xcode 16+** with a signing team, [XcodeGen](https://github.com/yonaskolb/XcodeGen), and CMake (`brew install xcodegen cmake`).
 
 ```bash
 git clone https://github.com/stevyhacker/lokalbot.git
@@ -272,7 +272,7 @@ Set your team under **Signing & Capabilities**, pick a scheme, and Run:
 | **LokalBot** | `me.dotenv.LokalBot` | production; Sparkle auto-update compiled in |
 | **LokalBot Dev** | `me.dotenv.LokalBot.dev` | `LOKALBOT_DEV` flag; Sparkle compiled out. A distinct bundle id keeps its own Mic / Screen Recording / Accessibility grants, so running from Xcode never disturbs the released app |
 
-The first build runs `Scripts/fetch-llama.sh` (a pre-build phase) which vendors the pinned llama.cpp server (`b9844` — server + dylibs, ~10 MB) into `Vendor/`, copied into the app bundle. GGUF models are not bundled with the app; users choose and download them into Application Support. On first recording, macOS prompts for **Microphone** and **System Audio Recording**; transcription and screenshot models download from Hugging Face on first use.
+The first build runs `Scripts/fetch-llama.sh` (a pre-build phase), which verifies and compiles pinned llama.cpp source (`b9844` — server + dylibs, ~36 MB) for macOS 15 into `Vendor/`, then copies it into the app bundle. GGUF models are not bundled with the app; built-in models download into Application Support when first needed. On first recording, macOS prompts for **Microphone** and **System Audio Recording**; transcription and recap models prepare automatically before their first use.
 
 > The shipped app is **LokalBot** (`me.dotenv.LokalBot`); the Xcode project and scheme are named `LokalBot`.
 
@@ -291,7 +291,7 @@ Everything is configured in **Settings** inside the app:
 <details>
 <summary>Does anything leave my Mac?</summary>
 
-Your audio, transcripts, and summaries never leave the device. The only network calls are optional: downloading a model once, or pointing summaries at a backend you choose yourself.
+Audio stays on your Mac. Transcripts, summaries, screenshots, and workday context stay local with the built-in backend; if you approve a non-loopback Ollama or OpenAI-compatible origin, LokalBot sends the context required for requests to that server. The app also connects for model downloads, update checks, and optional Agent Mode setup. See [PRIVACY.md](PRIVACY.md).
 </details>
 
 <details>

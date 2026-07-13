@@ -76,6 +76,26 @@ grep -q "^## TL;DR" "$FIX/summary.md" 2>/dev/null \
   && grep -q "^## Action items" "$FIX/summary.md" \
   && pass "summary.md has TL;DR + Action items sections" || fail "summary sections"
 
+echo "== T2b: crash recovery (broken m4a → preserved PCM tee) =="
+RECOVERY="$ROOT/meetings/2026/06/e2e-recovery"
+mkdir -p "$RECOVERY"
+say -v Samantha -o /tmp/e2e_recovery.aiff \
+  "The crash recovery phrase is amber lighthouse. This audio must survive processing." 2>/dev/null
+afconvert -f caff -d LEF32@16000 /tmp/e2e_recovery.aiff "$RECOVERY/mic.live.caf"
+printf 'unfinished m4a container' > "$RECOVERY/mic.m4a"
+cat > "$RECOVERY/meta.json" <<'EOF'
+{"id":"7E57C0DE-0000-4000-8000-00000000E2E2","title":"E2E recovery","appName":"E2E",
+ "startedAt":"2026-06-10T10:00:00Z","endedAt":"2026-06-10T10:01:00Z",
+ "relativePath":"meetings/2026/06/e2e-recovery","hasSystemTrack":false}
+EOF
+"$BIN" --process "$RECOVERY" --no-summary >/dev/null 2>&1
+if grep -qi "amber lighthouse" "$RECOVERY/transcript.md" 2>/dev/null \
+   && [ -s "$RECOVERY/mic.live.caf" ]; then
+  pass "recovered transcript from CAF and preserved the sole playable audio"
+else
+  fail "crash recovery did not transcribe and preserve mic.live.caf"
+fi
+
 echo "== T3: keyword search (FTS5) =="
 "$BIN" --search "eviction policy" 2>/dev/null | grep -q "\[segment\]" \
   && pass "exact keyword hits a transcript segment" || fail "keyword search"

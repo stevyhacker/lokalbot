@@ -323,7 +323,9 @@ struct MeetingDetailView: View {
                 .keyboardShortcut(.space, modifiers: [])
                 .help("Play / pause (Space)")
 
-                WaveformView(url: folder.appendingPathComponent("mic.m4a"),
+                WaveformView(url: MeetingAudioFiles.readableURL(for: .mic, in: folder)
+                                 ?? MeetingAudioFiles.readableURL(for: .system, in: folder)
+                                 ?? MeetingAudioFiles.primaryURL(for: .mic, in: folder),
                              progress: progress) { p in
                     player.seek(to: p * player.duration)
                 }

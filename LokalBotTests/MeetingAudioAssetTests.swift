@@ -55,6 +55,56 @@ final class MeetingAudioAssetTests: XCTestCase {
                                                         hasSystemTrack: true).isEmpty)
     }
 
+    /// A process crash can leave an MP4 container on disk but unreadable. The
+    /// append-only CAF tee is then the only copy of the meeting and must remain
+    /// the source for playback and transcription until the user deletes it.
+    func testUnreadablePrimaryFallsBackToCrashSafeCAFWithoutDeletingIt() throws {
+        let folder = try temporaryFolder()
+        let primary = folder.appendingPathComponent("mic.m4a")
+        let recovery = folder.appendingPathComponent(AudioPreviewTee.micFileName)
+        try Data("unfinished m4a container".utf8).write(to: primary)
+        try writePCMTone(to: recovery, frequency: 440, duration: 0.5)
+
+        XCTAssertEqual(MeetingAudioFiles.readableURL(for: .mic, in: folder), recovery)
+        XCTAssertEqual(MeetingAudioFiles.transcribableURL(for: .mic, in: folder), recovery)
+        XCTAssertEqual(
+            MeetingAudioAsset.playbackSources(folder: folder, hasSystemTrack: false).map(\.url),
+            [recovery])
+
+        MeetingAudioFiles.removeRedundantRecoveryFiles(in: folder)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recovery.path),
+                      "recovery must preserve the only decodable meeting audio")
+    }
+
+    func testFinalizedPrimaryMakesCrashSafeCAFSafeToRemove() throws {
+        let folder = try temporaryFolder()
+        let primary = folder.appendingPathComponent("mic.m4a")
+        let recovery = folder.appendingPathComponent(AudioPreviewTee.micFileName)
+        try writeTone(to: primary, frequency: 440, duration: 0.5)
+        try writePCMTone(to: recovery, frequency: 440, duration: 0.5)
+
+        MeetingAudioFiles.removeRedundantRecoveryFiles(in: folder)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: primary.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recovery.path))
+    }
+
+    func testReadableButTruncatedPrimaryDoesNotReplaceLongerRecovery() throws {
+        let folder = try temporaryFolder()
+        let primary = folder.appendingPathComponent("mic.m4a")
+        let recovery = folder.appendingPathComponent(AudioPreviewTee.micFileName)
+        try writeTone(to: primary, frequency: 440, duration: 0.5)
+        try writePCMTone(to: recovery, frequency: 440, duration: 4)
+
+        XCTAssertEqual(MeetingAudioFiles.transcribableURL(for: .mic, in: folder), recovery)
+
+        MeetingAudioFiles.removeRedundantRecoveryFiles(in: folder)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recovery.path),
+                      "a decodable but truncated primary must not destroy fuller recovery audio")
+    }
+
     /// The mic and system files routinely differ in sample rate and channel
     /// count; the player must load both and report the longer duration. The
     /// previous composition-based player garbled mismatched tracks during
@@ -119,6 +169,24 @@ final class MeetingAudioAssetTests: XCTestCase {
                 AVSampleRateKey: sampleRate,
                 AVNumberOfChannelsKey: Int(channels),
             ])
+        try file.write(from: buffer)
+    }
+
+    private func writePCMTone(to url: URL, frequency: Double, duration: TimeInterval,
+                              sampleRate: Double = 16_000) throws {
+        let frameCount = AVAudioFrameCount(sampleRate * duration)
+        let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                                 sampleRate: sampleRate,
+                                                 channels: 1,
+                                                 interleaved: false))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount))
+        buffer.frameLength = frameCount
+        let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+        for index in 0..<Int(frameCount) {
+            samples[index] = Float(sin(2 * .pi * frequency * Double(index) / sampleRate) * 0.25)
+        }
+
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
         try file.write(from: buffer)
     }
 }

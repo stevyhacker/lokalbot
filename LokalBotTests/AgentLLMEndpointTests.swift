@@ -65,4 +65,27 @@ final class AgentLLMEndpointTests: XCTestCase {
             return XCTFail("expected unsupported resolution for missing OpenAI-compatible model")
         }
     }
+
+    func testRemoteOllamaRequiresExplicitApproval() {
+        var s = settings(.ollama)
+        s.ollamaBaseURL = "https://ollama.example.com"
+        s.ollamaModel = "qwen3:8b"
+
+        guard case .unsupported(let reason) = AgentLLMEndpointResolver.resolve(settings: s) else {
+            return XCTFail("expected remote Ollama to require approval")
+        }
+        XCTAssertTrue(reason.contains("Approve"))
+    }
+
+    func testApprovedRemoteOpenAICompatibleEndpointResolves() {
+        var s = settings(.openAICompatible)
+        s.openAIBaseURL = "https://inference.example.com/v1"
+        s.openAIModel = "private-model"
+        s.approvedRemoteInferenceOrigins = ["https://inference.example.com"]
+
+        guard case .ready(let endpoint) = AgentLLMEndpointResolver.resolve(settings: s) else {
+            return XCTFail("expected approved remote endpoint")
+        }
+        XCTAssertEqual(endpoint.baseURL.absoluteString, "https://inference.example.com/v1")
+    }
 }

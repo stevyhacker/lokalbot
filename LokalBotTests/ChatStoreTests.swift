@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 @testable import LokalBot
 
@@ -9,6 +10,7 @@ import XCTest
 final class ChatStoreTests: XCTestCase {
 
     private var root: URL!
+    private let encryptionKey = SymmetricKey(data: Data(repeating: 0xA5, count: 32))
 
     override func setUpWithError() throws {
         root = FileManager.default.temporaryDirectory
@@ -21,7 +23,7 @@ final class ChatStoreTests: XCTestCase {
     }
 
     func testSaveAndLoadRoundTrip() throws {
-        let store = ChatStore(rootURL: root)
+        let store = makeStore()
         let conversation = Conversation(
             title: "Pricing decision",
             messages: [
@@ -56,7 +58,7 @@ final class ChatStoreTests: XCTestCase {
     }
 
     func testLoadAllSortsByUpdatedAtDescending() {
-        let store = ChatStore(rootURL: root)
+        let store = makeStore()
         store.save(Conversation(title: "older", updatedAt: Date(timeIntervalSince1970: 1_000),
                                 messages: [ChatMessage(role: .user, text: "a")]))
         store.save(Conversation(title: "newer", updatedAt: Date(timeIntervalSince1970: 2_000),
@@ -65,7 +67,7 @@ final class ChatStoreTests: XCTestCase {
     }
 
     func testDeleteRemovesConversationFromDisk() {
-        let store = ChatStore(rootURL: root)
+        let store = makeStore()
         let conversation = Conversation(title: "temp", messages: [ChatMessage(role: .user, text: "x")])
         store.save(conversation)
         XCTAssertEqual(store.loadAll().count, 1)
@@ -74,7 +76,7 @@ final class ChatStoreTests: XCTestCase {
     }
 
     func testFilesOnDiskAreEncrypted() throws {
-        let store = ChatStore(rootURL: root)
+        let store = makeStore()
         store.save(Conversation(title: "Secret pricing strategy",
                                 messages: [ChatMessage(role: .user, text: "raise prices 20%")]))
 
@@ -99,12 +101,16 @@ final class ChatStoreTests: XCTestCase {
         try encoder.encode(conversation)
             .write(to: chats.appendingPathComponent("\(conversation.id.uuidString).json"))
 
-        let loaded = ChatStore(rootURL: root).loadAll()
+        let loaded = makeStore().loadAll()
         XCTAssertEqual(loaded.first?.title, "legacy", "legacy plaintext must still load")
 
         let files = try FileManager.default.contentsOfDirectory(at: chats, includingPropertiesForKeys: nil)
         XCTAssertTrue(files.contains { $0.pathExtension == "enc" }, "should have migrated to a sealed file")
         XCTAssertFalse(files.contains { $0.lastPathComponent == "\(conversation.id.uuidString).json" },
                        "plaintext must be removed once the sealed copy exists")
+    }
+
+    private func makeStore() -> ChatStore {
+        ChatStore(rootURL: root, encryptionKey: { [encryptionKey] in encryptionKey })
     }
 }

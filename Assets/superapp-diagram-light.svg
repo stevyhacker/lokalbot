@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg viewBox="0 0 680 700" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ttl dsc" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
   <title id="ttl">LokalBot — the local-LLM super-app for your Mac</title>
-  <desc id="dsc">One on-device language model at the center, connected to seven capabilities: meetings, cotyping autocomplete, chat, search, day timeline, agent CLI and bring-your-own models. Everything runs locally — nothing leaves the device.</desc>
+  <desc id="dsc">One on-device language model at the center, connected to seven capabilities: meetings, cotyping autocomplete, chat, search, day timeline, agent CLI and bring-your-own models. Built-in inference is local; approved remote inference is optional.</desc>
   <style>
     .lab{font-size:13px;font-weight:650;fill:#0D1B26;}
     .sub{font-size:10.5px;font-weight:450;fill:#5B6B76;}
@@ -111,10 +111,10 @@
 
   <!-- boundary tag -->
   <rect x="248" y="165" width="184" height="22" rx="11" fill="#FFFFFF" stroke="#16B3A1" stroke-opacity="0.6"/>
-  <text x="340" y="180" text-anchor="middle" font-size="10.5" letter-spacing="0.4" fill="#0C8C7D">nothing leaves your Mac</text>
+  <text x="340" y="180" text-anchor="middle" font-size="10.5" letter-spacing="0.4" fill="#0C8C7D">local by default</text>
 
   <!-- footer -->
   <line x1="70" y1="634" x2="610" y2="634" stroke="#E4E9EE"/>
-  <text x="340" y="657" text-anchor="middle" font-size="12" font-weight="600" fill="#2B3A44">100% on-device&#160;&#160;·&#160;&#160;no account&#160;&#160;·&#160;&#160;open source&#160;&#160;·&#160;&#160;Apple Silicon</text>
+  <text x="340" y="657" text-anchor="middle" font-size="12" font-weight="600" fill="#2B3A44">local-first&#160;&#160;·&#160;&#160;no account&#160;&#160;·&#160;&#160;open source&#160;&#160;·&#160;&#160;Apple Silicon</text>
   <text x="340" y="678" text-anchor="middle" font-size="11" fill="#7C8B95">25+ languages&#160;&#160;·&#160;&#160;~190× realtime&#160;&#160;·&#160;&#160;8 models / 5 engines&#160;&#160;·&#160;&#160;AES-GCM encrypted</text>
 </svg>

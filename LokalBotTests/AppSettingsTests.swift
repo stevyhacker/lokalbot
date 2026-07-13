@@ -97,6 +97,28 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(AppSettings().screenshotsEnabled)
     }
 
+    func testFreshInstallRequiresManualMeetingRecording() {
+        XCTAssertEqual(AppSettings().autoRecordMode, .manual)
+    }
+
+    func testApprovedRemoteInferenceOriginsRoundTrip() throws {
+        var settings = AppSettings()
+        settings.approvedRemoteInferenceOrigins = ["https://inference.example.com"]
+
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self, from: JSONEncoder().encode(settings))
+
+        XCTAssertEqual(decoded.approvedRemoteInferenceOrigins,
+                       ["https://inference.example.com"])
+    }
+
+    func testLegacySettingsHaveNoApprovedRemoteInferenceOrigins() throws {
+        let settings = try JSONDecoder().decode(
+            AppSettings.self, from: Data(#"{"autoTranscribe":false}"#.utf8))
+
+        XCTAssertTrue(settings.approvedRemoteInferenceOrigins.isEmpty)
+    }
+
     /// A settings blob saved by an existing install keeps whatever the user
     /// had — the new opt-in default only applies to fresh installs.
     func testExistingScreenshotChoiceSurvivesDefaultFlip() throws {

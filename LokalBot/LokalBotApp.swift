@@ -440,9 +440,7 @@ final class AppState: ObservableObject {
         // audio). Measure the actual playable length once and persist it.
         for i in loaded.indices where loaded[i].recordedDuration == nil && loaded[i].endedAt != nil {
             let folder = loaded[i].folderURL(in: storage)
-            if let recorded = ["mic.m4a", "system.m4a"]
-                .compactMap({ AudioFileInspector.duration(at: folder.appendingPathComponent($0)) })
-                .max() {
+            if let recorded = MeetingAudioFiles.longestDuration(in: folder) {
                 loaded[i].recordedDuration = recorded
                 try? storage.saveMeta(loaded[i])
             }

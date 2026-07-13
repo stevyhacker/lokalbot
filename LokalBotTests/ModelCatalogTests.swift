@@ -100,4 +100,15 @@ final class ModelCatalogTests: XCTestCase {
             XCTAssertNotNil(URL(string: entry.url), "\(entry.id) has an invalid URL")
         }
     }
+
+    func testCatalogDownloadsAreImmutableAndIntegrityPinned() throws {
+        for entry in ModelCatalog.entries {
+            XCTAssertFalse(entry.url.contains("/resolve/main/"),
+                           "\(entry.id) must pin an immutable Hugging Face revision")
+            let digest = try XCTUnwrap(entry.sha256, "\(entry.id) needs a SHA-256 digest")
+            XCTAssertNotNil(digest.range(of: #"^[0-9a-f]{64}$"#,
+                                         options: .regularExpression),
+                            "\(entry.id) has an invalid SHA-256 digest")
+        }
+    }
 }
