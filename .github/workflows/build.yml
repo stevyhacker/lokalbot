@@ -27,7 +27,10 @@ jobs:
   build:
     name: xcodebuild (macOS)
     runs-on: macos-15
-    timeout-minutes: 40
+    # A cold checksum-pinned llama.cpp source build can take more than 40
+    # minutes on GitHub's macOS runners. Keep enough headroom for that first
+    # build to finish and populate the shared Vendor cache.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 

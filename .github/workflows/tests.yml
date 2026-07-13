@@ -26,7 +26,9 @@ jobs:
   tests:
     name: xcodebuild test (macOS)
     runs-on: macos-15
-    timeout-minutes: 45
+    # Match the cold-build budget used by the compile gate, then leave room
+    # for the full app-hosted test suite before the Vendor cache is warm.
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
