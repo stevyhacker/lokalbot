@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Record Both Sides of a Mac Meeting Without a Bot</title>
+  <meta name="description" content="How LokalBot captures your microphone and meeting-app audio as synchronized tracks on macOS without adding a bot participant." />
+  <meta name="theme-color" content="#0b1119" />
+  <link rel="canonical" href="https://www.lokalbot.com/record-both-sides-mac-meeting-without-bot" />
+  <meta property="og:type" content="article" />
+  <meta property="og:url" content="https://www.lokalbot.com/record-both-sides-mac-meeting-without-bot" />
+  <meta property="og:title" content="Record Both Sides of a Mac Meeting Without a Bot" />
+  <meta property="og:description" content="How LokalBot captures your microphone and meeting-app audio as synchronized tracks on macOS without adding a bot participant." />
+  <meta property="og:image" content="https://www.lokalbot.com/assets/og-image.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://www.lokalbot.com/assets/og-image.png" />
+  <link rel="icon" href="assets/lokalbot-icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="icons.css" />
+  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Article","headline":"Record both sides of a Mac meeting without a bot","description":"How LokalBot captures your microphone and meeting-app audio as synchronized tracks on macOS without adding a bot participant.","datePublished":"2026-07-13","dateModified":"2026-07-13","mainEntityOfPage":"https://www.lokalbot.com/record-both-sides-mac-meeting-without-bot","image":"https://www.lokalbot.com/assets/og-image.png","author":{"@type":"Organization","name":"LokalBot project","url":"https://www.lokalbot.com/"},"publisher":{"@type":"Organization","name":"LokalBot project","url":"https://www.lokalbot.com/"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://www.lokalbot.com/"},{"@type":"ListItem","position":2,"name":"Guides","item":"https://www.lokalbot.com/guides"},{"@type":"ListItem","position":3,"name":"Record both sides of a Mac meeting without a bot","item":"https://www.lokalbot.com/record-both-sides-mac-meeting-without-bot"}]},{"@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Does LokalBot join Zoom or Google Meet?","acceptedAnswer":{"@type":"Answer","text":"No. It records the selected app's audio locally through macOS rather than joining as a participant."}},{"@type":"Question","name":"Can it identify every speaker?","acceptedAnswer":{"@type":"Answer","text":"It reliably separates your microphone from the remote track. Optional diarization can split remote speakers further, but accuracy depends on the audio."}},{"@type":"Question","name":"Is bot-free recording legal everywhere?","acceptedAnswer":{"@type":"Answer","text":"No recording method is automatically legal everywhere. You are responsible for notice, consent, workplace rules, and local law."}}]}]}</script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#guide">Skip to guide</a>
+  <div class="bg-field" aria-hidden="true"></div>
+  <header class="nav" id="top">
+    <a class="brand" href="/" aria-label="LokalBot home"><img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="32" height="32" /><span class="brand__name">LokalBot</span></a>
+    <nav class="nav__links" aria-label="Primary"><a href="/#features">Features</a><a href="/guides" aria-current="page">Guides</a><a href="/#compare">Compare</a></nav>
+    <div class="nav__actions"><a class="icon-link" href="https://github.com/stevyhacker/lokalbot" aria-label="LokalBot on GitHub" target="_blank" rel="noopener"><i class="ph ph-github-logo" aria-hidden="true"></i></a><a class="btn btn--primary btn--sm" href="https://github.com/stevyhacker/lokalbot/releases/latest" target="_blank" rel="noopener">Download</a></div>
+  </header>
+
+  <main class="guide-page" id="guide">
+    <header class="guide-hero">
+      <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a><span aria-hidden="true">/</span><a href="guides">Guides</a><span aria-hidden="true">/</span><span>Bot-free capture</span></nav>
+      <p class="eyebrow">Bot-free capture</p>
+      <h1>Record both sides of a Mac meeting without a bot</h1>
+      <p class="guide-hero__lead">A microphone alone misses the people coming through your speakers. A meeting bot changes the call. macOS process audio provides a third route.</p>
+      <p class="guide-byline"><time datetime="2026-07-13">Updated July 13, 2026</time> · 5 min read</p>
+    </header>
+
+    <article class="guide-article">
+<h2>Why ordinary recording falls short</h2>
+        <p>Your microphone is designed to capture your voice, not clean digital output from Zoom, Teams, Meet, Slack, Webex, or FaceTime. Turning the speakers up and recording the room mixes both sides with echo, keyboard noise, and acoustic processing. A cloud meeting bot avoids that acoustic problem but becomes another participant, may require calendar access, and sends the call through an external service.</p>
+
+        <h2>The two-track approach</h2>
+        <p>LokalBot records the microphone as the “Me” track. At the same time, a Core Audio process tap records the selected meeting application's output as “Them.” The tracks are kept synchronized and processed on the Mac. This gives the transcript an immediate speaker boundary without relying on a bot or trying to infer whether every sentence came from you.</p>
+        <p>When multiple remote participants speak, optional on-device diarization can divide the “Them” side into additional speakers. Diarization is probabilistic, so names and boundaries may still need editing after a difficult or overlapping conversation.</p>
+
+        <h2>What the other participants see</h2>
+        <p>No account joins the room, no virtual participant appears in the roster, and no bot announces itself. That makes the workflow less disruptive, but it does not make recording invisible in a legal or ethical sense. Tell people when required, obtain consent, and follow employer and platform policies. LokalBot is a personal recorder; it cannot decide whether a particular meeting may be recorded.</p>
+
+        <h2>Permissions and controls</h2>
+        <ul>
+          <li><strong>Microphone access</strong> captures your side.</li>
+          <li><strong>System-audio access</strong> enables the process tap for the other side.</li>
+          <li><strong>Manual recording</strong> is the fresh-install default.</li>
+          <li><strong>Ask-first or automatic modes</strong> can react to supported meeting apps after you enable them.</li>
+          <li><strong>Calendar access</strong> is optional and can help detect and title scheduled meetings.</li>
+        </ul>
+
+        <h2>After the call</h2>
+        <p>The selected local speech model transcribes the synchronized audio. The built-in language model can turn the transcript into a TL;DR, decisions, and action items. Because the capture sources are separate, you can replay the meeting with a clearer “Me” versus “Them” context and search from a result back to the relevant timestamp.</p>
+
+        <h2>A pre-meeting test worth doing</h2>
+        <p>Open the actual meeting app, play remote audio, speak into your microphone, and make a short recording. Verify that both tracks show activity and play back correctly. macOS permissions and device routing can change when you switch headsets, docks, or output devices, so repeat this check before an unusually important call.</p>
+    </article>
+
+    <section class="guide-faq" aria-labelledby="faq-title">
+      <p class="eyebrow">FAQ</p>
+      <h2 id="faq-title">Questions about this guide</h2>
+      <div class="faq__list">
+        <details class="qa">
+          <summary>Does LokalBot join Zoom or Google Meet?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>No. It records the selected app's audio locally through macOS rather than joining as a participant.</p>
+        </details>
+        <details class="qa">
+          <summary>Can it identify every speaker?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>It reliably separates your microphone from the remote track. Optional diarization can split remote speakers further, but accuracy depends on the audio.</p>
+        </details>
+        <details class="qa">
+          <summary>Is bot-free recording legal everywhere?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>No recording method is automatically legal everywhere. You are responsible for notice, consent, workplace rules, and local law.</p>
+        </details>
+      </div>
+    </section>
+
+    <section class="guide-related" aria-labelledby="related-title">
+      <p class="eyebrow">Keep reading</p>
+      <h2 id="related-title">Related LokalBot guides</h2>
+      <div class="guide-card-grid">
+        <a class="guide-card" href="local-ai-meeting-notes-mac">
+          <span class="guide-card__eyebrow">Local meeting notes</span>
+          <strong>Local AI meeting notes on your Mac</strong>
+          <span>How local AI meeting notes work on a Mac: bot-free capture, on-device transcription, private summaries, trade-offs, and setup.</span>
+        </a>
+        <a class="guide-card" href="offline-meeting-transcription-mac">
+          <span class="guide-card__eyebrow">Offline transcription</span>
+          <strong>Offline meeting transcription on Mac</strong>
+          <span>Set up offline meeting transcription on Apple Silicon with local speech models, two-track audio, timestamps, and no cloud upload.</span>
+        </a>
+        <a class="guide-card" href="system-requirements">
+          <span class="guide-card__eyebrow">Compatibility</span>
+          <strong>LokalBot system requirements</strong>
+          <span>Check LokalBot's macOS version, Apple Silicon, memory, disk, permissions, model downloads, and offline requirements before installing.</span>
+        </a>
+      </div>
+    </section>
+
+    <section class="section download guide-download">
+      <div class="download__panel">
+        <img class="download__icon" src="assets/lokalbot-icon.svg" alt="" width="80" height="80" />
+        <p class="eyebrow">Try it locally</p>
+        <h2 class="section__title">Meeting notes that stay on your Mac by default.</h2>
+        <p class="section__lead">Free, open source, and no account. Apple Silicon · macOS 15.0+</p>
+        <a class="btn btn--primary btn--lg" href="https://github.com/stevyhacker/lokalbot/releases/latest" target="_blank" rel="noopener"><i class="ph ph-download-simple" aria-hidden="true"></i>Download for macOS</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer__brand"><a class="brand" href="/"><img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="30" height="30" /><span class="brand__name">LokalBot</span></a><p>Local-first AI meeting notes for macOS — plus dictation, autocomplete, and a private day timeline.</p><p class="footer__meta">Apple Silicon · macOS 15.0+</p></div>
+    <nav class="footer__col" aria-label="Learn"><h3>Learn</h3><a href="guides">All guides</a><a href="local-ai-meeting-notes-mac">Local meeting notes</a><a href="local-transcription-models-mac">Model guide</a><a href="system-requirements">Requirements</a></nav>
+    <nav class="footer__col" aria-label="Compare"><h3>Compare</h3><a href="lokalbot-vs-granola">vs Granola</a><a href="lokalbot-vs-rewind">vs Rewind</a><a href="lokalbot-vs-superwhisper">vs Superwhisper</a><a href="lokalbot-vs-hyprnote">vs Hyprnote</a></nav>
+    <nav class="footer__col" aria-label="Project"><h3>Project</h3><a href="https://github.com/stevyhacker/lokalbot">GitHub</a><a href="privacy">Privacy</a><a href="terms">Terms</a><a href="support">Support</a></nav>
+    <p class="footer__legal">Local by default. Record with consent. Your meetings are yours.</p>
+  </footer>
+</body>
+</html>
