@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LokalBot System Requirements for Mac</title>
+  <meta name="description" content="Check LokalBot's macOS version, Apple Silicon, memory, disk, permissions, model downloads, and offline requirements before installing." />
+  <meta name="theme-color" content="#0b1119" />
+  <link rel="canonical" href="https://www.lokalbot.com/system-requirements" />
+  <meta property="og:type" content="article" />
+  <meta property="og:url" content="https://www.lokalbot.com/system-requirements" />
+  <meta property="og:title" content="LokalBot System Requirements for Mac" />
+  <meta property="og:description" content="Check LokalBot's macOS version, Apple Silicon, memory, disk, permissions, model downloads, and offline requirements before installing." />
+  <meta property="og:image" content="https://www.lokalbot.com/assets/og-image.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://www.lokalbot.com/assets/og-image.png" />
+  <link rel="icon" href="assets/lokalbot-icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="icons.css" />
+  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Article","headline":"LokalBot system requirements","description":"Check LokalBot's macOS version, Apple Silicon, memory, disk, permissions, model downloads, and offline requirements before installing.","datePublished":"2026-07-13","dateModified":"2026-07-13","mainEntityOfPage":"https://www.lokalbot.com/system-requirements","image":"https://www.lokalbot.com/assets/og-image.png","author":{"@type":"Organization","name":"LokalBot project","url":"https://www.lokalbot.com/"},"publisher":{"@type":"Organization","name":"LokalBot project","url":"https://www.lokalbot.com/"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://www.lokalbot.com/"},{"@type":"ListItem","position":2,"name":"Guides","item":"https://www.lokalbot.com/guides"},{"@type":"ListItem","position":3,"name":"LokalBot system requirements","item":"https://www.lokalbot.com/system-requirements"}]},{"@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Does LokalBot support Intel Macs?","acceptedAnswer":{"@type":"Answer","text":"No. Apple Silicon (M1 or later) is required."}},{"@type":"Question","name":"Does it support macOS 14?","acceptedAnswer":{"@type":"Answer","text":"No. The minimum supported version is macOS 15.0."}},{"@type":"Question","name":"Do I need 32 GB of memory?","acceptedAnswer":{"@type":"Answer","text":"No. Smaller models run on lower-memory Apple Silicon Macs. The 32 GB recommendation applies to the largest local language-model choices."}}]}]}</script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#guide">Skip to guide</a>
+  <div class="bg-field" aria-hidden="true"></div>
+  <header class="nav" id="top">
+    <a class="brand" href="/" aria-label="LokalBot home"><img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="32" height="32" /><span class="brand__name">LokalBot</span></a>
+    <nav class="nav__links" aria-label="Primary"><a href="/#features">Features</a><a href="/guides" aria-current="page">Guides</a><a href="/#compare">Compare</a></nav>
+    <div class="nav__actions"><a class="icon-link" href="https://github.com/stevyhacker/lokalbot" aria-label="LokalBot on GitHub" target="_blank" rel="noopener"><i class="ph ph-github-logo" aria-hidden="true"></i></a><a class="btn btn--primary btn--sm" href="https://github.com/stevyhacker/lokalbot/releases/latest" target="_blank" rel="noopener">Download</a></div>
+  </header>
+
+  <main class="guide-page" id="guide">
+    <header class="guide-hero">
+      <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a><span aria-hidden="true">/</span><a href="guides">Guides</a><span aria-hidden="true">/</span><span>Compatibility</span></nav>
+      <p class="eyebrow">Compatibility</p>
+      <h1>LokalBot system requirements</h1>
+      <p class="guide-hero__lead">The short version: an Apple Silicon Mac on macOS 15 or later, enough disk for your selected models, and permission to capture the audio you choose.</p>
+      <p class="guide-byline"><time datetime="2026-07-13">Updated July 13, 2026</time> · 5 min read</p>
+    </header>
+
+    <article class="guide-article">
+<h2>Required hardware and software</h2>
+        <ul>
+          <li><strong>Mac:</strong> Apple Silicon — M1 or later.</li>
+          <li><strong>Operating system:</strong> macOS 15.0 or later.</li>
+          <li><strong>Disk:</strong> room for the app, recordings, and selected models.</li>
+          <li><strong>Internet:</strong> required for the initial app and model downloads; optional for the built-in workflow after setup.</li>
+        </ul>
+        <p>Intel Macs are not supported. LokalBot is built around Apple Silicon acceleration, Core Audio process taps, the Neural Engine, MLX, and Metal rather than treating macOS as one target among many.</p>
+
+        <h2>How much memory do you need?</h2>
+        <p>The application runs across the supported Apple Silicon range, but local language-model choice changes the practical memory requirement. Compact built-in models start around 0.53–1.28 GB. Several balanced summary and cotyping models recommend 16 GB of unified memory. The largest long-meeting models in the catalog are roughly 16.8–17.73 GB on disk and target Macs with 32 GB or more.</p>
+        <p>You do not need the largest model to record or transcribe a meeting. Choose a compact speech model and a smaller summarizer first, then move up only if the quality gain is worthwhile on your hardware.</p>
+
+        <h2>Plan disk space by workflow</h2>
+        <ul>
+          <li><strong>Compact setup:</strong> a roughly 0.7 GB Qwen3-ASR speech model plus a small 0.53–1.28 GB language model.</li>
+          <li><strong>Broader transcription:</strong> Whisper large-v3 turbo is roughly 1.6 GB; Qwen3-ASR 1.7B is roughly 3.2 GB.</li>
+          <li><strong>Quality-focused summaries:</strong> larger catalog choices add about 5–18 GB each.</li>
+          <li><strong>Meetings:</strong> audio, transcripts, and optional screenshots use additional space over time.</li>
+        </ul>
+        <p>These numbers describe model downloads and may change when publishers update packaging. LokalBot lets you choose rather than downloading every model.</p>
+
+        <h2>macOS permissions</h2>
+        <p>Grant only the permissions for features you intend to use:</p>
+        <ul>
+          <li><strong>Microphone</strong> records your voice.</li>
+          <li><strong>System audio / Screen Recording</strong> enables the selected meeting-app audio capture and opt-in screen context.</li>
+          <li><strong>Calendar</strong> helps detect and title scheduled meetings.</li>
+          <li><strong>Accessibility</strong> supports meeting detection, Cotyping, dictation insertion, and approved agent interaction.</li>
+        </ul>
+        <p>Manual recording is the default on a fresh install. Screenshots are separately opt-in, encrypted at rest, and deleted after 14 days by default.</p>
+
+        <h2>Before an important meeting</h2>
+        <ol>
+          <li>Install the latest release and finish the selected model downloads.</li>
+          <li>Confirm the required macOS permissions in System Settings.</li>
+          <li>Make a short recording in the actual meeting application.</li>
+          <li>Play back both the microphone and system-audio tracks.</li>
+          <li>Process the recording once, offline if offline use matters.</li>
+        </ol>
+    </article>
+
+    <section class="guide-faq" aria-labelledby="faq-title">
+      <p class="eyebrow">FAQ</p>
+      <h2 id="faq-title">Questions about this guide</h2>
+      <div class="faq__list">
+        <details class="qa">
+          <summary>Does LokalBot support Intel Macs?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>No. Apple Silicon (M1 or later) is required.</p>
+        </details>
+        <details class="qa">
+          <summary>Does it support macOS 14?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>No. The minimum supported version is macOS 15.0.</p>
+        </details>
+        <details class="qa">
+          <summary>Do I need 32 GB of memory?<i class="ph ph-plus" aria-hidden="true"></i></summary>
+          <p>No. Smaller models run on lower-memory Apple Silicon Macs. The 32 GB recommendation applies to the largest local language-model choices.</p>
+        </details>
+      </div>
+    </section>
+
+    <section class="guide-related" aria-labelledby="related-title">
+      <p class="eyebrow">Keep reading</p>
+      <h2 id="related-title">Related LokalBot guides</h2>
+      <div class="guide-card-grid">
+        <a class="guide-card" href="local-transcription-models-mac">
+          <span class="guide-card__eyebrow">Model guide</span>
+          <strong>Local transcription models for Mac</strong>
+          <span>Compare Granite Speech, Parakeet, Qwen3-ASR, and Whisper for private on-device meeting transcription on Apple Silicon.</span>
+        </a>
+        <a class="guide-card" href="offline-meeting-transcription-mac">
+          <span class="guide-card__eyebrow">Offline transcription</span>
+          <strong>Offline meeting transcription on Mac</strong>
+          <span>Set up offline meeting transcription on Apple Silicon with local speech models, two-track audio, timestamps, and no cloud upload.</span>
+        </a>
+        <a class="guide-card" href="record-both-sides-mac-meeting-without-bot">
+          <span class="guide-card__eyebrow">Bot-free capture</span>
+          <strong>Record both sides of a Mac meeting without a bot</strong>
+          <span>How LokalBot captures your microphone and meeting-app audio as synchronized tracks on macOS without adding a bot participant.</span>
+        </a>
+      </div>
+    </section>
+
+    <section class="section download guide-download">
+      <div class="download__panel">
+        <img class="download__icon" src="assets/lokalbot-icon.svg" alt="" width="80" height="80" />
+        <p class="eyebrow">Try it locally</p>
+        <h2 class="section__title">Meeting notes that stay on your Mac by default.</h2>
+        <p class="section__lead">Free, open source, and no account. Apple Silicon · macOS 15.0+</p>
+        <a class="btn btn--primary btn--lg" href="https://github.com/stevyhacker/lokalbot/releases/latest" target="_blank" rel="noopener"><i class="ph ph-download-simple" aria-hidden="true"></i>Download for macOS</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer__brand"><a class="brand" href="/"><img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="30" height="30" /><span class="brand__name">LokalBot</span></a><p>Local-first AI meeting notes for macOS — plus dictation, autocomplete, and a private day timeline.</p><p class="footer__meta">Apple Silicon · macOS 15.0+</p></div>
+    <nav class="footer__col" aria-label="Learn"><h3>Learn</h3><a href="guides">All guides</a><a href="local-ai-meeting-notes-mac">Local meeting notes</a><a href="local-transcription-models-mac">Model guide</a><a href="system-requirements">Requirements</a></nav>
+    <nav class="footer__col" aria-label="Compare"><h3>Compare</h3><a href="lokalbot-vs-granola">vs Granola</a><a href="lokalbot-vs-rewind">vs Rewind</a><a href="lokalbot-vs-superwhisper">vs Superwhisper</a><a href="lokalbot-vs-hyprnote">vs Hyprnote</a></nav>
+    <nav class="footer__col" aria-label="Project"><h3>Project</h3><a href="https://github.com/stevyhacker/lokalbot">GitHub</a><a href="privacy">Privacy</a><a href="terms">Terms</a><a href="support">Support</a></nav>
+    <p class="footer__legal">Local by default. Record with consent. Your meetings are yours.</p>
+  </footer>
+</body>
+</html>

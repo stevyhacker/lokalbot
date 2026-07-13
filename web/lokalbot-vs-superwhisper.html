@@ -4,26 +4,27 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>LokalBot vs Superwhisper: on-device dictation compared</title>
-  <meta name="description" content="Superwhisper is a deep, dedicated dictation app. LokalBot includes hold-⌥-Space dictation as one feature of a free, open-source on-device workspace with meetings, a day timeline, and autocomplete." />
+  <meta name="description" content="Compare Superwhisper's dictation with LokalBot's free, open-source Mac workspace for dictation, meetings, autocomplete, and a day timeline." />
   <meta name="theme-color" content="#0b1119" />
 
-  <link rel="canonical" href="https://www.lokalbot.com/lokalbot-vs-superwhisper.html" />
+  <link rel="canonical" href="https://www.lokalbot.com/lokalbot-vs-superwhisper" />
   <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://www.lokalbot.com/lokalbot-vs-superwhisper.html" />
+  <meta property="og:url" content="https://www.lokalbot.com/lokalbot-vs-superwhisper" />
   <meta property="og:title" content="LokalBot vs Superwhisper — on-device dictation compared" />
   <meta property="og:description" content="One is a dedicated dictation tool. The other is a free, open-source workspace where dictation is one of five features. An honest comparison." />
   <meta property="og:image" content="https://www.lokalbot.com/assets/og-image.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
   <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="LokalBot vs Superwhisper — on-device dictation compared" />
+  <meta name="twitter:description" content="One is a dedicated dictation tool. The other is a free, open-source workspace where dictation is one of five features. An honest comparison." />
   <meta name="twitter:image" content="https://www.lokalbot.com/assets/og-image.png" />
 
   <link rel="icon" href="assets/lokalbot-icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="assets/lokalbot-icon.svg" />
 
-  <link rel="preconnect" href="https://unpkg.com" crossorigin />
   <link rel="stylesheet" href="styles.css" />
-  <script src="https://unpkg.com/@phosphor-icons/web@2.1.1" defer></script>
+  <link rel="stylesheet" href="icons.css" />
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -46,20 +47,20 @@
 
   <!-- ───────────────────────── NAV ───────────────────────── -->
   <header class="nav" id="top">
-    <a class="brand" href="index.html" aria-label="LokalBot home">
+    <a class="brand" href="/" aria-label="LokalBot home">
       <img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="32" height="32" />
       <span class="brand__name">LokalBot</span>
     </a>
     <nav class="nav__links" aria-label="Primary">
-      <a href="index.html#features">Features</a>
-      <a href="index.html#how">How it works</a>
-      <a href="index.html#privacy">Privacy</a>
+      <a href="/#features">Features</a>
+      <a href="/#how">How it works</a>
+      <a href="/guides">Guides</a>
     </nav>
     <div class="nav__actions">
       <a class="icon-link" href="https://github.com/stevyhacker/lokalbot" aria-label="LokalBot on GitHub" target="_blank" rel="noopener">
         <i class="ph ph-github-logo" aria-hidden="true"></i>
       </a>
-      <a class="btn btn--primary btn--sm" href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">Download</a>
+      <a class="btn btn--primary btn--sm" href="https://github.com/stevyhacker/lokalbot/releases/latest" target="_blank" rel="noopener">Download</a>
     </div>
   </header>
 
@@ -189,8 +190,8 @@
         <img class="download__icon" src="assets/lokalbot-icon.svg" alt="" width="80" height="80" />
         <p class="eyebrow">Download</p>
         <h2 class="section__title">Speak anywhere. Stays on your Mac.</h2>
-        <p class="section__lead">Free and open source. Models download on first run, then it works fully offline.</p>
-        <a class="btn btn--primary btn--lg" href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">
+        <p class="section__lead">Free and open source. Models download on first use; built-in inference then works offline.</p>
+        <a class="btn btn--primary btn--lg" href="https://github.com/stevyhacker/lokalbot/releases/latest" target="_blank" rel="noopener">
           <i class="ph ph-download-simple" aria-hidden="true"></i>
           Download for macOS
         </a>
@@ -201,9 +202,9 @@
     <!-- ─────────────────────── MORE ─────────────────────── -->
     <section class="section section--tight" aria-label="More comparisons">
       <nav class="compare-more">
-        <a href="lokalbot-vs-granola.html">LokalBot vs Granola</a>
-        <a href="lokalbot-vs-rewind.html">LokalBot vs Rewind</a>
-        <a href="lokalbot-vs-hyprnote.html">LokalBot vs Hyprnote</a>
+        <a href="lokalbot-vs-granola">LokalBot vs Granola</a>
+        <a href="lokalbot-vs-rewind">LokalBot vs Rewind</a>
+        <a href="lokalbot-vs-hyprnote">LokalBot vs Hyprnote</a>
       </nav>
       <p class="compare-disclaimer">Superwhisper is a trademark of its owner; LokalBot is not affiliated with or endorsed by it. Details are based on public pages and pricing as of July 2026 and may change — if something here is wrong or out of date, <a href="https://github.com/stevyhacker/lokalbot/issues" target="_blank" rel="noopener">open an issue</a> and we'll fix it.</p>
     </section>
@@ -212,7 +213,7 @@
   <!-- ───────────────────────── FOOTER ───────────────────────── -->
   <footer class="footer">
     <div class="footer__brand">
-      <a class="brand" href="index.html">
+      <a class="brand" href="/">
         <img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="30" height="30" />
         <span class="brand__name">LokalBot</span>
       </a>
@@ -220,25 +221,29 @@
       <p class="footer__meta">Apple Silicon &middot; macOS 15.0+</p>
     </div>
     <nav class="footer__col" aria-label="Product">
-      <h4>Product</h4>
-      <a href="index.html#features">Features</a>
-      <a href="index.html#how">How it works</a>
-      <a href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">Download</a>
+      <h3>Product</h3>
+      <a href="/#features">Features</a>
+      <a href="/#how">How it works</a>
+      <a href="https://github.com/stevyhacker/lokalbot/releases/latest" target="_blank" rel="noopener">Download</a>
     </nav>
     <nav class="footer__col" aria-label="Compare">
-      <h4>Compare</h4>
-      <a href="lokalbot-vs-granola.html">vs Granola</a>
-      <a href="lokalbot-vs-rewind.html">vs Rewind</a>
-      <a href="lokalbot-vs-superwhisper.html">vs Superwhisper</a>
-      <a href="lokalbot-vs-hyprnote.html">vs Hyprnote</a>
+      <h3>Compare</h3>
+      <a href="lokalbot-vs-granola">vs Granola</a>
+      <a href="lokalbot-vs-rewind">vs Rewind</a>
+      <a href="lokalbot-vs-superwhisper">vs Superwhisper</a>
+      <a href="lokalbot-vs-hyprnote">vs Hyprnote</a>
     </nav>
     <nav class="footer__col" aria-label="Project">
-      <h4>Project</h4>
+      <h3>Project</h3>
       <a href="https://github.com/stevyhacker/lokalbot" target="_blank" rel="noopener">GitHub</a>
+      <a href="/guides">Guides</a>
       <a href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">Releases</a>
       <a href="https://github.com/stevyhacker/lokalbot#build--run" target="_blank" rel="noopener">Build from source</a>
+      <a href="privacy">Privacy</a>
+      <a href="terms">Terms</a>
+      <a href="support">Support</a>
     </nav>
-    <p class="footer__legal">Runs entirely on your Mac. Your meetings are yours.</p>
+    <p class="footer__legal">Local by default. Record with consent. Your meetings are yours.</p>
   </footer>
 </body>
 </html>

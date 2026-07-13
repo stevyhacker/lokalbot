@@ -15,11 +15,11 @@ PAGES = [
     {
         "slug": 'lokalbot-vs-granola',
         "title": 'LokalBot vs Granola: the on-device, open-source alternative',
-        "description": 'Granola is a polished cloud AI notepad. LokalBot keeps the bot-free meeting workflow but runs transcription and summaries on your Mac — no account, no upload, free and GPLv3.',
+        "description": "Compare Granola's cloud AI notepad with LokalBot's bot-free, on-device meeting notes for Mac. Free, open source, and no account.",
         "og_title": 'LokalBot vs Granola — the on-device alternative',
-        "og_description": 'Same bot-free meeting notes, zero cloud: transcription and summaries run on your Mac. Free, open source, no account.',
+        "og_description": 'Same bot-free meeting notes, with built-in transcription and summaries on your Mac. Free, open source, no account.',
         "h1": 'LokalBot vs Granola',
-        "lead": 'Granola is one of the most polished AI notepads around — bot-free capture, great templates, strong team features. The trade-off is that your meetings are processed in the cloud, under an account. LokalBot keeps the bot-free workflow but runs the AI on your Mac: no account, no upload, nothing to opt out of.',
+        "lead": 'Granola is one of the most polished AI notepads around — bot-free capture, great templates, strong team features. The trade-off is that your meetings are processed in the cloud, under an account. LokalBot keeps the bot-free workflow but uses built-in AI on your Mac by default: no account, no LokalBot backend, and optional remote inference only when you approve its origin.',
         "competitor_column": 'Granola',
         "table_rows": [
             (
@@ -44,7 +44,7 @@ PAGES = [
             ),
             (
                 'Model training on your data',
-                'Nothing leaves the Mac, so there is nothing to opt out of',
+                'No LokalBot training pipeline or telemetry; approved remote servers have their own terms',
                 '<span class="dim">&ldquo;Opt out of model training any time&rdquo; is a listed plan feature</span>',
             ),
             (
@@ -96,11 +96,11 @@ PAGES = [
         "faq": [
             (
                 "Isn't bot-free capture the differentiator?",
-                'Not anymore — Granola and several others skip the meeting bot now. The differentiator is where processing happens. LokalBot transcribes and summarizes on the Mac itself; your audio and notes are never uploaded anywhere.',
+                'Not anymore — Granola and several others skip the meeting bot now. The differentiator is where processing happens. LokalBot transcribes and summarizes on the Mac with its built-in default; if you opt into a remote inference server, it receives the request context.',
             ),
             (
                 'What does LokalBot send over the network?',
-                'A one-time model download and update checks. Meeting audio, transcripts, summaries, and screenshots never leave the machine — there is no backend to send them to.',
+                'Model downloads, update checks, optional Agent Mode setup, and remote inference origins you explicitly approve. Audio stays on the Mac; built-in inference keeps transcript and workday context there too.',
             ),
             (
                 'Can I try LokalBot next to Granola?',
@@ -113,11 +113,11 @@ PAGES = [
     {
         "slug": 'lokalbot-vs-rewind',
         "title": "LokalBot vs Rewind: a local timeline that's still alive",
-        "description": "Rewind's Mac app is discontinued — the team became Limitless, acquired by Meta. LokalBot's day timeline keeps the idea on your Mac: screenshots, OCR, and meetings, open source.",
+        "description": "Compare discontinued Rewind with LokalBot's local day timeline, searchable meeting notes, encrypted screenshots, and open-source Mac app.",
         "og_title": "LokalBot vs Rewind — a local timeline that's still alive",
         "og_description": "Rewind is gone. LokalBot's day timeline carries the idea forward: screenshots, OCR, and meetings — on your Mac, open source.",
         "h1": 'LokalBot vs Rewind',
-        "lead": "Rewind pioneered &ldquo;search everything you've seen on your Mac.&rdquo; Its app is now discontinued: the team pivoted to the Limitless wearable, Meta acquired Limitless in December 2025, and rewind.ai today hosts an unrelated site. LokalBot's day timeline carries the idea forward — smaller, open source, and still entirely on your Mac.",
+        "lead": "Rewind pioneered &ldquo;search everything you've seen on your Mac.&rdquo; Its app is now discontinued: the team pivoted to the Limitless wearable, Meta acquired Limitless in December 2025, and rewind.ai today hosts an unrelated site. LokalBot's day timeline carries the idea forward — smaller, open source, and processed on your Mac with the built-in backend.",
         "competitor_column": 'Rewind (as it was)',
         "table_rows": [
             (
@@ -205,7 +205,7 @@ PAGES = [
     {
         "slug": 'lokalbot-vs-superwhisper',
         "title": 'LokalBot vs Superwhisper: on-device dictation compared',
-        "description": 'Superwhisper is a deep, dedicated dictation app. LokalBot includes hold-⌥-Space dictation as one feature of a free, open-source on-device workspace with meetings, a day timeline, and autocomplete.',
+        "description": "Compare Superwhisper's dictation with LokalBot's free, open-source Mac workspace for dictation, meetings, autocomplete, and a day timeline.",
         "og_title": 'LokalBot vs Superwhisper — on-device dictation compared',
         "og_description": 'One is a dedicated dictation tool. The other is a free, open-source workspace where dictation is one of five features. An honest comparison.',
         "h1": 'LokalBot vs Superwhisper',
@@ -291,8 +291,8 @@ PAGES = [
     },
     {
         "slug": 'lokalbot-vs-hyprnote',
-        "title": 'LokalBot vs Hyprnote (anarlog): two open-source local notetakers',
-        "description": 'Hyprnote — now anarlog — is a kindred open-source, local-first meeting notetaker. How LokalBot differs: built-in local AI with no API keys, GPLv3, plus dictation, a day timeline, and autocomplete.',
+        "title": 'LokalBot vs Hyprnote: Open-Source Local Notes',
+        "description": 'Compare two open-source local meeting notetakers: built-in local AI, cloud options, storage, license, dictation, and day timeline.',
         "og_title": 'LokalBot vs Hyprnote — two open-source local notetakers',
         "og_description": 'Both are open-source and local-first. They differ on scope, built-in local AI vs bring-your-own keys, and license.',
         "h1": 'LokalBot vs Hyprnote',
