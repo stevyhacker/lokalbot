@@ -179,6 +179,7 @@ final class ChatAgentTests: XCTestCase {
         let prompt = ChatPrompt.systemPrompt(tools: [], libraryOverview: "")
         XCTAssertTrue(prompt.contains("[meeting:ID]"))
         XCTAssertTrue(prompt.contains("[meeting:ID@HH:MM:SS]"))
+        XCTAssertTrue(prompt.contains("[screen:ID]"))
     }
 
     func testSystemPromptListsToolsAndLibrary() {
@@ -408,6 +409,7 @@ final class ChatAgentTests: XCTestCase {
                                                arguments: ["query": "refund invoice"]))
         XCTAssertTrue(hit.text.contains("Safari"), "screen: \(hit.text)")
         XCTAssertTrue(hit.text.contains("Stripe invoicing docs"), "screen: \(hit.text)")
+        XCTAssertTrue(hit.text.contains("[screen:"), "screen citation: \(hit.text)")
 
         // Natural-language question rescued by the relaxed OR fallback.
         let rescued = await tools.run(ChatToolCall(name: "search_screen",

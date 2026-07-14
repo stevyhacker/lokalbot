@@ -42,10 +42,203 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(shot.trigger, "window_change")
 
         let hit = try XCTUnwrap(store.searchOCR("revenue").first)
+        XCTAssertEqual(hit.snapshotID, id)
+        XCTAssertEqual(hit.id, id)
         XCTAssertEqual(hit.windowTitle, "Quarterly report — Google Docs")
+        XCTAssertEqual(store.screenshot(id: id)?.id, id)
+        XCTAssertEqual(store.ocrText(snapshotID: id), "Q3 revenue grew 14 percent")
 
         // Window titles are indexed too: a query matching only the title hits.
         XCTAssertEqual(store.searchOCR("quarterly").count, 1)
+    }
+
+    func testScreenshotAndOCRFiltersUseHalfOpenDateRangeAndExactApp() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ActivityStore(databaseURL: url)
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let safariID = try store.insertScreenshot(
+            ts: base, path: "/tmp/safari.heic.enc", app: "Safari",
+            ocr: "shared launch checklist")
+        _ = try store.insertScreenshot(
+            ts: base.addingTimeInterval(60), path: "/tmp/xcode.heic.enc", app: "Xcode",
+            ocr: "shared compile checklist")
+        _ = try store.insertScreenshot(
+            ts: base.addingTimeInterval(120), path: "/tmp/later.heic.enc", app: "Safari",
+            ocr: "shared later checklist")
+        let interval = DateInterval(start: base, end: base.addingTimeInterval(120))
+
+        XCTAssertEqual(
+            store.screenshots(in: interval, app: "sAfArI").map(\.id),
+            [safariID])
+        XCTAssertEqual(
+            store.searchOCR(
+                "shared", filter: ScreenSearchFilter(interval: interval, app: "SAFARI"))
+                .map(\.snapshotID),
+            [safariID])
+    }
+
+    func testSavedMomentsPersistNotesAndBookmarkState() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ActivityStore(databaseURL: url)
+        let snapshotID = try store.insertScreenshot(
+            ts: Date(), path: "/tmp/moment.heic.enc", app: "Notes",
+            windowTitle: "Project plan", trigger: "manual", ocr: "launch plan")
+
+        try store.saveMoment(snapshotID: snapshotID, note: "Decision source")
+        let createdAt = try XCTUnwrap(store.savedMoments().first?.createdAt)
+        XCTAssertTrue(store.screenshot(id: snapshotID)?.isBookmarked == true)
+        XCTAssertEqual(store.screenshots(bookmarkedOnly: true).map(\.id), [snapshotID])
+
+        try store.saveMoment(snapshotID: snapshotID, note: "Updated note")
+        let saved = try XCTUnwrap(store.savedMoments().first)
+        XCTAssertEqual(saved.snapshotID, snapshotID)
+        XCTAssertEqual(saved.note, "Updated note")
+        XCTAssertEqual(saved.createdAt, createdAt)
+
+        // A second store proves bookmark state is durable rather than cached.
+        let reopened = ActivityStore(databaseURL: url)
+        XCTAssertEqual(reopened.savedMoments().first?.note, "Updated note")
+        try reopened.removeSavedMoment(snapshotID: snapshotID)
+        XCTAssertTrue(reopened.savedMoments().isEmpty)
+        XCTAssertFalse(reopened.screenshot(id: snapshotID)?.isBookmarked ?? true)
+    }
+
+    func testPerceptualHashesPersistAndNearDuplicatesShareAGroup() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ActivityStore(databaseURL: url)
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let firstHash: UInt64 = 0x00FF_00FF_00FF_00FF
+        let nearHash = firstHash ^ 0b101
+        let farHash = ~firstHash
+        let firstID = try store.insertScreenshot(
+            ts: base, path: "/tmp/one.heic.enc", app: "Safari", ocr: "one",
+            perceptualHash: firstHash)
+        let nearID = try store.insertScreenshot(
+            ts: base.addingTimeInterval(1), path: "/tmp/two.heic.enc", app: "Safari",
+            ocr: "two", perceptualHash: nearHash)
+        let farID = try store.insertScreenshot(
+            ts: base.addingTimeInterval(2), path: "/tmp/three.heic.enc", app: "Safari",
+            ocr: "three", perceptualHash: farHash)
+
+        let first = try XCTUnwrap(store.screenshot(id: firstID))
+        let near = try XCTUnwrap(store.screenshot(id: nearID))
+        let far = try XCTUnwrap(store.screenshot(id: farID))
+        XCTAssertEqual(first.perceptualHash, firstHash)
+        XCTAssertEqual(near.perceptualHash, nearHash)
+        XCTAssertEqual(first.similarityGroupID, firstID)
+        XCTAssertEqual(near.similarityGroupID, firstID)
+        XCTAssertEqual(far.similarityGroupID, farID)
+    }
+
+    func testPerceptualGroupingDoesNotDriftAwayFromItsRepresentative() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ActivityStore(databaseURL: url)
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let representative: UInt64 = 0
+        let nearRepresentative = representative ^ 0b11_1111
+        let nearPreviousButFarFromRepresentative = nearRepresentative ^ (0b11_1111 << 6)
+
+        let firstID = try store.insertScreenshot(
+            ts: base, path: "/tmp/drift-one.heic.enc", app: "Safari", ocr: "one",
+            perceptualHash: representative)
+        let secondID = try store.insertScreenshot(
+            ts: base.addingTimeInterval(1), path: "/tmp/drift-two.heic.enc", app: "Safari",
+            ocr: "two", perceptualHash: nearRepresentative)
+        let thirdID = try store.insertScreenshot(
+            ts: base.addingTimeInterval(2), path: "/tmp/drift-three.heic.enc", app: "Safari",
+            ocr: "three", perceptualHash: nearPreviousButFarFromRepresentative)
+
+        XCTAssertEqual(store.screenshot(id: firstID)?.similarityGroupID, firstID)
+        XCTAssertEqual(store.screenshot(id: secondID)?.similarityGroupID, firstID)
+        XCTAssertEqual(store.screenshot(id: thirdID)?.similarityGroupID, thirdID)
+    }
+
+    func testDeleteScreenshotRemovesOCRBookmarkAndSemanticVector() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ActivityStore(databaseURL: url)
+        let snapshotID = try store.insertScreenshot(
+            ts: Date(), path: "/tmp/delete.heic.enc", app: "Safari",
+            ocr: "delete this source")
+        try store.saveMoment(snapshotID: snapshotID)
+        let database = try XCTUnwrap(SQLiteDatabase(url: url))
+        try database.execute("""
+            CREATE TABLE screen_embeddings (
+                snapshot_id INTEGER PRIMARY KEY, ts REAL NOT NULL,
+                app TEXT NOT NULL, text TEXT NOT NULL, vec BLOB NOT NULL,
+                model_id TEXT NOT NULL DEFAULT '');
+            """)
+        try database.runChecked("""
+            INSERT INTO screen_embeddings (snapshot_id, ts, app, text, vec, model_id)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            """, bind: [snapshotID, Date().timeIntervalSince1970, "Safari", "delete", Data([0]), "test"])
+
+        try store.deleteScreenshot(id: snapshotID)
+
+        XCTAssertNil(store.screenshot(id: snapshotID))
+        XCTAssertNil(store.ocrText(snapshotID: snapshotID))
+        XCTAssertTrue(store.savedMoments().isEmpty)
+        XCTAssertFalse(try database.hasRowChecked(
+            "SELECT 1 FROM screen_embeddings WHERE snapshot_id = ?1", bind: [snapshotID]))
+    }
+
+    func testReciprocalRankFusionIsStableAndRewardsAgreement() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let keyword = [
+            ActivityStore.OCRHit(
+                snapshotID: 1, ts: now, app: "Safari", snippet: "keyword one"),
+            ActivityStore.OCRHit(
+                snapshotID: 2, ts: now, app: "Xcode", snippet: "keyword two"),
+        ]
+        let semantic = [
+            EmbeddingIndex.ScreenHit(
+                snapshotID: 2, ts: now, app: "Xcode", text: "semantic two", score: 0.9),
+            EmbeddingIndex.ScreenHit(
+                snapshotID: 3, ts: now, app: "Notes", text: "semantic three", score: 0.8),
+        ]
+
+        let ranked = ScreenSearchRanker.fuse(
+            keyword: keyword, semantic: semantic, limit: 3)
+
+        XCTAssertEqual(ranked.map(\.snapshotID), [2, 1, 3])
+        XCTAssertEqual(ranked.first?.keywordRank, 2)
+        XCTAssertEqual(ranked.first?.semanticRank, 1)
+        XCTAssertGreaterThan(ranked[0].score, ranked[1].score)
+    }
+
+    func testSemanticScreenRankingUsesCosineAndDeterministicTieBreaks() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let vectorData: ([Float]) -> Data = { values in
+            values.withUnsafeBufferPointer { buffer in
+                Data(bytes: buffer.baseAddress!, count: buffer.count * MemoryLayout<Float>.stride)
+            }
+        }
+        let candidates = [
+            EmbeddingIndex.ScreenCandidate(
+                snapshotID: 3, ts: now, app: "Notes", text: "weak",
+                vector: vectorData([0.2, 0.8])),
+            EmbeddingIndex.ScreenCandidate(
+                snapshotID: 2, ts: now, app: "Xcode", text: "tie",
+                vector: vectorData([0.8, 0.2])),
+            EmbeddingIndex.ScreenCandidate(
+                snapshotID: 1, ts: now, app: "Safari", text: "tie",
+                vector: vectorData([0.8, 0.2])),
+        ]
+
+        let ranked = EmbeddingIndex.rankScreen(
+            candidates, against: [1, 0], limit: 2)
+
+        XCTAssertEqual(ranked.map(\.snapshotID), [1, 2])
+        XCTAssertEqual(ranked.map(\.score), [0.8, 0.8])
     }
 
     func testSearchOCRRelaxedFallbackRescuesNaturalLanguage() throws {
@@ -101,6 +294,79 @@ final class ActivityStoreTests: XCTestCase {
                                    ocr: "compile succeeded")
         XCTAssertEqual(store.searchOCR("compile").first?.windowTitle, "build log")
         XCTAssertEqual(store.screenshots(on: Date()).count, 2)
+    }
+
+    func testLegacyOCRMigrationUsesTimestampInsteadOfDivergedFTSRowID() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        do {
+            let legacy = try XCTUnwrap(SQLiteDatabase(url: url))
+            try legacy.execute("""
+                CREATE TABLE screenshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts REAL NOT NULL, path TEXT NOT NULL, app TEXT NOT NULL);
+                CREATE VIRTUAL TABLE ocr_fts USING fts5(
+                    text, ts UNINDEXED, app UNINDEXED,
+                    tokenize='unicode61 remove_diacritics 2');
+                """)
+            try legacy.runChecked(
+                "INSERT INTO screenshots (ts, path, app) VALUES (?1, ?2, ?3)",
+                bind: [base.timeIntervalSince1970, "/tmp/no-ocr.heic.enc", "Notes"])
+            try legacy.runChecked(
+                "INSERT INTO screenshots (ts, path, app) VALUES (?1, ?2, ?3)",
+                bind: [base.addingTimeInterval(10).timeIntervalSince1970,
+                       "/tmp/with-ocr.heic.enc", "Notes"])
+            // Empty OCR was never inserted in the legacy FTS table, so this
+            // row's FTS rowid is 1 while its real screenshot id is 2.
+            try legacy.runChecked(
+                "INSERT INTO ocr_fts (text, ts, app) VALUES (?1, ?2, ?3)",
+                bind: ["linked to the second frame",
+                       base.addingTimeInterval(10).timeIntervalSince1970, "Notes"])
+        }
+
+        let store = ActivityStore(databaseURL: url)
+        let hit = try XCTUnwrap(store.searchOCR("second").first)
+        XCTAssertEqual(hit.snapshotID, 2)
+        XCTAssertEqual(store.screenshot(id: hit.snapshotID)?.path, "/tmp/with-ocr.heic.enc")
+    }
+
+    func testExistingV2OCRMigrationRepairsZeroSnapshotID() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let capturedAt = Date(timeIntervalSince1970: 1_700_000_000)
+
+        do {
+            let legacy = try XCTUnwrap(SQLiteDatabase(url: url))
+            try legacy.execute("""
+                CREATE TABLE screenshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts REAL NOT NULL, path TEXT NOT NULL, app TEXT NOT NULL,
+                    window_title TEXT NOT NULL DEFAULT '',
+                    capture_trigger TEXT NOT NULL DEFAULT 'interval');
+                CREATE VIRTUAL TABLE ocr_fts USING fts5(
+                    text, window_title, ts UNINDEXED, app UNINDEXED,
+                    text_source UNINDEXED, snapshot_id UNINDEXED,
+                    tokenize='unicode61 remove_diacritics 2');
+                """)
+            try legacy.runChecked(
+                "INSERT INTO screenshots (ts, path, app) VALUES (?1, ?2, ?3)",
+                bind: [capturedAt.timeIntervalSince1970, "/tmp/v2.heic.enc", "Xcode"])
+            try legacy.runChecked("""
+                INSERT INTO ocr_fts (
+                    text, window_title, ts, app, text_source, snapshot_id
+                ) VALUES (?1, ?2, ?3, ?4, 'ocr', 0)
+                """, bind: ["repair this orphan", "Editor",
+                              capturedAt.timeIntervalSince1970, "xcode"])
+        }
+
+        let store = ActivityStore(databaseURL: url)
+        let hit = try XCTUnwrap(store.searchOCR("orphan").first)
+        XCTAssertEqual(hit.snapshotID, 1)
+        XCTAssertEqual(store.ocrText(snapshotID: 1), "repair this orphan")
     }
 
     func testScreenshotAndOCRRowsRollbackTogetherWhenOCRInsertFails() throws {
@@ -344,6 +610,56 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(store.searchOCR("fresh").count, 1)
         // Pixel bookkeeping untouched: text pruning is independent of paths.
         XCTAssertEqual(store.screenshotPaths(olderThan: Date()).count, 2)
+    }
+
+    func testRetentionPreservesSavedMomentPixelsOCRAndEmbeddingUntilUnsaved() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ActivityStore(databaseURL: url)
+        let old = Date(timeIntervalSinceNow: -3 * 86_400)
+        let cutoff = Date(timeIntervalSinceNow: -86_400)
+        let savedID = try store.insertScreenshot(
+            ts: old, path: "/tmp/saved-moment.heic.enc", app: "Notes",
+            ocr: "saved launch decision")
+        let ordinaryID = try store.insertScreenshot(
+            ts: old, path: "/tmp/ordinary.heic.enc", app: "Safari",
+            ocr: "ordinary expired context")
+        try store.saveMoment(snapshotID: savedID, note: "Keep this")
+
+        let database = try XCTUnwrap(SQLiteDatabase(url: url))
+        try database.execute("""
+            CREATE TABLE screen_embeddings (
+                snapshot_id INTEGER PRIMARY KEY, ts REAL NOT NULL,
+                app TEXT NOT NULL, text TEXT NOT NULL, vec BLOB NOT NULL,
+                model_id TEXT NOT NULL DEFAULT '');
+            """)
+        for (id, text) in [(savedID, "saved"), (ordinaryID, "ordinary")] {
+            try database.runChecked("""
+                INSERT INTO screen_embeddings (snapshot_id, ts, app, text, vec, model_id)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                """, bind: [id, old.timeIntervalSince1970, "Test", text, Data([0]), "test"])
+        }
+
+        XCTAssertEqual(
+            Set(store.screenshotPaths(olderThan: cutoff)),
+            Set(["/tmp/ordinary.heic.enc"]))
+        XCTAssertTrue(store.clearOCRText(olderThan: cutoff))
+        XCTAssertEqual(store.ocrText(snapshotID: savedID), "saved launch decision")
+        XCTAssertNil(store.ocrText(snapshotID: ordinaryID))
+        XCTAssertTrue(try database.hasRowChecked(
+            "SELECT 1 FROM screen_embeddings WHERE snapshot_id = ?1", bind: [savedID]))
+        XCTAssertFalse(try database.hasRowChecked(
+            "SELECT 1 FROM screen_embeddings WHERE snapshot_id = ?1", bind: [ordinaryID]))
+
+        try store.removeSavedMoment(snapshotID: savedID)
+        XCTAssertEqual(
+            Set(store.screenshotPaths(olderThan: cutoff)),
+            Set(["/tmp/saved-moment.heic.enc", "/tmp/ordinary.heic.enc"]))
+        XCTAssertTrue(store.clearOCRText(olderThan: cutoff))
+        XCTAssertNil(store.ocrText(snapshotID: savedID))
+        XCTAssertFalse(try database.hasRowChecked(
+            "SELECT 1 FROM screen_embeddings WHERE snapshot_id = ?1", bind: [savedID]))
     }
 }
 

@@ -55,6 +55,29 @@ struct ScreenCapturePolicy {
     mutating func noteCheck(at now: Date = Date()) { lastCheck = now }
 }
 
+/// Bounds retention work to once per day during normal operation while still
+/// allowing explicit privacy changes to force an immediate pass. Keeping this
+/// policy pure makes sleep/wake and clock-adjustment behavior deterministic in
+/// tests; the service owns only the lightweight timer that asks it periodically.
+struct ScreenshotRetentionSchedule {
+    static let pruneInterval: TimeInterval = 86_400
+
+    private(set) var lastPrune: Date?
+
+    mutating func shouldPrune(at now: Date, force: Bool = false) -> Bool {
+        if !force, let lastPrune {
+            let elapsed = now.timeIntervalSince(lastPrune)
+            guard elapsed < 0 || elapsed >= Self.pruneInterval else { return false }
+        }
+        lastPrune = now
+        return true
+    }
+
+    static func requiresImmediatePrune(previousDays: Int, currentDays: Int) -> Bool {
+        currentDays < previousDays
+    }
+}
+
 /// Pure capture-layout selection. ScreenCaptureKit objects cannot be created
 /// in unit tests, so production metadata is reduced to these value types before
 /// choosing the focused display and every privacy-excluded window on it.
@@ -236,13 +259,93 @@ actor ScreenshotProcessingWorker {
     }
 }
 
+/// 64-bit difference hash (dHash) for visually similar-frame detection.
+/// Unlike a byte SHA, this remains stable across tiny cursor/animation/codec
+/// changes. Automatic captures within `defaultDistanceThreshold` are skipped;
+/// explicit manual captures always bypass that decision in the worker above.
+enum ScreenPerceptualHash {
+    static let width = 9
+    static let height = 8
+    static let defaultDistanceThreshold = 6
+
+    static func hash(of image: CGImage) -> UInt64 {
+        var pixels = [UInt8](repeating: 0, count: width * height)
+        let rendered = pixels.withUnsafeMutableBytes { bytes -> Bool in
+            guard let baseAddress = bytes.baseAddress,
+                  let context = CGContext(
+                    data: baseAddress,
+                    width: width,
+                    height: height,
+                    bitsPerComponent: 8,
+                    bytesPerRow: width,
+                    space: CGColorSpaceCreateDeviceGray(),
+                    bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+            context.interpolationQuality = .medium
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard rendered else { return 0 }
+
+        var result: UInt64 = 0
+        var bit: UInt64 = 1
+        for row in 0..<height {
+            let offset = row * width
+            for column in 0..<(width - 1) {
+                if pixels[offset + column] > pixels[offset + column + 1] {
+                    result |= bit
+                }
+                bit <<= 1
+            }
+        }
+        return result
+    }
+
+    static func data(of image: CGImage) -> Data {
+        var value = hash(of: image).littleEndian
+        return withUnsafeBytes(of: &value) { Data($0) }
+    }
+
+    static func value(from data: Data) -> UInt64? {
+        guard data.count == MemoryLayout<UInt64>.size else { return nil }
+        let littleEndian = data.withUnsafeBytes {
+            $0.loadUnaligned(as: UInt64.self)
+        }
+        return UInt64(littleEndian: littleEndian)
+    }
+
+    static func hammingDistance(_ lhs: UInt64, _ rhs: UInt64) -> Int {
+        (lhs ^ rhs).nonzeroBitCount
+    }
+
+    static func isNearDuplicate(
+        _ lhs: UInt64,
+        _ rhs: UInt64,
+        threshold: Int = defaultDistanceThreshold
+    ) -> Bool {
+        hammingDistance(lhs, rhs) <= max(0, threshold)
+    }
+
+    static func isNearDuplicate(
+        _ lhs: Data,
+        _ rhs: Data,
+        threshold: Int = defaultDistanceThreshold
+    ) -> Bool {
+        guard let lhs = value(from: lhs), let rhs = value(from: rhs) else {
+            // Test/custom processors historically supplied SHA-sized values.
+            // Preserve exact-dedup behavior for those non-production inputs.
+            return lhs == rhs
+        }
+        return isNearDuplicate(lhs, rhs, threshold: threshold)
+    }
+}
+
 /// Pure image transforms used by the background worker. Keeping these outside
 /// the `@MainActor` service is what makes Vision, Core Graphics, and ImageIO run
 /// away from SwiftUI's executor.
 private enum ScreenshotImageProcessing {
-    /// Hash the downscaled pixels before HEIC/OCR. Unchanged frames therefore
-    /// skip both the encoder and Vision instead of paying an encode merely to
-    /// discover that the output bytes match the previous capture.
+    /// Hash the downscaled pixels before HEIC/OCR. Only byte-identical frames
+    /// are suppressed; the much coarser perceptual hash is persisted later for
+    /// visual grouping and must never discard changed OCR evidence.
     static func contentHash(of image: CGImage) -> Data {
         var input = Data()
         var width = UInt64(image.width).littleEndian
@@ -307,26 +410,32 @@ final class ScreenshotService: ObservableObject {
     private let storage: StorageManager
     private let settings: () -> AppSettings
     private let isMeetingRecordingActive: () -> Bool
+    private let now: () -> Date
     private let sampler: ActivitySampler
     private let windowTitleLookup: FocusedWindowTitleLookup
     private let processingWorker = ScreenshotProcessingWorker()
     private var timer: Timer?
+    private var retentionTimer: Timer?
     private var policy = ScreenCapturePolicy()
+    private var retentionSchedule = ScreenshotRetentionSchedule()
     private var captureGate = ScreenshotCaptureGate()
 
     init(store: ActivityStore, storage: StorageManager, sampler: ActivitySampler,
          windowTitleLookup: FocusedWindowTitleLookup = .shared,
          isMeetingRecordingActive: @escaping () -> Bool = { false },
+         now: @escaping () -> Date = Date.init,
          settings: @escaping () -> AppSettings) {
         self.store = store
         self.storage = storage
         self.sampler = sampler
         self.windowTitleLookup = windowTitleLookup
         self.isMeetingRecordingActive = isMeetingRecordingActive
+        self.now = now
         self.settings = settings
     }
 
     func start() {
+        startRetentionMaintenance()
         guard timer == nil else { return }
         // Event-driven path: the sampler already detects app/window boundaries
         // every 5 s; captures ride those events instead of a fixed clock.
@@ -346,18 +455,37 @@ final class ScreenshotService: ObservableObject {
             try? await Task.sleep(for: .seconds(20))
             await self?.captureIfAppropriate(trigger: .interval)
         }
-        pruneOldScreenshots()
     }
 
     func stop() {
         sampler.onActivityBoundary = nil
         timer?.invalidate()
         timer = nil
+        retentionTimer?.invalidate()
+        retentionTimer = nil
     }
 
     func restart() {
         stop()
+        // Retention is a privacy lifecycle, not a capture lifecycle. Keep its
+        // daily maintenance alive even when tracking/capture is disabled.
+        startRetentionMaintenance()
         if settings().screenshotsEnabled && settings().trackingEnabled { start() }
+    }
+
+    private func startRetentionMaintenance() {
+        _ = runRetentionMaintenanceIfNeeded()
+        guard retentionTimer == nil else { return }
+        let maintenance = Timer.scheduledTimer(
+            withTimeInterval: 60 * 60,
+            repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor in
+                _ = self?.runRetentionMaintenanceIfNeeded()
+            }
+        }
+        maintenance.tolerance = 5 * 60
+        retentionTimer = maintenance
     }
 
     private func captureIfAppropriate(trigger: ScreenCaptureTrigger) async {
@@ -495,7 +623,8 @@ final class ScreenshotService: ObservableObject {
         do {
             try store.insertScreenshot(ts: timestamp, path: file.path, app: frontApp,
                                        windowTitle: windowTitle, trigger: trigger.rawValue,
-                                       ocr: ocrText)
+                                       ocr: ocrText,
+                                       perceptualHash: ScreenPerceptualHash.hash(of: image))
         } catch {
             do {
                 try FileManager.default.removeItem(at: file)
@@ -534,11 +663,64 @@ final class ScreenshotService: ObservableObject {
         return try? AES.GCM.open(box, using: key)
     }
 
+    /// Resolve a stable snapshot citation and decrypt it away from the main
+    /// actor. Missing/pruned rows intentionally produce nil.
+    func decryptedData(for snapshotID: Int64) async -> Data? {
+        guard let screenshot = store.screenshot(id: snapshotID), !screenshot.path.isEmpty,
+              let key = try? Self.encryptionKey() else { return nil }
+        let path = screenshot.path
+        return await Task.detached(priority: .userInitiated) {
+            Self.decryptedData(path: path, key: key)
+        }.value
+    }
+
+    /// User-requested deletion removes pixels first, then the screenshot row
+    /// and all linked OCR, bookmark, and semantic-vector state atomically.
+    func deleteCapture(id: Int64) throws {
+        guard let screenshot = store.screenshot(id: id) else { return }
+        if !screenshot.path.isEmpty,
+           FileManager.default.fileExists(atPath: screenshot.path) {
+            try FileManager.default.removeItem(atPath: screenshot.path)
+        }
+        try store.deleteScreenshot(id: id)
+    }
+
+    @discardableResult
+    func deleteCaptures(in interval: DateInterval) throws -> Int {
+        guard interval.end > interval.start else { return 0 }
+        let captures = store.screenshots(
+            in: interval, app: nil, bookmarkedOnly: false,
+            includingMissingFiles: true)
+        for capture in captures {
+            if !capture.path.isEmpty,
+               FileManager.default.fileExists(atPath: capture.path) {
+                try FileManager.default.removeItem(atPath: capture.path)
+            }
+        }
+        try store.deleteScreenshots(ids: captures.map(\.id))
+        return captures.count
+    }
+
     /// Files older than the retention window are deleted. OCR text follows
     /// the same cutoff unless the user explicitly opted into keeping it —
     /// screen text can be as sensitive as the pixels it came from.
     func pruneOldScreenshots() {
-        let cutoff = Date().addingTimeInterval(-Double(settings().retentionDays) * 86_400)
+        _ = runRetentionMaintenanceIfNeeded(force: true)
+    }
+
+    /// Called by the hourly maintenance timer. The schedule guarantees the
+    /// actual filesystem/SQLite pass runs at most daily unless a retention
+    /// reduction or explicit privacy action forces it.
+    @discardableResult
+    func runRetentionMaintenanceIfNeeded(force: Bool = false) -> Bool {
+        let current = now()
+        guard retentionSchedule.shouldPrune(at: current, force: force) else { return false }
+        performRetentionPrune(at: current)
+        return true
+    }
+
+    private func performRetentionPrune(at current: Date) {
+        let cutoff = current.addingTimeInterval(-Double(settings().retentionDays) * 86_400)
         for path in store.screenshotPaths(olderThan: cutoff) {
             do {
                 if FileManager.default.fileExists(atPath: path) {

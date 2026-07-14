@@ -60,6 +60,10 @@ struct LokalBotApp: App {
                     WindowAccess.shared.open("palette")
                 }
                 .keyboardShortcut("k", modifiers: [.command])
+
+                Button("Quick Recall…") {
+                    WindowAccess.shared.open("quick-recall")
+                }
             }
         }
 
@@ -73,6 +77,15 @@ struct LokalBotApp: App {
         // records, navigates, and opens recent meetings without the sidebar.
         Window("Command Palette", id: "palette") {
             CommandPaletteView()
+                .environmentObject(app)
+                .brandTinted()
+        }
+        .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
+        .defaultPosition(.center)
+
+        Window("Quick Recall", id: "quick-recall") {
+            QuickRecallView()
                 .environmentObject(app)
                 .brandTinted()
         }
@@ -318,6 +331,18 @@ final class AppState: ObservableObject {
                 if Self.cotypingRuntimeChanged(from: oldValue, to: settings) {
                     scheduleCotypingPrewarm()
                 }
+                if settings.quickRecallEnabled != oldValue.quickRecallEnabled {
+                    applyQuickRecallSetting()
+                }
+                if ScreenshotRetentionSchedule.requiresImmediatePrune(
+                    previousDays: oldValue.retentionDays,
+                    currentDays: settings.retentionDays
+                ) {
+                    screenshots.pruneOldScreenshots()
+                }
+                if Self.dailyMemoryExportChanged(from: oldValue, to: settings) {
+                    applyDailyMemoryExportSetting()
+                }
             }
         }
     }
@@ -336,6 +361,14 @@ final class AppState: ObservableObject {
             || old.customBuiltInModels != new.customBuiltInModels
     }
 
+    private static func dailyMemoryExportChanged(from old: AppSettings,
+                                                 to new: AppSettings) -> Bool {
+        old.dailyMemoryExportEnabled != new.dailyMemoryExportEnabled
+            || old.dailyMemoryExportFolder != new.dailyMemoryExportFolder
+            || old.dailyMemoryExportFormat != new.dailyMemoryExportFormat
+            || old.dailyMemoryExportHour != new.dailyMemoryExportHour
+    }
+
     // Navigation (main window): sidebar section, selected meeting, and a
     // pending "jump to timestamp" handed from search to the detail player.
     @Published var navSection: NavSection = .timeline
@@ -343,6 +376,10 @@ final class AppState: ObservableObject {
     @Published var settingsTab: SettingsTab = .general
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []
     @Published var pendingSeek: TimeInterval?
+    /// A screen-memory deep link waiting for Timeline's shared capture model.
+    /// Search, assistant citations, and Quick Recall set this before switching
+    /// sections; Timeline consumes it once its content column is mounted.
+    @Published var pendingScreenSnapshotID: Int64?
 
     /// A query handed to the Ask section by another surface (⌘K palette).
     /// AskView consumes and clears it on appear/change.
@@ -352,6 +389,8 @@ final class AppState: ObservableObject {
     /// §2.2): rendered as a removable chip, and prepended to escalated
     /// queries so the assistant scopes its answer to that day.
     @Published var askDayScope: Date?
+    /// Screens explicitly attached from Timeline to the next Ask turn.
+    @Published var askScreenContextIDs: [Int64] = []
 
     /// Navigate to the Type section with a specific tab preselected.
     func openType(_ tab: TypeTab) {
@@ -367,9 +406,11 @@ final class AppState: ObservableObject {
 
     /// Navigate to the Ask section, optionally pre-filling the query and/or
     /// scoping it to a day (Timeline's "Ask about this day").
-    func openAsk(query: String = "", dayScope: Date? = nil) {
+    func openAsk(query: String = "", dayScope: Date? = nil,
+                 screenSnapshotIDs: [Int64] = []) {
         askPrefill = query.isEmpty ? nil : query
         askDayScope = dayScope
+        askScreenContextIDs = screenSnapshotIDs
         navSection = .ask
     }
 
@@ -398,6 +439,16 @@ final class AppState: ObservableObject {
     private(set) lazy var agentAccess = AgentAccessManager(
         storage: storage,
         settings: { [weak self] in self?.settings ?? AppSettings.load() })
+    /// Screen-memory access is intentionally separate from meeting-library
+    /// access: enabling one capability never grants the other.
+    private(set) lazy var screenMemoryAccess = ScreenMemoryAccessManager(
+        gate: ScreenMemoryAccessGate(root: storage.rootURL))
+    private(set) lazy var quickRecallHotKey: QuickRecallHotKeyController = {
+        let controller = QuickRecallHotKeyController()
+        controller.onInvoke = { WindowAccess.shared.open("quick-recall") }
+        return controller
+    }()
+    private let dailyMemoryExportScheduler = DailyMemoryExportScheduler()
     /// Read-only calendar access (EventKit): confirms meetings and titles
     /// recordings. Concrete type so the settings UI observes its permission
     /// state; handed to the detector as the `CalendarEventProviding` seam.
@@ -711,6 +762,9 @@ final class AppState: ObservableObject {
         AppUpdateManager.shared.start()
         // Resume the wake watcher when the Privacy marker was left enabled.
         agentAccess.start()
+        screenMemoryAccess.start()
+        applyQuickRecallSetting()
+        applyDailyMemoryExportSetting()
         // First-run check. A genuinely-new user with missing permissions gets
         // onboarding (windowed — see AppDelegate). We persist the flag in every
         // case so established/permissioned users are recognised next launch and
@@ -858,6 +912,8 @@ final class AppState: ObservableObject {
             audioMonitor.stop()
             sampler.stop()
             screenshots.stop()
+            quickRecallHotKey.stop()
+            dailyMemoryExportScheduler.stop()
             chat.stop()
             dictation.stop()
             cotyping.stop()
@@ -978,12 +1034,61 @@ final class AppState: ObservableObject {
         screenshots.restart()
     }
 
+    func applyQuickRecallSetting() {
+        let registered = quickRecallHotKey.setEnabled(settings.quickRecallEnabled)
+        if settings.quickRecallEnabled, !registered {
+            settings.quickRecallEnabled = false
+            lastError = "Quick Recall could not register \(QuickRecallHotKeyController.shortcutLabel). Another app may already use it."
+        }
+    }
+
+    func applyDailyMemoryExportSetting() {
+        let snapshot = settings
+        let destinationID = snapshot.dailyMemoryExportFolder.isEmpty
+            ? ""
+            : "\(snapshot.dailyMemoryExportFolder)|\(snapshot.dailyMemoryExportFormat.rawValue)"
+        let configuration = DailyMemoryExportScheduler.Configuration(
+            enabled: snapshot.dailyMemoryExportEnabled,
+            hour: snapshot.dailyMemoryExportHour,
+            destinationID: destinationID)
+        let storageRoot = storage.rootURL
+        let destinationPath = snapshot.dailyMemoryExportFolder
+        let exportKind: DailyMemoryExportKind = switch snapshot.dailyMemoryExportFormat {
+        case .markdown: .markdown
+        case .obsidian: .obsidian
+        case .logseq: .logseq
+        }
+        dailyMemoryExportScheduler.configure(configuration) { day in
+            let destination = URL(
+                fileURLWithPath: destinationPath,
+                isDirectory: true)
+            try Task.checkCancellation()
+            let service = DailyMemoryExportService(
+                source: FileDailyMemoryExportSource(root: storageRoot),
+                calendar: .current)
+            _ = try service.export(
+                day: day,
+                configuration: DailyMemoryExportConfiguration(
+                    destinationDirectory: destination,
+                    format: exportKind))
+        } onError: { [weak self] message in
+            self?.lastError = message
+        }
+    }
+
     /// Search hit → open the meeting; transcript hits seek the player.
     func openSearchHit(_ hit: SearchIndex.Hit) {
         if hit.kind == .segment {
             pendingSeek = hit.start
         }
         openMeeting(hit.meetingID)
+    }
+
+    /// Screen search/citation hit → open Timeline at the exact captured frame.
+    func openScreenSnapshot(_ snapshotID: Int64) {
+        pendingScreenSnapshotID = snapshotID
+        selectedMeetingIDs = []
+        navSection = .timeline
     }
 
     /// Chat citation marker → open the cited meeting; timed markers seek the player.

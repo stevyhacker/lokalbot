@@ -82,6 +82,59 @@ actor EmbeddingModelPreparationCoordinator {
     }
 }
 
+/// Deterministic reciprocal-rank fusion for lexical + semantic screen search.
+/// It intentionally consumes only stable snapshot IDs: metadata is resolved
+/// through `ActivityStore.screenshot(id:)`, avoiding stale duplicated rows.
+enum ScreenSearchRanker {
+    struct RankedSnapshot: Identifiable, Equatable, Sendable {
+        let snapshotID: Int64
+        let score: Double
+        let keywordRank: Int?
+        let semanticRank: Int?
+
+        var id: Int64 { snapshotID }
+    }
+
+    static func fuse(
+        keyword: [ActivityStore.OCRHit],
+        semantic: [EmbeddingIndex.ScreenHit],
+        limit: Int = 40,
+        rankConstant: Double = 60
+    ) -> [RankedSnapshot] {
+        guard limit > 0 else { return [] }
+        let constant = max(1, rankConstant)
+        var keywordRanks: [Int64: Int] = [:]
+        var semanticRanks: [Int64: Int] = [:]
+
+        for (offset, hit) in keyword.enumerated() where keywordRanks[hit.snapshotID] == nil {
+            keywordRanks[hit.snapshotID] = offset + 1
+        }
+        for (offset, hit) in semantic.enumerated() where semanticRanks[hit.snapshotID] == nil {
+            semanticRanks[hit.snapshotID] = offset + 1
+        }
+
+        let snapshotIDs = Set(keywordRanks.keys).union(semanticRanks.keys)
+        return snapshotIDs.map { snapshotID in
+            let keywordRank = keywordRanks[snapshotID]
+            let semanticRank = semanticRanks[snapshotID]
+            let score = [keywordRank, semanticRank].compactMap { $0 }.reduce(0.0) {
+                $0 + 1.0 / (constant + Double($1))
+            }
+            return RankedSnapshot(
+                snapshotID: snapshotID,
+                score: score,
+                keywordRank: keywordRank,
+                semanticRank: semanticRank)
+        }.sorted { lhs, rhs in
+            if lhs.score != rhs.score { return lhs.score > rhs.score }
+            let lhsBest = min(lhs.keywordRank ?? .max, lhs.semanticRank ?? .max)
+            let rhsBest = min(rhs.keywordRank ?? .max, rhs.semanticRank ?? .max)
+            if lhsBest != rhsBest { return lhsBest < rhsBest }
+            return lhs.snapshotID < rhs.snapshotID
+        }.prefix(limit).map { $0 }
+    }
+}
+
 /// M6 semantic layer (design §4.1): transcript/summary chunks embedded with
 /// Qwen3-Embedding 0.6B GGUF, served by the second llama-server instance.
 /// Vectors live in SQLite; query = brute-force cosine (normalized dot) —
@@ -97,6 +150,16 @@ final class EmbeddingIndex {
         let score: Float
     }
 
+    struct ScreenHit: Identifiable, Equatable, Sendable {
+        let snapshotID: Int64
+        let ts: Date
+        let app: String
+        let text: String
+        let score: Float
+
+        var id: Int64 { snapshotID }
+    }
+
     private static let modelID = "qwen3-embedding-0.6b-q8"
     nonisolated private static let modelFile = "Qwen3-Embedding-0.6B-Q8_0.gguf"
     nonisolated private static let modelBytes: Int64 = 639_150_592
@@ -108,11 +171,17 @@ final class EmbeddingIndex {
         Instruct: Retrieve relevant meeting transcript and summary chunks for the user's query.
         Query:
         """
+    private static let screenDocumentPrefix = "Document from screen memory: "
+    private static let screenQueryPrefix = """
+        Instruct: Retrieve relevant OCR text captured from the user's screen.
+        Query:
+        """
     private static let modelPreparation = EmbeddingModelPreparationCoordinator()
 
     private let database: SQLiteDatabase?
     private let storage: StorageManager
     private var locallyDeletedMeetingIDs: Set<UUID> = []
+    private var screenReindexFlight: (id: UUID, task: Task<Void, Never>)?
 
     init(databaseURL: URL, storage: StorageManager) {
         self.storage = storage
@@ -130,6 +199,19 @@ final class EmbeddingIndex {
                 meeting_id TEXT PRIMARY KEY,
                 deleted_at REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS screen_embeddings (
+                snapshot_id INTEGER PRIMARY KEY,
+                ts REAL NOT NULL,
+                app TEXT NOT NULL,
+                text TEXT NOT NULL,
+                vec BLOB NOT NULL,
+                model_id TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY(snapshot_id) REFERENCES screenshots(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_screen_embeddings_ts
+                ON screen_embeddings(ts);
+            CREATE INDEX IF NOT EXISTS idx_screen_embeddings_app_ts
+                ON screen_embeddings(app, ts);
             """)
         if database?.hasRow(
             "SELECT 1 FROM pragma_table_info('embedded_meetings') WHERE name = 'model_id'"
@@ -147,6 +229,14 @@ final class EmbeddingIndex {
                 """, bind: [Self.modelID])
                     && database.run(
                     "DELETE FROM embedded_meetings WHERE model_id != ?1",
+                    bind: [Self.modelID])
+            }
+            if database.hasRow("""
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'screenshots'
+                """) {
+                database.run(
+                    "DELETE FROM screen_embeddings WHERE model_id != ?1",
                     bind: [Self.modelID])
             }
         }
@@ -304,6 +394,208 @@ final class EmbeddingIndex {
             """) ?? false
     }
 
+    var hasScreenEmbeddings: Bool {
+        guard let database,
+              database.hasRow("""
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'screenshots'
+                """),
+              database.hasRow("""
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'ocr_fts'
+                """) else { return false }
+        return database.hasRow("""
+            SELECT 1 FROM screen_embeddings AS embedded
+            JOIN screenshots AS shot ON shot.id = embedded.snapshot_id
+            WHERE embedded.model_id = ?1
+              AND EXISTS (
+                  SELECT 1 FROM ocr_fts AS ocr
+                  WHERE CAST(ocr.snapshot_id AS INTEGER) = embedded.snapshot_id
+              )
+            LIMIT 1
+            """, bind: [Self.modelID])
+    }
+
+    /// Backfills immutable OCR rows that do not yet have a vector. This is
+    /// invoked lazily by semantic screen search, so users who never enable that
+    /// feature do not download a model or spend background inference time.
+    func reindexScreenText() async {
+        if let flight = screenReindexFlight {
+            await flight.task.value
+            return
+        }
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performScreenTextReindex()
+        }
+        screenReindexFlight = (id, task)
+        await task.value
+        if screenReindexFlight?.id == id {
+            screenReindexFlight = nil
+        }
+    }
+
+    private func performScreenTextReindex() async {
+        guard let database,
+              database.hasRow("""
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'ocr_fts'
+                """),
+              database.hasRow("""
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'screenshots'
+                """) else { return }
+
+        while !Task.isCancelled {
+            let batch: [ScreenDocument] = database.query("""
+                SELECT CAST(ocr.snapshot_id AS INTEGER), CAST(ocr.ts AS REAL),
+                       ocr.app, ocr.text
+                FROM ocr_fts AS ocr
+                JOIN screenshots AS shot
+                  ON shot.id = CAST(ocr.snapshot_id AS INTEGER)
+                WHERE CAST(ocr.snapshot_id AS INTEGER) > 0
+                  AND NOT EXISTS (
+                      SELECT 1 FROM screen_embeddings AS embedded
+                      WHERE embedded.snapshot_id = CAST(ocr.snapshot_id AS INTEGER)
+                        AND embedded.model_id = ?1
+                  )
+                ORDER BY CAST(ocr.ts AS REAL), CAST(ocr.snapshot_id AS INTEGER)
+                LIMIT 32
+                """, bind: [Self.modelID]) { statement in
+                guard let app = sqlite3_column_text(statement, 2),
+                      let text = sqlite3_column_text(statement, 3) else { return nil }
+                let snapshotID = sqlite3_column_int64(statement, 0)
+                guard snapshotID > 0 else { return nil }
+                return ScreenDocument(
+                    snapshotID: snapshotID,
+                    ts: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
+                    app: String(cString: app),
+                    text: String(String(cString: text).prefix(1_500)))
+            }
+            guard !batch.isEmpty else { return }
+            guard !Task.isCancelled else { return }
+            do {
+                let vectors = try await Self.embed(
+                    batch.map(\.text), prefix: Self.screenDocumentPrefix,
+                    storage: storage)
+                try Task.checkCancellation()
+                guard vectors.count == batch.count else {
+                    throw TextEngineError.badResponse(
+                        "screen embedding response contained \(vectors.count) vectors "
+                        + "for \(batch.count) OCR rows")
+                }
+                try database.withTransaction {
+                    for (document, vector) in zip(batch, vectors) {
+                        let vectorData = Self.vectorData(vector)
+                        // Retention or explicit deletion may remove OCR while
+                        // embedding is suspended. Recheck the exact live text
+                        // under the write transaction so an in-flight backfill
+                        // cannot resurrect expired plaintext in this table.
+                        let liveTexts: [String] = try database.queryChecked("""
+                            SELECT ocr.text FROM ocr_fts AS ocr
+                            JOIN screenshots AS shot
+                              ON shot.id = CAST(ocr.snapshot_id AS INTEGER)
+                            WHERE CAST(ocr.snapshot_id AS INTEGER) = ?1
+                            LIMIT 1
+                            """, bind: [document.snapshotID]) { statement in
+                            guard let value = sqlite3_column_text(statement, 0) else {
+                                return nil
+                            }
+                            return String(cString: value)
+                        }
+                        guard let liveText = liveTexts.first,
+                              String(liveText.prefix(1_500)) == document.text else { continue }
+                        try database.runChecked("""
+                            INSERT OR REPLACE INTO screen_embeddings (
+                                snapshot_id, ts, app, text, vec, model_id
+                            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                            """, bind: [
+                                document.snapshotID,
+                                document.ts.timeIntervalSince1970,
+                                document.app,
+                                document.text,
+                                vectorData,
+                                Self.modelID,
+                            ])
+                    }
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                lokalbotLog("screen embedding backfill failed: \(error.localizedDescription)")
+                return
+            }
+        }
+    }
+
+    /// Semantic retrieval over screen OCR, with the same date/app filter
+    /// contract as lexical FTS. Results retain the snapshot ID needed for an
+    /// exact citation, thumbnail, saved moment, or timeline jump.
+    func searchScreen(
+        _ query: String,
+        filter: ScreenSearchFilter = .all,
+        limit: Int = 10
+    ) async -> [ScreenHit] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard limit > 0, !trimmed.isEmpty, let database else { return [] }
+        await reindexScreenText()
+        guard !Task.isCancelled, hasScreenEmbeddings,
+              let queryVector = try? await Self.embed(
+                [trimmed], prefix: Self.screenQueryPrefix, storage: storage).first
+        else { return [] }
+
+        var conditions = ["embedded.model_id = ?1"]
+        var bindings: [Any] = [Self.modelID]
+        if let interval = filter.interval {
+            let startParameter = bindings.count + 1
+            bindings.append(interval.start.timeIntervalSince1970)
+            let endParameter = bindings.count + 1
+            bindings.append(interval.end.timeIntervalSince1970)
+            conditions.append(
+                "embedded.ts >= ?\(startParameter) AND embedded.ts < ?\(endParameter)")
+        }
+        if let app = filter.app {
+            let parameter = bindings.count + 1
+            bindings.append(app)
+            conditions.append("embedded.app = ?\(parameter) COLLATE NOCASE")
+        }
+
+        let candidates: [ScreenCandidate] = database.query("""
+            SELECT embedded.snapshot_id, embedded.ts, embedded.app,
+                   embedded.text, embedded.vec
+            FROM screen_embeddings AS embedded
+            JOIN screenshots AS shot ON shot.id = embedded.snapshot_id
+            WHERE \(conditions.joined(separator: " AND "))
+              AND EXISTS (
+                  SELECT 1 FROM ocr_fts AS ocr
+                  WHERE CAST(ocr.snapshot_id AS INTEGER) = embedded.snapshot_id
+              )
+            ORDER BY embedded.snapshot_id
+            """, bind: bindings) { statement in
+            guard let app = sqlite3_column_text(statement, 2),
+                  let text = sqlite3_column_text(statement, 3),
+                  let blob = sqlite3_column_blob(statement, 4) else { return nil }
+            let byteCount = Int(sqlite3_column_bytes(statement, 4))
+            guard byteCount == queryVector.count * MemoryLayout<Float>.stride else { return nil }
+            return ScreenCandidate(
+                snapshotID: sqlite3_column_int64(statement, 0),
+                ts: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
+                app: String(cString: app),
+                text: String(cString: text),
+                vector: Data(bytes: blob, count: byteCount))
+        }
+        let ranked = await Task.detached(priority: .userInitiated) {
+            Self.rankScreen(candidates, against: queryVector, limit: limit)
+        }.value
+        guard !Task.isCancelled else { return [] }
+        return ranked.filter { hit in
+            database.hasRow(
+                "SELECT 1 FROM screenshots WHERE id = ?1",
+                bind: [hit.snapshotID])
+        }
+    }
+
     func search(_ query: String, limit: Int = 10) async -> [Hit] {
         guard limit > 0, let database, hasEmbeddings else { return [] }
         guard let queryVector = try? await Self.embed([query], prefix: Self.queryPrefix,
@@ -350,6 +642,21 @@ final class EmbeddingIndex {
         let vector: Data
     }
 
+    private struct ScreenDocument: Sendable {
+        let snapshotID: Int64
+        let ts: Date
+        let app: String
+        let text: String
+    }
+
+    struct ScreenCandidate: Sendable {
+        let snapshotID: Int64
+        let ts: Date
+        let app: String
+        let text: String
+        let vector: Data
+    }
+
     /// Cosine scoring is the expensive part of brute-force retrieval. Keep it
     /// off the main actor and retain only the best `limit` rows instead of
     /// allocating and sorting a hit for every embedding in the library.
@@ -383,6 +690,63 @@ final class EmbeddingIndex {
             }
         }
         return best.sorted { $0.score > $1.score }
+    }
+
+    nonisolated static func rankScreen(
+        _ candidates: [ScreenCandidate],
+        against queryVector: [Float],
+        limit: Int
+    ) -> [ScreenHit] {
+        var best: [ScreenHit] = []
+        best.reserveCapacity(limit)
+        for candidate in candidates {
+            let score = cosine(candidate.vector, queryVector: queryVector)
+            guard score > 0.35 else { continue }
+            let hit = ScreenHit(
+                snapshotID: candidate.snapshotID,
+                ts: candidate.ts,
+                app: candidate.app,
+                text: candidate.text,
+                score: score)
+            if best.count < limit {
+                best.append(hit)
+            } else if let weakest = best.indices.min(by: {
+                let lhs = best[$0]
+                let rhs = best[$1]
+                if lhs.score != rhs.score { return lhs.score < rhs.score }
+                if lhs.ts != rhs.ts { return lhs.ts < rhs.ts }
+                return lhs.snapshotID > rhs.snapshotID
+            }), Self.screenHitSort(hit, best[weakest]) {
+                best[weakest] = hit
+            }
+        }
+        return best.sorted(by: screenHitSort)
+    }
+
+    nonisolated private static func cosine(_ vector: Data, queryVector: [Float]) -> Float {
+        vector.withUnsafeBytes { bytes in
+            var total: Float = 0
+            for index in queryVector.indices {
+                let value = bytes.loadUnaligned(
+                    fromByteOffset: index * MemoryLayout<Float>.stride,
+                    as: Float.self)
+                total += queryVector[index] * value
+            }
+            return total
+        }
+    }
+
+    nonisolated private static func screenHitSort(_ lhs: ScreenHit, _ rhs: ScreenHit) -> Bool {
+        if lhs.score != rhs.score { return lhs.score > rhs.score }
+        if lhs.ts != rhs.ts { return lhs.ts > rhs.ts }
+        return lhs.snapshotID < rhs.snapshotID
+    }
+
+    nonisolated private static func vectorData(_ vector: [Float]) -> Data {
+        vector.withUnsafeBufferPointer { buffer -> Data in
+            guard let baseAddress = buffer.baseAddress else { return Data() }
+            return Data(bytes: baseAddress, count: buffer.count * MemoryLayout<Float>.stride)
+        }
     }
 
     // MARK: - Embedding via llama-server

@@ -1,9 +1,9 @@
 import XCTest
 @testable import LokalBot
 
-/// Citation-marker parsing: `[meeting:ID@HH:MM:SS]` markers the assistant
-/// emits are stripped from display text and surfaced as deep-linkable
-/// citations, while ordinary bracketed text passes through untouched.
+/// Citation-marker parsing: meeting and screen markers the assistant emits are
+/// stripped from display text and surfaced as deep-linkable citations, while
+/// ordinary bracketed text passes through untouched.
 final class ChatCitationTests: XCTestCase {
 
     func testExtractTimedMarker() {
@@ -28,6 +28,25 @@ final class ChatCitationTests: XCTestCase {
         let (_, citations) = ChatCitationParser.extract(
             "A [meeting:a1b2c3d4@0:30]. B [meeting:a1b2c3d4@0:30]. C [meeting:a1b2c3d4@0:45].")
         XCTAssertEqual(citations.count, 2)
+    }
+
+    func testExtractScreenMarkerAlongsideMeeting() {
+        let (display, citations) = ChatCitationParser.extract(
+            "The design was visible here [screen:4821] and discussed later [meeting:a1b2c3d4@0:30].")
+        XCTAssertEqual(display, "The design was visible here and discussed later.")
+        XCTAssertEqual(citations, [
+            ChatCitation(snapshotID: 4_821),
+            ChatCitation(meetingID: "a1b2c3d4", seconds: 30),
+        ])
+        XCTAssertEqual(citations.first?.snapshotID, 4_821)
+        XCTAssertEqual(citations.first?.kind, .screen)
+    }
+
+    func testMalformedScreenMarkersStayVisible() {
+        let text = "Odd [screen:abc] and [screen:0] and [screen:12@0:30] stay."
+        let (display, citations) = ChatCitationParser.extract(text)
+        XCTAssertEqual(display, text)
+        XCTAssertTrue(citations.isEmpty)
     }
 
     func testTextWithoutMarkersPassesThrough() {

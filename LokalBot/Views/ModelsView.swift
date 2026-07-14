@@ -366,7 +366,7 @@ struct ModelsView: View {
             }
             Text("Finds meetings by meaning, not just keywords. Uses Qwen3-Embedding 0.6B, downloaded when semantic search is first enabled (from Ask).")
                 .font(.caption).foregroundStyle(.secondary)
-            Text("Text search now uses Qwen3-Embedding 0.6B. Screenshot/slide embeddings with Qwen3-VL-Embedding 2B are listed as a future pipeline because image vectors need separate indexing and ranking.")
+            Text("Meeting text and captured-screen OCR use Qwen3-Embedding 0.6B. Direct screenshot/slide image vectors with Qwen3-VL-Embedding 2B remain a future pipeline.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .accessibilityIdentifier("models.embeddings")

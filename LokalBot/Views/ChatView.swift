@@ -194,9 +194,9 @@ private struct EditorialTurn: View {
     }
 }
 
-/// Source chips parsed from the assistant's `[meeting:ID@HH:MM:SS]` citation
-/// markers. Each chip deep-links into the cited meeting; timed citations seek
-/// the player to the cited moment.
+/// Visual sources parsed from the assistant's meeting and screen citation
+/// markers. Meetings stay compact chips; screen sources carry a private local
+/// thumbnail and open Timeline at the exact captured moment.
 private struct CitationRow: View {
     @EnvironmentObject var app: AppState
     let citations: [ChatCitation]
@@ -205,19 +205,26 @@ private struct CitationRow: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(citations) { citation in
-                    Button {
-                        app.openCitation(citation)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "quote.opening").font(.caption2)
-                            Text(label(for: citation)).font(.caption).lineLimit(1)
+                    switch citation.kind {
+                    case .meeting:
+                        Button {
+                            app.openCitation(citation)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "quote.opening").font(.caption2)
+                                Text(label(for: citation)).font(.caption).lineLimit(1)
+                            }
+                            .foregroundStyle(.secondary)
+                            .chipChrome()
                         }
-                        .foregroundStyle(.secondary)
-                        .chipChrome()
+                        .buttonStyle(.plain)
+                        .help("Open this meeting")
+                        .accessibilityIdentifier("chat.citation.meeting.\(citation.meetingID)")
+                    case .screen:
+                        if let snapshotID = citation.snapshotID {
+                            ScreenCitationCard(snapshotID: snapshotID)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .help("Open this meeting")
-                    .accessibilityIdentifier("chat.citation.\(citation.meetingID)")
                 }
             }
         }

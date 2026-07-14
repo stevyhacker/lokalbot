@@ -140,11 +140,14 @@ enum ChatPrompt {
         """)
         lines.append("")
         lines.append("""
-        Citing meetings:
+        Citing sources:
         • When part of your final answer comes from a specific meeting, append a \
         citation marker right after that sentence: [meeting:ID], or [meeting:ID@HH:MM:SS] \
         to point at a moment in the transcript. Use the exact meeting id a tool returned \
         — never invent one. The app renders markers as links; don't explain them.
+        • When part of your final answer comes from search_screen, append the exact \
+        [screen:ID] marker that search_screen returned. The app renders it as a private, \
+        local thumbnail linking to that captured moment. Never invent a screen id.
         """)
         if !libraryOverview.isEmpty {
             lines.append("")
