@@ -333,8 +333,11 @@ final class AgentSessionController: ObservableObject {
             return endpoint
         case .builtIn(let modelID):
             guard let entry = ModelCatalog.entry(id: modelID, custom: settings().customBuiltInModels)
-                    ?? ModelCatalog.entry(id: modelID),
-                  let modelURL = ModelCatalog.localURL(for: entry, storage: storage) else {
+                    ?? ModelCatalog.entry(id: modelID) else {
+                throw StartError.modelConfiguration("The built-in model isn't downloaded yet. Download it under Settings → Models.")
+            }
+            guard let modelURL = await ModelDownloadManager.shared.verifiedExistingURL(
+                entry, storage: storage) else {
                 throw StartError.modelConfiguration("The built-in model isn't downloaded yet. Download it under Settings → Models.")
             }
             releaseLLMLease()

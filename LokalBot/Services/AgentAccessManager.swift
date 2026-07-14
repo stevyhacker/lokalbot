@@ -121,14 +121,17 @@ final class AgentAccessManager: ObservableObject {
     static func resolveBuiltInModelURL(
         settings: AppSettings,
         storage: StorageManager
-    ) -> ResolvedBuiltInModel {
+    ) async -> ResolvedBuiltInModel {
         switch AgentLLMEndpointResolver.resolve(settings: settings) {
         case .builtIn(let modelID):
             guard let entry = ModelCatalog.entry(
                 id: modelID,
                 custom: settings.customBuiltInModels)
-                ?? ModelCatalog.entry(id: modelID),
-                let modelURL = ModelCatalog.localURL(for: entry, storage: storage) else {
+                ?? ModelCatalog.entry(id: modelID) else {
+                return .failure("The built-in model isn't downloaded. Open LokalBot → Settings → Models and download it, then ask again.")
+            }
+            guard let modelURL = await ModelDownloadManager.shared.verifiedExistingURL(
+                entry, storage: storage) else {
                 return .failure("The built-in model isn't downloaded. Open LokalBot → Settings → Models and download it, then ask again.")
             }
             return .model(modelURL)
@@ -142,7 +145,7 @@ final class AgentAccessManager: ObservableObject {
     /// Default wake handler: resolve the built-in model, then hold a TTL
     /// lease on the Main LLM.
     func wakeMainLLM(settings: AppSettings, storage: StorageManager) async -> String? {
-        switch Self.resolveBuiltInModelURL(settings: settings, storage: storage) {
+        switch await Self.resolveBuiltInModelURL(settings: settings, storage: storage) {
         case .failure(let reason):
             return reason
         case .model(let modelURL):

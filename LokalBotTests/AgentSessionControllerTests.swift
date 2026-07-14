@@ -102,13 +102,16 @@ final class AgentSessionControllerTests: XCTestCase {
             withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let entry = try XCTUnwrap(
-            ModelCatalog.entry(id: ModelCatalog.recommendedSummarizationID))
+        let entry = ModelCatalog.Entry(
+            id: "agent-lease-fixture", displayName: "Agent Lease Fixture",
+            fileName: "agent-lease-fixture.gguf", url: "", sizeGB: 0,
+            blurb: "", disablesThinking: false)
         try Data("GGUF".utf8).write(
             to: root.appendingPathComponent("models/\(entry.fileName)"))
         var settings = AppSettings()
         settings.summarizerBackend = .builtIn
         settings.builtInModelID = entry.id
+        settings.customBuiltInModels = [entry]
 
         let blocker = BlockingBrokerEnsure()
         var hooks: [InferenceRole: InferenceBroker.RuntimeHooks] = [:]

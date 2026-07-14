@@ -243,13 +243,16 @@ struct AgentTranscriptFolder: Equatable {
         case .tool(let id, let name, let args, let output, _):
             return id.count + name.count + args.count + output.count
         case .approval(let request):
-            return request.id.count + request.tool.count
+            let scalarCount = request.id.count + request.tool.count
                 + (request.workspace?.count ?? 0)
                 + (request.path?.count ?? 0)
                 + (request.command?.count ?? 0)
                 + (request.content?.count ?? 0)
                 + (request.summary?.count ?? 0)
-                + request.edits.reduce(0) { $0 + $1.oldText.count + $1.newText.count }
+            let editCount = request.edits.reduce(0) {
+                $0 + $1.oldText.count + $1.newText.count
+            }
+            return scalarCount + editCount
         }
     }
 

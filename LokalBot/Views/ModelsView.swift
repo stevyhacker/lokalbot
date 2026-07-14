@@ -467,6 +467,8 @@ struct ModelsView: View {
                                             displayName: file.fileName,
                                             fileName: file.fileName,
                                             url: file.downloadURL.absoluteString,
+                                            sha256: file.sha256,
+                                            sizeBytes: file.sizeBytes.map(Int64.init),
                                             sizeGB: file.sizeBytes.map { Double($0) / 1_000_000_000 } ?? 0,
                                             blurb: "Downloaded from \(file.modelID).",
                                             disablesThinking: false)

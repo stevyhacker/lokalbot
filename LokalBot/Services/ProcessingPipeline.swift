@@ -644,9 +644,8 @@ final class ProcessingPipeline: ObservableObject {
                 ?? ModelCatalog.entry(id: ModelCatalog.recommendedSummarizationID) else {
             throw PipelineError.badServerURL
         }
-        if let existing = ModelCatalog.localURL(for: entry, storage: storage) {
-            return existing
-        }
+        // The preparer also validates legacy on-disk models. Bypassing it for a
+        // GGUF header match would skip the newly pinned SHA-256 digest.
         return try await builtInModelPreparer(entry, storage)
     }
 

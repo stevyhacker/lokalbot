@@ -54,8 +54,9 @@ final class ProcessingPipelineModelPreparationTests: XCTestCase {
             storage: storage,
             settings: { settings },
             builtInModelPreparer: { entry, storage in
-                preparationCount += 1
                 let url = storage.rootURL.appendingPathComponent("models/\(entry.fileName)")
+                if ModelFileValidator.looksLikeGGUF(url) { return url }
+                preparationCount += 1
                 try FileManager.default.createDirectory(
                     at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try Data("GGUF".utf8).write(to: url)

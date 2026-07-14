@@ -6,6 +6,8 @@ import Foundation
 /// Conforms to `CotypingCompleting`, so `CotypingCoordinator` is unchanged.
 @MainActor
 final class CotypingEngineSelector: CotypingCompleting {
+    typealias ModelVerifier = (ModelCatalog.Entry, StorageManager) async -> URL?
+
     /// How long completions stay on HTTP after an in-process failure before
     /// the local engine is rebuilt and retried. Long enough that a persistent
     /// failure doesn't reload the ~6.66 GB weights on every keystroke, short
@@ -17,6 +19,7 @@ final class CotypingEngineSelector: CotypingCompleting {
     private let settings: () -> AppSettings
     private let storage: StorageManager
     private let now: () -> Date
+    private let verifyModel: ModelVerifier
     private var local: CotypingCompleting?
     private var localModelPath: String?
     /// Set after the first in-process failure so the HTTP fallback is logged
@@ -32,13 +35,17 @@ final class CotypingEngineSelector: CotypingCompleting {
         makeLocal: @escaping (String) -> CotypingCompleting,
         settings: @escaping () -> AppSettings,
         storage: StorageManager,
-        now: @escaping () -> Date = { Date() }
+        now: @escaping () -> Date = { Date() },
+        verifyModel: @escaping ModelVerifier = { entry, storage in
+            await ModelDownloadManager.shared.verifiedExistingURL(entry, storage: storage)
+        }
     ) {
         self.http = http
         self.makeLocal = makeLocal
         self.settings = settings
         self.storage = storage
         self.now = now
+        self.verifyModel = verifyModel
     }
 
     static var isAppleSilicon: Bool {
@@ -54,26 +61,24 @@ final class CotypingEngineSelector: CotypingCompleting {
     }
 
     /// Resolves the built-in cotyping model path the same way `makeTextEngine` does.
-    private func resolvedModelURL(_ s: AppSettings) -> URL? {
+    private func resolvedModelURL(_ s: AppSettings) async -> URL? {
         guard let entry = ModelCatalog.entry(id: s.cotypingBuiltInModelID, custom: s.customBuiltInModels)
                 ?? ModelCatalog.entry(id: ModelCatalog.recommendedCotypingID) else { return nil }
-        return ModelCatalog.localURL(for: entry, storage: storage)
+        return await verifyModel(entry, storage)
     }
 
     /// Returns the local engine if eligible, lazily (re)building it when the
     /// resolved model path changes; nil → use HTTP.
-    private func localIfEligible() -> CotypingCompleting? {
+    private func localIfEligible() async -> CotypingCompleting? {
         let s = settings()
-        // Short-circuit the cheap gating conditions before the synchronous GGUF
-        // disk read in `resolvedModelURL`: a built-in-backend user with the runtime
-        // toggle off (or on Intel) would otherwise pay that read for nothing. This
-        // is behavior-identical to gating in `shouldUseLocal` — which still returns
-        // false in exactly these cases — we just avoid resolving the path first.
+        // Short-circuit the cheap gating conditions before resolving and, for a
+        // legacy download, hashing the GGUF. Users with local cotyping disabled
+        // should not pay that integrity-check cost.
         guard s.cotypingInProcessRuntime, Self.isAppleSilicon else { dropLocalEngine(); return nil }
         // Failure cooldown: the engine was already dropped (weights freed) in
         // handleLocalFailure, so just route to HTTP until the retry instant.
         if let retryLocalAt, now() < retryLocalAt { return nil }
-        guard let url = resolvedModelURL(s),
+        guard let url = await resolvedModelURL(s),
               Self.shouldUseLocal(settings: s, modelURL: url, isAppleSilicon: Self.isAppleSilicon)
         else { dropLocalEngine(); return nil }
         if local == nil || localModelPath != url.path {
@@ -105,12 +110,12 @@ final class CotypingEngineSelector: CotypingCompleting {
     }
 
     func prewarm() async {
-        guard let engine = localIfEligible() else { return }
+        guard let engine = await localIfEligible() else { return }
         try? await engine.prewarm()
     }
 
     func prewarm(for request: CotypingRequest) async {
-        guard let engine = localIfEligible() else { return }
+        guard let engine = await localIfEligible() else { return }
         try? await engine.prewarm(for: request)
     }
 
@@ -120,7 +125,7 @@ final class CotypingEngineSelector: CotypingCompleting {
     }
 
     func generate(_ request: CotypingRequest) async throws -> CotypingNormalizationResult {
-        guard let engine = localIfEligible() else { return try await http.generate(request) }
+        guard let engine = await localIfEligible() else { return try await http.generate(request) }
         do {
             let result = try await engine.generate(request)
             noteLocalSuccess()
@@ -135,7 +140,7 @@ final class CotypingEngineSelector: CotypingCompleting {
         _ request: CotypingRequest,
         onPartial: @escaping @Sendable (CotypingNormalizationResult) -> Void
     ) async throws -> CotypingNormalizationResult {
-        guard let engine = localIfEligible() else {
+        guard let engine = await localIfEligible() else {
             return try await http.generateStreaming(request, onPartial: onPartial)
         }
         do {

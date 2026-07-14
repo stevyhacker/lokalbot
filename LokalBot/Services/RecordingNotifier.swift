@@ -1,6 +1,45 @@
 import Foundation
 import UserNotifications
 
+@MainActor
+struct RecordingPromptRegistry {
+    struct PendingPrompt {
+        let expiresAt: Date
+        let record: @MainActor () -> Void
+    }
+
+    private var prompts: [String: PendingPrompt] = [:]
+
+    mutating func insert(identifier: String, expiresAt: Date,
+                         record: @escaping @MainActor () -> Void) {
+        prompts[identifier] = PendingPrompt(expiresAt: expiresAt, record: record)
+    }
+
+    func contains(_ identifier: String) -> Bool {
+        prompts[identifier] != nil
+    }
+
+    mutating func remove(_ identifier: String) -> PendingPrompt? {
+        prompts.removeValue(forKey: identifier)
+    }
+
+    mutating func removeAll() -> [String] {
+        let identifiers = Array(prompts.keys)
+        prompts.removeAll()
+        return identifiers
+    }
+
+    mutating func removeExpired(now: Date) -> [String] {
+        let identifiers = prompts.compactMap { identifier, prompt in
+            prompt.expiresAt <= now ? identifier : nil
+        }
+        for identifier in identifiers {
+            prompts.removeValue(forKey: identifier)
+        }
+        return identifiers
+    }
+}
+
 /// Local notifications that announce recording start/stop, so the user knows a
 /// meeting is being captured without keeping the window open. This is the
 /// "push" half of the menu-bar-only experience; the always-visible menu bar
@@ -18,12 +57,7 @@ final class RecordingNotifier: NSObject, UNUserNotificationCenterDelegate {
     private static let recordAction = "lokalbot.record-detected-meeting"
     private static let ignoreAction = "lokalbot.ignore-detected-meeting"
 
-    private struct PendingDetection {
-        let expiresAt: Date
-        let record: @MainActor () -> Void
-    }
-
-    private var pendingDetections: [String: PendingDetection] = [:]
+    private var pendingDetections = RecordingPromptRegistry()
 
     /// Install the foreground-presentation delegate. Called once at launch from
     /// the interactive (non-headless, non-UI-test) path.
@@ -63,8 +97,10 @@ final class RecordingNotifier: NSObject, UNUserNotificationCenterDelegate {
                          expiresAfter: TimeInterval = 2 * 60,
                          onRecord: @escaping @MainActor () -> Void) {
         purgeExpiredDetections()
+        invalidateMeetingDetections()
         let identifier = "meeting-detected-\(UUID().uuidString)"
-        pendingDetections[identifier] = PendingDetection(
+        pendingDetections.insert(
+            identifier: identifier,
             expiresAt: Date().addingTimeInterval(expiresAfter),
             record: onRecord)
         post(
@@ -97,15 +133,44 @@ final class RecordingNotifier: NSObject, UNUserNotificationCenterDelegate {
                 authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) == true
             }
             guard authorized else {
-                pendingDetections.removeValue(forKey: identifier)
+                _ = pendingDetections.remove(identifier)
                 return
             }
-            try? await center.add(request)
+            if categoryIdentifier == Self.detectionCategory,
+               !pendingDetections.contains(identifier) {
+                return
+            }
+            do {
+                try await center.add(request)
+            } catch {
+                if categoryIdentifier == Self.detectionCategory {
+                    _ = pendingDetections.remove(identifier)
+                }
+                return
+            }
+            // `add` suspends. A meeting can end while the notification center
+            // is accepting the request, after invalidation already tried to
+            // remove it. Clean up the newly added request on resume as well.
+            if categoryIdentifier == Self.detectionCategory,
+               !pendingDetections.contains(identifier) {
+                removeNotifications(withIdentifiers: [identifier])
+            }
         }
     }
 
+    func invalidateMeetingDetections() {
+        removeNotifications(withIdentifiers: pendingDetections.removeAll())
+    }
+
     private func purgeExpiredDetections(now: Date = Date()) {
-        pendingDetections = pendingDetections.filter { $0.value.expiresAt > now }
+        removeNotifications(withIdentifiers: pendingDetections.removeExpired(now: now))
+    }
+
+    private func removeNotifications(withIdentifiers identifiers: [String]) {
+        guard !identifiers.isEmpty else { return }
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: identifiers)
+        center.removeDeliveredNotifications(withIdentifiers: identifiers)
     }
 
     // Show the banner even when LokalBot happens to be the active app (e.g. the
@@ -126,7 +191,7 @@ final class RecordingNotifier: NSObject, UNUserNotificationCenterDelegate {
 
     private func handle(_ response: UNNotificationResponse) {
         let identifier = response.notification.request.identifier
-        guard let pending = pendingDetections.removeValue(forKey: identifier) else { return }
+        guard let pending = pendingDetections.remove(identifier) else { return }
         guard response.actionIdentifier == Self.recordAction,
               pending.expiresAt > Date() else { return }
         pending.record()

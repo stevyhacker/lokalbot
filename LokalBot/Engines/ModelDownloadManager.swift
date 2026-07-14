@@ -34,6 +34,7 @@ final class ModelDownloadManager: ObservableObject {
 
     private var tasks: [String: Task<Void, Never>] = [:]
     private var generations: [String: UUID] = [:]
+    private var verificationTasks: [String: (token: UUID, task: Task<URL?, Never>)] = [:]
     private var lastProgressPublish: [String: (fraction: Double, time: TimeInterval)] = [:]
 
     private let session: URLSession
@@ -74,8 +75,66 @@ final class ModelDownloadManager: ObservableObject {
 
     func download(_ entry: ModelCatalog.Entry, storage: StorageManager) {
         download(url: entry.url, fileName: entry.fileName, id: entry.id,
-                 expectedSizeGB: entry.sizeGB, expectedSHA256: entry.sha256,
+                 expectedSizeGB: entry.sizeGB, expectedSHA256: entry.expectedSHA256,
                  storage: storage)
+    }
+
+    /// Resolve an on-disk model only after its pinned digest has been checked.
+    /// Legacy files without a marker are hashed once; the shared verification
+    /// task prevents simultaneous summary, Agent, and cotyping callers from
+    /// hashing the same multi-gigabyte model independently.
+    func verifiedExistingURL(_ entry: ModelCatalog.Entry,
+                             storage: StorageManager) async -> URL? {
+        guard ModelCatalog.localURL(for: entry, storage: storage) != nil else { return nil }
+        guard entry.expectedSHA256 != nil else {
+            return ModelCatalog.localURL(for: entry, storage: storage)
+        }
+        if let running = verificationTasks[entry.id] {
+            return await running.task.value
+        }
+
+        let token = UUID()
+        let task = Task { @MainActor [weak self] () -> URL? in
+            guard let self else { return nil }
+            return await self.verifyExistingUncoalesced(entry, storage: storage)
+        }
+        verificationTasks[entry.id] = (token, task)
+        let result = await task.value
+        if verificationTasks[entry.id]?.token == token {
+            verificationTasks.removeValue(forKey: entry.id)
+        }
+        return result
+    }
+
+    private func verifyExistingUncoalesced(_ entry: ModelCatalog.Entry,
+                                           storage: StorageManager) async -> URL? {
+        guard let existing = ModelCatalog.localURL(for: entry, storage: storage),
+              let expectedSHA256 = entry.expectedSHA256 else { return nil }
+        let isValid: Bool
+        do {
+            if let expectedBytes = entry.expectedSizeBytes {
+                isValid = try await DownloadIntegrity.verifyExisting(
+                    at: existing,
+                    expectedBytes: expectedBytes,
+                    expectedSHA256: expectedSHA256)
+            } else {
+                try Task.checkCancellation()
+                isValid = try await sha256Digest(existing).lowercased() == expectedSHA256
+            }
+        } catch {
+            guard !Task.isCancelled else { return nil }
+            errors[entry.id] = "Could not verify the existing model: \(error.localizedDescription)"
+            return nil
+        }
+        guard !Task.isCancelled else { return nil }
+        guard isValid else {
+            DownloadIntegrity.removeFileAndMarker(at: existing)
+            errors[entry.id] = "The existing model failed its SHA-256 integrity check."
+            objectWillChange.send()
+            return nil
+        }
+        errors[entry.id] = nil
+        return existing
     }
 
     /// Await the same single-flight download used by the Models UI. This keeps
@@ -83,9 +142,10 @@ final class ModelDownloadManager: ObservableObject {
     /// racing a second download and turns preparation failures into actionable
     /// pipeline errors instead of a generic "model missing" response.
     func ensureAvailable(_ entry: ModelCatalog.Entry, storage: StorageManager) async throws -> URL {
-        if let existing = ModelCatalog.localURL(for: entry, storage: storage) {
+        if let existing = await verifiedExistingURL(entry, storage: storage) {
             return existing
         }
+        try Task.checkCancellation()
 
         download(entry, storage: storage)
         while tasks[entry.id] != nil {
@@ -93,7 +153,7 @@ final class ModelDownloadManager: ObservableObject {
             try await Task.sleep(for: .milliseconds(200))
         }
 
-        if let downloaded = ModelCatalog.localURL(for: entry, storage: storage) {
+        if let downloaded = await verifiedExistingURL(entry, storage: storage) {
             return downloaded
         }
         throw PreparationError.failed(
@@ -108,6 +168,7 @@ final class ModelDownloadManager: ObservableObject {
                   expectedSizeGB: Double? = nil, expectedSHA256: String? = nil,
                   storage: StorageManager) {
         guard tasks[id] == nil, let rawURL = URL(string: urlString) else { return }
+        verificationTasks.removeValue(forKey: id)?.task.cancel()
         guard Self.isSafeFileName(fileName) else {
             errors[id] = "The model filename is unsafe. Choose the file again."
             return
@@ -198,6 +259,7 @@ final class ModelDownloadManager: ObservableObject {
 
     func cancel(id: String) {
         tasks[id]?.cancel()
+        verificationTasks.removeValue(forKey: id)?.task.cancel()
         tasks[id] = nil
         generations[id] = nil
         progress[id] = nil
@@ -205,7 +267,8 @@ final class ModelDownloadManager: ObservableObject {
     }
 
     func delete(_ entry: ModelCatalog.Entry, storage: StorageManager) {
-        try? FileManager.default.removeItem(
+        verificationTasks.removeValue(forKey: entry.id)?.task.cancel()
+        DownloadIntegrity.removeFileAndMarker(
             at: storage.rootURL.appendingPathComponent("models/\(entry.fileName)"))
         objectWillChange.send()
     }

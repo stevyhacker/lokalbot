@@ -41,6 +41,57 @@ final class DownloadIntegrityTests: XCTestCase {
 
 @MainActor
 final class ModelDownloadManagerCancellationTests: XCTestCase {
+    func testLegacyCatalogModelIsHashedAndMarkedBeforeReuse() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("legacy-model-\(UUID().uuidString)", isDirectory: true)
+        let storage = StorageManager(rootURL: root)
+        let models = root.appendingPathComponent("models", isDirectory: true)
+        try FileManager.default.createDirectory(at: models, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let data = Data("GGUFlegacy-model".utf8)
+        let model = models.appendingPathComponent("legacy.gguf")
+        try data.write(to: model)
+        let digest = try SHA256Verifier.hexDigest(of: model)
+        let entry = ModelCatalog.Entry(
+            id: "legacy", displayName: "Legacy", fileName: model.lastPathComponent,
+            url: "https://example.com/legacy.gguf", sha256: digest,
+            sizeBytes: Int64(data.count), sizeGB: Double(data.count) / 1_000_000_000,
+            blurb: "", disablesThinking: false)
+
+        let resolved = await ModelDownloadManager().verifiedExistingURL(entry, storage: storage)
+
+        XCTAssertEqual(resolved, model)
+        XCTAssertEqual(
+            try String(contentsOf: model.appendingPathExtension("sha256"), encoding: .utf8),
+            digest)
+    }
+
+    func testMismatchedLegacyCatalogModelIsRemoved() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("corrupt-model-\(UUID().uuidString)", isDirectory: true)
+        let storage = StorageManager(rootURL: root)
+        let models = root.appendingPathComponent("models", isDirectory: true)
+        try FileManager.default.createDirectory(at: models, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let model = models.appendingPathComponent("corrupt.gguf")
+        try Data("GGUFbad!".utf8).write(to: model)
+        let expectedFile = root.appendingPathComponent("expected.gguf")
+        try Data("GGUFgood".utf8).write(to: expectedFile)
+        let expectedDigest = try SHA256Verifier.hexDigest(of: expectedFile)
+        let entry = ModelCatalog.Entry(
+            id: "corrupt", displayName: "Corrupt", fileName: model.lastPathComponent,
+            url: "https://example.com/corrupt.gguf", sha256: expectedDigest,
+            sizeBytes: 8, sizeGB: 0.000_000_008,
+            blurb: "", disablesThinking: false)
+
+        let resolved = await ModelDownloadManager().verifiedExistingURL(entry, storage: storage)
+
+        XCTAssertNil(resolved)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: model.path))
+    }
+
     func testCancellationDuringSHA256VerificationRemovesOnlyCompletedStagedFile() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("model-cancel-\(UUID().uuidString)", isDirectory: true)

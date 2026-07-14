@@ -556,6 +556,7 @@ final class AppState: ObservableObject {
     var menuBarTimer: String { recording.menuBarTimer }
 
     func startRecording(context: MeetingDetectionContext? = nil, source: String = "ui") {
+        RecordingNotifier.shared.invalidateMeetingDetections()
         guard libraryReady else {
             pendingRecordingStart = (context, source)
             lastError = "Preparing your meeting library; recording will start when it is ready."
@@ -669,14 +670,27 @@ final class AppState: ObservableObject {
             switch self.settings.autoRecordMode {
             case .automatic: self.startRecording(context: context, source: "detector")
             case .ask: self.notifyMeetingDetected(context)
-            case .manual: break
+            case .manual: RecordingNotifier.shared.invalidateMeetingDetections()
             }
         }
         detector.onMeetingSwitched = { [weak self] context in
-            guard let self, self.settings.autoRecordMode == .automatic else { return }
-            self.recording.splitForCalendarHandoff(context)
+            guard let self else { return }
+            switch self.settings.autoRecordMode {
+            case .automatic:
+                RecordingNotifier.shared.invalidateMeetingDetections()
+                self.recording.splitForCalendarHandoff(context)
+            case .ask:
+                if self.recording.isRecording || self.recording.isStarting {
+                    RecordingNotifier.shared.invalidateMeetingDetections()
+                } else {
+                    self.notifyMeetingDetected(context)
+                }
+            case .manual:
+                RecordingNotifier.shared.invalidateMeetingDetections()
+            }
         }
         detector.onMeetingEnded = { [weak self] in
+            RecordingNotifier.shared.invalidateMeetingDetections()
             self?.stopRecording()
         }
         detector.stopDebounce = settings.stopDebounceSeconds
@@ -924,7 +938,10 @@ final class AppState: ObservableObject {
             useCalendarTitles: settings.useCalendarTitles,
             appName: context.detectedApp?.name)
         RecordingNotifier.shared.meetingDetected(title: title) { [weak self] in
-            guard let self, !self.recording.isRecording, !self.recording.isStarting else { return }
+            guard let self,
+                  self.settings.autoRecordMode == .ask,
+                  !self.recording.isRecording,
+                  !self.recording.isStarting else { return }
             self.startRecording(context: context, source: "notification")
         }
     }
