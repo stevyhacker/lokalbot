@@ -16,6 +16,8 @@ LokalBot can store the following under its Application Support directory:
 - downloaded transcription, embedding, speech, and language models;
 - opt-in app/window activity history;
 - opt-in screenshots and locally extracted text;
+- saved screen moments and optional unencrypted daily-memory exports at a
+  folder you choose;
 - opt-in Agent Mode sessions and the agent runtime; and
 - preferences, diagnostic logs, and encryption keys.
 
@@ -66,6 +68,17 @@ obtaining any consent required before recording other people.
 The bundled `lokalbot-cli` and MCP interface are read-only. They refuse library
 access unless you explicitly enable Agent Access under Settings → Privacy. An
 enabled external tool runs as your macOS user, so only connect tools you trust.
+Screen-memory MCP tools require a second, independent toggle. They expose OCR,
+window/app activity, timestamps, and capture metadata, but never decrypted
+screenshot pixels or screenshot file paths. Enabling meeting access does not
+enable screen-memory access, or vice versa. A connected MCP client may transmit
+tool inputs and results under that client's own privacy terms.
+
+Screenshot pixels and extracted text follow the configured retention window by
+default. A screen moment you explicitly save retains its encrypted pixels, OCR,
+and semantic search vector until you unsave or delete that moment. Daily-memory
+exports are ordinary unencrypted Markdown files written only to the folder you
+choose and remain there until you remove them.
 
 ## Security and changes
 

@@ -1,13 +1,74 @@
 import XCTest
 @testable import LokalBot
 
+private final class StubScreenMemoryReader: ScreenMemoryReading {
+    let timestamp = Date(timeIntervalSince1970: 1_780_000_000)
+
+    func search(_ request: ScreenMemorySearchRequest) throws -> [ScreenMemorySearchHit] {
+        [ScreenMemorySearchHit(
+            snapshotID: 7, capturedAt: timestamp, app: "Safari",
+            windowTitle: "Report", textSource: "ocr", snippet: "«revenue» grew")]
+    }
+
+    func timeline(from start: Date, to end: Date, limit: Int) throws -> ScreenMemoryTimeline {
+        ScreenMemoryTimeline(
+            start: start,
+            end: end,
+            activity: [ScreenMemoryActivityBlock(
+                id: 3, app: "Safari", windowTitle: "Report",
+                startedAt: timestamp, endedAt: timestamp.addingTimeInterval(60),
+                durationSeconds: 60)],
+            screenshots: [ScreenMemoryScreenshotSummary(
+                snapshotID: 7, capturedAt: timestamp, app: "Safari",
+                windowTitle: "Report", captureTrigger: "window_change",
+                hasOCR: true, isSaved: true)])
+    }
+
+    func recentActivity(since: Date, limit: Int) throws -> [ScreenMemoryActivityBlock] {
+        [ScreenMemoryActivityBlock(
+            id: 3, app: "Safari", windowTitle: "Report",
+            startedAt: timestamp, endedAt: timestamp.addingTimeInterval(60),
+            durationSeconds: 60)]
+    }
+
+    func appUsage(from start: Date, to end: Date, limit: Int) throws
+        -> [ScreenMemoryAppUsage] {
+        [ScreenMemoryAppUsage(app: "Safari", durationSeconds: 60, blockCount: 1)]
+    }
+
+    func screenshotDetail(snapshotID: Int64) throws -> ScreenMemoryScreenshotDetail? {
+        guard snapshotID == 7 else { return nil }
+        return ScreenMemoryScreenshotDetail(
+            snapshotID: 7, capturedAt: timestamp, app: "Safari", windowTitle: "Report",
+            captureTrigger: "window_change", hasEncryptedPixels: true,
+            textSources: ["ocr"], ocrText: "Revenue grew", isSaved: true,
+            savedNote: "Review", savedAt: timestamp)
+    }
+
+    func savedMoments(from start: Date, to end: Date, limit: Int) throws
+        -> [ScreenMemorySavedMoment] { [] }
+
+    func daySummary(from start: Date, to end: Date) throws -> ScreenMemoryDaySummary {
+        ScreenMemoryDaySummary(
+            trackedSeconds: 60, appCount: 1, activityBlockCount: 1,
+            screenshotCount: 1, savedMomentCount: 1)
+    }
+}
+
 final class FileLibraryToolProviderTests: XCTestCase {
     private var root: URL!
     private var gate: AgentAccessGate!
+    private var screenGate: ScreenMemoryAccessGate!
+    private var screenReader: StubScreenMemoryReader!
     private var askedQuestions: [String] = []
 
     private var provider: FileLibraryToolProvider {
-        FileLibraryToolProvider(gate: gate) { question in
+        FileLibraryToolProvider(
+            gate: gate,
+            screenGate: screenGate,
+            screenReader: screenReader,
+            now: { Date(timeIntervalSince1970: 1_780_000_000) }
+        ) { question in
             self.askedQuestions.append(question)
             return .text("stub answer")
         }
@@ -20,6 +81,8 @@ final class FileLibraryToolProviderTests: XCTestCase {
         setenv("LOKALBOT_STORAGE_ROOT", root.path, 1)
         gate = AgentAccessGate(root: root)
         try gate.enable()
+        screenGate = ScreenMemoryAccessGate(root: root)
+        screenReader = StubScreenMemoryReader()
         askedQuestions = []
 
         try MeetingFixture.write([
@@ -44,10 +107,14 @@ final class FileLibraryToolProviderTests: XCTestCase {
         super.tearDown()
     }
 
-    func testAdvertisesExactlyTheFourTools() {
+    func testAdvertisesMeetingAndScreenTools() {
         XCTAssertEqual(
             provider.tools.map(\.name),
-            ["list_meetings", "get_meeting", "search_meetings", "ask_library"])
+            [
+                "list_meetings", "get_meeting", "search_meetings", "ask_library",
+                "search_screen", "get_timeline", "get_recent_activity", "get_app_usage",
+                "get_screenshot_detail",
+            ])
         for tool in provider.tools {
             XCTAssertFalse(tool.description.isEmpty, tool.name)
         }
@@ -63,6 +130,29 @@ final class FileLibraryToolProviderTests: XCTestCase {
             XCTAssertTrue(result.text.hasPrefix("[access_disabled]"), name)
         }
         XCTAssertTrue(askedQuestions.isEmpty)
+    }
+
+    func testScreenToolsUseIndependentGate() async throws {
+        for name in [
+            "search_screen", "get_timeline", "get_recent_activity", "get_app_usage",
+            "get_screenshot_detail",
+        ] {
+            let result = await provider.call(
+                name: name,
+                arguments: ["query": "revenue", "snapshot_id": 7])
+            XCTAssertTrue(result.isError, name)
+            XCTAssertTrue(result.text.hasPrefix("[screen_access_disabled]"), name)
+        }
+
+        try screenGate.enable()
+        gate.disable()
+        let screenResult = await provider.call(
+            name: "search_screen", arguments: ["query": "revenue"])
+        XCTAssertFalse(screenResult.isError)
+        XCTAssertTrue(screenResult.text.contains("\"snapshot_id\" : 7"))
+
+        let meetingResult = await provider.call(name: "list_meetings", arguments: nil)
+        XCTAssertTrue(meetingResult.text.hasPrefix("[access_disabled]"))
     }
 
     func testListMeetingsReturnsBothNewestFirst() async {
@@ -164,6 +254,64 @@ final class FileLibraryToolProviderTests: XCTestCase {
             name: "ask_library",
             arguments: ["question": "   "])
         XCTAssertTrue(empty.text.hasPrefix("[invalid_arguments]"))
+    }
+
+    func testScreenToolsReturnOnlyOCRAndMetadata() async throws {
+        try screenGate.enable()
+
+        let search = await provider.call(
+            name: "search_screen",
+            arguments: ["query": "revenue", "day": "2026-05-27", "limit": 10])
+        XCTAssertFalse(search.isError)
+        XCTAssertTrue(search.text.contains("«revenue»"))
+
+        let timeline = await provider.call(
+            name: "get_timeline", arguments: ["day": "2026-05-27"])
+        XCTAssertFalse(timeline.isError)
+        XCTAssertTrue(timeline.text.contains("\"activity\""))
+        XCTAssertTrue(timeline.text.contains("\"screenshots\""))
+
+        let recent = await provider.call(
+            name: "get_recent_activity", arguments: ["minutes": 60])
+        XCTAssertFalse(recent.isError)
+        XCTAssertTrue(recent.text.contains("\"duration_seconds\""))
+
+        let usage = await provider.call(
+            name: "get_app_usage", arguments: ["day": "2026-05-27"])
+        XCTAssertFalse(usage.isError)
+        XCTAssertTrue(usage.text.contains("Safari"))
+
+        let detail = await provider.call(
+            name: "get_screenshot_detail", arguments: ["snapshot_id": 7])
+        XCTAssertFalse(detail.isError)
+        XCTAssertTrue(detail.text.contains("Revenue grew"))
+        XCTAssertTrue(detail.text.contains("\"has_encrypted_pixels\" : true"))
+        XCTAssertFalse(detail.text.contains("path"))
+        XCTAssertFalse(detail.text.contains("image"))
+        XCTAssertFalse(detail.text.contains("base64"))
+    }
+
+    func testScreenToolArgumentErrorsAndMissingScreenshot() async throws {
+        try screenGate.enable()
+
+        let emptyQuery = await provider.call(name: "search_screen", arguments: ["query": " "])
+        XCTAssertTrue(emptyQuery.text.hasPrefix("[invalid_arguments]"))
+
+        let badDay = await provider.call(
+            name: "get_timeline", arguments: ["day": "2026-02-30"])
+        XCTAssertTrue(badDay.text.hasPrefix("[invalid_arguments]"))
+
+        let badMinutes = await provider.call(
+            name: "get_recent_activity", arguments: ["minutes": 0])
+        XCTAssertTrue(badMinutes.text.hasPrefix("[invalid_arguments]"))
+
+        let badID = await provider.call(
+            name: "get_screenshot_detail", arguments: ["snapshot_id": -1])
+        XCTAssertTrue(badID.text.hasPrefix("[invalid_arguments]"))
+
+        let missing = await provider.call(
+            name: "get_screenshot_detail", arguments: ["snapshot_id": 99])
+        XCTAssertTrue(missing.text.hasPrefix("[screenshot_not_found]"))
     }
 
     func testUnknownToolName() async {

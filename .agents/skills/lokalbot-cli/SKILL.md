@@ -1,6 +1,6 @@
 ---
 name: lokalbot-cli
-description: Read your LokalBot meeting library (recordings, transcripts, summaries) from a shell command. Use whenever the user asks about past meetings, decisions, action items, or anything that happened during a recorded meeting.
+description: Read your LokalBot meeting library from the shell and use separately authorized screen-memory MCP tools. Use for past meetings, decisions, action items, recently viewed screen text, app activity, or exact captured moments.
 ---
 
 # LokalBot CLI Skill
@@ -15,6 +15,7 @@ If `lokalbot-cli` isn't on PATH, use the embedded copy directly:
 - The user mentions a meeting, call, sync, standup, or talk that probably happened recently.
 - The user asks about a decision, an action item, a quote, or "who said X" — that knowledge likely lives in a meeting summary or transcript.
 - The user wants to find past mentions of a topic across all meetings.
+- The user asks what they recently viewed, which app they used, or when a phrase appeared on screen; use the screen-memory MCP tools only when their separate permission is enabled.
 
 ## Picking the right verb
 
@@ -63,7 +64,7 @@ cd $(lokalbot-cli path latest)
 
 ## MCP alternative (and ask_library)
 
-The same library is available over MCP for GUI clients and anything else that speaks it: `lokalbot-cli mcp` serves `list_meetings`, `get_meeting`, `search_meetings`, and `ask_library` on stdio.
+The same library is available over MCP for GUI clients and anything else that speaks it: `lokalbot-cli mcp` serves `list_meetings`, `get_meeting`, `search_meetings`, and `ask_library` on stdio. It also advertises `search_screen`, `get_timeline`, `get_recent_activity`, `get_app_usage`, and `get_screenshot_detail`; those return OCR and metadata only, never decrypted pixels or screenshot paths.
 
 ```bash
 claude mcp add lokalbot -- /Applications/LokalBot.app/Contents/Helpers/lokalbot-cli mcp
@@ -72,6 +73,8 @@ claude mcp add lokalbot -- /Applications/LokalBot.app/Contents/Helpers/lokalbot-
 `ask_library` is the synthesis tool: it sends the question to LokalBot's **local** model, which reads the library and returns only an answer with meeting citations — useful when the user wants a conclusion rather than quotes. It needs the LokalBot app running, and the first call can take up to a minute while the model loads. Prefer `search`/`get` when the user wants exact wording.
 
 The MCP tools require the user's consent toggle: LokalBot → Settings → Privacy → "Allow external agents to read your meeting library". If a tool returns `[access_disabled]`, tell the user to flip that toggle — do not try to work around it.
+
+Screen-memory tools require the separate "Allow external agents to read screen memory" toggle. A meeting-library grant never implies a screen-memory grant. If a screen tool returns `[screen_access_disabled]`, explain that separate choice and do not work around it.
 
 ## What you SHOULD do
 

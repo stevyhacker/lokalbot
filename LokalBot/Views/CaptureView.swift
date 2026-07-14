@@ -13,6 +13,7 @@ final class CaptureModel: ObservableObject {
     @Published var blocks: [ActivityBlock] = []
     @Published var shots: [ActivityStore.Screenshot] = []
     @Published var selection: ActivityBlock.ID?
+    @Published var selectedSnapshotID: Int64?
     @Published var digest: String?
     @Published var generating = false
     @Published var digestError: String?
@@ -23,16 +24,20 @@ final class CaptureModel: ObservableObject {
     }
 
     func moveDay(by value: Int) {
+        selectedSnapshotID = nil
         day = Calendar.current.date(byAdding: .day, value: value, to: day)
             ?? day.addingTimeInterval(TimeInterval(value) * 86_400)
     }
 
     func reload(app: AppState) {
+        let retainedSnapshotID = selectedSnapshotID
         blocks = app.activityStore.blocks(on: day)
         shots = app.activityStore.screenshots(on: day)
         digest = try? String(contentsOf: journalURL(app: app), encoding: .utf8)
         digestError = nil
         selection = nil
+        selectedSnapshotID = shots.contains { $0.id == retainedSnapshotID }
+            ? retainedSnapshotID : nil
     }
 
     /// The selected day's meetings, live recording included, for the track
@@ -114,6 +119,8 @@ struct TimelineContentView: View {
             .task(id: model.day.formatted(date: .numeric, time: .omitted)) {
                 model.reload(app: app)
             }
+            .onAppear(perform: consumePendingScreenMoment)
+            .onChange(of: app.pendingScreenSnapshotID) { consumePendingScreenMoment() }
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
                     Button {
@@ -130,6 +137,20 @@ struct TimelineContentView: View {
                 }
             }
     }
+
+    private func consumePendingScreenMoment() {
+        guard let snapshotID = app.pendingScreenSnapshotID else { return }
+        defer { app.pendingScreenSnapshotID = nil }
+        guard let screenshot = app.activityStore.screenshot(id: snapshotID) else {
+            app.lastError = "That captured screen is no longer available."
+            return
+        }
+        model.day = screenshot.ts
+        model.reload(app: app)
+        model.selectedSnapshotID = snapshotID
+        model.selection = nil
+        app.selectedMeetingIDs = []
+    }
 }
 
 // MARK: - Day view — header, summary rail, hour track
@@ -142,7 +163,7 @@ struct CaptureDayView: View {
         let meetings = model.meetings(in: app)
         VStack(alignment: .leading, spacing: 12) {
             header
-            if model.blocks.isEmpty && meetings.isEmpty {
+            if model.blocks.isEmpty && meetings.isEmpty && model.shots.isEmpty {
                 ContentUnavailableView(
                     "No activity recorded",
                     systemImage: "clock",
@@ -152,6 +173,12 @@ struct CaptureDayView: View {
                     .frame(maxHeight: .infinity)
             } else {
                 summaryRail(meetings: meetings)
+                if !model.shots.isEmpty {
+                    ScreenRewindView(
+                        screenshots: model.shots,
+                        selectedSnapshotID: screenSelection,
+                        onReload: { model.reload(app: app) })
+                }
                 Divider()
                 if meetings.contains(where: { $0.endedAt == nil }) {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -175,13 +202,27 @@ struct CaptureDayView: View {
             selectedMeetingIDs: app.selectedMeetingIDs,
             onSelectBlock: { id in
                 model.selection = id
-                if id != nil { app.selectedMeetingIDs = [] }
+                if id != nil {
+                    model.selectedSnapshotID = nil
+                    app.selectedMeetingIDs = []
+                }
             },
             onSelectMeeting: { id in
                 model.selection = nil
+                model.selectedSnapshotID = nil
                 app.selectedMeetingIDs = app.selectedMeetingIDs == [id] ? [] : [id]
             })
             .accessibilityIdentifier("timeline.track")
+    }
+
+    private var screenSelection: Binding<Int64?> {
+        Binding(get: { model.selectedSnapshotID }, set: { snapshotID in
+            model.selectedSnapshotID = snapshotID
+            if snapshotID != nil {
+                model.selection = nil
+                app.selectedMeetingIDs = []
+            }
+        })
     }
 
     private var header: some View {

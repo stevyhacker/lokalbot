@@ -5,6 +5,105 @@ import XCTest
 
 @MainActor
 final class ScreenshotProcessingWorkerTests: XCTestCase {
+    func testRetentionScheduleRunsDailyAndRespondsToPrivacyChanges() {
+        var schedule = ScreenshotRetentionSchedule()
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+
+        XCTAssertTrue(schedule.shouldPrune(at: start))
+        XCTAssertFalse(schedule.shouldPrune(at: start.addingTimeInterval(86_399)))
+        XCTAssertTrue(schedule.shouldPrune(at: start.addingTimeInterval(86_400)))
+
+        // A shorter retention window is an explicit privacy action, so it can
+        // bypass the daily bound. A clock rollback must also not suspend
+        // cleanup until wall time catches up with the old timestamp.
+        XCTAssertTrue(schedule.shouldPrune(
+            at: start.addingTimeInterval(86_460),
+            force: true
+        ))
+        XCTAssertTrue(schedule.shouldPrune(at: start))
+
+        XCTAssertTrue(ScreenshotRetentionSchedule.requiresImmediatePrune(
+            previousDays: 14,
+            currentDays: 7
+        ))
+        XCTAssertFalse(ScreenshotRetentionSchedule.requiresImmediatePrune(
+            previousDays: 7,
+            currentDays: 7
+        ))
+        XCTAssertFalse(ScreenshotRetentionSchedule.requiresImmediatePrune(
+            previousDays: 7,
+            currentDays: 14
+        ))
+    }
+
+    func testRetentionMaintenanceUsesInjectedClockAndPreservesSavedMoments() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ScreenshotRetentionTests-\(UUID().uuidString)",
+                                    isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let storage = StorageManager(rootURL: root)
+        let store = ActivityStore(databaseURL: root.appendingPathComponent("activity.sqlite"))
+        let sampler = ActivitySampler(store: store, notificationCenter: NotificationCenter())
+        var clock = Date(timeIntervalSince1970: 2_000_000_000)
+        var configuration = AppSettings()
+        configuration.retentionDays = 1
+        configuration.keepOCRTextForever = false
+        let service = ScreenshotService(
+            store: store,
+            storage: storage,
+            sampler: sampler,
+            now: { clock },
+            settings: { configuration }
+        )
+
+        let expired = clock.addingTimeInterval(-2 * 86_400)
+        let ordinaryURL = root.appendingPathComponent("ordinary.heic.enc")
+        let savedURL = root.appendingPathComponent("saved.heic.enc")
+        try Data("ordinary pixels".utf8).write(to: ordinaryURL)
+        try Data("saved pixels".utf8).write(to: savedURL)
+        let ordinaryID = try store.insertScreenshot(
+            ts: expired,
+            path: ordinaryURL.path,
+            app: "Notes",
+            ocr: "ordinary private text"
+        )
+        let savedID = try store.insertScreenshot(
+            ts: expired,
+            path: savedURL.path,
+            app: "Notes",
+            ocr: "saved private text"
+        )
+        try store.saveMoment(snapshotID: savedID, note: "Keep this")
+
+        XCTAssertTrue(service.runRetentionMaintenanceIfNeeded())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ordinaryURL.path))
+        XCTAssertNil(store.ocrText(snapshotID: ordinaryID))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: savedURL.path))
+        XCTAssertEqual(store.ocrText(snapshotID: savedID), "saved private text")
+
+        let delayedURL = root.appendingPathComponent("delayed.heic.enc")
+        try Data("delayed pixels".utf8).write(to: delayedURL)
+        let delayedID = try store.insertScreenshot(
+            ts: expired,
+            path: delayedURL.path,
+            app: "Mail",
+            ocr: "delete on next daily pass"
+        )
+
+        clock.addTimeInterval(86_399)
+        XCTAssertFalse(service.runRetentionMaintenanceIfNeeded())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: delayedURL.path))
+        XCTAssertEqual(store.ocrText(snapshotID: delayedID), "delete on next daily pass")
+
+        clock.addTimeInterval(1)
+        XCTAssertTrue(service.runRetentionMaintenanceIfNeeded())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: delayedURL.path))
+        XCTAssertNil(store.ocrText(snapshotID: delayedID))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: savedURL.path))
+        XCTAssertEqual(store.ocrText(snapshotID: savedID), "saved private text")
+    }
+
     func testAutomaticDedupSkipsWorkButManualCaptureStillStoresEncryptedImage() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ScreenshotProcessingWorkerTests-\(UUID().uuidString)",

@@ -155,6 +155,43 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(decoded.keepOCRTextForever)
     }
 
+    func testScreenMemoryAutomationDefaultsOff() {
+        let settings = AppSettings()
+
+        XCTAssertFalse(settings.quickRecallEnabled)
+        XCTAssertFalse(settings.dailyMemoryExportEnabled)
+        XCTAssertTrue(settings.dailyMemoryExportFolder.isEmpty)
+        XCTAssertEqual(settings.dailyMemoryExportFormat, .markdown)
+        XCTAssertEqual(settings.dailyMemoryExportHour, 18)
+    }
+
+    func testScreenMemoryAutomationRoundTripsAndClampsHour() throws {
+        var settings = AppSettings()
+        settings.quickRecallEnabled = true
+        settings.dailyMemoryExportEnabled = true
+        settings.dailyMemoryExportFolder = "/tmp/My Vault"
+        settings.dailyMemoryExportFormat = .obsidian
+        settings.dailyMemoryExportHour = 99
+
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self, from: JSONEncoder().encode(settings))
+
+        XCTAssertTrue(decoded.quickRecallEnabled)
+        XCTAssertTrue(decoded.dailyMemoryExportEnabled)
+        XCTAssertEqual(decoded.dailyMemoryExportFolder, "/tmp/My Vault")
+        XCTAssertEqual(decoded.dailyMemoryExportFormat, .obsidian)
+        XCTAssertEqual(decoded.dailyMemoryExportHour, 23)
+    }
+
+    func testLegacySettingsKeepScreenMemoryAutomationOff() throws {
+        let settings = try JSONDecoder().decode(
+            AppSettings.self, from: Data(#"{"autoTranscribe":false}"#.utf8))
+
+        XCTAssertFalse(settings.quickRecallEnabled)
+        XCTAssertFalse(settings.dailyMemoryExportEnabled)
+        XCTAssertEqual(settings.dailyMemoryExportFormat, .markdown)
+    }
+
     func testStopDebounceDefaultsToBackToBackFriendlyValue() {
         XCTAssertEqual(AppSettings().stopDebounceSeconds, AppSettings.defaultStopDebounceSeconds)
     }

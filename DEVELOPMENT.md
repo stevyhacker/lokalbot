@@ -58,7 +58,7 @@ Models auto-download on first use (Hugging Face; the ONNX specialists fetch sher
 ## Search & player
 
 - **Index:** SQLite + FTS5 (`lokalbotv3.sqlite` — system SQLite, no dependency) over titles, transcript segments, summaries, and OCR'd screen text. Segment rows carry their audio timestamp; incremental re-index by file mtime on launch and after each pipeline run.
-- **Semantic search:** transcript/summary chunks embedded with Qwen3-Embedding 0.6B GGUF on a second llama-server instance (port 17873, `--embeddings --pooling mean`); vectors live in SQLite with a model-version marker and queries are brute-force cosine — instant at personal scale, zero extra dependency. Ask → All adds a "Related (semantic)" section for meaning-matches keywords miss; toggle in Ask. Qwen3-VL-Embedding 2B is tracked for screenshot/slide retrieval once image-vector indexing is added.
+- **Semantic search:** transcript/summary chunks and retained screen OCR are embedded with Qwen3-Embedding 0.6B GGUF on a second llama-server instance (port 17873, `--embeddings --pooling mean`); vectors live in SQLite with a model-version marker and queries are brute-force cosine — instant at personal scale, zero extra dependency. Screen results fuse FTS and semantic ranks with deterministic reciprocal-rank fusion while preserving the exact snapshot id. Qwen3-VL-Embedding 2B remains future work for direct image-vector retrieval.
 - **UI:** sidebar Timeline | Meetings | Ask | Type | Agent | Settings; search lives in **Ask** — debounced search-as-you-type (last term prefix-matched), All / Transcripts / Summaries / Screen facets, «highlighted» snippets; clicking a transcript hit opens the meeting and plays from that timestamp.
 - **Player:** mic + system tracks play in sync (shared device-time anchor); seek bar; click any transcript line to jump the audio there; the currently-playing segment is highlighted.
 
@@ -73,7 +73,7 @@ Models auto-download on first use (Hugging Face; the ONNX specialists fetch sher
 
 - **Opt-in:** day tracking is off by default. A dedicated onboarding step (or Settings → Recording → Day tracking) turns on activity sampling and, separately, screenshots — finishing setup never silently enables either.
 - **Sampler:** frontmost app + focused-window title (Accessibility; degrades to app-name-only) every 5 s, idle-aware (3 min), minimum 5 s block, pause/resume from the menu bar. Stored in `activity_blocks` (same SQLite db).
-- **Timeline:** per-day colored block bar with hover details, time-by-app totals with %, and day navigation. An **Ask your day** box answers free-form questions from the day's activity blocks + OCR'd screen text + meetings via the local LLM.
+- **Timeline:** per-day colored block bar plus a visual Rewind rail over perceptually grouped captures. Users can scrub, hover, step, play, open an exact frame, save/note a moment, pin it into Ask, or permanently delete a selected time range. An **Ask your day** action answers from activity blocks + OCR'd screen text + meetings via the local LLM.
 - **Day digest:** "Generate digest" runs the configured LLM over the day's blocks + meetings + OCR'd text → `journal/YYYY-MM-DD.md` (What I worked on / Meetings / Time allocation).
 
 ## Cotyping — inline AI autocomplete
@@ -99,19 +99,19 @@ Models auto-download on first use (Hugging Face; the ONNX specialists fetch sher
 
 ## Screenshots, OCR & privacy
 
-- **Capture:** off by default, enabled only by the onboarding day-memory step or Settings → Recording → Day tracking. When on, ScreenCaptureKit captures the main display on app/window changes with a 20-second cooldown, plus an idle-active fallback at the configured interval; unchanged screens are skipped. Images are downscaled to ≤1500 px and encoded as HEIC. Capture is also skipped when idle (3 min), paused, locked, or when an excluded app is frontmost. It is display-level and cannot redact a password field inside an otherwise allowed app. Requires the Screen Recording permission (which LokalBot uses for nothing else — system audio rides an entitlement, not this grant).
+- **Capture:** off by default, enabled only by the onboarding day-memory step or Settings → Recording → Day tracking. When on, ScreenCaptureKit captures the main display on app/window changes with a 20-second cooldown, plus an idle-active fallback at the configured interval; byte-identical automatic frames are skipped, while a separate 64-bit perceptual dHash groups visually similar retained frames without discarding changed OCR evidence (manual capture bypasses exact dedup). Images are downscaled to ≤1500 px and encoded as HEIC. Capture is also skipped when idle (3 min), paused, locked, or when an excluded app is frontmost. It is display-level and cannot redact a password field inside an otherwise allowed app.
 - **OCR:** Vision (`VNRecognizeTextRequest`, on-device) runs immediately; text goes into `ocr_fts` (searchable under Ask → Screen) and feeds day digests and Ask-your-day.
-- **Encryption & retention:** each screenshot is AES-GCM sealed with a per-install key in the macOS Keychain; pixels auto-delete after N days (default 14, Settings stepper), and OCR text follows the same retention unless you opt into keeping it forever (Settings → Privacy). The timeline shows a decrypted thumbnail filmstrip.
+- **Encryption & retention:** each screenshot is AES-GCM sealed with a per-install key in the macOS Keychain; pixels auto-delete after N days (default 14, Settings stepper), and OCR text follows the same retention unless you opt into keeping it forever (Settings → Privacy). Saved moments retain their encrypted pixels, OCR, and semantic vector until unsaved or explicitly deleted. The timeline shows a decrypted thumbnail filmstrip.
 - **Exclusions:** comma-separated app list (preseeded with password managers); excluded time logs as "Private" — no titles, no screenshots.
 
 ## Configuration
 
 Everything lives in **Settings** — five tabs with a search box that finds any setting — plus per-feature controls in the **Type** section:
 
-- **General** — launch at login, menu-bar-only mode, permission status + repair, storage location, update checks.
-- **Recording** — auto-record behavior, calendar-assisted detection, auto-transcribe/summarize, notes template + language, neural diarization, and day tracking (activity sampling, screenshots, capture interval, retention, excluded apps).
+- **General** — launch at login, menu-bar-only mode, the opt-in `⌃⇧Space` Quick Recall shortcut, permission status + repair, storage location, update checks.
+- **Recording** — auto-record behavior, calendar-assisted detection, auto-transcribe/summarize, notes template + language, neural diarization, day tracking, and scheduled Markdown/Obsidian/Logseq daily-memory export.
 - **Models** — every model in one tab: the transcription engine (table above), the Main LLM backend (Built-in / Apple Intelligence / Ollama / OpenAI-compatible) with its GGUF catalog and Hugging Face browser, the dedicated cotyping model, embeddings, and the Kokoro TTS voice.
-- **Privacy** — screen-text retention and the "Allow external agents to read your meeting library" toggle that gates the CLI/MCP surface.
+- **Privacy** — screen-text retention plus independent meeting-library and screen-memory MCP permission markers.
 - **Advanced** — live resource monitor, hardware fit advisory, Agent CLI install.
 - **Type** — enable and tune Cotyping (model, exclusions, accept granularity) and Dictation (shortcut style, paste vs. clipboard).
 
@@ -119,9 +119,9 @@ Everything lives in **Settings** — five tabs with a search box that finds any 
 
 `lokalbot-cli` (ArgumentParser, embedded in `Contents/Helpers/`) gives coding agents read-only access to the meeting library via `list` / `get` / `search` / `path`. JSON by default, `--table` for humans. Settings → Advanced → Agent CLI (or `lokalbot-cli install-skill`) symlinks the binary to `~/.local/bin/lokalbot-cli` and the bundled skill to `~/.agents/skills/lokalbot-cli/`.
 
-The same binary is an **MCP server**: `lokalbot-cli mcp` speaks MCP over stdio and exposes `list_meetings` / `get_meeting` / `search_meetings` / `ask_library` — the last answers questions through the app's local llama-server (woken on demand under a short-lived lease) before returning the result to the requesting client. LokalBot does not upload library content, but an external MCP client may transmit tool inputs and results under its own privacy terms. `Scripts/build-mcpb.sh` wraps the server into a one-click `dist/LokalBot.mcpb` bundle for GUI MCP clients.
+The same binary is an **MCP server**: `lokalbot-cli mcp` speaks MCP over stdio. Meeting tools are `list_meetings` / `get_meeting` / `search_meetings` / `ask_library`. Independently gated screen tools are `search_screen` / `get_timeline` / `get_recent_activity` / `get_app_usage` / `get_screenshot_detail`; they use a query-only SQLite connection and return OCR/metadata, never decrypted pixels or file paths. LokalBot does not upload library content, but an external MCP client may transmit tool inputs and results under its own privacy terms.
 
-The whole agent surface is **off by default**: every command requires the Privacy-pane toggle ("Allow external agents to read your meeting library"), which drops a `control/agent-access-enabled` marker under the storage root — with it off, tools return an error explaining how to enable access.
+Both agent surfaces are **off by default**. Meeting tools require `control/agent-access-enabled`; screen-memory tools require the separate `control/screen-memory-access-enabled` marker. Neither marker grants the other capability.
 
 See [`.agents/skills/lokalbot-cli/SKILL.md`](.agents/skills/lokalbot-cli/SKILL.md).
 
@@ -194,6 +194,6 @@ In-place signed updates ship via [Sparkle](https://github.com/sparkle-project/Sp
 
 ## Status
 
-**Done:** recording with robust device/PID handling · live meeting view (notes + rolling transcript) · transcription (8 models across 5 engines) + neural diarization · summarization (4 backends) + templates/languages · FTS5 + semantic search · synced player · Kokoro TTS · day tracking + digests · screenshots/OCR/privacy · Ask-your-day · chat assistant · inference broker (lease-managed servers, RAM budget + LRU, resource monitor) · Agent Mode (embedded pi on the selected Main LLM, approval-gated) · agent CLI + MCP server + skill (opt-in) · Sparkle updates · dev/prod split · in-app model manager + Hugging Face browse · Cotyping (opt-in) · system-wide dictation (opt-in).
+**Done:** recording with robust device/PID handling · live meeting view (notes + rolling transcript) · transcription (8 models across 5 engines) + neural diarization · summarization (4 backends) + templates/languages · FTS5 + semantic meeting/screen search · synced player · Kokoro TTS · day tracking + digests · encrypted visual Rewind + exact screen citations + saved moments · Quick Recall · scheduled Markdown/Obsidian/Logseq export · Ask-your-day · chat assistant · inference broker · Agent Mode · separately gated meeting/screen MCP tools · Sparkle updates · dev/prod split · in-app model manager + Hugging Face browse · Cotyping (opt-in) · system-wide dictation (opt-in).
 
 **Not yet built:** VLM screenshot captions (needs a multimodal model + an mmproj slot in `LlamaServer`).

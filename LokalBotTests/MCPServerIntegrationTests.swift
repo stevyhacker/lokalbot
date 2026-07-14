@@ -69,7 +69,11 @@ final class MCPServerIntegrationTests: XCTestCase {
         XCTAssertEqual(output.count, 3)
         XCTAssertTrue(output[0].contains(#""protocolVersion":"2025-06-18""#))
         XCTAssertTrue(output[0].contains(#""name":"lokalbot""#))
-        for tool in ["list_meetings", "get_meeting", "search_meetings", "ask_library"] {
+        for tool in [
+            "list_meetings", "get_meeting", "search_meetings", "ask_library",
+            "search_screen", "get_timeline", "get_recent_activity", "get_app_usage",
+            "get_screenshot_detail",
+        ] {
             XCTAssertTrue(output[1].contains("\"\(tool)\""), tool)
         }
         XCTAssertTrue(output[2].lowercased().contains("redis"))
@@ -85,6 +89,25 @@ final class MCPServerIntegrationTests: XCTestCase {
         XCTAssertEqual(output.count, 2)
         XCTAssertTrue(output[1].contains("[access_disabled]"))
         XCTAssertTrue(output[1].contains(#""isError":true"#))
+    }
+
+    func testScreenToolsRequireTheirOwnMarker() throws {
+        let output = try runSession([
+            #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_meetings","arguments":{}}}"#,
+            #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_screen","arguments":{"query":"redis"}}}"#,
+        ])
+        XCTAssertEqual(output.count, 2)
+        XCTAssertTrue(output[0].contains(#""isError":false"#))
+        XCTAssertTrue(output[1].contains("[screen_access_disabled]"))
+
+        try ScreenMemoryAccessGate(root: root).enable()
+        AgentAccessGate(root: root).disable()
+        let inverse = try runSession([
+            #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_meetings","arguments":{}}}"#,
+            #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_screenshot_detail","arguments":{}}}"#,
+        ])
+        XCTAssertTrue(inverse[0].contains("[access_disabled]"))
+        XCTAssertTrue(inverse[1].contains("[invalid_arguments]"), inverse[1])
     }
 
     func testUnterminatedOversizedRecordIsRejectedBeforeEOF() throws {

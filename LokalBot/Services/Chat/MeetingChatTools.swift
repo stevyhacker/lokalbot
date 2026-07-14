@@ -125,7 +125,8 @@ enum MeetingChatFormat {
         var lines = ["Screen-text matches (from on-device screen captures):"]
         for hit in hits.prefix(12) {
             let title = hit.windowTitle.isEmpty ? "" : " · \(clean(hit.windowTitle))"
-            lines.append("- [\(hit.app)\(title)] \(dateLabel(hit.ts)): \(clean(hit.snippet))")
+            lines.append("- [screen:\(hit.snapshotID)] [\(hit.app)\(title)] "
+                + "\(dateLabel(hit.ts)): \(clean(hit.snippet))")
         }
         return lines.joined(separator: "\n")
     }

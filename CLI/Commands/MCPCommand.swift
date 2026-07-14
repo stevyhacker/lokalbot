@@ -4,21 +4,26 @@ import Foundation
 struct MCPCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "mcp",
-        abstract: "Serve the meeting library over MCP (stdio, JSON-RPC 2.0).",
+        abstract: "Serve the meeting library and optional screen memory over MCP.",
         discussion: """
             For GUI agent clients (Claude Desktop, and any MCP-capable app):
 
               claude mcp add lokalbot -- \
                 /Applications/LokalBot.app/Contents/Helpers/lokalbot-cli mcp
 
-            Tools: list_meetings, get_meeting, search_meetings, ask_library.
+            Meeting tools: list_meetings, get_meeting, search_meetings,
+            ask_library. Screen-memory tools: search_screen, get_timeline,
+            get_recent_activity, get_app_usage, get_screenshot_detail.
             Read tools work with the app closed; ask_library needs the app
             running (it answers with the local model on localhost:17872).
 
-            All tools require the Privacy toggle: LokalBot → Settings →
-            Privacy → "Allow external agents to read your meeting library".
-            While it is off, the handshake still succeeds and every call
-            returns a structured access_disabled error with enable steps.
+            Meeting tools require "Allow external agents to read your meeting
+            library". Screen-memory tools require the separate "Allow external
+            agents to read screen memory" Privacy toggle. Screen tools expose
+            only local OCR and metadata — never decrypted pixels or screenshot
+            file paths. The MCP handshake and tools/list work while either
+            permission is off; a call returns a structured scope-specific
+            access error with enable steps.
             """)
 
     func run() async throws {

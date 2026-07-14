@@ -254,8 +254,14 @@ struct MenuBarView: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
+            Button {
+                WindowAccess.shared.open("quick-recall")
+            } label: {
+                Label("Recall", systemImage: "sparkle.magnifyingglass")
+            }
+            .buttonStyle(.plain).foregroundStyle(.tint)
             Button("Open LokalBot") { WindowAccess.shared.open("main") }
-                .buttonStyle(.plain).foregroundStyle(.tint)
+                .buttonStyle(.plain).foregroundStyle(.secondary)
             Button("Settings") {
                 app.navSection = .settings
                 WindowAccess.shared.open("main")

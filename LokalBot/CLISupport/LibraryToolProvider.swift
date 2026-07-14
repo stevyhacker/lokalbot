@@ -18,6 +18,9 @@ struct ToolDefinition {
 /// Stable machine-readable failure codes for MCP tool calls.
 enum ToolErrorCode: String {
     case accessDisabled = "access_disabled"
+    case screenAccessDisabled = "screen_access_disabled"
+    case screenMemoryUnavailable = "screen_memory_unavailable"
+    case screenshotNotFound = "screenshot_not_found"
     case appNotRunning = "app_not_running"
     case engineUnavailable = "engine_unavailable"
     case modelLoadingTimeout = "model_loading_timeout"

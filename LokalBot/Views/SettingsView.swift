@@ -130,7 +130,8 @@ struct SettingsView: View {
     @ViewBuilder private var generalSection: some View {
         if shows("General", ["launch", "login", "startup", "open at login", "auto start",
                                  "menu bar", "menubar", "dock", "dock icon", "hide dock",
-                                 "window", "background", "tray"]) {
+                                 "window", "background", "tray", "quick recall", "shortcut",
+                                 "hotkey", "global search"]) {
                 Section("General") {
                     LaunchAtLogin.Toggle("Launch LokalBot at login")
                     Text("Start LokalBot automatically so it's ready to catch meetings.")
@@ -142,6 +143,10 @@ struct SettingsView: View {
                             if !menuBarOnly { openWindow(id: "main") }
                         }
                     Text("Run from the menu bar with a live recording timer — no Dock icon, no window at launch. The window stays one click away. Takes full effect once open windows are closed.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Divider()
+                    Toggle("Enable system-wide Quick Recall", isOn: $app.settings.quickRecallEnabled)
+                    Text("Press \(QuickRecallHotKeyController.shortcutLabel) from any app to search meetings, captured screen text, and saved moments. LokalBot registers only this shortcut and does not inspect other keystrokes.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -275,7 +280,8 @@ struct SettingsView: View {
     @ViewBuilder private var dayTrackingSection: some View {
             if shows("Day tracking", ["tracking", "activity", "screenshots", "screen", "capture",
                                       "ocr", "window", "accessibility", "retention", "private",
-                                      "excluded apps", "never capture"]) {
+                                      "excluded apps", "never capture", "export", "obsidian",
+                                      "logseq", "markdown", "daily note", "vault"]) {
                 Section("Day tracking") {
                     // Screenshots ride on the activity sampler (ScreenshotService
                     // captures on its block boundaries and guards on BOTH flags),
@@ -317,7 +323,44 @@ struct SettingsView: View {
                     }
                     TextField("Never capture (app names, comma-separated)",
                               text: $app.settings.excludedApps)
-                    Text("Captures when you switch apps or windows (20 s cooldown, unchanged screens skipped) and at least every few minutes when idle-active; never captures the lock screen. Screenshots are AES-GCM encrypted (key in your Keychain); extracted text follows the same retention (see Privacy). Excluded apps log as “Private”.")
+                    Text(
+                        "Captures when you switch apps or windows (20 s cooldown, unchanged "
+                            + "screens skipped) and at least every few minutes when idle-active; "
+                            + "never captures the lock screen. Screenshots are AES-GCM encrypted "
+                            + "(key in your Keychain); extracted text follows the same retention "
+                            + "(see Privacy). Saved moments retain their encrypted frame and text "
+                            + "until you unsave or delete them. Excluded apps log as “Private”."
+                    )
+                        .font(.caption).foregroundStyle(.secondary)
+                    Divider()
+                    Toggle("Export a daily memory note", isOn: Binding(
+                        get: { app.settings.dailyMemoryExportEnabled },
+                        set: { enabled in
+                            app.settings.dailyMemoryExportEnabled = enabled
+                            if enabled && app.settings.dailyMemoryExportFolder.isEmpty {
+                                chooseDailyExportFolder()
+                            }
+                        }))
+                    if app.settings.dailyMemoryExportEnabled {
+                        Picker("Format", selection: $app.settings.dailyMemoryExportFormat) {
+                            ForEach(AppSettings.DailyMemoryExportFormat.allCases) { format in
+                                Text(format.rawValue).tag(format)
+                            }
+                        }
+                        LabeledContent("Folder") {
+                            Button(app.settings.dailyMemoryExportFolder.isEmpty
+                                   ? "Choose…"
+                                   : URL(fileURLWithPath: app.settings.dailyMemoryExportFolder).lastPathComponent) {
+                                chooseDailyExportFolder()
+                            }
+                            .buttonStyle(.link)
+                        }
+                        Stepper(
+                            "Refresh at \(String(format: "%02d:00", app.settings.dailyMemoryExportHour))",
+                            value: $app.settings.dailyMemoryExportHour,
+                            in: 0...23)
+                    }
+                    Text("Writes one idempotent, unencrypted Markdown file per day with the digest, meeting links, app-time totals, and saved moments. Existing non-LokalBot content is never overwritten.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -336,9 +379,10 @@ struct SettingsView: View {
                         get: { app.settings.keepOCRTextForever },
                         set: { app.settings.keepOCRTextForever = $0
                                if !$0 { app.screenshots.pruneOldScreenshots() } }))
-                    Text("Text extracted from screenshots is deleted with the pixels after \(app.settings.retentionDays) days. Turn on to keep it searchable forever; turning back off deletes text older than the window.")
+                    Text("Text extracted from screenshots is deleted with the pixels after \(app.settings.retentionDays) days. Saved moments are retained until you unsave or delete them. Turn on to keep all other screen text searchable forever; turning back off deletes text older than the window.")
                         .font(.caption).foregroundStyle(.secondary)
                     AgentAccessToggleRow(manager: app.agentAccess)
+                    ScreenMemoryAccessToggleRow(manager: app.screenMemoryAccess)
                     HStack(spacing: 16) {
                         Link("Privacy Policy", destination: URL(string: "https://www.lokalbot.com/privacy")!)
                         Link("Support", destination: URL(string: "https://www.lokalbot.com/support")!)
@@ -509,6 +553,27 @@ struct SettingsView: View {
         SettingsSearchRanker.matches(query: settingsQuery, haystack: [title] + keywords)
     }
 
+    private func chooseDailyExportFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose daily memory export folder"
+        panel.prompt = "Choose"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        if !app.settings.dailyMemoryExportFolder.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: app.settings.dailyMemoryExportFolder)
+        }
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else {
+                if app.settings.dailyMemoryExportFolder.isEmpty {
+                    app.settings.dailyMemoryExportEnabled = false
+                }
+                return
+            }
+            app.settings.dailyMemoryExportFolder = url.path
+        }
+    }
+
 }
 
 /// Observes the nested manager directly so its published marker state keeps
@@ -524,6 +589,23 @@ private struct AgentAccessToggleRow: View {
                     get: { manager.isEnabled },
                     set: { manager.setEnabled($0) }))
             Text("Lets MCP clients and the lokalbot-cli skill (Claude, Cursor, …) list, read, and search your meetings, and ask questions answered by your local model — read-only, localhost only. Off by default; while off, agent tools return an error explaining how to enable this.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct ScreenMemoryAccessToggleRow: View {
+    @ObservedObject var manager: ScreenMemoryAccessManager
+
+    var body: some View {
+        Group {
+            Toggle(
+                "Allow external agents to read screen memory",
+                isOn: Binding(
+                    get: { manager.isEnabled },
+                    set: { manager.setEnabled($0) }))
+            Text("Separately grants read-only MCP access to captured-screen OCR and metadata. Decrypted screenshot pixels are never returned, and meeting access remains independently controlled above.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

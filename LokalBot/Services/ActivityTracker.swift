@@ -16,6 +16,22 @@ struct ActivityBlock: Identifiable {
     var duration: TimeInterval { end.timeIntervalSince(start) }
 }
 
+/// Optional constraints shared by keyword and semantic screen-memory search.
+/// The interval is half-open (`start <= timestamp < end`) so adjacent day or
+/// selection ranges never return the same capture twice.
+struct ScreenSearchFilter: Equatable, Sendable {
+    var interval: DateInterval?
+    var app: String?
+
+    static let all = ScreenSearchFilter()
+
+    init(interval: DateInterval? = nil, app: String? = nil) {
+        self.interval = interval
+        let trimmed = app?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.app = trimmed?.isEmpty == false ? trimmed : nil
+    }
+}
+
 /// Storage for activity blocks (own connection to lokalbotv3.sqlite).
 @MainActor
 final class ActivityStore {
@@ -37,7 +53,18 @@ final class ActivityStore {
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     ts REAL NOT NULL, path TEXT NOT NULL, app TEXT NOT NULL,
                     window_title TEXT NOT NULL DEFAULT '',
-                    capture_trigger TEXT NOT NULL DEFAULT 'interval');
+                    capture_trigger TEXT NOT NULL DEFAULT 'interval',
+                    perceptual_hash TEXT NOT NULL DEFAULT '',
+                    similarity_group INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS screen_bookmarks (
+                    snapshot_id INTEGER PRIMARY KEY,
+                    note TEXT NOT NULL DEFAULT '',
+                    created_at REAL NOT NULL,
+                    FOREIGN KEY(snapshot_id) REFERENCES screenshots(id) ON DELETE CASCADE);
+                CREATE INDEX IF NOT EXISTS idx_screenshot_ts ON screenshots(ts);
+                CREATE INDEX IF NOT EXISTS idx_screenshot_app_ts ON screenshots(app, ts);
+                CREATE INDEX IF NOT EXISTS idx_screen_bookmarks_created
+                    ON screen_bookmarks(created_at);
                 """)
             try migrateScreenshotColumns()
             try migrateOCRTable()
@@ -60,6 +87,14 @@ final class ActivityStore {
             try database.execute(
                 "ALTER TABLE screenshots ADD COLUMN capture_trigger TEXT NOT NULL DEFAULT 'interval'")
         }
+        if !columns.contains("perceptual_hash") {
+            try database.execute(
+                "ALTER TABLE screenshots ADD COLUMN perceptual_hash TEXT NOT NULL DEFAULT ''")
+        }
+        if !columns.contains("similarity_group") {
+            try database.execute(
+                "ALTER TABLE screenshots ADD COLUMN similarity_group INTEGER NOT NULL DEFAULT 0")
+        }
     }
 
     /// FTS5 tables cannot ALTER-add columns, so a legacy `ocr_fts`
@@ -74,15 +109,70 @@ final class ActivityStore {
             try database.execute(Self.createOCRTableSQL(named: "ocr_fts"))
             return
         }
-        guard !existing.contains("snapshot_id") else { return }
+        if existing.contains("snapshot_id") {
+            try backfillUnlinkedOCRRows(database)
+            return
+        }
         try database.withTransaction {
             try database.execute(Self.createOCRTableSQL(named: "ocr_fts_v2"))
             try database.execute("""
+                WITH ranked_candidates AS (
+                    SELECT legacy.rowid AS ocr_rowid,
+                           shot.id AS snapshot_id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY legacy.rowid
+                               ORDER BY ABS(shot.ts - CAST(legacy.ts AS REAL)), shot.id
+                           ) AS candidate_rank
+                    FROM ocr_fts AS legacy
+                    JOIN screenshots AS shot
+                      ON shot.app = legacy.app COLLATE NOCASE
+                     AND ABS(shot.ts - CAST(legacy.ts AS REAL)) <= 1.0
+                )
                 INSERT INTO ocr_fts_v2 (text, window_title, ts, app, text_source, snapshot_id)
-                    SELECT text, '', ts, app, 'ocr', 0 FROM ocr_fts;
+                    SELECT legacy.text, '', legacy.ts, legacy.app, 'ocr',
+                           COALESCE(candidate.snapshot_id, 0)
+                    FROM ocr_fts AS legacy
+                    LEFT JOIN ranked_candidates AS candidate
+                      ON candidate.ocr_rowid = legacy.rowid
+                     AND candidate.candidate_rank = 1;
                 DROP TABLE ocr_fts;
                 ALTER TABLE ocr_fts_v2 RENAME TO ocr_fts;
                 """)
+        }
+    }
+
+    /// An earlier migration version could create the six-column FTS table but
+    /// leave `snapshot_id = 0`. Repair those rows idempotently by capture time;
+    /// FTS row IDs are not screenshot IDs because empty OCR was never inserted.
+    private func backfillUnlinkedOCRRows(_ database: SQLiteDatabase) throws {
+        let rows: [(rowID: Int64, timestamp: Double, app: String)] = try database
+            .queryChecked("""
+                SELECT rowid, CAST(ts AS REAL), app FROM ocr_fts
+                WHERE CAST(snapshot_id AS INTEGER) <= 0
+                ORDER BY rowid
+                """) { statement in
+                guard let app = sqlite3_column_text(statement, 2) else { return nil }
+                return (
+                    sqlite3_column_int64(statement, 0),
+                    sqlite3_column_double(statement, 1),
+                    String(cString: app))
+            }
+        guard !rows.isEmpty else { return }
+        try database.withTransaction {
+            for row in rows {
+                let snapshotID: Int64? = try database.queryChecked("""
+                    SELECT id FROM screenshots
+                    WHERE app = ?1 COLLATE NOCASE AND ABS(ts - ?2) <= 1.0
+                    ORDER BY ABS(ts - ?2), id
+                    LIMIT 1
+                    """, bind: [row.app, row.timestamp]) { statement in
+                    sqlite3_column_int64(statement, 0)
+                }.first
+                guard let snapshotID else { continue }
+                try database.runChecked(
+                    "UPDATE ocr_fts SET snapshot_id = ?1 WHERE rowid = ?2",
+                    bind: [snapshotID, row.rowID])
+            }
         }
     }
 
@@ -130,21 +220,37 @@ final class ActivityStore {
 
     // MARK: Screenshots / OCR (M5)
 
-    struct Screenshot: Identifiable {
+    struct Screenshot: Identifiable, Equatable, Sendable {
         var id: Int64
         var ts: Date
         var path: String
         var app: String
         var windowTitle: String = ""
         var trigger: String = "interval"
+        var perceptualHash: UInt64?
+        var similarityGroupID: Int64?
+        var isBookmarked: Bool = false
     }
 
-    struct OCRHit: Identifiable {
-        let id = UUID()
+    struct OCRHit: Identifiable, Equatable, Sendable {
+        var snapshotID: Int64
+        var id: Int64 { snapshotID }
         var ts: Date
         var app: String
         var windowTitle: String = ""
         var snippet: String
+    }
+
+    struct SavedMoment: Identifiable, Equatable, Sendable {
+        var snapshotID: Int64
+        var id: Int64 { snapshotID }
+        var ts: Date
+        var path: String
+        var app: String
+        var windowTitle: String
+        var trigger: String
+        var note: String
+        var createdAt: Date
     }
 
     /// Insert one paired capture row (pixels bookkeeping + searchable text).
@@ -152,13 +258,16 @@ final class ActivityStore {
     @discardableResult
     func insertScreenshot(ts: Date, path: String, app: String,
                           windowTitle: String = "", trigger: String = "interval",
-                          textSource: String = "ocr", ocr: String) throws -> Int64 {
+                          textSource: String = "ocr", ocr: String,
+                          perceptualHash: UInt64? = nil) throws -> Int64 {
         let database = try requiredDatabase()
         return try database.withTransaction {
             try database.runChecked("""
-                INSERT INTO screenshots (ts, path, app, window_title, capture_trigger)
-                VALUES (?1, ?2, ?3, ?4, ?5)
-                """, bind: [ts.timeIntervalSince1970, path, app, windowTitle, trigger])
+                INSERT INTO screenshots (
+                    ts, path, app, window_title, capture_trigger, perceptual_hash
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                """, bind: [ts.timeIntervalSince1970, path, app, windowTitle, trigger,
+                              perceptualHash.map(Self.encodePerceptualHash) ?? ""])
             let snapshotID = database.lastInsertRowID()
             guard snapshotID > 0 else {
                 throw SQLiteDatabase.DatabaseError.step(
@@ -172,28 +281,100 @@ final class ActivityStore {
                     """, bind: [ocr, windowTitle, ts.timeIntervalSince1970, app,
                                  textSource, snapshotID])
             }
+            if let perceptualHash {
+                let previous: (id: Int64, hash: UInt64, groupID: Int64)? = try database
+                    .queryChecked("""
+                        SELECT id, perceptual_hash, similarity_group
+                        FROM screenshots
+                        WHERE id != ?1 AND ts <= ?2 AND perceptual_hash != ''
+                        ORDER BY ts DESC, id DESC LIMIT 1
+                        """, bind: [snapshotID, ts.timeIntervalSince1970]) { statement in
+                        guard let rawHash = sqlite3_column_text(statement, 1),
+                              let hash = Self.decodePerceptualHash(
+                                String(cString: rawHash)) else { return nil }
+                        return (
+                            sqlite3_column_int64(statement, 0), hash,
+                            sqlite3_column_int64(statement, 2))
+                    }.first
+                let groupID: Int64
+                if let previous {
+                    let candidateGroupID = previous.groupID > 0
+                        ? previous.groupID : previous.id
+                    let representativeHash: UInt64
+                    if candidateGroupID == previous.id {
+                        representativeHash = previous.hash
+                    } else {
+                        representativeHash = try database.queryChecked(
+                            "SELECT perceptual_hash FROM screenshots WHERE id = ?1 LIMIT 1",
+                            bind: [candidateGroupID]) { statement in
+                            guard let rawHash = sqlite3_column_text(statement, 0) else {
+                                return nil
+                            }
+                            return Self.decodePerceptualHash(String(cString: rawHash))
+                        }.first ?? previous.hash
+                    }
+                    groupID = ScreenPerceptualHash.isNearDuplicate(
+                        representativeHash, perceptualHash)
+                        ? candidateGroupID : snapshotID
+                } else {
+                    groupID = snapshotID
+                }
+                try database.runChecked(
+                    "UPDATE screenshots SET similarity_group = ?1 WHERE id = ?2",
+                    bind: [groupID, snapshotID])
+            }
             return snapshotID
         }
     }
 
     func screenshots(on day: Date) -> [Screenshot] {
-        let interval = Self.dayInterval(containing: day)
+        screenshots(in: Self.dayInterval(containing: day))
+    }
+
+    /// Captures available for rewind/citation, oldest first. A nil interval
+    /// means all retained captures. App matching is exact but case-insensitive,
+    /// which maps cleanly to the app chips built from stored application names.
+    func screenshots(in interval: DateInterval? = nil, app: String? = nil,
+                     bookmarkedOnly: Bool = false,
+                     includingMissingFiles: Bool = false) -> [Screenshot] {
+        let filter = ScreenSearchFilter(interval: interval, app: app)
+        var conditions: [String] = []
+        if !includingMissingFiles { conditions.append("shot.path != ''") }
+        var bindings: [Any] = []
+        Self.appendFilter(filter, timestampColumn: "shot.ts", appColumn: "shot.app",
+                          conditions: &conditions, bindings: &bindings)
+        if bookmarkedOnly { conditions.append("bookmark.snapshot_id IS NOT NULL") }
         do {
             return try requiredDatabase().queryChecked("""
-                SELECT id, ts, path, app, window_title, capture_trigger FROM screenshots
-                WHERE ts >= ?1 AND ts < ?2 AND path != '' ORDER BY ts
-                """, bind: [interval.start.timeIntervalSince1970,
-                             interval.end.timeIntervalSince1970]) { statement in
-                Screenshot(id: sqlite3_column_int64(statement, 0),
-                           ts: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
-                           path: String(cString: sqlite3_column_text(statement, 2)),
-                           app: String(cString: sqlite3_column_text(statement, 3)),
-                           windowTitle: String(cString: sqlite3_column_text(statement, 4)),
-                           trigger: String(cString: sqlite3_column_text(statement, 5)))
-            }
+                SELECT shot.id, shot.ts, shot.path, shot.app, shot.window_title,
+                       shot.capture_trigger, shot.perceptual_hash,
+                       shot.similarity_group, bookmark.snapshot_id IS NOT NULL
+                FROM screenshots AS shot
+                LEFT JOIN screen_bookmarks AS bookmark ON bookmark.snapshot_id = shot.id
+                \(conditions.isEmpty ? "" : "WHERE " + conditions.joined(separator: " AND "))
+                ORDER BY shot.ts, shot.id
+                """, bind: bindings, row: Self.screenshot(from:))
         } catch {
             lokalbotLog("screenshot query failed: \(error.localizedDescription)")
             return []
+        }
+    }
+
+    /// Exact row lookup used by `[screen:ID]` citations and pinned context.
+    func screenshot(id: Int64) -> Screenshot? {
+        guard id > 0 else { return nil }
+        do {
+            return try requiredDatabase().queryChecked("""
+                SELECT shot.id, shot.ts, shot.path, shot.app, shot.window_title,
+                       shot.capture_trigger, shot.perceptual_hash,
+                       shot.similarity_group, bookmark.snapshot_id IS NOT NULL
+                FROM screenshots AS shot
+                LEFT JOIN screen_bookmarks AS bookmark ON bookmark.snapshot_id = shot.id
+                WHERE shot.id = ?1 LIMIT 1
+                """, bind: [id], row: Self.screenshot(from:)).first
+        } catch {
+            lokalbotLog("screenshot lookup failed id=\(id): \(error.localizedDescription)")
+            return nil
         }
     }
 
@@ -201,22 +382,147 @@ final class ActivityStore {
     /// relaxes a natural-language query to OR'd content keywords — same
     /// rescue the meeting search uses.
     func searchOCR(_ query: String, limit: Int = 40,
-                   matchAll: Bool = true, dropStopWords: Bool = false) -> [OCRHit] {
+                   matchAll: Bool = true, dropStopWords: Bool = false,
+                   filter: ScreenSearchFilter = .all) -> [OCRHit] {
+        guard limit > 0 else { return [] }
         guard let match = SearchIndex.ftsQuery(from: query, matchAll: matchAll,
                                                dropStopWords: dropStopWords) else { return [] }
+        var conditions = ["ocr_fts MATCH ?1", "CAST(snapshot_id AS INTEGER) > 0"]
+        var bindings: [Any] = [match]
+        Self.appendFilter(filter, timestampColumn: "CAST(ts AS REAL)", appColumn: "app",
+                          conditions: &conditions, bindings: &bindings)
         do {
             return try requiredDatabase().queryChecked("""
-                SELECT ts, app, window_title, snippet(ocr_fts, 0, '«', '»', '…', 14)
-                FROM ocr_fts WHERE ocr_fts MATCH ?1 ORDER BY rank LIMIT \(limit)
-                """, bind: [match]) { statement in
-                OCRHit(ts: Date(timeIntervalSince1970: sqlite3_column_double(statement, 0)),
-                       app: String(cString: sqlite3_column_text(statement, 1)),
-                       windowTitle: String(cString: sqlite3_column_text(statement, 2)),
-                       snippet: String(cString: sqlite3_column_text(statement, 3)))
+                SELECT CAST(snapshot_id AS INTEGER), CAST(ts AS REAL), app, window_title,
+                       snippet(ocr_fts, 0, '«', '»', '…', 14)
+                FROM ocr_fts
+                WHERE \(conditions.joined(separator: " AND "))
+                ORDER BY rank, CAST(ts AS REAL) DESC, CAST(snapshot_id AS INTEGER)
+                LIMIT \(limit)
+                """, bind: bindings) { statement in
+                OCRHit(snapshotID: sqlite3_column_int64(statement, 0),
+                       ts: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
+                       app: String(cString: sqlite3_column_text(statement, 2)),
+                       windowTitle: String(cString: sqlite3_column_text(statement, 3)),
+                       snippet: String(cString: sqlite3_column_text(statement, 4)))
             }
         } catch {
             lokalbotLog("OCR search failed: \(error.localizedDescription)")
             return []
+        }
+    }
+
+    /// Full captured OCR for a stable citation/pinned Ask attachment. Unlike
+    /// FTS snippets this preserves line breaks and never falls through to a
+    /// nearby timestamp, so `[screen:ID]` always resolves exact source text.
+    func ocrText(snapshotID: Int64, maxChars: Int = 9_000) -> String? {
+        guard snapshotID > 0, maxChars > 0 else { return nil }
+        do {
+            return try requiredDatabase().queryChecked("""
+                SELECT text FROM ocr_fts
+                WHERE CAST(snapshot_id AS INTEGER) = ?1 LIMIT 1
+                """, bind: [snapshotID]) { statement in
+                guard let rawText = sqlite3_column_text(statement, 0) else { return nil }
+                return String(String(cString: rawText).prefix(maxChars))
+            }.first
+        } catch {
+            lokalbotLog("snapshot OCR lookup failed id=\(snapshotID): \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    // MARK: Saved moments
+
+    /// Idempotently saves a capture. Saving it again updates the note without
+    /// changing its original `createdAt`, keeping daily exports stable.
+    func saveMoment(snapshotID: Int64, note: String = "") throws {
+        let database = try requiredDatabase()
+        guard snapshotID > 0,
+              try database.hasRowChecked(
+                "SELECT 1 FROM screenshots WHERE id = ?1", bind: [snapshotID]) else {
+            throw SQLiteDatabase.DatabaseError.step(
+                sql: nil, code: SQLITE_NOTFOUND,
+                message: "screenshot \(snapshotID) does not exist")
+        }
+        try database.runChecked("""
+            INSERT INTO screen_bookmarks (snapshot_id, note, created_at)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(snapshot_id) DO UPDATE SET note = excluded.note
+            """, bind: [snapshotID, note, Date().timeIntervalSince1970])
+    }
+
+    func removeSavedMoment(snapshotID: Int64) throws {
+        try requiredDatabase().runChecked(
+            "DELETE FROM screen_bookmarks WHERE snapshot_id = ?1", bind: [snapshotID])
+    }
+
+    func savedMoments(limit: Int = 200) -> [SavedMoment] {
+        guard limit > 0 else { return [] }
+        do {
+            return try requiredDatabase().queryChecked("""
+                SELECT shot.id, shot.ts, shot.path, shot.app, shot.window_title,
+                       shot.capture_trigger, bookmark.note, bookmark.created_at
+                FROM screen_bookmarks AS bookmark
+                JOIN screenshots AS shot ON shot.id = bookmark.snapshot_id
+                ORDER BY bookmark.created_at DESC, shot.id DESC LIMIT \(limit)
+                """) { statement in
+                SavedMoment(
+                    snapshotID: sqlite3_column_int64(statement, 0),
+                    ts: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
+                    path: String(cString: sqlite3_column_text(statement, 2)),
+                    app: String(cString: sqlite3_column_text(statement, 3)),
+                    windowTitle: String(cString: sqlite3_column_text(statement, 4)),
+                    trigger: String(cString: sqlite3_column_text(statement, 5)),
+                    note: String(cString: sqlite3_column_text(statement, 6)),
+                    createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 7)))
+            }
+        } catch {
+            lokalbotLog("saved-moment query failed: \(error.localizedDescription)")
+            return []
+        }
+    }
+
+    /// Removes one capture and every derived/search row in one transaction.
+    /// The owning `ScreenshotService` removes encrypted pixels first so a
+    /// failed filesystem delete remains retryable from this database row.
+    func deleteScreenshot(id: Int64) throws {
+        try deleteScreenshots(ids: [id])
+    }
+
+    /// Batch counterpart for Timeline range deletion. FTS metadata columns are
+    /// unindexed, so deleting chunks in one transaction avoids rescanning the
+    /// entire OCR table once per selected frame and prevents partial DB state.
+    func deleteScreenshots(ids: [Int64]) throws {
+        let snapshotIDs = Array(Set(ids.filter { $0 > 0 })).sorted()
+        guard !snapshotIDs.isEmpty else { return }
+        let database = try requiredDatabase()
+        try database.withTransaction {
+            let hasScreenEmbeddings = try database.hasRowChecked("""
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'screen_embeddings'
+                """)
+            for start in stride(from: 0, to: snapshotIDs.count, by: 400) {
+                let chunk = Array(snapshotIDs[start..<min(start + 400, snapshotIDs.count)])
+                let placeholders = (1...chunk.count).map { "?\($0)" }.joined(separator: ", ")
+                let bindings: [Any] = chunk
+                try database.runChecked("""
+                    DELETE FROM ocr_fts
+                    WHERE CAST(snapshot_id AS INTEGER) IN (\(placeholders))
+                    """, bind: bindings)
+                try database.runChecked("""
+                    DELETE FROM screen_bookmarks
+                    WHERE snapshot_id IN (\(placeholders))
+                    """, bind: bindings)
+                if hasScreenEmbeddings {
+                    try database.runChecked("""
+                        DELETE FROM screen_embeddings
+                        WHERE snapshot_id IN (\(placeholders))
+                        """, bind: bindings)
+                }
+                try database.runChecked("""
+                    DELETE FROM screenshots WHERE id IN (\(placeholders))
+                    """, bind: bindings)
+            }
         }
     }
 
@@ -253,8 +559,13 @@ final class ActivityStore {
 
     func screenshotPaths(olderThan cutoff: Date) -> [String] {
         do {
-            return try requiredDatabase().queryChecked(
-                "SELECT path FROM screenshots WHERE ts < ?1 AND path != ''",
+            return try requiredDatabase().queryChecked("""
+                SELECT shot.path FROM screenshots AS shot
+                LEFT JOIN screen_bookmarks AS bookmark
+                    ON bookmark.snapshot_id = shot.id
+                WHERE shot.ts < ?1 AND shot.path != ''
+                  AND bookmark.snapshot_id IS NULL
+                """,
                 bind: [cutoff.timeIntervalSince1970]) { statement in
                 String(cString: sqlite3_column_text(statement, 0))
             }
@@ -275,8 +586,28 @@ final class ActivityStore {
     @discardableResult
     func clearOCRText(olderThan cutoff: Date) -> Bool {
         do {
-            try requiredDatabase().runChecked(
-                "DELETE FROM ocr_fts WHERE ts < ?1", bind: [cutoff.timeIntervalSince1970])
+            let database = try requiredDatabase()
+            try database.withTransaction {
+                if try database.hasRowChecked("""
+                    SELECT 1 FROM sqlite_master
+                    WHERE type = 'table' AND name = 'screen_embeddings'
+                    """) {
+                    try database.runChecked(
+                        """
+                        DELETE FROM screen_embeddings
+                        WHERE ts < ?1 AND snapshot_id NOT IN (
+                            SELECT snapshot_id FROM screen_bookmarks
+                        )
+                        """,
+                        bind: [cutoff.timeIntervalSince1970])
+                }
+                try database.runChecked("""
+                    DELETE FROM ocr_fts
+                    WHERE ts < ?1 AND CAST(snapshot_id AS INTEGER) NOT IN (
+                        SELECT snapshot_id FROM screen_bookmarks
+                    )
+                    """, bind: [cutoff.timeIntervalSince1970])
+            }
             return true
         } catch {
             lokalbotLog("OCR retention cleanup failed: \(error.localizedDescription)")
@@ -304,6 +635,51 @@ final class ActivityStore {
             lokalbotLog("activity block query failed: \(error.localizedDescription)")
             return []
         }
+    }
+
+    private nonisolated static func appendFilter(
+        _ filter: ScreenSearchFilter,
+        timestampColumn: String,
+        appColumn: String,
+        conditions: inout [String],
+        bindings: inout [Any]
+    ) {
+        if let interval = filter.interval {
+            let startParameter = bindings.count + 1
+            bindings.append(interval.start.timeIntervalSince1970)
+            let endParameter = bindings.count + 1
+            bindings.append(interval.end.timeIntervalSince1970)
+            conditions.append(
+                "\(timestampColumn) >= ?\(startParameter) AND \(timestampColumn) < ?\(endParameter)")
+        }
+        if let app = filter.app {
+            let parameter = bindings.count + 1
+            bindings.append(app)
+            conditions.append("\(appColumn) = ?\(parameter) COLLATE NOCASE")
+        }
+    }
+
+    private nonisolated static func screenshot(from statement: OpaquePointer) -> Screenshot? {
+        let rawHash = sqlite3_column_text(statement, 6).map { String(cString: $0) } ?? ""
+        let rawGroup = sqlite3_column_int64(statement, 7)
+        return Screenshot(
+            id: sqlite3_column_int64(statement, 0),
+            ts: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
+            path: String(cString: sqlite3_column_text(statement, 2)),
+            app: String(cString: sqlite3_column_text(statement, 3)),
+            windowTitle: String(cString: sqlite3_column_text(statement, 4)),
+            trigger: String(cString: sqlite3_column_text(statement, 5)),
+            perceptualHash: decodePerceptualHash(rawHash),
+            similarityGroupID: rawGroup > 0 ? rawGroup : nil,
+            isBookmarked: sqlite3_column_int(statement, 8) != 0)
+    }
+
+    private nonisolated static func encodePerceptualHash(_ hash: UInt64) -> String {
+        String(format: "%016llx", hash)
+    }
+
+    private nonisolated static func decodePerceptualHash(_ value: String) -> UInt64? {
+        UInt64(value, radix: 16)
     }
 }
 

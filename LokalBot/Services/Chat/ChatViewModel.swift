@@ -207,9 +207,13 @@ final class ChatViewModel: ObservableObject {
     }
 
     /// Send the current draft (or an explicit `prompt`, e.g. a suggestion chip).
-    func send(_ prompt: String? = nil) {
+    /// `displayText` keeps model-only context such as attached OCR excerpts out
+    /// of the visible transcript while still sending it in the current turn.
+    func send(_ prompt: String? = nil, displayText: String? = nil) {
         let text = (prompt ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isResponding else { return }
+        let trimmedDisplay = displayText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let visibleText = trimmedDisplay.flatMap { $0.isEmpty ? nil : $0 } ?? text
         draft = ""
 
         // History = finalised turns only (skip the pending/error placeholders).
@@ -217,7 +221,7 @@ final class ChatViewModel: ObservableObject {
             .filter { !$0.isPending && !$0.isError }
             .map { ChatAgent.Turn(role: $0.role, text: $0.text) }
 
-        messages.append(ChatMessage(role: .user, text: text))
+        messages.append(ChatMessage(role: .user, text: visibleText))
         let assistant = ChatMessage(role: .assistant, text: "", isPending: true)
         let assistantID = assistant.id
         messages.append(assistant)

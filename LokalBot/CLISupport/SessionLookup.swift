@@ -29,11 +29,19 @@ enum SessionLookup {
     /// from the audio mtime) lives in `StorageManager` and isn't run here —
     /// this is read-only on purpose.
     static func loadAllMeetings() throws -> [Meeting] {
+        try loadAllMeetings(root: storageRootURL)
+    }
+
+    /// Root-explicit variant for exporters and isolated-library callers. This
+    /// avoids accidentally mixing the default production library into output
+    /// generated for a caller-supplied storage root.
+    static func loadAllMeetings(root: URL) throws -> [Meeting] {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: meetingsRootURL.path) else { return [] }
+        let meetingsRoot = root.appendingPathComponent("meetings", isDirectory: true)
+        guard fm.fileExists(atPath: meetingsRoot.path) else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let enumerator = fm.enumerator(at: meetingsRootURL,
+        guard let enumerator = fm.enumerator(at: meetingsRoot,
                                              includingPropertiesForKeys: nil) else { return [] }
         var meetings: [Meeting] = []
         for case let url as URL in enumerator where url.lastPathComponent == "meta.json" {

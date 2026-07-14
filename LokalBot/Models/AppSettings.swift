@@ -86,6 +86,29 @@ struct AppSettings: Codable, Equatable {
     /// text can be as sensitive as the pixels it came from, so keeping it
     /// forever is an explicit opt-in (Settings → Privacy).
     var keepOCRTextForever: Bool = false
+    /// System-wide Quick Recall opens a compact search surface without first
+    /// bringing the main app forward. Off by default because a global shortcut
+    /// is an explicit automation choice.
+    var quickRecallEnabled: Bool = false
+
+    // MARK: - Daily memory export
+
+    enum DailyMemoryExportFormat: String, Codable, CaseIterable, Identifiable {
+        case markdown = "Markdown"
+        case obsidian = "Obsidian"
+        case logseq = "Logseq"
+
+        var id: String { rawValue }
+    }
+
+    /// Optional, local-only daily export. An empty folder means the scheduler
+    /// remains parked even if an older settings blob somehow enables it.
+    var dailyMemoryExportEnabled: Bool = false
+    var dailyMemoryExportFolder: String = ""
+    var dailyMemoryExportFormat: DailyMemoryExportFormat = .markdown
+    /// Local wall-clock hour (0...23) at which yesterday/today's memory note is
+    /// refreshed. The scheduler clamps decoded values defensively.
+    var dailyMemoryExportHour: Int = 18
     /// Comma-separated app-name substrings that are never captured;
     /// their time shows as "Private" in the timeline.
     var excludedApps: String = "1Password, Keychain Access, Bitwarden, KeePassXC"
@@ -369,6 +392,11 @@ struct AppSettings: Codable, Equatable {
         case screenshotIntervalMinutes
         case retentionDays
         case keepOCRTextForever
+        case quickRecallEnabled
+        case dailyMemoryExportEnabled
+        case dailyMemoryExportFolder
+        case dailyMemoryExportFormat
+        case dailyMemoryExportHour
         case excludedApps
         case summarizerBackend
         case builtInModelID
@@ -462,6 +490,11 @@ struct AppSettings: Codable, Equatable {
         try c.encode(screenshotIntervalMinutes, forKey: .screenshotIntervalMinutes)
         try c.encode(retentionDays, forKey: .retentionDays)
         try c.encode(keepOCRTextForever, forKey: .keepOCRTextForever)
+        try c.encode(quickRecallEnabled, forKey: .quickRecallEnabled)
+        try c.encode(dailyMemoryExportEnabled, forKey: .dailyMemoryExportEnabled)
+        try c.encode(dailyMemoryExportFolder, forKey: .dailyMemoryExportFolder)
+        try c.encode(dailyMemoryExportFormat, forKey: .dailyMemoryExportFormat)
+        try c.encode(min(23, max(0, dailyMemoryExportHour)), forKey: .dailyMemoryExportHour)
         try c.encode(excludedApps, forKey: .excludedApps)
         try c.encode(summarizerBackend, forKey: .summarizerBackend)
         try c.encode(builtInModelID, forKey: .builtInModelID)
@@ -549,6 +582,20 @@ struct AppSettings: Codable, Equatable {
         screenshotIntervalMinutes = (try? c.decode(Double.self, forKey: .screenshotIntervalMinutes)) ?? defaults.screenshotIntervalMinutes
         retentionDays = (try? c.decode(Int.self, forKey: .retentionDays)) ?? defaults.retentionDays
         keepOCRTextForever = (try? c.decode(Bool.self, forKey: .keepOCRTextForever)) ?? defaults.keepOCRTextForever
+        quickRecallEnabled = (try? c.decode(Bool.self, forKey: .quickRecallEnabled)) ?? defaults.quickRecallEnabled
+        dailyMemoryExportEnabled =
+            (try? c.decode(Bool.self, forKey: .dailyMemoryExportEnabled))
+            ?? defaults.dailyMemoryExportEnabled
+        dailyMemoryExportFolder =
+            (try? c.decode(String.self, forKey: .dailyMemoryExportFolder))
+            ?? defaults.dailyMemoryExportFolder
+        dailyMemoryExportFormat =
+            (try? c.decode(DailyMemoryExportFormat.self, forKey: .dailyMemoryExportFormat))
+            ?? defaults.dailyMemoryExportFormat
+        dailyMemoryExportHour = min(
+            23,
+            max(0, (try? c.decode(Int.self, forKey: .dailyMemoryExportHour))
+                ?? defaults.dailyMemoryExportHour))
         excludedApps = (try? c.decode(String.self, forKey: .excludedApps)) ?? defaults.excludedApps
         summarizerBackend = (try? c.decode(SummarizerBackend.self, forKey: .summarizerBackend)) ?? defaults.summarizerBackend
         builtInModelID = (try? c.decode(String.self, forKey: .builtInModelID)) ?? defaults.builtInModelID

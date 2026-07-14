@@ -12,40 +12,51 @@ struct CaptureDetailView: View {
     @ObservedObject var model: CaptureModel
     @Binding var pendingDelete: Set<Meeting.ID>?
 
+    @ViewBuilder
     var body: some View {
-        switch CaptureInspectorState.resolve(meetingIDs: app.selectedMeetingIDs,
-                                             blockSelection: model.selection,
-                                             allowsBlockSelection: app.navSection == .timeline) {
-        case .meeting:
-            if let meeting = app.selectedMeeting {
-                if meeting.endedAt == nil {
-                    LiveMeetingDetailView(meeting: meeting)
-                        .id(meeting.id)
+        if app.navSection == .timeline,
+           let snapshotID = model.selectedSnapshotID,
+           let screenshot = model.shots.first(where: { $0.id == snapshotID }) {
+            ScreenMomentDetailView(
+                screenshot: screenshot,
+                onReload: { model.reload(app: app) },
+                onClear: { model.selectedSnapshotID = nil })
+                .id(snapshotID)
+        } else {
+            switch CaptureInspectorState.resolve(meetingIDs: app.selectedMeetingIDs,
+                                                 blockSelection: model.selection,
+                                                 allowsBlockSelection: app.navSection == .timeline) {
+            case .meeting:
+                if let meeting = app.selectedMeeting {
+                    if meeting.endedAt == nil {
+                        LiveMeetingDetailView(meeting: meeting)
+                            .id(meeting.id)
+                    } else {
+                        MeetingDetailView(meeting: meeting)
+                            .id(meeting.id)
+                    }
                 } else {
-                    MeetingDetailView(meeting: meeting)
-                        .id(meeting.id)
+                    noSelection
                 }
-            } else {
+            case .multiSelection(let count):
+                ContentUnavailableView {
+                    Label("\(count) meetings selected", systemImage: "checklist")
+                } description: {
+                    Text("Press ⌫ or right-click to delete them.")
+                } actions: {
+                    Button("Delete \(count) meetings", role: .destructive) {
+                        pendingDelete = app.selectedMeetingIDs
+                    }
+                }
+            case .block:
+                if let block = model.selectedBlock {
+                    blockDetail(block)
+                } else {
+                    noSelection
+                }
+            case .overview:
                 noSelection
             }
-        case .multiSelection(let count):
-            ContentUnavailableView {
-                Label("\(count) meetings selected", systemImage: "checklist")
-            } description: {
-                Text("Press ⌫ or right-click to delete them.")
-            } actions: {
-                Button("Delete \(count) meetings", role: .destructive) {
-                    pendingDelete = app.selectedMeetingIDs
-                }
-            }
-        case .block:
-            if let block = model.selectedBlock {
-                blockDetail(block)
-            } else {
-                noSelection
-            }
-        case .overview:
-            noSelection
         }
     }
 
@@ -193,7 +204,7 @@ struct CaptureDetailView: View {
                 } else {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 8)], spacing: 8) {
                         ForEach(scoped) { shot in
-                            ThumbnailView(path: shot.path)
+                            ScreenThumbnailView(snapshotID: shot.id)
                                 .help("\(shot.app) — \(shot.ts.formatted(date: .omitted, time: .shortened))")
                         }
                     }
@@ -223,50 +234,5 @@ struct CaptureDetailView: View {
         }
         .padding(10)
         .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: Brand.Radius.control))
-    }
-}
-
-/// Decoded-thumbnail cache, keyed by encrypted-file path. Decoding a HEIC and
-/// AES-opening it is not free; caching means each screenshot is decrypted once
-/// per session no matter how often the grid is rebuilt or scrolled.
-private enum ThumbnailCache {
-    static let shared = NSCache<NSString, NSImage>()
-}
-
-/// One screenshot thumbnail: decrypts off the main actor on first appearance,
-/// caches the result, and shows a placeholder until it's ready. Combined with
-/// `LazyVGrid`, only on-screen thumbnails are ever decoded.
-private struct ThumbnailView: View {
-    let path: String
-    @State private var image: NSImage?
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.4))
-            if let image {
-                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
-            } else {
-                ProgressView().controlSize(.small)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: 84)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .task(id: path) { await load() }
-    }
-
-    private func load() async {
-        if let cached = ThumbnailCache.shared.object(forKey: path as NSString) {
-            image = cached
-            return
-        }
-        guard let key = try? ScreenshotService.encryptionKey() else { return }
-        let filePath = path
-        let data = await Task.detached(priority: .utility) {
-            ScreenshotService.decryptedData(path: filePath, key: key)
-        }.value
-        guard let data, let decoded = NSImage(data: data) else { return }
-        ThumbnailCache.shared.setObject(decoded, forKey: path as NSString)
-        image = decoded
     }
 }
