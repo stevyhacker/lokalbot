@@ -51,8 +51,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/hummingbird-project/hummingbird-websocket.git",
       "state" : {
-        "revision" : "716c54294152c6d3301a6239a1d74db57cbcd6dc",
-        "version" : "2.6.0"
+        "revision" : "89c66b8d6655209268c44f619afcf771d8d83ec9",
+        "version" : "2.7.0"
       }
     },
     {
