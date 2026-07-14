@@ -34,10 +34,22 @@ struct MCPCommand: AsyncParsableCommand {
         FileHandle.standardError.write(Data(
             "lokalbot-cli mcp: serving on stdio (library: \(SessionLookup.storageRootURL.path))\n".utf8))
 
-        while let line = readLine(strippingNewline: true) {
-            guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
-            if let response = await dispatcher.handle(line: line) {
+        var reader = MCPStdioLineReader()
+        while true {
+            switch try reader.next() {
+            case .line(let line):
+                guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+                if let response = await dispatcher.handle(line: line) {
+                    FileHandle.standardOutput.write(Data((response + "\n").utf8))
+                }
+            case .oversized:
+                let response = MCPResponse.failure(
+                    id: nil,
+                    code: -32600,
+                    message: "Request exceeds the 1 MiB limit")
                 FileHandle.standardOutput.write(Data((response + "\n").utf8))
+            case .end:
+                return
             }
         }
     }

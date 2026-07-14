@@ -185,6 +185,61 @@ final class SystemAudioRecorderCopyTests: XCTestCase {
         try assertLosslessMicrophoneCopy(interleaved: false)
     }
 
+    func testMicrophoneBufferPoolIsBoundedAndReusesReturnedBuffer() throws {
+        let format = makeFormat(interleaved: false)
+        let source = makeBuffer(format: format, frames: frameCount)
+        let pool = try XCTUnwrap(MicAudioBufferPool(
+            format: format,
+            bufferCount: 2,
+            frameCapacity: frameCount))
+
+        let first = try XCTUnwrap(pool.borrow(for: source))
+        let second = try XCTUnwrap(pool.borrow(for: source))
+        XCTAssertEqual(pool.availableBufferCount, 0)
+        XCTAssertNil(pool.borrow(for: source))
+
+        pool.returnBuffer(first)
+        XCTAssertEqual(pool.availableBufferCount, 1)
+        let reused = try XCTUnwrap(pool.borrow(for: source))
+        XCTAssertTrue(reused === first)
+        pool.returnBuffer(reused)
+        pool.returnBuffer(second)
+        XCTAssertEqual(pool.availableBufferCount, 2)
+    }
+
+    func testMicrophoneBufferPoolRejectsOversizedOrMismatchedInput() throws {
+        let format = makeFormat(interleaved: false)
+        let pool = try XCTUnwrap(MicAudioBufferPool(
+            format: format,
+            bufferCount: 1,
+            frameCapacity: frameCount))
+        let oversized = makeBuffer(format: format, frames: frameCount + 1)
+        let mismatchedFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 44_100,
+            channels: 2,
+            interleaved: false)!
+        let mismatched = makeBuffer(format: mismatchedFormat, frames: frameCount)
+
+        XCTAssertNil(pool.borrow(for: oversized))
+        XCTAssertNil(pool.borrow(for: mismatched))
+        XCTAssertEqual(pool.availableBufferCount, 1)
+    }
+
+    func testMicrophoneDropCounterNeverWaitsForContendedHealthLock() {
+        let lock = NSLock()
+        let counter = MicRealtimeDropCounter(lock: lock)
+        lock.lock()
+        XCTAssertFalse(counter.recordDrop())
+        lock.unlock()
+
+        XCTAssertEqual(counter.snapshot(), 0)
+        XCTAssertTrue(counter.recordDrop())
+        XCTAssertEqual(counter.snapshot(), 1)
+        counter.reset()
+        XCTAssertEqual(counter.snapshot(), 0)
+    }
+
     private func assertLosslessMicrophoneCopy(
         interleaved: Bool,
         file: StaticString = #filePath,
@@ -194,7 +249,12 @@ final class SystemAudioRecorderCopyTests: XCTestCase {
         let source = makeBuffer(format: format, frames: frameCount)
         fillDeterministicRamp(source)
 
-        let destination = try XCTUnwrap(MicRecorder.copyBuffer(source), file: file, line: line)
+        let pool = try XCTUnwrap(MicAudioBufferPool(
+            format: format,
+            bufferCount: 1,
+            frameCapacity: frameCount), file: file, line: line)
+        let destination = try XCTUnwrap(pool.borrow(for: source), file: file, line: line)
+        XCTAssertTrue(MicRecorder.copyBuffer(source, into: destination), file: file, line: line)
         XCTAssertEqual(destination.frameLength, source.frameLength, file: file, line: line)
         let sourceList = UnsafeMutableAudioBufferListPointer(
             UnsafeMutablePointer(mutating: source.audioBufferList))
@@ -206,6 +266,7 @@ final class SystemAudioRecorderCopyTests: XCTestCase {
             XCTAssertEqual(memcmp(src.mData!, dst.mData!, Int(src.mDataByteSize)), 0,
                            file: file, line: line)
         }
+        pool.returnBuffer(destination)
     }
 
     // MARK: - RMS

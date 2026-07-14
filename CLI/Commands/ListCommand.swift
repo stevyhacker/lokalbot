@@ -28,12 +28,19 @@ struct ListCommand: AsyncParsableCommand {
     var table: Bool = false
 
     func run() async throws {
+        try AgentAccessGate().requireAuthorized()
+        let sinceDate = try since.map { try Self.requireDate($0, option: "--since") }
+        let untilDate = try until.map { try Self.requireDate($0, option: "--until") }
+        if let limit, !(1...LibraryInputPolicy.maximumMeetingCount).contains(limit) {
+            throw ValidationError(
+                "--limit must be between 1 and \(LibraryInputPolicy.maximumMeetingCount).")
+        }
         var meetings = try SessionLookup.loadAllMeetings()
 
-        if let since, let date = Self.parseDate(since) {
+        if let date = sinceDate {
             meetings = meetings.filter { $0.startedAt >= date }
         }
-        if let until, let date = Self.parseDate(until) {
+        if let date = untilDate {
             let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: date) ?? date
             meetings = meetings.filter { $0.startedAt < endOfDay }
         }
@@ -53,5 +60,12 @@ struct ListCommand: AsyncParsableCommand {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withFullDate]
         return f.date(from: s)
+    }
+
+    private static func requireDate(_ value: String, option: String) throws -> Date {
+        guard let date = parseDate(value) else {
+            throw ValidationError("\(option) must use YYYY-MM-DD, got '\(value)'.")
+        }
+        return date
     }
 }

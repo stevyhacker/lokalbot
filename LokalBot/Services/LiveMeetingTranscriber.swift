@@ -14,9 +14,9 @@ enum LiveMeetingAudioPreparation: Equatable, Sendable {
 }
 
 /// Serializes the filesystem and PCM work for both live meeting tracks away
-/// from the main actor. `prepareNextChunk` has no suspension points, so one
-/// track's snapshot/read/cut/VAD/write transaction cannot interleave with the
-/// other track's temporary files or audio buffers.
+/// from the main actor. The source CAF is append-safe, so preparation opens a
+/// point-in-time reader and seeks directly to the unprocessed suffix; it never
+/// copies the full, ever-growing meeting file.
 actor LiveMeetingAudioPreparationWorker {
     private let storageRoot: URL
 
@@ -30,10 +30,8 @@ actor LiveMeetingAudioPreparationWorker {
         guard FileManager.default.fileExists(atPath: source.path) else { return .noWork }
 
         // Opening the append-only CAF just long enough to inspect its current
-        // readable frame count is much cheaper than copying the whole growing
-        // recording every time the poller wakes before four fresh seconds are
-        // available. If the live header is momentarily unreadable, fall back to
-        // the established snapshot path rather than treating it as a failure.
+        // readable frame count avoids allocating a chunk before four fresh
+        // seconds are available.
         if let availability = try? Self.availableAudio(at: source),
            LiveTranscriptChunker.nextChunk(
                processedFrames: processedFrames,
@@ -43,13 +41,7 @@ actor LiveMeetingAudioPreparationWorker {
         }
 
         try Task.checkCancellation()
-        let scratch = try scratchDirectory()
-        let snapshot = scratch.appendingPathComponent("snap-\(UUID().uuidString).caf")
-        try FileManager.default.copyItem(at: source, to: snapshot)
-        defer { try? FileManager.default.removeItem(at: snapshot) }
-
-        try Task.checkCancellation()
-        let reader = try AVAudioFile(forReading: snapshot)
+        let reader = try AVAudioFile(forReading: source)
         let sampleRate = reader.fileFormat.sampleRate
         guard let range = LiveTranscriptChunker.nextChunk(
             processedFrames: processedFrames,
@@ -89,7 +81,8 @@ actor LiveMeetingAudioPreparationWorker {
             return .advance(toFrame: chunkEnd)
         }
 
-        let chunk = scratch.appendingPathComponent("chunk-\(UUID().uuidString).caf")
+        let chunk = try scratchDirectory()
+            .appendingPathComponent("chunk-\(UUID().uuidString).caf")
         var keepChunk = false
         defer {
             if !keepChunk { try? FileManager.default.removeItem(at: chunk) }

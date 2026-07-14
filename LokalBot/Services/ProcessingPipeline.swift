@@ -12,8 +12,10 @@ final class ProcessingPipeline: ObservableObject {
     enum Stage: Equatable {
         case queued
         case preparingTranscriptionModel
+        case preparingDiarizationModel
         case preparingSummaryModel
         case transcribing
+        case diarizing
         case summarizing
         case failed(String)
 
@@ -22,9 +24,12 @@ final class ProcessingPipeline: ObservableObject {
             case .queued: "Queued…"
             case .preparingTranscriptionModel:
                 "Preparing transcription model (download size depends on your selection)…"
+            case .preparingDiarizationModel:
+                "Preparing speaker diarization model…"
             case .preparingSummaryModel:
                 "Preparing summary model (download size depends on your selection)…"
             case .transcribing: "Transcribing…"
+            case .diarizing: "Identifying speakers…"
             case .summarizing: "Summarizing…"
             case .failed(let message): "Failed: \(message)"
             }
@@ -51,6 +56,7 @@ final class ProcessingPipeline: ObservableObject {
     /// loses nothing — see `resumePending(meetings:)`.
     private var queue: [Job] = []
     private var isDraining = false
+    private var activeMeetingID: Meeting.ID?
     private let diarizer = NeuralDiarizationEngine()
     private let jobStore: PipelineJobStore?
     /// Fired after transcript/summary files land on disk (search re-index).
@@ -68,7 +74,33 @@ final class ProcessingPipeline: ObservableObject {
     }
 
     func enqueue(_ meeting: Meeting, transcribe: Bool = true, summarize: Bool = true) {
-        jobStore?.enqueue(meetingID: meeting.id, transcribe: transcribe, summarize: summarize)
+        if let index = queue.firstIndex(where: { $0.meeting.id == meeting.id }) {
+            let mergedTranscribe = queue[index].transcribe || transcribe
+            let mergedSummarize = queue[index].summarize || summarize
+            if let jobStore,
+               !jobStore.enqueue(
+                    meetingID: meeting.id,
+                    transcribe: mergedTranscribe,
+                    summarize: mergedSummarize) {
+                stages[meeting.id] = .failed("Could not persist the processing queue update.")
+                return
+            }
+            queue[index].transcribe = mergedTranscribe
+            queue[index].summarize = mergedSummarize
+            queue[index].resumed = false
+            lokalbotLog("pipeline coalesced queued meeting=\(meeting.id)")
+            return
+        }
+        guard activeMeetingID != meeting.id else {
+            lokalbotLog("pipeline duplicate ignored while active meeting=\(meeting.id)")
+            return
+        }
+        if let jobStore,
+           !jobStore.enqueue(
+                meetingID: meeting.id, transcribe: transcribe, summarize: summarize) {
+            stages[meeting.id] = .failed("Could not persist the processing job.")
+            return
+        }
         queue.append(Job(meeting: meeting, transcribe: transcribe, summarize: summarize))
         stages[meeting.id] = .queued
         drain()
@@ -82,7 +114,9 @@ final class ProcessingPipeline: ObservableObject {
     /// not crash-loop every launch.
     func resumePending(meetings: [Meeting]) {
         guard let jobStore else { return }
-        jobStore.prune(existing: Set(meetings.map(\.id)))
+        if !jobStore.prune(existing: Set(meetings.map(\.id))) {
+            lokalbotLog("pipeline resume continued after queue prune failure")
+        }
         let byID = Dictionary(uniqueKeysWithValues: meetings.map { ($0.id, $0) })
         for job in jobStore.pendingJobs() {
             guard let meeting = byID[job.meetingID], stages[meeting.id] == nil else { continue }
@@ -106,7 +140,9 @@ final class ProcessingPipeline: ObservableObject {
         Task {
             while !queue.isEmpty {
                 let job = queue.removeFirst()
+                activeMeetingID = job.meeting.id
                 await process(job)
+                activeMeetingID = nil
             }
             isDraining = false
         }
@@ -116,7 +152,10 @@ final class ProcessingPipeline: ObservableObject {
         let meeting = job.meeting
         let folder = meeting.folderURL(in: storage)
         let config = settings()
-        jobStore?.markStarted(meetingID: meeting.id)
+        if let jobStore, !jobStore.markStarted(meetingID: meeting.id) {
+            stages[meeting.id] = .failed("Could not durably start this processing job.")
+            return
+        }
         do {
             if job.transcribe || !FileManager.default.fileExists(
                 atPath: folder.appendingPathComponent("transcript.json").path) {
@@ -131,10 +170,18 @@ final class ProcessingPipeline: ObservableObject {
                 stages[meeting.id] = .transcribing
                 var transcript = try await transcribeTracks(meeting: meeting, folder: folder,
                                                             engine: engine, config: config)
-                transcript = await refineSpeakers(transcript: transcript,
-                                                  meeting: meeting,
-                                                  folder: folder,
-                                                  config: config)
+                if config.multiSpeakerDiarization,
+                   MeetingAudioFiles.transcribableURL(for: .system, in: folder) != nil {
+                    stages[meeting.id] = .preparingDiarizationModel
+                    await prepareDiarizationModels()
+                    stages[meeting.id] = .diarizing
+                    transcript = await refineSpeakers(
+                        transcript: transcript,
+                        meeting: meeting,
+                        folder: folder,
+                        config: config,
+                        modelsPrepared: true)
+                }
                 transcript = SpeakerAutoNamer.applyingAliases(
                     to: transcript, participantNames: meeting.participantNameHints ?? [])
                 try write(transcript, to: folder)
@@ -179,7 +226,7 @@ final class ProcessingPipeline: ObservableObject {
                         summary = try await summarize(transcript, meeting: meeting, config: config)
                     }
                 } catch {
-                    outcomesTask?.cancel()
+                    await Self.cancelAndWaitForOutcomes(outcomesTask)
                     throw error
                 }
                 try summary.data(using: .utf8)?.write(
@@ -191,8 +238,13 @@ final class ProcessingPipeline: ObservableObject {
                                           config: config)
                 }
             }
+            if let jobStore, !jobStore.markCompleted(meetingID: meeting.id) {
+                stages[meeting.id] = .failed(
+                    "Artifacts were saved, but the durable processing queue could not be completed.")
+                onArtifactsWritten?(meeting)
+                return
+            }
             stages[meeting.id] = nil
-            jobStore?.markCompleted(meetingID: meeting.id)
             onArtifactsWritten?(meeting)
         } catch {
             // The persisted job row stays — the next launch re-enqueues it
@@ -308,12 +360,13 @@ final class ProcessingPipeline: ObservableObject {
     private func refineSpeakers(transcript: Transcript,
                                 meeting: Meeting,
                                 folder: URL,
-                                config: AppSettings) async -> Transcript {
+                                config: AppSettings,
+                                modelsPrepared: Bool = false) async -> Transcript {
         guard config.multiSpeakerDiarization else { return transcript }
         guard let systemURL = MeetingAudioFiles.transcribableURL(for: .system, in: folder) else {
             return transcript
         }
-        await diarizer.prepareModels()
+        if !modelsPrepared { await prepareDiarizationModels() }
         let segments = await diarizer.diarize(url: systemURL)
         guard !segments.isEmpty else { return transcript }
 
@@ -338,6 +391,19 @@ final class ProcessingPipeline: ObservableObject {
             }
         }
         return labelled
+    }
+
+    /// Shared by recording-time prewarm and the post-meeting stage. The
+    /// `NeuralDiarizationEngine` instance is retained by this pipeline, so the
+    /// downloaded/prepared models are reused instead of rebuilt per job.
+    func prepareDiarizationModels() async {
+        await diarizer.prepareModels()
+        // A recording-time prewarm may already own the engine's preparation.
+        // `prepareModels()` is idempotent and returns for secondary callers, so
+        // wait for that retained instance to finish before entering diarization.
+        while diarizer.isPreparing, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
     }
 
     private func write(_ transcript: Transcript, to folder: URL) throws {
@@ -444,6 +510,7 @@ final class ProcessingPipeline: ObservableObject {
     private func extractOutcomes(transcript: Transcript, summary: String,
                                  folder: URL, config: AppSettings) async {
         do {
+            try Task.checkCancellation()
             let engine = try await makeTextEngine(config)
             let output = try await engine.generate(
                 system: OutcomesExtractor.systemPrompt,
@@ -451,14 +518,25 @@ final class ProcessingPipeline: ObservableObject {
                                                  summary: summary),
                 context: MeetingNotes.promptContext(in: folder),
                 schema: OutcomesExtractor.schema)
+            try Task.checkCancellation()
             guard let outcomes = OutcomesExtractor.parse(output) else {
                 lokalbotLog("outcomes extraction unparseable, skipping")
                 return
             }
+            try Task.checkCancellation()
             try outcomes.write(to: folder)
         } catch {
             lokalbotLog("outcomes extraction failed error=\(error.localizedDescription)")
         }
+    }
+
+    /// Cancellation is cooperative; some inference backends may not return
+    /// immediately. A failed summary must not let its sibling outcomes task
+    /// outlive the job and race a retry's artifact writes.
+    nonisolated static func cancelAndWaitForOutcomes(_ task: Task<Void, Never>?) async {
+        guard let task else { return }
+        task.cancel()
+        await task.value
     }
 
     /// Day digest (M4/M6) — shared by the Timeline UI and `--digest`. `ocr` is
@@ -513,10 +591,11 @@ final class ProcessingPipeline: ObservableObject {
                 throw PipelineError.badServerURL
             }
             let modelURL = try await prepareBuiltInModel(config)
+            let authenticationToken = await server.authenticationToken()
             let engine = OpenAICompatibleEngine(
                 baseURL: server.baseURL,
                 model: entry.id,
-                apiKey: nil,
+                apiKey: authenticationToken,
                 extraBody: entry.disablesThinking
                     ? ["chat_template_kwargs": ["enable_thinking": false]] : [:],
                 displayNameOverride: "Built-in — \(entry.displayName)")
@@ -565,9 +644,8 @@ final class ProcessingPipeline: ObservableObject {
                 ?? ModelCatalog.entry(id: ModelCatalog.recommendedSummarizationID) else {
             throw PipelineError.badServerURL
         }
-        if let existing = ModelCatalog.localURL(for: entry, storage: storage) {
-            return existing
-        }
+        // The preparer also validates legacy on-disk models. Bypassing it for a
+        // GGUF header match would skip the newly pinned SHA-256 digest.
         return try await builtInModelPreparer(entry, storage)
     }
 

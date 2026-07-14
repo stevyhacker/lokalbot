@@ -15,6 +15,9 @@ struct AgentView: View {
             }
         }
         .navigationTitle("Agent")
+        .task {
+            await installer.refreshInstalledState()
+        }
     }
 
     private var sessionTabs: some View {
@@ -49,6 +52,9 @@ struct AgentView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 420)
             switch installer.phase {
+            case .checking:
+                ProgressView().controlSize(.small)
+                Text("Checking Agent runtime…").font(.caption).foregroundStyle(.secondary)
             case .idle:
                 Button("Download & Enable Agent Mode") {
                     Task { await installer.installIfNeeded() }

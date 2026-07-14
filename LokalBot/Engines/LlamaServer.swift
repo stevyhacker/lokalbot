@@ -40,8 +40,32 @@ actor LlamaServer {
 
     private var process: Process?
     private var loadedModelPath: String?
+    private var loadedAuthenticationToken: String?
     private var residencyGeneration: UUID?
     private let startup = AsyncSingleFlight()
+
+    /// Shared bearer required by this private localhost server. It is created
+    /// with 256 bits of randomness, stored mode 0600, and can be obtained
+    /// before the lazy server boot so leased engines carry the right header.
+    func authenticationToken() -> String {
+        if let loadedAuthenticationToken { return loadedAuthenticationToken }
+        if let markerToken = readPidMarker()?.authenticationToken {
+            loadedAuthenticationToken = markerToken
+            persistAuthenticationToken(markerToken)
+            return markerToken
+        }
+        if let data = try? Data(contentsOf: authenticationTokenURL),
+           let saved = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           saved.count >= 32 {
+            loadedAuthenticationToken = saved
+            return saved
+        }
+        let created = Self.makeAuthenticationToken()
+        loadedAuthenticationToken = created
+        persistAuthenticationToken(created)
+        return created
+    }
 
     enum ServerError: LocalizedError {
         case binaryMissing
@@ -86,6 +110,7 @@ actor LlamaServer {
         }
         if await healthyServingExpectedConfiguration(modelAt: url) {
             loadedModelPath = url.path
+            loadedAuthenticationToken = readPidMarker()?.authenticationToken
             return
         }
         try await start(modelAt: url)
@@ -139,12 +164,14 @@ actor LlamaServer {
         let binary = try installedBinary()
         if await healthyServingExpectedConfiguration(modelAt: url) {
             loadedModelPath = url.path
+            loadedAuthenticationToken = readPidMarker()?.authenticationToken
             return
         }
         if await healthy() {
             await stopRecordedServerIfOwned(expectedBinary: binary)
             if await healthyServingExpectedConfiguration(modelAt: url) {
                 loadedModelPath = url.path
+                loadedAuthenticationToken = readPidMarker()?.authenticationToken
                 return
             }
         }
@@ -161,47 +188,56 @@ actor LlamaServer {
         // Make room before the subprocess mmaps the weights: evict the
         // least-recently-used other models if this one would bust the budget.
         let nonEvictableBytes = await ModelRuntimeRegistry.shared.totalEstimatedBytes
-        await ModelResidency.shared.willLoad(
+        let loadReservation = await ModelResidency.shared.willLoad(
             id: residencyID,
             bytes: estimatedResidentBytes(modelAt: url),
             reservedBytes: Int64(clamping: nonEvictableBytes))
-        let process = Process()
-        process.executableURL = binary
-        process.arguments = [
-            "-m", url.path,
-            "--host", "127.0.0.1", "--port", String(port),
-            "-c", String(contextTokens),
-            "-ngl", "99",           // full Metal offload
-            "--jinja",              // correct chat templates (qwen3, gpt-oss)
-            "--no-webui",
-        ] + extraArgs
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        process.terminationHandler = { [weak self] process in
-            let processIdentifier = process.processIdentifier
-            Task { await self?.processDidTerminate(processIdentifier) }
-        }
-        try process.run()
-        self.process = process
-        loadedModelPath = url.path
-        writePidMarker(ServerPidMarker(
-            pid: process.processIdentifier,
-            port: port,
-            binaryPath: binary.path,
-            modelPath: url.path,
-            contextTokens: contextTokens,
-            extraArgs: extraArgs))
-
-        // Model load can take a while for the big ones; poll /health.
-        for _ in 0..<240 {
-            try await Task.sleep(for: .milliseconds(500))
-            if !process.isRunning {
-                throw ServerError.failedToStart("llama-server exited during startup")
+        do {
+            let authenticationToken = authenticationToken()
+            let process = Process()
+            process.executableURL = binary
+            process.arguments = [
+                "-m", url.path,
+                "--host", "127.0.0.1", "--port", String(port),
+                "-c", String(contextTokens),
+                "-ngl", "99",           // full Metal offload
+                "--jinja",              // correct chat templates (qwen3, gpt-oss)
+                "--no-webui",
+                "--api-key", authenticationToken,
+            ] + extraArgs
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            process.terminationHandler = { [weak self] process in
+                let processIdentifier = process.processIdentifier
+                Task { await self?.processDidTerminate(processIdentifier) }
             }
-            if await healthy() { return }
+            try process.run()
+            self.process = process
+            loadedModelPath = url.path
+            loadedAuthenticationToken = authenticationToken
+            writePidMarker(LocalLlamaServerMarker(
+                pid: process.processIdentifier,
+                port: port,
+                binaryPath: binary.path,
+                modelPath: url.path,
+                contextTokens: contextTokens,
+                extraArgs: extraArgs,
+                authenticationToken: authenticationToken))
+
+            // Model load can take a while for the big ones; poll /health.
+            for _ in 0..<240 {
+                try await Task.sleep(for: .milliseconds(500))
+                if !process.isRunning {
+                    throw ServerError.failedToStart("llama-server exited during startup")
+                }
+                if await healthy() { return }
+            }
+            throw ServerError.failedToStart("server did not become healthy in time")
+        } catch {
+            await ModelResidency.shared.cancelLoad(loadReservation)
+            await stop()
+            throw error
         }
-        await stop()
-        throw ServerError.failedToStart("server did not become healthy in time")
     }
 
     /// Weight files are not the whole llama footprint: prompt cache, KV, and
@@ -229,6 +265,7 @@ actor LlamaServer {
         let generation = residencyGeneration
         process = nil
         loadedModelPath = nil
+        loadedAuthenticationToken = nil
         residencyGeneration = nil
         if let old {
             removePidMarker(ifMatching: old.processIdentifier)
@@ -263,6 +300,7 @@ actor LlamaServer {
         let generation = residencyGeneration
         process = nil
         loadedModelPath = nil
+        loadedAuthenticationToken = nil
         residencyGeneration = nil
         removePidMarker(ifMatching: processIdentifier)
         if let generation {
@@ -300,18 +338,20 @@ actor LlamaServer {
         removePidMarker(ifMatching: pid)
     }
 
-    private func readPidMarker() -> ServerPidMarker? {
+    private func readPidMarker() -> LocalLlamaServerMarker? {
         guard let data = try? Data(contentsOf: pidMarkerURL) else { return nil }
-        return try? JSONDecoder().decode(ServerPidMarker.self, from: data)
+        return try? JSONDecoder().decode(LocalLlamaServerMarker.self, from: data)
     }
 
-    private func writePidMarker(_ marker: ServerPidMarker) {
+    private func writePidMarker(_ marker: LocalLlamaServerMarker) {
         do {
             try FileManager.default.createDirectory(
                 at: pidMarkerURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true)
             let data = try JSONEncoder().encode(marker)
             try data.write(to: pidMarkerURL, options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: pidMarkerURL.path)
         } catch {
             // Best-effort orphan recovery only; startup must not depend on it.
         }
@@ -323,11 +363,32 @@ actor LlamaServer {
     }
 
     private var pidMarkerURL: URL {
-        AppDirectories.applicationSupport.appendingPathComponent("llama-server-\(port).pid.json")
+        LocalLlamaServerAuthentication.markerURL(port: port)
+    }
+
+    private var authenticationTokenURL: URL {
+        AppDirectories.applicationSupport
+            .appendingPathComponent("llama-server-\(port).auth-token")
+    }
+
+    private func persistAuthenticationToken(_ token: String) {
+        do {
+            try FileManager.default.createDirectory(
+                at: authenticationTokenURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            try Data(token.utf8).write(to: authenticationTokenURL, options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: authenticationTokenURL.path)
+        } catch {
+            lokalbotLog("llama-server: could not persist localhost authentication token")
+        }
     }
 
     private func healthy() async -> Bool {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/health")!)
+        if let token = loadedAuthenticationToken ?? readPidMarker()?.authenticationToken {
+            LocalLlamaServerAuthentication.apply(to: &request, token: token)
+        }
         request.timeoutInterval = 2
         guard let (_, response) = try? await URLSession.shared.data(for: request) else { return false }
         return (response as? HTTPURLResponse)?.statusCode == 200
@@ -335,6 +396,10 @@ actor LlamaServer {
 
     private func healthyServing(modelAt url: URL) async -> Bool {
         var request = URLRequest(url: baseURL.appendingPathComponent("models"))
+        guard let token = loadedAuthenticationToken ?? readPidMarker()?.authenticationToken else {
+            return false
+        }
+        LocalLlamaServerAuthentication.apply(to: &request, token: token)
         request.timeoutInterval = 2
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return false }
@@ -414,13 +479,10 @@ actor LlamaServer {
             .compactMap { pid_t($0) }
     }
 
-    private struct ServerPidMarker: Codable {
-        var pid: pid_t
-        var port: Int
-        var binaryPath: String
-        var modelPath: String
-        var contextTokens: Int?
-        var extraArgs: [String]?
+    private nonisolated static func makeAuthenticationToken() -> String {
+        (UUID().uuidString + UUID().uuidString)
+            .replacingOccurrences(of: "-", with: "")
+            .lowercased()
     }
 
     private struct ModelListPayload: Decodable {

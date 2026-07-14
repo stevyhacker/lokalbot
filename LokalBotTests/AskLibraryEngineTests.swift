@@ -153,4 +153,10 @@ final class AskLibraryEngineTests: XCTestCase {
             "\(URLSessionLlamaChatClient.mainServerBaseURL)/v1",
             "\(LlamaServer.shared.baseURL)")
     }
+
+    func testLocalServerAuthenticationAddsBearerHeader() throws {
+        var request = URLRequest(url: try XCTUnwrap(URL(string: "http://127.0.0.1:17872/health")))
+        LocalLlamaServerAuthentication.apply(to: &request, token: "secret")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
+    }
 }

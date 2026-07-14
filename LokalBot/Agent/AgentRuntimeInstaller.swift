@@ -8,8 +8,10 @@ import Foundation
 final class AgentRuntimeInstaller: ObservableObject {
 
     typealias PackageInstaller = (_ bun: URL, _ template: URL, _ destination: URL) async throws -> Void
+    typealias RuntimeVerifier = @Sendable (URL, AgentRuntimeManifest) async -> Bool
 
     enum Phase: Equatable {
+        case checking
         case idle
         case downloading(name: String, progress: Double)   // 0…1; -1 when length unknown
         case installing(name: String)
@@ -23,22 +25,44 @@ final class AgentRuntimeInstaller: ObservableObject {
     private let session: URLSession
     private let runtimeTemplate: URL
     private let packageInstaller: PackageInstaller
+    private let runtimeVerifier: RuntimeVerifier
+    private var operationInProgress = false
 
     init(root: URL = AgentRuntimeLayout.defaultRoot,
          session: URLSession = .shared,
          runtimeTemplate: URL? = nil,
-         packageInstaller: @escaping PackageInstaller = AgentRuntimeInstaller.installPackages) {
+         packageInstaller: @escaping PackageInstaller = AgentRuntimeInstaller.installPackages,
+         runtimeVerifier: @escaping RuntimeVerifier = { root, manifest in
+             await AgentRuntimeInstaller.verifyInstalledRuntime(root: root, manifest: manifest)
+         }) {
         self.root = root
         self.session = session
         self.runtimeTemplate = runtimeTemplate
             ?? Bundle.main.resourceURL?.appendingPathComponent("pi/runtime", isDirectory: true)
             ?? URL(fileURLWithPath: "pi/runtime", isDirectory: true)
         self.packageInstaller = packageInstaller
-        if AgentRuntimeLayout.isInstalled(under: root) { phase = .installed }
+        self.runtimeVerifier = runtimeVerifier
+        phase = .checking
+    }
+
+    /// Called when Agent Mode first appears. Runtime hashing can cover Bun,
+    /// pi, and the lockfile, so verification runs on a utility executor rather
+    /// than blocking AppState construction and the first SwiftUI frame.
+    func refreshInstalledState(manifest: AgentRuntimeManifest = .current) async {
+        guard phase == .checking, !operationInProgress else { return }
+        operationInProgress = true
+        let installed = await runtimeVerifier(root, manifest)
+        operationInProgress = false
+        guard phase == .checking else { return }
+        phase = installed ? .installed : .idle
     }
 
     func installIfNeeded(manifest: AgentRuntimeManifest = .current) async {
-        guard !AgentRuntimeLayout.isInstalled(under: root) else {
+        guard !operationInProgress else { return }
+        operationInProgress = true
+        defer { operationInProgress = false }
+        phase = .checking
+        guard !(await runtimeVerifier(root, manifest)) else {
             phase = .installed
             return
         }
@@ -59,6 +83,13 @@ final class AgentRuntimeInstaller: ObservableObject {
             }
             try FileManager.default.setAttributes([.posixPermissions: 0o755],
                                                   ofItemAtPath: bunBinary.path)
+            let bunBinaryDigest = try SHA256Verifier.hexDigest(of: bunBinary)
+            if let expected = manifest.bunBinarySHA256,
+               bunBinaryDigest != expected.lowercased() {
+                throw InstallError.checksum(manifest.bun.name)
+            }
+
+            try Self.verifyTemplate(runtimeTemplate, manifest: manifest)
 
             phase = .installing(name: "pi \(AgentRuntimeManifest.piVersion)")
             let piStage = staging.appendingPathComponent("pi-install", isDirectory: true)
@@ -67,6 +98,16 @@ final class AgentRuntimeInstaller: ObservableObject {
                 "node_modules/@earendil-works/pi-coding-agent/dist/cli.js")
             guard FileManager.default.fileExists(atPath: stagedCLI.path) else {
                 throw InstallError.layout("pi cli.js missing from bundle")
+            }
+            let piCLIDigest = try SHA256Verifier.hexDigest(of: stagedCLI)
+            if let expected = manifest.piCLISHA256,
+               piCLIDigest != expected.lowercased() {
+                throw InstallError.checksum("pi \(AgentRuntimeManifest.piVersion)")
+            }
+            let piRuntimeTreeDigest = try SHA256Verifier.treeHexDigest(of: piStage)
+            if let expected = manifest.piRuntimeTreeSHA256,
+               piRuntimeTreeDigest != expected.lowercased() {
+                throw InstallError.checksum("pi \(AgentRuntimeManifest.piVersion) runtime")
             }
 
             let assembled = staging.appendingPathComponent("agent-runtime", isDirectory: true)
@@ -78,11 +119,23 @@ final class AgentRuntimeInstaller: ObservableObject {
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installedBun.path)
             try FileManager.default.moveItem(at: piStage, to: assembled.appendingPathComponent("pi"))
 
-            let marker = try JSONSerialization.data(
-                withJSONObject: ["bun": AgentRuntimeManifest.bunVersion,
-                                 "pi": AgentRuntimeManifest.piVersion],
-                options: [.sortedKeys])
-            try marker.write(to: AgentRuntimeLayout.versionMarker(under: assembled))
+            let packageDigest = try SHA256Verifier.hexDigest(
+                of: assembled.appendingPathComponent("pi/package.json"))
+            let lockDigest = try SHA256Verifier.hexDigest(
+                of: assembled.appendingPathComponent("pi/bun.lock"))
+            let marker = AgentRuntimeVersionMarker(
+                bunVersion: AgentRuntimeManifest.bunVersion,
+                piVersion: AgentRuntimeManifest.piVersion,
+                bunArchiveSHA256: manifest.bun.sha256.lowercased(),
+                bunBinarySHA256: bunBinaryDigest,
+                piCLISHA256: piCLIDigest,
+                packageJSONSHA256: packageDigest,
+                lockfileSHA256: lockDigest,
+                piRuntimeTreeSHA256: piRuntimeTreeDigest)
+            let markerURL = AgentRuntimeLayout.versionMarker(under: assembled)
+            try JSONEncoder().encode(marker).write(to: markerURL, options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: markerURL.path)
 
             try? FileManager.default.removeItem(at: root)
             try FileManager.default.createDirectory(at: root.deletingLastPathComponent(),
@@ -92,6 +145,15 @@ final class AgentRuntimeInstaller: ObservableObject {
         } catch {
             phase = .failed(Self.userMessage(for: error))
         }
+    }
+
+    nonisolated static func verifyInstalledRuntime(
+        root: URL,
+        manifest: AgentRuntimeManifest
+    ) async -> Bool {
+        await Task.detached(priority: .utility) {
+            AgentRuntimeLayout.isInstalled(under: root, manifest: manifest)
+        }.value
     }
 
     // MARK: - Frozen package install
@@ -145,34 +207,38 @@ final class AgentRuntimeInstaller: ObservableObject {
         }
     }
 
+    private static func verifyTemplate(
+        _ template: URL,
+        manifest: AgentRuntimeManifest
+    ) throws {
+        let packageJSON = template.appendingPathComponent("package.json")
+        let lockfile = template.appendingPathComponent("bun.lock")
+        if let expected = manifest.packageJSONSHA256,
+           try SHA256Verifier.hexDigest(of: packageJSON) != expected.lowercased() {
+            throw InstallError.checksum("pi package manifest")
+        }
+        if let expected = manifest.lockfileSHA256,
+           try SHA256Verifier.hexDigest(of: lockfile) != expected.lowercased() {
+            throw InstallError.checksum("pi lockfile")
+        }
+    }
+
     // MARK: - Download + verify
 
     private func download(_ artifact: AgentRuntimeArtifact, into staging: URL) async throws -> URL {
         phase = .downloading(name: artifact.name, progress: 0)
         let destination = staging.appendingPathComponent(artifact.url.lastPathComponent)
-        let (bytes, response) = try await session.bytes(from: artifact.url)
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw InstallError.download(artifact.name, "HTTP \(http.statusCode)")
-        }
-        let expected = response.expectedContentLength
-        FileManager.default.createFile(atPath: destination.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: destination)
-        defer { try? handle.close() }
-        var received: Int64 = 0
-        var chunk = Data()
-        chunk.reserveCapacity(1 << 16)
-        for try await byte in bytes {
-            chunk.append(byte)
-            if chunk.count == 1 << 16 {
-                try handle.write(contentsOf: chunk)
-                received += Int64(chunk.count)
-                chunk.removeAll(keepingCapacity: true)
-                phase = .downloading(name: artifact.name,
-                                     progress: expected > 0 ? Double(received) / Double(expected) : -1)
+        if artifact.url.isFileURL {
+            try FileManager.default.copyItem(at: artifact.url, to: destination)
+        } else {
+            phase = .downloading(name: artifact.name, progress: -1)
+            let (temporary, response) = try await session.download(from: artifact.url)
+            if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+                throw InstallError.download(artifact.name, "HTTP \(http.statusCode)")
             }
+            try FileManager.default.moveItem(at: temporary, to: destination)
         }
-        try handle.write(contentsOf: chunk)
-        try handle.close()
+        phase = .downloading(name: artifact.name, progress: 1)
 
         guard try SHA256Verifier.hexDigest(of: destination).lowercased() == artifact.sha256.lowercased() else {
             throw InstallError.checksum(artifact.name)

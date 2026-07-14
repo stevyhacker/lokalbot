@@ -1,7 +1,26 @@
+import CryptoKit
 import Foundation
+
+struct AgentAccessCapability: Equatable, Sendable {
+    fileprivate let id: String
+    let token: String
+}
+
+enum AgentAccessError: LocalizedError {
+    case disabled
+
+    var errorDescription: String? {
+        switch self {
+        case .disabled:
+            FileLibraryToolProvider.accessDisabledMessage
+        }
+    }
+}
 
 /// Cross-process marker-file truth for external-agent access and LLM wakeup.
 struct AgentAccessGate {
+    static let capabilityEnvironmentKey = "LOKALBOT_AGENT_CAPABILITY"
+
     var root: URL
 
     init(root: URL = SessionLookup.storageRootURL) {
@@ -24,8 +43,31 @@ struct AgentAccessGate {
         controlDirectory.appendingPathComponent("agent-wake-error")
     }
 
+    var capabilityDirectory: URL {
+        controlDirectory.appendingPathComponent("agent-capabilities", isDirectory: true)
+    }
+
     var isEnabled: Bool {
         FileManager.default.fileExists(atPath: accessMarkerURL.path)
+    }
+
+    /// True for the user-controlled global toggle or for an app-issued,
+    /// short-lived capability inherited by the embedded Agent Mode process.
+    /// A normal terminal invocation has no capability and must honor the
+    /// Privacy toggle just like MCP does.
+    func isAuthorized(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        now: Date = Date()
+    ) -> Bool {
+        if isEnabled { return true }
+        guard let token = environment[Self.capabilityEnvironmentKey] else { return false }
+        return validateCapability(token, now: now)
+    }
+
+    func requireAuthorized(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) throws {
+        guard isAuthorized(environment: environment) else { throw AgentAccessError.disabled }
     }
 
     func enable() throws {
@@ -37,6 +79,47 @@ struct AgentAccessGate {
 
     func disable() {
         try? FileManager.default.removeItem(at: accessMarkerURL)
+    }
+
+    /// Creates a bearer capability for one embedded Agent Mode subprocess.
+    /// Only a SHA-256 digest is persisted; the bearer secret exists in the
+    /// process environment and is revoked when the tab shuts down.
+    func issueScopedCapability(validFor lifetime: TimeInterval = 24 * 60 * 60) throws
+        -> AgentAccessCapability {
+        let id = UUID().uuidString.lowercased()
+        let secret = (UUID().uuidString + UUID().uuidString)
+            .replacingOccurrences(of: "-", with: "")
+            .lowercased()
+        let record = CapabilityRecord(
+            digest: Self.digest(secret),
+            expiresAt: Date().addingTimeInterval(max(60, lifetime)))
+        try FileManager.default.createDirectory(
+            at: capabilityDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        let url = capabilityURL(id: id)
+        try JSONEncoder().encode(record).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        return AgentAccessCapability(id: id, token: "\(id).\(secret)")
+    }
+
+    func revoke(_ capability: AgentAccessCapability) {
+        try? FileManager.default.removeItem(at: capabilityURL(id: capability.id))
+    }
+
+    func removeExpiredCapabilities(now: Date = Date()) {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: capabilityDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]) else { return }
+        for file in files {
+            guard let data = try? Data(contentsOf: file),
+                  let record = try? JSONDecoder().decode(CapabilityRecord.self, from: data),
+                  record.expiresAt > now else {
+                try? FileManager.default.removeItem(at: file)
+                continue
+            }
+        }
     }
 
     func touchWake() throws {
@@ -72,5 +155,34 @@ struct AgentAccessGate {
         let message = String(decoding: data, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return message.isEmpty ? nil : message
+    }
+
+    private func validateCapability(_ token: String, now: Date) -> Bool {
+        let parts = token.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return false }
+        let id = String(parts[0])
+        let secret = String(parts[1])
+        guard UUID(uuidString: id) != nil,
+              secret.count == 64,
+              secret.allSatisfy({ $0.isHexDigit }),
+              let data = try? Data(contentsOf: capabilityURL(id: id)),
+              let record = try? JSONDecoder().decode(CapabilityRecord.self, from: data),
+              record.expiresAt > now else { return false }
+        return record.digest == Self.digest(secret)
+    }
+
+    private func capabilityURL(id: String) -> URL {
+        capabilityDirectory.appendingPathComponent("\(id.lowercased()).json")
+    }
+
+    private static func digest(_ secret: String) -> String {
+        SHA256.hash(data: Data(secret.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    private struct CapabilityRecord: Codable {
+        let digest: String
+        let expiresAt: Date
     }
 }

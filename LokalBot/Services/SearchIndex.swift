@@ -5,7 +5,6 @@ import SQLite3
 /// transcript segments and summaries. Lives at <storage root>/lokalbotv3.sqlite.
 /// Segment-level rows let transcript hits deep-link to their audio timestamp.
 /// macOS ships SQLite with FTS5 enabled, so this adds no dependency.
-@MainActor
 final class SearchIndex {
 
     private static let documentRowsMigration = "search-document-rows-v1"
@@ -26,6 +25,7 @@ final class SearchIndex {
     }
 
     private let database: SQLiteDatabase?
+    private var locallyDeletedMeetingIDs: Set<UUID> = []
 
     init(databaseURL: URL) {
         guard let database = SQLiteDatabase(url: databaseURL) else {
@@ -56,19 +56,32 @@ final class SearchIndex {
             CREATE TABLE IF NOT EXISTS search_index_migrations (
                 name TEXT PRIMARY KEY
             );
+            CREATE TABLE IF NOT EXISTS deleted_meetings (
+                meeting_id TEXT PRIMARY KEY,
+                deleted_at REAL NOT NULL
+            );
             """)
         Self.backfillDocumentRowsIfNeeded(in: database)
+        _ = reconcileDeletedMeetings()
     }
 
     // MARK: - Indexing
 
     /// Re-index every meeting whose files changed since the last pass.
     func reindexAll(_ meetings: [Meeting], storage: StorageManager) {
-        for meeting in meetings { reindex(meeting, storage: storage) }
+        for meeting in meetings {
+            guard !Task.isCancelled else { return }
+            reindex(meeting, storage: storage)
+        }
     }
 
-    func reindex(_ meeting: Meeting, storage: StorageManager) {
+    func reindex(_ meeting: Meeting, storage: StorageManager,
+                 beforeTransaction: (() -> Void)? = nil) {
+        guard !locallyDeletedMeetingIDs.contains(meeting.id) else { return }
         let folder = meeting.folderURL(in: storage)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return }
         let mtime = Self.latestMtime(in: folder)
         if let indexed = indexedMtime(of: meeting.id), indexed >= mtime { return }
 
@@ -95,9 +108,33 @@ final class SearchIndex {
                                                  start: document.start, speaker: document.speaker)
         }
 
-        guard let database else { return }
+        guard !Task.isCancelled, let database else { return }
         let meetingID = meeting.id.uuidString
+        // Test seam for deterministically exercising an older snapshot that
+        // reaches its transaction after a newer independent connection.
+        beforeTransaction?()
+        guard !Task.isCancelled else { return }
         database.transaction {
+            // Deletion and indexing use independent SQLite connections. Check
+            // the durable tombstone inside this write transaction so either
+            // indexing commits first and deletion removes it, or deletion
+            // commits first and this late worker becomes a no-op.
+            do {
+                guard try !database.hasRowChecked(
+                    "SELECT 1 FROM deleted_meetings WHERE meeting_id = ?1",
+                    bind: [meetingID]),
+                      FileManager.default.fileExists(atPath: folder.path) else { return true }
+                // The optimistic check above avoids unnecessary file reads.
+                // Repeat it under BEGIN IMMEDIATE so an older worker cannot
+                // commit after and overwrite a newer snapshot.
+                if let indexed = try database.firstDoubleChecked(
+                    "SELECT source_mtime FROM indexed_meetings WHERE meeting_id = ?1",
+                    bind: [meetingID]), indexed >= mtime {
+                    return true
+                }
+            } catch {
+                return false
+            }
             guard Self.deleteDocuments(for: meetingID, in: database) else { return false }
             let inserted = database.withStatement(
                 "INSERT INTO docs (text, meeting_id, kind, start, speaker) VALUES (?1, ?2, ?3, ?4, ?5)"
@@ -123,12 +160,49 @@ final class SearchIndex {
         }
     }
 
-    func remove(_ meetingID: UUID) {
-        guard let database else { return }
+    @discardableResult
+    func remove(_ meetingID: UUID) -> Bool {
+        noteDeletion(meetingID)
+        guard let database else { return false }
         let id = meetingID.uuidString
-        database.transaction {
+        let marked = database.transaction {
+            database.run(
+                "INSERT OR IGNORE INTO deleted_meetings (meeting_id, deleted_at) VALUES (?1, ?2)",
+                bind: [id, Date().timeIntervalSince1970])
+        }
+        guard marked else { return false }
+        return database.transaction {
             Self.deleteDocuments(for: id, in: database)
                 && database.run("DELETE FROM indexed_meetings WHERE meeting_id = ?1", bind: [id])
+        }
+    }
+
+    func noteDeletion(_ meetingID: UUID) {
+        locallyDeletedMeetingIDs.insert(meetingID)
+    }
+
+    /// Finishes cleanup for durable tombstones left by a prior failed or
+    /// interrupted deletion. Queries exclude tombstones even before this pass
+    /// succeeds, so reconciliation can safely be retried at startup and in-app.
+    @discardableResult
+    func reconcileDeletedMeetings() -> Bool {
+        guard let database else { return false }
+        return database.transaction {
+            database.run("""
+                DELETE FROM docs
+                WHERE rowid IN (
+                    SELECT doc_rowid FROM search_document_rows
+                    WHERE meeting_id IN (SELECT meeting_id FROM deleted_meetings)
+                )
+                """)
+                && database.run("""
+                    DELETE FROM search_document_rows
+                    WHERE meeting_id IN (SELECT meeting_id FROM deleted_meetings)
+                    """)
+                && database.run("""
+                    DELETE FROM indexed_meetings
+                    WHERE meeting_id IN (SELECT meeting_id FROM deleted_meetings)
+                    """)
         }
     }
 
@@ -147,6 +221,10 @@ final class SearchIndex {
             SELECT meeting_id, kind, start, speaker,
                    snippet(docs, 0, '«', '»', '…', 14)
             FROM docs WHERE docs MATCH ?1
+              AND NOT EXISTS (
+                  SELECT 1 FROM deleted_meetings AS deleted
+                  WHERE deleted.meeting_id = docs.meeting_id
+              )
             """
         if kind != nil { sql += " AND kind = ?2" }
         sql += " ORDER BY rank LIMIT \(limit)"
@@ -168,7 +246,7 @@ final class SearchIndex {
                        start: sqlite3_column_double(statement, 2),
                        snippet: String(cString: snippetText),
                        speaker: speaker)
-        }
+        }.filter { !locallyDeletedMeetingIDs.contains($0.meetingID) }
     }
 
     /// Common English function words that carry no retrieval signal. Stripped

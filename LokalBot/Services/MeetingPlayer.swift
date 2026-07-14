@@ -26,6 +26,13 @@ final class MeetingPlayer: NSObject, ObservableObject {
     private var players: [AVAudioPlayer] = []
     private var ticker: Timer?
 
+    /// The longest source owns the meeting timeline. The system track can end
+    /// before the mic (or vice versa); clocking from `players.first` freezes or
+    /// jumps the scrubber as soon as that shorter player finishes.
+    private var timelinePlayer: AVAudioPlayer? {
+        players.max { $0.duration < $1.duration }
+    }
+
     func load(folder: URL, hasSystemTrack: Bool) {
         stop()
         // Share the file + gain policy with the offline export so what you hear
@@ -110,8 +117,8 @@ final class MeetingPlayer: NSObject, ObservableObject {
         stopTicker()
         ticker = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self, let first = self.players.first else { return }
-                self.currentTime = first.currentTime
+                guard let self, let timelinePlayer = self.timelinePlayer else { return }
+                self.currentTime = min(timelinePlayer.currentTime, self.duration)
             }
         }
     }

@@ -20,11 +20,20 @@ final class CotypingFocusTracker: ObservableObject {
     private var pollBackoff = CotypingFocusPollBackoff()
     private var capabilityFlickerGate = CotypingFocusCapabilityFlickerGate()
     private var lastCaptureUptimeNanoseconds: UInt64?
+    private let snapshotExecutor: CotypingAXSnapshotExecutor
+    private var timerCaptureTask: Task<Void, Never>?
+    private var timerCaptureRequested = false
+    private var timerCaptureGeneration: UInt64 = 0
+    private var captureLifecycleGeneration: UInt64 = 0
 
     nonisolated static let defaultIntervalMs = 200
 
-    init(intervalMs: Int = defaultIntervalMs) {
+    init(
+        intervalMs: Int = defaultIntervalMs,
+        snapshotExecutor: CotypingAXSnapshotExecutor = .shared
+    ) {
         self.baseIntervalMs = intervalMs
+        self.snapshotExecutor = snapshotExecutor
     }
 
     var isRunning: Bool { timer != nil }
@@ -41,8 +50,8 @@ final class CotypingFocusTracker: ObservableObject {
     func start() {
         guard timer == nil else { return }
         pollBackoff.reset()
-        refreshNow()
         scheduleTimer()
+        requestTimerCapture()
     }
 
     private var effectiveIntervalMs: Int {
@@ -67,6 +76,11 @@ final class CotypingFocusTracker: ObservableObject {
     func stop() {
         timer?.invalidate()
         timer = nil
+        captureLifecycleGeneration &+= 1
+        timerCaptureGeneration &+= 1
+        timerCaptureTask?.cancel()
+        timerCaptureTask = nil
+        timerCaptureRequested = false
         scheduledIntervalMs = nil
         lastCaptureUptimeNanoseconds = nil
         pollBackoff.reset()
@@ -78,18 +92,55 @@ final class CotypingFocusTracker: ObservableObject {
     }
 
     private func handleTimerTick() {
-        let previous = focus
-        let latest = captureFocus(includeSurface: false, includeURL: false, includeStyle: false)
-        pollBackoff.recordCapture(didChange: latest != previous)
-        rescheduleTimerIfNeeded()
+        requestTimerCapture()
     }
 
-    /// Synchronous capture. Publishes only on a real change so SwiftUI surfaces
-    /// and the coordinator do not churn every tick.
+    /// Latest-wins timer polling. A slow target app can never build an unbounded
+    /// stack of timer tasks while the serialized AX executor is still working.
+    private func requestTimerCapture() {
+        guard timer != nil else { return }
+        if timerCaptureTask != nil {
+            timerCaptureRequested = true
+            return
+        }
+        timerCaptureGeneration &+= 1
+        let captureGeneration = timerCaptureGeneration
+        timerCaptureTask = Task { [weak self] in
+            guard let self else { return }
+            repeat {
+                self.timerCaptureRequested = false
+                let previous = self.focus
+                let capture = await self.captureFocus(
+                    includeSurface: false,
+                    includeURL: false,
+                    includeStyle: false)
+                guard !Task.isCancelled,
+                      self.timer != nil,
+                      self.timerCaptureGeneration == captureGeneration else { break }
+                if capture.completed {
+                    self.pollBackoff.recordCapture(didChange: capture.focus != previous)
+                    self.rescheduleTimerIfNeeded()
+                }
+            } while self.timerCaptureRequested
+            if self.timerCaptureGeneration == captureGeneration {
+                self.timerCaptureTask = nil
+            }
+        }
+    }
+
+    /// Asynchronous background capture. Publishes only on a real change so
+    /// SwiftUI surfaces and the coordinator do not churn every tick.
     @discardableResult
-    func refreshNow(includeSurface: Bool = false, includeURL: Bool = false, includeStyle: Bool = false) -> CotypingFocus {
+    func refreshNow(
+        includeSurface: Bool = false,
+        includeURL: Bool = false,
+        includeStyle: Bool = false
+    ) async -> CotypingFocus {
         pollBackoff.reset()
-        let latest = captureFocus(includeSurface: includeSurface, includeURL: includeURL, includeStyle: includeStyle)
+        let latest = await captureFocus(
+            includeSurface: includeSurface,
+            includeURL: includeURL,
+            includeStyle: includeStyle).focus
         rescheduleTimerIfNeeded()
         return latest
     }
@@ -100,19 +151,50 @@ final class CotypingFocusTracker: ObservableObject {
         includeSurface: Bool = false,
         includeURL: Bool = false,
         includeStyle: Bool = false
-    ) -> CotypingFocus {
+    ) async -> CotypingFocus {
         guard Self.shouldRefreshCapture(
             lastCaptureUptimeNanoseconds: lastCaptureUptimeNanoseconds,
             nowUptimeNanoseconds: DispatchTime.now().uptimeNanoseconds,
             maxAgeMilliseconds: maxAgeMilliseconds) else {
             return focus
         }
-        return refreshNow(includeSurface: includeSurface, includeURL: includeURL, includeStyle: includeStyle)
+        return await refreshNow(
+            includeSurface: includeSurface,
+            includeURL: includeURL,
+            includeStyle: includeStyle)
     }
 
-    private func captureFocus(includeSurface: Bool, includeURL: Bool, includeStyle: Bool) -> CotypingFocus {
-        let latestRaw = CotypingAXHelper.resolveFocus(
-            includeSurface: includeSurface, includeURL: includeURL, includeStyle: includeStyle)
+    /// A validation capture fails closed on a whole-snapshot timeout. Callers
+    /// that are about to display generated text must not validate against a
+    /// cached field after the live target becomes unresponsive.
+    func refreshForValidation(
+        includeSurface: Bool = false,
+        includeURL: Bool = false,
+        includeStyle: Bool = false
+    ) async -> CotypingFocus? {
+        let capture = await captureFocus(
+            includeSurface: includeSurface,
+            includeURL: includeURL,
+            includeStyle: includeStyle)
+        return capture.completed ? capture.focus : nil
+    }
+
+    private func captureFocus(
+        includeSurface: Bool,
+        includeURL: Bool,
+        includeStyle: Bool
+    ) async -> (focus: CotypingFocus, completed: Bool) {
+        var options: CotypingAXCaptureOptions = []
+        if includeSurface { options.insert(.surface) }
+        if includeURL { options.insert(.url) }
+        if includeStyle { options.insert(.style) }
+        let lifecycleGeneration = captureLifecycleGeneration
+        let capture = await snapshotExecutor.capture(options: options)
+        guard lifecycleGeneration == captureLifecycleGeneration,
+              !capture.timedOut,
+              let latestRaw = capture.focus else {
+            return (focus, false)
+        }
         lastCaptureUptimeNanoseconds = DispatchTime.now().uptimeNanoseconds
         let latest: CotypingFocus
         switch capabilityFlickerGate.evaluate(latestRaw) {
@@ -125,7 +207,7 @@ final class CotypingFocusTracker: ObservableObject {
             focus = latest
             onChange?(latest)
         }
-        return latest
+        return (latest, true)
     }
 
     nonisolated static func millisecondsSinceCapture(

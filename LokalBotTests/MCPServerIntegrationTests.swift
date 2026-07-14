@@ -86,4 +86,67 @@ final class MCPServerIntegrationTests: XCTestCase {
         XCTAssertTrue(output[1].contains("[access_disabled]"))
         XCTAssertTrue(output[1].contains(#""isError":true"#))
     }
+
+    func testUnterminatedOversizedRecordIsRejectedBeforeEOF() throws {
+        let process = Process()
+        process.executableURL = helperURL
+        process.arguments = ["mcp"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["LOKALBOT_STORAGE_ROOT"] = root.path
+        process.environment = environment
+
+        let stdin = Pipe()
+        let stdout = Pipe()
+        process.standardInput = stdin
+        process.standardOutput = stdout
+        process.standardError = FileHandle.nullDevice
+        let responseArrived = expectation(description: "oversized record rejected before EOF")
+        let output = MCPOutputProbe(expectation: responseArrived)
+        stdout.fileHandleForReading.readabilityHandler = { handle in
+            output.append(handle.availableData)
+        }
+
+        try process.run()
+        let payload = Data(
+            repeating: 0x78,
+            count: MCPRequest.maximumLineBytes + 2 * 1_024 * 1_024)
+        stdin.fileHandleForWriting.write(payload)
+
+        let result = XCTWaiter.wait(for: [responseArrived], timeout: 2)
+        stdin.fileHandleForWriting.closeFile()
+        process.waitUntilExit()
+        stdout.fileHandleForReading.readabilityHandler = nil
+
+        XCTAssertEqual(result, .completed)
+        XCTAssertEqual(process.terminationStatus, 0)
+        XCTAssertTrue(output.text.contains(#""code":-32600"#))
+        XCTAssertTrue(output.text.contains("1 MiB"))
+    }
+}
+
+private final class MCPOutputProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private let expectation: XCTestExpectation
+    private var data = Data()
+    private var fulfilled = false
+
+    init(expectation: XCTestExpectation) {
+        self.expectation = expectation
+    }
+
+    func append(_ chunk: Data) {
+        guard !chunk.isEmpty else { return }
+        lock.lock()
+        data.append(chunk)
+        let shouldFulfill = !fulfilled && data.contains(0x0A)
+        if shouldFulfill { fulfilled = true }
+        lock.unlock()
+        if shouldFulfill { expectation.fulfill() }
+    }
+
+    var text: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return String(decoding: data, as: UTF8.self)
+    }
 }

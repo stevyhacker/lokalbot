@@ -110,7 +110,7 @@ final class LiveMeetingTranscriberTests: XCTestCase {
         addBurst(to: &samples, at: 1.0, duration: 0.4, sampleRate: sampleRate)
         addBurst(to: &samples, at: 3.0, duration: 0.4, sampleRate: sampleRate)
         let source = root.appendingPathComponent(AudioPreviewTee.micFileName)
-        try writeCAF(samples: samples, to: source, sampleRate: sampleRate)
+        let liveWriter = try writeCAF(samples: samples, to: source, sampleRate: sampleRate)
         let worker = LiveMeetingAudioPreparationWorker(storageRoot: root)
 
         let result = try await worker.prepareNextChunk(source: source, processedFrames: 0)
@@ -126,6 +126,8 @@ final class LiveMeetingTranscriberTests: XCTestCase {
         XCTAssertEqual(
             contents.first?.resolvingSymlinksInPath(),
             prepared.url.resolvingSymlinksInPath())
+        XCTAssertGreaterThan(liveWriter.length, 0,
+                             "suffix preparation must work while the append-only writer remains open")
 
         let reader = try AVAudioFile(forReading: prepared.url)
         XCTAssertEqual(reader.length, prepared.processedFrames)

@@ -65,11 +65,11 @@ jobs:
       - name: Generate project
         run: xcodegen generate
 
-      - name: Cache llama.cpp vendor
+      - name: Cache native vendors
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: Vendor
-          key: vendor-${{ runner.os }}-${{ hashFiles('Scripts/fetch-llama.sh') }}
+          key: vendor-${{ runner.os }}-${{ hashFiles('Scripts/fetch-llama.sh', 'Scripts/fetch-sherpa.sh') }}
 
       - name: Fetch llama.cpp vendor
         run: bash Scripts/fetch-llama.sh

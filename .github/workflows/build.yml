@@ -72,11 +72,11 @@ jobs:
       # The pre-build phase Scripts/fetch-llama.sh builds checksum-pinned
       # llama.cpp source for the app's deployment target into Vendor/. GGUF
       # models are user-selected downloads, not bundled in CI artifacts.
-      - name: Cache llama.cpp vendor
+      - name: Cache native vendors
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: Vendor
-          key: vendor-${{ runner.os }}-${{ hashFiles('Scripts/fetch-llama.sh') }}
+          key: vendor-${{ runner.os }}-${{ hashFiles('Scripts/fetch-llama.sh', 'Scripts/fetch-sherpa.sh') }}
 
       # Idempotent: a no-op on a cache hit, the real download on a miss. Running
       # it explicitly (rather than only via the xcodebuild pre-build phase) lets

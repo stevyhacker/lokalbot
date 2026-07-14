@@ -174,14 +174,17 @@ final class AgentAccessManagerTests: XCTestCase {
     }
 
     func testDisableDuringWakeReleasesLeaseAcquiredAfterDisable() async throws {
-        let entry = try XCTUnwrap(
-            ModelCatalog.entry(id: ModelCatalog.recommendedSummarizationID))
+        let entry = ModelCatalog.Entry(
+            id: "wake-fixture", displayName: "Wake Fixture",
+            fileName: "wake-fixture.gguf", url: "", sizeGB: 0,
+            blurb: "", disablesThinking: false)
         let models = root.appendingPathComponent("models", isDirectory: true)
         try FileManager.default.createDirectory(at: models, withIntermediateDirectories: true)
         try Data("GGUF".utf8).write(to: models.appendingPathComponent(entry.fileName))
         var settings = AppSettings()
         settings.summarizerBackend = .builtIn
         settings.builtInModelID = entry.id
+        settings.customBuiltInModels = [entry]
 
         let blocker = BlockingEnsure()
         let ensureStarted = expectation(description: "broker ensure started")

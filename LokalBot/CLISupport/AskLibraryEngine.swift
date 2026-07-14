@@ -1,4 +1,71 @@
+import Darwin
 import Foundation
+
+/// Shared on-disk identity and bearer contract for the private llama-server.
+/// The marker is mode 0600, the token rotates on every subprocess start, and
+/// CLI callers validate that its PID is alive, is the recorded executable,
+/// and owns the expected listening port before trusting localhost.
+struct LocalLlamaServerMarker: Codable {
+    var pid: pid_t
+    var port: Int
+    var binaryPath: String
+    var modelPath: String
+    var contextTokens: Int?
+    var extraArgs: [String]?
+    var authenticationToken: String?
+}
+
+enum LocalLlamaServerAuthentication {
+    static func markerURL(port: Int) -> URL {
+        AppDirectories.applicationSupport
+            .appendingPathComponent("llama-server-\(port).pid.json")
+    }
+
+    static func readMarker(port: Int) -> LocalLlamaServerMarker? {
+        guard let data = try? Data(contentsOf: markerURL(port: port)),
+              let marker = try? JSONDecoder().decode(LocalLlamaServerMarker.self, from: data),
+              marker.port == port else { return nil }
+        return marker
+    }
+
+    static func validatedToken(port: Int) -> String? {
+        guard let marker = readMarker(port: port),
+              let token = marker.authenticationToken,
+              token.count >= 32,
+              kill(marker.pid, 0) == 0,
+              processPath(for: marker.pid) == marker.binaryPath,
+              marker.binaryPath.hasSuffix("/llama-server"),
+              listeningPIDs(onPort: port).contains(marker.pid) else { return nil }
+        return token
+    }
+
+    static func apply(to request: inout URLRequest, token: String) {
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    }
+
+    private static func processPath(for pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4_096)
+        let result = buffer.withUnsafeMutableBufferPointer { pointer in
+            proc_pidpath(pid, pointer.baseAddress, UInt32(pointer.count))
+        }
+        return result > 0 ? String(cString: buffer) : nil
+    }
+
+    private static func listeningPIDs(onPort port: Int) -> [pid_t] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        process.arguments = ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-t"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return [] }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+            .split(whereSeparator: { $0.isWhitespace })
+            .compactMap { pid_t($0) }
+    }
+}
 
 /// Minimal local llama-server chat surface so tests can substitute a mock.
 protocol LlamaChatClient {
@@ -10,9 +77,14 @@ struct URLSessionLlamaChatClient: LlamaChatClient {
     static let mainServerBaseURL = URL(string: "http://127.0.0.1:17872")!
 
     var baseURL = URLSessionLlamaChatClient.mainServerBaseURL
+    var authenticationToken: () -> String? = {
+        LocalLlamaServerAuthentication.validatedToken(port: 17872)
+    }
 
     func healthy() async -> Bool {
+        guard let token = authenticationToken() else { return false }
         var request = URLRequest(url: baseURL.appendingPathComponent("health"))
+        LocalLlamaServerAuthentication.apply(to: &request, token: token)
         request.timeoutInterval = 2
         guard let (_, response) = try? await URLSession.shared.data(for: request) else {
             return false
@@ -21,9 +93,13 @@ struct URLSessionLlamaChatClient: LlamaChatClient {
     }
 
     func complete(messages: [[String: String]]) async throws -> String {
+        guard let token = authenticationToken() else {
+            throw URLError(.userAuthenticationRequired)
+        }
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/chat/completions"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        LocalLlamaServerAuthentication.apply(to: &request, token: token)
         request.timeoutInterval = 300
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "messages": messages,
@@ -54,7 +130,7 @@ struct AskLibraryEngine {
     var maxPollAttempts = 60
 
     func ask(_ question: String) async -> ToolResult {
-        guard gate.isEnabled else {
+        guard gate.isAuthorized() else {
             return .error(.accessDisabled, FileLibraryToolProvider.accessDisabledMessage)
         }
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -62,6 +138,11 @@ struct AskLibraryEngine {
             return .error(
                 .invalidArguments,
                 "ask_library requires a non-empty \"question\" string.")
+        }
+        guard trimmed.count <= LibraryInputPolicy.maximumQuestionCharacters else {
+            return .error(
+                .invalidArguments,
+                "ask_library questions are limited to \(LibraryInputPolicy.maximumQuestionCharacters) characters.")
         }
 
         if await !client.healthy(), let failure = await wakeAndWait() {
@@ -100,7 +181,10 @@ struct AskLibraryEngine {
                 "Could not signal the LokalBot app (\(error.localizedDescription)). Open LokalBot and try again.")
         }
 
-        for _ in 0..<maxPollAttempts {
+        for _ in 0..<max(0, maxPollAttempts) {
+            if Task.isCancelled {
+                return .error(.appNotRunning, "ask_library was cancelled.")
+            }
             await pollDelay()
             if await client.healthy() { return nil }
             if let reason = gate.readWakeError() {

@@ -24,6 +24,34 @@ final class InferenceBrokerTests: XCTestCase {
 
     private struct TestFailure: Error {}
 
+    private actor EnsureGate {
+        private var started = false
+        private var released = false
+        private var startWaiters: [CheckedContinuation<Void, Never>] = []
+        private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+        func wait() async {
+            started = true
+            let waiters = startWaiters
+            startWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+            guard !released else { return }
+            await withCheckedContinuation { releaseWaiters.append($0) }
+        }
+
+        func waitUntilStarted() async {
+            if started { return }
+            await withCheckedContinuation { startWaiters.append($0) }
+        }
+
+        func release() {
+            released = true
+            let waiters = releaseWaiters
+            releaseWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
+    }
+
     private let modelURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("broker-test-fake.gguf")
 
@@ -126,6 +154,49 @@ final class InferenceBrokerTests: XCTestCase {
         XCTAssertEqual(active, 0)
     }
 
+    func testCancellationAfterEnsureSchedulesIdleStop() async throws {
+        let recorder = HookRecorder()
+        let sink = SinkRecorder()
+        let gate = EnsureGate()
+        var hooks: [InferenceRole: InferenceBroker.RuntimeHooks] = [:]
+        for role in InferenceRole.allCases {
+            hooks[role] = InferenceBroker.RuntimeHooks(
+                ensure: { _ in
+                    await recorder.record("ensure:\(role.rawValue)")
+                    if role == .mainLLM { await gate.wait() }
+                },
+                stop: { await recorder.record("stop:\(role.rawValue)") })
+        }
+        let broker = InferenceBroker(
+            hooks: hooks,
+            lingerSeconds: [.mainLLM: 0.01],
+            leaseStateSink: { pinned, descriptions in
+                sink.record(pinned: pinned, descriptions: descriptions)
+            })
+
+        let acquiring = Task {
+            try await broker.lease(
+                .mainLLM, model: modelURL, priority: .interactive, purpose: "cancelled")
+        }
+        await gate.waitUntilStarted()
+        acquiring.cancel()
+        await gate.release()
+        do {
+            _ = try await acquiring.value
+            XCTFail("expected cancellation after ensure returned")
+        } catch is CancellationError {
+            // expected
+        }
+
+        let active = await broker.activeLeaseCount(.mainLLM)
+        XCTAssertEqual(active, 0)
+        XCTAssertEqual(sink.lastPinned, [])
+        let stopped = await waitUntil {
+            await recorder.count(of: "stop:mainLLM") == 1
+        }
+        XCTAssertTrue(stopped)
+    }
+
     func testWithLeaseReleasesOnSuccessAndOnThrow() async throws {
         let recorder = HookRecorder()
         let sink = SinkRecorder()
@@ -188,5 +259,58 @@ final class InferenceBrokerTests: XCTestCase {
         await broker.release(summary)
         let stopped = await waitUntil { await recorder.count(of: "stop:mainLLM") == 1 }
         XCTAssertTrue(stopped)
+    }
+
+    func testConflictingModelWaitsUntilExistingLeaseReleases() async throws {
+        let recorder = HookRecorder()
+        let sink = SinkRecorder()
+        let broker = makeBroker(recorder: recorder, sink: sink)
+        let firstURL = modelURL.appendingPathExtension("first")
+        let secondURL = modelURL.appendingPathExtension("second")
+        let first = try await broker.lease(
+            .mainLLM, model: firstURL, priority: .background, purpose: "first")
+
+        let waiting = Task {
+            try await broker.lease(
+                .mainLLM, model: secondURL, priority: .interactive, purpose: "second")
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        let ensuresBeforeRelease = await recorder.count(of: "ensure:mainLLM")
+        let pathBeforeRelease = await broker.activeModelPath(.mainLLM)
+        XCTAssertEqual(ensuresBeforeRelease, 1)
+        XCTAssertEqual(pathBeforeRelease,
+                       firstURL.standardizedFileURL.resolvingSymlinksInPath().path)
+
+        await broker.release(first)
+        let second = try await waiting.value
+        let ensuresAfterRelease = await recorder.count(of: "ensure:mainLLM")
+        XCTAssertEqual(ensuresAfterRelease, 2)
+        XCTAssertEqual(second.modelPath,
+                       secondURL.standardizedFileURL.resolvingSymlinksInPath().path)
+        await broker.release(second)
+    }
+
+    func testCancellingConflictingWaiterDoesNotAcquireOrLeak() async throws {
+        let recorder = HookRecorder()
+        let sink = SinkRecorder()
+        let broker = makeBroker(recorder: recorder, sink: sink)
+        let first = try await broker.lease(
+            .mainLLM, model: modelURL, priority: .background, purpose: "first")
+        let waiting = Task {
+            try await broker.lease(
+                .mainLLM, model: modelURL.appendingPathExtension("other"),
+                priority: .interactive, purpose: "cancelled")
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        waiting.cancel()
+        do {
+            _ = try await waiting.value
+            XCTFail("expected cancellation")
+        } catch is CancellationError {
+            // expected
+        }
+        let active = await broker.activeLeaseCount(.mainLLM)
+        XCTAssertEqual(active, 1)
+        await broker.release(first)
     }
 }

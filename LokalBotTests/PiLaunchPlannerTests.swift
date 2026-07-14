@@ -12,6 +12,7 @@ final class PiLaunchPlannerTests: XCTestCase {
     private func makePlan(apiKey: String? = nil,
                           skill: URL? = URL(fileURLWithPath: "/app/Resources/pi/lokalbot-cli-skill"),
                           helpers: URL? = URL(fileURLWithPath: "/app/Contents/Helpers"),
+                          capability: String? = nil,
                           continuePrevious: Bool = false) -> PiLaunchPlan {
         PiLaunchPlanner.plan(
             bun: URL(fileURLWithPath: "/rt/bun/bun"),
@@ -23,6 +24,7 @@ final class PiLaunchPlannerTests: XCTestCase {
             endpoint: AgentLLMEndpoint(baseURL: endpoint.baseURL, model: endpoint.model,
                                        contextTokens: endpoint.contextTokens, apiKey: apiKey),
             helpersDirectory: helpers,
+            agentAccessCapability: capability,
             continuePreviousSession: continuePrevious,
             baseEnvironment: ["PATH": "/usr/bin:/bin", "HOME": "/Users/x"])
     }
@@ -36,6 +38,7 @@ final class PiLaunchPlannerTests: XCTestCase {
             "--no-extensions", "-e", "/app/Resources/pi/lokalbot-extension",
             "--no-skills", "--skill", "/app/Resources/pi/lokalbot-cli-skill",
             "--no-prompt-templates",
+            "--no-context-files",
             "--no-approve",
             "--session-dir", "/store/agent/sessions",
             "--offline",
@@ -71,9 +74,15 @@ final class PiLaunchPlannerTests: XCTestCase {
         XCTAssertEqual(plan.workingDirectory.path, "/work")
     }
 
-    func testNoContextFilesFlagIsDeliberatelyAbsent() {
-        XCTAssertFalse(makePlan().arguments.contains("--no-context-files"),
-                       "project AGENTS.md/CLAUDE.md context stays enabled by design")
+    func testAutomaticContextDiscoveryIsDisabledToPreventParentDirectoryReads() {
+        XCTAssertTrue(makePlan().arguments.contains("--no-context-files"))
+    }
+
+    func testScopedAgentCapabilityIsPassedOnlyWhenIssued() {
+        XCTAssertNil(makePlan().environment[AgentAccessGate.capabilityEnvironmentKey])
+        XCTAssertEqual(
+            makePlan(capability: "id.secret").environment[AgentAccessGate.capabilityEnvironmentKey],
+            "id.secret")
     }
 
     func testContinueFlagOnlyAppearsForResumeLaunches() {

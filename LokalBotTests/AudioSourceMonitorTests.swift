@@ -84,6 +84,27 @@ final class AudioSourceMonitorTests: XCTestCase {
                        helper.id)
     }
 
+    func testZoomCaptureMapsCptHostAndPrefersItOverTheHost() {
+        let host = AudioProcess(id: 100,
+                                name: "zoom.us",
+                                bundleID: "us.zoom.xos",
+                                objectID: AudioObjectID(100),
+                                isRunningOutput: true)
+        let helper = AudioProcess(id: 200,
+                                  name: "CptHost",
+                                  bundleID: "us.zoom.CptHost",
+                                  objectID: AudioObjectID(200),
+                                  isRunningOutput: true)
+        let app = MeetingDetector.DetectedApp(
+            name: "Zoom", bundleID: "us.zoom.xos", pid: host.id)
+
+        XCTAssertTrue(MeetingDetector.audioBundleID(
+            "us.zoom.CptHost", belongsTo: "us.zoom.xos"))
+        XCTAssertEqual(
+            MeetingDetector.bestOutputAudioProcess(for: app, in: [host, helper])?.id,
+            helper.id)
+    }
+
     /// Unknown apps stay eligible so a genuinely-new meeting tool is still
     /// surfaced via the monitor's fallback candidate path.
     func testUnknownAppIsNotExcluded() {

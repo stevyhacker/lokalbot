@@ -18,13 +18,25 @@ enum DownloadIntegrity {
 
     static func verifiedExisting(at url: URL, expectedBytes: Int64,
                                  expectedSHA256: String) async -> Bool {
-        guard exactSize(of: url) == expectedBytes else { return false }
+        (try? await verifyExisting(
+            at: url,
+            expectedBytes: expectedBytes,
+            expectedSHA256: expectedSHA256)) == true
+    }
+
+    /// Throwing variant used by callers that must distinguish an unreadable
+    /// file from a verified digest mismatch before deciding whether to delete it.
+    static func verifyExisting(at url: URL, expectedBytes: Int64,
+                               expectedSHA256: String) async throws -> Bool {
+        try Task.checkCancellation()
+        guard try checkedSize(of: url) == expectedBytes else { return false }
         let expected = expectedSHA256.lowercased()
         if (try? String(contentsOf: markerURL(for: url), encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)) == expected {
             return true
         }
-        guard let digest = try? await digest(of: url), digest == expected else { return false }
+        guard try await digest(of: url) == expected else { return false }
+        try Task.checkCancellation()
         try? expected.write(to: markerURL(for: url), atomically: true, encoding: .utf8)
         return true
     }
@@ -59,6 +71,13 @@ enum DownloadIntegrity {
     private static func exactSize(of url: URL) -> Int64? {
         let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
         return (attributes?[.size] as? NSNumber)?.int64Value
+    }
+
+    /// Preserve filesystem errors so callers do not classify an unreadable
+    /// model as corrupt and attempt to delete it.
+    private static func checkedSize(of url: URL) throws -> Int64? {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes[.size] as? NSNumber)?.int64Value
     }
 
     private static func digest(of url: URL) async throws -> String {

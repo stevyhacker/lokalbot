@@ -122,20 +122,14 @@ struct FileLogHandler: LogHandler {
         set { metadata[key] = newValue }
     }
 
-    func log(
-        level: Logging.Logger.Level,
-        message: Logging.Logger.Message,
-        metadata explicitMetadata: Logging.Logger.Metadata?,
-        source: String,
-        file: String,
-        function: String,
-        line: UInt
-    ) {
+    func log(event: Logging.LogEvent) {
         let timestamp = Self.timestampFormatter.string(from: Date())
         let category = Self.shortCategory(from: label)
-        let merged = Self.merge(base: metadata, explicit: explicitMetadata)
+        let merged = Self.merge(base: metadata, explicit: event.metadata)
         let suffix = merged.isEmpty ? "" : " " + Self.render(merged)
-        sink.write("\(timestamp) \(level.rawValue.uppercased()) [\(category)] \(message)\(suffix)\n")
+        sink.write(
+            "\(timestamp) \(event.level.rawValue.uppercased()) "
+                + "[\(category)] \(event.message)\(suffix)\n")
     }
 
     /// `me.dotenv.LokalBot.networking` → `networking`. The trailing dot-segment

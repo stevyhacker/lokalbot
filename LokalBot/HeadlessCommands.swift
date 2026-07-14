@@ -193,7 +193,8 @@ struct HeadlessCommandRunner {
     }
 
     /// `LokalBot --agent "<prompt>"`: one Agent Mode turn against the real
-    /// runtime + Main LLM engine, auto-approved, printing each transcript
+    /// runtime + Main LLM engine, auto-approving file changes and declining
+    /// privacy-sensitive shell/external-read requests, then printing each transcript
     /// item. Exit 0 ok / 3 skip (runtime not installed) / 1 fail. Test hook
     /// for Agent Mode, same spirit as --chat.
     private func runAgent(prompt: String) {
@@ -216,9 +217,11 @@ struct HeadlessCommandRunner {
             // THEN wait for it to leave .running. Otherwise the settle loop
             // exits before any work happened.
             for _ in 0..<100 where controller.state != .running {   // 10s to start
+                await controller.denyAllPendingApprovals()
                 try? await Task.sleep(for: .milliseconds(100))
             }
             for _ in 0..<600 where controller.state == .running {   // 60s to settle
+                await controller.denyAllPendingApprovals()
                 try? await Task.sleep(for: .milliseconds(100))
             }
             for item in controller.items {
@@ -226,7 +229,7 @@ struct HeadlessCommandRunner {
                 case .user(_, let text): print("LokalBot --agent: > \(text)")
                 case .assistant(_, let text, _): print("LokalBot --agent: \(text)")
                 case .tool(_, let name, _, _, let status): print("LokalBot --agent: tool \(name) [\(status)]")
-                case .approval: break   // auto-approve means none surface
+                case .approval: break   // handled by the unattended-run policy above
                 case .notice(_, let text, let isError): print("LokalBot --agent: \(isError ? "ERROR" : "note") \(text)")
                 }
             }

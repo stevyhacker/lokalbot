@@ -1,6 +1,6 @@
 import Foundation
 
-struct AppSettings: Codable {
+struct AppSettings: Codable, Equatable {
     enum AutoRecordMode: String, Codable, CaseIterable, Identifiable {
         case automatic = "Record automatically"
         case ask = "Ask via notification"

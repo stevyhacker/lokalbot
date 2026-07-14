@@ -109,4 +109,15 @@ final class PipelineJobStoreTests: XCTestCase {
 
         XCTAssertEqual(makeStore().pendingJobs().first?.meetingID, id)
     }
+
+    func testEnqueueReportsUnavailableDatabaseInsteadOfSilentlyDroppingJob() {
+        let missingParent = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-\(UUID().uuidString)", isDirectory: true)
+        let store = PipelineJobStore(
+            databaseURL: missingParent.appendingPathComponent("test.sqlite"))
+
+        XCTAssertFalse(store.enqueue(
+            meetingID: UUID(), transcribe: true, summarize: true))
+        XCTAssertTrue(store.pendingJobs().isEmpty)
+    }
 }

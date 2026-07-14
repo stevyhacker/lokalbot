@@ -53,6 +53,31 @@ final class AgentSessionControllerTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(150))
     }
 
+    private func approvalEvent(
+        id: String,
+        tool: String,
+        workspace: String,
+        path: String?,
+        content: String
+    ) throws -> String {
+        var payload: [String: Any] = [
+            "tool": tool,
+            "workspace": workspace,
+            "content": content,
+        ]
+        if let path { payload["path"] = path }
+        let payloadData = try JSONSerialization.data(withJSONObject: payload)
+        let payloadString = String(decoding: payloadData, as: UTF8.self)
+        let event: [String: Any] = [
+            "type": "extension_ui_request",
+            "id": id,
+            "method": "confirm",
+            "title": "lokalbot_tool_approval",
+            "message": payloadString,
+        ]
+        return String(decoding: try JSONSerialization.data(withJSONObject: event), as: UTF8.self)
+    }
+
     func testStartReachesReady() async throws {
         let controller = makeController()
         await controller.start()
@@ -77,13 +102,16 @@ final class AgentSessionControllerTests: XCTestCase {
             withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let entry = try XCTUnwrap(
-            ModelCatalog.entry(id: ModelCatalog.recommendedSummarizationID))
+        let entry = ModelCatalog.Entry(
+            id: "agent-lease-fixture", displayName: "Agent Lease Fixture",
+            fileName: "agent-lease-fixture.gguf", url: "", sizeGB: 0,
+            blurb: "", disablesThinking: false)
         try Data("GGUF".utf8).write(
             to: root.appendingPathComponent("models/\(entry.fileName)"))
         var settings = AppSettings()
         settings.summarizerBackend = .builtIn
         settings.builtInModelID = entry.id
+        settings.customBuiltInModels = [entry]
 
         let blocker = BlockingBrokerEnsure()
         var hooks: [InferenceRole: InferenceBroker.RuntimeHooks] = [:]
@@ -225,16 +253,107 @@ final class AgentSessionControllerTests: XCTestCase {
     func testSessionScopeAutoApprovesRepeats() async throws {
         let controller = makeController()
         await controller.start()
-        transport.inject(#"{"type":"extension_ui_request","id":"u1","method":"confirm","title":"lokalbot_tool_approval","message":"{\"tool\":\"bash\",\"summary\":\"ls\"}"}"#)
+        let root = controller.workspace.path
+        transport.inject(try approvalEvent(
+            id: "u1", tool: "write", workspace: root,
+            path: root + "/one.txt", content: "one"))
         try await pump()
         await controller.respondToApproval(id: "u1", approved: true, scope: .session)
-        transport.inject(#"{"type":"extension_ui_request","id":"u2","method":"confirm","title":"lokalbot_tool_approval","message":"{\"tool\":\"bash\",\"summary\":\"pwd\"}"}"#)
+        transport.inject(try approvalEvent(
+            id: "u2", tool: "write", workspace: root,
+            path: root + "/nested/two.txt", content: "two"))
         try await pump()
         XCTAssertTrue(transport.sentLines.contains {
             $0.contains(#""id":"u2""#) && $0.contains(#""confirmed":true"#)
-        }, "second bash auto-approved for the session")
+        }, "second write auto-approved for the session")
         XCTAssertFalse(controller.items.contains {
             if case .approval(let request) = $0 { return request.id == "u2" } else { return false }
+        })
+    }
+
+    func testOutsideAndMissingWritePathsNeverInheritSessionApproval() async throws {
+        let controller = makeController()
+        await controller.start()
+        controller.autoApproveSession = true
+        let root = controller.workspace.path
+
+        transport.inject(try approvalEvent(
+            id: "outside", tool: "write", workspace: root,
+            path: "/private/lokalbot-outside.txt", content: "outside"))
+        transport.inject(try approvalEvent(
+            id: "missing", tool: "edit", workspace: root,
+            path: nil, content: "missing"))
+        transport.inject(try approvalEvent(
+            id: "mismatch", tool: "write", workspace: "/private/other-workspace",
+            path: root + "/inside.txt", content: "mismatch"))
+        try await pump()
+
+        for id in ["outside", "missing", "mismatch"] {
+            XCTAssertTrue(controller.items.contains {
+                if case .approval(let request) = $0 { return request.id == id }
+                return false
+            })
+            XCTAssertFalse(transport.sentLines.contains {
+                $0.contains("\"id\":\"\(id)\"") && $0.contains(#""confirmed":true"#)
+            })
+        }
+    }
+
+    func testBashAlwaysRequiresOneTimeApproval() async throws {
+        let controller = makeController()
+        await controller.start()
+        controller.autoApproveSession = true
+
+        transport.inject(#"{"type":"extension_ui_request","id":"bash1","method":"confirm","title":"lokalbot_tool_approval","message":"{\"tool\":\"bash\",\"workspace\":\"/tmp/project\",\"command\":\"cat ~/.ssh/config\"}"}"#)
+        try await pump()
+        XCTAssertTrue(controller.items.contains {
+            if case .approval(let request) = $0 { return request.id == "bash1" }
+            return false
+        })
+        XCTAssertFalse(transport.sentLines.contains {
+            $0.contains(#""id":"bash1""#) && $0.contains(#""confirmed":true"#)
+        })
+
+        // A caller cannot persist shell permission even if it requests session
+        // scope; the next command must surface independently.
+        await controller.respondToApproval(id: "bash1", approved: true, scope: .session)
+        transport.inject(#"{"type":"extension_ui_request","id":"bash2","method":"confirm","title":"lokalbot_tool_approval","message":"{\"tool\":\"bash\",\"workspace\":\"/tmp/project\",\"command\":\"env\"}"}"#)
+        try await pump()
+        XCTAssertTrue(controller.items.contains {
+            if case .approval(let request) = $0 { return request.id == "bash2" }
+            return false
+        })
+        XCTAssertFalse(transport.sentLines.contains {
+            $0.contains(#""id":"bash2""#) && $0.contains(#""confirmed":true"#)
+        })
+    }
+
+    func testOutsideWorkspaceReadAlwaysRequiresOneTimeApproval() async throws {
+        let controller = makeController()
+        await controller.start()
+        controller.autoApproveSession = true
+
+        transport.inject(#"{"type":"extension_ui_request","id":"read1","method":"confirm","title":"lokalbot_tool_approval","message":"{\"tool\":\"read\",\"workspace\":\"/tmp/project\",\"path\":\"/private/notes.txt\"}"}"#)
+        try await pump()
+        XCTAssertTrue(controller.items.contains {
+            if case .approval(let request) = $0 { return request.id == "read1" }
+            return false
+        })
+        XCTAssertFalse(transport.sentLines.contains {
+            $0.contains(#""id":"read1""#) && $0.contains(#""confirmed":true"#)
+        })
+
+        // Even if a caller attempts session scope, reads outside the selected
+        // workspace remain one-request capabilities.
+        await controller.respondToApproval(id: "read1", approved: true, scope: .session)
+        transport.inject(#"{"type":"extension_ui_request","id":"read2","method":"confirm","title":"lokalbot_tool_approval","message":"{\"tool\":\"read\",\"workspace\":\"/tmp/project\",\"path\":\"/private/other.txt\"}"}"#)
+        try await pump()
+        XCTAssertTrue(controller.items.contains {
+            if case .approval(let request) = $0 { return request.id == "read2" }
+            return false
+        })
+        XCTAssertFalse(transport.sentLines.contains {
+            $0.contains(#""id":"read2""#) && $0.contains(#""confirmed":true"#)
         })
     }
 
@@ -262,6 +381,44 @@ final class AgentSessionControllerTests: XCTestCase {
             return XCTFail("expected transport failure notice, got \(controller.items)")
         }
         XCTAssertTrue(isError)
+    }
+
+    func testRequestFailureTearsDownOldEventLoopBeforeRestart() async throws {
+        var settings = AppSettings()
+        settings.summarizerBackend = .openAICompatible
+        settings.openAIBaseURL = "http://127.0.0.1:1234/v1"
+        settings.openAIModel = "test-model"
+        var transports: [FakeTransport] = []
+        let controller = AgentSessionController(
+            settings: { settings },
+            storage: StorageManager(),
+            makeTransport: { _ in
+                let transport = FakeTransport()
+                transports.append(transport)
+                return transport
+            })
+
+        await controller.start()
+        let first = try XCTUnwrap(transports.first)
+        first.failFutureSends()
+        await controller.send(prompt: "trigger transport failure")
+        guard case .failed = controller.state else {
+            return XCTFail("expected failed state, got \(controller.state)")
+        }
+
+        await controller.start()
+        XCTAssertEqual(controller.state, .ready)
+        XCTAssertEqual(transports.count, 2)
+
+        // The first stream is deliberately still open. A late event from it
+        // must not mutate the replacement session.
+        first.inject(#"{"type":"agent_start"}"#)
+        try await pump()
+        XCTAssertEqual(controller.state, .ready)
+
+        transports[1].inject(#"{"type":"agent_start"}"#)
+        try await pump()
+        XCTAssertEqual(controller.state, .running)
     }
 
     func testFirstPromptNamesSessionAndDraftRequiresCloseConfirmation() async throws {

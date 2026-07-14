@@ -10,16 +10,28 @@ enum LlamaRuntimeError: Error, Equatable {
 private final class LlamaDecodeAbortState: @unchecked Sendable {
     private let lock = NSLock()
     private var abortRequested = false
+    private var decodeActive = false
 
-    func reset() {
+    /// Starts one decode scope. Abort requests made while no decode is active
+    /// are intentionally ignored, so cancelling an old request cannot poison
+    /// the next generation.
+    func beginDecode() {
         lock.lock()
+        decodeActive = true
+        abortRequested = false
+        lock.unlock()
+    }
+
+    func endDecode() {
+        lock.lock()
+        decodeActive = false
         abortRequested = false
         lock.unlock()
     }
 
     func requestAbort() {
         lock.lock()
-        abortRequested = true
+        if decodeActive { abortRequested = true }
         lock.unlock()
     }
 
@@ -56,6 +68,11 @@ actor LlamaCotypingRuntime {
     private var vocab: OpaquePointer?
     private var loadedModelPath: String?
     private var residencyGeneration: UUID?
+    /// Actor methods are reentrant at `await` points. Serialize model loads so
+    /// concurrent prewarm and first-generation calls cannot mmap the same
+    /// weights twice while `willLoad` is suspended.
+    private var loadInProgress = false
+    private var loadWaiters: [CheckedContinuation<Void, Never>] = []
     /// The prompt most recently prefilled into the context (basis for the
     /// incremental KV-reuse probe against the next prompt).
     private var cachedTokens: [Int32] = []
@@ -87,23 +104,45 @@ actor LlamaCotypingRuntime {
     // MARK: - Lifecycle
 
     func loadIfNeeded(modelPath: String) async throws {
+        while loadInProgress {
+            await withCheckedContinuation { continuation in
+                loadWaiters.append(continuation)
+            }
+        }
+        try Task.checkCancellation()
         if isLoaded, loadedModelPath == modelPath {
             await ModelResidency.shared.touch(id: Self.residencyID)
             return
         }
+        loadInProgress = true
+        defer { finishLoad() }
         unload()
         // Make room before llama mmaps the weights: evict LRU models first
         // if this load would push total resident weights past the budget.
-        await ModelResidency.shared.willLoad(
+        let loadReservation = await ModelResidency.shared.willLoad(
             id: Self.residencyID,
             bytes: ModelResidency.weightBytes(at: URL(fileURLWithPath: modelPath)))
+        do {
+            try Task.checkCancellation()
+        } catch {
+            await ModelResidency.shared.cancelLoad(loadReservation)
+            throw error
+        }
 
         _ = Self.backendReady   // forces the run-once backend init (idempotent)
 
         var mparams = llama_model_default_params()
         mparams.n_gpu_layers = 99   // full Metal offload (matches LlamaServer's -ngl 99)
         guard let m = llama_model_load_from_file(modelPath, mparams) else {
+            await ModelResidency.shared.cancelLoad(loadReservation)
             throw LlamaRuntimeError.modelLoadFailed(modelPath)
+        }
+        do {
+            try Task.checkCancellation()
+        } catch {
+            llama_model_free(m)
+            await ModelResidency.shared.cancelLoad(loadReservation)
+            throw error
         }
 
         var cparams = llama_context_default_params()
@@ -114,9 +153,17 @@ actor LlamaCotypingRuntime {
         cparams.n_threads_batch = threads
         guard let c = llama_init_from_model(m, cparams) else {
             llama_model_free(m)
+            await ModelResidency.shared.cancelLoad(loadReservation)
             throw LlamaRuntimeError.contextInitFailed
         }
-        decodeAbortState.reset()
+        do {
+            try Task.checkCancellation()
+        } catch {
+            llama_free(c)
+            llama_model_free(m)
+            await ModelResidency.shared.cancelLoad(loadReservation)
+            throw error
+        }
         llama_set_abort_callback(
             c,
             llamaCotypingAbortCallback,
@@ -149,8 +196,23 @@ actor LlamaCotypingRuntime {
     /// this the Metal backend's residency set is still live at process exit,
     /// which trips a teardown assertion in the vendored ggml-metal build.
     deinit {
+        let generation = residencyGeneration
         if let c = ctx { llama_free(c) }
         if let m = model { llama_model_free(m) }
+        if let generation {
+            Task { @MainActor in
+                ModelResidency.shared.unregister(
+                    id: Self.residencyID,
+                    ifGenerationMatches: generation)
+            }
+        }
+    }
+
+    private func finishLoad() {
+        loadInProgress = false
+        let waiters = loadWaiters
+        loadWaiters.removeAll(keepingCapacity: true)
+        waiters.forEach { $0.resume() }
     }
 
     /// Prewarm == load + the priming decode `loadIfNeeded` already performs.
@@ -161,8 +223,8 @@ actor LlamaCotypingRuntime {
     /// masquerade as the prompt represented by `cachedTokens`.
     func prefill(promptTokens: [Int32]) throws {
         guard let ctx, !promptTokens.isEmpty else { return }
-        decodeAbortState.reset()
-        defer { decodeAbortState.reset() }
+        decodeAbortState.beginDecode()
+        defer { decodeAbortState.endDecode() }
         try Task.checkCancellation()
         guard supportsPartialReuse else {
             // CoTabby avoids speculative prefills once a model cannot reuse a
@@ -232,8 +294,8 @@ actor LlamaCotypingRuntime {
     /// keystroke, then clears the KV so generation starts from a clean cache.
     private func warmup() {
         guard let vocab, let ctx else { return }
-        decodeAbortState.reset()
-        defer { decodeAbortState.reset() }
+        decodeAbortState.beginDecode()
+        defer { decodeAbortState.endDecode() }
         let bos = llama_vocab_bos(vocab)
         _ = decode([bos], startPos: 0, logitsLastOnly: true)
         llama_memory_clear(llama_get_memory(ctx), true)
@@ -353,8 +415,8 @@ actor LlamaCotypingRuntime {
     ) throws -> String {
         guard let ctx, let vocab, !promptTokens.isEmpty else { return "" }
         guard let sampler = makeSampler(samplerSpecs) else { return "" }
-        decodeAbortState.reset()
-        defer { decodeAbortState.reset() }
+        decodeAbortState.beginDecode()
+        defer { decodeAbortState.endDecode() }
         defer { llama_sampler_free(sampler) }
 
         let mem = llama_get_memory(ctx)

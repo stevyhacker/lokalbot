@@ -198,4 +198,24 @@ final class ModelResidencyTests: XCTestCase {
         residency.unregister(id: "server", ifGenerationMatches: replacementGeneration)
         XCTAssertTrue(residency.residents.isEmpty)
     }
+
+    func testPendingLoadsReserveBudgetUntilCancelledOrRegistered() async {
+        let residency = ModelResidency(budgetBytes: 10)
+        final class Unloads { var ids: [String] = [] }
+        let unloads = Unloads()
+        residency.register(id: "old", label: "Old", bytes: 4) {
+            unloads.ids.append("old")
+        }
+
+        let first = await residency.willLoad(id: "first", bytes: 4)
+        XCTAssertEqual(residency.pendingLoadBytes, 4)
+        _ = await residency.willLoad(id: "second", bytes: 4)
+        XCTAssertEqual(unloads.ids, ["old"], "the second admission must count the first pending load")
+        XCTAssertEqual(residency.pendingLoadBytes, 8)
+
+        residency.cancelLoad(first)
+        XCTAssertEqual(residency.pendingLoadBytes, 4)
+        residency.register(id: "second", label: "Second", bytes: 4, unload: {})
+        XCTAssertEqual(residency.pendingLoadBytes, 0)
+    }
 }

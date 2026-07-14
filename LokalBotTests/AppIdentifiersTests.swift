@@ -3,6 +3,21 @@ import XCTest
 @testable import LokalBot
 
 final class AppIdentifiersTests: XCTestCase {
+    func testHostedUnitTestsUseProcessScopedLibraryAndDefaults() throws {
+        guard UITestRuntime.isUnitTesting else {
+            throw XCTSkip("requires the hosted LokalBot unit-test process")
+        }
+        let processID = String(ProcessInfo.processInfo.processIdentifier)
+        let storageRoot = try XCTUnwrap(UITestRuntime.storageRoot)
+        let defaultsSuite = try XCTUnwrap(UITestRuntime.defaultsSuiteName)
+
+        XCTAssertTrue(storageRoot.hasSuffix("lokalbot-unit-tests-\(processID)"))
+        XCTAssertEqual(defaultsSuite, "me.dotenv.LokalBot.unit-tests.\(processID)")
+        XCTAssertNotEqual(
+            URL(fileURLWithPath: storageRoot).standardizedFileURL,
+            AppDirectories.applicationSupport.standardizedFileURL)
+    }
+
     @MainActor
     func testUITestRuntimeFlagDoesNotSelectDeterministicEncryptionKeyInProductionTarget() throws {
         guard ProcessInfo.processInfo.environment["LOKALBOT_RUN_KEYCHAIN_TESTS"] == "1" else {

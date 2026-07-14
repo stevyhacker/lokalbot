@@ -94,8 +94,8 @@ Models auto-download on first use (Hugging Face; the ONNX specialists fetch sher
 
 - **A coding agent in the sidebar:** the **Agent** section embeds the pi coding agent, preconnected to the same local Main LLM through an OpenAI-compatible shim — a coding agent running on your own GGUF (or whichever backend you configured). Sessions run in tabs, and an active session holds an inference lease so the model stays loaded while you work.
 - **Pi's own network behavior is disabled:** pi runs with `--offline`, version checks and crash reporting disabled. Enabling Agent Mode downloads its runtime once — a checksum-verified Bun release from GitHub plus the pi package from npm, pinned by a lockfile bundled with LokalBot. LLM requests stay local with the built-in backend; an approved remote Ollama or OpenAI-compatible endpoint receives agent context when selected.
-- **You approve the side effects:** `write` / `edit` / `bash` tool calls pause behind native approval cards before anything touches disk or shell; read-only tools run freely. Approved shell commands run with your macOS user permissions and may access files or the network.
-- **Headless:** `LokalBot --agent "<prompt>"` runs one agent turn from the terminal (see Headless flags).
+- **You approve sensitive access:** `write` / `edit` tool calls pause behind native approval cards unless you opt into file changes for the session. Every shell command and every read outside the selected workspace requires a fresh one-time approval. Approved shell commands run with your macOS user permissions and may access files or the network.
+- **Headless:** `LokalBot --agent "<prompt>"` runs one agent turn from the terminal (see Headless flags). It auto-approves file changes but safely declines shell and external-read requests because no person is present to review them.
 
 ## Screenshots, OCR & privacy
 

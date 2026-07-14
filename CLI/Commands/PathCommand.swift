@@ -16,6 +16,7 @@ struct PathCommand: AsyncParsableCommand {
     var id: String?
 
     func run() async throws {
+        try AgentAccessGate().requireAuthorized()
         guard let id else {
             print(SessionLookup.storageRootURL.path(percentEncoded: false))
             return

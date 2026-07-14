@@ -119,6 +119,77 @@ final class AgentTranscriptTests: XCTestCase {
         }
     }
 
+    func testEveryMessageInsertionPathIsBounded() {
+        let oversized = String(repeating: "x", count: AgentTranscriptFolder.maximumMessageCharacters + 1)
+        var folder = AgentTranscriptFolder()
+        folder.noteUserPrompt(oversized)
+        folder.appendAssistantMessage(oversized)
+        folder.appendNotice(oversized)
+        folder.fold(.messageEnd(role: "assistant", text: oversized))
+
+        XCTAssertEqual(folder.items.count, 4)
+        for item in folder.items {
+            let text: String
+            switch item {
+            case .user(_, let value), .assistant(_, let value, _), .notice(_, let value, _):
+                text = value
+            default:
+                return XCTFail("unexpected item \(item)")
+            }
+            XCTAssertEqual(text.count, AgentTranscriptFolder.maximumMessageCharacters)
+        }
+    }
+
+    func testResourceLimitEvictsOldestTextUntilWithinTotalBudget() {
+        var folder = AgentTranscriptFolder()
+        for index in 0..<10 {
+            folder.noteUserPrompt(
+                "\(index)" + String(
+                    repeating: "x",
+                    count: AgentTranscriptFolder.maximumMessageCharacters - 1))
+        }
+        folder.enforceResourceLimits()
+
+        XCTAssertLessThan(folder.items.count, 10)
+        let retainedCharacters = folder.items.reduce(0) { total, item in
+            if case .user(_, let text) = item { return total + text.count }
+            return total
+        }
+        XCTAssertLessThanOrEqual(
+            retainedCharacters, AgentTranscriptFolder.maximumTotalCharacters)
+        XCTAssertFalse(folder.items.contains {
+            if case .user(_, let text) = $0 { return text.first == "0" }
+            return false
+        })
+    }
+
+    func testApprovalsHaveIndependentCountAndPreviewBounds() {
+        var folder = AgentTranscriptFolder()
+        let oversizedCommand = String(
+            repeating: "x", count: AgentTranscriptFolder.maximumToolCharacters + 1)
+        for index in 0..<AgentTranscriptFolder.maximumPendingApprovals {
+            XCTAssertTrue(folder.addApproval(
+                approvalRequest(id: "approval-\(index)", command: oversizedCommand)))
+        }
+        XCTAssertFalse(folder.addApproval(
+            approvalRequest(id: "overflow", command: "must be rejected")))
+        XCTAssertEqual(folder.pendingApprovalIDs.count, AgentTranscriptFolder.maximumPendingApprovals)
+        guard case .approval(let first) = folder.items.first else {
+            return XCTFail("expected bounded approval")
+        }
+        XCTAssertEqual(
+            (first.workspace?.count ?? 0) + (first.command?.count ?? 0),
+            AgentTranscriptFolder.maximumToolCharacters)
+        XCTAssertTrue(first.isTruncated)
+
+        var freshFolder = AgentTranscriptFolder()
+        XCTAssertFalse(freshFolder.addApproval(approvalRequest(
+            id: String(
+                repeating: "i",
+                count: AgentTranscriptFolder.maximumApprovalIdentifierCharacters + 1),
+            command: "oversized id")))
+    }
+
     private func approvalRequest(id: String, command: String) -> AgentApprovalRequest {
         AgentApprovalRequest(
             id: id,

@@ -5,6 +5,68 @@ import XCTest
 /// Everything here is deterministic and runs off the main actor.
 final class ReuseSubsystemsTests: XCTestCase {
 
+    private final class ResolverThreadProbe: @unchecked Sendable {
+        private let lock = NSLock()
+        private var resolverWasOnMainThread = true
+
+        func recordCurrentThread() {
+            lock.withLock {
+                resolverWasOnMainThread = Thread.isMainThread
+            }
+        }
+
+        var wasOnMainThread: Bool {
+            lock.withLock { resolverWasOnMainThread }
+        }
+    }
+
+    func testMicrophoneReconfigurationRetryPolicyIsFinite() {
+        let delays = (1...MicRecorder.maximumReconfigurationAttempts).compactMap {
+            MicRecorder.reconfigurationRetryDelay(forAttempt: $0)
+        }
+
+        XCTAssertEqual(delays, [1, 2, 3, 4])
+        XCTAssertNil(MicRecorder.reconfigurationRetryDelay(forAttempt: 0))
+        XCTAssertNil(MicRecorder.reconfigurationRetryDelay(
+            forAttempt: MicRecorder.maximumReconfigurationAttempts + 1))
+    }
+
+    func testAudioRecoverySilencePlannerRejectsTinyAndInvalidGaps() {
+        XCTAssertNil(AudioRecoverySilencePlanner.plan(forElapsed: -1))
+        XCTAssertNil(AudioRecoverySilencePlanner.plan(forElapsed: .nan))
+        XCTAssertNil(AudioRecoverySilencePlanner.plan(
+            forElapsed: AudioRecoverySilencePlanner.minimumDuration - 0.001))
+    }
+
+    func testAudioRecoverySilencePlannerPreservesOrdinaryMonotonicGap() {
+        XCTAssertEqual(
+            AudioRecoverySilencePlanner.plan(forElapsed: Duration.seconds(4)),
+            AudioRecoverySilencePlan(duration: 4, wasCapped: false))
+    }
+
+    func testAudioRecoverySilencePlannerCapsSleepSizedGap() {
+        XCTAssertEqual(
+            AudioRecoverySilencePlanner.plan(forElapsed: 3_600),
+            AudioRecoverySilencePlan(
+                duration: AudioRecoverySilencePlanner.maximumDuration,
+                wasCapped: true))
+    }
+
+    func testSystemAudioRetryBudgetIsFiniteAndResetsForNewTarget() {
+        var budget = SystemAudioSamePIDRetryBudget()
+
+        XCTAssertTrue(budget.canRetry)
+        budget.recordRetry()
+        budget.recordRetry()
+        budget.recordRetry()
+        XCTAssertEqual(budget.attempts, SystemAudioSamePIDRetryBudget.maximumAttempts)
+        XCTAssertFalse(budget.canRetry)
+
+        budget.reset()
+        XCTAssertEqual(budget.attempts, 0)
+        XCTAssertTrue(budget.canRetry)
+    }
+
     // MARK: - SettingsSearchRanker
 
     func testSearchEmptyQueryMatchesEverything() {
@@ -113,6 +175,79 @@ final class ReuseSubsystemsTests: XCTestCase {
                 previous: "We should ship the fix today",
                 incoming: "the fix today"),
             "We should ship the fix today")
+    }
+
+    func testDictationDeliveryTargetRejectsAnotherAppOrField() {
+        let target = DictationDeliveryTarget(
+            processID: 42,
+            bundleID: "com.example.Editor",
+            focusIdentityKey: "field-a")
+
+        XCTAssertTrue(target.matches(
+            processID: 42,
+            bundleID: "com.example.Editor",
+            focusIdentityKey: "field-a"))
+        XCTAssertFalse(target.matches(
+            processID: 43,
+            bundleID: "com.example.Chat",
+            focusIdentityKey: "field-a"))
+        XCTAssertFalse(target.matches(
+            processID: 42,
+            bundleID: "com.example.Editor",
+            focusIdentityKey: "field-b"))
+    }
+
+    func testDictationDeliveryTargetCanBindToAnAppWhenAXFieldIdentityIsUnavailable() {
+        let target = DictationDeliveryTarget(
+            processID: 42,
+            bundleID: "com.example.Editor",
+            focusIdentityKey: nil)
+
+        XCTAssertTrue(target.matches(
+            processID: 42,
+            bundleID: "com.example.Editor",
+            focusIdentityKey: nil))
+        XCTAssertFalse(target.matches(
+            processID: 7,
+            bundleID: "com.example.Editor",
+            focusIdentityKey: nil))
+    }
+
+    func testAppOnlyDictationTargetRejectsSameAppSecureFocus() {
+        let target = DictationDeliveryTarget(
+            processID: 42,
+            bundleID: "com.example.Editor",
+            focusIdentityKey: nil)
+        let secureFocus = DictationFocusSnapshot(
+            processID: 42,
+            bundleID: "com.example.Editor",
+            focusIdentityKey: "password-field",
+            isSecureOrBlocked: true)
+
+        XCTAssertFalse(target.matches(secureFocus))
+        XCTAssertNil(DictationDeliveryTarget.captured(from: secureFocus))
+    }
+
+    func testDictationFocusSnapshotExecutorFailsClosedWithoutBlockingMainActor() async {
+        let threadProbe = ResolverThreadProbe()
+        let executor = DictationFocusSnapshotExecutor(deadlineMilliseconds: 20) {
+            threadProbe.recordCurrentThread()
+            Thread.sleep(forTimeInterval: 0.15)
+            return DictationFocusSnapshot(
+                processID: 42,
+                bundleID: "com.example.Editor",
+                focusIdentityKey: "late-field",
+                isSecureOrBlocked: false)
+        }
+        let started = ContinuousClock.now
+
+        let capture = await executor.capture()
+
+        let elapsed = started.duration(to: .now)
+        XCTAssertTrue(capture.timedOut)
+        XCTAssertNil(capture.snapshot)
+        XCTAssertLessThan(elapsed, .milliseconds(100))
+        XCTAssertFalse(threadProbe.wasOnMainThread)
     }
 
     // MARK: - ModelFit
@@ -225,6 +360,26 @@ final class ReuseSubsystemsTests: XCTestCase {
             ParallelRangeDownloader.ResumeState.self, from: JSONEncoder().encode(state))
 
         XCTAssertEqual(decoded, state)
+    }
+
+    func testHuggingFaceFileUsesPinnedRevisionIntegrityHintAndNamespacedName() throws {
+        let digest = String(repeating: "a", count: 64)
+        let revision = String(repeating: "b", count: 40)
+        let file = HFFile(
+            id: "gguf/model.gguf",
+            modelID: "owner/repo",
+            sizeBytes: 123,
+            revision: revision,
+            sha256: digest)
+        XCTAssertTrue(file.downloadURL.path.contains("/resolve/\(revision)/"))
+        XCTAssertEqual(file.downloadURL.fragment, "sha256=\(digest)")
+        XCTAssertTrue(file.fileName.hasPrefix("hf-"))
+        XCTAssertTrue(file.fileName.hasSuffix("-model.gguf"))
+
+        let sameLeafElsewhere = HFFile(
+            id: "model.gguf", modelID: "other/repo", sizeBytes: 123,
+            revision: revision, sha256: digest)
+        XCTAssertNotEqual(file.fileName, sameLeafElsewhere.fileName)
     }
 
     // MARK: - DiskSpacePrecheck

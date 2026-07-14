@@ -2,7 +2,7 @@ import Foundation
 
 /// One recorded meeting. Persisted as `meta.json` inside its own folder:
 /// `meetings/YYYY/MM/dd-slug/{mic.m4a, system.m4a, meta.json}`.
-struct Meeting: Identifiable, Codable, Equatable {
+struct Meeting: Identifiable, Codable, Equatable, Sendable {
     let id: UUID
     var title: String
     var appName: String

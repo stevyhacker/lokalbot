@@ -99,8 +99,11 @@ final class StorageManager {
         return result.sorted { $0.startedAt > $1.startedAt }
     }
 
-    func deleteMeeting(_ meeting: Meeting) {
-        try? FileManager.default.removeItem(at: meeting.folderURL(in: self))
+    /// Delete the durable meeting folder. Callers must only remove the meeting
+    /// from in-memory/UI state after this succeeds; swallowing the filesystem
+    /// error made failed deletions reappear on the next launch.
+    func deleteMeeting(_ meeting: Meeting) throws {
+        try FileManager.default.removeItem(at: meeting.folderURL(in: self))
     }
 
     static func slugify(_ s: String) -> String {

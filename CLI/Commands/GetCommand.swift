@@ -28,23 +28,35 @@ struct GetCommand: AsyncParsableCommand {
     var format: String = "md"
 
     func run() async throws {
+        try AgentAccessGate().requireAuthorized()
+        let options = try parseOptions()
+        let normalizedFormat = format.lowercased()
+        guard normalizedFormat == "md" || normalizedFormat == "json" else {
+            throw ValidationError("Unknown format '\(format)'. Use 'md' or 'json'.")
+        }
         guard let meeting = try SessionLookup.find(id: id) else {
             throw ValidationError("No meeting with id '\(id)'. Run `list` to see available IDs.")
         }
-        let options = parseOptions()
-        switch format.lowercased() {
+        switch normalizedFormat {
         case "md":
             print(SessionFormatter.getMarkdown(meeting, options: options))
         case "json":
             print(SessionFormatter.getJSON(meeting, options: options))
-        default:
-            throw ValidationError("Unknown format '\(format)'. Use 'md' or 'json'.")
+        default: break
         }
     }
 
-    private func parseOptions() -> SessionFormatter.GetOptions {
+    private func parseOptions() throws -> SessionFormatter.GetOptions {
         let parts = include.split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+        let allowed = Set(["metadata", "summary", "transcript"])
+        let unknown = Set(parts).subtracting(allowed)
+        guard !parts.isEmpty, unknown.isEmpty else {
+            let detail = unknown.sorted().joined(separator: ", ")
+            throw ValidationError(detail.isEmpty
+                ? "--include must contain metadata, summary, or transcript."
+                : "Unknown --include value(s): \(detail).")
+        }
         return SessionFormatter.GetOptions(
             includeSummary: parts.contains("summary"),
             includeTranscript: parts.contains("transcript"),

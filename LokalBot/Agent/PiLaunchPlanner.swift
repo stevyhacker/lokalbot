@@ -13,8 +13,10 @@ struct PiLaunchPlan: Equatable {
 /// (--no-extensions/-e, --no-skills/--skill, --no-prompt-templates,
 /// --no-approve) and fully offline (--offline + PI_SKIP_VERSION_CHECK —
 /// pi ships install telemetry and update checks enabled by default).
-/// --no-context-files is deliberately NOT passed: project AGENTS.md /
-/// CLAUDE.md context stays on.
+/// Context files are disabled because pi's upward discovery is not confined
+/// to the selected workspace. Workspace files remain available through the
+/// read tool, whose extension hook canonicalizes paths and asks before any
+/// out-of-workspace access.
 enum PiLaunchPlanner {
 
     static func plan(bun: URL,
@@ -25,6 +27,7 @@ enum PiLaunchPlanner {
                      workspace: URL,
                      endpoint: AgentLLMEndpoint,
                      helpersDirectory: URL?,
+                     agentAccessCapability: String? = nil,
                      continuePreviousSession: Bool = false,
                      baseEnvironment: [String: String] = ProcessInfo.processInfo.environment) -> PiLaunchPlan {
         var arguments = [
@@ -43,6 +46,7 @@ enum PiLaunchPlanner {
         }
         arguments += [
             "--no-prompt-templates",
+            "--no-context-files",
             "--no-approve",
             "--session-dir", sessionDirectory.path,
             "--offline",
@@ -54,6 +58,9 @@ enum PiLaunchPlanner {
         environment["LOKALBOT_LLM_CTX"] = String(endpoint.contextTokens)
         if let apiKey = endpoint.apiKey {
             environment["LOKALBOT_LLM_API_KEY"] = apiKey
+        }
+        if let agentAccessCapability {
+            environment[AgentAccessGate.capabilityEnvironmentKey] = agentAccessCapability
         }
         environment["PI_SKIP_VERSION_CHECK"] = "1"
         environment["PI_TELEMETRY"] = "0"

@@ -384,7 +384,7 @@ final class ChatAgentTests: XCTestCase {
         try FileManager.default.createDirectory(at: storage.rootURL, withIntermediateDirectories: true)
         let activityStore = ActivityStore(databaseURL: sqlite)
 
-        activityStore.insertScreenshot(
+        try activityStore.insertScreenshot(
             ts: Date(), path: "/tmp/x.heic.enc", app: "Safari",
             windowTitle: "Stripe invoicing docs", trigger: "app_switch",
             ocr: "How to issue a refund for an invoice in the Stripe dashboard")

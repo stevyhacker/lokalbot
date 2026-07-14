@@ -7,12 +7,15 @@ enum InferenceEndpointPolicy {
 
     enum PolicyError: LocalizedError, Equatable {
         case unsupportedURL
+        case insecureRemoteEndpoint(String)
         case remoteApprovalRequired(String)
 
         var errorDescription: String? {
             switch self {
             case .unsupportedURL:
                 "Use an http or https inference-server URL."
+            case .insecureRemoteEndpoint(let origin):
+                "Remote inference server \(origin) is not encrypted. Use HTTPS, or run the server on this Mac."
             case .remoteApprovalRequired(let origin):
                 "Approve the remote inference server \(origin) under Settings → Models before sending meeting or workday text to it."
             }
@@ -39,8 +42,7 @@ enum InferenceEndpointPolicy {
             || host == "::1"
             || host == "0:0:0:0:0:0:0:1"
             || host == "0.0.0.0"
-            || host == "127.0.0.1"
-            || host.hasPrefix("127.")
+            || isIPv4Loopback(host)
     }
 
     static func requiresApproval(_ url: URL) -> Bool {
@@ -49,13 +51,34 @@ enum InferenceEndpointPolicy {
 
     static func isAllowed(_ url: URL, approvedOrigins: [String]) -> Bool {
         guard let origin = origin(for: url) else { return false }
-        return isLoopback(url) || approvedOrigins.contains(origin)
+        if isLoopback(url) { return true }
+        return url.scheme?.lowercased() == "https" && approvedOrigins.contains(origin)
     }
 
     static func validate(_ url: URL, approvedOrigins: [String]) throws {
         guard let origin = origin(for: url) else { throw PolicyError.unsupportedURL }
-        guard isLoopback(url) || approvedOrigins.contains(origin) else {
+        if isLoopback(url) { return }
+        guard url.scheme?.lowercased() == "https" else {
+            throw PolicyError.insecureRemoteEndpoint(origin)
+        }
+        guard approvedOrigins.contains(origin) else {
             throw PolicyError.remoteApprovalRequired(origin)
         }
+    }
+
+    private static func isIPv4Loopback(_ host: String) -> Bool {
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard octets.count == 4 else { return false }
+        var values: [Int] = []
+        values.reserveCapacity(4)
+        for octet in octets {
+            guard !octet.isEmpty,
+                  octet.allSatisfy(\.isNumber),
+                  let value = Int(octet), (0...255).contains(value) else {
+                return false
+            }
+            values.append(value)
+        }
+        return values[0] == 127
     }
 }

@@ -53,6 +53,43 @@ final class ScreenshotProcessingWorkerTests: XCTestCase {
         XCTAssertEqual(try Self.decrypt(manualURL, key: key), rawHEIC)
     }
 
+    func testDiscardedPersistenceAllowsIdenticalAutomaticCaptureToRetry() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ScreenshotProcessingWorkerTests-\(UUID().uuidString)",
+                                    isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let image = try XCTUnwrap(Self.onePixelImage())
+        let contentHash = Data(repeating: 0x44, count: 32)
+        let key = SymmetricKey(data: Data(repeating: 0x55, count: 32))
+        let worker = ScreenshotProcessingWorker(dependencies: ScreenshotProcessingDependencies(
+            contentHash: { _ in contentHash },
+            heicData: { _ in Data("image".utf8) },
+            recognizeText: { _ in "retry me" },
+            write: { data, url in
+                try FileManager.default.createDirectory(
+                    at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: url, options: .atomic)
+            }))
+
+        let first = try await worker.process(.init(
+            image: image, trigger: .interval, key: key,
+            fileURL: root.appendingPathComponent("first.heic.enc")))
+        guard case .stored(let storedHash, _) = first else {
+            return XCTFail("The initial capture should store")
+        }
+
+        // ScreenshotService calls this after its SQLite transaction fails and
+        // removes the encrypted file. The same screen must be allowed to retry.
+        await worker.discardStored(contentHash: storedHash)
+        let retry = try await worker.process(.init(
+            image: image, trigger: .interval, key: key,
+            fileURL: root.appendingPathComponent("retry.heic.enc")))
+
+        guard case .stored = retry else {
+            return XCTFail("A rolled-back capture must not poison dedup state")
+        }
+    }
+
     private static func onePixelImage() -> CGImage? {
         guard let context = CGContext(
             data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
