@@ -71,6 +71,7 @@ final class MeetingDetector {
     private var activeCalendarEvent: CalendarMeetingCandidate?
     private var timer: Timer?
     private var pendingStop: DispatchWorkItem?
+    private var workspaceObservers: [NSObjectProtocol] = []
 
     private var micListener: AudioObjectPropertyListenerBlock?
     private var listenedDevice = AudioObjectID(kAudioObjectUnknown)
@@ -78,7 +79,16 @@ final class MeetingDetector {
     /// callbacks (each mic open/close then fans out into a tick storm).
     private var deviceChangeListener: AudioObjectPropertyListenerBlock?
 
+    /// Core Audio process enumeration is comparatively expensive and several
+    /// meeting subsystems ask for the same answer in one detector/poller turn.
+    /// Keep a very short-lived snapshot so detection, helper handoff, and media
+    /// pausing share one system query without making process state feel stale.
+    private static let processSnapshotLock = NSLock()
+    private static var processSnapshot: (capturedAt: Date, processes: [AudioProcess])?
+    private static let processSnapshotLifetime: TimeInterval = 0.35
+
     func start() {
+        guard timer == nil else { return }
         // Safety-net poll (browser titles have no change notification).
         timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             self?.tick()
@@ -88,9 +98,11 @@ final class MeetingDetector {
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification,
                      NSWorkspace.didTerminateApplicationNotification] {
-            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+            let observer = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Self.invalidateAudioProcessSnapshot()
                 self?.tick()
             }
+            workspaceObservers.append(observer)
         }
         tick()
     }
@@ -98,6 +110,11 @@ final class MeetingDetector {
     func stop() {
         timer?.invalidate()
         timer = nil
+        pendingStop?.cancel()
+        pendingStop = nil
+        let center = NSWorkspace.shared.notificationCenter
+        for observer in workspaceObservers { center.removeObserver(observer) }
+        workspaceObservers.removeAll()
         disarmAll()
     }
 
@@ -194,8 +211,17 @@ final class MeetingDetector {
                     requireCalendarForBrowser: requireCalendarForBrowser) {
                     pendingStop?.cancel()
                     pendingStop = nil
+                    let previousApp = activeApp
                     activeApp = replacementApp
                     activeCalendarEvent = calendarEvent
+                    if previousApp != replacementApp {
+                        onMeetingSwitched?(MeetingDetectionContext(
+                            detectedApp: replacementApp,
+                            calendarEvent: calendarEvent,
+                            confidence: MeetingMatcher.confidence(
+                                hasApp: true, hasCalendar: calendarEvent != nil),
+                            reason: "meeting-app-handoff"))
+                    }
                     return
                 }
                 scheduleStopIfNeeded(now: now)
@@ -359,12 +385,29 @@ final class MeetingDetector {
         return bundle == browser || bundle.hasPrefix("\(browser).helper")
     }
 
+    /// Whether an audio process belongs to the detected meeting application's
+    /// process family. Zoom routes call audio through `us.zoom.CptHost`, while
+    /// Chromium-family browsers use `.helper` bundle identifiers.
+    static func audioBundleID(_ bundleID: String, belongsTo appBundleID: String) -> Bool {
+        if browsers.contains(appBundleID) {
+            return browserAudioBundleID(bundleID, belongsTo: appBundleID)
+        }
+        let bundle = bundleID.lowercased()
+        let host = appBundleID.lowercased()
+        if host == "us.zoom.xos" {
+            return bundle == host
+                || bundle == "us.zoom.cpthost"
+                || bundle.hasPrefix("us.zoom.xos.")
+        }
+        return bundle == host || bundle.hasPrefix("\(host).helper")
+    }
+
     static func bestOutputAudioProcess(for app: DetectedApp,
                                        in processes: [AudioProcess]) -> AudioProcess? {
-        if browsers.contains(app.bundleID) {
+        if browsers.contains(app.bundleID) || app.bundleID == "us.zoom.xos" {
             let matches = processes.filter { process in
                 guard process.isRunningOutput, let bundleID = process.bundleID else { return false }
-                return browserAudioBundleID(bundleID, belongsTo: app.bundleID)
+                return audioBundleID(bundleID, belongsTo: app.bundleID)
             }
             // Chrome/Edge/Safari often emit meeting audio from helper processes,
             // while the browser host can still expose a tap that only delivers
@@ -379,8 +422,30 @@ final class MeetingDetector {
     }
 
     static func currentOutputAudioProcess(for app: DetectedApp) -> AudioProcess? {
-        let processes = (try? CoreAudioUtils.listAudioProcesses()) ?? []
+        let processes = currentAudioProcesses()
         return bestOutputAudioProcess(for: app, in: processes)
+    }
+
+    static func currentAudioProcesses(now: Date = Date()) -> [AudioProcess] {
+        processSnapshotLock.lock()
+        if let processSnapshot,
+           now.timeIntervalSince(processSnapshot.capturedAt) <= processSnapshotLifetime {
+            processSnapshotLock.unlock()
+            return processSnapshot.processes
+        }
+        processSnapshotLock.unlock()
+
+        let processes = (try? CoreAudioUtils.listAudioProcesses()) ?? []
+        processSnapshotLock.lock()
+        processSnapshot = (now, processes)
+        processSnapshotLock.unlock()
+        return processes
+    }
+
+    static func invalidateAudioProcessSnapshot() {
+        processSnapshotLock.lock()
+        processSnapshot = nil
+        processSnapshotLock.unlock()
     }
 
     private static func continuingApp(_ app: DetectedApp, in running: [NSRunningApplication]) -> DetectedApp? {

@@ -24,7 +24,7 @@ final class AgentSessionController: ObservableObject {
     @Published var workspace: URL
     @Published var draft = ""
     @Published var autoApproveSession = false {
-        didSet { policy.autoApproveAll = autoApproveSession }
+        didSet { policy.autoApproveFileChanges = autoApproveSession }
     }
 
     private let settings: () -> AppSettings
@@ -33,6 +33,7 @@ final class AgentSessionController: ObservableObject {
     private let sessionsDirectory: URL
     private let broker: InferenceBroker
     private let makeTransport: ((PiLaunchPlan) async throws -> PiLineTransport)?
+    private let accessGate: AgentAccessGate
 
     private var policy = AgentApprovalPolicy()
     private var folder = AgentTranscriptFolder()
@@ -47,22 +48,29 @@ final class AgentSessionController: ObservableObject {
     /// Without this, a close during model warm-up could finish spawning pi
     /// after shutdown() had already returned.
     private var lifecycleGeneration = 0
+    /// Serializes failure cleanup with shutdown/restart. A failed state is not
+    /// published until this returns to false, so a replacement process can
+    /// never launch while its predecessor is still being terminated.
+    private var failureTeardownInProgress = false
     /// Held from resolveEndpoint (built-in engine only) until shutdown or
     /// failure, so the Main LLM cannot be evicted mid-conversation by an
     /// unrelated model load.
     private var llmLease: InferenceLease?
+    private var accessCapability: AgentAccessCapability?
 
     init(settings: @escaping () -> AppSettings,
          storage: StorageManager,
          runtimeRoot: URL = AgentRuntimeLayout.defaultRoot,
          sessionsDirectory: URL = AgentRuntimeLayout.sessionsDirectory,
          broker: InferenceBroker = .shared,
+         accessGate: AgentAccessGate? = nil,
          makeTransport: ((PiLaunchPlan) async throws -> PiLineTransport)? = nil) {
         self.settings = settings
         self.storage = storage
         self.runtimeRoot = runtimeRoot
         self.sessionsDirectory = sessionsDirectory
         self.broker = broker
+        self.accessGate = accessGate ?? AgentAccessGate(root: storage.rootURL)
         self.makeTransport = makeTransport
         self.workspace = storage.rootURL
     }
@@ -70,7 +78,8 @@ final class AgentSessionController: ObservableObject {
     // MARK: - Lifecycle
 
     func start() async {
-        guard state == .idle || isFailed else { return }
+        guard !failureTeardownInProgress,
+              state == .idle || isFailed else { return }
         lifecycleGeneration += 1
         let generation = lifecycleGeneration
         state = .starting
@@ -83,7 +92,14 @@ final class AgentSessionController: ObservableObject {
                 releaseLLMLease()
                 return
             }
-            let plan = makePlan(endpoint: endpoint)
+            var capabilityToken: String?
+            if makeTransport == nil {
+                accessGate.removeExpiredCapabilities()
+                let capability = try accessGate.issueScopedCapability()
+                accessCapability = capability
+                capabilityToken = capability.token
+            }
+            let plan = makePlan(endpoint: endpoint, capabilityToken: capabilityToken)
             let transport: PiLineTransport
             var spawnedProcess: PiProcess?
             if let makeTransport {
@@ -106,25 +122,36 @@ final class AgentSessionController: ObservableObject {
                 return
             }
             client = rpc
-            consumeEvents(from: rpc)
+            consumeEvents(from: rpc, generation: generation)
             if launchMode == .continueRecent {
                 await restorePreviousMessages(using: rpc)
             }
             state = .ready
         } catch {
             guard generation == lifecycleGeneration else { return }
+            revokeAccessCapability()
             setFailure(error)
         }
     }
 
     func shutdown() async {
+        while failureTeardownInProgress {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
         lifecycleGeneration += 1
+        await cancelPendingApprovals()
         eventTask?.cancel()
         eventTask = nil
         discardPendingTextDelta()
+        // Revoke access before giving a hung child its SIGTERM grace period.
+        // Closing a tab must close the meeting-library capability immediately,
+        // even if pi ignores termination until the SIGKILL fallback.
+        revokeAccessCapability()
         await process?.stop()
         process = nil
         client = nil
+        policy.resetSession()
+        autoApproveSession = false
         releaseLLMLease()
         state = .idle
     }
@@ -147,7 +174,7 @@ final class AgentSessionController: ObservableObject {
                 publish()
             }
         } catch {
-            fail(with: error)
+            await fail(with: error)
         }
     }
 
@@ -169,7 +196,7 @@ final class AgentSessionController: ObservableObject {
             publish()
             state = .ready
         } catch {
-            fail(with: error)
+            await fail(with: error)
         }
     }
 
@@ -191,36 +218,51 @@ final class AgentSessionController: ObservableObject {
 
     func respondToApproval(id: String, approved: Bool, scope: ApprovalScope) async {
         guard let client else { return }
-        let tool = pendingApprovalTool(requestID: id)
-        if approved, scope == .session,
-           let tool {
-            policy.allowForSession(tool: tool)
+        guard let request = pendingApprovalRequest(requestID: id) else { return }
+        if approved, scope == .session {
+            policy.allowForSession(
+                tool: request.tool,
+                path: request.path,
+                requestWorkspace: request.workspace,
+                selectedWorkspace: workspace)
         }
         folder.resolveApproval(requestID: id)
         if !approved {
-            folder.appendNotice("You denied this \(tool ?? "tool") request. Nothing changed.")
+            folder.appendNotice("You denied this \(request.tool) request. Nothing changed.")
         }
         publish()
         try? await client.sendResponse(.uiConfirmResponse(requestID: id, confirmed: approved))
     }
 
+    /// Unattended callers have nobody available to inspect sensitive requests.
+    /// Resolve every card as a one-time denial so the pi turn cannot hang.
+    func denyAllPendingApprovals() async {
+        for id in folder.pendingApprovalIDs {
+            await respondToApproval(id: id, approved: false, scope: .once)
+        }
+    }
+
     // MARK: - Event loop
 
-    private func consumeEvents(from client: PiRPCClient) {
+    private func consumeEvents(from client: PiRPCClient, generation: Int) {
+        eventTask?.cancel()
         eventTask = Task { [weak self] in
             guard let self else { return }
             for await event in client.events {
                 guard !Task.isCancelled else { return }
-                await self.handle(event)
+                await self.handle(event, generation: generation)
             }
             // shutdown() cancels this task and only later sets .idle; a
             // cancelled iteration ending must not fold a spurious failure.
             guard !Task.isCancelled else { return }
-            await self.handleStreamEnd()
+            await self.handleStreamEnd(generation: generation)
         }
     }
 
-    private func handle(_ event: PiEvent) async {
+    private func handle(_ event: PiEvent, generation: Int) async {
+        guard generation == lifecycleGeneration,
+              state != .idle,
+              !isFailed else { return }
         // Pi can emit hundreds of token deltas per second. Fold and publish
         // those as one string at display cadence; structural events flush the
         // pending text first so message/tool/approval ordering stays exact.
@@ -252,27 +294,35 @@ final class AgentSessionController: ObservableObject {
             return
         }
         let approval = Self.parseApprovalPayload(request)
-        switch policy.verdict(tool: approval.tool) {
+        switch policy.verdict(
+            tool: approval.tool,
+            path: approval.path,
+            requestWorkspace: approval.workspace,
+            selectedWorkspace: workspace) {
         case .allow:
             try? await client.sendResponse(.uiConfirmResponse(requestID: request.id, confirmed: true))
         case .ask:
-            folder.addApproval(approval)
+            if !folder.addApproval(approval) {
+                folder.appendNotice(
+                    "The newest tool approval exceeded safety limits or too many are already waiting; it was declined.",
+                    isError: true)
+                try? await client.sendResponse(.uiCancelResponse(requestID: request.id))
+            }
         }
     }
 
-    private func handleStreamEnd() async {
-        guard state != .idle else { return }
+    private func handleStreamEnd(generation: Int) async {
+        guard generation == lifecycleGeneration,
+              state != .idle,
+              !isFailed else { return }
         flushPendingTextDelta()
         var detail = "The agent process exited unexpectedly."
         if let process {
             let tail = await process.stderrTail
             if !tail.isEmpty { detail += "\n" + tail.suffix(5).joined(separator: "\n") }
         }
-        folder.appendNotice(detail, isError: true)
-        publish()
-        releaseLLMLease()
-        state = .failed(detail)
-        recoveryAction = .restart
+        guard generation == lifecycleGeneration else { return }
+        await transitionToFailure(message: detail, recovery: .restart)
     }
 
     // MARK: - Endpoint + plan
@@ -291,16 +341,17 @@ final class AgentSessionController: ObservableObject {
             llmLease = try await broker.lease(.mainLLM, model: modelURL,
                                               priority: .interactive,
                                               purpose: "agent session")
+            let authenticationToken = await LlamaServer.shared.authenticationToken()
             return AgentLLMEndpoint(baseURL: LlamaServer.shared.baseURL,
                                     model: entry.id,
                                     contextTokens: AgentLLMEndpoint.defaultContextTokens,
-                                    apiKey: nil)
+                                    apiKey: authenticationToken)
         case .unsupported(let reason):
             throw StartError.modelConfiguration(reason)
         }
     }
 
-    private func makePlan(endpoint: AgentLLMEndpoint) -> PiLaunchPlan {
+    private func makePlan(endpoint: AgentLLMEndpoint, capabilityToken: String?) -> PiLaunchPlan {
         let resources = Bundle.main.resourceURL
         let extensionDir = resources?.appendingPathComponent("pi/lokalbot-extension")
             ?? URL(fileURLWithPath: "pi/lokalbot-extension")
@@ -318,6 +369,7 @@ final class AgentSessionController: ObservableObject {
             workspace: workspace,
             endpoint: endpoint,
             helpersDirectory: FileManager.default.fileExists(atPath: helpers.path) ? helpers : nil,
+            agentAccessCapability: capabilityToken,
             continuePreviousSession: launchMode == .continueRecent)
     }
 
@@ -328,11 +380,13 @@ final class AgentSessionController: ObservableObject {
     }
 
     private func publish() {
+        folder.enforceResourceLimits()
         items = folder.items
     }
 
     private func enqueueTextDelta(_ delta: String) {
-        pendingTextDelta.append(delta)
+        let room = max(0, AgentTranscriptFolder.maximumMessageCharacters - pendingTextDelta.count)
+        if room > 0 { pendingTextDelta.append(contentsOf: delta.prefix(room)) }
         guard deltaFlushTask == nil else { return }
         deltaFlushTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(33))
@@ -366,29 +420,86 @@ final class AgentSessionController: ObservableObject {
         Task { await broker.release(lease) }
     }
 
+    private func revokeAccessCapability() {
+        guard let capability = accessCapability else { return }
+        accessCapability = nil
+        accessGate.revoke(capability)
+    }
+
+    private func cancelPendingApprovals() async {
+        let ids = folder.pendingApprovalIDs
+        if let client {
+            for id in ids {
+                try? await client.sendResponse(.uiCancelResponse(requestID: id))
+            }
+        }
+        folder.resolveAllApprovals()
+        publish()
+    }
+
     private func freshID(_ prefix: String) -> String {
         nextRequestID += 1
         return "\(prefix)\(nextRequestID)"
     }
 
-    private func pendingApprovalTool(requestID: String) -> String? {
+    private func pendingApprovalRequest(requestID: String) -> AgentApprovalRequest? {
         for item in folder.items {
-            if case .approval(let request) = item, request.id == requestID { return request.tool }
+            if case .approval(let request) = item, request.id == requestID { return request }
         }
         return nil
     }
 
-    private func fail(with error: Error) {
+    func canAllowForSession(_ request: AgentApprovalRequest) -> Bool {
+        AgentApprovalPolicy.canPersistApproval(
+            tool: request.tool,
+            path: request.path,
+            requestWorkspace: request.workspace,
+            selectedWorkspace: workspace)
+    }
+
+    private func fail(with error: Error) async {
         flushPendingTextDelta()
         let message = Self.message(for: error)
+        await transitionToFailure(message: message, recovery: .restart)
+    }
+
+    /// Invalidates the current event generation before awaiting subprocess
+    /// shutdown. That prevents already-buffered frames from reviving `.ready`
+    /// or `.running` while teardown yields, and keeps restart disabled until
+    /// the old process has actually been terminated.
+    private func transitionToFailure(message: String, recovery: RecoveryAction) async {
+        guard !failureTeardownInProgress,
+              state != .idle,
+              !isFailed else { return }
+        failureTeardownInProgress = true
+        lifecycleGeneration += 1
+        let failureGeneration = lifecycleGeneration
+        recoveryAction = nil
+        eventTask?.cancel()
+        eventTask = nil
+        discardPendingTextDelta()
+        let oldProcess = process
+        process = nil
+        client = nil
+        folder.resolveAllApprovals()
+        policy.resetSession()
+        autoApproveSession = false
+        revokeAccessCapability()
         folder.appendNotice(message, isError: true)
         publish()
         releaseLLMLease()
+        await oldProcess?.stop()
+        failureTeardownInProgress = false
+        guard failureGeneration == lifecycleGeneration else { return }
         state = .failed(message)
-        recoveryAction = .restart
+        recoveryAction = recovery
     }
 
     private func setFailure(_ error: Error) {
+        folder.resolveAllApprovals()
+        policy.resetSession()
+        autoApproveSession = false
+        revokeAccessCapability()
         releaseLLMLease()
         state = .failed(Self.message(for: error))
         if case StartError.modelConfiguration = error {

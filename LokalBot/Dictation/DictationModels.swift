@@ -75,6 +75,171 @@ struct DictationLiveTranscript: Equatable, Sendable {
     }
 }
 
+/// The app/field that owned focus when dictation began. Final transcription
+/// may take long enough for focus to move; insertion is allowed only when the
+/// same destination still owns focus, otherwise the text is copied safely.
+struct DictationDeliveryTarget: Equatable, Sendable {
+    let processID: pid_t
+    let bundleID: String?
+    let focusIdentityKey: String?
+
+    func matches(processID currentProcessID: pid_t,
+                 bundleID currentBundleID: String?,
+                 focusIdentityKey currentFocusIdentityKey: String?) -> Bool {
+        guard processID == currentProcessID else { return false }
+        if let bundleID, let currentBundleID, bundleID != currentBundleID { return false }
+        if let focusIdentityKey, !focusIdentityKey.isEmpty {
+            return focusIdentityKey == currentFocusIdentityKey
+        }
+        return true
+    }
+
+    /// A blocked snapshot always wins over the app-only fallback. In
+    /// particular, a target captured before AX exposed a field must never
+    /// become permission to paste into a same-app password field later.
+    func matches(_ snapshot: DictationFocusSnapshot) -> Bool {
+        guard !snapshot.isSecureOrBlocked else { return false }
+        return matches(
+            processID: snapshot.processID,
+            bundleID: snapshot.bundleID,
+            focusIdentityKey: snapshot.focusIdentityKey)
+    }
+
+    static func captured(from snapshot: DictationFocusSnapshot) -> Self? {
+        guard !snapshot.isSecureOrBlocked else { return nil }
+        return Self(
+            processID: snapshot.processID,
+            bundleID: snapshot.bundleID,
+            focusIdentityKey: snapshot.focusIdentityKey)
+    }
+}
+
+/// The minimum Accessibility state needed to bind and later validate a
+/// dictation destination. It intentionally carries no field text or geometry.
+struct DictationFocusSnapshot: Equatable, Sendable {
+    let processID: pid_t
+    let bundleID: String?
+    let focusIdentityKey: String?
+    let isSecureOrBlocked: Bool
+}
+
+struct DictationFocusCaptureResult: Equatable, Sendable {
+    let snapshot: DictationFocusSnapshot?
+    let timedOut: Bool
+
+    static let timeout = Self(snapshot: nil, timedOut: true)
+}
+
+/// Serializes lightweight dictation focus reads on a background queue and
+/// gives every caller one wall-clock deadline. A wedged target app therefore
+/// fails closed without blocking the main actor or accumulating AX workers.
+final class DictationFocusSnapshotExecutor: @unchecked Sendable {
+    typealias Resolver = @Sendable () -> DictationFocusSnapshot?
+
+    static let shared = DictationFocusSnapshotExecutor()
+    static let defaultDeadlineMilliseconds = 120
+
+    private struct Waiter {
+        let id: UInt64
+        let continuation: CheckedContinuation<DictationFocusCaptureResult, Never>
+    }
+
+    private struct Batch {
+        let id: UInt64
+        var waiters: [UInt64: Waiter]
+    }
+
+    private let stateQueue = DispatchQueue(label: "me.dotenv.LokalBot.dictation.ax-snapshot-state")
+    private let workerQueue = DispatchQueue(
+        label: "me.dotenv.LokalBot.dictation.ax-snapshot-worker",
+        qos: .userInitiated)
+    private let deadlineMilliseconds: Int
+    private let resolver: Resolver
+    private var nextIdentifier: UInt64 = 0
+    private var active: Batch?
+    private var pending: Batch?
+
+    init(
+        deadlineMilliseconds: Int = defaultDeadlineMilliseconds,
+        resolver: @escaping Resolver = { CotypingAXHelper.resolveDictationFocusSnapshot() }
+    ) {
+        self.deadlineMilliseconds = max(1, deadlineMilliseconds)
+        self.resolver = resolver
+    }
+
+    func capture() async -> DictationFocusCaptureResult {
+        await withCheckedContinuation { continuation in
+            stateQueue.async { [self] in
+                nextIdentifier &+= 1
+                let waiterID = nextIdentifier
+                let waiter = Waiter(id: waiterID, continuation: continuation)
+                enqueue(waiter)
+                stateQueue.asyncAfter(
+                    deadline: .now() + .milliseconds(deadlineMilliseconds)
+                ) { [weak self] in
+                    self?.expire(waiterID: waiterID)
+                }
+            }
+        }
+    }
+
+    private func enqueue(_ waiter: Waiter) {
+        guard active != nil else {
+            nextIdentifier &+= 1
+            start(Batch(id: nextIdentifier, waiters: [waiter.id: waiter]))
+            return
+        }
+        if var pending {
+            pending.waiters[waiter.id] = waiter
+            self.pending = pending
+        } else {
+            nextIdentifier &+= 1
+            pending = Batch(id: nextIdentifier, waiters: [waiter.id: waiter])
+        }
+    }
+
+    private func start(_ batch: Batch) {
+        active = batch
+        let batchID = batch.id
+        workerQueue.async { [weak self] in
+            guard let self else { return }
+            let snapshot = resolver()
+            stateQueue.async { [weak self] in
+                self?.finish(batchID: batchID, snapshot: snapshot)
+            }
+        }
+    }
+
+    private func finish(batchID: UInt64, snapshot: DictationFocusSnapshot?) {
+        guard let completed = active, completed.id == batchID else { return }
+        active = nil
+        let result = DictationFocusCaptureResult(snapshot: snapshot, timedOut: false)
+        for waiter in completed.waiters.values {
+            waiter.continuation.resume(returning: result)
+        }
+        startPendingIfNeeded()
+    }
+
+    private func expire(waiterID: UInt64) {
+        if var active, let waiter = active.waiters.removeValue(forKey: waiterID) {
+            self.active = active
+            waiter.continuation.resume(returning: .timeout)
+            return
+        }
+        if var pending, let waiter = pending.waiters.removeValue(forKey: waiterID) {
+            self.pending = pending.waiters.isEmpty ? nil : pending
+            waiter.continuation.resume(returning: .timeout)
+        }
+    }
+
+    private func startPendingIfNeeded() {
+        guard active == nil, let pending else { return }
+        self.pending = nil
+        guard !pending.waiters.isEmpty else { return }
+        start(pending)
+    }
+}
+
 struct DictationPreviewAudioRange: Equatable, Sendable {
     let start: TimeInterval
     let end: TimeInterval

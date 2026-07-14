@@ -1,5 +1,221 @@
 import AppKit
 import ApplicationServices
+import Foundation
+
+/// Options for one Accessibility snapshot. Keeping these as an option set lets
+/// the executor merge queued requests into one superset capture.
+struct CotypingAXCaptureOptions: OptionSet, Sendable {
+    let rawValue: UInt8
+
+    static let surface = Self(rawValue: 1 << 0)
+    static let url = Self(rawValue: 1 << 1)
+    static let style = Self(rawValue: 1 << 2)
+}
+
+struct CotypingAXCaptureResult: Sendable {
+    let focus: CotypingFocus?
+    let timedOut: Bool
+
+    static let timeout = Self(focus: nil, timedOut: true)
+}
+
+/// Thread-safe one-entry surface cache with one active resolver. The resolver
+/// runs outside the cache lock, so a slow cross-process AX call cannot block
+/// unrelated cache/state readers. Same-key callers share the active result;
+/// different-key callers wait outside the lock and retry against the one-entry
+/// cache, keeping capture concurrency bounded to one.
+final class CotypingSurfaceCaptureSingleFlight: @unchecked Sendable {
+    private final class Flight {
+        let key: String
+        let completion = DispatchGroup()
+        var result: CotypingSurfaceCapture?
+
+        init(key: String) {
+            self.key = key
+            completion.enter()
+        }
+    }
+
+    private let lock = NSLock()
+    private var cachedKey: String?
+    private var cachedCapture: CotypingSurfaceCapture = .empty
+    private var activeFlight: Flight?
+
+    func cachedValue(forKey key: String) -> CotypingSurfaceCapture? {
+        lock.withLock {
+            cachedKey == key ? cachedCapture : nil
+        }
+    }
+
+    func capture(
+        forKey key: String,
+        resolve: () -> CotypingSurfaceCapture
+    ) -> CotypingSurfaceCapture {
+        while true {
+            lock.lock()
+            if cachedKey == key {
+                let value = cachedCapture
+                lock.unlock()
+                return value
+            }
+            if let activeFlight {
+                let sharesResult = activeFlight.key == key
+                lock.unlock()
+                activeFlight.completion.wait()
+                if sharesResult,
+                   let result = lock.withLock({ activeFlight.result }) {
+                    return result
+                }
+                continue
+            }
+
+            let flight = Flight(key: key)
+            activeFlight = flight
+            lock.unlock()
+
+            let resolved = resolve()
+
+            lock.withLock {
+                cachedKey = key
+                cachedCapture = resolved
+                flight.result = resolved
+                if activeFlight === flight {
+                    activeFlight = nil
+                }
+            }
+            flight.completion.leave()
+            return resolved
+        }
+    }
+}
+
+/// Runs all routine AX snapshots on one background queue. There can be at most
+/// one active capture and one latest-wins pending batch; callers that arrive
+/// while a compatible capture is active share its result. Each caller has one
+/// wall-clock deadline for the *whole* snapshot, rather than multiplying the AX
+/// per-message timeout by every attribute read.
+final class CotypingAXSnapshotExecutor: @unchecked Sendable {
+    typealias Resolver = @Sendable (CotypingAXCaptureOptions) -> CotypingFocus
+
+    static let shared = CotypingAXSnapshotExecutor()
+    static let defaultDeadlineMilliseconds = 120
+
+    private struct Waiter {
+        let id: UInt64
+        let continuation: CheckedContinuation<CotypingAXCaptureResult, Never>
+    }
+
+    private struct Batch {
+        let id: UInt64
+        var options: CotypingAXCaptureOptions
+        var waiters: [UInt64: Waiter]
+    }
+
+    private let stateQueue = DispatchQueue(label: "me.dotenv.LokalBot.cotyping.ax-snapshot-state")
+    private let workerQueue = DispatchQueue(
+        label: "me.dotenv.LokalBot.cotyping.ax-snapshot-worker",
+        qos: .userInitiated)
+    private let deadlineMilliseconds: Int
+    private let resolver: Resolver
+    private var nextIdentifier: UInt64 = 0
+    private var active: Batch?
+    private var pending: Batch?
+
+    init(
+        deadlineMilliseconds: Int = defaultDeadlineMilliseconds,
+        resolver: @escaping Resolver = { options in
+            CotypingAXHelper.resolveFocus(
+                includeSurface: options.contains(.surface),
+                includeURL: options.contains(.url),
+                includeStyle: options.contains(.style))
+        }
+    ) {
+        self.deadlineMilliseconds = max(1, deadlineMilliseconds)
+        self.resolver = resolver
+    }
+
+    func capture(options: CotypingAXCaptureOptions = []) async -> CotypingAXCaptureResult {
+        await withCheckedContinuation { continuation in
+            stateQueue.async { [self] in
+                nextIdentifier &+= 1
+                let waiterID = nextIdentifier
+                let waiter = Waiter(id: waiterID, continuation: continuation)
+                enqueue(waiter: waiter, options: options)
+                stateQueue.asyncAfter(deadline: .now() + .milliseconds(deadlineMilliseconds)) { [weak self] in
+                    self?.expire(waiterID: waiterID)
+                }
+            }
+        }
+    }
+
+    private func enqueue(waiter: Waiter, options: CotypingAXCaptureOptions) {
+        if var active, options.isSubset(of: active.options) {
+            active.waiters[waiter.id] = waiter
+            self.active = active
+            return
+        }
+
+        if var pending {
+            pending.options.formUnion(options)
+            pending.waiters[waiter.id] = waiter
+            self.pending = pending
+            return
+        }
+
+        nextIdentifier &+= 1
+        let batch = Batch(id: nextIdentifier, options: options, waiters: [waiter.id: waiter])
+        if active == nil {
+            start(batch)
+        } else {
+            pending = batch
+        }
+    }
+
+    private func start(_ batch: Batch) {
+        active = batch
+        let batchID = batch.id
+        let options = batch.options
+        workerQueue.async { [weak self] in
+            guard let self else { return }
+            let focus = resolver(options)
+            stateQueue.async { [weak self] in
+                self?.finish(batchID: batchID, focus: focus)
+            }
+        }
+    }
+
+    private func finish(batchID: UInt64, focus: CotypingFocus) {
+        guard let completed = active, completed.id == batchID else { return }
+        active = nil
+        for waiter in completed.waiters.values {
+            waiter.continuation.resume(returning: CotypingAXCaptureResult(focus: focus, timedOut: false))
+        }
+        startPendingIfNeeded()
+    }
+
+    private func expire(waiterID: UInt64) {
+        if var active, let waiter = active.waiters.removeValue(forKey: waiterID) {
+            self.active = active
+            waiter.continuation.resume(returning: .timeout)
+            return
+        }
+        if var pending, let waiter = pending.waiters.removeValue(forKey: waiterID) {
+            if pending.waiters.isEmpty {
+                self.pending = nil
+            } else {
+                self.pending = pending
+            }
+            waiter.continuation.resume(returning: .timeout)
+        }
+    }
+
+    private func startPendingIfNeeded() {
+        guard active == nil, let pending else { return }
+        self.pending = nil
+        guard !pending.waiters.isEmpty else { return }
+        start(pending)
+    }
+}
 
 /// The Accessibility boundary for cotyping. Resolves the system-wide focused
 /// element into a value-type `CotypingField` (preceding/trailing text, caret
@@ -46,16 +262,95 @@ enum CotypingAXHelper {
     /// Per-element cache of resolved field styles so the focus poll (every ~200 ms)
     /// doesn't re-read `AXAttributedStringForRange` for a field it already styled.
     /// Keyed by the element's stable `AXIdentifier`; cleared wholesale at 64 entries.
-    @MainActor private static var fieldStyleCache: [String: CotypingFieldStyle] = [:]
-    @MainActor private static var surfaceCaptureCache = CotypingSurfaceCaptureCache()
-    @MainActor private static var primedWebAccessibilityPIDs: Set<pid_t> = []
-    @MainActor private static var unsupportedWebAccessibilityPIDs: Set<pid_t> = []
-    @MainActor private static var lastFrontmostPrimePID: pid_t?
-    @MainActor private static var chromiumHitTestCache: (element: AXUIElement, pid: pid_t)?
+    /// Mutable caches are boxed behind a lock because routine reads now happen
+    /// on the snapshot queue while the event-tap acceptance check remains a
+    /// synchronous main-thread read.
+    private final class CacheState: @unchecked Sendable {
+        let lock = NSLock()
+        var fieldStyles: [String: CotypingFieldStyle] = [:]
+        let surfaceCaptures = CotypingSurfaceCaptureSingleFlight()
+        var primedWebAccessibilityPIDs: Set<pid_t> = []
+        var unsupportedWebAccessibilityPIDs: Set<pid_t> = []
+        var lastFrontmostPrimePID: pid_t?
+        var chromiumHitTest: (element: AXUIElement, pid: pid_t)?
 
-    /// Resolve the current focus into a cotyping snapshot. Pure read; safe to
-    /// call from the focus-tracker timer on the main thread.
-    @MainActor
+        func withLock<T>(_ operation: () -> T) -> T {
+            lock.lock()
+            defer { lock.unlock() }
+            return operation()
+        }
+    }
+
+    private static let cacheState = CacheState()
+
+    /// A bounded-cost identity/privacy snapshot for dictation delivery. Unlike
+    /// `resolveFocus`, this never reads the field value, surrounding text,
+    /// caret geometry, window surface, URL, or style.
+    static func resolveDictationFocusSnapshot() -> DictationFocusSnapshot? {
+        guard isTrusted else { return nil }
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        guard let element = focusedElement() else {
+            return frontmost.map {
+                DictationFocusSnapshot(
+                    processID: $0.processIdentifier,
+                    bundleID: $0.bundleIdentifier,
+                    focusIdentityKey: nil,
+                    isSecureOrBlocked: false)
+            }
+        }
+
+        let owner = owningApp(of: element)
+        let processID = owner?.pid ?? frontmost?.processIdentifier ?? 0
+        guard processID > 0 else { return nil }
+        let bundleID = owner?.bundleID ?? frontmost?.bundleIdentifier
+        let role = stringAttribute(element, kAXRoleAttribute as String) ?? ""
+        let subrole = stringAttribute(element, kAXSubroleAttribute as String)
+
+        let roleDescription = stringAttribute(element, kAXRoleDescriptionAttribute as String)
+        let title = stringAttribute(element, kAXTitleAttribute as String)
+        let descriptionLabel = stringAttribute(element, kAXDescriptionAttribute as String)
+        let isSecure = CotypingSecureFieldDetector.isSecure(
+            role: role,
+            subrole: subrole,
+            roleDescription: roleDescription,
+            title: title,
+            descriptionLabel: descriptionLabel)
+        if isSecure {
+            return DictationFocusSnapshot(
+                processID: processID,
+                bundleID: bundleID,
+                focusIdentityKey: nil,
+                isSecureOrBlocked: true)
+        }
+
+        let isEditable = editableRoles.contains(role)
+            || isAttributeSettable(element, kAXValueAttribute as String)
+        guard isEditable else {
+            return DictationFocusSnapshot(
+                processID: processID,
+                bundleID: bundleID,
+                focusIdentityKey: nil,
+                isSecureOrBlocked: false)
+        }
+
+        let focusIdentityKey = focusIdentityKey(
+            for: element,
+            processID: processID,
+            bundleID: bundleID,
+            role: role,
+            subrole: subrole)
+        let hasSelection = selectionRange(element).map { $0.length > 0 } ?? false
+        return DictationFocusSnapshot(
+            processID: processID,
+            bundleID: bundleID,
+            focusIdentityKey: focusIdentityKey,
+            isSecureOrBlocked: hasSelection)
+    }
+
+    /// Resolve the current focus into a cotyping snapshot. Routine callers use
+    /// `CotypingAXSnapshotExecutor`; the synchronous entry point is retained for
+    /// the event-tap acceptance check, where returning before accepting is
+    /// required to avoid inserting into the wrong field.
     static func resolveFocus(includeSurface: Bool = false, includeURL: Bool = false, includeStyle: Bool = false) -> CotypingFocus {
         guard isTrusted else {
             return CotypingFocus(appName: "", bundleID: nil,
@@ -193,21 +488,21 @@ enum CotypingAXHelper {
     /// CoTabby's focus pipeline. Safe to call on every poll: successful and
     /// unsupported PIDs are cached, while named Electron editors get one
     /// re-assertion per activation edge.
-    @MainActor
     private static func primeWebAccessibilityIfNeeded(application: NSRunningApplication) {
         let pid = application.processIdentifier
         let bundleID = application.bundleIdentifier
-        let isActivationEdge = pid != lastFrontmostPrimePID
-        lastFrontmostPrimePID = pid
-
-        guard pid > 0,
-              needsWebAccessibilityPriming(bundleID: bundleID),
-              !unsupportedWebAccessibilityPIDs.contains(pid) else {
-            return
+        let shouldPrime = cacheState.withLock {
+            let isActivationEdge = pid != cacheState.lastFrontmostPrimePID
+            cacheState.lastFrontmostPrimePID = pid
+            guard pid > 0,
+                  needsWebAccessibilityPriming(bundleID: bundleID),
+                  !cacheState.unsupportedWebAccessibilityPIDs.contains(pid) else {
+                return false
+            }
+            let reassertForElectronEditor = isActivationEdge && isElectronEditor(bundleID: bundleID)
+            return !cacheState.primedWebAccessibilityPIDs.contains(pid) || reassertForElectronEditor
         }
-
-        let reassertForElectronEditor = isActivationEdge && isElectronEditor(bundleID: bundleID)
-        guard !primedWebAccessibilityPIDs.contains(pid) || reassertForElectronEditor else {
+        guard shouldPrime else {
             return
         }
 
@@ -216,9 +511,9 @@ enum CotypingAXHelper {
         let value: CFBoolean = kCFBooleanTrue
         switch AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, value) {
         case .success:
-            primedWebAccessibilityPIDs.insert(pid)
+            _ = cacheState.withLock { cacheState.primedWebAccessibilityPIDs.insert(pid) }
         case .attributeUnsupported:
-            unsupportedWebAccessibilityPIDs.insert(pid)
+            _ = cacheState.withLock { cacheState.unsupportedWebAccessibilityPIDs.insert(pid) }
         default:
             break
         }
@@ -314,11 +609,12 @@ enum CotypingAXHelper {
     /// the ghost overlay can match it. Best-effort: nil on any miss → overlay
     /// defaults. The parameterized attributed-string read is a synchronous
     /// cross-process call, so it is cached and gated behind `includeStyle`.
-    @MainActor
     private static func resolveFieldStyle(for element: AXUIElement, caretLocation: Int, textLength: Int) -> CotypingFieldStyle? {
         guard textLength > 0 else { return nil }
         let identifier = stringAttribute(element, kAXIdentifierAttribute as String)
-        if let identifier, !identifier.isEmpty, let cached = fieldStyleCache[identifier] {
+        if let identifier,
+           !identifier.isEmpty,
+           let cached = cacheState.withLock({ cacheState.fieldStyles[identifier] }) {
             return cached
         }
         // Prefer the character just before the caret (what the user is extending),
@@ -334,8 +630,10 @@ enum CotypingAXHelper {
             break
         }
         if let identifier, !identifier.isEmpty, let resolved {
-            fieldStyleCache[identifier] = resolved
-            if fieldStyleCache.count > 64 { fieldStyleCache.removeAll() }
+            cacheState.withLock {
+                cacheState.fieldStyles[identifier] = resolved
+                if cacheState.fieldStyles.count > 64 { cacheState.fieldStyles.removeAll() }
+            }
         }
         return resolved
     }
@@ -399,7 +697,6 @@ enum CotypingAXHelper {
         return stringAttribute(raw as! AXUIElement, kAXTitleAttribute as String)
     }
 
-    @MainActor
     private static func resolveSurfaceCapture(
         element: AXUIElement,
         processID: pid_t,
@@ -421,10 +718,12 @@ enum CotypingAXHelper {
             inputFrameRect: inputFrameRect,
             includeSurface: includeSurface,
             includeURL: includeURL)
-        return surfaceCaptureCache.capture(forKey: key) {
+        return cacheState.surfaceCaptures.capture(forKey: key) {
             CotypingSurfaceCapture(
                 windowTitle: includeSurface ? windowTitle(near: element) : nil,
-                fieldPlaceholder: includeSurface ? stringAttribute(element, kAXPlaceholderValueAttribute as String) : nil,
+                fieldPlaceholder: includeSurface
+                    ? stringAttribute(element, kAXPlaceholderValueAttribute as String)
+                    : nil,
                 urlString: includeURL ? webURL(near: element) : nil)
         }
     }
@@ -461,7 +760,6 @@ enum CotypingAXHelper {
 
     // MARK: - Element + owner
 
-    @MainActor
     static func focusedElement() -> AXUIElement? {
         if let element = focusedElement(from: systemWide) {
             return element
@@ -472,7 +770,7 @@ enum CotypingAXHelper {
             return nil
         }
         if let element = focusedElement(forApplicationPID: frontmost.processIdentifier) {
-            chromiumHitTestCache = nil
+            cacheState.withLock { cacheState.chromiumHitTest = nil }
             return element
         }
         return chromiumHitTestFallback(for: frontmost)
@@ -497,27 +795,26 @@ enum CotypingAXHelper {
         return element
     }
 
-    @MainActor
     private static func chromiumHitTestFallback(for application: NSRunningApplication) -> AXUIElement? {
         let pid = application.processIdentifier
         guard pid > 0,
               needsWebAccessibilityPriming(bundleID: application.bundleIdentifier) else {
-            chromiumHitTestCache = nil
+            cacheState.withLock { cacheState.chromiumHitTest = nil }
             return nil
         }
 
-        if let cache = chromiumHitTestCache,
+        if let cache = cacheState.withLock({ cacheState.chromiumHitTest }),
            cache.pid == pid,
            isFocused(cache.element) {
             return cache.element
         }
-        chromiumHitTestCache = nil
+        cacheState.withLock { cacheState.chromiumHitTest = nil }
 
         guard let hit = element(atCocoaPoint: NSEvent.mouseLocation) else {
             return nil
         }
         let editable = nearestEditable(from: hit)
-        chromiumHitTestCache = (editable, pid)
+        cacheState.withLock { cacheState.chromiumHitTest = (editable, pid) }
         return editable
     }
 

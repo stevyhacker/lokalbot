@@ -1,4 +1,5 @@
 import AVFoundation
+import Accelerate
 import AppKit
 import AudioToolbox
 import CoreAudio
@@ -42,15 +43,25 @@ final class SystemAudioRecorder {
     private var audibleFramesWritten: AVAudioFramePosition = 0
     private var recordingSampleRate: Double = 0
     private var lastAudioWriteAt: Date?
+    private var lastAudioWriteInstant: ContinuousClock.Instant?
+    private var captureStartedInstant: ContinuousClock.Instant?
     private var lastAudibleWriteAt: Date?
     private var lastRMSLevel: Float = 0
     private var peakRMSLevel: Float = 0
+    private var droppedBufferCount = 0
     private static let audibleRMSThreshold: Float = 0.0005
+    private static let bufferPoolSize = 16
+    private static let pooledBufferFrameCapacity: AVAudioFrameCount = 32_768
 
     /// IOProc writes hop here so the Core Audio real-time thread never
     /// blocks on AAC encoding or filesystem I/O. Serial → ordered writes.
     private let ioQueue = DispatchQueue(label: "lokalbot.systemaudio.write",
                                         qos: .userInitiated)
+    /// The tap callback borrows from this fixed pool with a non-blocking lock.
+    /// It never allocates an AVAudioPCMBuffer or waits for the writer queue.
+    private let bufferPoolLock = NSLock()
+    private var bufferPool: [AVAudioPCMBuffer] = []
+    private let dropLock = NSLock()
 
     /// Captured app's PID, so we can detect the process terminating and
     /// stop instead of silently recording a blank track.
@@ -59,7 +70,7 @@ final class SystemAudioRecorder {
 
     /// Fired on the main thread when the captured process exits before
     /// `stop()` was called (crash, user-quit, browser tab close).
-    var onCapturedProcessTerminated: (() -> Void)?
+    var onCapturedProcessTerminated: ((pid_t) -> Void)?
 
     struct CaptureHealth {
         let duration: TimeInterval
@@ -69,6 +80,7 @@ final class SystemAudioRecorder {
         let capturedPID: pid_t
         let lastRMSLevel: Float
         let peakRMSLevel: Float
+        let droppedBufferCount: Int
     }
 
     /// `previewTee` mirrors the capture into a snapshot-safe PCM `.caf` for
@@ -82,15 +94,21 @@ final class SystemAudioRecorder {
         do {
             outputURL = url
             previewTeeURL = previewURL
+            let startedInstant = ContinuousClock.now
             ioQueue.sync {
                 framesWritten = 0
                 audibleFramesWritten = 0
                 recordingSampleRate = 0
                 lastAudioWriteAt = nil
+                lastAudioWriteInstant = nil
+                captureStartedInstant = startedInstant
                 lastAudibleWriteAt = nil
                 lastRMSLevel = 0
                 peakRMSLevel = 0
             }
+            dropLock.lock()
+            droppedBufferCount = 0
+            dropLock.unlock()
             try attachTap(processObject: processObject, writingTo: url)
         } catch {
             cleanup(closeFile: true)
@@ -113,6 +131,9 @@ final class SystemAudioRecorder {
         }
         teardownTap()
         do {
+            try appendRecoverySilence(
+                until: ContinuousClock.now,
+                wallDate: Date())
             try attachTap(processObject: processObject, writingTo: outputURL)
             installTerminationObserver(for: pid)
         } catch {
@@ -122,7 +143,10 @@ final class SystemAudioRecorder {
     }
 
     func captureHealth() -> CaptureHealth {
-        ioQueue.sync {
+        dropLock.lock()
+        let dropped = droppedBufferCount
+        dropLock.unlock()
+        return ioQueue.sync {
             let duration = recordingSampleRate > 0
                 ? Double(framesWritten) / recordingSampleRate
                 : 0
@@ -135,7 +159,8 @@ final class SystemAudioRecorder {
                                  lastAudibleWriteAt: lastAudibleWriteAt,
                                  capturedPID: capturedPID,
                                  lastRMSLevel: lastRMSLevel,
-                                 peakRMSLevel: peakRMSLevel)
+                                 peakRMSLevel: peakRMSLevel,
+                                 droppedBufferCount: dropped)
         }
     }
 
@@ -193,6 +218,7 @@ final class SystemAudioRecorder {
                                    commonFormat: format.commonFormat,
                                    interleaved: format.isInterleaved)
             previewTee = previewTeeURL.flatMap { AudioPreviewTee(url: $0, sourceFormat: format) }
+            try prepareBufferPool(format: format)
             ioQueue.sync {
                 recordingSampleRate = format.sampleRate
             }
@@ -204,28 +230,39 @@ final class SystemAudioRecorder {
         //    audio thread — copy the samples, then hop to a serial queue.
         err = AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggregateID, nil) { [weak self] _, inInputData, _, _, _ in
             guard let self, let fmt = self.tapFormat,
-                  fmt.commonFormat == .pcmFormatFloat32,
-                  let src = AVAudioPCMBuffer(pcmFormat: fmt,
-                                             bufferListNoCopy: inInputData,
-                                             deallocator: nil),
-                  src.frameLength > 0,
-                  let copy = AVAudioPCMBuffer(pcmFormat: fmt,
-                                              frameCapacity: src.frameLength)
-            else { return }
-            copy.frameLength = src.frameLength
-            let rmsLevel = Self.copyAndMeasureRMS(from: src, into: copy)
-            // Snapshot the file ref on the audio thread (atomic class read);
-            // strongly retained by the dispatched block until the write returns.
-            let fileRef = self.file
-            let teeRef = self.previewTee
+                  fmt.commonFormat == .pcmFormatFloat32 else { return }
+            let streamDescription = fmt.streamDescription
+            guard streamDescription.pointee.mBytesPerFrame > 0 else { return }
+            let sourceBuffers = UnsafeMutableAudioBufferListPointer(
+                UnsafeMutablePointer(mutating: inInputData))
+            guard let firstBuffer = sourceBuffers.first else { return }
+            let frameLength = AVAudioFrameCount(
+                firstBuffer.mDataByteSize / streamDescription.pointee.mBytesPerFrame)
+            guard frameLength > 0,
+                  let copy = self.borrowBuffer(frameLength: frameLength) else {
+                self.noteDroppedBuffer()
+                return
+            }
+            guard Self.copyBufferList(inInputData, into: copy) else {
+                self.returnBuffer(copy)
+                self.noteDroppedBuffer()
+                return
+            }
             self.ioQueue.async {
-                guard let fileRef else { return }
+                defer { self.returnBuffer(copy) }
+                guard let fileRef = self.file else { return }
                 do {
+                    // The real-time callback only performs one bounded copy.
+                    // RMS traversal, AAC encoding, preview conversion, and I/O
+                    // all stay on this serial writer queue.
+                    let rmsLevel = Self.measureRMS(of: copy)
                     try fileRef.write(from: copy)
-                    teeRef?.write(copy)
+                    self.previewTee?.write(copy)
                     let now = Date()
+                    let nowInstant = ContinuousClock.now
                     self.framesWritten += AVAudioFramePosition(copy.frameLength)
                     self.lastAudioWriteAt = now
+                    self.lastAudioWriteInstant = nowInstant
                     self.lastRMSLevel = rmsLevel
                     self.peakRMSLevel = max(self.peakRMSLevel, rmsLevel)
                     if rmsLevel >= Self.audibleRMSThreshold {
@@ -266,7 +303,7 @@ final class SystemAudioRecorder {
             guard let self,
                   let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                   app.processIdentifier == self.capturedPID else { return }
-            self.onCapturedProcessTerminated?()
+            self.onCapturedProcessTerminated?(app.processIdentifier)
         }
     }
 
@@ -312,10 +349,101 @@ final class SystemAudioRecorder {
             audibleFramesWritten = 0
             recordingSampleRate = 0
             lastAudioWriteAt = nil
+            lastAudioWriteInstant = nil
+            captureStartedInstant = nil
             lastAudibleWriteAt = nil
             lastRMSLevel = 0
             peakRMSLevel = 0
         }
+        dropLock.lock()
+        droppedBufferCount = 0
+        dropLock.unlock()
+        bufferPoolLock.lock()
+        bufferPool.removeAll(keepingCapacity: false)
+        bufferPoolLock.unlock()
+    }
+
+    /// Fill the elapsed-time hole left by a process-helper handoff. Keeping the
+    /// original writer open preserves the samples already captured; padding
+    /// the missing interval keeps both tracks and transcript timestamps aligned
+    /// instead of compressing everything after the interruption earlier.
+    private func appendRecoverySilence(
+        until now: ContinuousClock.Instant,
+        wallDate: Date
+    ) throws {
+        try ioQueue.sync {
+            guard let file, let format = tapFormat,
+                  let anchor = lastAudioWriteInstant ?? captureStartedInstant,
+                  let plan = AudioRecoverySilencePlanner.plan(
+                      forElapsed: anchor.duration(to: now)),
+                  format.sampleRate > 0 else { return }
+            var remaining = AVAudioFramePosition(plan.duration * format.sampleRate)
+            while remaining > 0 {
+                let count = AVAudioFrameCount(min(remaining, 4_096))
+                guard let silence = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: count) else {
+                    throw RecorderError.badTapFormat
+                }
+                silence.frameLength = count
+                let buffers = UnsafeMutableAudioBufferListPointer(silence.mutableAudioBufferList)
+                for buffer in buffers where buffer.mData != nil {
+                    memset(buffer.mData!, 0, Int(buffer.mDataByteSize))
+                }
+                try file.write(from: silence)
+                previewTee?.write(silence)
+                framesWritten += AVAudioFramePosition(count)
+                remaining -= AVAudioFramePosition(count)
+            }
+            self.lastAudioWriteAt = wallDate
+            lastAudioWriteInstant = now
+            lastRMSLevel = 0
+            if plan.wasCapped {
+                NSLog(
+                    "SystemAudioRecorder recovery gap capped at "
+                        + "\(AudioRecoverySilencePlanner.maximumDuration)s")
+            }
+        }
+    }
+
+    private func noteDroppedBuffer() {
+        // Capture-health accounting is best-effort. Never wait behind its reader
+        // or emit a log from Core Audio's realtime callback.
+        guard dropLock.try() else { return }
+        droppedBufferCount += 1
+        dropLock.unlock()
+    }
+
+    private func prepareBufferPool(format: AVAudioFormat) throws {
+        var prepared: [AVAudioPCMBuffer] = []
+        prepared.reserveCapacity(Self.bufferPoolSize)
+        for _ in 0..<Self.bufferPoolSize {
+            guard let buffer = AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: Self.pooledBufferFrameCapacity
+            ) else {
+                throw RecorderError.badTapFormat
+            }
+            prepared.append(buffer)
+        }
+        bufferPoolLock.lock()
+        bufferPool = prepared
+        bufferPoolLock.unlock()
+    }
+
+    /// Runs on Core Audio's real-time callback. `try()` makes saturation a
+    /// dropped-buffer event instead of priority-inverting on a contended lock.
+    private func borrowBuffer(frameLength: AVAudioFrameCount) -> AVAudioPCMBuffer? {
+        guard frameLength <= Self.pooledBufferFrameCapacity,
+              bufferPoolLock.try() else { return nil }
+        defer { bufferPoolLock.unlock() }
+        guard let buffer = bufferPool.popLast() else { return nil }
+        buffer.frameLength = frameLength
+        return buffer
+    }
+
+    private func returnBuffer(_ buffer: AVAudioPCMBuffer) {
+        bufferPoolLock.lock()
+        bufferPool.append(buffer)
+        bufferPoolLock.unlock()
     }
 
     private static func formatsCompatible(_ lhs: AVAudioFormat, _ rhs: AVAudioFormat) -> Bool {
@@ -344,7 +472,7 @@ final class SystemAudioRecorder {
             UnsafeMutablePointer(mutating: source.audioBufferList))
         let destinationBuffers = UnsafeMutableAudioBufferListPointer(
             destination.mutableAudioBufferList)
-        var sumSquares = 0.0
+        var sumSquares: Double = 0
         var sampleCount = 0
         for (src, dst) in zip(sourceBuffers, destinationBuffers) {
             guard let srcData = src.mData, let dstData = dst.mData else { continue }
@@ -352,13 +480,62 @@ final class SystemAudioRecorder {
             memcpy(dstData, srcData, bytes)
             let samples = srcData.assumingMemoryBound(to: Float.self)
             let count = bytes / MemoryLayout<Float>.size
-            for index in 0..<count {
-                let sample = Double(samples[index])
-                sumSquares += sample * sample
-            }
+            var partial: Float = 0
+            vDSP_svesq(samples, 1, &partial, vDSP_Length(count))
+            sumSquares += Double(partial)
             sampleCount += count
         }
         guard sampleCount > 0 else { return 0 }
         return Float(sqrt(sumSquares / Double(sampleCount)))
+    }
+
+    private static func copyBuffer(_ source: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let destination = AVAudioPCMBuffer(
+            pcmFormat: source.format,
+            frameCapacity: source.frameLength) else { return nil }
+        destination.frameLength = source.frameLength
+        return copyBuffer(source, into: destination) ? destination : nil
+    }
+
+    private static func copyBuffer(
+        _ source: AVAudioPCMBuffer,
+        into destination: AVAudioPCMBuffer
+    ) -> Bool {
+        copyBufferList(source.audioBufferList, into: destination)
+    }
+
+    private static func copyBufferList(
+        _ source: UnsafePointer<AudioBufferList>,
+        into destination: AVAudioPCMBuffer
+    ) -> Bool {
+        let sourceBuffers = UnsafeMutableAudioBufferListPointer(
+            UnsafeMutablePointer(mutating: source))
+        let destinationBuffers = UnsafeMutableAudioBufferListPointer(
+            destination.mutableAudioBufferList)
+        guard sourceBuffers.count == destinationBuffers.count else { return false }
+        for (source, destination) in zip(sourceBuffers, destinationBuffers) {
+            guard source.mDataByteSize <= destination.mDataByteSize,
+                  let sourceData = source.mData,
+                  let destinationData = destination.mData else { return false }
+            memcpy(destinationData, sourceData, Int(source.mDataByteSize))
+        }
+        return true
+    }
+
+    private static func measureRMS(of buffer: AVAudioPCMBuffer) -> Float {
+        let buffers = UnsafeMutableAudioBufferListPointer(
+            UnsafeMutablePointer(mutating: buffer.audioBufferList))
+        var sumSquares: Double = 0
+        var sampleCount = 0
+        for buffer in buffers {
+            guard let data = buffer.mData else { continue }
+            let samples = data.assumingMemoryBound(to: Float.self)
+            let count = Int(buffer.mDataByteSize) / MemoryLayout<Float>.size
+            var partial: Float = 0
+            vDSP_svesq(samples, 1, &partial, vDSP_Length(count))
+            sumSquares += Double(partial)
+            sampleCount += count
+        }
+        return sampleCount > 0 ? Float(sqrt(sumSquares / Double(sampleCount))) : 0
     }
 }

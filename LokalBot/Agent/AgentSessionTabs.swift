@@ -4,6 +4,7 @@ import Foundation
 /// subprocess, so switching tabs never pauses or replaces another session.
 @MainActor
 final class AgentSessionTabs: ObservableObject {
+    static let maximumLiveSessions = 4
 
     struct Tab: Identifiable {
         let id: UUID
@@ -47,6 +48,9 @@ final class AgentSessionTabs: ObservableObject {
 
     @discardableResult
     func addSession() -> Tab {
+        if tabs.count >= Self.maximumLiveSessions, let selectedTab {
+            return selectedTab
+        }
         let tab = Tab(id: UUID(), number: nextNumber, controller: makeController())
         nextNumber += 1
         tabs.append(tab)

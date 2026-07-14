@@ -1,5 +1,12 @@
 import Foundation
 
+enum LibraryInputPolicy {
+    static let maximumMeetingCount = 1_000
+    static let maximumSearchHits = 500
+    static let maximumQueryCharacters = 4_096
+    static let maximumQuestionCharacters = 16_384
+}
+
 /// Shared substring search over on-disk meeting artifacts. Case-insensitive,
 /// recency-ordered, and capped so the CLI and MCP expose one behavior.
 enum LibrarySearch {

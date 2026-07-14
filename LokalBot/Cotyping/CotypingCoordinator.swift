@@ -39,13 +39,15 @@ final class CotypingCoordinator: ObservableObject {
     private var focusPrewarmTask: Task<Void, Never>?
     private var focusPrewarmFieldIdentity: String?
     private var hostPublishPollGeneration: UInt64 = 0
+    private var hostPublishPollTask: Task<Void, Never>?
     private var wired = false
     private var lastLatencyMilliseconds: Int?
     private var isPostExhaustionAcceptanceArmed = false
     private var hasQueuedPostExhaustionAccept = false
     private var postExhaustionAcceptanceGeneration: UInt64 = 0
     private var pendingStreamPartial: PendingStreamPartial?
-    private var isStreamDrainScheduled = false
+    private var streamValidationTask: Task<Void, Never>?
+    private var streamValidationGeneration: UInt64 = 0
     private var lastAcceptedTail: AcceptedSuggestionTail?
     private var lastAcceptanceAt: Date?
     private var pendingInsertionConsumedCount: Int?
@@ -274,8 +276,11 @@ final class CotypingCoordinator: ObservableObject {
         let pollGeneration = hostPublishPollGeneration
         let keystrokeUptimeNanoseconds = DispatchTime.now().uptimeNanoseconds
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(Self.hostPublishFirstPollIntervalMs)) { [weak self] in
-            self?.pollForHostPublish(
+        hostPublishPollTask?.cancel()
+        hostPublishPollTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.hostPublishFirstPollIntervalMs))
+            guard !Task.isCancelled else { return }
+            await self?.pollForHostPublish(
                 baseline: baseline,
                 pollGeneration: pollGeneration,
                 elapsedMs: Self.hostPublishFirstPollIntervalMs,
@@ -289,9 +294,9 @@ final class CotypingCoordinator: ObservableObject {
         pollGeneration: UInt64,
         elapsedMs: Int,
         keystrokeUptimeNanoseconds: UInt64
-    ) {
+    ) async {
         guard isRunning, pollGeneration == hostPublishPollGeneration else { return }
-        let focus = focusTracker.refreshNow()
+        let focus = await focusTracker.refreshNow()
         guard isRunning, pollGeneration == hostPublishPollGeneration else { return }
         let nextElapsed = elapsedMs + Self.hostPublishPollIntervalMs
 
@@ -314,14 +319,13 @@ final class CotypingCoordinator: ObservableObject {
                    liveField: focus.field,
                    pendingInsertionConsumedCount: pendingInsertionConsumedCount),
                nextElapsed < Self.hostPublishWaitCeilingMs {
-                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(Self.hostPublishPollIntervalMs)) { [weak self] in
-                    self?.pollForHostPublish(
-                        baseline: baseline,
-                        pollGeneration: pollGeneration,
-                        elapsedMs: nextElapsed,
-                        keystrokeUptimeNanoseconds: keystrokeUptimeNanoseconds
-                    )
-                }
+                try? await Task.sleep(for: .milliseconds(Self.hostPublishPollIntervalMs))
+                guard !Task.isCancelled else { return }
+                await pollForHostPublish(
+                    baseline: baseline,
+                    pollGeneration: pollGeneration,
+                    elapsedMs: nextElapsed,
+                    keystrokeUptimeNanoseconds: keystrokeUptimeNanoseconds)
                 return
             }
             scheduleGeneration(consumedDelayMilliseconds: consumed)
@@ -335,14 +339,13 @@ final class CotypingCoordinator: ObservableObject {
             return
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(Self.hostPublishPollIntervalMs)) { [weak self] in
-            self?.pollForHostPublish(
-                baseline: baseline,
-                pollGeneration: pollGeneration,
-                elapsedMs: nextElapsed,
-                keystrokeUptimeNanoseconds: keystrokeUptimeNanoseconds
-            )
-        }
+        try? await Task.sleep(for: .milliseconds(Self.hostPublishPollIntervalMs))
+        guard !Task.isCancelled else { return }
+        await pollForHostPublish(
+            baseline: baseline,
+            pollGeneration: pollGeneration,
+            elapsedMs: nextElapsed,
+            keystrokeUptimeNanoseconds: keystrokeUptimeNanoseconds)
     }
 
     private nonisolated static func elapsedMilliseconds(since uptimeNanoseconds: UInt64) -> Int {
@@ -353,6 +356,8 @@ final class CotypingCoordinator: ObservableObject {
         focusPrewarmTask?.cancel()
         focusPrewarmTask = nil
         hostPublishPollGeneration &+= 1
+        hostPublishPollTask?.cancel()
+        hostPublishPollTask = nil
         pendingSpeculativeSignature = nil
         pendingSpeculativeResult = nil
         debounceTask?.cancel()
@@ -447,7 +452,8 @@ final class CotypingCoordinator: ObservableObject {
             state = .disabled(CotypingMeetingPause.reason)
             return
         }
-        let focus = refreshFocusForPrediction(settings: settings)
+        let focus = await refreshFocusForPrediction(settings: settings)
+        guard work == generation, isRunning, !Task.isCancelled else { return }
 
         if let reason = CotypingAvailability.disabledReason(
             enabled: settings.cotypingEnabled,
@@ -514,7 +520,7 @@ final class CotypingCoordinator: ObservableObject {
                 guard streamPartials else { return }
                 Task { @MainActor in self?.queueStreamPartial(partial, work: work, field: field) }
             }
-            completeGeneration(
+            await completeGeneration(
                 result,
                 targetField: field,
                 work: work,
@@ -538,16 +544,27 @@ final class CotypingCoordinator: ObservableObject {
         work: UInt64,
         latencyMilliseconds: Int,
         holdSignature: String?
-    ) {
+    ) async {
         guard work == generation, isRunning else { return }
         let settings = settingsProvider()
 
         if let signature = holdSignature {
             guard pendingSpeculativeSignature == signature else { return }
-            let focus = focusTracker.refreshNow(
+            guard let focus = await focusTracker.refreshForValidation(
                 includeSurface: settings.cotypingUseAppContext,
                 includeURL: !settings.cotypingExcludedDomainList.isEmpty,
-                includeStyle: settings.cotypingMatchHostStyle)
+                includeStyle: settings.cotypingMatchHostStyle) else {
+                guard work == generation, pendingSpeculativeSignature == signature else { return }
+                pendingSpeculativeResult = PendingSpeculativeResult(
+                    result: result,
+                    work: work,
+                    optimisticField: targetField,
+                    latencyMilliseconds: latencyMilliseconds)
+                return
+            }
+            guard work == generation,
+                  isRunning,
+                  pendingSpeculativeSignature == signature else { return }
             if let publishedField = focus.field,
                publishedField.contentSignature == signature {
                 _ = applySpeculativeResult(
@@ -566,9 +583,11 @@ final class CotypingCoordinator: ObservableObject {
             return
         }
 
-        guard let liveField = validatedLiveFieldForGeneratedResult(
+        guard let liveField = await validatedLiveFieldForGeneratedResult(
             originalField: targetField,
-            settings: settings) else {
+            settings: settings,
+            work: work) else {
+            guard work == generation, isRunning else { return }
             clearStaleGeneratedResult()
             return
         }
@@ -652,25 +671,36 @@ final class CotypingCoordinator: ObservableObject {
         return resolution.value
     }
 
-    private func refreshFocusForPrediction(settings: AppSettings) -> CotypingFocus {
+    private func refreshFocusForPrediction(settings: AppSettings) async -> CotypingFocus {
         let includeSurface = settings.cotypingUseAppContext
         let includeURL = !settings.cotypingExcludedDomainList.isEmpty
         let includeStyle = settings.cotypingMatchHostStyle
         guard !includeSurface, !includeURL, !includeStyle else {
-            return focusTracker.refreshNow(
+            return await focusTracker.refreshNow(
                 includeSurface: includeSurface,
                 includeURL: includeURL,
                 includeStyle: includeStyle)
         }
-        return focusTracker.refreshIfStale(
+        return await focusTracker.refreshIfStale(
             maxAgeMilliseconds: Self.freshSnapshotReuseWindowMilliseconds)
     }
 
     private func validatedLiveFieldForGeneratedResult(
         originalField: CotypingField,
-        settings: AppSettings
-    ) -> CotypingField? {
-        let focus = refreshFocusForPrediction(settings: settings)
+        settings: AppSettings,
+        work: UInt64
+    ) async -> CotypingField? {
+        guard work == generation, isRunning else { return nil }
+        let includeSurface = settings.cotypingUseAppContext
+        let includeURL = !settings.cotypingExcludedDomainList.isEmpty
+        let includeStyle = settings.cotypingMatchHostStyle
+        guard let focus = await focusTracker.refreshForValidation(
+            includeSurface: includeSurface,
+            includeURL: includeURL,
+            includeStyle: includeStyle) else {
+            return nil
+        }
+        guard work == generation, isRunning else { return nil }
         if let reason = CotypingAvailability.disabledReason(
             enabled: settings.cotypingEnabled,
             excludedApps: settings.cotypingExcludedAppList,
@@ -810,7 +840,7 @@ final class CotypingCoordinator: ObservableObject {
             do {
                 let result = try await self.engine.generate(request)
                 guard !Task.isCancelled else { return }
-                self.completeGeneration(
+                await self.completeGeneration(
                     result,
                     targetField: optimisticField,
                     work: work,
@@ -862,28 +892,41 @@ final class CotypingCoordinator: ObservableObject {
     private func queueStreamPartial(_ result: CotypingNormalizationResult, work: UInt64, field: CotypingField) {
         guard work == generation, isRunning else { return }
         pendingStreamPartial = PendingStreamPartial(result: result, work: work, field: field)
-        guard !isStreamDrainScheduled else { return }
-        isStreamDrainScheduled = true
-        DispatchQueue.main.async { [weak self] in
-            self?.drainStreamPartial()
+        guard streamValidationTask == nil else { return }
+        streamValidationGeneration &+= 1
+        let validationGeneration = streamValidationGeneration
+        streamValidationTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled,
+                  self.streamValidationGeneration == validationGeneration,
+                  let pending = self.pendingStreamPartial {
+                self.pendingStreamPartial = nil
+                await self.renderStreamPartial(
+                    pending.result,
+                    work: pending.work,
+                    field: pending.field)
+            }
+            if self.streamValidationGeneration == validationGeneration {
+                self.streamValidationTask = nil
+            }
         }
-    }
-
-    private func drainStreamPartial() {
-        isStreamDrainScheduled = false
-        guard let pending = pendingStreamPartial else { return }
-        pendingStreamPartial = nil
-        renderStreamPartial(pending.result, work: pending.work, field: pending.field)
     }
 
     /// Renders a streamed partial. Monotonic: ignores reordered/shorter partials
     /// so the ghost only grows.
-    private func renderStreamPartial(_ result: CotypingNormalizationResult, work: UInt64, field: CotypingField) {
+    private func renderStreamPartial(
+        _ result: CotypingNormalizationResult,
+        work: UInt64,
+        field: CotypingField
+    ) async {
         guard work == generation, isRunning, !result.text.isEmpty else { return }
         let settings = settingsProvider()
-        guard let liveField = validatedLiveFieldForGeneratedResult(
+        let liveField = await validatedLiveFieldForGeneratedResult(
             originalField: field,
-            settings: settings) else {
+            settings: settings,
+            work: work)
+        guard work == generation, isRunning, !Task.isCancelled else { return }
+        guard let liveField else {
             clearStaleGeneratedResult()
             return
         }
@@ -1125,7 +1168,7 @@ final class CotypingCoordinator: ObservableObject {
                 guard let self, self.overlay.isVisible, let liveSession = self.session,
                       liveSession.remainingText == remainingText else { return }
                 guard !self.isAwaitingPostInsertionSync else { return }
-                let focus = self.focusTracker.refreshNow()
+                let focus = await self.focusTracker.refreshNow()
                 if let field = focus.field {
                     let placement = self.placement(for: field)
                     if self.overlay.shouldHoldInlineReanchor(
@@ -1181,6 +1224,9 @@ final class CotypingCoordinator: ObservableObject {
         pendingInsertionConsumedCount = nil
         overlay.hide()
         pendingStreamPartial = nil
+        streamValidationGeneration &+= 1
+        streamValidationTask?.cancel()
+        streamValidationTask = nil
         if releasePostExhaustionWindow {
             clearPostExhaustionAcceptanceWindow()
         }

@@ -51,4 +51,30 @@ final class AgentAccessGateTests: XCTestCase {
         }
         XCTAssertEqual(AgentAccessGate().root.path, root.path)
     }
+
+    func testScopedCapabilityAuthorizesOnlyWhilePresentAndUnexpired() throws {
+        let (gate, root) = makeGate()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let capability = try gate.issueScopedCapability(validFor: 120)
+        let environment = [AgentAccessGate.capabilityEnvironmentKey: capability.token]
+
+        XCTAssertTrue(gate.isAuthorized(environment: environment))
+        XCTAssertFalse(gate.isAuthorized(
+            environment: environment,
+            now: Date().addingTimeInterval(121)))
+        XCTAssertFalse(gate.isAuthorized(environment: [
+            AgentAccessGate.capabilityEnvironmentKey: capability.token + "tampered",
+        ]))
+
+        gate.revoke(capability)
+        XCTAssertFalse(gate.isAuthorized(environment: environment))
+    }
+
+    func testGlobalToggleAuthorizesWithoutCapability() throws {
+        let (gate, root) = makeGate()
+        defer { try? FileManager.default.removeItem(at: root) }
+        XCTAssertFalse(gate.isAuthorized(environment: [:]))
+        try gate.enable()
+        XCTAssertTrue(gate.isAuthorized(environment: [:]))
+    }
 }

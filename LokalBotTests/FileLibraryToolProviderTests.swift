@@ -99,6 +99,12 @@ final class FileLibraryToolProviderTests: XCTestCase {
             arguments: ["limit": 1])
         XCTAssertTrue(capped.text.contains("Cache planning"))
         XCTAssertFalse(capped.text.contains("Old sync"))
+
+        for invalid: JSONValue in [0, -1, .number(1.5), 1_001] {
+            let result = await provider.call(
+                name: "list_meetings", arguments: ["limit": invalid])
+            XCTAssertTrue(result.text.hasPrefix("[invalid_arguments]"), "\(invalid)")
+        }
     }
 
     func testGetMeetingLatestReturnsMarkdownSections() async {
@@ -141,6 +147,10 @@ final class FileLibraryToolProviderTests: XCTestCase {
 
         let missing = await provider.call(name: "search_meetings", arguments: nil)
         XCTAssertTrue(missing.text.hasPrefix("[invalid_arguments]"))
+
+        let badLimit = await provider.call(
+            name: "search_meetings", arguments: ["query": "redis", "limit": -4])
+        XCTAssertTrue(badLimit.text.hasPrefix("[invalid_arguments]"))
     }
 
     func testAskLibraryDelegatesToClosure() async {

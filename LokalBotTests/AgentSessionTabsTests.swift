@@ -99,6 +99,16 @@ final class AgentSessionTabsTests: XCTestCase {
         XCTAssertEqual(second.controller.state, .idle)
     }
 
+    func testLiveSessionCountIsBounded() {
+        let factory = Factory(root: root)
+        let sessions = AgentSessionTabs { factory.makeController() }
+        for _ in 0..<(AgentSessionTabs.maximumLiveSessions + 3) {
+            _ = sessions.addSession()
+        }
+        XCTAssertEqual(sessions.tabs.count, AgentSessionTabs.maximumLiveSessions)
+        XCTAssertEqual(factory.transports.count, AgentSessionTabs.maximumLiveSessions)
+    }
+
     func testClearSavedHistoryStopsSessionsRemovesFilesAndCreatesFreshTab() async throws {
         let factory = Factory(root: root)
         try FileManager.default.createDirectory(

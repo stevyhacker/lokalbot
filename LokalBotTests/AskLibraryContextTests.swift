@@ -103,6 +103,37 @@ final class AskLibraryContextTests: XCTestCase {
         XCTAssertEqual(summaryLines.count, 1)
     }
 
+    func testTitleSummaryMatchesAreRankedCappedAndBudgeted() throws {
+        try MeetingFixture.write((0..<10).map { index in
+            .init(
+                title: "Portfolio review",
+                startedAt: Date(timeIntervalSince1970: 1_790_000_000 + Double(index)),
+                summary: "rank-\(index)\n" + String(
+                    repeating: "🧠",
+                    count: AskLibraryContext.maxSummaryUTF8Bytes),
+                transcriptLines: [])
+        }, under: root)
+
+        let meetings = try SessionLookup.loadAllMeetings()
+        let bundle = AskLibraryContext.build(
+            question: "Please summarize the Portfolio review meeting",
+            meetings: meetings)
+
+        XCTAssertLessThanOrEqual(
+            bundle.contextText.utf8.count,
+            AskLibraryContext.maxContextUTF8Bytes)
+        XCTAssertEqual(
+            bundle.contextText.components(separatedBy: "— full summary").count - 1,
+            AskLibraryContext.maxTitleSummaryMatches)
+        XCTAssertTrue(bundle.contextText.contains("[… summary truncated …]"))
+        for index in 6..<10 {
+            XCTAssertTrue(bundle.contextText.contains("rank-\(index)"), "missing newest rank \(index)")
+        }
+        for index in 0..<6 {
+            XCTAssertFalse(bundle.contextText.contains("rank-\(index)"), "included older rank \(index)")
+        }
+    }
+
     func testEmptyBundleWhenNothingMatches() throws {
         let meetings = try SessionLookup.loadAllMeetings()
         let bundle = AskLibraryContext.build(

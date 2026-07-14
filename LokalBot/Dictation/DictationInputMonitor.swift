@@ -57,7 +57,13 @@ final class DictationInputMonitor {
     /// Returns true when the original event should be swallowed.
     fileprivate func handle(type: CGEventType, event: CGEvent) -> Bool {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            // A disabled event tap can swallow the physical key-up. Treat the
+            // disable notification as a fail-safe release before re-enabling,
+            // otherwise push-to-talk may record indefinitely.
+            let shouldStop = shortcutIsDown && triggerModeProvider() == .pushToTalk
+            shortcutIsDown = false
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            if shouldStop { onStop?() }
             return false
         }
         guard type == .keyDown || type == .keyUp else { return false }

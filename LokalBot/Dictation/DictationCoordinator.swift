@@ -31,6 +31,7 @@ final class DictationCoordinator: ObservableObject {
     }
 
     @Published private(set) var state: State = .idle
+    @Published private(set) var isStarting = false
     @Published private(set) var now = Date()
     @Published private(set) var isShortcutMonitoringActive = false
     @Published private(set) var lastTranscript: String?
@@ -45,15 +46,22 @@ final class DictationCoordinator: ObservableObject {
     private let canStart: () -> Bool
     private let onBusy: () -> Void
     private let onError: (String) -> Void
+    private let focusSnapshotExecutor: DictationFocusSnapshotExecutor
     private let recorder = MicRecorder()
     private let inputMonitor = DictationInputMonitor()
     private let overlay = DictationOverlayController()
     private lazy var inserter = CotypingInserter()
     private var tick: AnyCancellable?
     private var prewarmTask: Task<Void, Never>?
+    private var startTask: Task<Void, Never>?
+    private var startTaskGeneration: Int?
     private var livePreviewTask: Task<Void, Never>?
     private var transcribeTask: Task<Void, Never>?
+    private var mediaCleanupTask: Task<Void, Never>?
+    private var mediaCleanupGeneration = 0
     private var activeAudioURL: URL?
+    private var pausedMediaSession: MediaPlaybackController.PauseSession?
+    private var deliveryTarget: DictationDeliveryTarget?
     private var generation = 0
 
     init(
@@ -61,13 +69,15 @@ final class DictationCoordinator: ObservableObject {
         settingsProvider: @escaping () -> AppSettings,
         canStart: @escaping () -> Bool,
         onBusy: @escaping () -> Void,
-        onError: @escaping (String) -> Void
+        onError: @escaping (String) -> Void,
+        focusSnapshotExecutor: DictationFocusSnapshotExecutor = .shared
     ) {
         self.storageRoot = storageRoot
         self.settingsProvider = settingsProvider
         self.canStart = canStart
         self.onBusy = onBusy
         self.onError = onError
+        self.focusSnapshotExecutor = focusSnapshotExecutor
         inputMonitor.triggerModeProvider = { [weak self] in
             self?.settingsProvider().dictationTriggerMode ?? .pushToTalk
         }
@@ -75,6 +85,7 @@ final class DictationCoordinator: ObservableObject {
         inputMonitor.onStart = { [weak self] in self?.start(source: "shortcut") }
         inputMonitor.onStop = { [weak self] in self?.finishRecordingAndTranscribe(source: "shortcut") }
         inputMonitor.onToggle = { [weak self] in self?.toggle(source: "shortcut") }
+        Self.sweepOrphanedPreviewFiles(storageRoot: storageRoot)
     }
 
     var elapsed: TimeInterval {
@@ -121,7 +132,7 @@ final class DictationCoordinator: ObservableObject {
                         generation: generation)
                 }
             } else {
-                stopLivePreview(reset: true)
+                _ = cancelLivePreview(reset: true)
             }
         }
         refreshOverlay()
@@ -136,6 +147,10 @@ final class DictationCoordinator: ObservableObject {
     }
 
     func toggle(source: String = "ui") {
+        if isStarting {
+            invalidateStartingSession()
+            return
+        }
         switch state {
         case .idle:
             start(source: source)
@@ -147,7 +162,7 @@ final class DictationCoordinator: ObservableObject {
     }
 
     func start(source: String = "ui") {
-        guard case .idle = state else { return }
+        guard case .idle = state, startTask == nil else { return }
         guard canStart() else {
             onBusy()
             return
@@ -155,22 +170,61 @@ final class DictationCoordinator: ObservableObject {
         let startedAt = Date()
         generation += 1
         let session = generation
+        startTaskGeneration = session
+        isStarting = true
+        let outputMode = settingsProvider().dictationOutputMode
+        let deliveryTargetTask = Task { [focusSnapshotExecutor] in
+            await Self.captureDeliveryTarget(
+                for: outputMode,
+                using: focusSnapshotExecutor)
+        }
+        deliveryTarget = nil
         resetLivePreview()
-        Task {
+        refreshOverlay()
+        let pendingMediaCleanup = mediaCleanupTask
+        startTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                deliveryTargetTask.cancel()
+                if self.startTaskGeneration == session {
+                    self.startTask = nil
+                    self.startTaskGeneration = nil
+                    if self.isStarting {
+                        self.isStarting = false
+                        self.refreshOverlay()
+                    }
+                }
+            }
             guard await MicRecorder.requestPermission() else {
-                guard self.generation == session else { return }
+                guard self.generation == session, !Task.isCancelled else { return }
                 self.onError("Microphone permission denied.")
                 return
             }
-            guard self.generation == session else { return }
+            let capturedDeliveryTarget = await deliveryTargetTask.value
+            // An earlier cancel may still be restoring the exact players it
+            // paused. Finish that bounded transition before taking a new media
+            // snapshot, otherwise its late resume could interrupt this capture.
+            if let pendingMediaCleanup { await pendingMediaCleanup.value }
+            guard self.generation == session, !Task.isCancelled else { return }
+            self.deliveryTarget = capturedDeliveryTarget
+            var localMediaSession: MediaPlaybackController.PauseSession?
             do {
                 let audioURL = try self.nextAudioURL(startedAt: startedAt)
-                let pausedMedia = MediaPlaybackController.pauseActiveMediaPlayers(reason: "dictation")
+                let pausedMedia = await MediaPlaybackController.pauseActiveMediaPlayers(
+                    reason: "dictation")
+                localMediaSession = pausedMedia
                 if !pausedMedia.isEmpty {
                     try await Task.sleep(for: .milliseconds(250))
                 }
-                guard self.generation == session else { return }
+                guard self.generation == session, !Task.isCancelled else {
+                    await MediaPlaybackController.resume(pausedMedia, reason: "cancelled dictation start")
+                    return
+                }
                 try await self.startRecorder(writingTo: audioURL)
+                try Task.checkCancellation()
+                guard self.generation == session else { throw CancellationError() }
+                self.pausedMediaSession = pausedMedia
+                localMediaSession = nil
                 self.activeAudioURL = audioURL
                 self.state = .recording(startedAt: startedAt)
                 self.startTick()
@@ -181,7 +235,22 @@ final class DictationCoordinator: ObservableObject {
                 self.prewarmSelectedModel(reason: source)
                 self.startLivePreviewIfNeeded(audioURL: audioURL, config: config, generation: session)
                 lokalbotLog("dictation recording started source=\(source)")
+            } catch is CancellationError {
+                if let localMediaSession {
+                    await MediaPlaybackController.resume(
+                        localMediaSession, reason: "cancelled dictation start")
+                } else {
+                    await self.resumePausedMedia(reason: "cancelled dictation start")
+                }
+                self.recorder.stop()
+                self.activeAudioURL = nil
             } catch {
+                if let localMediaSession {
+                    await MediaPlaybackController.resume(
+                        localMediaSession, reason: "failed dictation start")
+                } else {
+                    await self.resumePausedMedia(reason: "failed dictation start")
+                }
                 self.onError("Could not start dictation: \(error.localizedDescription)")
                 self.activeAudioURL = nil
                 self.state = .idle
@@ -193,8 +262,14 @@ final class DictationCoordinator: ObservableObject {
     }
 
     func finishRecordingAndTranscribe(source: String = "ui") {
+        if isStarting {
+            invalidateStartingSession()
+            return
+        }
         guard case .recording(let startedAt) = state, let audioURL = activeAudioURL else { return }
-        stopLivePreview(reset: false)
+        let previewTask = cancelLivePreview(reset: false)
+        let mediaSession = pausedMediaSession
+        pausedMediaSession = nil
         recorder.stop()
         activeAudioURL = nil
         stopTick()
@@ -205,20 +280,32 @@ final class DictationCoordinator: ObservableObject {
         refreshOverlay()
         generation += 1
         let session = generation
+        let mediaCleanup = mediaSession.map {
+            scheduleMediaResume($0, reason: "dictation capture finished")
+        }
         transcribeTask?.cancel()
         transcribeTask = Task { [weak self] in
+            if let mediaCleanup { await mediaCleanup.value }
+            if let previewTask { await previewTask.value }
+            guard !Task.isCancelled else { return }
             await self?.transcribeAndDeliver(audioURL: audioURL, startedAt: startedAt,
                                              source: source, generation: session)
         }
     }
 
     func cancel() {
+        if startTask != nil {
+            invalidateStartingSession()
+            prewarmTask?.cancel()
+            prewarmTask = nil
+            return
+        }
         generation += 1
         transcribeTask?.cancel()
         transcribeTask = nil
         prewarmTask?.cancel()
         prewarmTask = nil
-        stopLivePreview(reset: true)
+        _ = cancelLivePreview(reset: true)
         if case .recording = state {
             recorder.stop()
         }
@@ -228,7 +315,13 @@ final class DictationCoordinator: ObservableObject {
         activeAudioURL = nil
         state = .idle
         stopTick()
+        deliveryTarget = nil
+        let mediaSession = pausedMediaSession
+        pausedMediaSession = nil
         refreshOverlay()
+        if let mediaSession {
+            scheduleMediaResume(mediaSession, reason: "cancelled dictation")
+        }
         lokalbotLog("dictation cancelled")
     }
 
@@ -258,8 +351,12 @@ final class DictationCoordinator: ObservableObject {
 
             lastTranscript = text
             lastEngine = transcript.engine
-            let delivered = deliver(text, mode: config.dictationOutputMode)
-            if !delivered {
+            switch await deliver(text, mode: config.dictationOutputMode) {
+            case .inserted, .copied:
+                break
+            case .focusChanged:
+                onError("Dictation finished after focus moved, so the text was copied to the clipboard instead of being inserted into another app.")
+            case .failed:
                 onError("Dictation finished, but LokalBot could not insert the text. It was copied to the clipboard.")
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
@@ -275,13 +372,25 @@ final class DictationCoordinator: ObservableObject {
         }
     }
 
-    private func deliver(_ text: String, mode: DictationOutputMode) -> Bool {
+    private enum DeliveryResult {
+        case inserted
+        case copied
+        case focusChanged
+        case failed
+    }
+
+    private func deliver(_ text: String, mode: DictationOutputMode) async -> DeliveryResult {
         switch mode {
         case .pasteIntoFocusedApp:
-            return inserter.insertViaPaste(text) || inserter.insert(text)
+            guard await deliveryTargetMatchesCurrentFocus() else {
+                NSPasteboard.general.clearContents()
+                return NSPasteboard.general.setString(text, forType: .string)
+                    ? .focusChanged : .failed
+            }
+            return inserter.insertViaPaste(text) || inserter.insert(text) ? .inserted : .failed
         case .copyToClipboard:
             NSPasteboard.general.clearContents()
-            return NSPasteboard.general.setString(text, forType: .string)
+            return NSPasteboard.general.setString(text, forType: .string) ? .copied : .failed
         }
     }
 
@@ -289,7 +398,65 @@ final class DictationCoordinator: ObservableObject {
         state = .idle
         stopTick()
         resetLivePreview()
+        deliveryTarget = nil
         refreshOverlay()
+    }
+
+    nonisolated private static func captureDeliveryTarget(
+        for mode: DictationOutputMode,
+        using executor: DictationFocusSnapshotExecutor
+    ) async -> DictationDeliveryTarget? {
+        guard mode == .pasteIntoFocusedApp else { return nil }
+        let capture = await executor.capture()
+        guard !capture.timedOut, let snapshot = capture.snapshot else { return nil }
+        return DictationDeliveryTarget.captured(from: snapshot)
+    }
+
+    private func deliveryTargetMatchesCurrentFocus() async -> Bool {
+        guard let deliveryTarget else { return false }
+        let capture = await focusSnapshotExecutor.capture()
+        guard !capture.timedOut, let snapshot = capture.snapshot else { return false }
+        return deliveryTarget.matches(snapshot)
+    }
+
+    private func invalidateStartingSession() {
+        generation += 1
+        // Do not cancel an in-flight media pause: it is bounded, and allowing
+        // it to return gives that task the exact resume token it needs. The
+        // generation guard prevents the recorder from starting afterward. Keep
+        // the task retained until that pause-and-resume cleanup finishes so a
+        // new start cannot race ahead of its late media restoration.
+        isStarting = false
+        state = .idle
+        stopTick()
+        deliveryTarget = nil
+        resetLivePreview()
+        refreshOverlay()
+        lokalbotLog("dictation start cancelled before capture")
+    }
+
+    private func resumePausedMedia(reason: String) async {
+        guard let pausedMediaSession else { return }
+        self.pausedMediaSession = nil
+        await MediaPlaybackController.resume(pausedMediaSession, reason: reason)
+    }
+
+    @discardableResult
+    private func scheduleMediaResume(
+        _ session: MediaPlaybackController.PauseSession,
+        reason: String
+    ) -> Task<Void, Never> {
+        mediaCleanupGeneration += 1
+        let cleanupGeneration = mediaCleanupGeneration
+        let precedingCleanup = mediaCleanupTask
+        let task = Task { [weak self] in
+            if let precedingCleanup { await precedingCleanup.value }
+            await MediaPlaybackController.resume(session, reason: reason)
+            guard let self, self.mediaCleanupGeneration == cleanupGeneration else { return }
+            self.mediaCleanupTask = nil
+        }
+        mediaCleanupTask = task
+        return task
     }
 
     private func completeWithMessage(_ message: String) {
@@ -414,13 +581,16 @@ final class DictationCoordinator: ObservableObject {
         }
     }
 
-    private func stopLivePreview(reset: Bool) {
-        livePreviewTask?.cancel()
+    @discardableResult
+    private func cancelLivePreview(reset: Bool) -> Task<Void, Never>? {
+        let task = livePreviewTask
+        task?.cancel()
         livePreviewTask = nil
         isLivePreviewWorking = false
         if reset {
             resetLivePreview()
         }
+        return task
     }
 
     private func resetLivePreview() {
@@ -434,17 +604,11 @@ final class DictationCoordinator: ObservableObject {
         min(4.0, max(1.4, duration / 8.0))
     }
 
-    private nonisolated static func copyLivePreviewSnapshot(
-        from audioURL: URL,
-        storageRoot: URL
-    ) throws -> URL {
-        let dir = storageRoot.appendingPathComponent("dictation-previews", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let ext = audioURL.pathExtension.isEmpty ? "caf" : audioURL.pathExtension
-        let destination = dir.appendingPathComponent(
-            "\(audioURL.deletingPathExtension().lastPathComponent)-live-\(UUID().uuidString).\(ext)")
-        try FileManager.default.copyItem(at: audioURL, to: destination)
-        return destination
+    nonisolated static let previewScratchDirectoryName = "dictation-previews"
+
+    nonisolated static func sweepOrphanedPreviewFiles(storageRoot: URL) {
+        try? FileManager.default.removeItem(at: storageRoot.appendingPathComponent(
+            previewScratchDirectoryName, isDirectory: true))
     }
 
     private struct IncrementalLivePreviewWindow: Sendable {
@@ -453,9 +617,9 @@ final class DictationCoordinator: ObservableObject {
         let endTime: TimeInterval
     }
 
-    /// Copies the append-only CAF to get a stable header, then materializes only
-    /// the unprocessed suffix plus a short overlap. The full snapshot is deleted
-    /// before returning; the caller owns and removes the much smaller window.
+    /// Opens the append-safe CAF at its current length and materializes only the
+    /// unprocessed suffix plus a short overlap. This keeps preview I/O bounded
+    /// as dictation grows instead of copying the full recording on every pass.
     private static func makeIncrementalLivePreviewWindow(
         from audioURL: URL,
         storageRoot: URL,
@@ -474,10 +638,7 @@ final class DictationCoordinator: ObservableObject {
         storageRoot: URL,
         previousEnd: TimeInterval
     ) throws -> IncrementalLivePreviewWindow {
-        let snapshot = try copyLivePreviewSnapshot(from: audioURL, storageRoot: storageRoot)
-        defer { try? FileManager.default.removeItem(at: snapshot) }
-
-        let reader = try AVAudioFile(forReading: snapshot)
+        let reader = try AVAudioFile(forReading: audioURL)
         let format = reader.processingFormat
         guard format.sampleRate > 0 else { throw DictationError.noAudio }
         let currentEnd = Double(reader.length) / format.sampleRate
@@ -493,8 +654,11 @@ final class DictationCoordinator: ObservableObject {
         let endFrame = reader.length
         guard endFrame > startFrame else { throw DictationError.noAudio }
 
-        let ext = snapshot.pathExtension.isEmpty ? "caf" : snapshot.pathExtension
-        let windowURL = snapshot.deletingLastPathComponent().appendingPathComponent(
+        let scratch = storageRoot.appendingPathComponent(
+            previewScratchDirectoryName, isDirectory: true)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let ext = audioURL.pathExtension.isEmpty ? "caf" : audioURL.pathExtension
+        let windowURL = scratch.appendingPathComponent(
             "dictation-live-window-\(UUID().uuidString).\(ext)")
         var keepWindow = false
         defer {

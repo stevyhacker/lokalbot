@@ -47,4 +47,18 @@ final class PiJSONLFrameSplitterTests: XCTestCase {
         var splitter = PiJSONLFrameSplitter()
         XCTAssertEqual(splitter.append(Data("\n\n{\"a\":1}\n\n".utf8)), ["{\"a\":1}"])
     }
+
+    func testOversizedFrameIsDiscardedAndFollowingFrameSurvives() {
+        var splitter = PiJSONLFrameSplitter(maximumFrameBytes: 1_024)
+        let oversized = String(repeating: "x", count: 2_000)
+        let lines = splitter.append(Data((oversized + "\n{\"ok\":true}\n").utf8))
+        XCTAssertEqual(lines.count, 2)
+        XCTAssertTrue(lines[0].contains("safety limit"))
+        XCTAssertEqual(lines[1], #"{"ok":true}"#)
+    }
+
+    func testInvalidUTF8BecomesProtocolErrorFrame() {
+        var splitter = PiJSONLFrameSplitter()
+        XCTAssertTrue(splitter.append(Data([0xFF, 0x0A])).first?.contains("valid UTF-8") == true)
+    }
 }

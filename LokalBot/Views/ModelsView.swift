@@ -27,6 +27,10 @@ struct ModelsView: View {
     @State private var showingHFBrowse = false
     @State private var hfSelectedModel: String?
     @State private var hfFiles: [HFFile] = []
+    @State private var openAIAPIKeyDraft = ""
+    @State private var openAIAPIKeySavedValue = ""
+    @State private var didLoadOpenAIAPIKey = false
+    @State private var openAIAPIKeySaved = false
 
     var body: some View {
         ScrollView {
@@ -50,6 +54,12 @@ struct ModelsView: View {
         .onAppear {
             refreshTranscriptionDownloads()
             refreshSpeechModel()
+            if !didLoadOpenAIAPIKey {
+                let savedKey = app.settings.openAIAPIKey
+                openAIAPIKeyDraft = savedKey
+                openAIAPIKeySavedValue = savedKey
+                didLoadOpenAIAPIKey = true
+            }
         }
         .sheet(isPresented: $showingHFBrowse) { huggingFaceBrowser }
     }
@@ -189,7 +199,21 @@ struct ModelsView: View {
             case .openAICompatible:
                 TextField("Base URL (…/v1)", text: $app.settings.openAIBaseURL)
                 TextField("Model name", text: $app.settings.openAIModel)
-                SecureField("API key (optional)", text: $app.settings.openAIAPIKey)
+                HStack(spacing: 8) {
+                    SecureField("API key (optional)", text: $openAIAPIKeyDraft)
+                        .onChange(of: openAIAPIKeyDraft) { _, _ in
+                            openAIAPIKeySaved = false
+                        }
+                    Button(openAIAPIKeySaved ? "Saved" : "Save key") {
+                        app.settings.openAIAPIKey = openAIAPIKeyDraft
+                        openAIAPIKeySavedValue = openAIAPIKeyDraft
+                        openAIAPIKeySaved = true
+                    }
+                    .disabled(openAIAPIKeyDraft == openAIAPIKeySavedValue)
+                }
+                Text("The key is written to Keychain only when you choose Save key.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 remoteEndpointDisclosure(rawURL: app.settings.openAIBaseURL)
             }
 
@@ -211,17 +235,26 @@ struct ModelsView: View {
     private func remoteEndpointDisclosure(rawURL: String) -> some View {
         if let url = URL(string: rawURL), InferenceEndpointPolicy.requiresApproval(url),
            let origin = InferenceEndpointPolicy.origin(for: url) {
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Remote server: meeting transcripts, screen text, and agent context may leave this Mac.",
-                      systemImage: "exclamationmark.triangle.fill")
+            if url.scheme?.lowercased() != "https" {
+                Label("Blocked: remote inference must use HTTPS so transcripts and screen text are encrypted in transit.",
+                      systemImage: "lock.slash.fill")
                     .font(.caption)
-                    .foregroundStyle(.orange)
-                Toggle("Allow sending inference context to \(origin)",
-                       isOn: remoteApprovalBinding(rawURL: rawURL))
-                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .padding(8)
+                    .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Remote server: meeting transcripts, screen text, and agent context may leave this Mac.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Toggle("Allow sending inference context to \(origin)",
+                           isOn: remoteApprovalBinding(rawURL: rawURL))
+                        .font(.caption)
+                }
+                .padding(8)
+                .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
             }
-            .padding(8)
-            .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
         } else if let url = URL(string: rawURL), InferenceEndpointPolicy.isLoopback(url) {
             Label("Loopback server: inference context stays on this Mac.",
                   systemImage: "checkmark.shield.fill")

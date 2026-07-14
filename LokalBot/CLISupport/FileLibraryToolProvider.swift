@@ -77,7 +77,7 @@ struct FileLibraryToolProvider: LibraryToolProvider {
     }
 
     func call(name: String, arguments: JSONValue?) async -> ToolResult {
-        guard gate.isEnabled else {
+        guard gate.isAuthorized() else {
             return .error(.accessDisabled, Self.accessDisabledMessage)
         }
 
@@ -127,7 +127,12 @@ struct FileLibraryToolProvider: LibraryToolProvider {
                 }
                 meetings = meetings.filter { $0.startedAt >= day }
             }
-            let limit = max(1, arguments?["limit"]?.intValue ?? 20)
+            let limit: Int
+            switch boundedLimit(arguments?["limit"], default: 20,
+                                maximum: LibraryInputPolicy.maximumMeetingCount) {
+            case .success(let value): limit = value
+            case .failure(let result): return result
+            }
             return .text(SessionFormatter.listJSON(Array(meetings.prefix(limit))))
         } catch {
             return .error(
@@ -137,7 +142,8 @@ struct FileLibraryToolProvider: LibraryToolProvider {
     }
 
     private func getMeeting(_ arguments: JSONValue?) -> ToolResult {
-        guard let id = arguments?["id"]?.stringValue, !id.isEmpty else {
+        guard let id = arguments?["id"]?.stringValue, !id.isEmpty,
+              id.count <= 64 else {
             return .error(
                 .invalidArguments,
                 "get_meeting requires an \"id\" string (short id, full UUID, or \"latest\").")
@@ -184,13 +190,21 @@ struct FileLibraryToolProvider: LibraryToolProvider {
     }
 
     private func searchMeetings(_ arguments: JSONValue?) -> ToolResult {
-        guard let query = arguments?["query"]?.stringValue, !query.isEmpty else {
+        guard let query = arguments?["query"]?.stringValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !query.isEmpty,
+              query.count <= LibraryInputPolicy.maximumQueryCharacters else {
             return .error(
                 .invalidArguments,
-                "search_meetings requires a non-empty \"query\" string.")
+                "search_meetings requires a non-empty \"query\" string of at most \(LibraryInputPolicy.maximumQueryCharacters) characters.")
         }
         do {
-            let limit = max(1, arguments?["limit"]?.intValue ?? LibrarySearch.defaultLimit)
+            let limit: Int
+            switch boundedLimit(arguments?["limit"], default: LibrarySearch.defaultLimit,
+                                maximum: LibraryInputPolicy.maximumSearchHits) {
+            case .success(let value): limit = value
+            case .failure(let result): return result
+            }
             return .text(SessionFormatter.searchJSON(
                 try LibrarySearch.hits(query: query, limit: limit)))
         } catch {
@@ -198,5 +212,21 @@ struct FileLibraryToolProvider: LibraryToolProvider {
                 .meetingNotFound,
                 "Could not read the meeting library: \(error.localizedDescription)")
         }
+    }
+
+    private enum LimitResult {
+        case success(Int)
+        case failure(ToolResult)
+    }
+
+    private func boundedLimit(_ raw: JSONValue?, default defaultValue: Int,
+                              maximum: Int) -> LimitResult {
+        guard let raw else { return .success(defaultValue) }
+        guard let value = raw.intValue, (1...maximum).contains(value) else {
+            return .failure(.error(
+                .invalidArguments,
+                "\"limit\" must be an integer between 1 and \(maximum)."))
+        }
+        return .success(value)
     }
 }

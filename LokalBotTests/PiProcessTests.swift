@@ -73,4 +73,36 @@ final class PiProcessTests: XCTestCase {
         let running = await process.isRunning
         XCTAssertFalse(running)
     }
+
+    func testStopIsBoundedWhenChildDoesNotDrainStdin() async throws {
+        // `sleep` deliberately never reads stdin. A full-size RPC frame fills
+        // the pipe and keeps the dedicated writer busy until stop closes it.
+        let process = PiProcess(plan: plan("/bin/sh", ["-c", "exec /bin/sleep 3"]))
+        try await process.start()
+        let line = String(
+            repeating: "x",
+            count: PiJSONLFrameSplitter.defaultMaximumFrameBytes - 1)
+        let blockedSend = Task { try await process.send(line: line) }
+        try await Task.sleep(for: .milliseconds(100))
+
+        do {
+            try await process.send(line: "second command")
+            XCTFail("expected bounded input backpressure")
+        } catch PiProcessError.inputBackpressure {
+            // expected: the first frame owns the bounded 4 MiB budget
+        }
+
+        let started = ContinuousClock.now
+        await process.stop()
+        XCTAssertLessThan(started.duration(to: .now), .seconds(1))
+
+        do {
+            try await blockedSend.value
+            XCTFail("expected the blocked write to fail when stdin closes")
+        } catch PiProcessError.inputClosed {
+            // expected
+        } catch PiProcessError.inputWriteFailed {
+            // The kernel may report EPIPE before DispatchIO observes close.
+        }
+    }
 }

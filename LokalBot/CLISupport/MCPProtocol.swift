@@ -60,7 +60,13 @@ enum JSONValue: Codable, Equatable {
     }
 
     var intValue: Int? {
-        if case .number(let value) = self { return Int(value) }
+        if case .number(let value) = self,
+           value.isFinite,
+           value.rounded(.towardZero) == value,
+           value >= Double(Int.min),
+           value <= Double(Int.max) {
+            return Int(value)
+        }
         return nil
     }
 
@@ -85,8 +91,92 @@ extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral,
     init(nilLiteral: ()) { self = .null }
 }
 
+enum MCPTransportLimits {
+    static let maximumRecordBytes = 1_048_576
+}
+
+/// Incremental newline-delimited stdin reader for the MCP helper. Its buffer
+/// never grows with an unterminated record: once the byte limit is crossed it
+/// reports one rejection and discards bytes until LF/EOF without constructing
+/// an oversized `String`.
+struct MCPStdioLineReader {
+    enum Record: Equatable {
+        case line(String)
+        case oversized
+        case end
+    }
+
+    private let input: FileHandle
+    private let maximumRecordBytes: Int
+    private let chunkBytes: Int
+    private var pending = Data()
+    private var reachedEOF = false
+    private var discardingOversizedRecord = false
+
+    init(
+        input: FileHandle = .standardInput,
+        maximumRecordBytes: Int = MCPTransportLimits.maximumRecordBytes,
+        chunkBytes: Int = 64 * 1_024
+    ) {
+        self.input = input
+        self.maximumRecordBytes = max(1, maximumRecordBytes)
+        self.chunkBytes = max(1, chunkBytes)
+    }
+
+    mutating func next() throws -> Record {
+        while true {
+            if discardingOversizedRecord {
+                if let newline = pending.firstIndex(of: 0x0A) {
+                    pending.removeSubrange(pending.startIndex...newline)
+                    discardingOversizedRecord = false
+                    continue
+                }
+                pending.removeAll(keepingCapacity: true)
+                if reachedEOF {
+                    discardingOversizedRecord = false
+                    return .end
+                }
+            } else {
+                if let newline = pending.firstIndex(of: 0x0A) {
+                    let byteCount = pending.distance(from: pending.startIndex, to: newline)
+                    guard byteCount <= maximumRecordBytes else {
+                        pending.removeSubrange(pending.startIndex...newline)
+                        return .oversized
+                    }
+                    var data = pending.prefix(upTo: newline)
+                    pending.removeSubrange(pending.startIndex...newline)
+                    if data.last == 0x0D { data.removeLast() }
+                    return .line(String(decoding: data, as: UTF8.self))
+                }
+
+                if pending.count > maximumRecordBytes {
+                    pending.removeAll(keepingCapacity: true)
+                    discardingOversizedRecord = true
+                    return .oversized
+                }
+
+                if reachedEOF {
+                    guard !pending.isEmpty else { return .end }
+                    var data = pending
+                    pending.removeAll(keepingCapacity: true)
+                    if data.last == 0x0D { data.removeLast() }
+                    return .line(String(decoding: data, as: UTF8.self))
+                }
+            }
+
+            let chunk = try input.read(upToCount: chunkBytes) ?? Data()
+            if chunk.isEmpty {
+                reachedEOF = true
+            } else {
+                pending.append(chunk)
+            }
+        }
+    }
+}
+
 /// One decoded JSON-RPC 2.0 message from an MCP client.
 struct MCPRequest: Equatable {
+    static let maximumLineBytes = MCPTransportLimits.maximumRecordBytes
     enum RequestID: Equatable {
         case number(Int)
         case string(String)
@@ -110,6 +200,9 @@ struct MCPRequest: Equatable {
     }
 
     static func parse(_ line: String) -> ParseOutcome {
+        guard line.utf8.count <= maximumLineBytes else {
+            return .failure(code: -32600, message: "Request exceeds the 1 MiB limit", id: nil)
+        }
         guard let raw = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)),
               let object = raw.objectValue else {
             return .failure(code: -32700, message: "Parse error", id: nil)
@@ -117,7 +210,14 @@ struct MCPRequest: Equatable {
 
         let id: RequestID?
         switch object["id"] {
-        case .some(.number(let value)): id = .number(Int(value))
+        case .some(.number(let value)):
+            guard value.isFinite,
+                  value.rounded(.towardZero) == value,
+                  value >= Double(Int.min),
+                  value <= Double(Int.max) else {
+                return .failure(code: -32600, message: "Invalid numeric request id", id: nil)
+            }
+            id = .number(Int(value))
         case .some(.string(let value)): id = .string(value)
         default: id = nil
         }

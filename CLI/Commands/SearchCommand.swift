@@ -25,7 +25,20 @@ struct SearchCommand: AsyncParsableCommand {
     var table: Bool = false
 
     func run() async throws {
-        let hits = try LibrarySearch.hits(query: query, limit: limit)
+        try AgentAccessGate().requireAuthorized()
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedQuery.isEmpty else {
+            throw ValidationError("Query must not be empty.")
+        }
+        guard normalizedQuery.count <= LibraryInputPolicy.maximumQueryCharacters else {
+            throw ValidationError(
+                "Query must be at most \(LibraryInputPolicy.maximumQueryCharacters) characters.")
+        }
+        guard (1...LibraryInputPolicy.maximumSearchHits).contains(limit) else {
+            throw ValidationError(
+                "--limit must be between 1 and \(LibraryInputPolicy.maximumSearchHits).")
+        }
+        let hits = try LibrarySearch.hits(query: normalizedQuery, limit: limit)
         print(table
             ? SessionFormatter.searchTable(hits)
             : SessionFormatter.searchJSON(hits))

@@ -21,6 +21,14 @@ enum UITestRuntime {
     private static let storageRootArgument = "--lokalbot-storage-root"
     private static let defaultsSuiteArgument = "--lokalbot-defaults-suite"
 
+    /// XCTest loads the production app as its host, so `LokalBotMain.main()` and
+    /// `AppState` still run before the first test method. Keep that launch
+    /// hermetic even when the caller did not provide the UI-test overrides.
+    static var isUnitTesting: Bool {
+        !isEnabled
+            && ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
+
     static var isEnabled: Bool {
 #if LOKALBOT_UI_TEST_HOST
         true
@@ -35,12 +43,27 @@ enum UITestRuntime {
         nonEmpty(ProcessInfo.processInfo.environment["LOKALBOT_STORAGE_ROOT"])
             ?? argumentValue(after: storageRootArgument)
             ?? nonEmpty(UserDefaults.standard.string(forKey: storageRootKey))
+            ?? unitTestStorageRoot
     }
 
     static var defaultsSuiteName: String? {
         nonEmpty(ProcessInfo.processInfo.environment["LOKALBOT_DEFAULTS_SUITE"])
             ?? argumentValue(after: defaultsSuiteArgument)
             ?? nonEmpty(UserDefaults.standard.string(forKey: defaultsSuiteKey))
+            ?? unitTestDefaultsSuite
+    }
+
+    private static var unitTestStorageRoot: String? {
+        guard isUnitTesting else { return nil }
+        return FileManager.default.temporaryDirectory
+            .appendingPathComponent("lokalbot-unit-tests-\(ProcessInfo.processInfo.processIdentifier)",
+                                    isDirectory: true)
+            .path
+    }
+
+    private static var unitTestDefaultsSuite: String? {
+        guard isUnitTesting else { return nil }
+        return "me.dotenv.LokalBot.unit-tests.\(ProcessInfo.processInfo.processIdentifier)"
     }
 
     private static func argumentValue(after option: String) -> String? {

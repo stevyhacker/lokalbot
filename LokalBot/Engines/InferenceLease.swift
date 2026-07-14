@@ -67,6 +67,9 @@ enum InferenceRole: String, CaseIterable, Sendable {
 struct InferenceLease: Identifiable, Equatable, Sendable {
     let id: UUID
     let role: InferenceRole
+    /// Canonical weights path served for the entire lifetime of this lease.
+    /// Leases on the same role but a different model are queued by the broker.
+    let modelPath: String
     let priority: InferencePriority
     let purpose: String
 }
@@ -82,9 +85,12 @@ struct LeaseBook {
 
     private(set) var records: [Record] = []
 
-    mutating func acquire(role: InferenceRole, priority: InferencePriority,
-                          purpose: String, expiresAt: Date? = nil) -> InferenceLease {
-        let lease = InferenceLease(id: UUID(), role: role, priority: priority, purpose: purpose)
+    mutating func acquire(role: InferenceRole, modelPath: String = "",
+                          priority: InferencePriority, purpose: String,
+                          expiresAt: Date? = nil) -> InferenceLease {
+        let lease = InferenceLease(
+            id: UUID(), role: role, modelPath: modelPath,
+            priority: priority, purpose: purpose)
         records.append(Record(lease: lease, expiresAt: expiresAt))
         return lease
     }
@@ -102,6 +108,10 @@ struct LeaseBook {
 
     func activeCount(for role: InferenceRole) -> Int {
         records.filter { $0.lease.role == role }.count
+    }
+
+    func activeModelPath(for role: InferenceRole) -> String? {
+        records.first { $0.lease.role == role }?.lease.modelPath
     }
 
     /// Residency ids that must never be eviction victims right now.

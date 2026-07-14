@@ -6,10 +6,12 @@
 // extension_ui_request on stdout, answered over stdin.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 
-const GATED_TOOLS = new Set(["write", "edit", "bash"]);
+const MUTATING_TOOLS = new Set(["write", "edit", "bash"]);
+const MAX_APPROVAL_TEXT = 64 * 1024;
 
 export default function lokalbotExtension(pi: ExtensionAPI) {
   const baseUrl = process.env.LOKALBOT_LLM_BASE_URL;
@@ -19,7 +21,21 @@ export default function lokalbotExtension(pi: ExtensionAPI) {
       "LOKALBOT_LLM_BASE_URL and LOKALBOT_LLM_MODEL must be set (launched outside LokalBot?)",
     );
   }
-  const contextWindow = Number(process.env.LOKALBOT_LLM_CTX ?? "16384");
+  const parsedContextWindow = Number(process.env.LOKALBOT_LLM_CTX ?? "16384");
+  const contextWindow = Number.isSafeInteger(parsedContextWindow)
+    && parsedContextWindow >= 1024
+    && parsedContextWindow <= 1_048_576
+    ? parsedContextWindow
+    : 16384;
+  const endpoint = new URL(baseUrl);
+  const loopback = endpoint.hostname === "localhost"
+    || endpoint.hostname.endsWith(".localhost")
+    || isIPv4Loopback(endpoint.hostname)
+    || endpoint.hostname === "[::1]"
+    || endpoint.hostname === "::1";
+  if (!loopback && endpoint.protocol !== "https:") {
+    throw new Error("Remote LokalBot LLM endpoints must use HTTPS");
+  }
 
   pi.registerProvider("lokalbot", {
     baseUrl,
@@ -41,7 +57,7 @@ export default function lokalbotExtension(pi: ExtensionAPI) {
   });
 
   pi.on("tool_call", async (event, ctx) => {
-    if (!GATED_TOOLS.has(event.toolName)) return undefined; // reads auto-allowed
+    if (!requiresApproval(event.toolName, event.input)) return undefined;
 
     // Machine-parseable payload: the host renders exact commands and file
     // changes, rather than relying on a model-authored summary.
@@ -60,12 +76,64 @@ export default function lokalbotExtension(pi: ExtensionAPI) {
   });
 }
 
-function resolvedPath(value: unknown): string | undefined {
+function isIPv4Loopback(hostname: string): boolean {
+  const octets = hostname.split(".");
+  return octets.length === 4
+    && octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255)
+    && Number(octets[0]) === 127;
+}
+
+function requestedPath(value: unknown): string | undefined {
   const path = String(value ?? "");
   if (!path) return undefined;
   if (path === "~") return homedir();
   if (path.startsWith("~/")) return resolve(homedir(), path.slice(2));
   return resolve(process.cwd(), path);
+}
+
+function canonicalPath(value: unknown): string | undefined {
+  const requested = requestedPath(value);
+  if (!requested) return undefined;
+  try {
+    return realpathSync(requested);
+  } catch {
+    // Canonicalize the nearest existing ancestor so a path through a symlink
+    // cannot escape merely because its final component does not exist yet.
+    let ancestor = requested;
+    const suffix: string[] = [];
+    while (!existsSync(ancestor)) {
+      const parent = dirname(ancestor);
+      if (parent === ancestor) return undefined;
+      suffix.unshift(ancestor.slice(parent.length).replace(/^\//, ""));
+      ancestor = parent;
+    }
+    try {
+      return resolve(realpathSync(ancestor), ...suffix);
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+function isInsideWorkspace(path: string): boolean {
+  const workspace = realpathSync(process.cwd());
+  const child = relative(workspace, path);
+  return child === "" || (!child.startsWith("..") && !isAbsolute(child));
+}
+
+function requiresApproval(toolName: string, input: unknown): boolean {
+  if (MUTATING_TOOLS.has(toolName)) return true;
+  if (toolName !== "read") return false;
+  const args = (input ?? {}) as Record<string, unknown>;
+  const path = canonicalPath(args.path ?? args.file_path);
+  // Missing/unresolvable paths are never silently treated as in-workspace.
+  return !path || !isInsideWorkspace(path);
+}
+
+function boundedText(value: unknown): { text: string; truncated: boolean } {
+  const text = String(value ?? "");
+  if (text.length <= MAX_APPROVAL_TEXT) return { text, truncated: false };
+  return { text: text.slice(0, MAX_APPROVAL_TEXT), truncated: true };
 }
 
 function approvalPayload(toolName: string, input: unknown): Record<string, unknown> {
@@ -78,26 +146,39 @@ function approvalPayload(toolName: string, input: unknown): Record<string, unkno
 
   switch (toolName) {
     case "bash": {
-      payload.command = String(args.command ?? args.cmd ?? JSON.stringify(args));
+      const bounded = boundedText(args.command ?? args.cmd ?? JSON.stringify(args));
+      payload.command = bounded.text;
+      payload.truncated = bounded.truncated;
       break;
     }
     case "write": {
-      payload.path = resolvedPath(args.path ?? args.file_path);
-      payload.content = String(args.content ?? "");
+      payload.path = canonicalPath(args.path ?? args.file_path) ?? requestedPath(args.path ?? args.file_path);
+      const bounded = boundedText(args.content);
+      payload.content = bounded.text;
+      payload.truncated = bounded.truncated;
       break;
     }
     case "edit": {
+      let wasTruncated = false;
       const edits = Array.isArray(args.edits)
         ? args.edits.map((value) => {
             const edit = (value ?? {}) as Record<string, unknown>;
+            const oldText = boundedText(edit.oldText ?? edit.old_text);
+            const newText = boundedText(edit.newText ?? edit.new_text);
+            wasTruncated ||= oldText.truncated || newText.truncated;
             return {
-              oldText: String(edit.oldText ?? edit.old_text ?? ""),
-              newText: String(edit.newText ?? edit.new_text ?? ""),
+              oldText: oldText.text,
+              newText: newText.text,
             };
           })
         : [];
-      payload.path = resolvedPath(args.path ?? args.file_path);
-      payload.edits = edits;
+      payload.path = canonicalPath(args.path ?? args.file_path) ?? requestedPath(args.path ?? args.file_path);
+      payload.edits = edits.slice(0, 100);
+      payload.truncated = wasTruncated || edits.length > 100;
+      break;
+    }
+    case "read": {
+      payload.path = canonicalPath(args.path ?? args.file_path) ?? requestedPath(args.path ?? args.file_path);
       break;
     }
   }

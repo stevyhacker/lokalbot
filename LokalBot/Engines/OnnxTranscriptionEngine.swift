@@ -1,4 +1,5 @@
 import AVFoundation
+import Darwin
 import FluidAudio
 import Foundation
 
@@ -186,44 +187,60 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
 
         let binary = runtime.binary
         let libDir = runtime.libDir
-        let stdout = try await Task.detached(priority: .userInitiated) { () throws -> String in
+        let processController = ONNXProcessController()
+        let execution = Task.detached(priority: .userInitiated) { () throws -> String in
             let runtimeID = "transcription:onnx:\(model.modelType):\(UUID().uuidString)"
             let estimatedBytes = ModelRuntimeRegistry.fileBytes(at: modelFile)
             await ModelRuntimeRegistry.shared.reserve(
                 id: runtimeID, role: "Transcription", label: model.displayName,
                 estimatedBytes: estimatedBytes)
-            let process = Process()
-            process.executableURL = binary
-            process.arguments = args
-            var env = ProcessInfo.processInfo.environment
-            env["DYLD_LIBRARY_PATH"] = libDir.path
-            process.environment = env
-            let out = Pipe()
-            process.standardOutput = out
-            process.standardError = FileHandle.nullDevice   // verbose logging — discard
             do {
+                // Cancellation can arrive while the MainActor reservation call
+                // is suspended. Keep every subsequent exit inside this cleanup
+                // scope so a helper that never attaches cannot strand a row.
+                try Task.checkCancellation()
+                let process = Process()
+                process.executableURL = binary
+                process.arguments = args
+                var env = ProcessInfo.processInfo.environment
+                env["DYLD_LIBRARY_PATH"] = libDir.path
+                process.environment = env
+                let out = Pipe()
+                process.standardOutput = out
+                process.standardError = FileHandle.nullDevice   // verbose logging — discard
+                guard processController.attach(process) else { throw CancellationError() }
+                defer { processController.detach(process) }
                 try process.run()
+                processController.processDidStart(process)
+                let processUsage = SystemResourceSampler.processUsage(for: process.processIdentifier)
+                await ModelRuntimeRegistry.shared.register(
+                    id: runtimeID,
+                    role: "Transcription",
+                    label: model.displayName,
+                    estimatedBytes: estimatedBytes,
+                    processIdentifier: processUsage?.processIdentifier,
+                    processStartTime: processUsage?.startTime
+                )
+                let data = out.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                try Task.checkCancellation()
+                if processController.wasCancelled { throw CancellationError() }
+                guard process.terminationStatus == 0 else {
+                    throw EngineError.transcriptionFailed(Int(process.terminationStatus))
+                }
+                await ModelRuntimeRegistry.shared.unregister(id: runtimeID)
+                return String(decoding: data, as: UTF8.self)
             } catch {
                 await ModelRuntimeRegistry.shared.unregister(id: runtimeID)
                 throw error
             }
-            let processUsage = SystemResourceSampler.processUsage(for: process.processIdentifier)
-            await ModelRuntimeRegistry.shared.register(
-                id: runtimeID,
-                role: "Transcription",
-                label: model.displayName,
-                estimatedBytes: estimatedBytes,
-                processIdentifier: processUsage?.processIdentifier,
-                processStartTime: processUsage?.startTime
-            )
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            await ModelRuntimeRegistry.shared.unregister(id: runtimeID)
-            guard process.terminationStatus == 0 else {
-                throw EngineError.transcriptionFailed(Int(process.terminationStatus))
-            }
-            return String(decoding: data, as: UTF8.self)
-        }.value
+        }
+        let stdout = try await withTaskCancellationHandler {
+            try await execution.value
+        } onCancel: {
+            execution.cancel()
+            processController.cancel()
+        }
         return Self.parseTexts(stdout)
     }
 
@@ -286,5 +303,79 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
             case .transcriptionFailed(let code): "sherpa-onnx-offline exited with code \(code)."
             }
         }
+    }
+}
+
+/// Bridges structured Swift cancellation to the blocking sherpa subprocess.
+/// Cancellation sends SIGTERM immediately and escalates to SIGKILL only if the
+/// helper ignores it, guaranteeing that `readDataToEndOfFile` eventually
+/// unblocks and model memory is released.
+private final class ONNXProcessController: @unchecked Sendable {
+    private let lock = NSLock()
+    private var process: Process?
+    private var cancelled = false
+
+    var wasCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func attach(_ process: Process) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !cancelled else { return false }
+        self.process = process
+        return true
+    }
+
+    func processDidStart(_ process: Process) {
+        lock.lock()
+        let shouldTerminate = cancelled && self.process === process
+        lock.unlock()
+        if shouldTerminate, process.isRunning { terminate(process) }
+    }
+
+    func detach(_ process: Process) {
+        lock.lock()
+        if self.process === process { self.process = nil }
+        lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let process = self.process
+        lock.unlock()
+        guard let process, process.isRunning else { return }
+        terminate(process)
+    }
+
+    private func terminate(_ process: Process) {
+        let pid = process.processIdentifier
+        let processStartTime = SystemResourceSampler.processUsage(for: pid)?.startTime
+        process.terminate()
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [weak self, weak process] in
+            guard let self, let process else { return }
+            self.killIfStillAttached(
+                process, pid: pid, expectedStartTime: processStartTime)
+        }
+    }
+
+    private func killIfStillAttached(
+        _ process: Process,
+        pid: pid_t,
+        expectedStartTime: UInt64?
+    ) {
+        lock.lock()
+        let isSameCancelledProcess = cancelled && self.process === process
+        lock.unlock()
+        guard isSameCancelledProcess,
+              process.isRunning,
+              process.processIdentifier == pid,
+              let expectedStartTime,
+              SystemResourceSampler.processUsage(for: pid)?.startTime == expectedStartTime
+        else { return }
+        kill(pid, SIGKILL)
     }
 }

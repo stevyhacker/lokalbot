@@ -12,11 +12,30 @@ import Foundation
 /// writes through here, so the store is always current.
 @MainActor
 final class SettingsStore {
+    private var persistTask: Task<Void, Never>?
+
     var current: AppSettings {
-        didSet { current.save() }
+        didSet {
+            guard current != oldValue else { return }
+            persistTask?.cancel()
+            let snapshot = current
+            persistTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled else { return }
+                snapshot.save()
+                self?.persistTask = nil
+            }
+        }
     }
 
     init() {
         current = AppSettings.load()
+    }
+
+    /// Flush debounced text-field edits before application termination.
+    func flush() {
+        persistTask?.cancel()
+        persistTask = nil
+        current.save()
     }
 }

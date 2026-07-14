@@ -64,12 +64,13 @@ jobs:
         run: xcodegen generate
 
       # The test host is the full app, so Vendor/ must be populated just like in
-      # the Build workflow. Same cache key (the fetch script) shares the cache.
-      - name: Cache llama.cpp vendor
+      # the Build workflow. The llama + Sherpa fetch scripts jointly key the
+      # cache, so either pinned native dependency invalidates stale contents.
+      - name: Cache native vendors
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: Vendor
-          key: vendor-${{ runner.os }}-${{ hashFiles('Scripts/fetch-llama.sh') }}
+          key: vendor-${{ runner.os }}-${{ hashFiles('Scripts/fetch-llama.sh', 'Scripts/fetch-sherpa.sh') }}
 
       - name: Fetch llama.cpp vendor
         run: bash Scripts/fetch-llama.sh

@@ -69,4 +69,20 @@ final class MCPProtocolTests: XCTestCase {
         let encoded = try JSONEncoder().encode(value)
         XCTAssertEqual(String(decoding: encoded, as: UTF8.self), #"{"limit":12}"#)
     }
+
+    func testFractionalAndOutOfRangeNumbersAreNotIntegers() {
+        XCTAssertNil(JSONValue.number(1.5).intValue)
+        XCTAssertNil(JSONValue.number(.infinity).intValue)
+        XCTAssertNil(JSONValue.number(Double.greatestFiniteMagnitude).intValue)
+    }
+
+    func testOversizedRequestIsRejectedBeforeJSONDecoding() {
+        let line = #"{"jsonrpc":"2.0","id":1,"method":"ping","padding":""#
+            + String(repeating: "x", count: 1_048_576) + #""}"#
+        guard case .failure(let code, let message, _) = MCPRequest.parse(line) else {
+            return XCTFail("expected an oversized request failure")
+        }
+        XCTAssertEqual(code, -32600)
+        XCTAssertTrue(message.contains("1 MiB"))
+    }
 }

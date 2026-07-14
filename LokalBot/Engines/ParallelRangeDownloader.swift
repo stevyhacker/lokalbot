@@ -28,7 +28,17 @@ enum ParallelRangeDownloader {
         let url: String
         let totalBytes: Int64
         let partSize: Int64
+        let validator: String?
         var completedParts: [Int]
+
+        init(url: String, totalBytes: Int64, partSize: Int64,
+             validator: String? = nil, completedParts: [Int]) {
+            self.url = url
+            self.totalBytes = totalBytes
+            self.partSize = partSize
+            self.validator = validator
+            self.completedParts = completedParts
+        }
     }
     struct Progress: Sendable {
         let bytesWritten: Int64
@@ -180,6 +190,8 @@ enum ParallelRangeDownloader {
            state.url == url.absoluteString,
            state.totalBytes == probe.totalBytes,
            state.partSize == partSize,
+           probe.validator != nil,
+           state.validator == probe.validator,
            fileManager.fileExists(atPath: assembled.path) {
             completed = Set(state.completedParts).intersection(byteRanges.map(\.index))
         } else {
@@ -193,7 +205,8 @@ enum ParallelRangeDownloader {
         defer { try? output.close() }
 
         var state = ResumeState(url: url.absoluteString, totalBytes: probe.totalBytes,
-                                partSize: partSize, completedParts: completed.sorted())
+                                partSize: partSize, validator: probe.validator,
+                                completedParts: completed.sorted())
         try await downloadParts(
             byteRanges,
             skipping: completed,
@@ -225,10 +238,9 @@ enum ParallelRangeDownloader {
         return assembled
     }
 
-    /// Single streamed GET for servers without byte-range support (or files
-    /// below the acceleration threshold). Still reports progress — unlike a
-    /// bare `URLSession.download(from:)` — so a 1.5 GB fallback download never
-    /// looks frozen in the UI.
+    /// Single download-task GET for servers without byte-range support (or
+    /// files below the acceleration threshold). URLSession streams directly
+    /// to disk instead of iterating every byte in Swift.
     private static func downloadWhole(
         from url: URL,
         session: URLSession,
@@ -240,52 +252,35 @@ enum ParallelRangeDownloader {
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue(AppIdentifiers.bundleID, forHTTPHeaderField: "User-Agent")
 
-        let (bytes, response) = try await session.bytes(for: request)
+        progress(.init(bytesWritten: 0, totalBytes: -1))
+        let (temporary, response) = try await session.download(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw DownloadError.invalidResponse
         }
         guard (200..<300).contains(http.statusCode) else {
             throw DownloadError.httpStatus(http.statusCode)
         }
-        let totalBytes = parseContentLength(http)
+        let expectedBytes = parseContentLength(http)
+        let actualBytes = fileSize(temporary)
+        if expectedBytes > 0, actualBytes != expectedBytes {
+            try? FileManager.default.removeItem(at: temporary)
+            throw DownloadError.assemblySizeMismatch(
+                expected: expectedBytes, actual: actualBytes)
+        }
 
         let fileManager = FileManager.default
         let destination = fileManager.temporaryDirectory
             .appendingPathComponent("LokalBot-download-\(UUID().uuidString)", isDirectory: false)
-        _ = fileManager.createFile(atPath: destination.path, contents: nil)
-        let output = try FileHandle(forWritingTo: destination)
-
-        var success = false
-        defer {
-            try? output.close()
-            if !success { try? fileManager.removeItem(at: destination) }
-        }
-
-        var written: Int64 = 0
-        var buffer = Data()
-        buffer.reserveCapacity(8 * 1024 * 1024)
-        progress(.init(bytesWritten: 0, totalBytes: totalBytes))
-        for try await byte in bytes {
-            buffer.append(byte)
-            if buffer.count >= 8 * 1024 * 1024 {
-                try output.write(contentsOf: buffer)
-                written += Int64(buffer.count)
-                buffer.removeAll(keepingCapacity: true)
-                progress(.init(bytesWritten: written, totalBytes: totalBytes))
-            }
-        }
-        if !buffer.isEmpty {
-            try output.write(contentsOf: buffer)
-            written += Int64(buffer.count)
-        }
-        progress(.init(bytesWritten: written, totalBytes: max(totalBytes, written)))
-        success = true
+        try? fileManager.removeItem(at: destination)
+        try fileManager.moveItem(at: temporary, to: destination)
+        progress(.init(bytesWritten: actualBytes, totalBytes: max(expectedBytes, actualBytes)))
         return destination
     }
 
     private struct Probe: Sendable {
         let totalBytes: Int64
         let supportsByteRanges: Bool
+        let validator: String?
     }
 
     private struct PartResult: Sendable {
@@ -315,7 +310,14 @@ enum ParallelRangeDownloader {
         guard totalBytes > 0 else { throw FallbackRequired.unsupported }
         let supportsByteRanges = http.value(forHTTPHeaderField: "Accept-Ranges")?
             .localizedCaseInsensitiveContains("bytes") == true
-        return Probe(totalBytes: totalBytes, supportsByteRanges: supportsByteRanges)
+        let validator = http.value(forHTTPHeaderField: "X-Linked-Etag")
+            ?? http.value(forHTTPHeaderField: "ETag")
+            ?? http.value(forHTTPHeaderField: "X-Repo-Commit")
+            ?? http.value(forHTTPHeaderField: "Last-Modified")
+        return Probe(
+            totalBytes: totalBytes,
+            supportsByteRanges: supportsByteRanges,
+            validator: validator)
     }
 
     private static func parseContentLength(_ response: HTTPURLResponse) -> Int64 {
@@ -359,7 +361,9 @@ enum ParallelRangeDownloader {
                 guard let range = iterator.next() else { return }
                 active += 1
                 group.addTask {
-                    try await downloadPart(range, from: url, into: workDir, session: session)
+                    try await downloadPart(
+                        range, totalBytes: totalBytes,
+                        from: url, into: workDir, session: session)
                 }
             }
 
@@ -389,6 +393,7 @@ enum ParallelRangeDownloader {
 
     private static func downloadPart(
         _ range: ByteRange,
+        totalBytes: Int64,
         from url: URL,
         into workDir: URL,
         session: URLSession
@@ -408,6 +413,13 @@ enum ParallelRangeDownloader {
         guard http.statusCode == 206 else {
             throw DownloadError.unexpectedRangeStatus(http.statusCode)
         }
+        guard contentRangeMatches(
+            http.value(forHTTPHeaderField: "Content-Range"),
+            range: range,
+            totalBytes: totalBytes) else {
+            try? FileManager.default.removeItem(at: temporary)
+            throw DownloadError.invalidResponse
+        }
 
         let size = fileSize(temporary)
         guard size == range.length else {
@@ -419,6 +431,13 @@ enum ParallelRangeDownloader {
         try? FileManager.default.removeItem(at: destination)
         try FileManager.default.moveItem(at: temporary, to: destination)
         return .init(range: range, url: destination)
+    }
+
+    private static func contentRangeMatches(
+        _ header: String?, range: ByteRange, totalBytes: Int64
+    ) -> Bool {
+        guard let header else { return false }
+        return header.lowercased() == "bytes \(range.start)-\(range.end)/\(totalBytes)"
     }
 
     private static func copyFile(_ inputURL: URL, to output: FileHandle, atOffset offset: Int64) throws {

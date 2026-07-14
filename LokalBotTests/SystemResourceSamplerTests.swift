@@ -79,6 +79,45 @@ final class SystemResourceSamplerTests: XCTestCase {
     }
 }
 
+final class MediaPlaybackProcessControllerTests: XCTestCase {
+    func testCancellationKillsTermIgnoringHelperWithinBound() async throws {
+        let process = Process()
+        let readyPipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "trap '' TERM; echo ready; exec /bin/sleep 30"]
+        process.standardOutput = readyPipe
+        process.standardError = FileHandle.nullDevice
+
+        let controller = ScriptProcessController(terminationGraceSeconds: 0.05)
+        XCTAssertTrue(controller.attach(process))
+        try process.run()
+        controller.processDidStart(process)
+        defer {
+            controller.detach(process)
+            if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
+            process.waitUntilExit()
+        }
+
+        let ready = readyPipe.fileHandleForReading.readData(ofLength: 6)
+        XCTAssertEqual(String(decoding: ready, as: UTF8.self), "ready\n")
+        XCTAssertNotNil(
+            SystemResourceSampler.processUsage(for: process.processIdentifier)?.startTime)
+
+        controller.cancel()
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while process.isRunning, clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        XCTAssertFalse(process.isRunning, "TERM-ignoring helper exceeded the hard bound")
+        guard !process.isRunning else { return }
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationReason, .uncaughtSignal)
+        XCTAssertEqual(process.terminationStatus, SIGKILL)
+    }
+}
+
 @MainActor
 final class ResourceMonitorPresentationTests: XCTestCase {
     private typealias Usage = SystemResourceSampler.ProcessUsage

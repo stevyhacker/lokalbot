@@ -105,6 +105,103 @@ struct LokalBotApp: App {
     }
 }
 
+/// One long-lived utility worker owns the background FTS connection. A
+/// dictionary keeps only the latest pending snapshot for each meeting, while
+/// the actor serializes SQLite writes across the entire queue.
+actor SearchIndexWorkQueue {
+    private let databaseURL: URL
+    private let rootURL: URL
+    private var index: SearchIndex?
+    private var storage: StorageManager?
+    private var pending: [Meeting.ID: Meeting] = [:]
+    private var deleted: Set<Meeting.ID> = []
+    private var drainTask: Task<Void, Never>?
+    private var stopped = false
+
+    init(databaseURL: URL, rootURL: URL) {
+        self.databaseURL = databaseURL
+        self.rootURL = rootURL
+    }
+
+    func enqueue(_ meeting: Meeting) {
+        enqueue([meeting])
+    }
+
+    func enqueue(_ meetings: [Meeting]) {
+        guard !stopped else { return }
+        for meeting in meetings where !deleted.contains(meeting.id) {
+            pending[meeting.id] = meeting
+        }
+        startDrainIfNeeded()
+    }
+
+    @discardableResult
+    func remove(_ meetingID: Meeting.ID) -> (search: Bool, embedding: Bool) {
+        deleted.insert(meetingID)
+        pending.removeValue(forKey: meetingID)
+        let searchClean = searchIndex.remove(meetingID)
+        let embeddingClean = EmbeddingIndex.remove(
+            meetingID, databaseURL: databaseURL)
+        return (searchClean, embeddingClean)
+    }
+
+    @discardableResult
+    func reconcileDeletedMeetings() -> (search: Bool, embedding: Bool) {
+        let searchClean = searchIndex.reconcileDeletedMeetings()
+        let embeddingClean = EmbeddingIndex.reconcileDeletedMeetings(
+            databaseURL: databaseURL)
+        return (searchClean, embeddingClean)
+    }
+
+    func stop() {
+        stopped = true
+        pending.removeAll()
+        drainTask?.cancel()
+        drainTask = nil
+    }
+
+    /// Test/diagnostic seam: wait for the currently scheduled drain and any
+    /// follow-up work that arrived while it yielded between meetings.
+    func waitUntilIdle() async {
+        while let drainTask {
+            await drainTask.value
+        }
+    }
+
+    private var searchIndex: SearchIndex {
+        if let index { return index }
+        let created = SearchIndex(databaseURL: databaseURL)
+        index = created
+        return created
+    }
+
+    private var workerStorage: StorageManager {
+        if let storage { return storage }
+        let created = StorageManager(rootURL: rootURL)
+        storage = created
+        return created
+    }
+
+    private func startDrainIfNeeded() {
+        guard drainTask == nil, !pending.isEmpty, !stopped else { return }
+        drainTask = Task(priority: .utility) { [weak self] in
+            await self?.drain()
+        }
+    }
+
+    private func drain() async {
+        while !Task.isCancelled, !stopped, let (meetingID, meeting) = pending.first {
+            pending.removeValue(forKey: meetingID)
+            searchIndex.reindex(meeting, storage: workerStorage)
+            // Let enqueues, deletions, and shutdown coalesce or cancel work
+            // between meetings without allowing concurrent SQLite writers.
+            await Task.yield()
+        }
+        drainTask = nil
+        startDrainIfNeeded()
+    }
+}
+
 /// Central app state (the "coordinator" from the design doc §6): dependency
 /// wiring, the meeting library, navigation, and the detection→recording glue.
 /// The recording lifecycle itself lives in `RecordingController`; headless
@@ -176,6 +273,10 @@ final class AppState: ObservableObject {
     /// Sparkle, periodic screenshots) so the UI renders against synthetic
     /// data without touching real audio, TCC, or the network.
     nonisolated static var isUITesting: Bool { UITestRuntime.isEnabled }
+    /// Hosted XCTest executes the real app entry point. It needs neither UI
+    /// fixtures nor any interactive service, so return before touching the
+    /// meeting library, indexes, permissions, audio, Sparkle, or the network.
+    nonisolated static var isUnitTesting: Bool { UITestRuntime.isUnitTesting }
 
     /// UserDefaults flag: the permission onboarding has been shown once. Also
     /// read by `AppDelegate` to keep the first run windowed.
@@ -192,16 +293,47 @@ final class AppState: ObservableObject {
     /// subsystems that apply settings live.
     @Published var settings: AppSettings {
         didSet {
+            guard settings != oldValue else { return }
             settingsStore.current = settings
-            detector.stopDebounce = settings.stopDebounceSeconds
-            detector.calendarEnabled = settings.calendarDetectionEnabled
-            detector.requireCalendarForBrowser = settings.requireCalendarForBrowser
+            if settings.stopDebounceSeconds != oldValue.stopDebounceSeconds {
+                detector.stopDebounce = settings.stopDebounceSeconds
+            }
+            if settings.calendarDetectionEnabled != oldValue.calendarDetectionEnabled {
+                detector.calendarEnabled = settings.calendarDetectionEnabled
+            }
+            if settings.requireCalendarForBrowser != oldValue.requireCalendarForBrowser {
+                detector.requireCalendarForBrowser = settings.requireCalendarForBrowser
+            }
             if interactive {
-                dictation.applySettings()
-                cotyping.applySettings()
-                if settings.cotypingEnabled { Task { await cotypingEngine.prewarm() } }
+                if Self.dictationLifecycleChanged(from: oldValue, to: settings) {
+                    dictation.applySettings()
+                }
+                if settings.cotypingEnabled != oldValue.cotypingEnabled {
+                    cotyping.applySettings()
+                    if !settings.cotypingEnabled {
+                        cotypingPrewarmTask?.cancel()
+                        cotypingPrewarmTask = nil
+                    }
+                }
+                if Self.cotypingRuntimeChanged(from: oldValue, to: settings) {
+                    scheduleCotypingPrewarm()
+                }
             }
         }
+    }
+
+    private static func dictationLifecycleChanged(from old: AppSettings, to new: AppSettings) -> Bool {
+        old.dictationEnabled != new.dictationEnabled
+            || old.dictationShowOverlay != new.dictationShowOverlay
+            || old.dictationLivePreview != new.dictationLivePreview
+    }
+
+    private static func cotypingRuntimeChanged(from old: AppSettings, to new: AppSettings) -> Bool {
+        guard new.cotypingEnabled else { return false }
+        return !old.cotypingEnabled
+            || old.cotypingBuiltInModelID != new.cotypingBuiltInModelID
+            || old.cotypingInProcessRuntime != new.cotypingInProcessRuntime
+            || old.customBuiltInModels != new.customBuiltInModels
     }
 
     // Navigation (main window): sidebar section, selected meeting, and a
@@ -270,14 +402,28 @@ final class AppState: ObservableObject {
     /// recordings. Concrete type so the settings UI observes its permission
     /// state; handed to the detector as the `CalendarEventProviding` seam.
     let calendar = EventKitCalendarEventProvider()
-    private(set) lazy var searchIndex = SearchIndex(
-        databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"))
+    private var cachedSearchIndex: SearchIndex?
+    var searchIndex: SearchIndex {
+        if let cachedSearchIndex { return cachedSearchIndex }
+        let created = SearchIndex(
+            databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"))
+        for meetingID in deletedMeetingIDs { created.noteDeletion(meetingID) }
+        cachedSearchIndex = created
+        return created
+    }
     private(set) lazy var activityStore = ActivityStore(
         databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"))
     private(set) lazy var sampler = ActivitySampler(store: activityStore)
-    private(set) lazy var embeddingIndex = EmbeddingIndex(
-        databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"),
-        storage: storage)
+    private var cachedEmbeddingIndex: EmbeddingIndex?
+    var embeddingIndex: EmbeddingIndex {
+        if let cachedEmbeddingIndex { return cachedEmbeddingIndex }
+        let created = EmbeddingIndex(
+            databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"),
+            storage: storage)
+        for meetingID in deletedMeetingIDs { created.noteDeletion(meetingID) }
+        cachedEmbeddingIndex = created
+        return created
+    }
     private(set) lazy var screenshots = ScreenshotService(
         store: activityStore, storage: storage, sampler: sampler,
         isMeetingRecordingActive: { [weak self] in
@@ -392,6 +538,16 @@ final class AppState: ObservableObject {
     /// gates recording notifications and first-run onboarding.
     private var interactive = false
     private var terminationCleanupTask: Task<Void, Never>?
+    private var cotypingPrewarmTask: Task<Void, Never>?
+    private var libraryLoadTask: Task<Void, Never>?
+    private var embeddingIndexTasks: [Meeting.ID: (token: UUID, task: Task<Void, Never>)] = [:]
+    private var indexCleanupTasks: [Meeting.ID: (token: UUID, task: Task<Void, Never>)] = [:]
+    private var deletedMeetingIDs: Set<Meeting.ID> = []
+    private var libraryReady = false
+    private var pendingRecordingStart: (context: MeetingDetectionContext?, source: String)?
+    private lazy var searchIndexWorkQueue = SearchIndexWorkQueue(
+        databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"),
+        rootURL: storage.rootURL)
 
     // Recording facades — views observe AppState only.
     var isRecording: Bool { recording.isRecording }
@@ -400,10 +556,19 @@ final class AppState: ObservableObject {
     var menuBarTimer: String { recording.menuBarTimer }
 
     func startRecording(context: MeetingDetectionContext? = nil, source: String = "ui") {
+        guard libraryReady else {
+            pendingRecordingStart = (context, source)
+            lastError = "Preparing your meeting library; recording will start when it is ready."
+            return
+        }
         recording.start(context: context, source: source)
     }
 
     func stopRecording(process: Bool = true) {
+        if !libraryReady {
+            pendingRecordingStart = nil
+            return
+        }
         recording.stop(process: process)
     }
 
@@ -434,18 +599,13 @@ final class AppState: ObservableObject {
     init() {
         AppLog.bootstrap()
         settings = settingsStore.current
-        var loaded = storage.loadMeetings()
-        // One-time backfill: meetings recorded before `recordedDuration` existed
-        // would otherwise show the wall-clock span (which can exceed the captured
-        // audio). Measure the actual playable length once and persist it.
-        for i in loaded.indices where loaded[i].recordedDuration == nil && loaded[i].endedAt != nil {
-            let folder = loaded[i].folderURL(in: storage)
-            if let recorded = MeetingAudioFiles.longestDuration(in: folder) {
-                loaded[i].recordedDuration = recorded
-                try? storage.saveMeta(loaded[i])
-            }
+        if Self.isUnitTesting { return }
+        let headlessCommand = HeadlessCommand.requested
+        let needsSynchronousLibrary = headlessCommand != nil || Self.isUITesting
+        if needsSynchronousLibrary {
+            meetings = storage.loadMeetings()
+            libraryReady = true
         }
-        meetings = loaded
         LiveMeetingTranscriber.sweepOrphanedSnapshots(storageRoot: storage.rootURL)
         // Views observe AppState only; forward pipeline / recording /
         // audio-monitor / calendar change notifications so MainWindowView
@@ -483,13 +643,15 @@ final class AppState: ObservableObject {
         }
         pipeline.onArtifactsWritten = { [weak self] meeting in
             guard let self else { return }
-            self.searchIndex.reindex(meeting, storage: self.storage)
+            self.reindexSearchInBackground(meeting)
             if self.settings.semanticSearchEnabled {
-                Task { try? await self.embeddingIndex.index(meeting) }
+                self.reindexEmbeddingInBackground(meeting)
             }
         }
-        searchIndex.reindexAll(meetings, storage: storage)
-        if let command = HeadlessCommand.requested {
+        if needsSynchronousLibrary {
+            searchIndex.reindexAll(meetings, storage: storage)
+        }
+        if let command = headlessCommand {
             HeadlessCommandRunner(app: self).run(command)
             return
         }
@@ -502,7 +664,6 @@ final class AppState: ObservableObject {
         applyTrackingSetting()
         // Crash recovery: re-enqueue any meeting whose processing never
         // finished — a quit or crash mid-transcription used to lose the job.
-        pipeline.resumePending(meetings: meetings)
         detector.onMeetingStarted = { [weak self] context in
             guard let self else { return }
             switch self.settings.autoRecordMode {
@@ -550,7 +711,114 @@ final class AppState: ObservableObject {
         // and the grants are in place; otherwise it parks itself.
         dictation.applySettings()
         cotyping.applySettings()
-        if settings.cotypingEnabled { Task { await cotypingEngine.prewarm() } }
+        if settings.cotypingEnabled { scheduleCotypingPrewarm() }
+        loadLibraryInBackground()
+    }
+
+    /// Large meeting libraries can take seconds to enumerate, repair, duration-
+    /// probe, and FTS-index. Do that work on a utility executor and publish one
+    /// sorted snapshot when ready instead of blocking the first app window.
+    private func loadLibraryInBackground() {
+        libraryLoadTask?.cancel()
+        let rootURL = storage.rootURL
+        libraryLoadTask = Task { @MainActor [weak self] in
+            let worker = Task.detached(priority: .utility) {
+                guard !Task.isCancelled else { return [Meeting]() }
+                let workerStorage = StorageManager(rootURL: rootURL)
+                return workerStorage.loadMeetings()
+            }
+            let loaded = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            guard let self, !Task.isCancelled else { return }
+
+            var byID = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
+            // Preserve meetings created while the background scan was running.
+            for meeting in self.meetings { byID[meeting.id] = meeting }
+            let merged = byID.values.sorted { $0.startedAt > $1.startedAt }
+            self.meetings = merged
+            self.libraryReady = true
+            self.pipeline.resumePending(meetings: merged)
+            self.reindexLibraryInBackground(merged)
+            self.libraryLoadTask = nil
+            if let pending = self.pendingRecordingStart {
+                self.pendingRecordingStart = nil
+                self.lastError = nil
+                self.recording.start(context: pending.context, source: pending.source)
+            }
+        }
+    }
+
+    private func reindexLibraryInBackground(_ meetings: [Meeting]) {
+        let worker = searchIndexWorkQueue
+        Task { await worker.enqueue(meetings) }
+    }
+
+    private func reindexSearchInBackground(_ meeting: Meeting) {
+        let worker = searchIndexWorkQueue
+        Task { await worker.enqueue(meeting) }
+    }
+
+    private func reindexEmbeddingInBackground(_ meeting: Meeting) {
+        embeddingIndexTasks.removeValue(forKey: meeting.id)?.task.cancel()
+        let token = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            try? await self.embeddingIndex.index(meeting)
+            guard self.embeddingIndexTasks[meeting.id]?.token == token else { return }
+            self.embeddingIndexTasks.removeValue(forKey: meeting.id)
+        }
+        embeddingIndexTasks[meeting.id] = (token, task)
+    }
+
+    /// Index rows are reconstructible, but a failed SQLite cleanup must not
+    /// become permanent once the meeting folder disappears. Retry both stores
+    /// with bounded backoff for the rest of the session; durable tombstones and
+    /// each index's startup reconciliation cover interruption or app exit.
+    private func scheduleIndexCleanup(_ meetingID: Meeting.ID) {
+        indexCleanupTasks.removeValue(forKey: meetingID)?.task.cancel()
+        let token = UUID()
+        let worker = searchIndexWorkQueue
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var embeddingClean = false
+            var searchClean = false
+            var attempt = 0
+
+            while !Task.isCancelled {
+                let result = await worker.remove(meetingID)
+                embeddingClean = embeddingClean || result.embedding
+                searchClean = searchClean || result.search
+                guard !Task.isCancelled,
+                      self.indexCleanupTasks[meetingID]?.token == token else { return }
+                if embeddingClean && searchClean {
+                    self.indexCleanupTasks.removeValue(forKey: meetingID)
+                    return
+                }
+
+                attempt += 1
+                if attempt.isMultiple(of: 4) {
+                    let reconciled = await worker.reconcileDeletedMeetings()
+                    embeddingClean = embeddingClean || reconciled.embedding
+                    searchClean = searchClean || reconciled.search
+                }
+                let delayMilliseconds = min(30_000, 250 * (1 << min(attempt, 7)))
+                try? await Task.sleep(for: .milliseconds(delayMilliseconds))
+            }
+        }
+        indexCleanupTasks[meetingID] = (token, task)
+    }
+
+    private func scheduleCotypingPrewarm() {
+        cotypingPrewarmTask?.cancel()
+        cotypingPrewarmTask = Task { @MainActor [weak self] in
+            guard let self, !Task.isCancelled, self.settings.cotypingEnabled else { return }
+            await self.cotypingEngine.prewarm()
+            guard !Task.isCancelled else { return }
+            self.cotypingPrewarmTask = nil
+        }
     }
 
     func prepareForTermination() async {
@@ -560,6 +828,17 @@ final class AppState: ObservableObject {
         }
         let task = Task { @MainActor in
             interactive = false
+            settingsStore.flush()
+            cotypingPrewarmTask?.cancel()
+            cotypingPrewarmTask = nil
+            libraryLoadTask?.cancel()
+            libraryLoadTask = nil
+            for entry in embeddingIndexTasks.values { entry.task.cancel() }
+            embeddingIndexTasks.removeAll()
+            for entry in indexCleanupTasks.values { entry.task.cancel() }
+            indexCleanupTasks.removeAll()
+            await searchIndexWorkQueue.stop()
+            pendingRecordingStart = nil
             recording.prepareForTermination()
             detector.stop()
             audioMonitor.stop()
@@ -639,10 +918,15 @@ final class AppState: ObservableObject {
     }
 
     private func notifyMeetingDetected(_ context: MeetingDetectionContext) {
-        // M1: simple user notification via the menu bar (badge). A richer
-        // UNUserNotification with a "Record" action button is a fast follow.
         lastError = nil
-        NSSound.beep()
+        let title = MeetingMatcher.recordingTitle(
+            calendarTitle: context.calendarEvent?.title,
+            useCalendarTitles: settings.useCalendarTitles,
+            appName: context.detectedApp?.name)
+        RecordingNotifier.shared.meetingDetected(title: title) { [weak self] in
+            guard let self, !self.recording.isRecording, !self.recording.isStarting else { return }
+            self.startRecording(context: context, source: "notification")
+        }
     }
 
     // MARK: - Library operations
@@ -653,9 +937,9 @@ final class AppState: ObservableObject {
 
     func saveTranscript(_ transcript: Transcript, for meeting: Meeting) throws {
         try pipeline.saveTranscript(transcript, for: meeting)
-        searchIndex.reindex(meeting, storage: storage)
+        reindexSearchInBackground(meeting)
         if settings.semanticSearchEnabled {
-            Task { try? await embeddingIndex.index(meeting) }
+            reindexEmbeddingInBackground(meeting)
         }
         objectWillChange.send()
     }
@@ -696,12 +980,21 @@ final class AppState: ObservableObject {
 
     /// Permanently removes meetings: audio folder, list entry, both indexes.
     func deleteMeetings(_ ids: Set<Meeting.ID>) {
+        var deletedIDs: Set<Meeting.ID> = []
         for meeting in meetings where ids.contains(meeting.id) {
-            storage.deleteMeeting(meeting)
-            searchIndex.remove(meeting.id)
-            embeddingIndex.remove(meeting.id)
+            do {
+                try storage.deleteMeeting(meeting)
+                embeddingIndexTasks.removeValue(forKey: meeting.id)?.task.cancel()
+                deletedMeetingIDs.insert(meeting.id)
+                cachedSearchIndex?.noteDeletion(meeting.id)
+                cachedEmbeddingIndex?.noteDeletion(meeting.id)
+                scheduleIndexCleanup(meeting.id)
+                deletedIDs.insert(meeting.id)
+            } catch {
+                lastError = "Could not delete \(meeting.title): \(error.localizedDescription)"
+            }
         }
-        meetings.removeAll { ids.contains($0.id) }
-        selectedMeetingIDs.subtract(ids)
+        meetings.removeAll { deletedIDs.contains($0.id) }
+        selectedMeetingIDs.subtract(deletedIDs)
     }
 }

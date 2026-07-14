@@ -1,4 +1,5 @@
 import XCTest
+import SQLite3
 @testable import LokalBot
 
 @MainActor
@@ -39,6 +40,36 @@ final class IndexPersistenceTests: XCTestCase {
 
         XCTAssertTrue(committed)
         XCTAssertEqual(database.firstDouble("SELECT COUNT(*) FROM values_table"), 3)
+    }
+
+    func testCheckedQueriesDistinguishEmptyResultsFromSQLiteFailures() throws {
+        let database = try XCTUnwrap(SQLiteDatabase(
+            url: root.appendingPathComponent("checked-errors.sqlite")))
+        try database.execute("CREATE TABLE values_table (value INTEGER NOT NULL)")
+
+        let empty: [Int64] = try database.queryChecked(
+            "SELECT value FROM values_table") { sqlite3_column_int64($0, 0) }
+        XCTAssertEqual(empty, [])
+
+        let failingQuery: () throws -> [Int64] = {
+            try database.queryChecked("SELECT value FROM table_that_does_not_exist") {
+                sqlite3_column_int64($0, 0)
+            }
+        }
+        XCTAssertThrowsError(try failingQuery())
+        XCTAssertNotNil(database.lastError)
+    }
+
+    func testDatabaseConnectionsEnableWALAndBusyTimeout() throws {
+        let database = try XCTUnwrap(SQLiteDatabase(
+            url: root.appendingPathComponent("connection-policy.sqlite")))
+        let journalModes: [String] = try database.queryChecked("PRAGMA journal_mode") {
+            String(cString: sqlite3_column_text($0, 0))
+        }
+        let timeout = try database.firstDoubleChecked("PRAGMA busy_timeout")
+
+        XCTAssertEqual(journalModes, ["wal"])
+        XCTAssertEqual(timeout, 5_000)
     }
 
     func testSearchIndexBackfillsLegacyRowMappingAndRemovesOnlyTargetMeeting() throws {
@@ -154,6 +185,204 @@ final class IndexPersistenceTests: XCTestCase {
         XCTAssertEqual(database.firstDouble(
             "SELECT COUNT(*) FROM search_document_rows WHERE meeting_id = ?1",
             bind: [meeting.id.uuidString]), 2)
+    }
+
+    func testDeletedMeetingTombstonePreventsLateSearchReindex() throws {
+        let storage = StorageManager(
+            rootURL: root.appendingPathComponent("deleted-library", isDirectory: true))
+        let meeting = Meeting(
+            id: UUID(),
+            title: "Deleted meeting",
+            appName: "Tests",
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            endedAt: Date(timeIntervalSince1970: 1_700_000_100),
+            relativePath: "meetings/deleted",
+            hasSystemTrack: false)
+        let folder = meeting.folderURL(in: storage)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let transcriptURL = folder.appendingPathComponent("transcript.json")
+        try writeTranscript(text: "originalneedle", to: transcriptURL,
+                            modificationDate: Date(timeIntervalSince1970: 1_700_000_200))
+
+        let databaseURL = storage.rootURL.appendingPathComponent("lokalbotv3.sqlite")
+        let index = SearchIndex(databaseURL: databaseURL)
+        index.reindex(meeting, storage: storage)
+        XCTAssertEqual(index.search("originalneedle").map(\.meetingID), [meeting.id])
+
+        XCTAssertTrue(index.remove(meeting.id))
+        try writeTranscript(text: "latenotification", to: transcriptURL,
+                            modificationDate: Date(timeIntervalSince1970: 1_700_000_300))
+        index.reindex(meeting, storage: storage)
+
+        let database = try XCTUnwrap(SQLiteDatabase(url: databaseURL))
+        XCTAssertTrue(database.hasRow(
+            "SELECT 1 FROM deleted_meetings WHERE meeting_id = ?1",
+            bind: [meeting.id.uuidString]))
+        XCTAssertTrue(index.search("originalneedle").isEmpty)
+        XCTAssertTrue(index.search("latenotification").isEmpty)
+        XCTAssertFalse(database.hasRow(
+            "SELECT 1 FROM indexed_meetings WHERE meeting_id = ?1",
+            bind: [meeting.id.uuidString]))
+    }
+
+    func testOlderSearchSnapshotCannotOverwriteNewerIndependentCommit() throws {
+        let storage = StorageManager(
+            rootURL: root.appendingPathComponent("freshness-library", isDirectory: true))
+        let meeting = Meeting(
+            id: UUID(),
+            title: "Freshness race",
+            appName: "Tests",
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            endedAt: Date(timeIntervalSince1970: 1_700_000_100),
+            relativePath: "meetings/freshness",
+            hasSystemTrack: false)
+        let folder = meeting.folderURL(in: storage)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let transcriptURL = folder.appendingPathComponent("transcript.json")
+        try writeTranscript(text: "stalesnapshotneedle", to: transcriptURL,
+                            modificationDate: Date(timeIntervalSince1970: 1_700_000_200))
+
+        let databaseURL = storage.rootURL.appendingPathComponent("lokalbotv3.sqlite")
+        let olderWorker = SearchIndex(databaseURL: databaseURL)
+        var injectionError: Error?
+        olderWorker.reindex(meeting, storage: storage) {
+            do {
+                try self.writeTranscript(
+                    text: "freshsnapshotneedle", to: transcriptURL,
+                    modificationDate: Date(timeIntervalSince1970: 1_700_000_300))
+                SearchIndex(databaseURL: databaseURL).reindex(meeting, storage: storage)
+            } catch {
+                injectionError = error
+            }
+        }
+
+        XCTAssertNil(injectionError)
+        XCTAssertTrue(olderWorker.search("stalesnapshotneedle").isEmpty)
+        XCTAssertEqual(olderWorker.search("freshsnapshotneedle").map(\.meetingID), [meeting.id])
+        let database = try XCTUnwrap(SQLiteDatabase(url: databaseURL))
+        XCTAssertEqual(database.firstDouble(
+            "SELECT source_mtime FROM indexed_meetings WHERE meeting_id = ?1",
+            bind: [meeting.id.uuidString]), 1_700_000_300)
+    }
+
+    func testFailedCleanupKeepsTombstoneVisibleAndStartupReconcilesStaleRows() throws {
+        let storage = StorageManager(
+            rootURL: root.appendingPathComponent("cleanup-library", isDirectory: true))
+        let removed = Meeting(
+            id: UUID(), title: "Removed", appName: "Tests",
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            endedAt: Date(timeIntervalSince1970: 1_700_000_100),
+            relativePath: "meetings/removed", hasSystemTrack: false)
+        let retained = Meeting(
+            id: UUID(), title: "Retained", appName: "Tests",
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            endedAt: Date(timeIntervalSince1970: 1_700_000_100),
+            relativePath: "meetings/retained", hasSystemTrack: false)
+        for (meeting, text) in [(removed, "ghostneedle removed"),
+                                (retained, "ghostneedle retained")] {
+            let folder = meeting.folderURL(in: storage)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try writeTranscript(
+                text: text, to: folder.appendingPathComponent("transcript.json"),
+                modificationDate: Date(timeIntervalSince1970: 1_700_000_200))
+        }
+
+        let databaseURL = storage.rootURL.appendingPathComponent("lokalbotv3.sqlite")
+        let index = SearchIndex(databaseURL: databaseURL)
+        index.reindex(removed, storage: storage)
+        index.reindex(retained, storage: storage)
+        let database = try XCTUnwrap(SQLiteDatabase(url: databaseURL))
+        XCTAssertTrue(database.exec("""
+            CREATE TRIGGER fail_removed_search_cleanup
+            BEFORE DELETE ON search_document_rows
+            WHEN OLD.meeting_id = '\(removed.id.uuidString)'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced cleanup failure');
+            END;
+            """))
+
+        XCTAssertFalse(index.remove(removed.id))
+        XCTAssertTrue(database.hasRow(
+            "SELECT 1 FROM deleted_meetings WHERE meeting_id = ?1",
+            bind: [removed.id.uuidString]))
+        XCTAssertGreaterThan(database.firstDouble(
+            "SELECT COUNT(*) FROM docs WHERE meeting_id = ?1",
+            bind: [removed.id.uuidString]) ?? 0, 0)
+        XCTAssertEqual(index.search("ghostneedle").map(\.meetingID), [retained.id])
+
+        let embedding = EmbeddingIndex(databaseURL: databaseURL, storage: storage)
+        XCTAssertTrue(database.run(
+            "INSERT INTO embeddings (meeting_id, start, text, vec) VALUES (?1, ?2, ?3, ?4)",
+            bind: [removed.id.uuidString, 12.0, "stale semantic row",
+                   Data(repeating: 1, count: MemoryLayout<Float>.stride)]))
+        XCTAssertTrue(database.run("""
+            INSERT INTO embedded_meetings (meeting_id, source_mtime, model_id)
+            VALUES (?1, ?2, ?3)
+            """, bind: [removed.id.uuidString, 1_700_000_200.0,
+                         "qwen3-embedding-0.6b-q8"]))
+        XCTAssertFalse(embedding.hasEmbeddings)
+        let staleHit = EmbeddingIndex.Hit(
+            meetingID: removed.id, start: 12, text: "stale semantic row", score: 0.9)
+        XCTAssertTrue(embedding.liveHits(from: [staleHit]).isEmpty)
+
+        XCTAssertTrue(database.exec("DROP TRIGGER fail_removed_search_cleanup"))
+        _ = SearchIndex(databaseURL: databaseURL)
+        _ = EmbeddingIndex(databaseURL: databaseURL, storage: storage)
+
+        XCTAssertEqual(database.firstDouble(
+            "SELECT COUNT(*) FROM docs WHERE meeting_id = ?1",
+            bind: [removed.id.uuidString]), 0)
+        XCTAssertEqual(database.firstDouble(
+            "SELECT COUNT(*) FROM search_document_rows WHERE meeting_id = ?1",
+            bind: [removed.id.uuidString]), 0)
+        XCTAssertEqual(database.firstDouble(
+            "SELECT COUNT(*) FROM embeddings WHERE meeting_id = ?1",
+            bind: [removed.id.uuidString]), 0)
+        XCTAssertEqual(index.search("ghostneedle").map(\.meetingID), [retained.id])
+    }
+
+    func testSearchWorkQueueCoalescesPendingMeetingAndStopRejectsNewWork() async throws {
+        let storage = StorageManager(
+            rootURL: root.appendingPathComponent("queue-library", isDirectory: true))
+        var older = Meeting(
+            id: UUID(), title: "oldcoalescedtitle", appName: "Tests",
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            endedAt: Date(timeIntervalSince1970: 1_700_000_100),
+            relativePath: "meetings/coalesced", hasSystemTrack: false)
+        let folder = older.folderURL(in: storage)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try writeTranscript(
+            text: "queue transcript", to: folder.appendingPathComponent("transcript.json"),
+            modificationDate: Date(timeIntervalSince1970: 1_700_000_200))
+        var newer = older
+        newer.title = "newcoalescedtitle"
+
+        let databaseURL = storage.rootURL.appendingPathComponent("lokalbotv3.sqlite")
+        let queue = SearchIndexWorkQueue(databaseURL: databaseURL, rootURL: storage.rootURL)
+        await queue.enqueue([older, newer])
+        await queue.waitUntilIdle()
+
+        let index = SearchIndex(databaseURL: databaseURL)
+        XCTAssertTrue(index.search("oldcoalescedtitle").isEmpty)
+        XCTAssertEqual(index.search("newcoalescedtitle").map(\.meetingID), [newer.id])
+
+        older = Meeting(
+            id: UUID(), title: "stoppedqueuetitle", appName: "Tests",
+            startedAt: Date(timeIntervalSince1970: 1_700_000_300),
+            endedAt: Date(timeIntervalSince1970: 1_700_000_400),
+            relativePath: "meetings/stopped", hasSystemTrack: false)
+        let stoppedFolder = older.folderURL(in: storage)
+        try FileManager.default.createDirectory(
+            at: stoppedFolder, withIntermediateDirectories: true)
+        try writeTranscript(
+            text: "must not be indexed",
+            to: stoppedFolder.appendingPathComponent("transcript.json"),
+            modificationDate: Date(timeIntervalSince1970: 1_700_000_500))
+
+        await queue.stop()
+        await queue.enqueue(older)
+        await queue.waitUntilIdle()
+        XCTAssertTrue(index.search("stoppedqueuetitle").isEmpty)
     }
 
     func testEmbeddingIndexAddsMeetingIDIndexWithoutDiscardingCurrentRows() throws {

@@ -55,6 +55,112 @@ struct ScreenCapturePolicy {
     mutating func noteCheck(at now: Date = Date()) { lastCheck = now }
 }
 
+/// Pure capture-layout selection. ScreenCaptureKit objects cannot be created
+/// in unit tests, so production metadata is reduced to these value types before
+/// choosing the focused display and every privacy-excluded window on it.
+struct ScreenshotCaptureLayout {
+    struct Display {
+        let id: CGDirectDisplayID
+        let frame: CGRect
+    }
+
+    struct Window {
+        let id: CGWindowID
+        let processID: pid_t
+        let appName: String
+        let title: String
+        let frame: CGRect
+    }
+
+    struct Selection: Equatable {
+        let displayID: CGDirectDisplayID
+        let excludedWindowIDs: Set<CGWindowID>
+    }
+
+    static func selection(
+        displays: [Display],
+        windows: [Window],
+        frontmostProcessID: pid_t,
+        focusedWindowTitle: String,
+        excludedApps: [String],
+        mainDisplayID: CGDirectDisplayID = CGMainDisplayID()
+    ) -> Selection? {
+        guard !displays.isEmpty else { return nil }
+
+        let frontmostWindows = windows.filter {
+            $0.processID == frontmostProcessID && !$0.frame.isEmpty && !$0.frame.isNull
+        }
+        let focusedWindow: Window?
+        if focusedWindowTitle.isEmpty {
+            focusedWindow = frontmostWindows.first
+        } else {
+            focusedWindow = frontmostWindows.first {
+                $0.title.compare(focusedWindowTitle, options: [.caseInsensitive, .diacriticInsensitive])
+                    == .orderedSame
+            } ?? frontmostWindows.first
+        }
+
+        let selectedDisplay: Display
+        if let focusedWindow,
+           let overlappingDisplay = displays.max(by: {
+               intersectionArea($0.frame, focusedWindow.frame)
+                   < intersectionArea($1.frame, focusedWindow.frame)
+           }), intersectionArea(overlappingDisplay.frame, focusedWindow.frame) > 0 {
+            selectedDisplay = overlappingDisplay
+        } else {
+            selectedDisplay = displays.first(where: { $0.id == mainDisplayID }) ?? displays[0]
+        }
+
+        let excludedWindowIDs = Set(windows.compactMap { window -> CGWindowID? in
+            guard isExcluded(appName: window.appName, excludedApps: excludedApps),
+                  intersectionArea(window.frame, selectedDisplay.frame) > 0 else { return nil }
+            return window.id
+        })
+        return Selection(displayID: selectedDisplay.id, excludedWindowIDs: excludedWindowIDs)
+    }
+
+    static func isExcluded(appName: String, excludedApps: [String]) -> Bool {
+        excludedApps.contains { rawTerm in
+            let term = rawTerm.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !term.isEmpty && appName.localizedCaseInsensitiveContains(term)
+        }
+    }
+
+    private static func intersectionArea(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
+        let intersection = lhs.intersection(rhs)
+        guard !intersection.isNull, !intersection.isEmpty else { return 0 }
+        return intersection.width * intersection.height
+    }
+}
+
+/// Main-actor gate that prevents repeated menu clicks and simultaneous sampler
+/// events from launching overlapping ScreenCaptureKit requests.
+struct ScreenshotCaptureGate {
+    private(set) var isCapturing = false
+
+    mutating func begin() -> Bool {
+        guard !isCapturing else { return false }
+        isCapturing = true
+        return true
+    }
+
+    mutating func end() {
+        isCapturing = false
+    }
+}
+
+enum ScreenshotWindowFocusValidation {
+    static func matches(
+        expectedTitle: String,
+        current: FocusedWindowTitleLookupResult
+    ) -> Bool {
+        guard !current.timedOut else { return false }
+        return (current.title ?? "").compare(
+            expectedTitle,
+            options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+    }
+}
+
 /// Immutable inputs passed across the main-actor/worker boundary. `CGImage` is
 /// an immutable Core Foundation value and is safe to read concurrently, but it
 /// is not annotated `Sendable` by every supported SDK, so the wrapper records
@@ -119,6 +225,14 @@ actor ScreenshotProcessingWorker {
         try dependencies.write(sealed, request.fileURL)
         lastContentHash = contentHash
         return .stored(contentHash: contentHash, ocrText: ocrText)
+    }
+
+    /// A file write is not a completed capture until its SQLite rows commit.
+    /// Let an identical screen retry when that later persistence step fails.
+    func discardStored(contentHash: Data) {
+        if lastContentHash == contentHash {
+            lastContentHash = nil
+        }
     }
 }
 
@@ -194,16 +308,20 @@ final class ScreenshotService: ObservableObject {
     private let settings: () -> AppSettings
     private let isMeetingRecordingActive: () -> Bool
     private let sampler: ActivitySampler
+    private let windowTitleLookup: FocusedWindowTitleLookup
     private let processingWorker = ScreenshotProcessingWorker()
     private var timer: Timer?
     private var policy = ScreenCapturePolicy()
+    private var captureGate = ScreenshotCaptureGate()
 
     init(store: ActivityStore, storage: StorageManager, sampler: ActivitySampler,
+         windowTitleLookup: FocusedWindowTitleLookup = .shared,
          isMeetingRecordingActive: @escaping () -> Bool = { false },
          settings: @escaping () -> AppSettings) {
         self.store = store
         self.storage = storage
         self.sampler = sampler
+        self.windowTitleLookup = windowTitleLookup
         self.isMeetingRecordingActive = isMeetingRecordingActive
         self.settings = settings
     }
@@ -272,13 +390,29 @@ final class ScreenshotService: ObservableObject {
         guard let frontmostApp = NSWorkspace.shared.frontmostApplication,
               let frontmost = frontmostApp.localizedName,
               frontmost != "loginwindow" else { lokalbotLog("shot skip: lock screen"); return }
-        guard !config.excludedAppList.contains(where: { frontmost.localizedCaseInsensitiveContains($0) })
+        guard !ScreenshotCaptureLayout.isExcluded(
+            appName: frontmost, excludedApps: config.excludedAppList)
         else { lokalbotLog("shot skip: excluded (\(frontmost))"); return }
 
+        guard captureGate.begin() else {
+            lokalbotLog("shot skip: capture already in flight (\(trigger.rawValue))")
+            return
+        }
+        defer { captureGate.end() }
+
+        let initialTitle = await windowTitleLookup.title(
+            for: frontmostApp.processIdentifier)
+        guard !initialTitle.timedOut,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier
+                == frontmostApp.processIdentifier else {
+            lokalbotLog("shot skip: focused-window lookup timed out or focus changed")
+            return
+        }
         do {
             try await capture(frontApp: frontmost,
-                              windowTitle: ActivitySampler.focusedWindowTitle(
-                                  pid: frontmostApp.processIdentifier) ?? "",
+                              frontmostProcessID: frontmostApp.processIdentifier,
+                              windowTitle: initialTitle.title ?? "",
+                              excludedApps: config.excludedAppList,
                               trigger: trigger)
             lastError = nil
         } catch {
@@ -287,11 +421,37 @@ final class ScreenshotService: ObservableObject {
         }
     }
 
-    private func capture(frontApp: String, windowTitle: String,
+    private func capture(frontApp: String, frontmostProcessID: pid_t, windowTitle: String,
+                         excludedApps: [String],
                          trigger: ScreenCaptureTrigger) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true)
-        guard let display = content.displays.first else { return }
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == frontmostProcessID else {
+            lokalbotLog("shot skip: focus changed while preparing capture")
+            return
+        }
+        let layout = ScreenshotCaptureLayout.selection(
+            displays: content.displays.map {
+                .init(id: $0.displayID, frame: CGDisplayBounds($0.displayID))
+            },
+            windows: content.windows.compactMap { window in
+                guard let application = window.owningApplication else { return nil }
+                return .init(
+                    id: window.windowID,
+                    processID: application.processID,
+                    appName: application.applicationName,
+                    title: window.title ?? "",
+                    frame: window.frame)
+            },
+            frontmostProcessID: frontmostProcessID,
+            focusedWindowTitle: windowTitle,
+            excludedApps: excludedApps)
+        guard let layout,
+              let display = content.displays.first(where: { $0.displayID == layout.displayID })
+        else { return }
+        let excludedWindows = content.windows.filter {
+            layout.excludedWindowIDs.contains($0.windowID)
+        }
 
         // Capture at NATIVE pixel resolution — OCR needs full-size glyphs.
         // The stored image is downscaled afterwards; the text is the value.
@@ -300,34 +460,51 @@ final class ScreenshotService: ObservableObject {
         configuration.width = mode?.pixelWidth ?? display.width * 2
         configuration.height = mode?.pixelHeight ?? display.height * 2
         configuration.showsCursor = false
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
         let image = try await SCScreenshotManager.captureImage(
             contentFilter: filter, configuration: configuration)
+        let currentTitle = await windowTitleLookup.title(for: frontmostProcessID)
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == frontmostProcessID,
+              ScreenshotWindowFocusValidation.matches(
+                expectedTitle: windowTitle,
+                current: currentTitle) else {
+            // ScreenCaptureKit requests suspend. Do not persist a display image
+            // under stale app/window metadata if the user switches meanwhile.
+            lokalbotLog("shot skip: focus changed during capture")
+            return
+        }
 
         let timestamp = Date()
 
         // The worker keeps the hash → dedup → OCR → encryption → atomic-write
         // sequence serial and off the main actor. The check still arms the
         // cooldown/idle clock when an unchanged frame is skipped.
-        let day = timestamp.formatted(.iso8601.year().month().day())
-        let file = storage.rootURL
-            .appendingPathComponent("activity/\(day)/shots", isDirectory: true)
-            .appendingPathComponent("\(Int(timestamp.timeIntervalSince1970)).heic.enc")
+        let file = Self.captureFileURL(rootURL: storage.rootURL, timestamp: timestamp)
         let outcome = try await processingWorker.process(ScreenshotProcessingRequest(
             image: image,
             trigger: trigger,
             key: try Self.encryptionKey(),
             fileURL: file))
 
-        guard case .stored(_, let ocrText) = outcome else {
+        guard case .stored(let contentHash, let ocrText) = outcome else {
             policy.noteCheck(at: timestamp)
             lokalbotLog("shot skip: unchanged frame (\(trigger.rawValue), app: \(frontApp))")
             return
         }
 
-        store.insertScreenshot(ts: timestamp, path: file.path, app: frontApp,
-                               windowTitle: windowTitle, trigger: trigger.rawValue,
-                               ocr: ocrText)
+        do {
+            try store.insertScreenshot(ts: timestamp, path: file.path, app: frontApp,
+                                       windowTitle: windowTitle, trigger: trigger.rawValue,
+                                       ocr: ocrText)
+        } catch {
+            do {
+                try FileManager.default.removeItem(at: file)
+            } catch let cleanupError {
+                lokalbotLog("shot rollback file cleanup failed: \(cleanupError.localizedDescription)")
+            }
+            await processingWorker.discardStored(contentHash: contentHash)
+            throw error
+        }
         policy.noteCheck(at: timestamp)
         lastCapture = timestamp
         lokalbotLog("shot ok: \(file.lastPathComponent) (\(ocrText.count) OCR chars, "
@@ -363,11 +540,19 @@ final class ScreenshotService: ObservableObject {
     func pruneOldScreenshots() {
         let cutoff = Date().addingTimeInterval(-Double(settings().retentionDays) * 86_400)
         for path in store.screenshotPaths(olderThan: cutoff) {
-            try? FileManager.default.removeItem(atPath: path)
+            do {
+                if FileManager.default.fileExists(atPath: path) {
+                    try FileManager.default.removeItem(atPath: path)
+                }
+                try store.clearScreenshotPath(path)
+            } catch {
+                // Keep the database path when deletion fails, so a later
+                // retention pass can retry instead of orphaning the file.
+                lokalbotLog("shot retention failed path=\(path): \(error.localizedDescription)")
+            }
         }
-        store.clearScreenshotPaths(olderThan: cutoff)
         if !settings().keepOCRTextForever {
-            store.clearOCRText(olderThan: cutoff)
+            _ = store.clearOCRText(olderThan: cutoff)
         }
     }
 
@@ -378,6 +563,19 @@ final class ScreenshotService: ObservableObject {
         recordingActive: Bool
     ) -> Bool {
         !recordingActive || trigger == .manual
+    }
+
+    nonisolated static func captureFileURL(
+        rootURL: URL,
+        timestamp: Date,
+        identifier: UUID = UUID()
+    ) -> URL {
+        let day = timestamp.formatted(.iso8601.year().month().day())
+        let milliseconds = Int64((timestamp.timeIntervalSince1970 * 1_000).rounded(.down))
+        return rootURL
+            .appendingPathComponent("activity/\(day)/shots", isDirectory: true)
+            .appendingPathComponent(
+                "\(milliseconds)-\(identifier.uuidString.lowercased()).heic.enc")
     }
 
     /// Per-install AES-256 key in the user Keychain (design §3.4), via the

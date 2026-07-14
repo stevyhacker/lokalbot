@@ -4,6 +4,19 @@ import XCTest
 @MainActor
 final class LeasedTextEngineTests: XCTestCase {
 
+    private final class PartialRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage: [String] = []
+
+        func append(_ partial: String) {
+            lock.withLock { storage.append(partial) }
+        }
+
+        var values: [String] {
+            lock.withLock { storage }
+        }
+    }
+
     private actor CallRecorder {
         private(set) var events: [String] = []
         func record(_ event: String) { events.append(event) }
@@ -99,10 +112,10 @@ final class LeasedTextEngineTests: XCTestCase {
         let completion = try await engine.complete(completionRequest)
         XCTAssertEqual(completion, "complete:the-prompt")
 
-        var partials: [String] = []
+        let partials = PartialRecorder()
         let streamed = try await engine.completeStreaming(completionRequest) { partials.append($0) }
         XCTAssertEqual(streamed, "stream:the-prompt")
-        XCTAssertEqual(partials, ["partial-chunk"])
+        XCTAssertEqual(partials.values, ["partial-chunk"])
 
         let ensures = await recorder.count(of: "ensure:mainLLM")
         XCTAssertEqual(ensures, 3)

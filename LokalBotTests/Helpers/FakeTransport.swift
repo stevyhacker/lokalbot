@@ -6,6 +6,7 @@ import Foundation
 final class FakeTransport: PiLineTransport, @unchecked Sendable {
     private(set) var sent: [String] = []
     private let lock = NSLock()
+    private var sendFailure: Error?
     let incoming: AsyncStream<String>
     private let continuation: AsyncStream<String>.Continuation
 
@@ -16,10 +17,18 @@ final class FakeTransport: PiLineTransport, @unchecked Sendable {
     }
 
     func send(line: String) async throws {
-        lock.lock(); sent.append(line); lock.unlock()
+        let failure = lock.withLock {
+            let failure = sendFailure
+            if failure == nil { sent.append(line) }
+            return failure
+        }
+        if let failure { throw failure }
     }
 
     func inject(_ line: String) { continuation.yield(line) }
     func close() { continuation.finish() }
-    var sentLines: [String] { lock.lock(); defer { lock.unlock() }; return sent }
+    func failFutureSends(_ error: Error = URLError(.cannotConnectToHost)) {
+        lock.withLock { sendFailure = error }
+    }
+    var sentLines: [String] { lock.withLock { sent } }
 }

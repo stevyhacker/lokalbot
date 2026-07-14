@@ -1,4 +1,5 @@
 import XCTest
+import CoreGraphics
 @testable import LokalBot
 
 @MainActor
@@ -29,7 +30,7 @@ final class ActivityStoreTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: url) }
         let store = ActivityStore(databaseURL: url)
 
-        let id = store.insertScreenshot(
+        let id = try store.insertScreenshot(
             ts: Date(), path: "/tmp/a.heic.enc", app: "Safari",
             windowTitle: "Quarterly report — Google Docs", trigger: "window_change",
             ocr: "Q3 revenue grew 14 percent")
@@ -47,13 +48,13 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(store.searchOCR("quarterly").count, 1)
     }
 
-    func testSearchOCRRelaxedFallbackRescuesNaturalLanguage() {
+    func testSearchOCRRelaxedFallbackRescuesNaturalLanguage() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
         defer { try? FileManager.default.removeItem(at: url) }
         let store = ActivityStore(databaseURL: url)
-        store.insertScreenshot(ts: Date(), path: "/tmp/a.heic.enc", app: "Safari",
-                               ocr: "kubernetes deployment rollback steps")
+        try store.insertScreenshot(ts: Date(), path: "/tmp/a.heic.enc", app: "Safari",
+                                   ocr: "kubernetes deployment rollback steps")
 
         // Strict ANDs the stop words and misses…
         XCTAssertTrue(store.searchOCR("what were the rollback steps").isEmpty)
@@ -95,11 +96,28 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(store.searchOCR("grocery").count, 1)
 
         // New-shape inserts work on the migrated tables.
-        store.insertScreenshot(ts: Date(), path: "/tmp/new.heic.enc", app: "Xcode",
-                               windowTitle: "build log", trigger: "app_switch",
-                               ocr: "compile succeeded")
+        try store.insertScreenshot(ts: Date(), path: "/tmp/new.heic.enc", app: "Xcode",
+                                   windowTitle: "build log", trigger: "app_switch",
+                                   ocr: "compile succeeded")
         XCTAssertEqual(store.searchOCR("compile").first?.windowTitle, "build log")
         XCTAssertEqual(store.screenshots(on: Date()).count, 2)
+    }
+
+    func testScreenshotAndOCRRowsRollbackTogetherWhenOCRInsertFails() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ActivityStore(databaseURL: url)
+        let database = try XCTUnwrap(SQLiteDatabase(url: url))
+        try database.execute("DROP TABLE ocr_fts")
+
+        XCTAssertThrowsError(try store.insertScreenshot(
+            ts: Date(), path: "/tmp/rollback.heic.enc", app: "Safari",
+            ocr: "this OCR insert must fail"))
+
+        XCTAssertEqual(
+            try database.firstDoubleChecked("SELECT COUNT(*) FROM screenshots"), 0,
+            "The screenshot row must roll back when its searchable OCR pair fails")
     }
 
     // MARK: - Capture policy
@@ -151,6 +169,163 @@ final class ActivityStoreTests: XCTestCase {
             recordingActive: false))
     }
 
+    func testCaptureLayoutUsesFocusedWindowDisplayAndExcludesEveryPrivateWindowOnIt() throws {
+        let displays = [
+            ScreenshotCaptureLayout.Display(
+                id: 1, frame: CGRect(x: 0, y: 0, width: 1_000, height: 800)),
+            ScreenshotCaptureLayout.Display(
+                id: 2, frame: CGRect(x: 1_000, y: 0, width: 1_000, height: 800)),
+        ]
+        let windows = [
+            // Same frontmost app on both displays; the title identifies the
+            // actual focused window on display 2 rather than array order.
+            ScreenshotCaptureLayout.Window(
+                id: 10, processID: 42, appName: "Safari", title: "Other tab",
+                frame: CGRect(x: 100, y: 100, width: 600, height: 500)),
+            ScreenshotCaptureLayout.Window(
+                id: 11, processID: 42, appName: "Safari", title: "Focused report",
+                frame: CGRect(x: 1_100, y: 100, width: 700, height: 500)),
+            ScreenshotCaptureLayout.Window(
+                id: 20, processID: 90, appName: "1Password", title: "Secrets",
+                frame: CGRect(x: 1_200, y: 200, width: 400, height: 400)),
+            ScreenshotCaptureLayout.Window(
+                id: 21, processID: 91, appName: "Signal", title: "Private chat",
+                frame: CGRect(x: 1_650, y: 50, width: 300, height: 500)),
+            // This excluded window is not on the selected display and does not
+            // need to be handed to that display's ScreenCaptureKit filter.
+            ScreenshotCaptureLayout.Window(
+                id: 22, processID: 92, appName: "1Password", title: "Vault",
+                frame: CGRect(x: 20, y: 20, width: 300, height: 300)),
+        ]
+
+        let selection = try XCTUnwrap(ScreenshotCaptureLayout.selection(
+            displays: displays,
+            windows: windows,
+            frontmostProcessID: 42,
+            focusedWindowTitle: "focused report",
+            excludedApps: ["1password", "SIGNAL"],
+            mainDisplayID: 1))
+
+        XCTAssertEqual(selection.displayID, 2)
+        XCTAssertEqual(selection.excludedWindowIDs, Set<CGWindowID>([20, 21]))
+    }
+
+    func testCaptureLayoutFallsBackToMainDisplayWithoutFocusedWindow() {
+        let selection = ScreenshotCaptureLayout.selection(
+            displays: [
+                .init(id: 1, frame: CGRect(x: 0, y: 0, width: 800, height: 600)),
+                .init(id: 2, frame: CGRect(x: 800, y: 0, width: 800, height: 600)),
+            ],
+            windows: [],
+            frontmostProcessID: 42,
+            focusedWindowTitle: "",
+            excludedApps: [],
+            mainDisplayID: 2)
+
+        XCTAssertEqual(selection?.displayID, 2)
+    }
+
+    func testCaptureFileNamesAndInFlightGateCannotCollide() {
+        let root = URL(fileURLWithPath: "/tmp/screenshot-path-test", isDirectory: true)
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000.125)
+        let first = ScreenshotService.captureFileURL(
+            rootURL: root, timestamp: timestamp,
+            identifier: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+        let second = ScreenshotService.captureFileURL(
+            rootURL: root, timestamp: timestamp,
+            identifier: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
+
+        XCTAssertNotEqual(first, second)
+        XCTAssertTrue(first.lastPathComponent.hasPrefix("1700000000125-"))
+
+        var gate = ScreenshotCaptureGate()
+        XCTAssertTrue(gate.begin())
+        XCTAssertFalse(gate.begin())
+        gate.end()
+        XCTAssertTrue(gate.begin())
+    }
+
+    func testFocusedWindowTitleLookupRunsOffMainAndReturnsValue() async {
+        let lookup = FocusedWindowTitleLookup { _ in
+            Thread.isMainThread ? "main" : "background"
+        }
+
+        let result = await lookup.title(for: 42)
+
+        XCTAssertFalse(result.timedOut)
+        XCTAssertEqual(result.title, "background")
+    }
+
+    func testFocusedWindowTitleLookupFailsClosedAtWholeOperationDeadline() async {
+        let lookup = FocusedWindowTitleLookup(deadlineMilliseconds: 20) { _ in
+            Thread.sleep(forTimeInterval: 0.2)
+            return "too late"
+        }
+        let started = ContinuousClock.now
+
+        let result = await lookup.title(for: 42)
+
+        XCTAssertTrue(result.timedOut)
+        XCTAssertNil(result.title)
+        XCTAssertLessThan(started.duration(to: .now), .milliseconds(150))
+    }
+
+    func testStalledWindowTitleLookupDoesNotQueueAnotherTarget() async {
+        let blocker = DispatchSemaphore(value: 0)
+        let probe = ActivityResolverInvocationProbe()
+        let lookup = FocusedWindowTitleLookup(deadlineMilliseconds: 20) { _ in
+            probe.recordInvocation()
+            blocker.wait()
+            return "late"
+        }
+        defer { blocker.signal() }
+
+        let first = Task { await lookup.title(for: 42) }
+        for _ in 0..<20 where probe.invocationCount == 0 {
+            try? await Task.sleep(for: .milliseconds(2))
+        }
+        XCTAssertEqual(probe.invocationCount, 1)
+        let firstResult = await first.value
+        XCTAssertTrue(firstResult.timedOut)
+
+        let started = ContinuousClock.now
+        let second = await lookup.title(for: 43)
+
+        XCTAssertTrue(second.timedOut)
+        XCTAssertLessThan(started.duration(to: .now), .milliseconds(20))
+        XCTAssertEqual(probe.invocationCount, 1)
+    }
+
+    func testScreenshotWindowFocusValidationFailsClosedOnTimeoutOrChange() {
+        XCTAssertTrue(ScreenshotWindowFocusValidation.matches(
+            expectedTitle: "Résumé",
+            current: .init(title: "resume", timedOut: false)))
+        XCTAssertTrue(ScreenshotWindowFocusValidation.matches(
+            expectedTitle: "",
+            current: .init(title: nil, timedOut: false)))
+        XCTAssertFalse(ScreenshotWindowFocusValidation.matches(
+            expectedTitle: "Report",
+            current: .timeout))
+        XCTAssertFalse(ScreenshotWindowFocusValidation.matches(
+            expectedTitle: "Report",
+            current: .init(title: "Chat", timedOut: false)))
+    }
+
+    func testActivitySamplerRemovesTerminationObserverWhenStopped() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let sampler = ActivitySampler(
+            store: ActivityStore(databaseURL: url),
+            notificationCenter: NotificationCenter())
+
+        XCTAssertFalse(sampler.hasTerminationObserver)
+        sampler.start()
+        XCTAssertTrue(sampler.hasTerminationObserver)
+        sampler.stop()
+        XCTAssertFalse(sampler.hasTerminationObserver)
+    }
+
     func testClearOCRTextRemovesOnlyRowsOlderThanCutoff() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
@@ -158,10 +333,10 @@ final class ActivityStoreTests: XCTestCase {
         let store = ActivityStore(databaseURL: url)
 
         let old = Date(timeIntervalSinceNow: -3 * 86_400)
-        store.insertScreenshot(ts: old, path: "/tmp/old.heic.enc", app: "Safari",
-                               ocr: "ancient invoice number")
-        store.insertScreenshot(ts: Date(), path: "/tmp/new.heic.enc", app: "Xcode",
-                               ocr: "fresh build log")
+        try store.insertScreenshot(ts: old, path: "/tmp/old.heic.enc", app: "Safari",
+                                   ocr: "ancient invoice number")
+        try store.insertScreenshot(ts: Date(), path: "/tmp/new.heic.enc", app: "Xcode",
+                                   ocr: "fresh build log")
 
         store.clearOCRText(olderThan: Date(timeIntervalSinceNow: -86_400))
 
@@ -169,5 +344,22 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(store.searchOCR("fresh").count, 1)
         // Pixel bookkeeping untouched: text pruning is independent of paths.
         XCTAssertEqual(store.screenshotPaths(olderThan: Date()).count, 2)
+    }
+}
+
+private final class ActivityResolverInvocationProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var invocationCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func recordInvocation() {
+        lock.lock()
+        count += 1
+        lock.unlock()
     }
 }

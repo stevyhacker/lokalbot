@@ -50,6 +50,11 @@ enum AgentLLMEndpointResolver {
                 return .unsupported(
                     reason: "Approve this remote Ollama server under Settings → Models before Agent Mode sends context to it.")
             }
+            guard InferenceEndpointPolicy.isLoopback(base)
+                    || base.scheme?.lowercased() == "https" else {
+                return .unsupported(
+                    reason: "Remote Ollama servers must use HTTPS so meeting context is encrypted in transit.")
+            }
             guard !settings.ollamaModel.isEmpty else {
                 return .unsupported(reason: "Pick an Ollama model under Settings → Models — Agent Mode needs an explicit model.")
             }
@@ -67,6 +72,11 @@ enum AgentLLMEndpointResolver {
                 base, approvedOrigins: settings.approvedRemoteInferenceOrigins) else {
                 return .unsupported(
                     reason: "Approve this remote inference server under Settings → Models before Agent Mode sends context to it.")
+            }
+            guard InferenceEndpointPolicy.isLoopback(base)
+                    || base.scheme?.lowercased() == "https" else {
+                return .unsupported(
+                    reason: "Remote inference servers must use HTTPS; LokalBot will not send meeting context or API keys over HTTP.")
             }
             guard !settings.openAIModel.isEmpty else {
                 return .unsupported(reason: "Set a model name for the OpenAI-compatible server under Settings → Models.")

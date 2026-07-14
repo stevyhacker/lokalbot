@@ -4,6 +4,15 @@ import XCTest
 @MainActor
 final class AgentRuntimeInstallerTests: XCTestCase {
 
+    private actor VerificationProbe {
+        private(set) var calls = 0
+
+        func verify() -> Bool {
+            calls += 1
+            return false
+        }
+    }
+
     private var sandbox: URL!
 
     override func setUp() async throws {
@@ -36,10 +45,16 @@ final class AgentRuntimeInstallerTests: XCTestCase {
     }
 
     private var fakePackageInstaller: AgentRuntimeInstaller.PackageInstaller {
-        { _, _, destination in
+        { _, template, destination in
             let cliDir = destination.appendingPathComponent(
                 "node_modules/@earendil-works/pi-coding-agent/dist", isDirectory: true)
             try FileManager.default.createDirectory(at: cliDir, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(
+                at: template.appendingPathComponent("package.json"),
+                to: destination.appendingPathComponent("package.json"))
+            try FileManager.default.copyItem(
+                at: template.appendingPathComponent("bun.lock"),
+                to: destination.appendingPathComponent("bun.lock"))
             try Data("// cli".utf8).write(to: cliDir.appendingPathComponent("cli.js"))
         }
     }
@@ -54,31 +69,61 @@ final class AgentRuntimeInstallerTests: XCTestCase {
         XCTAssertEqual(process.terminationStatus, 0, "\(tool) failed")
     }
 
-    private func manifest(bunZip: URL, corruptBunSHA: Bool = false) throws -> AgentRuntimeManifest {
+    private func manifest(
+        bunZip: URL,
+        corruptBunSHA: Bool = false,
+        runtimeTreeSHA256: String? = nil
+    ) throws -> AgentRuntimeManifest {
         AgentRuntimeManifest(
             bun: AgentRuntimeArtifact(
                 name: "Bun test", url: bunZip,
                 sha256: corruptBunSHA ? String(repeating: "0", count: 64)
                                       : try SHA256Verifier.hexDigest(of: bunZip),
-                archiveKind: .zip))
+                archiveKind: .zip),
+            piRuntimeTreeSHA256: runtimeTreeSHA256)
     }
 
     func testInstallsVerifiedArtifactsIntoLayout() async throws {
         let root = sandbox.appendingPathComponent("agent-runtime", isDirectory: true)
+        let testManifest = try manifest(bunZip: makeBunFixture())
         let installer = AgentRuntimeInstaller(
             root: root,
             runtimeTemplate: try makeRuntimeTemplate(),
             packageInstaller: fakePackageInstaller)
-        await installer.installIfNeeded(manifest: try manifest(bunZip: makeBunFixture()))
+        await installer.installIfNeeded(manifest: testManifest)
         XCTAssertEqual(installer.phase, .installed)
-        XCTAssertTrue(AgentRuntimeLayout.isInstalled(under: root))
+        XCTAssertTrue(AgentRuntimeLayout.isInstalled(under: root, manifest: testManifest))
         XCTAssertTrue(FileManager.default.isExecutableFile(
             atPath: AgentRuntimeLayout.bunBinary(under: root).path))
         let markerData = try Data(contentsOf: AgentRuntimeLayout.versionMarker(under: root))
-        let versions = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: markerData) as? [String: String])
-        XCTAssertEqual(versions, ["bun": AgentRuntimeManifest.bunVersion,
-                                  "pi": AgentRuntimeManifest.piVersion])
+        let marker = try JSONDecoder().decode(AgentRuntimeVersionMarker.self, from: markerData)
+        XCTAssertEqual(marker.bunVersion, AgentRuntimeManifest.bunVersion)
+        XCTAssertEqual(marker.piVersion, AgentRuntimeManifest.piVersion)
+        XCTAssertEqual(marker.bunArchiveSHA256, testManifest.bun.sha256)
+        XCTAssertEqual(marker.bunBinarySHA256.count, 64)
+        XCTAssertEqual(marker.piCLISHA256.count, 64)
+        XCTAssertEqual(marker.piRuntimeTreeSHA256.count, 64)
+        let attributes = try FileManager.default.attributesOfItem(
+            atPath: AgentRuntimeLayout.versionMarker(under: root).path)
+        XCTAssertEqual(attributes[.posixPermissions] as? NSNumber, NSNumber(value: 0o600))
+    }
+
+    func testInitializationDefersRuntimeVerificationUntilRefresh() async throws {
+        let probe = VerificationProbe()
+        let installer = AgentRuntimeInstaller(
+            root: sandbox.appendingPathComponent("agent-runtime", isDirectory: true),
+            runtimeTemplate: try makeRuntimeTemplate(),
+            packageInstaller: fakePackageInstaller,
+            runtimeVerifier: { _, _ in await probe.verify() })
+
+        XCTAssertEqual(installer.phase, .checking)
+        var calls = await probe.calls
+        XCTAssertEqual(calls, 0)
+
+        await installer.refreshInstalledState()
+        calls = await probe.calls
+        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(installer.phase, .idle)
     }
 
     func testChecksumMismatchFailsAndInstallsNothing() async throws {
@@ -94,6 +139,43 @@ final class AgentRuntimeInstallerTests: XCTestCase {
         }
         XCTAssertTrue(message.contains("checksum"), message)
         XCTAssertFalse(AgentRuntimeLayout.isInstalled(under: root))
+    }
+
+    func testRuntimeTreeChecksumMismatchFailsAndInstallsNothing() async throws {
+        let root = sandbox.appendingPathComponent("agent-runtime", isDirectory: true)
+        let installer = AgentRuntimeInstaller(
+            root: root,
+            runtimeTemplate: try makeRuntimeTemplate(),
+            packageInstaller: fakePackageInstaller)
+        await installer.installIfNeeded(manifest: try manifest(
+            bunZip: makeBunFixture(),
+            runtimeTreeSHA256: String(repeating: "0", count: 64)))
+        guard case .failed(let message) = installer.phase else {
+            return XCTFail("expected failure, got \(installer.phase)")
+        }
+        XCTAssertTrue(message.contains("checksum"), message)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+    }
+
+    func testRuntimeTreeChecksumMatchInstallsVerifiedTree() async throws {
+        let root = sandbox.appendingPathComponent("agent-runtime", isDirectory: true)
+        let template = try makeRuntimeTemplate()
+        let expectedTree = sandbox.appendingPathComponent("expected-pi", isDirectory: true)
+        try await fakePackageInstaller(
+            URL(fileURLWithPath: "/unused/fake-bun"), template, expectedTree)
+        let expectedDigest = try SHA256Verifier.treeHexDigest(of: expectedTree)
+        try FileManager.default.removeItem(at: expectedTree)
+
+        let testManifest = try manifest(
+            bunZip: makeBunFixture(), runtimeTreeSHA256: expectedDigest)
+        let installer = AgentRuntimeInstaller(
+            root: root,
+            runtimeTemplate: template,
+            packageInstaller: fakePackageInstaller)
+        await installer.installIfNeeded(manifest: testManifest)
+
+        XCTAssertEqual(installer.phase, .installed)
+        XCTAssertTrue(AgentRuntimeLayout.isInstalled(under: root, manifest: testManifest))
     }
 
     func testFrozenPackageInstallerCopiesManifestAndRunsExpectedCommand() async throws {
@@ -133,14 +215,11 @@ final class AgentRuntimeInstallerTests: XCTestCase {
             root: root,
             runtimeTemplate: try makeRuntimeTemplate(),
             packageInstaller: fakePackageInstaller)
-        await installer.installIfNeeded(manifest: try manifest(bunZip: makeBunFixture()))
+        let testManifest = try manifest(bunZip: makeBunFixture())
+        await installer.installIfNeeded(manifest: testManifest)
         XCTAssertEqual(installer.phase, .installed)
-        // Second call must short-circuit without downloading: this manifest
-        // points at nonexistent files, so any fetch attempt would fail.
-        let bogus = AgentRuntimeManifest(
-            bun: AgentRuntimeArtifact(name: "Bun", url: URL(fileURLWithPath: "/nonexistent.zip"),
-                                      sha256: String(repeating: "0", count: 64), archiveKind: .zip))
-        await installer.installIfNeeded(manifest: bogus)
+        try FileManager.default.removeItem(at: testManifest.bun.url)
+        await installer.installIfNeeded(manifest: testManifest)
         XCTAssertEqual(installer.phase, .installed)
     }
 }

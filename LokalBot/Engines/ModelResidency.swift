@@ -31,6 +31,12 @@ final class ModelResidency: ObservableObject {
         var lastUsed: Date
     }
 
+    struct LoadReservation: Identifiable, Equatable, Sendable {
+        let id: UUID
+        let residencyID: String
+        let bytes: Int64
+    }
+
     @Published private(set) var residents: [Resident] = []
     /// Residency ids currently pinned by open inference leases (pushed by
     /// `InferenceBroker`). Pinned rows are never eviction victims; they still
@@ -45,6 +51,8 @@ final class ModelResidency: ObservableObject {
     /// finishing. Generations keep that stale task from unregistering the
     /// replacement model that now occupies the same logical residency id.
     private var registrationGenerations: [String: UUID] = [:]
+    private var loadReservations: [UUID: LoadReservation] = [:]
+    private var reservationExpiryTasks: [UUID: Task<Void, Never>] = [:]
 
     /// Weights budget: half of physical RAM by default, leaving the other
     /// half for the app, transcription engines, and everything else.
@@ -55,12 +63,16 @@ final class ModelResidency: ObservableObject {
     }
 
     var totalBytes: Int64 { residents.reduce(0) { $0 + $1.bytes } }
+    var pendingLoadBytes: Int64 {
+        loadReservations.values.reduce(0) { Self.saturatingAdd($0, $1.bytes) }
+    }
 
     func register(id: String, label: String, bytes: Int64,
                   processIdentifier: pid_t? = nil,
                   processStartTime: UInt64? = nil,
                   generation: UUID = UUID(),
                   unload: @escaping () async -> Void) {
+        finishReservations(for: id)
         unloaders[id] = unload
         registrationGenerations[id] = generation
         let entry = Resident(
@@ -105,10 +117,20 @@ final class ModelResidency: ObservableObject {
     /// Evict least-recently-used residents (never `id` itself — a model swap
     /// on the same runtime replaces in place) until `bytes` fits the budget.
     /// Call right before loading new weights.
-    func willLoad(id: String, bytes: Int64, reservedBytes: Int64 = 0) async {
+    @discardableResult
+    func willLoad(id: String, bytes: Int64, reservedBytes: Int64 = 0) async
+        -> LoadReservation {
+        let reservation = LoadReservation(
+            id: UUID(), residencyID: id, bytes: max(0, bytes))
+        loadReservations[reservation.id] = reservation
+        scheduleReservationExpiry(reservation.id)
+        let otherPendingBytes = loadReservations.values
+            .filter { $0.id != reservation.id }
+            .reduce(Int64(0)) { Self.saturatingAdd($0, $1.bytes) }
+        let allReservedBytes = Self.saturatingAdd(max(0, reservedBytes), otherPendingBytes)
         let victims = ModelResidencyPolicy.evictions(
             residents: residents.map { .init(id: $0.id, bytes: $0.bytes, lastUsed: $0.lastUsed) },
-            incomingID: id, incomingBytes: bytes, reservedBytes: reservedBytes,
+            incomingID: id, incomingBytes: bytes, reservedBytes: allReservedBytes,
             pinned: pinnedIDs,
             budgetBytes: budgetBytes)
         for victim in victims {
@@ -120,6 +142,39 @@ final class ModelResidency: ObservableObject {
             unregister(id: victim)
             await unload?()
         }
+        return reservation
+    }
+
+    func cancelLoad(_ reservation: LoadReservation) {
+        reservationExpiryTasks[reservation.id]?.cancel()
+        reservationExpiryTasks[reservation.id] = nil
+        loadReservations[reservation.id] = nil
+    }
+
+    private func finishReservations(for residencyID: String) {
+        let ids = loadReservations.values
+            .filter { $0.residencyID == residencyID }
+            .map(\.id)
+        for id in ids {
+            reservationExpiryTasks[id]?.cancel()
+            reservationExpiryTasks[id] = nil
+            loadReservations[id] = nil
+        }
+    }
+
+    private func scheduleReservationExpiry(_ id: UUID) {
+        reservationExpiryTasks[id]?.cancel()
+        reservationExpiryTasks[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(300))
+            guard !Task.isCancelled else { return }
+            self?.loadReservations[id] = nil
+            self?.reservationExpiryTasks[id] = nil
+        }
+    }
+
+    private static func saturatingAdd(_ lhs: Int64, _ rhs: Int64) -> Int64 {
+        let result = lhs.addingReportingOverflow(rhs)
+        return result.overflow ? .max : result.partialValue
     }
 
     /// File size of the weights at `url` (0 if unreadable) — the bytes every

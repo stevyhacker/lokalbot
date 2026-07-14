@@ -38,3 +38,81 @@ final class DownloadIntegrityTests: XCTestCase {
         XCTAssertFalse(acceptsTruncatedFile)
     }
 }
+
+@MainActor
+final class ModelDownloadManagerCancellationTests: XCTestCase {
+    func testCancellationDuringSHA256VerificationRemovesOnlyCompletedStagedFile() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("model-cancel-\(UUID().uuidString)", isDirectory: true)
+        let storage = StorageManager(rootURL: root)
+        let sourceURL = try XCTUnwrap(URL(string: "https://example.com/model.gguf"))
+        let staged = root.appendingPathComponent("completed-whole-file.tmp")
+        let stashDirectory = root.appendingPathComponent("models/.partial", isDirectory: true)
+        let resumable = ParallelRangeDownloader.stashPartialURL(
+            for: sourceURL, in: stashDirectory)
+        let resumeManifest = stashDirectory.appendingPathComponent(
+            "LokalBot-resume-\(ParallelRangeDownloader.stashName(for: sourceURL)).json")
+        let gate = SHA256VerificationGate()
+        let expectedDigest = String(repeating: "a", count: 64)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let manager = ModelDownloadManager(
+            stagedDownloader: { _, _, passedStashDirectory, _ in
+                XCTAssertEqual(passedStashDirectory, stashDirectory)
+                try FileManager.default.createDirectory(
+                    at: stashDirectory, withIntermediateDirectories: true)
+                try Data("whole file".utf8).write(to: staged)
+                try Data("resumable bytes".utf8).write(to: resumable)
+                try Data("resume manifest".utf8).write(to: resumeManifest)
+                return staged
+            },
+            sha256Digest: { _ in
+                await gate.suspendUntilReleased()
+                return expectedDigest
+            })
+
+        manager.download(
+            url: sourceURL.absoluteString,
+            fileName: "model.gguf",
+            id: "cancel-during-verification",
+            expectedSHA256: expectedDigest,
+            storage: storage)
+        await gate.waitUntilSuspended()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: staged.path))
+
+        manager.cancel(id: "cancel-during-verification")
+        await gate.release()
+        for _ in 0..<100 where FileManager.default.fileExists(atPath: staged.path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: resumable.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: resumeManifest.path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: root.appendingPathComponent("models/model.gguf").path))
+    }
+}
+
+private actor SHA256VerificationGate {
+    private var suspended = false
+    private var suspensionWaiter: CheckedContinuation<Void, Never>?
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    func suspendUntilReleased() async {
+        suspended = true
+        suspensionWaiter?.resume()
+        suspensionWaiter = nil
+        await withCheckedContinuation { releaseWaiter = $0 }
+    }
+
+    func waitUntilSuspended() async {
+        guard !suspended else { return }
+        await withCheckedContinuation { suspensionWaiter = $0 }
+    }
+
+    func release() {
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+}

@@ -30,13 +30,13 @@ struct AgentSessionView: View {
         .onChange(of: controller.state) {
             focusComposerWhenReady()
         }
-        .alert("Allow every change this session?", isPresented: $confirmingAutoApprove) {
-            Button("Allow All Changes", role: .destructive) {
+        .alert("Allow every file change this session?", isPresented: $confirmingAutoApprove) {
+            Button("Allow All File Changes", role: .destructive) {
                 controller.autoApproveSession = true
             }
             Button("Keep Asking", role: .cancel) {}
         } message: {
-            Text("The agent will be able to edit files and run shell commands without showing each request first. This resets when the session closes.")
+            Text("The agent will be able to write and edit files without showing each request first. Shell commands and reads outside the working folder will still ask every time. This resets when the session closes.")
         }
     }
 
@@ -62,7 +62,7 @@ struct AgentSessionView: View {
 
             statusBadge
             Spacer()
-            Toggle("Allow all changes", isOn: Binding(
+            Toggle("Allow all file changes", isOn: Binding(
                 get: { controller.autoApproveSession },
                 set: { enabled in
                     if enabled {
@@ -73,8 +73,8 @@ struct AgentSessionView: View {
                 }))
                 .toggleStyle(.switch)
                 .controlSize(.small)
-                .help("Skip approval cards for file edits and shell commands in this session")
-                .accessibilityHint("When enabled, edits and commands run without individual confirmation")
+                .help("Skip approval cards for file writes and edits in this session")
+                .accessibilityHint("When enabled, file writes and edits run without individual confirmation; shell commands still ask")
                 .accessibilityIdentifier("agent.autoApprove")
         }
         .padding(.horizontal, 12)
@@ -320,14 +320,16 @@ struct AgentSessionView: View {
 
                 Spacer()
 
-                Button("Allow \(request.tool) for Session") {
-                    Task {
-                        await controller.respondToApproval(
-                            id: request.id, approved: true, scope: .session)
+                if controller.canAllowForSession(request) {
+                    Button("Allow \(request.tool) for Session") {
+                        Task {
+                            await controller.respondToApproval(
+                                id: request.id, approved: true, scope: .session)
+                        }
                     }
+                    .help("Automatically allow future \(request.tool) requests until this session closes")
+                    .accessibilityIdentifier("agent.approve.session")
                 }
-                .help("Automatically allow future \(request.tool) requests until this session closes")
-                .accessibilityIdentifier("agent.approve.session")
 
                 Button("Allow Once") {
                     Task {

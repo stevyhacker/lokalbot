@@ -148,13 +148,13 @@ final class AudioSourceMonitor: ObservableObject {
     // MARK: - Private
 
     private func seedCurrentState() {
-        let processes = (try? CoreAudioUtils.listAudioProcesses()) ?? []
+        let processes = MeetingDetector.currentAudioProcesses()
         knownActiveObjectIDs = Set(processes.filter(\.isRunningOutput).map(\.objectID))
     }
 
     private func poll() {
         guard !isRecordingActive else { return }
-        let processes = (try? CoreAudioUtils.listAudioProcesses()) ?? []
+        let processes = MeetingDetector.currentAudioProcesses()
         let active = processes.filter(\.isRunningOutput)
         let activeIDs = Set(active.map(\.objectID))
 

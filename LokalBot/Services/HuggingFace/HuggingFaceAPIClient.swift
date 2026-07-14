@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Stateless client for HuggingFace's public model REST API. Holds one
@@ -71,23 +72,32 @@ struct HuggingFaceAPIClient {
 
     /// List the `.gguf` files in a repository.
     ///
-    /// Reads the plain model record's `siblings`, which carry only `rfilename`
-    /// (no blob metadata) — hence `HFFile.sizeBytes` is usually nil here. Files
-    /// are returned in natural filename order so quantization variants group
-    /// sensibly in the UI.
+    /// Requests blob metadata so every downloadable file carries its immutable
+    /// LFS SHA-256 and can satisfy ModelDownloadManager's integrity policy.
+    /// Files are returned in natural filename order so quantization variants
+    /// group sensibly in the UI.
     func files(modelID: String) async throws -> [HFFile] {
+        guard Self.validModelID(modelID) else { throw APIError.invalidURL }
         var components = URLComponents()
         components.scheme = "https"
         components.host = "huggingface.co"
         // modelID is "owner/repo"; its slash is a real path separator, so set it
         // via `path` (URLComponents percent-encodes only the unsafe characters).
         components.path = "/api/models/\(modelID)"
+        components.queryItems = [URLQueryItem(name: "blobs", value: "true")]
         guard let url = components.url else { throw APIError.invalidURL }
 
         let record = try await fetch(ModelRecord.self, from: url)
         return record.siblings
             .filter { $0.rfilename.lowercased().hasSuffix(".gguf") }
-            .map { HFFile(id: $0.rfilename, modelID: modelID, sizeBytes: $0.size) }
+            .map {
+                HFFile(
+                    id: $0.rfilename,
+                    modelID: modelID,
+                    sizeBytes: $0.lfs?.size ?? $0.size,
+                    revision: record.sha ?? "main",
+                    sha256: Self.normalizedSHA256($0.lfs?.sha256 ?? $0.lfs?.oid))
+            }
             .sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
     }
 
@@ -127,13 +137,37 @@ struct HuggingFaceAPIClient {
     /// and less likely to hit shared rate limits.
     private static let userAgent = AppIdentifiers.bundleID
 
+    private static func validModelID(_ id: String) -> Bool {
+        let parts = id.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return false }
+        return parts.allSatisfy { part in
+            !part.isEmpty && part != "." && part != ".."
+                && part.allSatisfy { $0.isLetter || $0.isNumber || "-_.".contains($0) }
+        }
+    }
+
+    private static func normalizedSHA256(_ oid: String?) -> String? {
+        guard var oid = oid?.lowercased() else { return nil }
+        if oid.hasPrefix("sha256:") { oid.removeFirst("sha256:".count) }
+        guard oid.count == 64, oid.allSatisfy({ $0.isHexDigit }) else { return nil }
+        return oid
+    }
+
     /// Wire shape of `GET /api/models/<id>` — only `siblings` is consumed; the
     /// many other keys are ignored by `JSONDecoder`.
     private struct ModelRecord: Decodable {
+        let sha: String?
         let siblings: [Sibling]
 
         struct Sibling: Decodable {
             let rfilename: String
+            let size: Int?
+            let lfs: LFS?
+        }
+
+        struct LFS: Decodable {
+            let sha256: String?
+            let oid: String?
             let size: Int?
         }
     }
@@ -175,9 +209,21 @@ struct HFFile: Identifiable, Hashable {
     let id: String
     /// Owning repository id (`owner/repo`); needed to build the resolve URL.
     let modelID: String
-    /// Byte size when the API reports it; nil from the plain model endpoint,
-    /// whose `siblings` omit blob metadata.
+    /// Byte size reported by the blob-enabled model endpoint.
     let sizeBytes: Int?
+    /// Immutable repository commit returned by the model API.
+    let revision: String
+    /// Hugging Face LFS object digest, when advertised by the API.
+    let sha256: String?
+
+    init(id: String, modelID: String, sizeBytes: Int?,
+         revision: String = "main", sha256: String? = nil) {
+        self.id = id
+        self.modelID = modelID
+        self.sizeBytes = sizeBytes
+        self.revision = revision
+        self.sha256 = sha256
+    }
 
     /// Direct download URL on HuggingFace's `resolve` endpoint. `URLSession`
     /// follows the CDN redirect automatically, so this is usable as-is by a
@@ -187,7 +233,12 @@ struct HFFile: Identifiable, Hashable {
         var components = URLComponents()
         components.scheme = "https"
         components.host = "huggingface.co"
-        components.path = "/\(modelID)/resolve/main/\(id)"
+        components.path = "/\(modelID)/resolve/\(revision)/\(id)"
+        // URL fragments are never sent to the server. ModelDownloadManager
+        // consumes this integrity hint before constructing its network URL,
+        // so existing UI plumbing carries the LFS digest without a parallel
+        // mutable lookup table.
+        if let sha256 { components.fragment = "sha256=\(sha256)" }
         // `url` is nil only for a malformed scheme/host, both constants here, so
         // the literal fallback is unreachable in practice.
         return components.url ?? URL(string: "https://huggingface.co")!
@@ -196,7 +247,14 @@ struct HFFile: Identifiable, Hashable {
     /// Leaf filename — repos sometimes nest files (e.g. `gguf/model.gguf`), and
     /// downloads should land flat under `<storage>/models/`.
     var fileName: String {
-        (id as NSString).lastPathComponent
+        let leaf = (id as NSString).lastPathComponent
+            .map { character -> Character in
+                character.isLetter || character.isNumber || "-_.".contains(character)
+                    ? character : "_"
+            }
+        let digest = SHA256.hash(data: Data("\(modelID)/\(id)".utf8))
+            .prefix(6).map { String(format: "%02x", $0) }.joined()
+        return "hf-\(digest)-\(String(leaf).suffix(180))"
     }
 
     /// Human-readable size, or nil when the endpoint didn't report one.
