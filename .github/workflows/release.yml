@@ -37,7 +37,9 @@ jobs:
   release:
     name: Archive, notarize, publish
     runs-on: macos-15
-    timeout-minutes: 90
+    # A cache miss includes a full llama.cpp source build before archive,
+    # export, two notarization submissions, stapling, and publication.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
