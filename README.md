@@ -21,7 +21,7 @@ Records both sides of the call and writes the recap with on-device models by def
 
 ---
 
-LokalBot records both sides of your calls — no bot joining — then transcribes, summarizes, and indexes them for search on your Mac by default. Around that core it grew into a local-first AI workspace: **Cotyping** suggests text inline as you type in any app, **Dictation** turns a held **⌥ Space** into on-device speech-to-text wherever your cursor is, and a private timeline shows where your day went. Built-in models run on Apple Silicon. Network access is limited to model downloads, update checks, optional Agent Mode setup, and remote inference origins you explicitly approve. There is no LokalBot account, telemetry endpoint, or hosted AI backend.
+LokalBot records both sides of your calls — no bot joining — then transcribes, summarizes, and indexes them for search on your Mac by default. Around that core it grew into a local-first AI workspace: **Cotyping** suggests text inline as you type in any app, **Dictation** turns a held **⌥ Space** into on-device speech-to-text wherever your cursor is, a private timeline shows where your day went, and **Agent Mode** embeds a coding agent that runs on the same local model. Built-in models run on Apple Silicon. Network access is limited to model downloads, update checks, optional Agent Mode setup, and remote inference origins you explicitly approve. There is no LokalBot account, telemetry endpoint, or hosted AI backend.
 
 <div align="center">
 
@@ -78,30 +78,32 @@ LokalBot records both sides of your calls — no bot joining — then transcribe
 ## Features
 
 - **Records both sides of the call.** Auto-detects Zoom, Teams, Meet, Slack, Webex, and FaceTime, then captures *you* and *them* on two synced tracks — speaker labels for free.
+- **Follow the call live.** A live meeting view during the call: quick notes that land in the finished meeting, plus an opt-in rolling transcript while people talk.
 - **Transcribes locally.** Recommended default: IBM Granite Speech 4.1; switch to Parakeet for speed, Whisper for 99 languages, or Qwen3-ASR for harder recordings.
 - **Writes the recap automatically.** A TL;DR with decisions and action items the moment the call ends. Pick a notes template, summary language, and re-run anytime.
 - **Search every word you've heard.** Full-text *and* meaning-based search across transcripts, summaries, and on-screen text. Click a hit to play from that exact second.
-- **Chat with your meetings.** Ask "what did we decide?" or "find the action items" in plain language — answers are grounded in your library.
+- **Chat with your meetings.** Ask "what did we decide?" or "find the action items" in plain language — answers are grounded in your library. Kokoro TTS can read summaries and answers aloud — on-device, like everything else.
 - **Cotyping — inline AI autocomplete.** Ghost text as you type in almost any app; press **Tab** to accept. Runs its own dedicated on-device model (recommended Gemma 4 · E4B). Opt-in.
 - **Dictation — voice typing anywhere.** Hold **⌥ Space**, talk, release: your words are transcribed on-device and pasted at the cursor. Pauses your music first; audio is deleted after transcription. Opt-in.
 - **See where your day went.** A private timeline of apps and meetings, a generated daily digest, and an "ask your day" box.
 - **Private by construction.** Optional screenshots are AES-GCM encrypted and auto-delete after 14 days. Password fields and excluded apps are never read.
 - **Bring your own model.** Use the included llama.cpp runtime with a GGUF you choose, or point at Ollama, any OpenAI-compatible server, or Apple Intelligence.
-- **Built for coding agents.** `lokalbot-cli` gives agents read-only access to your meeting library.
+- **Agent Mode — a coding agent on your model.** The embedded pi coding agent runs against the same local Main LLM, fully offline; `write` / `edit` / `bash` wait behind native approval cards. Opt-in.
+- **Built for coding agents.** `lokalbot-cli` gives agents read-only access to your meeting library — as a CLI, an installable agent skill, or an MCP server with a one-click bundle for Claude Desktop. Off by default.
 
 <details>
 <summary><strong>Recording &amp; meeting detection</strong> — the details</summary>
 
 - **Detection:** polls for known meeting apps (Zoom, Teams, Slack, Webex, FaceTime) plus mic-in-use, backed by event-driven signals — Core Audio property listeners on the default input (with device-change re-arm), `NSWorkspace` launch/quit, and an `AudioSourceMonitor` that treats *silent → producing-output* transitions as meeting candidates (catches muted calls and tabs opened before the mic). **Browser meetings** (Google Meet, Jitsi, Whereby) are detected from the focused-window title when Accessibility is granted; the system-audio tap captures the browser. Auto-start is configurable (auto / ask / manual); auto-stop debounces (default 60 s, configurable).
 - **Two synchronized tracks:** `mic.m4a` (AVAudioEngine) = **Me**, `system.m4a` (Core Audio process tap on the meeting app's PID → aggregate device → AAC) = **Them** — free diarization. The engine re-installs its tap on `AVAudioEngineConfigurationChange` (AirPods/USB switches no longer truncate the recording), drains the converter on stop (keeps trailing audio), stops cleanly if the captured app exits, and encodes AAC off the real-time IOProc thread.
-- **UI:** menu-bar item (record state, start/stop, recent meetings, pause/resume) plus a main window (meeting list, Show in Finder, in-app playback).
+- **UI:** menu-bar item (record state, start/stop, recent meetings, pause/resume) plus a main window (meeting list, Show in Finder, in-app playback). While a recording runs, the meeting opens in a **live view**: a quick-notes pad (notes land in the finished meeting) and an opt-in rolling live transcript.
 
 </details>
 
 <details>
 <summary><strong>Transcription &amp; speakers</strong> — engines and diarization</summary>
 
-Engines (Settings → Transcription; CoreML/MLX, in-process, Neural Engine/Metal):
+Engines (Settings → Models; CoreML/MLX, in-process, Neural Engine/Metal):
 
 | Engine | Coverage | Notes |
 | --- | --- | --- |
@@ -114,17 +116,17 @@ Engines (Settings → Transcription; CoreML/MLX, in-process, Neural Engine/Metal
 | **SenseVoice / GigaAM** (ONNX) | CJK/Cantonese/English, Russian | specialist coverage |
 | **Cohere Transcribe** (2B) | 14 languages | legacy — hidden unless already installed (no language detection, timestamps, or diarization) |
 
-Models auto-download from Hugging Face on first use and are cached under Application Support.
+Models auto-download on first use (Hugging Face; the ONNX specialists fetch sherpa-onnx archives from GitHub) and are cached under Application Support.
 
-- **Speaker attribution:** mic track = **Me**, system track = **Them**, merged by timestamp into `transcript.json` + `transcript.md`.
-- **Neural diarization:** Settings → "Split Them by speaker" runs FluidAudio's offline pyannote-community-1 pipeline on `system.m4a` after transcription and relabels segments "Them 1 / Them 2 / …" (threshold 0.70, step ratio 0.15, min segment 0.3 s). Enabled by default; first run downloads ~100 MB of CoreML models.
+- **Speaker attribution:** mic track = **Me**, system track = **Them**, merged by timestamp into `transcript.json` + `transcript.md`. When calendar detection matches the meeting to an event, the remote speaker is named from the invite's attendees instead of "Them".
+- **Neural diarization:** Settings → Recording → "Split 'Them' by speaker" runs FluidAudio's offline pyannote-community-1 pipeline on `system.m4a` after transcription and relabels segments "Them 1 / Them 2 / …" (threshold 0.70, step ratio 0.15, min segment 0.3 s). Enabled by default; first run downloads ~100 MB of CoreML models.
 
 </details>
 
 <details>
 <summary><strong>Summarization &amp; notes</strong> — backends, templates, pipeline</summary>
 
-- **Backends** (Settings → Summarization): **Built-in** (included localhost llama.cpp runtime; choose/download a GGUF model) · **Apple Intelligence** (FoundationModels, macOS 26+, gated so the app still builds/launches on 15.0) · **Ollama** · **any OpenAI-compatible server** (LM Studio, vllm-mlx, …). Non-loopback endpoints require explicit origin approval before context is sent.
+- **Backends** (Settings → Models): **Built-in** (included localhost llama.cpp runtime; choose/download a GGUF model) · **Apple Intelligence** (FoundationModels, macOS 26+, gated so the app still builds/launches on 15.0) · **Ollama** · **any OpenAI-compatible server** (LM Studio, vllm-mlx, …). Non-loopback endpoints require explicit origin approval before context is sent.
 - **Output:** `summary.md` with TL;DR / Key points / Decisions / Action items / Open questions. Map-reduce for long meetings; `<think>` reasoning blocks are stripped.
 - **Templates & language:** pick a notes template (Meeting / Lecture / Study guide / Podcast / Free-form) and a summary language (auto-detected via `NLLanguageRecognizer`, with Simplified / Traditional / Cantonese handling). Prompt budgeting (`TokenCountEstimator`, `PromptContextSanitizer`, `PromptSectionBudget`) keeps prompts within the model's context.
 - **Pipeline:** runs automatically when a recording stops (configurable); serial queue with per-meeting status in the UI, plus a Process menu for manual re-runs.
@@ -135,7 +137,8 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 <summary><strong>Built-in LLM runtime</strong> — llama.cpp &amp; model catalog</summary>
 
 - `LlamaServer` copies the vendored `llama-server` out of Resources into Application Support on first run (never executes from inside the bundle), spawns it (`-ngl 99 --jinja`, port 17872), health-checks `/health`, restarts on model switch, and terminates on quit.
-- **Model catalog** (Settings → Summarization) — download / cancel / delete with progress, radio-select the active model. Qwen "thinking" is disabled for summaries via `chat_template_kwargs`.
+- **Inference broker:** the three shared llama-servers — main (17872), embeddings (17873), cotyping fallback (17874) — are lease-managed by `InferenceBroker`: consumers take per-request leases, a server with no active leases unloads after a short linger, and loaded models sit under a RAM residency budget with LRU eviction. Settings → Advanced shows a live **resource monitor** of what's loaded and which lease is pinning it.
+- **Model catalog** (Settings → Models) — download / cancel / delete with progress, radio-select the active model. Qwen "thinking" is disabled for summaries via `chat_template_kwargs`. The Models tab also manages the dedicated cotyping model, the embedding model, and the **Kokoro** TTS voice (sherpa-onnx; downloads once, then reads summaries and chat answers aloud offline).
 
 | Model | Size | Best for |
 | --- | --- | --- |
@@ -158,7 +161,7 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 
 - **Index:** SQLite + FTS5 (`lokalbotv3.sqlite` — system SQLite, no dependency) over titles, transcript segments, summaries, and OCR'd screen text. Segment rows carry their audio timestamp; incremental re-index by file mtime on launch and after each pipeline run.
 - **Semantic search:** transcript/summary chunks embedded with Qwen3-Embedding 0.6B GGUF on a second llama-server instance (port 17873, `--embeddings --pooling mean`); vectors live in SQLite with a model-version marker and queries are brute-force cosine — instant at personal scale, zero extra dependency. Ask → All adds a "Related (semantic)" section for meaning-matches keywords miss; toggle in Ask. Qwen3-VL-Embedding 2B is tracked for screenshot/slide retrieval once image-vector indexing is added.
-- **UI:** sidebar Timeline | Meetings | Ask | Type | Settings; search lives in **Ask** — debounced search-as-you-type (last term prefix-matched), All / Transcripts / Summaries / Screen facets, «highlighted» snippets; clicking a transcript hit opens the meeting and plays from that timestamp.
+- **UI:** sidebar Timeline | Meetings | Ask | Type | Agent | Settings; search lives in **Ask** — debounced search-as-you-type (last term prefix-matched), All / Transcripts / Summaries / Screen facets, «highlighted» snippets; clicking a transcript hit opens the meeting and plays from that timestamp.
 - **Player:** mic + system tracks play in sync (shared device-time anchor); seek bar; click any transcript line to jump the audio there; the currently-playing segment is highlighted.
 
 </details>
@@ -169,7 +172,7 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 - **Chat with your meetings:** pressing ↵ in the **Ask** section escalates your query to a conversational assistant over your library — ask what was decided, find action items, or search transcripts in natural language. A small ReAct agent (`ChatAgent`) reuses the selected `TextEngine` and calls tools to ground every answer. With the built-in default it stays on the Mac; an approved remote backend receives the prompt context needed to answer.
 - **Tools (pi-agent style, mirroring the CLI):** `search_meetings` (FTS5 keyword + optional semantic search), `list_meetings` (filter by title), and `get_meeting` (read a meeting's summary or transcript). The agent picks a tool, reads the observation, then answers — citing meeting titles and dates, and saying so plainly when nothing matches.
 - **Robust protocol:** tools are advertised in the system prompt with the recent-meeting list as ambient context; a tool call is parsed from a JSON object **or** a model's native `name(arg=…)` function-call form (smaller Qwen models emit the latter), with a tolerant fallback to a plain answer so a sloppy reply never hard-fails.
-- **Reuses the configured backend:** built-in llama-server by default, or Ollama / OpenAI-compatible / Apple Intelligence — the same Settings → Summarization choice.
+- **Reuses the configured backend:** built-in llama-server by default, or Ollama / OpenAI-compatible / Apple Intelligence — the same Settings → Models choice.
 
 </details>
 
@@ -186,7 +189,7 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 <details>
 <summary><strong>Cotyping</strong> — inline AI autocomplete</summary>
 
-- **Ghost text everywhere:** as you type in almost any macOS text field, a gray suggestion appears next to the cursor; press **Tab** to accept (a word at a time, or the whole thing — Settings → Cotyping), or keep typing / press **Esc** to dismiss. Built on the same loop as [Cotabby](https://cotabby.app): an Accessibility poll resolves the focused field + caret, a `CGEventTap` watches keystrokes (and swallows the accept key only while a suggestion shows), a borderless click-through `NSPanel` renders the ghost at the caret, and accepted text is inserted as synthetic Unicode keystrokes.
+- **Ghost text everywhere:** as you type in almost any macOS text field, a gray suggestion appears next to the cursor; press **Tab** to accept (a word at a time, or the whole thing — Type → Cotyping), or keep typing / press **Esc** to dismiss. Built on the same loop as [Cotabby](https://cotabby.app): an Accessibility poll resolves the focused field + caret, a `CGEventTap` watches keystrokes (and swallows the accept key only while a suggestion shows), a borderless click-through `NSPanel` renders the ghost at the caret, and accepted text is inserted as synthetic Unicode keystrokes.
 - **Its own dedicated on-device model:** cotyping decodes a dedicated model (recommended **Gemma 4 · E4B**) **in-process via libllama** for low latency, with the localhost `llama-server` as the fallback. The prompt treats the model as a pure text-continuer; raw output is cleaned by a shared normalizer (strips chat/`<think>` scaffolding, prompt echoes, and trailing-text duplication; collapses to one line).
 - **Opt-in & private:** off by default; needs **Accessibility** + **Input Monitoring**. Never reads password/secure fields; honors a per-user app exclusion list (preseeded with password managers and terminals).
 - **In-app preview:** the **Type** section has a live playground that runs the real pipeline on text typed *inside LokalBot* — try it with zero system permissions. Quick-toggle from the menu bar.
@@ -196,10 +199,20 @@ Models auto-download from Hugging Face on first use and are cached under Applica
 <details>
 <summary><strong>Dictation</strong> — system-wide voice typing</summary>
 
-- **Hold ⌥ Space and talk** (or switch to toggle mode): a floating pill shows recording state and a live transcript while you speak; release, and the text is pasted into the focused app — or copied to the clipboard instead (Settings → Dictation).
+- **Hold ⌥ Space and talk** (or switch to toggle mode): a floating pill shows recording state and a live transcript while you speak; release, and the text is pasted into the focused app — or copied to the clipboard instead (Type → Dictation).
 - **Your ASR, prewarmed:** dictation reuses the transcription engine and language you picked under Models (Granite, Parakeet, Whisper, Qwen3-ASR, …) and prewarms it when the shortcut is armed, so short dictations start instantly.
 - **Considerate capture:** playing media (Spotify, Music, browsers, VLC, …) is paused before recording starts; audio goes to a local PCM scratch file and is deleted right after transcription.
 - **Opt-in & private:** off by default; needs the Microphone grant plus Input Monitoring for the global shortcut. Audio, transcription, and paste all happen on-device.
+
+</details>
+
+<details>
+<summary><strong>Agent Mode</strong> — an embedded coding agent on your local model</summary>
+
+- **A coding agent in the sidebar:** the **Agent** section embeds the pi coding agent, preconnected to the same local Main LLM through an OpenAI-compatible shim — a coding agent running on your own GGUF (or whichever backend you configured). Sessions run in tabs, and an active session holds an inference lease so the model stays loaded while you work.
+- **Offline by construction:** pi runs with `--offline`, version checks and crash reporting disabled. Enabling Agent Mode downloads its runtime once — a checksum-verified Bun release from GitHub plus the pi package from npm, pinned by a lockfile bundled with LokalBot — and nothing is fetched after that.
+- **You approve the side effects:** `write` / `edit` / `bash` tool calls pause behind native approval cards before anything touches disk or shell; read-only tools run freely.
+- **Headless:** `LokalBot --agent "<prompt>"` runs one agent turn from the terminal (see Headless flags).
 
 </details>
 
@@ -235,9 +248,10 @@ Privacy is the architecture, not a slogan. Audio, transcripts, summaries, embedd
 
 The only outbound connections LokalBot ever makes:
 
-1. **One-time model downloads** from Hugging Face (plus CoreML/MLX weights) the first time you use an engine — after that it runs fully offline.
+1. **One-time model downloads** the first time you use an engine — GGUF / CoreML / MLX weights from Hugging Face, sherpa-onnx archives (SenseVoice / GigaAM speech models, the Kokoro voice) from GitHub. After that they run fully offline.
 2. **A backend you explicitly configure** — if you point summaries or chat at Ollama, an OpenAI-compatible server, or Apple Intelligence, traffic goes only where you send it. The built-in llama.cpp runtime is localhost-only.
-3. **App updates** via Sparkle — off by default; run a manual check or opt into scheduled checks.
+3. **Agent Mode setup, if you enable it** — a one-time, checksum-verified download of the Bun runtime (GitHub) and the lockfile-pinned pi package (npm). The agent itself runs offline against your local model.
+4. **App updates** via Sparkle — off by default; run a manual check or opt into scheduled checks.
 
 Don't take our word for it: run Little Snitch (or `lsof -i -nP | grep LokalBot`) through a full record → transcribe → summarize cycle and watch it stay silent. Optional screenshots are AES-GCM sealed with a per-install Keychain key and auto-delete; password fields and excluded apps are never read.
 
@@ -278,13 +292,14 @@ The first build runs `Scripts/fetch-llama.sh` (a pre-build phase), which verifie
 
 ## Configuration
 
-Everything is configured in **Settings** inside the app:
+Everything lives in **Settings** — five tabs with a search box that finds any setting — plus per-feature controls in the **Type** section:
 
-- **Transcription** — pick an engine (see the table above).
-- **Summarization** — choose a backend (Built-in / Apple Intelligence / Ollama / OpenAI-compatible) and the active model; browse and download GGUF models from Hugging Face.
-- **Cotyping** — enable inline autocomplete, set the accept granularity, and manage the per-app exclusion list.
-- **Dictation** — enable the global ⌥ Space shortcut, choose hold-to-talk or toggle, and pick paste vs. clipboard output.
-- **Privacy** — toggle screenshots, set the capture interval and retention window, and edit excluded apps.
+- **General** — launch at login, menu-bar-only mode, permission status + repair, storage location, update checks.
+- **Recording** — auto-record behavior, calendar-assisted detection, auto-transcribe/summarize, notes template + language, neural diarization, and day tracking (activity sampling, screenshots, capture interval, retention, excluded apps).
+- **Models** — every model in one tab: the transcription engine (table above), the Main LLM backend (Built-in / Apple Intelligence / Ollama / OpenAI-compatible) with its GGUF catalog and Hugging Face browser, the dedicated cotyping model, embeddings, and the Kokoro TTS voice.
+- **Privacy** — screen-text retention and the "Allow external agents to read your meeting library" toggle that gates the CLI/MCP surface.
+- **Advanced** — live resource monitor, hardware fit advisory, Agent CLI install.
+- **Type** — enable and tune Cotyping (model, exclusions, accept granularity) and Dictation (shortcut style, paste vs. clipboard).
 
 ## FAQ
 
@@ -326,13 +341,18 @@ Only if you turn on screenshots — they're off by default and opt-in during onb
 
 ## For developers
 
-### Agent CLI
+### Agent CLI & MCP
 
-`lokalbot-cli` (ArgumentParser, embedded in `Contents/Helpers/`) gives coding agents read-only access to the meeting library via `list` / `get` / `search` / `path`. JSON by default, `--table` for humans. Settings → Agent CLI symlinks the binary to `~/.local/bin/lokalbot-cli` and the bundled skill to `~/.agents/skills/lokalbot-cli/`.
+`lokalbot-cli` (ArgumentParser, embedded in `Contents/Helpers/`) gives coding agents read-only access to the meeting library via `list` / `get` / `search` / `path`. JSON by default, `--table` for humans. Settings → Advanced → Agent CLI (or `lokalbot-cli install-skill`) symlinks the binary to `~/.local/bin/lokalbot-cli` and the bundled skill to `~/.agents/skills/lokalbot-cli/`.
+
+The same binary is an **MCP server**: `lokalbot-cli mcp` speaks MCP over stdio and exposes `list_meetings` / `get_meeting` / `search_meetings` / `ask_library` — the last answers questions through the app's local llama-server (woken on demand under a short-lived lease), so "chat with my meetings" from Claude Desktop or Cursor still never leaves the Mac. `Scripts/build-mcpb.sh` wraps it into a one-click `dist/LokalBot.mcpb` bundle for GUI MCP clients.
+
+The whole agent surface is **off by default**: every command requires the Privacy-pane toggle ("Allow external agents to read your meeting library"), which drops a `control/agent-access-enabled` marker under the storage root — with it off, tools return an error explaining how to enable access.
 
 ```bash
 lokalbot-cli search "auth refactor"
 lokalbot-cli get latest --include summary
+lokalbot-cli mcp        # stdio MCP server: list/get/search/ask_library
 ```
 
 <div align="center"><img src="Assets/cli-demo.svg" alt="Animated terminal session: lokalbot-cli lists meetings as a table, searches transcripts for redis and returns JSON, then prints the latest meeting summary" width="720"></div>
@@ -351,6 +371,8 @@ The app binary doubles as a test harness; flows that need ungranted permissions 
 | `--digest` | Generate today's day digest |
 | `--shot-test` | Capture one screenshot (needs Screen Recording) |
 | `--chat "<question>"` | Ask the meeting chat assistant once and print the answer |
+| `--agent "<prompt>"` | Run one Agent Mode turn headlessly (tool calls auto-approved) and exit by result |
+| `--cotyping-bench` | Run the cotyping quality benchmark and print a JSON report (exit 0 when every scenario passes) |
 
 ### Testing
 
@@ -383,7 +405,7 @@ Rooted at the bundle id (not "LokalBot") so it never collides with another app's
 LokalBot/
 ├── project.yml                            # XcodeGen manifest: LokalBot + LokalBot Dev + tests + lokalbot-cli
 ├── Scripts/                               # fetch-llama, e2e, ui-tests, DMG + appcast release tooling
-├── CLI/                                   # lokalbot-cli ArgumentParser entry + Commands/ (list/get/search/path)
+├── CLI/                                   # lokalbot-cli ArgumentParser entry + Commands/ (list/get/search/path/mcp/install-skill)
 ├── .agents/skills/lokalbot-cli/SKILL.md   # bundled into the app, symlinked on install
 └── LokalBot/
     ├── LokalBotApp.swift   # @main: Window + MenuBarExtra + Settings scenes, headless flags
@@ -393,11 +415,12 @@ LokalBot/
     │                       #   EmbeddingIndex, ActivityTracker/ScreenshotService (OCR), diarization,
     │                       #   PermissionManager, AppUpdateManager, AppLog, HuggingFace/, Chat/ (agent + tools)
     ├── Engines/            # TranscriptionEngine, TextEngine, AppleIntelligenceEngine,
-    │                       #   ModelCatalog / ModelDownloadManager / LlamaServer
+    │                       #   ModelCatalog / ModelDownloadManager / LlamaServer / InferenceBroker
     ├── Support/            # prompt budgeting, download rescue, DeviceInfo/HardwareCapabilityProbe, ranker
     ├── Cotyping/           # CotypingCoordinator + AX focus tracker, CGEventTap input monitor,
     │                       #   ghost-text overlay, synthetic inserter, prompt renderer + output normalizer
-    └── Views/              # MenuBar, MainWindow, Chat, Timeline, Search, Settings, Cotyping, Onboarding
+    ├── Agent/              # Agent Mode: pi RPC session, Bun runtime installer, approval flow
+    └── Views/              # MenuBar, MainWindow, Chat, Timeline, Search, Settings, Cotyping, Agent, Onboarding
 ```
 
 </details>
@@ -408,7 +431,7 @@ In-place signed updates ship via [Sparkle](https://github.com/sparkle-project/Sp
 
 ## Status
 
-**Done:** recording with robust device/PID handling · transcription (8 models across 5 engines) + neural diarization · summarization (4 backends) + templates/languages · FTS5 + semantic search · synced player · day tracking + digests · screenshots/OCR/privacy · Ask-your-day · chat assistant · agent CLI · Sparkle updates · dev/prod split · in-app model manager + Hugging Face browse · Cotyping (opt-in) · system-wide dictation (opt-in).
+**Done:** recording with robust device/PID handling · live meeting view (notes + rolling transcript) · transcription (8 models across 5 engines) + neural diarization · summarization (4 backends) + templates/languages · FTS5 + semantic search · synced player · Kokoro TTS · day tracking + digests · screenshots/OCR/privacy · Ask-your-day · chat assistant · inference broker (lease-managed servers, RAM budget + LRU, resource monitor) · Agent Mode (embedded pi on the local model, approval-gated) · agent CLI + MCP server + skill (opt-in) · Sparkle updates · dev/prod split · in-app model manager + Hugging Face browse · Cotyping (opt-in) · system-wide dictation (opt-in).
 
 **Not yet built:** VLM screenshot captions (needs a multimodal model + an mmproj slot in `LlamaServer`).
 
