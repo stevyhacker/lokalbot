@@ -79,12 +79,13 @@ final class DictationCoordinator: ObservableObject {
         onBusy: @escaping () -> Void,
         onError: @escaping (String) -> Void,
         focusSnapshotExecutor: DictationFocusSnapshotExecutor = .shared,
-        screenContextProvider: @escaping
-            (DictationScreenTarget, [String]) async -> DictationScreenContext? = {
-                target, excludedApps in
-                await DictationScreenContextCapture.shared.capture(
-                    target: target, excludedApps: excludedApps)
-            }
+        screenContextProvider: @escaping (
+            DictationScreenTarget,
+            [String]
+        ) async -> DictationScreenContext? = { target, excludedApps in
+            await DictationScreenContextCapture.shared.capture(
+                target: target, excludedApps: excludedApps)
+        }
     ) {
         self.storageRoot = storageRoot
         self.settingsProvider = settingsProvider

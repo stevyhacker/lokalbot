@@ -159,7 +159,7 @@ struct ScreenshotCaptureLayout {
                 appName: window.appName, excludedApps: excludedApps)
             let excludedForPrivacy = excludePrivateWindows
                 && ScreenContextPrivacy.isPrivateWindow(title: window.title)
-            guard (excludedForApp || excludedForPrivacy),
+            guard excludedForApp || excludedForPrivacy,
                   intersectionArea(window.frame, selectedDisplay.frame) > 0 else { return nil }
             return window.id
         })

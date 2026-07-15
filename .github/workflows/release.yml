@@ -141,8 +141,11 @@ jobs:
         run: bash Scripts/fetch-llama.sh
 
       # Hardened Runtime must be ON for notarization; the project default is
-      # OFF (project.yml) so local dev builds stay fast. Overriding here is the
-      # release-time flip RELEASING.md step 2 documents.
+      # OFF (project.yml) so local dev builds stay fast. LokalBot's bundled
+      # llama.cpp/sherpa runtimes and speech stack are Apple Silicon only, so
+      # keep the archive arm64-only instead of asking SwiftPM to compile an
+      # unsupported x86_64 slice. Overriding here is the release-time setup
+      # RELEASING.md step 2 documents.
       - name: Archive (Release, Hardened Runtime ON)
         env:
           APPLE_TEAM_ID: ${{ secrets.NOTARY_APPLE_TEAM_ID }}
@@ -153,6 +156,7 @@ jobs:
             -configuration Release \
             -archivePath build/LokalBot.xcarchive \
             ENABLE_HARDENED_RUNTIME=YES \
+            ARCHS=arm64 \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Developer ID Application"
