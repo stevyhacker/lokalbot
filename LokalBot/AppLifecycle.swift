@@ -187,6 +187,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if env["LOKALBOT_DISMISS_ONBOARDING"] == "1" {
             UserDefaults.standard.set(true, forKey: "lokalbotv3.gettingStartedDismissed")
         }
+        if env["LOKALBOT_COTYPING_DEMO"] == "1" || env["LOKALBOT_CAPTURE_SIZE"] != nil {
+            // Apply after launch settles: settings load and window creation both
+            // finish after this method runs, and would otherwise undo these.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self, weak app] in
+                if env["LOKALBOT_COTYPING_DEMO"] == "1" {
+                    // Render the Cotyping section in its enabled state for
+                    // captures; the try-it ghost is seeded in CotypingView.
+                    app?.settings.cotypingEnabled = true
+                }
+                if let raw = env["LOKALBOT_CAPTURE_SIZE"] {
+                    // e.g. "1280x800" — wider than the default window so
+                    // detail-pane chips don't wrap in captures.
+                    let parts = raw.split(separator: "x").compactMap { Double($0) }
+                    if parts.count == 2, let window = self?.uiTestWindow {
+                        window.setContentSize(NSSize(width: parts[0], height: parts[1]))
+                        window.center()
+                    }
+                }
+            }
+        }
+        if let path = env["LOKALBOT_CAPTURE_FILE"] {
+            // Self-capture: render the window to a PNG in-process and quit.
+            // Needs no Screen Recording grant, and renders at a fixed 2x so
+            // README assets are Retina-crisp regardless of the display.
+            let delay = Double(env["LOKALBOT_CAPTURE_DELAY"] ?? "") ?? 5.0
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                Self.writeWindowCapture(self?.uiTestWindow, to: path)
+                NSApp.terminate(nil)
+            }
+        }
+    }
+
+    /// Render the window's frame view (titlebar + content) into a 2x PNG via
+    /// `cacheDisplay`, independent of the display's backing scale.
+    @MainActor
+    private static func writeWindowCapture(_ window: NSWindow?, to path: String) {
+        guard let window, let content = window.contentView else { return }
+        let view: NSView = content.superview ?? content
+        let bounds = view.bounds
+        let scale: CGFloat = 2
+        guard bounds.width > 0, bounds.height > 0,
+              let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
+                                         pixelsWide: Int(bounds.width * scale),
+                                         pixelsHigh: Int(bounds.height * scale),
+                                         bitsPerSample: 8, samplesPerPixel: 4,
+                                         hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB,
+                                         bytesPerRow: 0, bitsPerPixel: 0) else { return }
+        rep.size = bounds.size
+        view.cacheDisplay(in: bounds, to: rep)
+        if let png = rep.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: path))
+        }
     }
 #endif
 

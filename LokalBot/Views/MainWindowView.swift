@@ -199,15 +199,32 @@ struct MeetingDetailView: View {
 
     private var stage: ProcessingPipeline.Stage? { app.pipeline.stages[meeting.id] }
 
+    private var dateChip: some View {
+        BrandChip(icon: "calendar",
+                  text: meeting.startedAt.formatted(date: .abbreviated, time: .shortened))
+            .fixedSize()
+    }
+    private var durationChip: some View { BrandChip(icon: "clock", text: meeting.durationLabel).fixedSize() }
+    private var appChip: some View { BrandChip(icon: "video", text: meeting.appName).fixedSize() }
+    private var trackChip: some View {
+        BrandChip(icon: meeting.hasSystemTrack ? "speaker.wave.2.fill" : "mic.fill",
+                  text: meeting.hasSystemTrack ? "Mic + system" : "Mic only")
+            .fixedSize()
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(meeting.title).font(.title2.bold()).accessibilityIdentifier("detail.title")
-            HStack(spacing: 6) {
-                BrandChip(icon: "calendar", text: meeting.startedAt.formatted(date: .abbreviated, time: .shortened))
-                BrandChip(icon: "clock", text: meeting.durationLabel)
-                BrandChip(icon: "video", text: meeting.appName)
-                BrandChip(icon: meeting.hasSystemTrack ? "speaker.wave.2.fill" : "mic.fill",
-                          text: meeting.hasSystemTrack ? "Mic + system" : "Mic only")
+            // One row when the detail column has room, two rows when it
+            // doesn't — never let chip text wrap inside a chip.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    dateChip; durationChip; appChip; trackChip
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) { dateChip; durationChip }
+                    HStack(spacing: 6) { appChip; trackChip }
+                }
             }
 
             if player.isLoaded { playerBar }

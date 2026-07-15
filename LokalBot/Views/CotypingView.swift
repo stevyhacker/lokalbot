@@ -20,7 +20,18 @@ private struct CotypingContent: View {
     @ObservedObject private var stats = CotypingStatsStore.shared
 
     @State private var previewText = "Hi Sarah, thanks for the update. I wanted to follow"
+#if LOKALBOT_UI_TEST_HOST
+    // Screenshot hooks (Scripts/capture-screenshots.sh): seed the try-it ghost
+    // so captures show the feature suggesting (no engine or model present), and
+    // skip the permissions rows so the ghost stays above the window fold.
+    private static let captureDemo = ProcessInfo.processInfo
+        .environment["LOKALBOT_COTYPING_DEMO"] == "1"
+    @State private var ghost = captureDemo
+        ? " up on the Postgres migration timeline we scoped yesterday." : ""
+#else
+    private static let captureDemo = false
     @State private var ghost = ""
+#endif
     @State private var previewError: String?
     @State private var previewing = false
     @State private var previewTask: Task<Void, Never>?
@@ -31,7 +42,7 @@ private struct CotypingContent: View {
     var body: some View {
         Form {
             headerSection
-            if app.settings.cotypingEnabled { permissionsSection }
+            if app.settings.cotypingEnabled && !Self.captureDemo { permissionsSection }
             previewSection
             modelSection
             if app.settings.cotypingEnabled {

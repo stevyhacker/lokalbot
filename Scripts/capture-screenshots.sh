@@ -4,9 +4,9 @@
 #
 # Builds the UI-test host, seeds a synthetic meeting library, then lands the
 # host on each section via the LOKALBOT_* capture env vars (handled in the app
-# only under the LOKALBOT_UI_TEST_HOST build flag) and screenshots each
-# window by its own PID -- so a running production LokalBot is never touched.
-# No TCC permissions beyond Screen Recording for the controlling terminal.
+# only under the LOKALBOT_UI_TEST_HOST build flag). The host renders its own
+# window to a 2x PNG in-process (LOKALBOT_CAPTURE_FILE) and quits -- so a
+# running production LokalBot is never touched and no TCC grant is needed.
 #
 # Produces in Assets/screenshots/:
 #   *.png      one still per section
@@ -40,37 +40,26 @@ APP="$PRODUCTS/LokalBot UI Test Host.app/Contents/MacOS/LokalBot UI Test Host"
 echo "==> Seeding demo library"
 python3 Scripts/seed_demo_library.py "$LIB"
 
-WIN="$(mktemp -d)/winfind.swift"
-cat > "$WIN" <<'SWIFT'
-import CoreGraphics
-import Foundation
-let targetPID = CommandLine.arguments.count > 1 ? Int(CommandLine.arguments[1]) : nil
-let infos = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-for w in infos {
-    guard (w[kCGWindowLayer as String] as? Int ?? -1) == 0 else { continue }
-    let pid = w[kCGWindowOwnerPID as String] as? Int ?? -1
-    if let t = targetPID, pid != t { continue }
-    print(w[kCGWindowNumber as String] as? Int ?? 0)
-}
-SWIFT
-
 # capture <dest-dir> <name> [ENV=val ...]
 capture() {
   dest="$1"; name="$2"; shift 2
   pkill -f "LokalBot UI Test Host" >/dev/null 2>&1 || true
   sleep 1
-  env LOKALBOT_UI_TEST=1 LOKALBOT_STORAGE_ROOT="$LIB" LOKALBOT_DEFAULTS_SUITE="$SUITE" "$@" \
+  rm -f "$dest/$name.png"
+  env LOKALBOT_UI_TEST=1 LOKALBOT_STORAGE_ROOT="$LIB" LOKALBOT_DEFAULTS_SUITE="$SUITE" \
+      LOKALBOT_CAPTURE_FILE="$dest/$name.png" LOKALBOT_CAPTURE_SIZE=1320x820 "$@" \
     "$APP" -ApplePersistenceIgnoreState YES -AppleLocale en_US -AppleLanguages "(en)" \
     --lokalbot-ui-test --lokalbot-storage-root "$LIB" --lokalbot-defaults-suite "$SUITE" \
     </dev/null >/dev/null 2>&1 &
-  pid=$!
-  sleep 6
-  wid=$(swift "$WIN" "$pid" | head -1 || true)
-  if [ -n "$wid" ]; then
-    screencapture -l"$wid" -o "$dest/$name.png"
+  for _ in $(seq 1 40); do
+    [ -s "$dest/$name.png" ] && break
+    sleep 0.5
+  done
+  sleep 0.3   # let the PNG write finish before the next launch recycles the app
+  if [ -s "$dest/$name.png" ]; then
     echo "    $name.png"
   else
-    echo "    !! no window for $name (pid=$pid)"
+    echo "    !! capture failed for $name"
   fi
 }
 
@@ -80,9 +69,9 @@ capture "$OUT" meetings-transcript LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SE
 capture "$OUT" timeline            LOKALBOT_INITIAL_SECTION=timeline LOKALBOT_DISMISS_ONBOARDING=1
 capture "$OUT" search              LOKALBOT_INITIAL_SECTION=search LOKALBOT_INITIAL_SEARCH=Redis
 capture "$OUT" models              LOKALBOT_INITIAL_SECTION=models
-capture "$OUT" cotyping            LOKALBOT_INITIAL_SECTION=cotyping
+capture "$OUT" cotyping            LOKALBOT_INITIAL_SECTION=cotyping LOKALBOT_COTYPING_DEMO=1
 capture "$OUT" settings            LOKALBOT_INITIAL_SECTION=settings
-capture "$OUT" chat                LOKALBOT_INITIAL_SECTION=chat
+capture "$OUT" chat                LOKALBOT_INITIAL_SECTION=chat LOKALBOT_DISMISS_ONBOARDING=1
 
 echo "==> Capturing GIF sequence frames"
 capture "$FRAMES" recap-northwind  LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=3 LOKALBOT_DETAIL_TAB=summary LOKALBOT_DISMISS_ONBOARDING=1
@@ -97,11 +86,20 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
 fi
 
 echo "==> Assembling GIFs"
-python3 Scripts/assemble_gif.py "$OUT/hero.gif" 1000 \
-  "$OUT/meetings-summary.png" "$OUT/meetings-transcript.png" "$OUT/search.png" "$OUT/timeline.png" "$OUT/cotyping.png"
-python3 Scripts/assemble_gif.py "$OUT/recap.gif" 940 \
+# Widths are 2x the README display size (880/860); assemble_gif never upscales,
+# so 1x captures pass through at native size.
+python3 Scripts/assemble_gif.py "$OUT/hero.gif" 1760 \
+  "$OUT/meetings-summary.png" "$OUT/meetings-transcript.png" "$OUT/search.png" "$OUT/chat.png" "$OUT/timeline.png" "$OUT/cotyping.png"
+python3 Scripts/assemble_gif.py "$OUT/recap.gif" 1720 \
   "$OUT/meetings-summary.png" "$OUT/meetings-transcript.png" "$FRAMES/recap-northwind.png" "$FRAMES/recap-q3.png"
-python3 Scripts/assemble_gif.py "$OUT/search.gif" 940 \
+python3 Scripts/assemble_gif.py "$OUT/search.gif" 1720 \
   "$OUT/search.png" "$FRAMES/search-sso.png" "$FRAMES/search-postgres.png"
 
-echo "==> Done: $OUT/{*.png, hero.gif, recap.gif, search.gif}"
+echo "==> Assembling landing-page hero video"
+# 1872 = 2x the landing page's 936px display slot.
+python3 Scripts/assemble_gif.py "web/assets/hero-demo.mp4" 1872 \
+  "$OUT/meetings-summary.png" "$OUT/meetings-transcript.png" "$OUT/search.png" "$OUT/chat.png" "$OUT/timeline.png" "$OUT/cotyping.png"
+ffmpeg -y -v error -i "web/assets/hero-demo.mp4" -frames:v 1 -q:v 3 "web/assets/hero-poster.jpg"
+echo "    web/assets/hero-poster.jpg"
+
+echo "==> Done: $OUT/{*.png, hero.gif, recap.gif, search.gif} + web/assets/hero-demo.mp4"

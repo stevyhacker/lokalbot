@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Assemble an animated GIF from screenshot frames with slide transitions.
+"""Assemble an animated GIF or MP4 from screenshot frames with slide transitions.
 
 Each frame is centered (no scaling, so text stays crisp) on an even-sized
 brand-dark canvas, cross-slid with xfade, then quantized to a GIF via a
-two-pass palette. Used by Scripts/capture-screenshots.sh.
+two-pass palette — or, when <out> ends in .mp4, encoded as web-grade H.264
+(the landing page's hero-demo). Used by Scripts/capture-screenshots.sh.
 
 Usage:
-    assemble_gif.py <out.gif> <width> <frame1.png> [frame2.png ...]
+    assemble_gif.py <out.gif|out.mp4> <width> <frame1.png> [frame2.png ...]
 """
 import os, subprocess, sys
 
@@ -59,12 +60,25 @@ def main():
     mp4 = os.path.join(tmp, "v.mp4")
     subprocess.run(["ffmpeg", "-y"] + inputs + ["-filter_complex", filt, "-map", "[out]", mp4],
                    check=True, capture_output=True)
+    # Never upscale: cap at the source width so 1x captures stay unscaled and
+    # 2x (Retina) captures land at the requested width for crisp README render.
+    if out.endswith(".mp4"):
+        # Web-grade H.264 for the landing page: even dimensions, faststart.
+        subprocess.run(["ffmpeg", "-y", "-i", mp4, "-vf",
+                        f"scale=min({width}\\,iw):-2:flags=lanczos",
+                        "-c:v", "libx264", "-crf", "22", "-preset", "slow",
+                        "-movflags", "+faststart", "-an", out],
+                       check=True, capture_output=True)
+        print(f"  {out} ({os.path.getsize(out) // 1024} KB)")
+        return
+
+    scale = f"scale=min({width}\\,iw):-1:flags=lanczos"
     pal = os.path.join(tmp, "pal.png")
     subprocess.run(["ffmpeg", "-y", "-i", mp4, "-vf",
-                    f"fps={FPS},scale={width}:-1:flags=lanczos,palettegen=stats_mode=diff", pal],
+                    f"fps={FPS},{scale},palettegen=stats_mode=diff", pal],
                    check=True, capture_output=True)
     subprocess.run(["ffmpeg", "-y", "-i", mp4, "-i", pal, "-lavfi",
-                    f"fps={FPS},scale={width}:-1:flags=lanczos[x];"
+                    f"fps={FPS},{scale}[x];"
                     f"[x][1:v]paletteuse=dither=bayer:bayer_scale=3", out],
                    check=True, capture_output=True)
     print(f"  {out} ({os.path.getsize(out) // 1024} KB)")

@@ -4,9 +4,9 @@
 
 # LokalBot
 
-**Your private AI memory for work — open source and on-device by default.**
+**A local LLM workhorse that keeps a private memory of your workday. Open source, on-device by default.**
 
-Records both sides of meetings without a bot, turns conversations and the workday context you choose into searchable memory, and helps you recall, dictate, write, and automate. No account, no telemetry, no LokalBot cloud. Don't take that on faith: with the built-in backend, required models already downloaded, and automatic update checks off, [point Little Snitch at it](#privacy--verify-it) through a full record → transcribe → summarize cycle and watch the processing path stay silent.
+Records both sides of meetings without a bot, turns conversations and the workday context you choose into searchable memory, and helps you recall, dictate, write, and automate. No account, no telemetry, no LokalBot cloud. Don't take that on faith: with the built-in backend, required models already downloaded, and automatic update checks off, [point Little Snitch at it](#privacy--verify-it) while it records, transcribes, and summarizes a meeting, and watch the processing path stay silent.
 
 [![Download LokalBot for macOS](https://img.shields.io/badge/%E2%80%82Download%20for%20macOS%E2%80%82-LokalBot.dmg-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/stevyhacker/lokalbot/releases/latest/download/LokalBot.dmg)
 
@@ -16,9 +16,9 @@ Records both sides of meetings without a bot, turns conversations and the workda
 ![macOS 15.0+](https://img.shields.io/badge/macOS-15.0%2B-000000?logo=apple&logoColor=white)
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-2ea043)](LICENSE)
 
-<img src="Assets/screenshots/hero.gif" alt="LokalBot tour: meeting recap, speaker-labeled transcript, search, day timeline, and inline autocomplete" width="880" />
+<img src="Assets/screenshots/hero.gif" alt="LokalBot tour: meeting recap, speaker-labeled transcript, search, a cited answer from chat, the day timeline, and inline autocomplete" width="880" />
 
-<sub>Remember → recall with evidence → write anywhere → act on what happened.</sub>
+<sub>Remember, recall with evidence, write anywhere, act on what happened.</sub>
 
 [Features](#features) · [How it works](#how-it-works) · [Privacy — verify it](#privacy--verify-it) · [Download](#download) · [FAQ](#faq) · [Build from source](#build-from-source)
 
@@ -26,7 +26,7 @@ Records both sides of meetings without a bot, turns conversations and the workda
 
 ---
 
-LokalBot is a local-first work-memory system for macOS. Meeting notes are the entry point: your mic is **Me**, a Core Audio tap on the meeting app is **Them**, so speaker labels come free and no bot ever joins. Transcription, summaries, and search run on your Mac by default.
+LokalBot is a local LLM workhorse for macOS that keeps a memory of your workday. The memory starts with meetings: your mic is **Me**, a Core Audio tap on the meeting app is **Them**, so speaker labels come free and no bot ever joins. Transcription, summaries, and search run on your Mac by default.
 
 Around that core, one private library connects four moves: **Remember** meetings and optional day context. **Recall** decisions with citations. **Write** with Dictation and Cotyping in any app. **Act** through fixed-scope local routines, exports, and approved Agent Mode sessions.
 
@@ -36,12 +36,19 @@ Around that core, one private library connects four moves: **Remember** meetings
 
 | | |
 | --- | --- |
+| **One workhorse, many jobs** | The work of a notetaker, a dictation tool, an autocomplete, and a screen-memory subscription, in one free app on your own hardware. |
 | **Memory that keeps working** | Capture the meeting once, then recall its decisions, write the follow-up, or hand scoped context to a trusted tool. |
-| **Evidence, not vague answers** | Search by words or meaning, open the exact meeting or retained moment, and jump to the audio behind a result. |
+| **Answers with evidence** | Search by words or meaning, open the exact meeting or retained moment, and jump to the audio behind a result. |
 | **Local by default** | Audio remains on your Mac; built-in transcription, summaries, search, and writing tools run there too. |
 | **Check, don't trust** | Audit the source or network traffic. Built-in processing stays local; downloads, approved remote inference, and approved agent commands are the disclosed exceptions. |
 | **Free, no API keys** | Pick the best local model for each job and download it once. |
 | **Open source** | Read every line, or build it yourself. |
+
+<div align="center">
+
+<img src="Assets/superapp-hero.svg" alt="LokalBot super-app map: one on-device language model at the center, connected to meetings, cotyping autocomplete, chat, search, the day timeline, the agent CLI, and bring-your-own models" width="680">
+
+</div>
 
 ## See it in action
 
@@ -102,11 +109,11 @@ Power users: bring your own model (any GGUF, Ollama, an OpenAI-compatible server
 2. **It transcribes and summarizes.** When the call ends, the selected engines turn the audio into a labeled transcript and structured recap. The built-in defaults run on-device; first use may include model downloads.
 3. **Your library stays on your Mac.** Everything lands in local files and SQLite you can search, replay, and hand to trusted tools.
 
-Embeddings live in SQLite with brute-force cosine similarity — at personal scale, brute force is instant.
+Embeddings live in SQLite with brute-force cosine similarity, because at personal scale brute force is instant.
 
 ## Privacy — verify it
 
-Privacy is the architecture, not a slogan. Audio, transcripts, summaries, embeddings, screenshots, and activity live in local files and SQLite under your account. There is no account or telemetry, and audio is never sent to a LokalBot service.
+Privacy is the architecture. Audio, transcripts, summaries, embeddings, screenshots, and activity live in local files and SQLite under your account. There is no account or telemetry, and audio is never sent to a LokalBot service.
 
 Depending on the features and backends you enable, LokalBot may make these outbound connections:
 
@@ -116,7 +123,7 @@ Depending on the features and backends you enable, LokalBot may make these outbo
 4. **App updates** via Sparkle — off by default; run a manual check or opt into scheduled checks.
 5. **Agent Mode commands you approve** — approved shell commands run with your macOS user permissions and can access any network destination available to your account. Their destinations and data handling are outside LokalBot's control.
 
-To verify the built-in path, download the required models first, select the built-in backend, turn off automatic update checks, then run Little Snitch (or `lsof -i -nP | grep LokalBot`) through a full record → transcribe → summarize cycle. LokalBot should make no outbound connection during that processing cycle; approved shell tools are separate processes and may connect when you permit them.
+To verify the built-in path, download the required models first, select the built-in backend, turn off automatic update checks, then run Little Snitch (or `lsof -i -nP | grep LokalBot`) while it records, transcribes, and summarizes a meeting. LokalBot should make no outbound connection during that processing cycle; approved shell tools are separate processes and may connect when you permit them.
 
 App Sandbox is intentionally off — Core Audio process taps don't work sandboxed. That's why LokalBot ships as a notarized Developer ID app rather than through the App Store.
 
@@ -136,7 +143,7 @@ Drag to Applications and open. Expect Microphone and System Audio prompts on you
 
 ## Switching from a cloud notetaker?
 
-The useful comparison is where capture, transcription, summaries, and stored data live — plus whether the source is auditable. Products and prices change quickly, so the dated, sourced comparisons are maintained separately: [vs Granola](https://www.lokalbot.com/lokalbot-vs-granola) · [vs Rewind](https://www.lokalbot.com/lokalbot-vs-rewind) · [vs Superwhisper](https://www.lokalbot.com/lokalbot-vs-superwhisper) · [vs Hyprnote](https://www.lokalbot.com/lokalbot-vs-hyprnote)
+The useful comparison is where capture, transcription, summaries, and stored data live, plus whether the source is auditable. Products and prices change quickly, so the dated, sourced comparisons are maintained separately: [vs Granola](https://www.lokalbot.com/lokalbot-vs-granola) · [vs Rewind](https://www.lokalbot.com/lokalbot-vs-rewind) · [vs Superwhisper](https://www.lokalbot.com/lokalbot-vs-superwhisper) · [vs Hyprnote](https://www.lokalbot.com/lokalbot-vs-hyprnote)
 
 ## FAQ
 
@@ -155,13 +162,19 @@ Free and open source under GPLv3 today, with no account, subscription, or teleme
 <details>
 <summary>Which Macs — and why Apple Silicon only?</summary>
 
-Apple Silicon (M1 and later) on macOS 15.0+, by design: LokalBot is welded to the Neural Engine, MLX, and Core Audio process taps. There is no Intel, Windows, or Linux build planned.
+Apple Silicon (M1 and later) on macOS 15.0+, by design: LokalBot is built around the Neural Engine, MLX, and Core Audio process taps. There is no Intel, Windows, or Linux build planned.
 </details>
 
 <details>
 <summary>How does it record both sides?</summary>
 
 Your microphone is one track, labeled **Me**. A Core Audio process tap on the meeting app is the other, labeled **Them**. That split gives you speaker labels for free — no bot joins the call.
+</details>
+
+<details>
+<summary>How is this different from Rewind or screenpipe?</summary>
+
+They proved people want a computer that remembers. Rewind became Limitless and moved cloud-first; screenpipe is a developer library you build on. LokalBot is a finished GPLv3 app: install it, and capture, transcription, summaries, and memory run on-device by default, with source you can audit. Dated comparisons: [vs Rewind](https://www.lokalbot.com/lokalbot-vs-rewind) · [vs Granola](https://www.lokalbot.com/lokalbot-vs-granola).
 </details>
 
 <details>
@@ -234,7 +247,7 @@ The first build vendors pinned llama.cpp (`b9844`) via a pre-build phase; models
 
 Issues and pull requests are welcome — see the [issue templates](.github/ISSUE_TEMPLATE) and [PR template](.github/PULL_REQUEST_TEMPLATE.md), and please run the unit tests before opening a PR ([DEVELOPMENT.md](DEVELOPMENT.md) has the commands). Security issues: report privately via [SECURITY.md](SECURITY.md) · usage help: [SUPPORT.md](SUPPORT.md).
 
-If LokalBot is useful to you, a star genuinely helps other people find it.
+If LokalBot is useful to you, a star helps other people find it.
 
 ## License
 
@@ -247,7 +260,7 @@ Built on [llama.cpp](https://github.com/ggml-org/llama.cpp), [IBM Granite Speech
 <details>
 <summary>LokalBot for LLMs</summary>
 
-LokalBot is a free, open-source (GPLv3) private AI work-memory app for macOS that runs on-device by default. Meeting notes are its entry point: it records both sides without a bot, turns conversations and optional workday context into searchable, evidence-backed memory, then helps users recall, dictate, write, and automate. It is an alternative to Granola, Otter.ai, Rewind, Superwhisper, and Hyprnote that runs transcription and summarization locally on Apple Silicon Macs (macOS 15+). Your microphone is captured as "Me" and the meeting app's system audio as "Them" via a Core Audio process tap, giving speaker-labeled transcripts without a meeting bot. Transcription engines include IBM Granite Speech 4.1, NVIDIA Parakeet, Whisper large-v3 turbo, and Qwen3-ASR, running on the Neural Engine via CoreML and MLX. Summaries are generated by a bundled llama.cpp runtime on localhost, or optionally by Ollama, any OpenAI-compatible server, or Apple Intelligence. There is no account, telemetry endpoint, or LokalBot cloud. Disclosed network paths are model/runtime downloads, optional update checks, remote inference origins the user explicitly approves, and network-capable Agent Mode commands the user explicitly approves. LokalBot also includes system-wide dictation, Cotyping inline AI autocomplete, opt-in Quick Recall, accessibility-first text context with optional encrypted visuals and local OCR fallback, evidence-backed citations, semantic search over meetings and captured text, fixed-scope local routines, scheduled Markdown/Obsidian/Logseq memory export, Memory Health diagnostics, chat over local memory, and a read-only CLI and MCP server for coding agents. External MCP clients may independently transmit tool inputs and results under their own privacy terms.
+LokalBot is a free, open-source (GPLv3) private AI work-memory app for macOS that runs on-device by default: a local LLM workhorse that keeps a memory of each workday. It records both sides of meetings without a bot, turns conversations and optional workday context into searchable, evidence-backed memory, then helps users recall, dictate, write, and automate. It is an alternative to Granola, Otter.ai, Rewind, Limitless, screenpipe, Superwhisper, and Hyprnote that runs transcription and summarization locally on Apple Silicon Macs (macOS 15+). Your microphone is captured as "Me" and the meeting app's system audio as "Them" via a Core Audio process tap, giving speaker-labeled transcripts without a meeting bot. Transcription engines include IBM Granite Speech 4.1, NVIDIA Parakeet, Whisper large-v3 turbo, and Qwen3-ASR, running on the Neural Engine via CoreML and MLX. Summaries are generated by a bundled llama.cpp runtime on localhost, or optionally by Ollama, any OpenAI-compatible server, or Apple Intelligence. There is no account, telemetry endpoint, or LokalBot cloud. Disclosed network paths are model/runtime downloads, optional update checks, remote inference origins the user explicitly approves, and network-capable Agent Mode commands the user explicitly approves. LokalBot also includes system-wide dictation, Cotyping inline AI autocomplete, opt-in Quick Recall, accessibility-first text context with optional encrypted visuals and local OCR fallback, evidence-backed citations, semantic search over meetings and captured text, fixed-scope local routines, scheduled Markdown/Obsidian/Logseq memory export, Memory Health diagnostics, chat over local memory, and a read-only CLI and MCP server for coding agents. External MCP clients may independently transmit tool inputs and results under their own privacy terms.
 
 Guides: [local AI meeting notes on Mac](https://www.lokalbot.com/local-ai-meeting-notes-mac) · [offline meeting transcription](https://www.lokalbot.com/offline-meeting-transcription-mac) · [local transcription models compared](https://www.lokalbot.com/local-transcription-models-mac) · [open-source AI meeting notes](https://www.lokalbot.com/open-source-ai-meeting-notes) · [record both sides of a Mac meeting without a bot](https://www.lokalbot.com/record-both-sides-mac-meeting-without-bot)
 
