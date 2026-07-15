@@ -343,6 +343,12 @@ final class AppState: ObservableObject {
                 if Self.dailyMemoryExportChanged(from: oldValue, to: settings) {
                     applyDailyMemoryExportSetting()
                 }
+                if Self.screenContextChanged(from: oldValue, to: settings) {
+                    applyTrackingSetting()
+                }
+                if Self.memoryRoutinesChanged(from: oldValue, to: settings) {
+                    applyMemoryRoutineSetting()
+                }
             }
         }
     }
@@ -367,6 +373,23 @@ final class AppState: ObservableObject {
             || old.dailyMemoryExportFolder != new.dailyMemoryExportFolder
             || old.dailyMemoryExportFormat != new.dailyMemoryExportFormat
             || old.dailyMemoryExportHour != new.dailyMemoryExportHour
+    }
+
+    private static func screenContextChanged(from old: AppSettings,
+                                             to new: AppSettings) -> Bool {
+        old.trackingEnabled != new.trackingEnabled
+            || old.effectiveScreenContextCaptureMode != new.effectiveScreenContextCaptureMode
+            || old.screenshotIntervalMinutes != new.screenshotIntervalMinutes
+            || old.meetingVisualContextEnabled != new.meetingVisualContextEnabled
+    }
+
+    private static func memoryRoutinesChanged(from old: AppSettings,
+                                              to new: AppSettings) -> Bool {
+        old.memoryRoutinesEnabled != new.memoryRoutinesEnabled
+            || old.memoryRoutineFolder != new.memoryRoutineFolder
+            || old.enabledMemoryRoutines != new.enabledMemoryRoutines
+            || old.memoryRoutineHour != new.memoryRoutineHour
+            || old.memoryRoutineWeekday != new.memoryRoutineWeekday
     }
 
     // Navigation (main window): sidebar section, selected meeting, and a
@@ -449,6 +472,23 @@ final class AppState: ObservableObject {
         return controller
     }()
     private let dailyMemoryExportScheduler = DailyMemoryExportScheduler()
+    private(set) lazy var memoryRoutines = MemoryRoutineScheduler(
+        storageRoot: storage.rootURL,
+        databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"),
+        canRun: { [weak self] in
+            guard let self else { return false }
+            let cotypingGenerating: Bool
+            if case .generating = self.cotyping.state {
+                cotypingGenerating = true
+            } else {
+                cotypingGenerating = false
+            }
+            return !self.recording.isRecording
+                && !self.recording.isStarting
+                && !self.dictation.state.isWorking
+                && !cotypingGenerating
+                && !self.pipeline.hasActiveWork
+        })
     /// Read-only calendar access (EventKit): confirms meetings and titles
     /// recordings. Concrete type so the settings UI observes its permission
     /// state; handed to the detector as the `CalendarEventProviding` seam.
@@ -480,6 +520,13 @@ final class AppState: ObservableObject {
         isMeetingRecordingActive: { [weak self] in
             guard let self else { return false }
             return self.recording.isRecording || self.recording.isStarting
+        }, activeMeetingID: { [weak self] in
+            self?.recording.currentMeeting?.id
+        }, isHighPriorityInteractionActive: { [weak self] in
+            guard let self else { return false }
+            if self.dictation.state.isWorking { return true }
+            if case .generating = self.cotyping.state { return true }
+            return false
         }) { [store = settingsStore] in
         store.current
     }
@@ -708,6 +755,7 @@ final class AppState: ObservableObject {
             if self.settings.semanticSearchEnabled {
                 self.reindexEmbeddingInBackground(meeting)
             }
+            self.memoryRoutines.tick()
         }
         if needsSynchronousLibrary {
             searchIndex.reindexAll(meetings, storage: storage)
@@ -774,6 +822,7 @@ final class AppState: ObservableObject {
         screenMemoryAccess.start()
         applyQuickRecallSetting()
         applyDailyMemoryExportSetting()
+        applyMemoryRoutineSetting()
         // First-run check. A genuinely-new user with missing permissions gets
         // onboarding (windowed — see AppDelegate). We persist the flag in every
         // case so established/permissioned users are recognised next launch and
@@ -923,6 +972,7 @@ final class AppState: ObservableObject {
             screenshots.stop()
             quickRecallHotKey.stop()
             dailyMemoryExportScheduler.stop()
+            memoryRoutines.stop()
             chat.stop()
             dictation.stop()
             cotyping.stop()
@@ -1083,6 +1133,26 @@ final class AppState: ObservableObject {
         } onError: { [weak self] message in
             self?.lastError = message
         }
+    }
+
+    func applyMemoryRoutineSetting() {
+        let snapshot = settings
+        memoryRoutines.configure(MemoryRoutineScheduler.Configuration(
+            enabled: snapshot.memoryRoutinesEnabled,
+            destinationPath: snapshot.memoryRoutineFolder,
+            kinds: snapshot.enabledMemoryRoutines,
+            hour: snapshot.memoryRoutineHour,
+            weekday: snapshot.memoryRoutineWeekday
+        )) { [weak self] message in
+            self?.lastError = message
+        }
+    }
+
+    func restartMemoryCapture() {
+        sampler.stop()
+        screenshots.stop()
+        applyTrackingSetting()
+        PermissionManager.shared.refresh()
     }
 
     /// Search hit → open the meeting; transcript hits seek the player.

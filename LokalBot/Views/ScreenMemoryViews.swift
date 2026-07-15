@@ -20,6 +20,10 @@ struct ScreenThumbnailView: View {
     @State private var image: NSImage?
     @State private var finishedLoading = false
 
+    private var hasPixels: Bool {
+        app.activityStore.screenshot(id: snapshotID)?.hasPixels ?? false
+    }
+
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -29,9 +33,15 @@ struct ScreenThumbnailView: View {
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
             } else if finishedLoading {
-                Image(systemName: "rectangle.slash")
-                    .font(.title3)
-                    .foregroundStyle(.tertiary)
+                VStack(spacing: 5) {
+                    Image(systemName: hasPixels ? "rectangle.slash" : "text.viewfinder")
+                        .font(.title3)
+                    if !hasPixels, height >= 70 {
+                        Text("Text context")
+                            .font(.caption2.weight(.medium))
+                    }
+                }
+                .foregroundStyle(.tertiary)
             } else {
                 ProgressView().controlSize(.small)
             }
@@ -39,14 +49,20 @@ struct ScreenThumbnailView: View {
         .frame(maxWidth: .infinity)
         .frame(height: height)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .accessibilityLabel("Captured screen")
+        .accessibilityLabel(hasPixels ? "Captured screen" : "Captured text context")
         .task(id: snapshotID) { await load() }
     }
 
     private func load() async {
+        image = nil
+        finishedLoading = false
         let key = NSNumber(value: snapshotID)
         if let cached = ScreenThumbnailCache.shared.object(forKey: key) {
             image = cached
+            finishedLoading = true
+            return
+        }
+        guard hasPixels else {
             finishedLoading = true
             return
         }
@@ -60,8 +76,8 @@ struct ScreenThumbnailView: View {
     }
 }
 
-/// Screenshot-backed Screen result anatomy: pixels, app/window metadata,
-/// highlighted OCR excerpt, exact time, and a separate context-pin action.
+/// Screen result anatomy: optional pixels, app/window metadata, highlighted
+/// captured-text excerpt, exact time, and a separate context-pin action.
 struct ScreenSearchResultRow: View {
     let hit: ActivityStore.OCRHit
     let isPinned: Bool

@@ -32,7 +32,10 @@ final class CaptureModel: ObservableObject {
     func reload(app: AppState) {
         let retainedSnapshotID = selectedSnapshotID
         blocks = app.activityStore.blocks(on: day)
-        shots = app.activityStore.screenshots(on: day)
+        // The Timeline is the canonical home for both visual captures and
+        // accessibility-only moments. Other callers keep the historical
+        // pixels-present default unless they opt in explicitly.
+        shots = app.activityStore.screenshots(on: day, includingTextOnly: true)
         digest = try? String(contentsOf: journalURL(app: app), encoding: .utf8)
         digestError = nil
         selection = nil
@@ -248,7 +251,8 @@ struct CaptureDayView: View {
         return HStack(spacing: 8) {
             StatTile(icon: "clock", value: CaptureStyle.hm(total), label: "tracked")
             StatTile(icon: "square.grid.2x2", value: "\(apps)", label: apps == 1 ? "app" : "apps")
-            StatTile(icon: "camera.viewfinder", value: "\(model.shots.count)", label: "screens")
+            StatTile(icon: "rectangle.and.text.magnifyingglass", value: "\(model.shots.count)",
+                     label: "moments")
             if !meetings.isEmpty {
                 StatTile(icon: "waveform", value: "\(meetings.count)",
                          label: meetings.count == 1 ? "meeting" : "meetings")

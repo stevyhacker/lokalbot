@@ -11,18 +11,34 @@ struct ScreenMomentDetailView: View {
     @State private var note = ""
     @State private var confirmingDeletion = false
 
+    private var capturedText: String {
+        app.activityStore.ocrText(snapshotID: screenshot.id) ?? ""
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
-                ScreenThumbnailView(
-                    snapshotID: screenshot.id,
-                    height: 320,
-                    contentMode: .fit,
-                    cornerRadius: Brand.Radius.panel)
-                    .background(.black.opacity(0.82),
-                                in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
+                if screenshot.hasPixels {
+                    ScreenThumbnailView(
+                        snapshotID: screenshot.id,
+                        height: 320,
+                        contentMode: .fit,
+                        cornerRadius: Brand.Radius.panel)
+                        .background(.black.opacity(0.82),
+                                    in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
+                } else {
+                    Label("This moment retained text context without screen pixels.",
+                          systemImage: "text.viewfinder")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.quaternary.opacity(0.3),
+                                    in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
+                }
                 metadata
+                if !capturedText.isEmpty { capturedTextSection }
                 actions
                 if screenshot.isBookmarked {
                     savedNote
@@ -32,17 +48,18 @@ struct ScreenMomentDetailView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .onAppear(perform: loadNote)
-        .confirmationDialog("Delete this captured screen?", isPresented: $confirmingDeletion) {
-            Button("Delete captured screen", role: .destructive, action: deleteCapture)
+        .confirmationDialog("Delete this context moment?", isPresented: $confirmingDeletion) {
+            Button("Delete context moment", role: .destructive, action: deleteCapture)
         } message: {
-            Text("This permanently removes the encrypted screenshot and its searchable screen text.")
+            Text("This permanently removes its pixels, captured text, and metadata.")
         }
         .accessibilityIdentifier("timeline.screenDetail.\(screenshot.id)")
     }
 
     private var header: some View {
         HStack(alignment: .top, spacing: 8) {
-            IconTile(systemImage: "camera.viewfinder", tint: Brand.teal, size: 34)
+            IconTile(systemImage: screenshot.hasPixels ? "camera.viewfinder" : "text.viewfinder",
+                     tint: Brand.teal, size: 34)
             VStack(alignment: .leading, spacing: 2) {
                 Text(screenshot.app).font(.title3.bold())
                 Text(screenshot.ts.formatted(date: .abbreviated, time: .standard))
@@ -73,6 +90,34 @@ struct ScreenMomentDetailView: View {
             LabeledContent("Captured") {
                 Text(screenshot.trigger.replacingOccurrences(of: "_", with: " ").capitalized)
             }
+            LabeledContent("Context") {
+                Text(screenshot.hasPixels ? "Accessible text + pixels" : "Accessible text only")
+            }
+            if !screenshot.documentName.isEmpty {
+                LabeledContent("Document") {
+                    Text(screenshot.documentName)
+                        .multilineTextAlignment(.trailing)
+                        .textSelection(.enabled)
+                }
+            }
+            if !screenshot.sourceURL.isEmpty {
+                LabeledContent("Source") {
+                    Text(screenshot.sourceURL)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.trailing)
+                        .textSelection(.enabled)
+                }
+            }
+            if !screenshot.meetingID.isEmpty {
+                LabeledContent("Meeting") {
+                    Text("Linked recording")
+                }
+            }
+            if screenshot.privacyRedactionCount > 0 {
+                LabeledContent("Privacy") {
+                    Text("\(screenshot.privacyRedactionCount) secret\(screenshot.privacyRedactionCount == 1 ? "" : "s") redacted")
+                }
+            }
             if let groupID = screenshot.similarityGroupID {
                 LabeledContent("Scene") {
                     Text("\(groupID)").monospacedDigit()
@@ -81,6 +126,21 @@ struct ScreenMomentDetailView: View {
         }
         .font(.callout)
         .padding(10)
+        .background(.quaternary.opacity(0.3),
+                    in: RoundedRectangle(cornerRadius: Brand.Radius.control))
+    }
+
+    private var capturedTextSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Captured text", systemImage: "text.quote")
+                .font(.headline)
+            Text(capturedText)
+                .font(.callout)
+                .textSelection(.enabled)
+                .lineLimit(12)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.3),
                     in: RoundedRectangle(cornerRadius: Brand.Radius.control))
     }
@@ -107,7 +167,7 @@ struct ScreenMomentDetailView: View {
             } label: {
                 Image(systemName: "trash")
             }
-            .help("Delete captured screen")
+            .help("Delete context moment")
         }
     }
 

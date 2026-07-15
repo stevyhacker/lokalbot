@@ -93,8 +93,12 @@ final class AppSettingsTests: XCTestCase {
     /// capture may ever default on — accepting onboarding must not silently
     /// start watching the screen.
     func testDayTrackingAndScreenshotsDefaultOff() {
-        XCTAssertFalse(AppSettings().trackingEnabled)
-        XCTAssertFalse(AppSettings().screenshotsEnabled)
+        let settings = AppSettings()
+        XCTAssertFalse(settings.trackingEnabled)
+        XCTAssertFalse(settings.screenshotsEnabled)
+        XCTAssertEqual(settings.screenContextCaptureMode, .activityOnly)
+        XCTAssertFalse(settings.meetingVisualContextEnabled)
+        XCTAssertFalse(settings.capturePrivateWindows)
     }
 
     func testFreshInstallRequiresManualMeetingRecording() {
@@ -128,6 +132,34 @@ final class AppSettingsTests: XCTestCase {
 
         XCTAssertTrue(settings.trackingEnabled)
         XCTAssertTrue(settings.screenshotsEnabled)
+        XCTAssertEqual(settings.screenContextCaptureMode, .visualContext)
+    }
+
+    func testTextContextPrivacyAndRoutineSettingsRoundTrip() throws {
+        var settings = AppSettings()
+        settings.screenContextCaptureMode = .accessibleText
+        settings.meetingVisualContextEnabled = true
+        settings.capturePrivateWindows = true
+        settings.excludedScreenDomains = "example.com, *.private.test"
+        settings.memoryRoutinesEnabled = true
+        settings.memoryRoutineFolder = "/tmp/Memory Drafts"
+        settings.enabledMemoryRoutines = [.dailyStandup, .weeklyWorkLog]
+        settings.memoryRoutineHour = 99
+        settings.memoryRoutineWeekday = -3
+
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self, from: JSONEncoder().encode(settings))
+
+        XCTAssertEqual(decoded.screenContextCaptureMode, .accessibleText)
+        XCTAssertFalse(decoded.screenshotsEnabled)
+        XCTAssertTrue(decoded.meetingVisualContextEnabled)
+        XCTAssertTrue(decoded.capturePrivateWindows)
+        XCTAssertEqual(decoded.excludedScreenDomainList, ["example.com", "*.private.test"])
+        XCTAssertTrue(decoded.memoryRoutinesEnabled)
+        XCTAssertEqual(decoded.memoryRoutineFolder, "/tmp/Memory Drafts")
+        XCTAssertEqual(decoded.enabledMemoryRoutines, [.dailyStandup, .weeklyWorkLog])
+        XCTAssertEqual(decoded.memoryRoutineHour, 23)
+        XCTAssertEqual(decoded.memoryRoutineWeekday, 1)
     }
 
     /// The default prunes OCR text on the same schedule as the pixels;

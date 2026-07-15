@@ -182,7 +182,7 @@ struct CaptureDetailView: View {
         }
     }
 
-    // MARK: - Activity block detail (card + per-app context + screenshots)
+    // MARK: - Activity block detail (card + per-app context + captured moments)
 
     private func blockDetail(_ block: ActivityBlock) -> some View {
         let scoped = model.shots.filter { $0.ts >= block.start && $0.ts <= block.end }
@@ -197,7 +197,7 @@ struct CaptureDetailView: View {
                     StatTile(icon: "rectangle.stack", value: "\(sameApp.count)",
                              label: sameApp.count == 1 ? "block" : "blocks")
                 }
-                Text("Screenshots (\(scoped.count))").font(.headline)
+                Text("Context moments (\(scoped.count))").font(.headline)
                 if scoped.isEmpty {
                     Text("None during this block.")
                         .font(.callout).foregroundStyle(.secondary)

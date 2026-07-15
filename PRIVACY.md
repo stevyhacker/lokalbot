@@ -15,17 +15,19 @@ LokalBot can store the following under its Application Support directory:
 - transcripts, summaries, notes, search indexes, and meeting metadata;
 - downloaded transcription, embedding, speech, and language models;
 - opt-in app/window activity history;
-- opt-in screenshots and locally extracted text;
-- saved screen moments and optional unencrypted daily-memory exports at a
-  folder you choose;
+- opt-in visible screen text and optional encrypted screenshots;
+- saved screen moments, optional unencrypted daily-memory exports, and optional
+  routine drafts at folders you choose;
 - opt-in Agent Mode sessions and the agent runtime; and
 - preferences, diagnostic logs, and encryption keys.
 
-Screenshots are off by default, encrypted at rest, and deleted after 14 days by
-default. Their extracted text follows the same retention unless you explicitly
-choose to keep it. Dictation scratch audio is deleted after transcription by
-default. You can delete an individual meeting in the app or remove the entire
-LokalBot Application Support directory.
+Screen context is off by default. You can enable accessible text without pixels
+or pair it with encrypted screenshots. Pixels are deleted after 14 days by
+default, and captured text follows the same retention unless you explicitly
+choose to keep it. Saved moments remain until you unsave or delete them.
+Dictation scratch audio is deleted after transcription by default. You can
+delete an individual meeting in the app or remove the entire LokalBot
+Application Support directory.
 
 ## Network access
 
@@ -57,8 +59,8 @@ LokalBot asks only for permissions needed by features you choose:
 - Microphone and system audio for recording meetings.
 - Calendar access for meeting detection and titles.
 - Accessibility for browser-meeting detection, Cotyping, dictation insertion,
-  and approved agent interaction.
-- Screen Recording for opt-in screen context capture.
+  visible-text context, and approved agent interaction.
+- Screen Recording only when you opt into visual screen context.
 
 Recording defaults to manual on a fresh install. You are responsible for
 obtaining any consent required before recording other people.
@@ -68,17 +70,26 @@ obtaining any consent required before recording other people.
 The bundled `lokalbot-cli` and MCP interface are read-only. They refuse library
 access unless you explicitly enable Agent Access under Settings → Privacy. An
 enabled external tool runs as your macOS user, so only connect tools you trust.
-Screen-memory MCP tools require a second, independent toggle. They expose OCR,
-window/app activity, timestamps, and capture metadata, but never decrypted
-screenshot pixels or screenshot file paths. Enabling meeting access does not
-enable screen-memory access, or vice versa. A connected MCP client may transmit
-tool inputs and results under that client's own privacy terms.
+Screen-memory MCP tools require a second, independent toggle and a history
+profile: today, the rolling last seven days, or all retained history. They
+expose captured text, window/app activity, timestamps, and capture metadata,
+but never decrypted screenshot pixels or screenshot file paths. Queries are
+clamped to the granted period and out-of-scope ids appear missing. Enabling
+meeting access does not enable screen-memory access, or vice versa. A connected
+MCP client may transmit tool inputs and results under that client's own privacy
+terms.
 
-Screenshot pixels and extracted text follow the configured retention window by
-default. A screen moment you explicitly save retains its encrypted pixels, OCR,
-and semantic search vector until you unsave or delete that moment. Daily-memory
-exports are ordinary unencrypted Markdown files written only to the folder you
-choose and remain there until you remove them.
+Screen pixels and captured text follow the configured retention window by
+default. A screen moment you explicitly save retains its encrypted pixels,
+captured text, and semantic search vector until you unsave or delete that
+moment. Private/incognito windows, excluded apps and domains, and focused
+secure fields are skipped by default. Detected credential text is redacted and
+causes the associated pixel payload to be dropped; no detector is perfect, so
+exclude any source whose content should never be retained. Daily-memory exports
+and routine outputs are ordinary unencrypted Markdown files written only to
+folders you choose and remain there until you remove them. Routines have fixed
+local read scopes and cannot run scripts, contact services, send messages, or
+modify source meetings.
 
 ## Security and changes
 

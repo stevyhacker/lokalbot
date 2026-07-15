@@ -22,6 +22,65 @@ struct AppSettings: Codable, Equatable {
         }
     }
 
+    enum ScreenContextCaptureMode: String, Codable, CaseIterable, Identifiable, Sendable {
+        case activityOnly = "Activity only"
+        case accessibleText = "Text context"
+        case visualContext = "Text + visual context"
+
+        var id: String { rawValue }
+        var capturesText: Bool { self != .activityOnly }
+        var capturesPixels: Bool { self == .visualContext }
+
+        var detail: String {
+            switch self {
+            case .activityOnly:
+                "Records the active app and window title only."
+            case .accessibleText:
+                "Reads visible interface text through Accessibility; no screenshots are stored."
+            case .visualContext:
+                "Pairs accessible text with an encrypted screenshot, using local OCR only when needed."
+            }
+        }
+    }
+
+    enum MemoryRoutineKind: String, Codable, CaseIterable, Identifiable, Sendable {
+        case postMeetingFollowUp
+        case dailyStandup
+        case weeklyWorkLog
+        case unfinishedActions
+        case localJournal
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .postMeetingFollowUp: "Post-meeting follow-up"
+            case .dailyStandup: "Daily stand-up"
+            case .weeklyWorkLog: "Weekly work log"
+            case .unfinishedActions: "Unfinished actions"
+            case .localJournal: "Local journal"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .postMeetingFollowUp:
+                "After processing, drafts a local follow-up from that meeting's summary and outcomes."
+            case .dailyStandup:
+                "Builds a morning brief from yesterday's meetings, activity totals, and open action candidates."
+            case .weeklyWorkLog:
+                "Collects the last seven days of meetings, decisions, actions, and app-time totals."
+            case .unfinishedActions:
+                "Rolls up extracted action items from the last fourteen days without sending or assigning them."
+            case .localJournal:
+                "Writes a private daily note from the local digest, meetings, app usage, and saved moments."
+            }
+        }
+
+        var isEventDriven: Bool { self == .postMeetingFollowUp }
+        var isWeekly: Bool { self == .weeklyWorkLog }
+    }
+
     /// New installs start manually. Recording other people is a consequential
     /// action, so automatic detection only records after the user opts in.
     var autoRecordMode: AutoRecordMode = .manual
@@ -75,12 +134,33 @@ struct AppSettings: Codable, Equatable {
     /// M6: embedding-based semantic search (Qwen3-Embedding, downloaded when enabled).
     var semanticSearchEnabled: Bool = false
 
-    // M5: screenshots + OCR. Strictly opt-in: periodic screen capture is the
-    // most sensitive thing this app can do, so it defaults off and only an
-    // explicit user action (onboarding day-memory step or Settings → Day
-    // tracking) turns it on.
+    // M5: screen context. Activity-only is the privacy-preserving default.
+    // Text and visual context are separate explicit opt-ins; the legacy boolean
+    // remains encoded so older builds can read a new settings blob safely.
+    var screenContextCaptureMode: ScreenContextCaptureMode = .activityOnly
     var screenshotsEnabled: Bool = false
+    /// Compatibility bridge for callers/settings blobs that still set only the
+    /// pre-mode screenshot switch.
+    var effectiveScreenContextCaptureMode: ScreenContextCaptureMode {
+        if screenContextCaptureMode == .activityOnly, screenshotsEnabled {
+            return .visualContext
+        }
+        return screenContextCaptureMode
+    }
     var screenshotIntervalMinutes: Double = 3
+    /// Capture change-driven visual context while a meeting is recording.
+    /// Off by default and throttled more aggressively than normal capture.
+    var meetingVisualContextEnabled: Bool = false
+    /// Private/incognito browser windows are excluded unless explicitly opted in.
+    var capturePrivateWindows: Bool = false
+    /// Comma-separated hosts or URL prefixes excluded from both text and pixels.
+    var excludedScreenDomains: String = ""
+    var excludedScreenDomainList: [String] {
+        excludedScreenDomains
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
     var retentionDays: Int = 14
     /// Keep OCR'd screen text past `retentionDays`. Off by default — screen
     /// text can be as sensitive as the pixels it came from, so keeping it
@@ -109,6 +189,17 @@ struct AppSettings: Codable, Equatable {
     /// Local wall-clock hour (0...23) at which yesterday/today's memory note is
     /// refreshed. The scheduler clamps decoded values defensively.
     var dailyMemoryExportHour: Int = 18
+
+    // MARK: - Safe routines
+
+    /// Curated local writers only: routines have fixed read scopes, cannot run
+    /// shell/network actions, and write solely inside this chosen folder.
+    var memoryRoutinesEnabled: Bool = false
+    var memoryRoutineFolder: String = ""
+    var enabledMemoryRoutines: [MemoryRoutineKind] = MemoryRoutineKind.allCases
+    var memoryRoutineHour: Int = 8
+    /// Calendar weekday (1 = Sunday ... 7 = Saturday) used by the weekly log.
+    var memoryRoutineWeekday: Int = 6
     /// Comma-separated app-name substrings that are never captured;
     /// their time shows as "Private" in the timeline.
     var excludedApps: String = "1Password, Keychain Access, Bitwarden, KeePassXC"
@@ -388,8 +479,12 @@ struct AppSettings: Codable, Equatable {
         case dictationRetainAudio
         case trackingEnabled
         case semanticSearchEnabled
+        case screenContextCaptureMode
         case screenshotsEnabled
         case screenshotIntervalMinutes
+        case meetingVisualContextEnabled
+        case capturePrivateWindows
+        case excludedScreenDomains
         case retentionDays
         case keepOCRTextForever
         case quickRecallEnabled
@@ -397,6 +492,11 @@ struct AppSettings: Codable, Equatable {
         case dailyMemoryExportFolder
         case dailyMemoryExportFormat
         case dailyMemoryExportHour
+        case memoryRoutinesEnabled
+        case memoryRoutineFolder
+        case enabledMemoryRoutines
+        case memoryRoutineHour
+        case memoryRoutineWeekday
         case excludedApps
         case summarizerBackend
         case builtInModelID
@@ -486,8 +586,12 @@ struct AppSettings: Codable, Equatable {
         try c.encode(dictationRetainAudio, forKey: .dictationRetainAudio)
         try c.encode(trackingEnabled, forKey: .trackingEnabled)
         try c.encode(semanticSearchEnabled, forKey: .semanticSearchEnabled)
-        try c.encode(screenshotsEnabled, forKey: .screenshotsEnabled)
+        try c.encode(effectiveScreenContextCaptureMode, forKey: .screenContextCaptureMode)
+        try c.encode(effectiveScreenContextCaptureMode.capturesPixels, forKey: .screenshotsEnabled)
         try c.encode(screenshotIntervalMinutes, forKey: .screenshotIntervalMinutes)
+        try c.encode(meetingVisualContextEnabled, forKey: .meetingVisualContextEnabled)
+        try c.encode(capturePrivateWindows, forKey: .capturePrivateWindows)
+        try c.encode(excludedScreenDomains, forKey: .excludedScreenDomains)
         try c.encode(retentionDays, forKey: .retentionDays)
         try c.encode(keepOCRTextForever, forKey: .keepOCRTextForever)
         try c.encode(quickRecallEnabled, forKey: .quickRecallEnabled)
@@ -495,6 +599,11 @@ struct AppSettings: Codable, Equatable {
         try c.encode(dailyMemoryExportFolder, forKey: .dailyMemoryExportFolder)
         try c.encode(dailyMemoryExportFormat, forKey: .dailyMemoryExportFormat)
         try c.encode(min(23, max(0, dailyMemoryExportHour)), forKey: .dailyMemoryExportHour)
+        try c.encode(memoryRoutinesEnabled, forKey: .memoryRoutinesEnabled)
+        try c.encode(memoryRoutineFolder, forKey: .memoryRoutineFolder)
+        try c.encode(enabledMemoryRoutines, forKey: .enabledMemoryRoutines)
+        try c.encode(min(23, max(0, memoryRoutineHour)), forKey: .memoryRoutineHour)
+        try c.encode(min(7, max(1, memoryRoutineWeekday)), forKey: .memoryRoutineWeekday)
         try c.encode(excludedApps, forKey: .excludedApps)
         try c.encode(summarizerBackend, forKey: .summarizerBackend)
         try c.encode(builtInModelID, forKey: .builtInModelID)
@@ -578,8 +687,22 @@ struct AppSettings: Codable, Equatable {
         dictationRetainAudio = (try? c.decode(Bool.self, forKey: .dictationRetainAudio)) ?? defaults.dictationRetainAudio
         trackingEnabled = (try? c.decode(Bool.self, forKey: .trackingEnabled)) ?? defaults.trackingEnabled
         semanticSearchEnabled = (try? c.decode(Bool.self, forKey: .semanticSearchEnabled)) ?? defaults.semanticSearchEnabled
-        screenshotsEnabled = (try? c.decode(Bool.self, forKey: .screenshotsEnabled)) ?? defaults.screenshotsEnabled
+        let legacyScreenshotsEnabled =
+            (try? c.decode(Bool.self, forKey: .screenshotsEnabled)) ?? defaults.screenshotsEnabled
+        screenContextCaptureMode =
+            (try? c.decode(ScreenContextCaptureMode.self, forKey: .screenContextCaptureMode))
+            ?? (legacyScreenshotsEnabled ? .visualContext : .activityOnly)
+        screenshotsEnabled = screenContextCaptureMode.capturesPixels
         screenshotIntervalMinutes = (try? c.decode(Double.self, forKey: .screenshotIntervalMinutes)) ?? defaults.screenshotIntervalMinutes
+        meetingVisualContextEnabled =
+            (try? c.decode(Bool.self, forKey: .meetingVisualContextEnabled))
+            ?? defaults.meetingVisualContextEnabled
+        capturePrivateWindows =
+            (try? c.decode(Bool.self, forKey: .capturePrivateWindows))
+            ?? defaults.capturePrivateWindows
+        excludedScreenDomains =
+            (try? c.decode(String.self, forKey: .excludedScreenDomains))
+            ?? defaults.excludedScreenDomains
         retentionDays = (try? c.decode(Int.self, forKey: .retentionDays)) ?? defaults.retentionDays
         keepOCRTextForever = (try? c.decode(Bool.self, forKey: .keepOCRTextForever)) ?? defaults.keepOCRTextForever
         quickRecallEnabled = (try? c.decode(Bool.self, forKey: .quickRecallEnabled)) ?? defaults.quickRecallEnabled
@@ -596,6 +719,23 @@ struct AppSettings: Codable, Equatable {
             23,
             max(0, (try? c.decode(Int.self, forKey: .dailyMemoryExportHour))
                 ?? defaults.dailyMemoryExportHour))
+        memoryRoutinesEnabled =
+            (try? c.decode(Bool.self, forKey: .memoryRoutinesEnabled))
+            ?? defaults.memoryRoutinesEnabled
+        memoryRoutineFolder =
+            (try? c.decode(String.self, forKey: .memoryRoutineFolder))
+            ?? defaults.memoryRoutineFolder
+        enabledMemoryRoutines =
+            (try? c.decode([MemoryRoutineKind].self, forKey: .enabledMemoryRoutines))
+            ?? defaults.enabledMemoryRoutines
+        memoryRoutineHour = min(
+            23,
+            max(0, (try? c.decode(Int.self, forKey: .memoryRoutineHour))
+                ?? defaults.memoryRoutineHour))
+        memoryRoutineWeekday = min(
+            7,
+            max(1, (try? c.decode(Int.self, forKey: .memoryRoutineWeekday))
+                ?? defaults.memoryRoutineWeekday))
         excludedApps = (try? c.decode(String.self, forKey: .excludedApps)) ?? defaults.excludedApps
         summarizerBackend = (try? c.decode(SummarizerBackend.self, forKey: .summarizerBackend)) ?? defaults.summarizerBackend
         builtInModelID = (try? c.decode(String.self, forKey: .builtInModelID)) ?? defaults.builtInModelID

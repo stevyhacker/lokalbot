@@ -127,11 +127,14 @@ final class ScreenshotProcessingWorkerTests: XCTestCase {
         let firstURL = root.appendingPathComponent("first.heic.enc")
         let first = try await worker.process(ScreenshotProcessingRequest(
             image: image, trigger: .appSwitch, key: key, fileURL: firstURL))
-        guard case .stored(let hash, let ocrText) = first else {
+        guard case .stored(let stored) = first else {
             return XCTFail("The first automatic capture should be stored")
         }
-        XCTAssertEqual(hash, deterministicHash)
-        XCTAssertEqual(ocrText, "Quarterly report revenue grew")
+        XCTAssertEqual(stored.contentHash, deterministicHash)
+        XCTAssertEqual(stored.text, "Quarterly report revenue grew")
+        XCTAssertEqual(stored.textSource, "ocr")
+        XCTAssertTrue(stored.hasPixels)
+        XCTAssertTrue(stored.usedOCR)
         XCTAssertEqual(try Self.decrypt(firstURL, key: key), rawHEIC)
 
         let duplicateURL = root.appendingPathComponent("duplicate.heic.enc")
@@ -145,10 +148,10 @@ final class ScreenshotProcessingWorkerTests: XCTestCase {
         let manualURL = root.appendingPathComponent("manual.heic.enc")
         let manual = try await worker.process(ScreenshotProcessingRequest(
             image: image, trigger: .manual, key: key, fileURL: manualURL))
-        guard case .stored(_, let manualOCR) = manual else {
+        guard case .stored(let manualCapture) = manual else {
             return XCTFail("A manual capture should bypass automatic dedup")
         }
-        XCTAssertEqual(manualOCR, "Quarterly report revenue grew")
+        XCTAssertEqual(manualCapture.text, "Quarterly report revenue grew")
         XCTAssertEqual(try Self.decrypt(manualURL, key: key), rawHEIC)
     }
 
@@ -173,13 +176,13 @@ final class ScreenshotProcessingWorkerTests: XCTestCase {
         let first = try await worker.process(.init(
             image: image, trigger: .interval, key: key,
             fileURL: root.appendingPathComponent("first.heic.enc")))
-        guard case .stored(let storedHash, _) = first else {
+        guard case .stored(let stored) = first else {
             return XCTFail("The initial capture should store")
         }
 
         // ScreenshotService calls this after its SQLite transaction fails and
         // removes the encrypted file. The same screen must be allowed to retry.
-        await worker.discardStored(contentHash: storedHash)
+        await worker.discardStored(contentHash: stored.contentHash)
         let retry = try await worker.process(.init(
             image: image, trigger: .interval, key: key,
             fileURL: root.appendingPathComponent("retry.heic.enc")))
@@ -187,6 +190,44 @@ final class ScreenshotProcessingWorkerTests: XCTestCase {
         guard case .stored = retry else {
             return XCTFail("A rolled-back capture must not poison dedup state")
         }
+    }
+
+    func testRichAccessibilityTextAvoidsOCRAndCredentialsDropPixels() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ScreenshotPrivacyTests-\(UUID().uuidString)",
+                                    isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let image = try XCTUnwrap(Self.onePixelImage())
+        let key = SymmetricKey(data: Data(repeating: 0x61, count: 32))
+        let secret = "sk-proj-abcdefghijklmnopqrstuvwxyz123456"
+        let accessibleText = """
+        Deployment settings for the local desktop application. This paragraph is deliberately
+        long enough to be useful without optical recognition. API key: \(secret)
+        """
+        let worker = ScreenshotProcessingWorker(dependencies: ScreenshotProcessingDependencies(
+            contentHash: { _ in Data(repeating: 0x71, count: 32) },
+            heicData: { _ in XCTFail("Pixels must not be encoded when a secret is detected"); return Data() },
+            recognizeText: { _ in XCTFail("Rich accessibility text must avoid OCR"); return "" },
+            write: { _, _ in XCTFail("Pixels must not be written when a secret is detected") }))
+        let destination = root.appendingPathComponent("private.heic.enc")
+
+        let outcome = try await worker.process(.init(
+            image: image,
+            trigger: .typingPause,
+            key: key,
+            fileURL: destination,
+            accessibleText: accessibleText))
+
+        guard case .stored(let stored) = outcome else {
+            return XCTFail("The redacted text context should still be retained")
+        }
+        XCTAssertFalse(stored.hasPixels)
+        XCTAssertFalse(stored.usedOCR)
+        XCTAssertEqual(stored.textSource, "accessibility_redacted")
+        XCTAssertGreaterThan(stored.privacyRedactionCount, 0)
+        XCTAssertTrue(stored.text.contains("[REDACTED"))
+        XCTAssertFalse(stored.text.contains(secret))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
     private static func onePixelImage() -> CGImage? {

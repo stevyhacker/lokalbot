@@ -54,6 +54,20 @@ final class ScreenMemoryAccessGateTests: XCTestCase {
         XCTAssertEqual(markerMode, 0o600)
     }
 
+    func testScopedProfilePersistsAndLegacyEmptyMarkerRemainsUnscoped() throws {
+        let (screenGate, _, root) = makeGates()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try screenGate.enable(profile: ScreenMemoryAccessProfile(scope: .today))
+        XCTAssertEqual(screenGate.profile.scope, .today)
+
+        try screenGate.updateProfile(ScreenMemoryAccessProfile(scope: .recentWeek))
+        XCTAssertEqual(screenGate.profile.scope, .recentWeek)
+
+        try Data().write(to: screenGate.accessMarkerURL, options: .atomic)
+        XCTAssertEqual(screenGate.profile.scope, .retainedHistory)
+    }
+
     func testDefaultRootFollowsStorageRootOverride() {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("screen-memory-env-\(UUID().uuidString)", isDirectory: true)
@@ -83,6 +97,11 @@ final class ScreenMemoryAccessManagerTests: XCTestCase {
         manager.setEnabled(true)
         XCTAssertTrue(manager.isEnabled)
         XCTAssertTrue(screenGate.isEnabled)
+        XCTAssertEqual(screenGate.profile.scope, .recentWeek)
+
+        manager.setScope(.today)
+        XCTAssertEqual(manager.profile.scope, .today)
+        XCTAssertEqual(screenGate.profile.scope, .today)
 
         manager.setEnabled(false)
         XCTAssertFalse(manager.isEnabled)

@@ -18,17 +18,23 @@ enum ScreenCaptureTrigger: String {
     case appSwitch = "app_switch"
     /// Window/tab/title changed inside the same application.
     case windowChange = "window_change"
+    /// A click completed; coordinates and button identity are never retained.
+    case click
+    /// Typing stopped briefly; no key code or typed string is observed here.
+    case typingPause = "typing_pause"
+    /// Scrolling settled; deltas and pointer position are not retained.
+    case scrollSettled = "scroll_settled"
+    /// The pasteboard generation changed; clipboard contents are never read.
+    case clipboardChange = "clipboard_change"
     /// Idle fallback: nothing captured for the configured interval.
     case interval
     /// Explicit "Capture now" from the menu bar.
     case manual
 }
 
-/// Pure rate-limiting policy for event-driven capture (borrowed from
-/// Screenpipe's debounce + idle-fallback split). Event triggers respect a
-/// short cooldown so cmd-tabbing through apps can't spam OCR; the interval
-/// trigger only fires once the user-configured idle window has passed with
-/// no other capture; manual always wins.
+/// Pure rate-limiting policy for event-driven capture. Event triggers respect
+/// a short cooldown so interaction bursts cannot spam extraction; the interval
+/// trigger fires only after the user-configured idle window; manual always wins.
 struct ScreenCapturePolicy {
     /// Minimum seconds between event-driven captures.
     var eventCooldown: TimeInterval
@@ -45,7 +51,8 @@ struct ScreenCapturePolicy {
         switch trigger {
         case .manual:
             return true
-        case .appSwitch, .windowChange:
+        case .appSwitch, .windowChange, .click, .typingPause, .scrollSettled,
+             .clipboardChange:
             return now.timeIntervalSince(last) >= eventCooldown
         case .interval:
             return now.timeIntervalSince(last) >= idleInterval
@@ -106,6 +113,7 @@ struct ScreenshotCaptureLayout {
         frontmostProcessID: pid_t,
         focusedWindowTitle: String,
         excludedApps: [String],
+        excludePrivateWindows: Bool = true,
         mainDisplayID: CGDirectDisplayID = CGMainDisplayID()
     ) -> Selection? {
         guard !displays.isEmpty else { return nil }
@@ -135,7 +143,11 @@ struct ScreenshotCaptureLayout {
         }
 
         let excludedWindowIDs = Set(windows.compactMap { window -> CGWindowID? in
-            guard isExcluded(appName: window.appName, excludedApps: excludedApps),
+            let excludedForApp = isExcluded(
+                appName: window.appName, excludedApps: excludedApps)
+            let excludedForPrivacy = excludePrivateWindows
+                && ScreenContextPrivacy.isPrivateWindow(title: window.title)
+            guard (excludedForApp || excludedForPrivacy),
                   intersectionArea(window.frame, selectedDisplay.frame) > 0 else { return nil }
             return window.id
         })
@@ -193,6 +205,24 @@ struct ScreenshotProcessingRequest: @unchecked Sendable {
     let trigger: ScreenCaptureTrigger
     let key: SymmetricKey
     let fileURL: URL
+    let accessibleText: String
+    let accessibilityRedactionCount: Int
+
+    init(
+        image: CGImage,
+        trigger: ScreenCaptureTrigger,
+        key: SymmetricKey,
+        fileURL: URL,
+        accessibleText: String = "",
+        accessibilityRedactionCount: Int = 0
+    ) {
+        self.image = image
+        self.trigger = trigger
+        self.key = key
+        self.fileURL = fileURL
+        self.accessibleText = accessibleText
+        self.accessibilityRedactionCount = max(0, accessibilityRedactionCount)
+    }
 }
 
 /// Injectable image/file operations keep the serial worker deterministic under
@@ -220,9 +250,18 @@ struct ScreenshotProcessingDependencies: @unchecked Sendable {
 /// successfully encrypted and written. There are no suspension points inside
 /// `process`, preventing actor reentrancy from interleaving two capture writes.
 actor ScreenshotProcessingWorker {
+    struct StoredCapture: Sendable {
+        let contentHash: Data
+        let text: String
+        let textSource: String
+        let hasPixels: Bool
+        let privacyRedactionCount: Int
+        let usedOCR: Bool
+    }
+
     enum Outcome: Sendable {
         case unchanged
-        case stored(contentHash: Data, ocrText: String)
+        case stored(StoredCapture)
     }
 
     private let dependencies: ScreenshotProcessingDependencies
@@ -239,15 +278,52 @@ actor ScreenshotProcessingWorker {
             return .unchanged
         }
 
-        let heic = try dependencies.heicData(preparedImage)
-        let ocrText = dependencies.recognizeText(request.image)
-        let sealedBox = try AES.GCM.seal(heic, using: request.key)
-        guard let sealed = sealedBox.combined else {
-            throw CocoaError(.fileWriteUnknown)
+        let accessible = ScreenContextPrivacy.redact(request.accessibleText)
+        let accessibilityRedactions = request.accessibilityRedactionCount + accessible.count
+        let hasRichAccessibility = ScreenContextPrivacy.hasRichAccessibleText(accessible.text)
+        let ocr = hasRichAccessibility
+            ? ScreenContextPrivacy.Redaction(text: "", count: 0)
+            : ScreenContextPrivacy.redact(dependencies.recognizeText(request.image))
+
+        let text: String
+        let textSource: String
+        if hasRichAccessibility {
+            text = accessible.text
+            textSource = accessibilityRedactions > 0
+                ? "accessibility_redacted" : "accessibility"
+        } else if !accessible.text.isEmpty, !ocr.text.isEmpty {
+            text = String((accessible.text + "\n" + ocr.text).prefix(36_000))
+            textSource = (accessibilityRedactions + ocr.count) > 0 ? "hybrid_redacted" : "hybrid"
+        } else if !accessible.text.isEmpty {
+            text = accessible.text
+            textSource = accessibilityRedactions > 0
+                ? "accessibility_redacted" : "accessibility"
+        } else {
+            text = ocr.text
+            textSource = ocr.count > 0 ? "ocr_redacted" : "ocr"
         }
-        try dependencies.write(sealed, request.fileURL)
+
+        let redactionCount = accessibilityRedactions + ocr.count
+        // If extracted text reveals a credential, retain only its deterministic
+        // redacted form. Dropping the entire pixel payload is safer than trying
+        // to infer a precise on-screen rectangle from a text-only observation.
+        let hasPixels = redactionCount == 0
+        if hasPixels {
+            let heic = try dependencies.heicData(preparedImage)
+            let sealedBox = try AES.GCM.seal(heic, using: request.key)
+            guard let sealed = sealedBox.combined else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            try dependencies.write(sealed, request.fileURL)
+        }
         lastContentHash = contentHash
-        return .stored(contentHash: contentHash, ocrText: ocrText)
+        return .stored(StoredCapture(
+            contentHash: contentHash,
+            text: text,
+            textSource: textSource,
+            hasPixels: hasPixels,
+            privacyRedactionCount: redactionCount,
+            usedOCR: !hasRichAccessibility))
     }
 
     /// A file write is not a completed capture until its SQLite rows commit.
@@ -395,41 +471,62 @@ private enum ScreenshotImageProcessing {
     }
 }
 
-/// M5 (design doc §3.2/§3.4), now event-driven: capture the active display
-/// when the sampler sees an app/window switch (idle timer as fallback) →
-/// dedup identical frames → OCR (Vision, on-device) → AES-GCM encrypt → disk.
-/// The OCR text is what's indexed and searchable; pixels and (by default)
-/// text are retention-pruned. Skips idle, lock screen, pauses, and excluded apps.
+/// Event-driven screen context: read bounded visible Accessibility text first,
+/// optionally pair it with an encrypted active-display image, and invoke local
+/// OCR only when the accessible text is thin. Captured text is indexed; pixels
+/// and, by default, text are retention-pruned. Privacy checks fail closed for
+/// idle/lock states, excluded sources, secure fields, and detected credentials.
 @MainActor
 final class ScreenshotService: ObservableObject {
 
     @Published private(set) var lastCapture: Date?
+    @Published private(set) var lastVisualCapture: Date?
+    @Published private(set) var lastAccessibilityCapture: Date?
+    @Published private(set) var lastOCRCapture: Date?
+    @Published private(set) var lastTextSource: String?
+    @Published private(set) var lastRetentionRun: Date?
+    @Published private(set) var lastRetentionError: String?
+    @Published private(set) var isCapturing = false
     @Published private(set) var lastError: String?
 
     private let store: ActivityStore
     private let storage: StorageManager
     private let settings: () -> AppSettings
     private let isMeetingRecordingActive: () -> Bool
+    private let activeMeetingID: () -> UUID?
+    private let isHighPriorityInteractionActive: () -> Bool
     private let now: () -> Date
     private let sampler: ActivitySampler
     private let windowTitleLookup: FocusedWindowTitleLookup
+    private let accessibilityReader: ScreenAccessibilityReader
     private let processingWorker = ScreenshotProcessingWorker()
+    private let eventMonitor = ScreenContextEventMonitor()
     private var timer: Timer?
     private var retentionTimer: Timer?
+    private var initialCaptureTask: Task<Void, Never>?
+    private var captureGeneration = 0
     private var policy = ScreenCapturePolicy()
     private var retentionSchedule = ScreenshotRetentionSchedule()
     private var captureGate = ScreenshotCaptureGate()
+    private var lastTextFingerprint: Data?
+    private var lastMeetingCapture: Date?
 
     init(store: ActivityStore, storage: StorageManager, sampler: ActivitySampler,
          windowTitleLookup: FocusedWindowTitleLookup = .shared,
+         accessibilityReader: ScreenAccessibilityReader = .shared,
          isMeetingRecordingActive: @escaping () -> Bool = { false },
+         activeMeetingID: @escaping () -> UUID? = { nil },
+         isHighPriorityInteractionActive: @escaping () -> Bool = { false },
          now: @escaping () -> Date = Date.init,
          settings: @escaping () -> AppSettings) {
         self.store = store
         self.storage = storage
         self.sampler = sampler
         self.windowTitleLookup = windowTitleLookup
+        self.accessibilityReader = accessibilityReader
         self.isMeetingRecordingActive = isMeetingRecordingActive
+        self.activeMeetingID = activeMeetingID
+        self.isHighPriorityInteractionActive = isHighPriorityInteractionActive
         self.now = now
         self.settings = settings
     }
@@ -437,6 +534,8 @@ final class ScreenshotService: ObservableObject {
     func start() {
         startRetentionMaintenance()
         guard timer == nil else { return }
+        captureGeneration &+= 1
+        let generation = captureGeneration
         // Event-driven path: the sampler already detects app/window boundaries
         // every 5 s; captures ride those events instead of a fixed clock.
         sampler.onActivityBoundary = { [weak self] _, _, appChanged in
@@ -444,6 +543,10 @@ final class ScreenshotService: ObservableObject {
                 await self?.captureIfAppropriate(trigger: appChanged ? .appSwitch : .windowChange)
             }
         }
+        eventMonitor.onTrigger = { [weak self] trigger in
+            Task { @MainActor in await self?.captureIfAppropriate(trigger: trigger) }
+        }
+        eventMonitor.start()
         // Idle fallback: a 60 s tick that only captures when nothing has been
         // captured for the configured interval (the old slider semantics
         // become "at least every N minutes").
@@ -451,14 +554,25 @@ final class ScreenshotService: ObservableObject {
             Task { @MainActor in await self?.captureIfAppropriate(trigger: .interval) }
         }
         // First capture shortly after launch, not a full interval later.
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(20))
-            await self?.captureIfAppropriate(trigger: .interval)
+        initialCaptureTask?.cancel()
+        initialCaptureTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(20))
+            } catch {
+                return
+            }
+            guard let self, self.captureGeneration == generation else { return }
+            await self.captureIfAppropriate(trigger: .interval)
+            if self.captureGeneration == generation { self.initialCaptureTask = nil }
         }
     }
 
     func stop() {
+        captureGeneration &+= 1
+        initialCaptureTask?.cancel()
+        initialCaptureTask = nil
         sampler.onActivityBoundary = nil
+        eventMonitor.stop()
         timer?.invalidate()
         timer = nil
         retentionTimer?.invalidate()
@@ -470,7 +584,8 @@ final class ScreenshotService: ObservableObject {
         // Retention is a privacy lifecycle, not a capture lifecycle. Keep its
         // daily maintenance alive even when tracking/capture is disabled.
         startRetentionMaintenance()
-        if settings().screenshotsEnabled && settings().trackingEnabled { start() }
+        if settings().effectiveScreenContextCaptureMode.capturesText,
+           settings().trackingEnabled { start() }
     }
 
     private func startRetentionMaintenance() {
@@ -490,68 +605,196 @@ final class ScreenshotService: ObservableObject {
 
     private func captureIfAppropriate(trigger: ScreenCaptureTrigger) async {
         let config = settings()
-        guard config.screenshotsEnabled, config.trackingEnabled else {
-            lokalbotLog("shot skip: disabled"); return
+        let mode = config.effectiveScreenContextCaptureMode
+        guard mode.capturesText, config.trackingEnabled else {
+            lokalbotLog("context skip: disabled"); return
         }
-        guard !sampler.isPaused else { lokalbotLog("shot skip: paused"); return }
+        guard !sampler.isPaused else { lokalbotLog("context skip: paused"); return }
+        if trigger != .manual, isHighPriorityInteractionActive() {
+            lokalbotLog("context skip: interactive capture has priority")
+            return
+        }
+        let recordingActive = isMeetingRecordingActive()
         guard Self.shouldCaptureDuringMeetingRecording(
             trigger: trigger,
-            recordingActive: isMeetingRecordingActive())
+            recordingActive: recordingActive,
+            visualContextEnabled: config.meetingVisualContextEnabled && mode.capturesPixels)
         else {
-            lokalbotLog("shot skip: recording active (\(trigger.rawValue))")
+            lokalbotLog("context skip: recording active (\(trigger.rawValue))")
             return
         }
         guard policy.shouldCapture(trigger: trigger,
                                    idleInterval: max(60, config.screenshotIntervalMinutes * 60))
         else {
-            if trigger != .interval { lokalbotLog("shot skip: cooldown (\(trigger.rawValue))") }
+            if trigger != .interval { lokalbotLog("context skip: cooldown (\(trigger.rawValue))") }
             return
         }
-        // Never let a background trigger raise a TCC dialog: preflight is
-        // prompt-free. Prompting belongs to onboarding / explicit clicks only.
-        guard CGPreflightScreenCaptureAccess() else {
-            lokalbotLog("shot skip: screen recording not granted"); return
+        let current = now()
+        if recordingActive, trigger != .manual,
+           let lastMeetingCapture,
+           current.timeIntervalSince(lastMeetingCapture) < 60 {
+            lokalbotLog("context skip: meeting capture cooldown")
+            return
         }
         let idle = CGEventSource.secondsSinceLastEventType(
             .combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
-        guard idle < 180 else { lokalbotLog("shot skip: idle \(Int(idle))s"); return }
+        guard idle < 180 else { lokalbotLog("context skip: idle \(Int(idle))s"); return }
         guard let frontmostApp = NSWorkspace.shared.frontmostApplication,
               let frontmost = frontmostApp.localizedName,
-              frontmost != "loginwindow" else { lokalbotLog("shot skip: lock screen"); return }
+              frontmost != "loginwindow" else { lokalbotLog("context skip: lock screen"); return }
         guard !ScreenshotCaptureLayout.isExcluded(
             appName: frontmost, excludedApps: config.excludedAppList)
-        else { lokalbotLog("shot skip: excluded (\(frontmost))"); return }
+        else { lokalbotLog("context skip: excluded app (\(frontmost))"); return }
 
         guard captureGate.begin() else {
-            lokalbotLog("shot skip: capture already in flight (\(trigger.rawValue))")
+            lokalbotLog("context skip: capture already in flight (\(trigger.rawValue))")
             return
         }
-        defer { captureGate.end() }
+        isCapturing = true
+        defer {
+            captureGate.end()
+            isCapturing = false
+        }
 
         let initialTitle = await windowTitleLookup.title(
             for: frontmostApp.processIdentifier)
         guard !initialTitle.timedOut,
               NSWorkspace.shared.frontmostApplication?.processIdentifier
                 == frontmostApp.processIdentifier else {
-            lokalbotLog("shot skip: focused-window lookup timed out or focus changed")
+            lokalbotLog("context skip: focused-window lookup timed out or focus changed")
             return
         }
+        let windowTitle = initialTitle.title ?? ""
+        if !config.capturePrivateWindows,
+           ScreenContextPrivacy.isPrivateWindow(title: windowTitle) {
+            policy.noteCheck(at: current)
+            lokalbotLog("context skip: private browsing window")
+            return
+        }
+
+        let accessibility = await accessibilityReader.capture(
+            processID: frontmostApp.processIdentifier)
+        if !accessibility.timedOut { lastAccessibilityCapture = current }
+        if accessibility.snapshot?.focusedSecureField == true {
+            policy.noteCheck(at: current)
+            lokalbotLog("context skip: focused secure field")
+            return
+        }
+        let sourceURL = accessibility.snapshot?.sourceURL
+        if ScreenContextPrivacy.isExcluded(
+            sourceURL: sourceURL,
+            rules: config.excludedScreenDomainList) {
+            policy.noteCheck(at: current)
+            lokalbotLog("context skip: excluded domain")
+            return
+        }
+        let redactedAccessibility = ScreenContextPrivacy.redact(
+            accessibility.snapshot?.text ?? "")
+        let redactedWindowTitle = ScreenContextPrivacy.redact(windowTitle)
+        let redactedSourceURL = ScreenContextPrivacy.redact(sourceURL ?? "")
+        let redactedDocumentName = ScreenContextPrivacy.redact(
+            accessibility.snapshot?.documentName ?? "")
+        let preCaptureRedactions = redactedAccessibility.count
+            + redactedWindowTitle.count
+            + redactedSourceURL.count
+            + redactedDocumentName.count
+        let meetingID = recordingActive ? activeMeetingID()?.uuidString : nil
+        let previousCapture = lastCapture
+        let screenCaptureGranted = mode.capturesPixels && CGPreflightScreenCaptureAccess()
+
         do {
-            try await capture(frontApp: frontmost,
-                              frontmostProcessID: frontmostApp.processIdentifier,
-                              windowTitle: initialTitle.title ?? "",
-                              excludedApps: config.excludedAppList,
-                              trigger: trigger)
+            if !mode.capturesPixels || preCaptureRedactions > 0
+                || !screenCaptureGranted {
+                try storeTextContext(
+                    text: redactedAccessibility.text,
+                    redactionCount: preCaptureRedactions,
+                    sourceURL: redactedSourceURL.text,
+                    documentName: redactedDocumentName.text,
+                    frontApp: frontmost,
+                    windowTitle: redactedWindowTitle.text,
+                    trigger: trigger,
+                    meetingID: meetingID,
+                    timestamp: current)
+                if mode.capturesPixels, !screenCaptureGranted {
+                    lokalbotLog("context visual fallback: screen recording not granted")
+                }
+            } else {
+                try await capture(
+                    frontApp: frontmost,
+                    frontmostProcessID: frontmostApp.processIdentifier,
+                    windowTitle: windowTitle,
+                    storedWindowTitle: redactedWindowTitle.text,
+                    excludedApps: config.excludedAppList,
+                    excludePrivateWindows: !config.capturePrivateWindows,
+                    trigger: trigger,
+                    accessibleText: redactedAccessibility.text,
+                    accessibilityRedactionCount: preCaptureRedactions,
+                    sourceURL: redactedSourceURL.text,
+                    documentName: redactedDocumentName.text,
+                    meetingID: meetingID)
+            }
+            if recordingActive, lastCapture != previousCapture { lastMeetingCapture = current }
             lastError = nil
         } catch {
             lastError = error.localizedDescription
-            lokalbotLog("shot FAILED: \(error)")
+            lokalbotLog("context FAILED: \(error)")
         }
     }
 
+    private func storeTextContext(
+        text: String,
+        redactionCount: Int,
+        sourceURL: String?,
+        documentName: String?,
+        frontApp: String,
+        windowTitle: String,
+        trigger: ScreenCaptureTrigger,
+        meetingID: String?,
+        timestamp: Date
+    ) throws {
+        let clipped = String(text.prefix(36_000))
+        guard !clipped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            policy.noteCheck(at: timestamp)
+            lokalbotLog("context skip: no accessible text")
+            return
+        }
+        let fingerprint = Data(SHA256.hash(data: Data(
+            "\(frontApp)\u{1f}\(windowTitle)\u{1f}\(clipped)".utf8)))
+        if trigger != .manual, fingerprint == lastTextFingerprint {
+            policy.noteCheck(at: timestamp)
+            lokalbotLog("context skip: unchanged accessible text")
+            return
+        }
+        let source = redactionCount > 0 ? "accessibility_redacted" : "accessibility"
+        try store.insertScreenshot(
+            ts: timestamp,
+            path: "",
+            app: frontApp,
+            windowTitle: windowTitle,
+            trigger: trigger.rawValue,
+            textSource: source,
+            ocr: clipped,
+            sourceURL: sourceURL ?? "",
+            documentName: documentName ?? "",
+            meetingID: meetingID ?? "",
+            privacyRedactions: redactionCount)
+        lastTextFingerprint = fingerprint
+        policy.noteCheck(at: timestamp)
+        lastCapture = timestamp
+        lastTextSource = source
+        lokalbotLog("context ok: text-only (\(clipped.count) chars, app: \(frontApp), trigger: \(trigger.rawValue))")
+    }
+
     private func capture(frontApp: String, frontmostProcessID: pid_t, windowTitle: String,
+                         storedWindowTitle: String,
                          excludedApps: [String],
-                         trigger: ScreenCaptureTrigger) async throws {
+                         excludePrivateWindows: Bool,
+                         trigger: ScreenCaptureTrigger,
+                         accessibleText: String,
+                         accessibilityRedactionCount: Int,
+                         sourceURL: String?,
+                         documentName: String?,
+                         meetingID: String?) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true)
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == frontmostProcessID else {
@@ -573,7 +816,8 @@ final class ScreenshotService: ObservableObject {
             },
             frontmostProcessID: frontmostProcessID,
             focusedWindowTitle: windowTitle,
-            excludedApps: excludedApps)
+            excludedApps: excludedApps,
+            excludePrivateWindows: excludePrivateWindows)
         guard let layout,
               let display = content.displays.first(where: { $0.displayID == layout.displayID })
         else { return }
@@ -604,49 +848,67 @@ final class ScreenshotService: ObservableObject {
 
         let timestamp = Date()
 
-        // The worker keeps the hash → dedup → OCR → encryption → atomic-write
-        // sequence serial and off the main actor. The check still arms the
-        // cooldown/idle clock when an unchanged frame is skipped.
+        // The worker keeps hash → text-source selection → optional OCR →
+        // redaction → encryption/write serial and off the main actor.
         let file = Self.captureFileURL(rootURL: storage.rootURL, timestamp: timestamp)
         let outcome = try await processingWorker.process(ScreenshotProcessingRequest(
             image: image,
             trigger: trigger,
             key: try Self.encryptionKey(),
-            fileURL: file))
+            fileURL: file,
+            accessibleText: accessibleText,
+            accessibilityRedactionCount: accessibilityRedactionCount))
 
-        guard case .stored(let contentHash, let ocrText) = outcome else {
+        guard case .stored(let stored) = outcome else {
             policy.noteCheck(at: timestamp)
-            lokalbotLog("shot skip: unchanged frame (\(trigger.rawValue), app: \(frontApp))")
+            lokalbotLog("context skip: unchanged frame (\(trigger.rawValue), app: \(frontApp))")
             return
         }
 
+        let storedPath = stored.hasPixels ? file.path : ""
         do {
-            try store.insertScreenshot(ts: timestamp, path: file.path, app: frontApp,
-                                       windowTitle: windowTitle, trigger: trigger.rawValue,
-                                       ocr: ocrText,
-                                       perceptualHash: ScreenPerceptualHash.hash(of: image))
+            try store.insertScreenshot(
+                ts: timestamp,
+                path: storedPath,
+                app: frontApp,
+                windowTitle: storedWindowTitle,
+                trigger: trigger.rawValue,
+                textSource: stored.textSource,
+                ocr: stored.text,
+                perceptualHash: ScreenPerceptualHash.hash(of: image),
+                sourceURL: sourceURL ?? "",
+                documentName: documentName ?? "",
+                meetingID: meetingID ?? "",
+                privacyRedactions: stored.privacyRedactionCount)
         } catch {
-            do {
-                try FileManager.default.removeItem(at: file)
-            } catch let cleanupError {
-                lokalbotLog("shot rollback file cleanup failed: \(cleanupError.localizedDescription)")
+            if FileManager.default.fileExists(atPath: file.path) {
+                do {
+                    try FileManager.default.removeItem(at: file)
+                } catch let cleanupError {
+                    lokalbotLog("context rollback file cleanup failed: \(cleanupError.localizedDescription)")
+                }
             }
-            await processingWorker.discardStored(contentHash: contentHash)
+            await processingWorker.discardStored(contentHash: stored.contentHash)
             throw error
         }
         policy.noteCheck(at: timestamp)
         lastCapture = timestamp
-        lokalbotLog("shot ok: \(file.lastPathComponent) (\(ocrText.count) OCR chars, "
-            + "app: \(frontApp), trigger: \(trigger.rawValue))")
+        lastTextSource = stored.textSource
+        if stored.hasPixels { lastVisualCapture = timestamp }
+        if stored.usedOCR { lastOCRCapture = timestamp }
+        let payload = stored.hasPixels ? file.lastPathComponent : "text-only after redaction"
+        lokalbotLog("context ok: \(payload) (\(stored.text.count) text chars, source: "
+            + "\(stored.textSource), app: \(frontApp), trigger: \(trigger.rawValue))")
     }
 
     /// Manual trigger (menu bar) — the one non-onboarding place allowed to
     /// prompt, because the user explicitly asked for a capture.
     func captureNow() {
         Task { @MainActor in
-            if !CGPreflightScreenCaptureAccess() {
+            if settings().effectiveScreenContextCaptureMode.capturesPixels,
+               !CGPreflightScreenCaptureAccess() {
                 lokalbotLog("capture now: requesting screen recording access")
-                guard CGRequestScreenCaptureAccess() else { return }
+                _ = CGRequestScreenCaptureAccess()
             }
             await captureIfAppropriate(trigger: .manual)
         }
@@ -721,6 +983,7 @@ final class ScreenshotService: ObservableObject {
 
     private func performRetentionPrune(at current: Date) {
         let cutoff = current.addingTimeInterval(-Double(settings().retentionDays) * 86_400)
+        var firstError: String?
         for path in store.screenshotPaths(olderThan: cutoff) {
             do {
                 if FileManager.default.fileExists(atPath: path) {
@@ -731,20 +994,26 @@ final class ScreenshotService: ObservableObject {
                 // Keep the database path when deletion fails, so a later
                 // retention pass can retry instead of orphaning the file.
                 lokalbotLog("shot retention failed path=\(path): \(error.localizedDescription)")
+                if firstError == nil { firstError = error.localizedDescription }
             }
         }
         if !settings().keepOCRTextForever {
-            _ = store.clearOCRText(olderThan: cutoff)
+            if !store.clearOCRText(olderThan: cutoff), firstError == nil {
+                firstError = "Could not prune expired screen text."
+            }
         }
+        lastRetentionRun = current
+        lastRetentionError = firstError
     }
 
     // MARK: - Pieces
 
     nonisolated static func shouldCaptureDuringMeetingRecording(
         trigger: ScreenCaptureTrigger,
-        recordingActive: Bool
+        recordingActive: Bool,
+        visualContextEnabled: Bool = false
     ) -> Bool {
-        !recordingActive || trigger == .manual
+        !recordingActive || trigger == .manual || visualContextEnabled
     }
 
     nonisolated static func captureFileURL(

@@ -52,6 +52,47 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(store.searchOCR("quarterly").count, 1)
     }
 
+    func testTextOnlyContextPersistsSanitizedProvenanceWithoutPretendingPixelsExist() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ActivityStore(databaseURL: url)
+        let capturedAt = Date()
+        let meetingID = UUID().uuidString
+
+        let id = try store.insertScreenshot(
+            ts: capturedAt,
+            path: "",
+            app: "Safari",
+            windowTitle: "Project brief",
+            trigger: "typing_pause",
+            textSource: "accessibility_redacted",
+            ocr: "Visible project context [REDACTED]",
+            sourceURL: "https://example.com/project",
+            documentName: "Brief.md",
+            meetingID: meetingID,
+            privacyRedactions: 1)
+
+        XCTAssertTrue(store.screenshots(on: capturedAt).isEmpty)
+        let moment = try XCTUnwrap(
+            store.screenshots(on: capturedAt, includingTextOnly: true).first)
+        XCTAssertEqual(moment.id, id)
+        XCTAssertFalse(moment.hasPixels)
+        XCTAssertEqual(moment.sourceURL, "https://example.com/project")
+        XCTAssertEqual(moment.documentName, "Brief.md")
+        XCTAssertEqual(moment.meetingID, meetingID)
+        XCTAssertEqual(moment.privacyRedactionCount, 1)
+        XCTAssertEqual(store.ocrText(snapshotID: id), "Visible project context [REDACTED]")
+
+        let reader = SQLiteScreenMemoryReader(databaseURL: url)
+        let detail = try XCTUnwrap(reader.screenshotDetail(snapshotID: id))
+        XCTAssertFalse(detail.hasEncryptedPixels)
+        XCTAssertEqual(detail.sourceURL, "https://example.com/project")
+        XCTAssertEqual(detail.documentName, "Brief.md")
+        XCTAssertEqual(detail.meetingID, meetingID)
+        XCTAssertEqual(detail.privacyRedactionCount, 1)
+    }
+
     func testScreenshotAndOCRFiltersUseHalfOpenDateRangeAndExactApp() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
@@ -433,6 +474,10 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertTrue(ScreenshotService.shouldCaptureDuringMeetingRecording(
             trigger: .interval,
             recordingActive: false))
+        XCTAssertTrue(ScreenshotService.shouldCaptureDuringMeetingRecording(
+            trigger: .typingPause,
+            recordingActive: true,
+            visualContextEnabled: true))
     }
 
     func testCaptureLayoutUsesFocusedWindowDisplayAndExcludesEveryPrivateWindowOnIt() throws {
@@ -457,6 +502,9 @@ final class ActivityStoreTests: XCTestCase {
             ScreenshotCaptureLayout.Window(
                 id: 21, processID: 91, appName: "Signal", title: "Private chat",
                 frame: CGRect(x: 1_650, y: 50, width: 300, height: 500)),
+            ScreenshotCaptureLayout.Window(
+                id: 23, processID: 93, appName: "Safari", title: "Private Browsing — Start Page",
+                frame: CGRect(x: 1_020, y: 20, width: 360, height: 320)),
             // This excluded window is not on the selected display and does not
             // need to be handed to that display's ScreenCaptureKit filter.
             ScreenshotCaptureLayout.Window(
@@ -473,7 +521,17 @@ final class ActivityStoreTests: XCTestCase {
             mainDisplayID: 1))
 
         XCTAssertEqual(selection.displayID, 2)
-        XCTAssertEqual(selection.excludedWindowIDs, Set<CGWindowID>([20, 21]))
+        XCTAssertEqual(selection.excludedWindowIDs, Set<CGWindowID>([20, 21, 23]))
+
+        let optedIn = try XCTUnwrap(ScreenshotCaptureLayout.selection(
+            displays: displays,
+            windows: windows,
+            frontmostProcessID: 42,
+            focusedWindowTitle: "focused report",
+            excludedApps: ["1password", "SIGNAL"],
+            excludePrivateWindows: false,
+            mainDisplayID: 1))
+        XCTAssertEqual(optedIn.excludedWindowIDs, Set<CGWindowID>([20, 21]))
     }
 
     func testCaptureLayoutFallsBackToMainDisplayWithoutFocusedWindow() {

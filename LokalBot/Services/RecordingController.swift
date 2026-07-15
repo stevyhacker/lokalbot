@@ -17,6 +17,17 @@ struct SystemAudioSamePIDRetryBudget: Equatable {
     }
 }
 
+struct RecordingMemoryHealthSnapshot: Equatable, Sendable {
+    var isRecording: Bool
+    var microphoneStatus: String
+    var microphoneLastWriteAt: Date?
+    var microphoneDroppedBuffers: Int
+    var systemAudioStatus: String
+    var systemAudioLastWriteAt: Date?
+    var systemAudioDroppedBuffers: Int
+    var lastRecoveryAt: Date?
+}
+
 /// Owns the meeting-recording lifecycle: the two recorders (mic + system tap),
 /// the start/stop state machine, the capture-health watchdog, the menu-bar
 /// timer tick, and transcription-model prewarm. `AppState` keeps a reference,
@@ -122,6 +133,58 @@ final class RecordingController: ObservableObject {
         return h > 0
             ? String(format: "%d:%02d:%02d", h, m, s)
             : String(format: "%02d:%02d", m, s)
+    }
+
+    func memoryHealthSnapshot() -> RecordingMemoryHealthSnapshot {
+        guard isRecording else {
+            return RecordingMemoryHealthSnapshot(
+                isRecording: false,
+                microphoneStatus: "Idle",
+                microphoneLastWriteAt: nil,
+                microphoneDroppedBuffers: 0,
+                systemAudioStatus: "Idle",
+                systemAudioLastWriteAt: nil,
+                systemAudioDroppedBuffers: 0,
+                lastRecoveryAt: latestRecoveryDate)
+        }
+        let microphone = micRecorder.captureHealth()
+        let microphoneStatus: String = switch microphone.recoveryState {
+        case .healthy:
+            microphone.isEngineRunning ? "Healthy" : "Stopped"
+        case .recovering(let attempt):
+            "Recovering (attempt \(attempt))"
+        case .degraded(let description):
+            "Degraded: \(description)"
+        }
+        let system = systemRecorder.captureHealth()
+        let systemStatus: String
+        if systemAudioTarget == nil {
+            systemStatus = "Not attached"
+        } else if system.lastAudioWriteAt == nil {
+            systemStatus = "Waiting for audio"
+        } else if system.lastAudibleWriteAt == nil {
+            systemStatus = "Silent"
+        } else {
+            systemStatus = "Healthy"
+        }
+        return RecordingMemoryHealthSnapshot(
+            isRecording: true,
+            microphoneStatus: microphoneStatus,
+            microphoneLastWriteAt: microphone.lastAudioWriteAt,
+            microphoneDroppedBuffers: microphone.droppedBufferCount,
+            systemAudioStatus: systemStatus,
+            systemAudioLastWriteAt: system.lastAudioWriteAt,
+            systemAudioDroppedBuffers: system.droppedBufferCount,
+            lastRecoveryAt: latestRecoveryDate)
+    }
+
+    private var latestRecoveryDate: Date? {
+        switch (lastMicRestartAt, lastSystemAudioReattachAt) {
+        case (.none, .none): nil
+        case (.some(let mic), .none): mic
+        case (.none, .some(let system)): system
+        case (.some(let mic), .some(let system)): max(mic, system)
+        }
     }
 
     func prepareForTermination() {

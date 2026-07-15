@@ -61,11 +61,11 @@ struct ScreenRewindView: View {
             .onReceive(playbackTimer) { _ in advancePlayback() }
             .onDisappear { isPlaying = false }
             .confirmationDialog(
-                "Delete \(selectedCaptureCount) captured screen\(selectedCaptureCount == 1 ? "" : "s")?",
+                "Delete \(selectedCaptureCount) context moment\(selectedCaptureCount == 1 ? "" : "s")?",
                 isPresented: $confirmingRangeDeletion) {
                     Button("Delete selected range", role: .destructive, action: deleteSelectedRange)
                 } message: {
-                    Text("This permanently removes the encrypted screenshots and their searchable screen text.")
+                    Text("This permanently removes the selected pixels and captured text.")
                 }
             .accessibilityIdentifier("timeline.rewind")
         }
@@ -73,7 +73,7 @@ struct ScreenRewindView: View {
 
     private var header: some View {
         HStack(spacing: 7) {
-            Label("Rewind", systemImage: "clock.arrow.circlepath")
+            Label("Context rewind", systemImage: "clock.arrow.circlepath")
                 .font(.headline)
             Text("\(frames.count) scene\(frames.count == 1 ? "" : "s")")
                 .font(.caption)

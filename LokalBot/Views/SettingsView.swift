@@ -86,13 +86,13 @@ struct SettingsView: View {
         case .general:
             generalSection; cotypingSection; permissionsSection; storageSection; updatesSection
         case .recording:
-            meetingsSection; processingSection; summarizationSection; dayTrackingSection
+            meetingsSection; processingSection; summarizationSection; dayTrackingSection; routinesSection
         case .models:
             EmptyView() // handled by the ModelsView branch in body
         case .privacy:
             privacySection
         case .advanced:
-            resourceMonitorSection; systemSection; agentCLISection
+            memoryHealthSection; resourceMonitorSection; systemSection; agentCLISection
         }
     }
 
@@ -101,8 +101,8 @@ struct SettingsView: View {
     /// plus a jump row into the Models tab when its keywords match.
     @ViewBuilder private var searchResults: some View {
         generalSection; cotypingSection; permissionsSection; meetingsSection
-        processingSection; summarizationSection; dayTrackingSection; privacySection
-        storageSection; updatesSection; resourceMonitorSection; systemSection; agentCLISection
+        processingSection; summarizationSection; dayTrackingSection; routinesSection; privacySection
+        storageSection; updatesSection; memoryHealthSection; resourceMonitorSection; systemSection; agentCLISection
         if shows("Models", ["model", "models", "transcription", "summarization",
                             "cotyping", "embeddings", "llm", "whisper", "download",
                             "gguf", "hugging face", "ollama", "engine", "backend"]) {
@@ -118,6 +118,14 @@ struct SettingsView: View {
     }
 
     // MARK: - Sections
+
+    @ViewBuilder private var memoryHealthSection: some View {
+        if shows("Memory Health", ["health", "capture", "activity", "audio", "ocr",
+                                   "accessibility", "retention", "queue", "routines",
+                                   "disk", "permissions", "recovery", "diagnostics"]) {
+            MemoryHealthSection()
+        }
+    }
 
     @ViewBuilder private var resourceMonitorSection: some View {
         if shows("Resource Monitor", ["resource", "usage", "cpu", "memory", "ram",
@@ -283,16 +291,15 @@ struct SettingsView: View {
                                       "excluded apps", "never capture", "export", "obsidian",
                                       "logseq", "markdown", "daily note", "vault"]) {
                 Section("Day tracking") {
-                    // Screenshots ride on the activity sampler (ScreenshotService
-                    // captures on its block boundaries and guards on BOTH flags),
-                    // so the toggles stay coupled the same way onboarding couples
-                    // them: screenshots on ⇒ tracking on, tracking off ⇒
-                    // screenshots off. Otherwise "on" here would capture nothing.
                     Toggle("Track app & window activity", isOn: Binding(
                         get: { app.settings.trackingEnabled },
                         set: { app.settings.trackingEnabled = $0
-                               if $0 { PermissionManager.shared.requestIfNeeded(.accessibility) } else { app.settings.screenshotsEnabled = false }
-                               app.applyTrackingSetting() }))
+                               if $0 {
+                                   PermissionManager.shared.requestIfNeeded(.accessibility)
+                               } else {
+                                   app.settings.screenContextCaptureMode = .activityOnly
+                                   app.settings.screenshotsEnabled = false
+                               } }))
                     LabeledContent("Window titles") {
                         if ActivitySampler.hasAccessibility {
                             Text("Accessibility granted").foregroundStyle(.secondary)
@@ -303,31 +310,54 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    Toggle("Screen context capture (on app/window switch, OCR'd locally, encrypted at rest)", isOn: Binding(
-                        get: { app.settings.screenshotsEnabled },
-                        set: { app.settings.screenshotsEnabled = $0
-                               if $0 {
-                                   app.settings.trackingEnabled = true
-                                   PermissionManager.shared.requestIfNeeded(.screenRecording)
-                               }
-                               app.applyTrackingSetting() }))
-                    if app.settings.screenshotsEnabled {
+                    Picker("Screen context", selection: Binding(
+                        get: { app.settings.effectiveScreenContextCaptureMode },
+                        set: { mode in
+                            app.settings.screenContextCaptureMode = mode
+                            app.settings.screenshotsEnabled = mode.capturesPixels
+                            if mode.capturesText {
+                                app.settings.trackingEnabled = true
+                                PermissionManager.shared.requestIfNeeded(.accessibility)
+                            }
+                            if mode.capturesPixels {
+                                PermissionManager.shared.requestIfNeeded(.screenRecording)
+                            }
+                        })) {
+                        ForEach(AppSettings.ScreenContextCaptureMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    Text(app.settings.effectiveScreenContextCaptureMode.detail)
+                        .font(.caption).foregroundStyle(.secondary)
+                    if app.settings.effectiveScreenContextCaptureMode.capturesText {
                         Slider(value: Binding(
                             get: { app.settings.screenshotIntervalMinutes },
-                            set: { app.settings.screenshotIntervalMinutes = $0; app.screenshots.restart() }),
+                            set: { app.settings.screenshotIntervalMinutes = $0 }),
                             in: 1...15, step: 1) {
                             Text("Idle fallback: at least every \(Int(app.settings.screenshotIntervalMinutes)) min")
                         }
-                        Stepper("Keep screenshots \(app.settings.retentionDays) days",
+                        Stepper("Keep screen context \(app.settings.retentionDays) days",
                                 value: $app.settings.retentionDays, in: 1...90)
+                        TextField("Never capture (domains or URL prefixes, comma-separated)",
+                                  text: $app.settings.excludedScreenDomains)
+                        Toggle("Allow private/incognito browser windows",
+                               isOn: $app.settings.capturePrivateWindows)
+                        if app.settings.effectiveScreenContextCaptureMode.capturesPixels {
+                            Toggle("Capture low-frequency visual context during meetings",
+                                   isOn: $app.settings.meetingVisualContextEnabled)
+                            Text("Off by default. When enabled, captures the focused display at most once per minute on meaningful changes and links each frame to the active meeting.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                     TextField("Never capture (app names, comma-separated)",
                               text: $app.settings.excludedApps)
                     Text(
-                        "Captures when you switch apps or windows (20 s cooldown, unchanged "
-                            + "screens skipped) and at least every few minutes when idle-active; "
-                            + "never captures the lock screen. Screenshots are AES-GCM encrypted "
-                            + "(key in your Keychain); extracted text follows the same retention "
+                        "Captures context after app/window changes, clicks, typing pauses, settled "
+                            + "scrolls, or a clipboard-generation change without storing raw keys, "
+                            + "pointer positions, or clipboard contents. Accessible text is preferred; "
+                            + "local OCR fills gaps. Private windows, excluded domains, secure fields, "
+                            + "and detected credentials fail closed. Visuals are AES-GCM encrypted "
+                            + "with a Keychain key; extracted text follows the same retention "
                             + "(see Privacy). Saved moments retain their encrypted frame and text "
                             + "until you unsave or delete them. Excluded apps log as “Private”."
                     )
@@ -367,6 +397,75 @@ struct SettingsView: View {
 
     }
 
+    @ViewBuilder private var routinesSection: some View {
+        if shows("Routines", ["routine", "automation", "standup", "stand-up", "weekly log",
+                              "follow-up", "follow up", "unfinished actions", "journal",
+                              "schedule", "history", "local output"]) {
+            Section("Routines") {
+                Toggle("Enable safe local routines", isOn: Binding(
+                    get: { app.settings.memoryRoutinesEnabled },
+                    set: { enabled in
+                        app.settings.memoryRoutinesEnabled = enabled
+                        if enabled && app.settings.memoryRoutineFolder.isEmpty {
+                            chooseMemoryRoutineFolder()
+                        }
+                    }))
+                if app.settings.memoryRoutinesEnabled {
+                    LabeledContent("Output folder") {
+                        Button(app.settings.memoryRoutineFolder.isEmpty
+                               ? "Choose…"
+                               : URL(fileURLWithPath: app.settings.memoryRoutineFolder).lastPathComponent) {
+                            chooseMemoryRoutineFolder()
+                        }
+                        .buttonStyle(.link)
+                    }
+                    Stepper(
+                        "Daily time: \(String(format: "%02d:00", app.settings.memoryRoutineHour))",
+                        value: $app.settings.memoryRoutineHour,
+                        in: 0...23)
+                    Picker("Weekly log day", selection: $app.settings.memoryRoutineWeekday) {
+                        ForEach(1...7, id: \.self) { weekday in
+                            Text(weekdayName(weekday)).tag(weekday)
+                        }
+                    }
+                    ForEach(AppSettings.MemoryRoutineKind.allCases) { kind in
+                        Toggle(kind.displayName, isOn: Binding(
+                            get: { app.settings.enabledMemoryRoutines.contains(kind) },
+                            set: { enabled in setRoutine(kind, enabled: enabled) }))
+                        Text(kind.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Menu("Run now") {
+                            ForEach(AppSettings.MemoryRoutineKind.allCases.filter { !$0.isEventDriven }) { kind in
+                                Button(kind.displayName) { app.memoryRoutines.runNow(kind) }
+                                    .disabled(!app.settings.enabledMemoryRoutines.contains(kind))
+                            }
+                        }
+                        if app.memoryRoutines.isRunning, let kind = app.memoryRoutines.currentKind {
+                            ProgressView().controlSize(.small)
+                            Text(kind.displayName).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    if !app.memoryRoutines.recentRuns.isEmpty {
+                        DisclosureGroup("Recent run history") {
+                            ForEach(app.memoryRoutines.recentRuns.prefix(8)) { run in
+                                LabeledContent(run.kind.displayName) {
+                                    Text(run.status.capitalized + " · "
+                                         + run.startedAt.formatted(.relative(presentation: .named)))
+                                        .foregroundStyle(run.status == "failed" ? .orange : .secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+                Text("Each routine has a fixed local read scope and writes Markdown only inside the chosen folder. Missed daily/weekly runs catch up after wake, each run stops after 30 seconds, and every attempt is recorded in the local database. Routines cannot execute scripts, contact services, send messages, or change source meetings.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
     @ViewBuilder private var privacySection: some View {
             if shows("Privacy", ["privacy", "retention", "ocr", "text", "screen text", "history",
                                  "delete", "prune", "forever", "keep", "local", "network",
@@ -379,7 +478,7 @@ struct SettingsView: View {
                         get: { app.settings.keepOCRTextForever },
                         set: { app.settings.keepOCRTextForever = $0
                                if !$0 { app.screenshots.pruneOldScreenshots() } }))
-                    Text("Text extracted from screenshots is deleted with the pixels after \(app.settings.retentionDays) days. Saved moments are retained until you unsave or delete them. Turn on to keep all other screen text searchable forever; turning back off deletes text older than the window.")
+                    Text("Captured screen text is deleted with any pixels after \(app.settings.retentionDays) days. Saved moments are retained until you unsave or delete them. Turn on to keep all other screen text searchable forever; turning back off deletes text older than the window.")
                         .font(.caption).foregroundStyle(.secondary)
                     AgentAccessToggleRow(manager: app.agentAccess)
                     ScreenMemoryAccessToggleRow(manager: app.screenMemoryAccess)
@@ -574,6 +673,43 @@ struct SettingsView: View {
         }
     }
 
+    private func chooseMemoryRoutineFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose routine output folder"
+        panel.prompt = "Choose"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        if !app.settings.memoryRoutineFolder.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: app.settings.memoryRoutineFolder)
+        }
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else {
+                if app.settings.memoryRoutineFolder.isEmpty {
+                    app.settings.memoryRoutinesEnabled = false
+                }
+                return
+            }
+            app.settings.memoryRoutineFolder = url.path
+        }
+    }
+
+    private func setRoutine(_ kind: AppSettings.MemoryRoutineKind, enabled: Bool) {
+        var values = app.settings.enabledMemoryRoutines
+        if enabled {
+            if !values.contains(kind) { values.append(kind) }
+        } else {
+            values.removeAll { $0 == kind }
+        }
+        app.settings.enabledMemoryRoutines = values
+    }
+
+    private func weekdayName(_ weekday: Int) -> String {
+        let symbols = Calendar.current.weekdaySymbols
+        guard symbols.indices.contains(weekday - 1) else { return "Friday" }
+        return symbols[weekday - 1]
+    }
+
 }
 
 /// Observes the nested manager directly so its published marker state keeps
@@ -605,7 +741,19 @@ private struct ScreenMemoryAccessToggleRow: View {
                 isOn: Binding(
                     get: { manager.isEnabled },
                     set: { manager.setEnabled($0) }))
-            Text("Separately grants read-only MCP access to captured-screen OCR and metadata. Decrypted screenshot pixels are never returned, and meeting access remains independently controlled above.")
+            if manager.isEnabled {
+                Picker("Granted history", selection: Binding(
+                    get: { manager.profile.scope },
+                    set: { manager.setScope($0) })) {
+                    ForEach(ScreenMemoryAccessProfile.Scope.allCases) { scope in
+                        Text(scope.displayName).tag(scope)
+                    }
+                }
+                Text(manager.profile.scope.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text("Separately grants scoped, read-only MCP access to captured text and metadata. Decrypted screenshot pixels are never returned, out-of-scope ids appear missing, and meeting access remains independently controlled above.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

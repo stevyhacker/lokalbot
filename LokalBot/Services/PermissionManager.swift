@@ -54,9 +54,9 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
         case .microphone:
             "Record your side of each call."
         case .screenRecording:
-            "Capture screenshots for day memory — only while that feature is on. System audio does not need this."
+            "Add encrypted visual context to day memory. Text-only context does not need this."
         case .accessibility:
-            "Name windows in your timeline and spot browser meetings."
+            "Name windows, read visible text context, and spot browser meetings."
         case .inputMonitoring:
             "Detect the dictation and cotyping shortcuts."
         }
@@ -76,9 +76,9 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
         case .microphone:
             "Records your side of the meeting from the microphone."
         case .screenRecording:
-            "Captures the periodic screenshots behind day memory, OCR'd into your timeline. Only used while screenshots are turned on; system-audio capture does not go through this permission."
+            "Captures optional encrypted visuals behind day memory. Only used in Text + visual context mode; system-audio capture does not use this permission."
         case .accessibility:
-            "Reads window titles to track your activity."
+            "Reads window titles and visible interface text for activity and text-context features."
         case .inputMonitoring:
             "Lets dictation and cotyping detect their global keyboard shortcuts."
         }

@@ -12,6 +12,48 @@ enum ScreenMemoryAccessError: LocalizedError {
     }
 }
 
+struct ScreenMemoryAccessProfile: Codable, Equatable, Sendable {
+    enum Scope: String, Codable, CaseIterable, Identifiable, Sendable {
+        case today
+        case recentWeek
+        case retainedHistory
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .today: "Today only"
+            case .recentWeek: "Last 7 days"
+            case .retainedHistory: "All retained history"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .today:
+                "Agents can read only context captured since local midnight."
+            case .recentWeek:
+                "Agents can read context from the rolling last seven days."
+            case .retainedHistory:
+                "Agents can read everything still inside the configured retention window."
+            }
+        }
+
+        var maximumLookbackDays: Int? {
+            switch self {
+            case .today: 0
+            case .recentWeek: 7
+            case .retainedHistory: nil
+            }
+        }
+    }
+
+    var scope: Scope = .recentWeek
+
+    static let safeDefault = ScreenMemoryAccessProfile(scope: .recentWeek)
+    static let legacyUnscoped = ScreenMemoryAccessProfile(scope: .retainedHistory)
+}
+
 /// Cross-process marker-file truth for the more-sensitive screen-memory scope.
 ///
 /// This deliberately does not reuse `AgentAccessGate`. Enabling meeting-library
@@ -38,6 +80,16 @@ struct ScreenMemoryAccessGate {
         FileManager.default.fileExists(atPath: accessMarkerURL.path)
     }
 
+    var profile: ScreenMemoryAccessProfile {
+        guard let data = try? Data(contentsOf: accessMarkerURL), !data.isEmpty else {
+            // An empty marker was written by the earlier binary gate. Preserve
+            // that user's existing authorization until they choose a profile.
+            return .legacyUnscoped
+        }
+        return (try? JSONDecoder().decode(ScreenMemoryAccessProfile.self, from: data))
+            ?? .safeDefault
+    }
+
     /// Kept as a method to parallel `AgentAccessGate` at call sites while
     /// intentionally accepting no environment-borne meeting capability.
     func isAuthorized() -> Bool {
@@ -48,7 +100,7 @@ struct ScreenMemoryAccessGate {
         guard isAuthorized() else { throw ScreenMemoryAccessError.disabled }
     }
 
-    func enable() throws {
+    func enable(profile: ScreenMemoryAccessProfile = .safeDefault) throws {
         let fileManager = FileManager.default
         try fileManager.createDirectory(
             at: controlDirectory,
@@ -60,10 +112,15 @@ struct ScreenMemoryAccessGate {
         try fileManager.setAttributes(
             [.posixPermissions: 0o700],
             ofItemAtPath: controlDirectory.path)
-        try Data().write(to: accessMarkerURL, options: .atomic)
+        try JSONEncoder().encode(profile).write(to: accessMarkerURL, options: .atomic)
         try fileManager.setAttributes(
             [.posixPermissions: 0o600],
             ofItemAtPath: accessMarkerURL.path)
+    }
+
+    func updateProfile(_ profile: ScreenMemoryAccessProfile) throws {
+        guard isEnabled else { return }
+        try enable(profile: profile)
     }
 
     func disable() {
@@ -79,6 +136,7 @@ struct ScreenMemoryAccessGate {
 @MainActor
 final class ScreenMemoryAccessManager: ObservableObject {
     @Published private(set) var isEnabled = false
+    @Published private(set) var profile: ScreenMemoryAccessProfile = .safeDefault
 
     private let gate: ScreenMemoryAccessGate
 
@@ -88,12 +146,13 @@ final class ScreenMemoryAccessManager: ObservableObject {
 
     func start() {
         isEnabled = gate.isEnabled
+        profile = isEnabled ? gate.profile : .safeDefault
     }
 
     func setEnabled(_ enabled: Bool) {
         if enabled {
             do {
-                try gate.enable()
+                try gate.enable(profile: profile)
             } catch {
                 return
             }
@@ -102,5 +161,17 @@ final class ScreenMemoryAccessManager: ObservableObject {
             gate.disable()
             isEnabled = false
         }
+    }
+
+    func setScope(_ scope: ScreenMemoryAccessProfile.Scope) {
+        let updated = ScreenMemoryAccessProfile(scope: scope)
+        if isEnabled {
+            do {
+                try gate.updateProfile(updated)
+            } catch {
+                return
+            }
+        }
+        profile = updated
     }
 }

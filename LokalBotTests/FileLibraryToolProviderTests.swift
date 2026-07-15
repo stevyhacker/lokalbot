@@ -2,10 +2,12 @@ import XCTest
 @testable import LokalBot
 
 private final class StubScreenMemoryReader: ScreenMemoryReading {
-    let timestamp = Date(timeIntervalSince1970: 1_780_000_000)
+    var timestamp = Date(timeIntervalSince1970: 1_780_000_000)
+    var lastSearchRequest: ScreenMemorySearchRequest?
 
     func search(_ request: ScreenMemorySearchRequest) throws -> [ScreenMemorySearchHit] {
-        [ScreenMemorySearchHit(
+        lastSearchRequest = request
+        return [ScreenMemorySearchHit(
             snapshotID: 7, capturedAt: timestamp, app: "Safari",
             windowTitle: "Report", textSource: "ocr", snippet: "«revenue» grew")]
     }
@@ -312,6 +314,23 @@ final class FileLibraryToolProviderTests: XCTestCase {
         let missing = await provider.call(
             name: "get_screenshot_detail", arguments: ["snapshot_id": 99])
         XCTAssertTrue(missing.text.hasPrefix("[screenshot_not_found]"))
+    }
+
+    func testScreenScopeBoundsSearchAndRejectsOlderDetail() async throws {
+        try screenGate.enable(profile: ScreenMemoryAccessProfile(scope: .today))
+        screenReader.timestamp = Date(timeIntervalSince1970: 1_780_000_000 - 86_400)
+
+        let search = await provider.call(
+            name: "search_screen", arguments: ["query": "revenue"])
+        XCTAssertFalse(search.isError)
+        XCTAssertFalse(search.text.contains("\"snapshot_id\" : 7"))
+        let expectedCutoff = Calendar.current.startOfDay(
+            for: Date(timeIntervalSince1970: 1_780_000_000))
+        XCTAssertEqual(screenReader.lastSearchRequest?.start, expectedCutoff)
+
+        let detail = await provider.call(
+            name: "get_screenshot_detail", arguments: ["snapshot_id": 7])
+        XCTAssertTrue(detail.text.hasPrefix("[screenshot_not_found]"))
     }
 
     func testUnknownToolName() async {

@@ -67,6 +67,11 @@ struct ScreenMemoryScreenshotSummary: Codable, Equatable {
     var captureTrigger: String
     var hasOCR: Bool
     var isSaved: Bool
+    var hasEncryptedPixels: Bool = false
+    var sourceURL: String = ""
+    var documentName: String = ""
+    var meetingID: String = ""
+    var privacyRedactionCount: Int = 0
 
     enum CodingKeys: String, CodingKey {
         case snapshotID = "snapshot_id"
@@ -76,6 +81,11 @@ struct ScreenMemoryScreenshotSummary: Codable, Equatable {
         case captureTrigger = "capture_trigger"
         case hasOCR = "has_ocr"
         case isSaved = "is_saved"
+        case hasEncryptedPixels = "has_encrypted_pixels"
+        case sourceURL = "source_url"
+        case documentName = "document_name"
+        case meetingID = "meeting_id"
+        case privacyRedactionCount = "privacy_redaction_count"
     }
 }
 
@@ -110,6 +120,10 @@ struct ScreenMemoryScreenshotDetail: Codable, Equatable {
     var isSaved: Bool
     var savedNote: String?
     var savedAt: Date?
+    var sourceURL: String = ""
+    var documentName: String = ""
+    var meetingID: String = ""
+    var privacyRedactionCount: Int = 0
 
     enum CodingKeys: String, CodingKey {
         case snapshotID = "snapshot_id"
@@ -123,6 +137,10 @@ struct ScreenMemoryScreenshotDetail: Codable, Equatable {
         case isSaved = "is_saved"
         case savedNote = "saved_note"
         case savedAt = "saved_at"
+        case sourceURL = "source_url"
+        case documentName = "document_name"
+        case meetingID = "meeting_id"
+        case privacyRedactionCount = "privacy_redaction_count"
     }
 }
 
@@ -256,14 +274,20 @@ struct SQLiteScreenMemoryReader: ScreenMemoryReading {
             }
 
             let hasBookmarks = try connection.tableExists("screen_bookmarks")
+            let hasContextMetadata = try [
+                "source_url", "document_name", "meeting_id", "privacy_redactions",
+            ].allSatisfy { try connection.columnExists($0, in: "screenshots") }
             let savedExpression = hasBookmarks
                 ? "EXISTS(SELECT 1 FROM screen_bookmarks b WHERE b.snapshot_id = s.id)"
                 : "0"
+            let metadataColumns = hasContextMetadata
+                ? "s.source_url, s.document_name, s.meeting_id, s.privacy_redactions"
+                : "'', '', '', 0"
             let screenshots = try connection.query("""
                 SELECT s.id, s.ts, s.app, s.window_title, s.capture_trigger,
                        EXISTS(SELECT 1 FROM ocr_fts o
                               WHERE CAST(o.snapshot_id AS INTEGER) = s.id),
-                       \(savedExpression)
+                       \(savedExpression), s.path != '', \(metadataColumns)
                 FROM screenshots s WHERE s.ts >= ?1 AND s.ts < ?2
                 ORDER BY s.ts LIMIT ?3
                 """, bindings: intervalBindings) { row in
@@ -274,7 +298,12 @@ struct SQLiteScreenMemoryReader: ScreenMemoryReading {
                     windowTitle: Self.text(row, 3),
                     captureTrigger: Self.text(row, 4),
                     hasOCR: sqlite3_column_int(row, 5) != 0,
-                    isSaved: sqlite3_column_int(row, 6) != 0)
+                    isSaved: sqlite3_column_int(row, 6) != 0,
+                    hasEncryptedPixels: sqlite3_column_int(row, 7) != 0,
+                    sourceURL: Self.text(row, 8),
+                    documentName: Self.text(row, 9),
+                    meetingID: Self.text(row, 10),
+                    privacyRedactionCount: Int(sqlite3_column_int64(row, 11)))
             }
             return ScreenMemoryTimeline(
                 start: start, end: end, activity: activity, screenshots: screenshots)
@@ -330,11 +359,17 @@ struct SQLiteScreenMemoryReader: ScreenMemoryReading {
     func screenshotDetail(snapshotID: Int64) throws -> ScreenMemoryScreenshotDetail? {
         try withConnection { connection in
             let hasBookmarks = try connection.tableExists("screen_bookmarks")
+            let hasContextMetadata = try [
+                "source_url", "document_name", "meeting_id", "privacy_redactions",
+            ].allSatisfy { try connection.columnExists($0, in: "screenshots") }
             let savedColumns = hasBookmarks
                 ? "EXISTS(SELECT 1 FROM screen_bookmarks b WHERE b.snapshot_id = s.id), "
                     + "COALESCE((SELECT b.note FROM screen_bookmarks b WHERE b.snapshot_id = s.id), ''), "
                     + "(SELECT b.created_at FROM screen_bookmarks b WHERE b.snapshot_id = s.id)"
                 : "0, '', NULL"
+            let metadataColumns = hasContextMetadata
+                ? "s.source_url, s.document_name, s.meeting_id, s.privacy_redactions"
+                : "'', '', '', 0"
             return try connection.query("""
                 SELECT s.id, s.ts, s.app, s.window_title, s.capture_trigger,
                        s.path != '',
@@ -343,7 +378,7 @@ struct SQLiteScreenMemoryReader: ScreenMemoryReading {
                        COALESCE((SELECT GROUP_CONCAT(o.text, char(10) || char(10))
                                  FROM ocr_fts o
                                  WHERE CAST(o.snapshot_id AS INTEGER) = s.id), ''),
-                       \(savedColumns)
+                       \(savedColumns), \(metadataColumns)
                 FROM screenshots s WHERE s.id = ?1 LIMIT 1
                 """, bindings: [.int64(snapshotID)]) { row in
                 let sources = Self.text(row, 6).split(separator: ",")
@@ -366,7 +401,11 @@ struct SQLiteScreenMemoryReader: ScreenMemoryReading {
                     ocrText: Self.text(row, 7),
                     isSaved: saved,
                     savedNote: saved ? Self.text(row, 9) : nil,
-                    savedAt: savedTimestamp)
+                    savedAt: savedTimestamp,
+                    sourceURL: Self.text(row, 11),
+                    documentName: Self.text(row, 12),
+                    meetingID: Self.text(row, 13),
+                    privacyRedactionCount: Int(sqlite3_column_int64(row, 14)))
             }.first
         }
     }
@@ -528,6 +567,18 @@ private final class ReadOnlySQLiteConnection {
         try scalarInt(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
             bindings: [.text(name)]) > 0
+    }
+
+    func columnExists(_ column: String, in table: String) throws -> Bool {
+        // Table and column names are internal constants at every call site.
+        try query("PRAGMA table_info(\(table))") { statement in
+            Self.text(statement, 1)
+        }.contains(column)
+    }
+
+    private static func text(_ statement: OpaquePointer, _ column: Int32) -> String {
+        guard let value = sqlite3_column_text(statement, column) else { return "" }
+        return String(cString: value)
     }
 
     private func bind(_ values: [SQLiteReadValue], to statement: OpaquePointer) throws {

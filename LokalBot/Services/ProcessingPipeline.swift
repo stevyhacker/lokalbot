@@ -57,6 +57,7 @@ final class ProcessingPipeline: ObservableObject {
     private var queue: [Job] = []
     private var isDraining = false
     private var activeMeetingID: Meeting.ID?
+    var hasActiveWork: Bool { isDraining || activeMeetingID != nil }
     private let diarizer = NeuralDiarizationEngine()
     private let jobStore: PipelineJobStore?
     /// Fired after transcript/summary files land on disk (search re-index).

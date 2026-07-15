@@ -52,7 +52,9 @@ struct OnboardingView: View {
             return AppPermission.allCases.filter(\.isOptionalOnboardingEnhancement)
         }
         var relevant: [AppPermission] = [.accessibility]
-        if app.settings.screenshotsEnabled { relevant.append(.screenRecording) }
+        if app.settings.effectiveScreenContextCaptureMode.capturesPixels {
+            relevant.append(.screenRecording)
+        }
         return relevant
     }
 
@@ -256,7 +258,7 @@ private extension OnboardingView {
                 systemImage: "calendar.day.timeline.left",
                 tint: .indigo,
                 title: "Remember your day?",
-                subtitle: "The Timeline can log your day — locally, and only if you turn it on. Both switches start off; nothing here is captured without them."
+                subtitle: "The Timeline can log your day locally, and only if you turn it on. Activity, text, and visual context all start off."
             )
             .onboardingReveal(0)
 
@@ -270,28 +272,48 @@ private extension OnboardingView {
                         get: { app.settings.trackingEnabled },
                         set: { on in
                             app.settings.trackingEnabled = on
-                            if !on { app.settings.screenshotsEnabled = false }
-                            app.applyTrackingSetting()
+                            if !on {
+                                app.settings.screenContextCaptureMode = .activityOnly
+                                app.settings.screenshotsEnabled = false
+                            }
                         }
                     )
                 )
                 .onboardingReveal(1)
 
                 OnboardingOptInCard(
-                    systemImage: "camera.viewfinder",
-                    tint: .purple,
-                    title: "Capture screenshots (screen memory)",
-                    subtitle: "Takes a periodic screenshot, OCRs it on-device, encrypts it at rest, and deletes it after \(app.settings.retentionDays) days. Needs the Screen Recording permission (next step). Turning this on also enables activity tracking.",
+                    systemImage: "text.viewfinder",
+                    tint: Brand.teal,
+                    title: "Capture visible text context",
+                    subtitle: "Reads visible interface text through Accessibility after meaningful changes. No screenshot pixels are stored; local OCR is not needed when this text is rich enough.",
                     isOn: Binding(
-                        get: { app.settings.screenshotsEnabled },
+                        get: { app.settings.effectiveScreenContextCaptureMode.capturesText },
                         set: { on in
-                            app.settings.screenshotsEnabled = on
+                            app.settings.screenContextCaptureMode = on
+                                ? .accessibleText : .activityOnly
+                            app.settings.screenshotsEnabled = false
                             if on { app.settings.trackingEnabled = true }
-                            app.applyTrackingSetting()
                         }
                     )
                 )
                 .onboardingReveal(2)
+
+                OnboardingOptInCard(
+                    systemImage: "camera.viewfinder",
+                    tint: .purple,
+                    title: "Add encrypted visual context",
+                    subtitle: "Pairs visible text with an encrypted screen capture and uses local OCR only for gaps. Pixels delete after \(app.settings.retentionDays) days by default and need Screen Recording permission.",
+                    isOn: Binding(
+                        get: { app.settings.effectiveScreenContextCaptureMode.capturesPixels },
+                        set: { on in
+                            app.settings.screenshotsEnabled = on
+                            app.settings.screenContextCaptureMode = on
+                                ? .visualContext : .accessibleText
+                            if on { app.settings.trackingEnabled = true }
+                        }
+                    )
+                )
+                .onboardingReveal(3)
             }
 
             Text("You can change both anytime in Settings → Day tracking. Everything stays in LokalBot's local library folder.")
@@ -299,7 +321,7 @@ private extension OnboardingView {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-                .onboardingReveal(3)
+                .onboardingReveal(4)
         }
         .pagePadding()
     }

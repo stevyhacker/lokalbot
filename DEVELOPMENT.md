@@ -71,9 +71,9 @@ Models auto-download on first use (Hugging Face; the ONNX specialists fetch sher
 
 ## Day tracking — timeline, digests, "ask your day"
 
-- **Opt-in:** day tracking is off by default. A dedicated onboarding step (or Settings → Recording → Day tracking) turns on activity sampling and, separately, screenshots — finishing setup never silently enables either.
+- **Opt-in modes:** day tracking is off by default. Settings → Recording → Day tracking offers activity only, accessible text without pixels, or accessible text paired with encrypted visual context. Enabling a richer mode also enables activity sampling; finishing setup never silently enables it.
 - **Sampler:** frontmost app + focused-window title (Accessibility; degrades to app-name-only) every 5 s, idle-aware (3 min), minimum 5 s block, pause/resume from the menu bar. Stored in `activity_blocks` (same SQLite db).
-- **Timeline:** per-day colored block bar plus a visual Rewind rail over perceptually grouped captures. Users can scrub, hover, step, play, open an exact frame, save/note a moment, pin it into Ask, or permanently delete a selected time range. An **Ask your day** action answers from activity blocks + OCR'd screen text + meetings via the local LLM.
+- **Timeline:** per-day colored block bar plus a context Rewind rail over accessibility-only moments and perceptually grouped visual captures. Users can scrub, hover, step, play, open exact retained text/pixels, save/note a moment, pin it into Ask, or permanently delete a selected time range. An **Ask your day** action answers from activity blocks + captured screen text + meetings via the local LLM.
 - **Day digest:** "Generate digest" runs the configured LLM over the day's blocks + meetings + OCR'd text → `journal/YYYY-MM-DD.md` (What I worked on / Meetings / Time allocation).
 
 ## Cotyping — inline AI autocomplete
@@ -97,21 +97,29 @@ Models auto-download on first use (Hugging Face; the ONNX specialists fetch sher
 - **You approve sensitive access:** `write` / `edit` tool calls pause behind native approval cards unless you opt into file changes for the session. Every shell command and every read outside the selected workspace requires a fresh one-time approval. Approved shell commands run with your macOS user permissions and may access files or the network.
 - **Headless:** `LokalBot --agent "<prompt>"` runs one agent turn from the terminal (see Headless flags). It auto-approves file changes but safely declines shell and external-read requests because no person is present to review them.
 
-## Screenshots, OCR & privacy
+## Screen context, OCR & privacy
 
-- **Capture:** off by default, enabled only by the onboarding day-memory step or Settings → Recording → Day tracking. When on, ScreenCaptureKit captures the main display on app/window changes with a 20-second cooldown, plus an idle-active fallback at the configured interval; byte-identical automatic frames are skipped, while a separate 64-bit perceptual dHash groups visually similar retained frames without discarding changed OCR evidence (manual capture bypasses exact dedup). Images are downscaled to ≤1500 px and encoded as HEIC. Capture is also skipped when idle (3 min), paused, locked, or when an excluded app is frontmost. It is display-level and cannot redact a password field inside an otherwise allowed app.
-- **OCR:** Vision (`VNRecognizeTextRequest`, on-device) runs immediately; text goes into `ocr_fts` (searchable under Ask → Screen) and feeds day digests and Ask-your-day.
-- **Encryption & retention:** each screenshot is AES-GCM sealed with a per-install key in the macOS Keychain; pixels auto-delete after N days (default 14, Settings stepper), and OCR text follows the same retention unless you opt into keeping it forever (Settings → Privacy). Saved moments retain their encrypted pixels, OCR, and semantic vector until unsaved or explicitly deleted. The timeline shows a decrypted thumbnail filmstrip.
-- **Exclusions:** comma-separated app list (preseeded with password managers); excluded time logs as "Private" — no titles, no screenshots.
+- **Capture:** off by default. A bounded, single-flight Accessibility reader collects visible text first; Vision (`VNRecognizeTextRequest`, on-device) runs only when that text is too thin. Coarse triggers include app/window changes, clicks, typing pauses, settled scrolling, and pasteboard-generation changes, plus an idle-active fallback. The trigger monitor never reads raw keys, pointer positions, scroll deltas, or clipboard contents. Automatic work has a 20-second cooldown; byte-identical frames and unchanged text are skipped. Visual mode uses ScreenCaptureKit, downscales to ≤1500 px, encodes HEIC, and groups similar scenes with a 64-bit perceptual dHash.
+- **Contextual privacy:** capture skips idle/lock/pause states, excluded apps and domains, private/incognito titles by default, and focused secure fields. URL metadata drops credentials, query, and fragment; document metadata keeps only the filename. Deterministic credential rules redact captured text before persistence. If either accessible text or OCR detects a credential, the redacted text remains useful but the pixel payload is never written.
+- **Meetings:** visual context during recording is a separate opt-in. It is throttled to at most one automatic moment per minute and rows carry the active meeting id. Manual capture remains available.
+- **Encryption & retention:** each retained visual is AES-GCM sealed with a per-install Keychain key. Pixels auto-delete after N days (default 14), and captured text follows the same retention unless you opt into keeping it forever. Saved moments retain their encrypted pixels, text, and semantic vector until unsaved or explicitly deleted. Accessibility-only and retention-pruned moments remain represented as text context rather than fake thumbnails.
+- **Exclusions:** the comma-separated app list is preseeded with password managers; excluded time logs as "Private" with no title or context. Domain/URL-prefix rules apply to both text and pixels.
+
+## Safe local routines
+
+- **Curated jobs:** post-meeting follow-up, daily stand-up, weekly work log, unfinished-action rollup, and local journal. Each renderer has a fixed local read scope and accepts no arbitrary prompt, shell command, or network action.
+- **Scheduling:** event-driven follow-ups run after processing; daily and weekly jobs catch up after wake. Meeting recording, dictation, cotyping generation, and the meeting pipeline take priority. A 30-second bound, durable SQLite run history, and terminal failure tokens prevent runaway retry loops.
+- **Writes:** Markdown goes only under a user-selected destination with `0700` folders and `0600` files. Existing different content is preserved as a collision error; identical output is idempotent. Deterministic secret redaction is applied again before writing.
 
 ## Configuration
 
 Everything lives in **Settings** — five tabs with a search box that finds any setting — plus per-feature controls in the **Type** section:
 
 - **General** — launch at login, menu-bar-only mode, the opt-in `⌃⇧Space` Quick Recall shortcut, permission status + repair, storage location, update checks.
-- **Recording** — auto-record behavior, calendar-assisted detection, auto-transcribe/summarize, notes template + language, neural diarization, day tracking, and scheduled Markdown/Obsidian/Logseq daily-memory export.
+- **Recording** — auto-record behavior, calendar-assisted detection, auto-transcribe/summarize, notes template + language, neural diarization, day tracking modes, scheduled Markdown/Obsidian/Logseq daily-memory export, and safe local routines.
 - **Models** — every model in one tab: the transcription engine (table above), the Main LLM backend (Built-in / Apple Intelligence / Ollama / OpenAI-compatible) with its GGUF catalog and Hugging Face browser, the dedicated cotyping model, embeddings, and the Kokoro TTS voice.
-- **Privacy** — screen-text retention plus independent meeting-library and screen-memory MCP permission markers.
+- **Privacy** — screen-text retention plus independent meeting-library and time-scoped screen-memory MCP permission profiles.
+- **Advanced** — unified Memory Health for activity, accessibility, visuals, OCR, Me/Them audio writes and drops, processing, routines, retention, and storage, with narrow restart/retention actions.
 - **Advanced** — live resource monitor, hardware fit advisory, Agent CLI install.
 - **Type** — enable and tune Cotyping (model, exclusions, accept granularity) and Dictation (shortcut style, paste vs. clipboard).
 
@@ -119,9 +127,9 @@ Everything lives in **Settings** — five tabs with a search box that finds any 
 
 `lokalbot-cli` (ArgumentParser, embedded in `Contents/Helpers/`) gives coding agents read-only access to the meeting library via `list` / `get` / `search` / `path`. JSON by default, `--table` for humans. Settings → Advanced → Agent CLI (or `lokalbot-cli install-skill`) symlinks the binary to `~/.local/bin/lokalbot-cli` and the bundled skill to `~/.agents/skills/lokalbot-cli/`.
 
-The same binary is an **MCP server**: `lokalbot-cli mcp` speaks MCP over stdio. Meeting tools are `list_meetings` / `get_meeting` / `search_meetings` / `ask_library`. Independently gated screen tools are `search_screen` / `get_timeline` / `get_recent_activity` / `get_app_usage` / `get_screenshot_detail`; they use a query-only SQLite connection and return OCR/metadata, never decrypted pixels or file paths. LokalBot does not upload library content, but an external MCP client may transmit tool inputs and results under its own privacy terms.
+The same binary is an **MCP server**: `lokalbot-cli mcp` speaks MCP over stdio. Meeting tools are `list_meetings` / `get_meeting` / `search_meetings` / `ask_library`. Independently gated screen tools are `search_screen` / `get_timeline` / `get_recent_activity` / `get_app_usage` / `get_screenshot_detail`; they use a query-only SQLite connection and return captured text/metadata, never decrypted pixels or file paths. The screen marker stores one of three profiles: today, rolling seven days, or all retained history; every query is clamped and out-of-scope detail ids appear missing. LokalBot does not upload library content, but an external MCP client may transmit tool inputs and results under its own privacy terms.
 
-Both agent surfaces are **off by default**. Meeting tools require `control/agent-access-enabled`; screen-memory tools require the separate `control/screen-memory-access-enabled` marker. Neither marker grants the other capability.
+Both agent surfaces are **off by default**. Meeting tools require `control/agent-access-enabled`; screen-memory tools require the separate JSON `control/screen-memory-access-enabled` marker. Neither marker grants the other capability. Empty markers written by older builds retain their prior unscoped authorization until the user chooses a profile; newly enabled access defaults to seven days.
 
 See [`.agents/skills/lokalbot-cli/SKILL.md`](.agents/skills/lokalbot-cli/SKILL.md).
 
@@ -194,6 +202,6 @@ In-place signed updates ship via [Sparkle](https://github.com/sparkle-project/Sp
 
 ## Status
 
-**Done:** recording with robust device/PID handling · live meeting view (notes + rolling transcript) · transcription (8 models across 5 engines) + neural diarization · summarization (4 backends) + templates/languages · FTS5 + semantic meeting/screen search · synced player · Kokoro TTS · day tracking + digests · encrypted visual Rewind + exact screen citations + saved moments · Quick Recall · scheduled Markdown/Obsidian/Logseq export · Ask-your-day · chat assistant · inference broker · Agent Mode · separately gated meeting/screen MCP tools · Sparkle updates · dev/prod split · in-app model manager + Hugging Face browse · Cotyping (opt-in) · system-wide dictation (opt-in).
+**Done:** recording with robust device/PID handling · live meeting view (notes + rolling transcript) · transcription (8 models across 5 engines) + neural diarization · summarization (4 backends) + templates/languages · FTS5 + semantic meeting/screen search · synced player · Kokoro TTS · accessibility-first day context + encrypted visual Rewind + exact citations + saved moments · contextual screen privacy + opt-in meeting visuals · Quick Recall · scheduled Markdown/Obsidian/Logseq export · fixed-scope local routines · unified Memory Health · Ask-your-day · chat assistant · inference broker · Agent Mode · independently gated and time-scoped meeting/screen MCP tools · Sparkle updates · dev/prod split · in-app model manager + Hugging Face browse · Cotyping (opt-in) · system-wide dictation (opt-in).
 
 **Not yet built:** VLM screenshot captions (needs a multimodal model + an mmproj slot in `LlamaServer`).

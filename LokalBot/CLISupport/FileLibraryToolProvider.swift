@@ -97,7 +97,7 @@ struct FileLibraryToolProvider: LibraryToolProvider {
                 ]),
             ToolDefinition(
                 name: "search_screen",
-                description: "Search locally extracted screen OCR and window titles. Returns OCR snippets and screenshot metadata only; never pixels or screenshot file paths. Requires the separate screen-memory permission.",
+                description: "Search locally captured screen text and window titles. Returns text snippets and context metadata only; never pixels or encrypted file paths. Requires the separate screen-memory permission.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -110,7 +110,7 @@ struct FileLibraryToolProvider: LibraryToolProvider {
                 ]),
             ToolDefinition(
                 name: "get_timeline",
-                description: "Get activity blocks and screenshot metadata for one local calendar day. No screenshot pixels or file paths are returned. Requires the separate screen-memory permission.",
+                description: "Get activity blocks and screen-context metadata for one local calendar day. No pixels or encrypted file paths are returned. Requires the separate screen-memory permission.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -140,7 +140,7 @@ struct FileLibraryToolProvider: LibraryToolProvider {
                 ]),
             ToolDefinition(
                 name: "get_screenshot_detail",
-                description: "Get OCR text and metadata for one screenshot id. It reports whether encrypted pixels exist but never returns decrypted pixels or a file path. Requires the separate screen-memory permission.",
+                description: "Get captured text and metadata for one context-moment id. It reports whether encrypted pixels exist but never returns decrypted pixels or a file path. Requires the separate screen-memory permission.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -341,13 +341,24 @@ struct FileLibraryToolProvider: LibraryToolProvider {
             return .error(.invalidArguments, "\"app\" must be at most 200 characters.")
         }
         do {
+            let scoped = scopedInterval(interval)
+            if interval != nil, scoped == nil {
+                return .text(encodeScreenMemory([ScreenMemorySearchHit]()))
+            }
+            let cutoff = screenAccessCutoff
             let hits = try screenReader.search(ScreenMemorySearchRequest(
                 query: query,
-                start: interval?.start,
-                end: interval?.end,
+                start: scoped?.start ?? cutoff,
+                end: scoped?.end,
                 app: app,
                 limit: limit))
-            return .text(encodeScreenMemory(hits))
+            // Enforce the profile again on returned rows. The SQLite reader
+            // already applies the bound, but this keeps the authorization
+            // boundary intact for alternate readers and future refactors.
+            let authorizedHits = cutoff.map { boundary in
+                hits.filter { $0.capturedAt >= boundary }
+            } ?? hits
+            return .text(encodeScreenMemory(authorizedHits))
         } catch {
             return screenMemoryFailure(error)
         }
@@ -365,8 +376,13 @@ struct FileLibraryToolProvider: LibraryToolProvider {
         case .failure(let result): return result
         }
         do {
+            guard let scoped = scopedInterval(interval) else {
+                return .text(encodeScreenMemory(ScreenMemoryTimeline(
+                    start: interval.start, end: interval.end,
+                    activity: [], screenshots: [])))
+            }
             return .text(encodeScreenMemory(try screenReader.timeline(
-                from: interval.start, to: interval.end, limit: limit)))
+                from: scoped.start, to: scoped.end, limit: limit)))
         } catch {
             return screenMemoryFailure(error)
         }
@@ -386,7 +402,8 @@ struct FileLibraryToolProvider: LibraryToolProvider {
         case .failure(let result): return result
         }
         do {
-            let start = now().addingTimeInterval(-TimeInterval(minutes * 60))
+            let requested = now().addingTimeInterval(-TimeInterval(minutes * 60))
+            let start = max(requested, screenAccessCutoff ?? requested)
             return .text(encodeScreenMemory(
                 try screenReader.recentActivity(since: start, limit: limit)))
         } catch {
@@ -406,8 +423,11 @@ struct FileLibraryToolProvider: LibraryToolProvider {
         case .failure(let result): return result
         }
         do {
+            guard let scoped = scopedInterval(interval) else {
+                return .text(encodeScreenMemory([ScreenMemoryAppUsage]()))
+            }
             return .text(encodeScreenMemory(try screenReader.appUsage(
-                from: interval.start, to: interval.end, limit: limit)))
+                from: scoped.start, to: scoped.end, limit: limit)))
         } catch {
             return screenMemoryFailure(error)
         }
@@ -423,7 +443,12 @@ struct FileLibraryToolProvider: LibraryToolProvider {
             guard let detail = try screenReader.screenshotDetail(snapshotID: Int64(id)) else {
                 return .error(
                     .screenshotNotFound,
-                    "No screenshot metadata matches id \(id). Use search_screen or get_timeline to find ids.")
+                    "No screen-context metadata matches id \(id). Use search_screen or get_timeline to find ids.")
+            }
+            if let cutoff = screenAccessCutoff, detail.capturedAt < cutoff {
+                return .error(
+                    .screenshotNotFound,
+                    "No screen-context metadata matches id \(id) inside the granted screen-memory scope.")
             }
             return .text(encodeScreenMemory(detail))
         } catch {
@@ -443,6 +468,28 @@ struct FileLibraryToolProvider: LibraryToolProvider {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         guard let data = try? encoder.encode(value) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    private var screenAccessCutoff: Date? {
+        switch screenGate.profile.scope {
+        case .today:
+            Calendar.current.startOfDay(for: now())
+        case .recentWeek:
+            now().addingTimeInterval(-7 * 86_400)
+        case .retainedHistory:
+            nil
+        }
+    }
+
+    /// Nil means the requested interval sits wholly outside the granted scope.
+    /// A nil input represents an open-ended search and remains nil when access is
+    /// unbounded; callers pair it with `screenAccessCutoff` for bounded profiles.
+    private func scopedInterval(_ requested: DateInterval?) -> DateInterval? {
+        guard let requested else { return nil }
+        guard let cutoff = screenAccessCutoff else { return requested }
+        let start = max(requested.start, cutoff)
+        guard requested.end > start else { return nil }
+        return DateInterval(start: start, end: requested.end)
     }
 
     private enum DayIntervalResult {

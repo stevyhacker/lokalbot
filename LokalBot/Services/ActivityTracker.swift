@@ -55,7 +55,11 @@ final class ActivityStore {
                     window_title TEXT NOT NULL DEFAULT '',
                     capture_trigger TEXT NOT NULL DEFAULT 'interval',
                     perceptual_hash TEXT NOT NULL DEFAULT '',
-                    similarity_group INTEGER NOT NULL DEFAULT 0);
+                    similarity_group INTEGER NOT NULL DEFAULT 0,
+                    source_url TEXT NOT NULL DEFAULT '',
+                    document_name TEXT NOT NULL DEFAULT '',
+                    meeting_id TEXT NOT NULL DEFAULT '',
+                    privacy_redactions INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS screen_bookmarks (
                     snapshot_id INTEGER PRIMARY KEY,
                     note TEXT NOT NULL DEFAULT '',
@@ -95,13 +99,28 @@ final class ActivityStore {
             try database.execute(
                 "ALTER TABLE screenshots ADD COLUMN similarity_group INTEGER NOT NULL DEFAULT 0")
         }
+        if !columns.contains("source_url") {
+            try database.execute(
+                "ALTER TABLE screenshots ADD COLUMN source_url TEXT NOT NULL DEFAULT ''")
+        }
+        if !columns.contains("document_name") {
+            try database.execute(
+                "ALTER TABLE screenshots ADD COLUMN document_name TEXT NOT NULL DEFAULT ''")
+        }
+        if !columns.contains("meeting_id") {
+            try database.execute(
+                "ALTER TABLE screenshots ADD COLUMN meeting_id TEXT NOT NULL DEFAULT ''")
+        }
+        if !columns.contains("privacy_redactions") {
+            try database.execute(
+                "ALTER TABLE screenshots ADD COLUMN privacy_redactions INTEGER NOT NULL DEFAULT 0")
+        }
     }
 
     /// FTS5 tables cannot ALTER-add columns, so a legacy `ocr_fts`
     /// (text, ts, app) is rebuilt into the new shape with `window_title`
     /// indexed (searchable) plus `text_source` / `snapshot_id` metadata.
-    /// `text_source` is always "ocr" today; it exists so Accessibility-first
-    /// capture can land later as a data-only change.
+    /// `text_source` distinguishes Accessibility, OCR, and hybrid captures.
     private func migrateOCRTable() throws {
         let database = try requiredDatabase()
         let existing = try columnNames(of: "ocr_fts")
@@ -229,7 +248,13 @@ final class ActivityStore {
         var trigger: String = "interval"
         var perceptualHash: UInt64?
         var similarityGroupID: Int64?
+        var sourceURL: String = ""
+        var documentName: String = ""
+        var meetingID: String = ""
+        var privacyRedactionCount: Int = 0
         var isBookmarked: Bool = false
+
+        var hasPixels: Bool { !path.isEmpty }
     }
 
     struct OCRHit: Identifiable, Equatable, Sendable {
@@ -259,15 +284,19 @@ final class ActivityStore {
     func insertScreenshot(ts: Date, path: String, app: String,
                           windowTitle: String = "", trigger: String = "interval",
                           textSource: String = "ocr", ocr: String,
-                          perceptualHash: UInt64? = nil) throws -> Int64 {
+                          perceptualHash: UInt64? = nil,
+                          sourceURL: String = "", documentName: String = "",
+                          meetingID: String = "", privacyRedactions: Int = 0) throws -> Int64 {
         let database = try requiredDatabase()
         return try database.withTransaction {
             try database.runChecked("""
                 INSERT INTO screenshots (
-                    ts, path, app, window_title, capture_trigger, perceptual_hash
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                    ts, path, app, window_title, capture_trigger, perceptual_hash,
+                    source_url, document_name, meeting_id, privacy_redactions
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                 """, bind: [ts.timeIntervalSince1970, path, app, windowTitle, trigger,
-                              perceptualHash.map(Self.encodePerceptualHash) ?? ""])
+                              perceptualHash.map(Self.encodePerceptualHash) ?? "",
+                              sourceURL, documentName, meetingID, max(0, privacyRedactions)])
             let snapshotID = database.lastInsertRowID()
             guard snapshotID > 0 else {
                 throw SQLiteDatabase.DatabaseError.step(
@@ -327,8 +356,9 @@ final class ActivityStore {
         }
     }
 
-    func screenshots(on day: Date) -> [Screenshot] {
-        screenshots(in: Self.dayInterval(containing: day))
+    func screenshots(on day: Date, includingTextOnly: Bool = false) -> [Screenshot] {
+        screenshots(in: Self.dayInterval(containing: day),
+                    includingMissingFiles: includingTextOnly)
     }
 
     /// Captures available for rewind/citation, oldest first. A nil interval
@@ -348,7 +378,9 @@ final class ActivityStore {
             return try requiredDatabase().queryChecked("""
                 SELECT shot.id, shot.ts, shot.path, shot.app, shot.window_title,
                        shot.capture_trigger, shot.perceptual_hash,
-                       shot.similarity_group, bookmark.snapshot_id IS NOT NULL
+                       shot.similarity_group, shot.source_url, shot.document_name,
+                       shot.meeting_id, shot.privacy_redactions,
+                       bookmark.snapshot_id IS NOT NULL
                 FROM screenshots AS shot
                 LEFT JOIN screen_bookmarks AS bookmark ON bookmark.snapshot_id = shot.id
                 \(conditions.isEmpty ? "" : "WHERE " + conditions.joined(separator: " AND "))
@@ -367,7 +399,9 @@ final class ActivityStore {
             return try requiredDatabase().queryChecked("""
                 SELECT shot.id, shot.ts, shot.path, shot.app, shot.window_title,
                        shot.capture_trigger, shot.perceptual_hash,
-                       shot.similarity_group, bookmark.snapshot_id IS NOT NULL
+                       shot.similarity_group, shot.source_url, shot.document_name,
+                       shot.meeting_id, shot.privacy_redactions,
+                       bookmark.snapshot_id IS NOT NULL
                 FROM screenshots AS shot
                 LEFT JOIN screen_bookmarks AS bookmark ON bookmark.snapshot_id = shot.id
                 WHERE shot.id = ?1 LIMIT 1
@@ -637,6 +671,20 @@ final class ActivityStore {
         }
     }
 
+    func latestActivityEnd() -> Date? {
+        do {
+            return try requiredDatabase().queryChecked(
+                "SELECT MAX(end) FROM activity_blocks"
+            ) { statement -> Date? in
+                guard sqlite3_column_type(statement, 0) != SQLITE_NULL else { return nil }
+                return Date(timeIntervalSince1970: sqlite3_column_double(statement, 0))
+            }.first ?? nil
+        } catch {
+            lokalbotLog("latest activity lookup failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
     private nonisolated static func appendFilter(
         _ filter: ScreenSearchFilter,
         timestampColumn: String,
@@ -671,7 +719,11 @@ final class ActivityStore {
             trigger: String(cString: sqlite3_column_text(statement, 5)),
             perceptualHash: decodePerceptualHash(rawHash),
             similarityGroupID: rawGroup > 0 ? rawGroup : nil,
-            isBookmarked: sqlite3_column_int(statement, 8) != 0)
+            sourceURL: sqlite3_column_text(statement, 8).map { String(cString: $0) } ?? "",
+            documentName: sqlite3_column_text(statement, 9).map { String(cString: $0) } ?? "",
+            meetingID: sqlite3_column_text(statement, 10).map { String(cString: $0) } ?? "",
+            privacyRedactionCount: Int(sqlite3_column_int64(statement, 11)),
+            isBookmarked: sqlite3_column_int(statement, 12) != 0)
     }
 
     private nonisolated static func encodePerceptualHash(_ hash: UInt64) -> String {
@@ -822,6 +874,7 @@ final class ActivitySampler: ObservableObject {
         didSet { if isPaused { closeCurrentBlock() } }
     }
     @Published private(set) var currentApp: String?
+    @Published private(set) var lastSampleAt: Date?
 
     private let store: ActivityStore
     private let windowTitleLookup: FocusedWindowTitleLookup
@@ -909,12 +962,18 @@ final class ActivitySampler: ObservableObject {
             : await windowTitleLookup.title(for: processID)
         guard !titleResult.timedOut,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == processID else { return }
+        lastSampleAt = Date()
         currentApp = appName
         var title = titleResult.title ?? ""
         // Exclusion list (design §3.4): time still counts, content doesn't.
         if isExcluded {
             appName = "Private"
             title = ""
+        } else {
+            // Window titles are part of screen-memory metadata and external
+            // timeline reads. Scrub recognizable credentials before the block
+            // ever reaches SQLite, even when richer context capture is off.
+            title = ScreenContextPrivacy.redact(title).text
         }
 
         if let current {
