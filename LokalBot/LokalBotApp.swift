@@ -981,6 +981,7 @@ final class AppState: ObservableObject {
             await LlamaServer.shared.stop()
             await LlamaServer.embedder.stop()
             await LlamaServer.cotyping.stop()
+            await GraniteSpeechEngine.shared.shutdown()
         }
         terminationCleanupTask = task
         await task.value

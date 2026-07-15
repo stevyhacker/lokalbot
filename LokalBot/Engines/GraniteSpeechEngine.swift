@@ -25,6 +25,7 @@ actor GraniteSpeechEngine: TranscriptionEngine {
 
     private var server: LlamaServer?
     private let preparation = AsyncSingleFlight()
+    private var activeUses = 0
     private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.stop() }
 
     func prepare(progress: ModelPreparationProgressHandler? = nil) async throws {
@@ -33,7 +34,15 @@ actor GraniteSpeechEngine: TranscriptionEngine {
             guard let self else { return }
             try await self.performPreparation(progress: progress)
         }
+        // Recording-time prewarm must not pin the ~2.7 GB model for an entire
+        // meeting. Actual transcription bumps the same timer after each use.
+        await idle.bump()
         report(.init(fractionCompleted: 1, status: "Ready"), to: progress)
+    }
+
+    func shutdown() async {
+        await server?.stop()
+        server = nil
     }
 
     private func performPreparation(progress: ModelPreparationProgressHandler?) async throws {
@@ -43,6 +52,8 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     }
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
+        activeUses += 1
+        defer { finishUse() }
         try await prepare()
         let started = Date()
         let regions = try await SpeechActivity.shared.spans(
@@ -60,7 +71,6 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         let duration = regions.last?.end ?? 0
         lokalbotLog(
             "granite-asr profile regions=\(regions.count) elapsed=\(String(format: "%.2fs", elapsed)) rtfx=\(String(format: "%.1fx", elapsed > 0 ? duration / elapsed : 0))")
-        await idle.bump()
         return Transcript(segments: segments, engine: "\(Self.repo):\(Self.modelFileName) (llama.cpp)")
     }
 
@@ -77,9 +87,14 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     }
 
     private func stop() async {
-        guard !(await preparation.isRunning) else { return }
-        await server?.stop()
-        server = nil
+        guard activeUses == 0, !(await preparation.isRunning) else { return }
+        await shutdown()
+    }
+
+    private func finishUse() {
+        activeUses -= 1
+        guard activeUses == 0 else { return }
+        Task { await idle.bump() }
     }
 
     private nonisolated func report(_ update: ModelPreparationUpdate,

@@ -231,6 +231,85 @@ final class ScreenshotProcessingWorkerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    func testCaptureDimensionsBoundLandscapeAndPortraitFrames() {
+        XCTAssertEqual(
+            ScreenshotCaptureDimensions.bounded(pixelWidth: 6_016, pixelHeight: 3_384),
+            ScreenshotCaptureDimensions(width: 1_500, height: 844))
+        XCTAssertEqual(
+            ScreenshotCaptureDimensions.bounded(pixelWidth: 2_160, pixelHeight: 3_840),
+            ScreenshotCaptureDimensions(width: 844, height: 1_500))
+        XCTAssertEqual(
+            ScreenshotCaptureDimensions.bounded(pixelWidth: 1_200, pixelHeight: 800),
+            ScreenshotCaptureDimensions(width: 1_200, height: 800))
+    }
+
+    func testProcessingBoundsPixelsBeforeHashOCRAndEncoding() async throws {
+        let image = try XCTUnwrap(Self.testImage(width: 3_000, height: 1_500))
+        let observedSizes = LockedImageSizes()
+        let worker = ScreenshotProcessingWorker(dependencies: ScreenshotProcessingDependencies(
+            contentHash: { image in
+                observedSizes.append(image)
+                return Data(repeating: 0x31, count: 32)
+            },
+            heicData: { image in
+                observedSizes.append(image)
+                return Data("bounded image".utf8)
+            },
+            recognizeText: { image in
+                observedSizes.append(image)
+                return "Text recovered from the bounded frame"
+            },
+            write: { _, _ in }))
+        let key = SymmetricKey(data: Data(repeating: 0x32, count: 32))
+
+        _ = try await worker.process(.init(
+            image: image,
+            trigger: .manual,
+            key: key,
+            fileURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("bounded-\(UUID().uuidString).heic.enc")))
+
+        XCTAssertEqual(observedSizes.values, Array(repeating: CGSize(width: 1_500, height: 750), count: 3))
+    }
+
+    func testEventCoalescerKeepsRawTypingAndScrollBurstsOffMainActor() async throws {
+        let triggers = LockedTriggers()
+        let coalescer = ScreenContextEventCoalescer(
+            typingDelay: 0.03,
+            scrollDelay: 0.03
+        ) { trigger in
+            triggers.append(trigger.rawValue)
+        }
+        for _ in 0..<250 {
+            coalescer.receive(.keyDown)
+            coalescer.receive(.scrollWheel)
+        }
+
+        try await Task.sleep(for: .milliseconds(150))
+        coalescer.cancel()
+
+        XCTAssertEqual(triggers.values.filter { $0 == ScreenCaptureTrigger.typingPause.rawValue }.count, 1)
+        XCTAssertEqual(triggers.values.filter { $0 == ScreenCaptureTrigger.scrollSettled.rawValue }.count, 1)
+    }
+
+    func testEventCoalescerCancellationDropsPendingBoundaries() async throws {
+        let triggers = LockedTriggers()
+        let coalescer = ScreenContextEventCoalescer(
+            typingDelay: 0.05,
+            scrollDelay: 0.05
+        ) { trigger in
+            triggers.append(trigger.rawValue)
+        }
+
+        coalescer.receive(.keyDown)
+        coalescer.receive(.scrollWheel)
+        coalescer.cancel()
+        coalescer.receive(.click)
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertTrue(triggers.values.isEmpty)
+    }
+
     func testThumbnailDecoderBoundsPixelsAndDecodedMemory() throws {
         let source = try XCTUnwrap(Self.testImage(width: 800, height: 400))
         let encoded = try Self.pngData(from: source)
@@ -275,5 +354,33 @@ final class ScreenshotProcessingWorkerTests: XCTestCase {
         let encrypted = try Data(contentsOf: url)
         let box = try AES.GCM.SealedBox(combined: encrypted)
         return try AES.GCM.open(box, using: key)
+    }
+}
+
+private final class LockedImageSizes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [CGSize] = []
+
+    var values: [CGSize] {
+        lock.withLock { storage }
+    }
+
+    func append(_ image: CGImage) {
+        lock.withLock {
+            storage.append(CGSize(width: image.width, height: image.height))
+        }
+    }
+}
+
+private final class LockedTriggers: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String] = []
+
+    var values: [String] {
+        lock.withLock { storage }
+    }
+
+    func append(_ trigger: String) {
+        lock.withLock { storage.append(trigger) }
     }
 }

@@ -147,7 +147,10 @@ struct MenuBarView: View {
                     }
                     Spacer()
                     if app.isRecording || app.dictation.state.isRecording {
-                        LiveWaveform(barCount: 7, barWidth: 3, maxHeight: 14)
+                        // MenuBarExtra keeps this view mounted after its popover
+                        // closes, so never leave a display-linked animation here.
+                        LiveWaveform(barCount: 7, barWidth: 3, maxHeight: 14,
+                                     animated: false)
                     }
                 }
 
@@ -192,11 +195,13 @@ struct MenuBarView: View {
                 .strokeBorder(app.isRecording ? Brand.recording.opacity(0.5) : Color.clear))
     }
 
-    /// Solid dot, with an expanding ring that pulses while recording.
+    /// Keep the always-mounted menu extra static while recording. Repeating
+    /// SwiftUI animations continue after the popover closes and otherwise
+    /// consume the main thread for the duration of a meeting.
     private var statusDot: some View {
         let live = app.isRecording || app.dictation.state.isRecording
         return StatusDot(color: live ? Brand.recording : Color.secondary.opacity(0.4),
-                         size: 11, pulses: live)
+                         size: 11)
     }
 
     private var statusTitle: String {

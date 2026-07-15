@@ -103,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await LlamaServer.shared.stop()
                 await LlamaServer.embedder.stop()
                 await LlamaServer.cotyping.stop()
+                await GraniteSpeechEngine.shared.shutdown()
             }
             self?.terminationCleanupFinished = true
             sender?.reply(toApplicationShouldTerminate: true)

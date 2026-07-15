@@ -180,6 +180,34 @@ struct ScreenshotCaptureLayout {
     }
 }
 
+/// ScreenCaptureKit allocates the requested frame before the background worker
+/// can downsample it. Bound that first allocation so large/retina displays do
+/// not briefly consume hundreds of megabytes on every context event.
+struct ScreenshotCaptureDimensions: Equatable {
+    static let maximumDimension = 1_500
+
+    let width: Int
+    let height: Int
+
+    static func bounded(
+        pixelWidth: Int,
+        pixelHeight: Int,
+        maximumDimension: Int = maximumDimension
+    ) -> ScreenshotCaptureDimensions {
+        let sourceWidth = max(1, pixelWidth)
+        let sourceHeight = max(1, pixelHeight)
+        let limit = max(1, maximumDimension)
+        let longest = max(sourceWidth, sourceHeight)
+        guard longest > limit else {
+            return ScreenshotCaptureDimensions(width: sourceWidth, height: sourceHeight)
+        }
+        let scale = Double(limit) / Double(longest)
+        return ScreenshotCaptureDimensions(
+            width: max(1, Int((Double(sourceWidth) * scale).rounded())),
+            height: max(1, Int((Double(sourceHeight) * scale).rounded())))
+    }
+}
+
 /// Main-actor gate that prevents repeated menu clicks and simultaneous sampler
 /// events from launching overlapping ScreenCaptureKit requests.
 struct ScreenshotCaptureGate {
@@ -295,7 +323,7 @@ actor ScreenshotProcessingWorker {
         let hasRichAccessibility = ScreenContextPrivacy.hasRichAccessibleText(accessible.text)
         let ocr = hasRichAccessibility
             ? ScreenContextPrivacy.Redaction(text: "", count: 0)
-            : ScreenContextPrivacy.redact(dependencies.recognizeText(request.image))
+            : ScreenContextPrivacy.redact(dependencies.recognizeText(preparedImage))
 
         let text: String
         let textSource: String
@@ -457,15 +485,20 @@ private enum ScreenshotImageProcessing {
     }
 
     static func downscale(_ image: CGImage, maxWidth: Int) -> CGImage {
-        guard image.width > maxWidth else { return image }
-        let scale = Double(maxWidth) / Double(image.width)
-        let height = Int(Double(image.height) * scale)
+        let dimensions = ScreenshotCaptureDimensions.bounded(
+            pixelWidth: image.width,
+            pixelHeight: image.height,
+            maximumDimension: maxWidth)
+        guard dimensions.width != image.width || dimensions.height != image.height else {
+            return image
+        }
         guard let context = CGContext(
-            data: nil, width: maxWidth, height: height, bitsPerComponent: 8,
+            data: nil, width: dimensions.width, height: dimensions.height, bitsPerComponent: 8,
             bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return image }
         context.interpolationQuality = .high
-        context.draw(image, in: CGRect(x: 0, y: 0, width: maxWidth, height: height))
+        context.draw(image, in: CGRect(
+            x: 0, y: 0, width: dimensions.width, height: dimensions.height))
         return context.makeImage() ?? image
     }
 
@@ -845,12 +878,16 @@ final class ScreenshotService: ObservableObject {
             layout.excludedWindowIDs.contains($0.windowID)
         }
 
-        // Capture at NATIVE pixel resolution — OCR needs full-size glyphs.
-        // The stored image is downscaled afterwards; the text is the value.
+        // Bound the source frame before ScreenCaptureKit allocates it. Vision
+        // receives this same readable 1,500 px frame in the worker; requesting
+        // a native 5K/6K IOSurface only inflated transient memory.
         let configuration = SCStreamConfiguration()
         let mode = CGDisplayCopyDisplayMode(display.displayID)
-        configuration.width = mode?.pixelWidth ?? display.width * 2
-        configuration.height = mode?.pixelHeight ?? display.height * 2
+        let dimensions = ScreenshotCaptureDimensions.bounded(
+            pixelWidth: mode?.pixelWidth ?? display.width * 2,
+            pixelHeight: mode?.pixelHeight ?? display.height * 2)
+        configuration.width = dimensions.width
+        configuration.height = dimensions.height
         configuration.showsCursor = false
         let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
         let image = try await SCScreenshotManager.captureImage(

@@ -16,28 +16,39 @@ enum LiveWaveformMath {
 }
 
 /// The one "audio is flowing" motion signature: tinted animated bars shared
-/// by the dictation HUD, the menu-bar status card, and the recording pill.
-/// Freezes at its time-zero shape under Reduce Motion.
+/// by the dictation HUD and recording surfaces. Animation is intentionally
+/// capped well below display refresh rate; changing bar heights causes layout,
+/// and a 60/120 Hz timeline needlessly competes with input handling.
+/// Freezes at its time-zero shape under Reduce Motion or when `animated` is false.
 struct LiveWaveform: View {
     var barCount: Int = 9
     var barWidth: CGFloat = 4
     var maxHeight: CGFloat = 18
+    var animated = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        SwiftUI.TimelineView(.animation(minimumInterval: nil, paused: reduceMotion)) { timeline in
-            HStack(alignment: .center, spacing: 3) {
-                ForEach(0..<barCount, id: \.self) { index in
-                    RoundedRectangle(cornerRadius: barWidth / 2)
-                        .fill(.tint)
-                        .frame(width: barWidth,
-                               height: LiveWaveformMath.height(
-                                   index: index,
-                                   time: reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate,
-                                   maxHeight: maxHeight))
-                }
+        if animated && !reduceMotion {
+            SwiftUI.TimelineView(.animation(minimumInterval: 1.0 / 15.0)) { timeline in
+                bars(at: timeline.date.timeIntervalSinceReferenceDate)
             }
-            .frame(height: maxHeight)
+        } else {
+            bars(at: 0)
         }
+    }
+
+    private func bars(at time: TimeInterval) -> some View {
+        HStack(alignment: .center, spacing: 3) {
+            ForEach(0..<barCount, id: \.self) { index in
+                RoundedRectangle(cornerRadius: barWidth / 2)
+                    .fill(.tint)
+                    .frame(width: barWidth,
+                           height: LiveWaveformMath.height(
+                               index: index,
+                               time: time,
+                               maxHeight: maxHeight))
+            }
+        }
+        .frame(height: maxHeight)
     }
 }
