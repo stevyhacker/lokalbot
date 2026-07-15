@@ -60,7 +60,7 @@ capture() {
   pkill -f "LokalBot UI Test Host" >/dev/null 2>&1 || true
   sleep 1
   env LOKALBOT_UI_TEST=1 LOKALBOT_STORAGE_ROOT="$LIB" LOKALBOT_DEFAULTS_SUITE="$SUITE" "$@" \
-    "$APP" -ApplePersistenceIgnoreState YES \
+    "$APP" -ApplePersistenceIgnoreState YES -AppleLocale en_US -AppleLanguages "(en)" \
     --lokalbot-ui-test --lokalbot-storage-root "$LIB" --lokalbot-defaults-suite "$SUITE" \
     </dev/null >/dev/null 2>&1 &
   pid=$!
