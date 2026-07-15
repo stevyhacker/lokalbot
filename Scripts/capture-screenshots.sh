@@ -27,6 +27,8 @@ OUT="$PWD/Assets/screenshots"
 FRAMES="$(mktemp -d)"          # GIF-only frames (kept out of Assets/)
 LIB="${TMPDIR:-/tmp}/lokalbot-demo-lib"
 SUITE="lokalbot.shots.$(uuidgen)"
+CAPTURE_SIZE="${LOKALBOT_CAPTURE_SIZE:-1480x930}"
+CAPTURE_CONTENT_MAX="${LOKALBOT_CAPTURE_CONTENT_MAX:-600}"
 mkdir -p "$OUT"
 
 echo "==> Building '$SCHEME'"
@@ -47,7 +49,8 @@ capture() {
   sleep 1
   rm -f "$dest/$name.png"
   env LOKALBOT_UI_TEST=1 LOKALBOT_STORAGE_ROOT="$LIB" LOKALBOT_DEFAULTS_SUITE="$SUITE" \
-      LOKALBOT_CAPTURE_FILE="$dest/$name.png" LOKALBOT_CAPTURE_SIZE=1320x820 "$@" \
+      LOKALBOT_CAPTURE_FILE="$dest/$name.png" LOKALBOT_CAPTURE_SIZE="$CAPTURE_SIZE" \
+      LOKALBOT_CAPTURE_CONTENT_MAX="$CAPTURE_CONTENT_MAX" "$@" \
     "$APP" -ApplePersistenceIgnoreState YES -AppleLocale en_US -AppleLanguages "(en)" \
     --lokalbot-ui-test --lokalbot-storage-root "$LIB" --lokalbot-defaults-suite "$SUITE" \
     </dev/null >/dev/null 2>&1 &
@@ -63,7 +66,7 @@ capture() {
   fi
 }
 
-echo "==> Capturing section stills"
+echo "==> Capturing section stills at ${CAPTURE_SIZE}pt (2x, content max ${CAPTURE_CONTENT_MAX}pt)"
 capture "$OUT" meetings-summary    LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=0 LOKALBOT_DETAIL_TAB=summary    LOKALBOT_DISMISS_ONBOARDING=1
 capture "$OUT" meetings-transcript LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=0 LOKALBOT_DETAIL_TAB=transcript LOKALBOT_DISMISS_ONBOARDING=1
 capture "$OUT" timeline            LOKALBOT_INITIAL_SECTION=timeline LOKALBOT_DISMISS_ONBOARDING=1
@@ -95,11 +98,17 @@ python3 Scripts/assemble_gif.py "$OUT/recap.gif" 1720 \
 python3 Scripts/assemble_gif.py "$OUT/search.gif" 1720 \
   "$OUT/search.png" "$FRAMES/search-sso.png" "$FRAMES/search-postgres.png"
 
-echo "==> Assembling landing-page hero video"
-# 1872 = 2x the landing page's 936px display slot.
+echo "==> Directing landing-page product tour"
+# 1872 = 2x the landing page's 936px display slot. The MP4 path adds eased
+# pans/zooms, pointer movement, click cues, and exact feature labels; GIFs keep
+# their compact README treatment.
 python3 Scripts/assemble_gif.py "web/assets/hero-demo.mp4" 1872 \
   "$OUT/meetings-summary.png" "$OUT/meetings-transcript.png" "$OUT/search.png" "$OUT/chat.png" "$OUT/timeline.png" "$OUT/cotyping.png"
-ffmpeg -y -v error -i "web/assets/hero-demo.mp4" -frames:v 1 -q:v 3 "web/assets/hero-poster.jpg"
+# Build the poster from the sRGB source rather than round-tripping through the
+# BT.709 video, which would leave JPEG viewers guessing at the transfer curve.
+ffmpeg -y -v error -i "$OUT/meetings-summary.png" \
+  -vf 'pad=iw+80:ih+80:40:40:color=0x0e141c,scale=min(1872\,iw):-2:flags=lanczos' \
+  -frames:v 1 -q:v 3 -pix_fmt yuvj444p "web/assets/hero-poster.jpg"
 echo "    web/assets/hero-poster.jpg"
 
-echo "==> Done: $OUT/{*.png, hero.gif, recap.gif, search.gif} + web/assets/hero-demo.mp4"
+echo "==> Done: $OUT/{*.png, hero.gif, recap.gif, search.gif} + web/assets/hero-demo.{mp4,manifest.json}"

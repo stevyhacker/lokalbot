@@ -3,9 +3,26 @@ import AppKit
 import AVFoundation
 import UniformTypeIdentifiers
 
+/// Lets the screenshot script cap the middle column so the inspector keeps a
+/// useful share of wide marketing captures. Production launches never set it.
+private struct ScriptedCaptureContentWidth: ViewModifier {
+    let maximum: CGFloat?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let maximum {
+            content.navigationSplitViewColumnWidth(
+                min: 300, ideal: min(380, maximum), max: maximum)
+        } else {
+            content.navigationSplitViewColumnWidth(min: 300, ideal: 380)
+        }
+    }
+}
+
 struct MainWindowView: View {
     @EnvironmentObject var app: AppState
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.colorScheme) private var colorScheme
     @State private var pendingDelete: Set<Meeting.ID>?
     /// Shared by the Capture section's two columns (content ↔ detail).
     @StateObject private var capture = CaptureModel()
@@ -85,7 +102,8 @@ struct MainWindowView: View {
                 sidebar
             } content: {
                 TimelineContentView(model: capture)
-                    .navigationSplitViewColumnWidth(min: 300, ideal: 380)
+                    .modifier(ScriptedCaptureContentWidth(
+                        maximum: scriptedCaptureContentMaximum))
             } detail: {
                 CaptureDetailView(model: capture, pendingDelete: $pendingDelete)
             }
@@ -95,7 +113,8 @@ struct MainWindowView: View {
             } content: {
                 MeetingListView(pendingDelete: $pendingDelete)
                     .navigationTitle("Meetings")
-                    .navigationSplitViewColumnWidth(min: 300, ideal: 380)
+                    .modifier(ScriptedCaptureContentWidth(
+                        maximum: scriptedCaptureContentMaximum))
             } detail: {
                 CaptureDetailView(model: capture, pendingDelete: $pendingDelete)
             }
@@ -131,38 +150,98 @@ struct MainWindowView: View {
 
     private var sidebar: some View {
         List(selection: sidebarSelection) {
-            Section("Remember") {
-                Label("Timeline", systemImage: "calendar.day.timeline.left")
+            Section {
+                sidebarLabel("Timeline", systemImage: "calendar.day.timeline.left")
                     .tag(AppState.NavSection.timeline)
                     .accessibilityIdentifier("sidebar.timeline")
-                Label("Meetings", systemImage: "waveform.circle")
+                sidebarLabel("Meetings", systemImage: "waveform.circle")
                     .tag(AppState.NavSection.meetings)
                     .accessibilityIdentifier("sidebar.meetings")
+            } header: {
+                sidebarSectionHeader("Remember")
             }
-            Section("Recall") {
-                Label("Ask", systemImage: "sparkle.magnifyingglass")
+            Section {
+                sidebarLabel("Ask", systemImage: "sparkle.magnifyingglass")
                     .tag(AppState.NavSection.ask)
                     .accessibilityIdentifier("sidebar.ask")
+            } header: {
+                sidebarSectionHeader("Recall")
             }
-            Section("Write & act") {
-                Label("Type", systemImage: "keyboard")
+            Section {
+                sidebarLabel("Type", systemImage: "keyboard")
                     .tag(AppState.NavSection.type)
                     .accessibilityIdentifier("sidebar.type")
-                Label("Agent", systemImage: "wand.and.sparkles")
+                sidebarLabel("Agent", systemImage: "wand.and.sparkles")
                     .tag(AppState.NavSection.agent)
                     .accessibilityIdentifier("sidebar.agent")
+            } header: {
+                sidebarSectionHeader("Write & act")
             }
-            Section("Configure") {
-                Label("Settings", systemImage: "gearshape")
+            Section {
+                sidebarLabel("Settings", systemImage: "gearshape")
                     .tag(AppState.NavSection.settings)
                     .accessibilityIdentifier("sidebar.settings")
+            } header: {
+                sidebarSectionHeader("Configure")
             }
         }
         .navigationSplitViewColumnWidth(min: 180, ideal: 210)
     }
 
+    /// `cacheDisplay` does not flatten the sidebar's vibrancy text correctly:
+    /// AppKit gives the offscreen bitmap the mask color (black) instead of the
+    /// composited label color. Use resolved colors only for scripted exports;
+    /// normal app and UI-test windows keep the native sidebar rendering.
+    @ViewBuilder
+    private func sidebarLabel(_ title: String, systemImage: String) -> some View {
+        if isScriptedCapture {
+            Label {
+                Text(title).foregroundStyle(scriptedSidebarLabelColor)
+            } icon: {
+                Image(systemName: systemImage).foregroundStyle(Color.accentColor)
+            }
+        } else {
+            Label(title, systemImage: systemImage)
+        }
+    }
+
+    @ViewBuilder
+    private func sidebarSectionHeader(_ title: String) -> some View {
+        if isScriptedCapture {
+            Text(title).foregroundStyle(scriptedSidebarHeaderColor)
+        } else {
+            Text(title)
+        }
+    }
+
+    private var scriptedSidebarLabelColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.90) : Color.black.opacity(0.84)
+    }
+
+    private var scriptedSidebarHeaderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.56) : Color.black.opacity(0.50)
+    }
+
+    private var isScriptedCapture: Bool {
+#if LOKALBOT_UI_TEST_HOST
+        ProcessInfo.processInfo.environment["LOKALBOT_CAPTURE_FILE"] != nil
+#else
+        false
+#endif
+    }
+
     private var sidebarSelection: Binding<AppState.NavSection?> {
         Binding(get: { app.navSection }, set: { app.navSection = $0 ?? .timeline })
+    }
+
+    private var scriptedCaptureContentMaximum: CGFloat? {
+#if LOKALBOT_UI_TEST_HOST
+        guard let raw = ProcessInfo.processInfo.environment["LOKALBOT_CAPTURE_CONTENT_MAX"],
+              let value = Double(raw), value >= 300 else { return nil }
+        return CGFloat(value)
+#else
+        return nil
+#endif
     }
 
 }

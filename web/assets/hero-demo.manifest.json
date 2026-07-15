@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "output": "hero-demo.mp4",
+  "dimensions": [
+    1872,
+    1276
+  ],
+  "fps": 30,
+  "workingColorSpace": "sRGB IEC 61966-2-1",
+  "deliveryColorSpace": "BT.709 limited range",
+  "transitionSeconds": 0.35,
+  "scenes": [
+    {
+      "source": "meetings-summary.png",
+      "label": "Meeting recap",
+      "duration": 3.15,
+      "start_zoom": 1.0,
+      "end_zoom": 1.16,
+      "focus_x": 0.76,
+      "focus_y": 0.31,
+      "cursor_start": [
+        0.54,
+        0.68
+      ],
+      "cursor_end": [
+        0.66,
+        0.24
+      ]
+    },
+    {
+      "source": "meetings-transcript.png",
+      "label": "Speaker-labeled transcript",
+      "duration": 2.75,
+      "start_zoom": 1.14,
+      "end_zoom": 1.07,
+      "focus_x": 0.77,
+      "focus_y": 0.34,
+      "cursor_start": [
+        0.66,
+        0.24
+      ],
+      "cursor_end": [
+        0.78,
+        0.61
+      ]
+    },
+    {
+      "source": "search.png",
+      "label": "Search across every word",
+      "duration": 2.85,
+      "start_zoom": 1.0,
+      "end_zoom": 1.19,
+      "focus_x": 0.82,
+      "focus_y": 0.27,
+      "cursor_start": [
+        0.6,
+        0.56
+      ],
+      "cursor_end": [
+        0.75,
+        0.18
+      ]
+    },
+    {
+      "source": "chat.png",
+      "label": "Answers with citations",
+      "duration": 3.1,
+      "start_zoom": 1.0,
+      "end_zoom": 1.16,
+      "focus_x": 0.7,
+      "focus_y": 0.29,
+      "cursor_start": [
+        0.72,
+        0.62
+      ],
+      "cursor_end": [
+        0.58,
+        0.39
+      ]
+    },
+    {
+      "source": "timeline.png",
+      "label": "Private day timeline",
+      "duration": 3.0,
+      "start_zoom": 1.0,
+      "end_zoom": 1.17,
+      "focus_x": 0.69,
+      "focus_y": 0.3,
+      "cursor_start": [
+        0.48,
+        0.67
+      ],
+      "cursor_end": [
+        0.68,
+        0.36
+      ]
+    },
+    {
+      "source": "cotyping.png",
+      "label": "Inline autocomplete",
+      "duration": 3.25,
+      "start_zoom": 1.0,
+      "end_zoom": 1.2,
+      "focus_x": 0.68,
+      "focus_y": 0.53,
+      "cursor_start": [
+        0.68,
+        0.34
+      ],
+      "cursor_end": [
+        0.78,
+        0.63
+      ]
+    }
+  ]
+}

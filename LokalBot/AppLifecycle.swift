@@ -213,8 +213,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // README assets are Retina-crisp regardless of the display.
             let delay = Double(env["LOKALBOT_CAPTURE_DELAY"] ?? "") ?? 5.0
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                Self.writeWindowCapture(self?.uiTestWindow, to: path)
-                NSApp.terminate(nil)
+                guard let window = self?.uiTestWindow else {
+                    NSApp.terminate(nil)
+                    return
+                }
+                // Repeated background launches can lose key status even after
+                // the normal UI-test activation retries. Re-key immediately
+                // before rasterization so active selections and titlebar
+                // controls match what a person sees while using the app.
+                window.makeKeyAndOrderFront(nil)
+                window.makeMain()
+                window.orderFrontRegardless()
+                NSApp.activate(ignoringOtherApps: true)
+                // Sidebar vibrancy redraws asynchronously after key-state
+                // changes. A full second prevents the active material from
+                // being captured between its mask and compositing passes.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    Self.writeWindowCapture(window, to: path)
+                    NSApp.terminate(nil)
+                }
             }
         }
     }
@@ -237,7 +254,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                          bytesPerRow: 0, bitsPerPixel: 0) else { return }
         rep.size = bounds.size
         view.cacheDisplay(in: bounds, to: rep)
-        if let png = rep.representation(using: .png, properties: [:]) {
+        // cacheDisplay renders through the current display profile. Convert the
+        // samples before tagging the web asset so P3 captures are not mislabeled.
+        guard let export = rep.converting(to: .sRGB,
+                                          renderingIntent: .relativeColorimetric) else { return }
+        export.size = bounds.size
+        if let png = export.representation(using: .png, properties: [:]) {
             try? png.write(to: URL(fileURLWithPath: path))
         }
     }
