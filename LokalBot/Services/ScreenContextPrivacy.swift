@@ -17,7 +17,11 @@ enum ScreenContextPrivacy {
         let replacement: String
 
         init(_ pattern: String, options: NSRegularExpression.Options = [], replacement: String) {
-            expression = try! NSRegularExpression(pattern: pattern, options: options)
+            do {
+                expression = try NSRegularExpression(pattern: pattern, options: options)
+            } catch {
+                preconditionFailure("Invalid built-in redaction pattern: \(pattern)")
+            }
             self.replacement = replacement
         }
     }

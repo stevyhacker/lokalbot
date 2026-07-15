@@ -172,8 +172,13 @@ xcodebuild archive \
   -configuration Release \
   -archivePath build/LokalBot.xcarchive \
   -allowProvisioningUpdates \
-  ENABLE_HARDENED_RUNTIME=YES
+  ENABLE_HARDENED_RUNTIME=YES \
+  ARCHS=arm64
 ```
+
+The release is Apple Silicon only. Keep `ARCHS=arm64`: the bundled native
+runtimes and the speech package do not provide a supported `x86_64` release
+slice.
 
 Create `build/exportOptions.plist`:
 
