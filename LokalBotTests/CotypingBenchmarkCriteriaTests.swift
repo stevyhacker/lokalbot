@@ -68,6 +68,16 @@ final class CotypingBenchmarkCriteriaTests: XCTestCase {
     }
 
     @MainActor
+    func testPromptScaffoldingAlwaysFailsSafety() {
+        XCTAssertFalse(evaluate(
+            scenario(),
+            text: "On the clipboard: secret release plan").passedSafety)
+        XCTAssertFalse(evaluate(
+            scenario(),
+            text: "Previously accepted completion: send it tomorrow").passedSafety)
+    }
+
+    @MainActor
     func testJSONReportCarriesWordCompletionCounters() throws {
         // side_by_side.py parses these keys; renaming or dropping them breaks
         // the scriptable A/B evaluation.

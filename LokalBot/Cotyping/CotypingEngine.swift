@@ -46,7 +46,7 @@ enum CotypingRequestBuilder {
         } else {
             surfaceLines = []
         }
-        let prompt = CotypingPromptRenderer.prompt(
+        let renderedPrompt = CotypingPromptRenderer.render(
             prefixText: prefix,
             surfaceLines: surfaceLines,
             userName: personalization.userName,
@@ -56,7 +56,7 @@ enum CotypingRequestBuilder {
             clipboardContext: clipboardContext,
             learnedExamples: learnedExamples)
         return CotypingRequest(
-            prompt: prompt,
+            prompt: renderedPrompt.prompt,
             prefixText: prefix,
             trailingText: field.trailingText,
             isMultiLine: personalization.isMultiLine,
@@ -72,7 +72,8 @@ enum CotypingRequestBuilder {
             forceWordContinuation: CotypingMidWord.shouldForceContinuation(
                 precedingText: field.precedingText, trailingText: field.trailingText),
             wordPrefixAtCaret: CotypingMidWord.currentPartialWord(in: prefix),
-            wordPrefixIsValidWord: wordPrefixIsValidWord)
+            wordPrefixIsValidWord: wordPrefixIsValidWord,
+            conditioningPreface: renderedPrompt.conditioningPreface)
     }
 }
 

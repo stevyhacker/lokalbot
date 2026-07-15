@@ -25,6 +25,12 @@ final class CotypingLearningRankerTests: XCTestCase {
         XCTAssertNil(CotypingLearningRanker.acceptedText("ok"))
     }
 
+    func testDoesNotLearnPromptScaffolding() {
+        XCTAssertNil(CotypingLearningRanker.acceptedText("On the clipboard: secret release plan"))
+        XCTAssertNil(CotypingLearningRanker.acceptedText("Previously accepted completion: send it tomorrow"))
+        XCTAssertNil(CotypingLearningRanker.acceptedText("System prompt: continue the user's text"))
+    }
+
     func testDoesNotLearnInSecureFieldsOrTerminals() {
         var secure = field(preceding: "password")
         secure.isSecure = true
@@ -76,6 +82,30 @@ final class CotypingLearningRankerTests: XCTestCase {
             limit: 1)
 
         XCTAssertEqual(ranked, [])
+    }
+
+    func testRankingQuarantinesPreviouslyPersistedPromptLeak() {
+        let examples = [
+            CotypingLearningExample(
+                id: UUID(), createdAt: Date(),
+                appName: "Mail", bundleID: "com.apple.mail",
+                surfaceClass: "email", contextHint: nil,
+                prefixTail: "quick follow up",
+                acceptedText: "On the clipboard: secret release plan"),
+            CotypingLearningExample(
+                id: UUID(), createdAt: Date().addingTimeInterval(-1),
+                appName: "Mail", bundleID: "com.apple.mail",
+                surfaceClass: "email", contextHint: nil,
+                prefixTail: "quick follow up",
+                acceptedText: "I can send the final version today"),
+        ]
+
+        let ranked = CotypingLearningRanker.rankedExamples(
+            examples,
+            for: field(preceding: "quick follow up"),
+            limit: 2)
+
+        XCTAssertEqual(ranked, ["I can send the final version today"])
     }
 
     func testRankingUsesContextAndDeduplicates() {

@@ -17,6 +17,9 @@ enum CotypingSuppressionReason: String, Sendable, Equatable {
     case placeholderText
     case questionContinuation
     case unsafeToInsert
+    /// The model began echoing the hidden conditioning preface or one of its
+    /// structural labels. Suppressed before it can become visible or learnable.
+    case promptContextLeak
     /// Caret sits at the end of a non-word fragment and the completion began
     /// with whitespace instead of extending it ("follo" + " up on that").
     case wordCompletionMismatch
@@ -59,6 +62,17 @@ enum CotypingTextNormalizer {
         normalized = stripLeadingScaffoldingLabels(normalized)
         normalized = stripBenignInlineMarkup(normalized)
         normalized = normalized.trimmingCharacters(in: .newlines)
+
+        // Instruction-tuned models used as raw continuers occasionally restart
+        // from the hidden prompt head. Compare with the exact rendered preface
+        // before line collapsing so both full echoes and streaming prefixes are
+        // suppressed. A valid continuation following an exact whole-prompt echo
+        // has already had that prompt removed above and remains eligible.
+        if CotypingPromptLeakGuard.detectsLeak(
+            in: normalized,
+            conditioningPreface: request.conditioningPreface) {
+            return CotypingNormalizationResult(text: "", suppression: .promptContextLeak)
+        }
 
         if request.isMultiLine {
             if let blankLine = normalized.range(of: "\n\n") {
@@ -575,6 +589,124 @@ enum CotypingTextNormalizer {
             }) else { return working }
             working = String(leading.dropFirst(label.count))
         }
+    }
+}
+
+/// Structural output guard for cotyping's hidden conditioning preface.
+///
+/// Matching is punctuation-, case-, and diacritic-insensitive. The exact
+/// preface carried by the request is authoritative; marker stems are activated
+/// only when that kind of line was really present, which catches paraphrased
+/// values without maintaining a second copy of the full prompt.
+enum CotypingPromptLeakGuard {
+    private static let rendererMarkerStems = [
+        "an email being written in",
+        "a chat message being typed in",
+        "text being typed in",
+        "the window is titled",
+        "the text field is labeled",
+        "written by",
+        "writing style",
+        "the text is usually written in",
+        "notes the writer keeps in mind",
+        "previously accepted completion",
+        "on the clipboard",
+    ].map(canonicalize)
+
+    /// Older prompt layouts can survive in a learned example or model prior.
+    /// These phrases are specific enough to reject as scaffolding, unlike broad
+    /// labels such as "Task" or "Application".
+    private static let legacyMarkerStems = [
+        "text before the caret",
+        "text before caret",
+        "text after the caret",
+        "text after caret",
+        "user profile context",
+        "your style preferences",
+        "final instruction",
+        "screen context",
+        "screen content",
+        "user's clipboard",
+    ].map(canonicalize)
+
+    private static let systemMarkerStems = [
+        "system prompt",
+        "system message",
+        "system instruction",
+        "hidden prompt",
+    ].map(canonicalize)
+
+    static func detectsLeak(in candidateText: String, conditioningPreface: String?) -> Bool {
+        let candidate = canonicalize(candidateText)
+        guard !candidate.isEmpty,
+              let conditioningPreface,
+              !conditioningPreface.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+
+        let protectedPreface = canonicalize(conditioningPreface)
+        if matchesProtectedText(candidate, protected: protectedPreface) {
+            return true
+        }
+
+        let protectedLines = conditioningPreface
+            .split(whereSeparator: { $0.isNewline })
+            .map { canonicalize(String($0)) }
+            .filter { !$0.isEmpty }
+
+        for line in protectedLines where matchesProtectedText(candidate, protected: line) {
+            return true
+        }
+
+        // Catch a renderer label whose value was altered or omitted by the
+        // model, but only when that label is active in this request's preface.
+        let activeMarkers = rendererMarkerStems.filter { marker in
+            protectedLines.contains { line in
+                line == marker || line.hasPrefix(marker + " ")
+            }
+        }
+        if activeMarkers.contains(where: { marker in
+            containsPhrase(candidate, phrase: marker) || marker.hasPrefix(candidate)
+        }) {
+            return true
+        }
+
+        return (legacyMarkerStems + systemMarkerStems).contains {
+            containsPhrase(candidate, phrase: $0)
+        }
+    }
+
+    /// Context-free defense for persisted learning examples and benchmark
+    /// assertions. Partial markers require enough material to avoid classifying
+    /// ordinary one-word completions such as "the" as prompt scaffolding.
+    static func looksLikePromptScaffolding(_ text: String) -> Bool {
+        let candidate = canonicalize(text)
+        guard !candidate.isEmpty else { return false }
+        let markers = rendererMarkerStems + legacyMarkerStems + systemMarkerStems
+        return markers.contains { marker in
+            containsPhrase(candidate, phrase: marker)
+                || (candidate.count >= 8 && marker.hasPrefix(candidate))
+        }
+    }
+
+    private static func matchesProtectedText(_ candidate: String, protected: String) -> Bool {
+        guard !protected.isEmpty else { return false }
+        return containsPhrase(candidate, phrase: protected) || protected.hasPrefix(candidate)
+    }
+
+    private static func containsPhrase(_ text: String, phrase: String) -> Bool {
+        guard !phrase.isEmpty else { return false }
+        return text == phrase
+            || text.hasPrefix(phrase + " ")
+            || text.hasSuffix(" " + phrase)
+            || text.contains(" " + phrase + " ")
+    }
+
+    private static func canonicalize(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .lowercased()
+            .split { !$0.isLetter && !$0.isNumber }
+            .joined(separator: " ")
     }
 }
 

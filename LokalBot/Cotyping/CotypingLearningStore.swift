@@ -25,7 +25,8 @@ enum CotypingLearningRanker {
 
     static func acceptedText(_ text: String) -> String? {
         guard let cleaned = clean(text, maxCharacters: maxAcceptedCharacters),
-              cleaned.count >= 3 else { return nil }
+              cleaned.count >= 3,
+              !CotypingPromptLeakGuard.looksLikePromptScaffolding(cleaned) else { return nil }
         return cleaned
     }
 

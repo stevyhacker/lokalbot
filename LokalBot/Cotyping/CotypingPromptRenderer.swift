@@ -9,9 +9,15 @@ import Foundation
 /// clean word boundary.
 ///
 /// LokalBot's recommended cotyping model is instruction-tuned rather than a base model, but
-/// raw `/v1/completions` still continues text from this prompt; the conditioning
-/// preface + `CotypingTextNormalizer` keep the output usable.
+/// raw `/v1/completions` still continues text from this prompt. The renderer
+/// therefore returns the exact conditioning preface separately as well, so the
+/// output boundary can suppress a partial or complete preface echo.
 enum CotypingPromptRenderer {
+    struct RenderedPrompt: Equatable, Sendable {
+        let prompt: String
+        let conditioningPreface: String?
+    }
+
     /// Upper bound on the conditioning preface so a long style note can never
     /// crowd the prompt; the caret prefix arrives pre-windowed by
     /// `CotypingPrefixWindow`.
@@ -36,6 +42,30 @@ enum CotypingPromptRenderer {
         clipboardContext: String? = nil,
         learnedExamples: [String] = []
     ) -> String {
+        render(
+            prefixText: prefixText,
+            surfaceLines: surfaceLines,
+            userName: userName,
+            styleNote: styleNote,
+            languageHint: languageHint,
+            extendedContext: extendedContext,
+            clipboardContext: clipboardContext,
+            learnedExamples: learnedExamples).prompt
+    }
+
+    /// Returns both the wire prompt and the exact (post-truncation) hidden
+    /// preface. Keeping that boundary explicit lets output filtering compare
+    /// against what the model really saw instead of duplicating prompt labels.
+    static func render(
+        prefixText: String,
+        surfaceLines: [String] = [],
+        userName: String? = nil,
+        styleNote: String? = nil,
+        languageHint: String? = nil,
+        extendedContext: String? = nil,
+        clipboardContext: String? = nil,
+        learnedExamples: [String] = []
+    ) -> RenderedPrompt {
         let prefix = trimmingTrailingWhitespace(prefixText)
 
         var preface: [String] = surfaceLines
@@ -56,7 +86,7 @@ enum CotypingPromptRenderer {
 
         guard !preface.isEmpty else {
             // No context to condition on: hand the model the bare text.
-            return prefix
+            return RenderedPrompt(prompt: prefix, conditioningPreface: nil)
         }
 
         var prefaceText = preface.joined(separator: "\n")
@@ -65,7 +95,9 @@ enum CotypingPromptRenderer {
         }
         // Blank line separates the conditioning preface from the live text
         // without a label the model could echo. Prefix stays the final bytes.
-        return prefaceText + "\n\n" + prefix
+        return RenderedPrompt(
+            prompt: prefaceText + "\n\n" + prefix,
+            conditioningPreface: prefaceText)
     }
 
     /// "Written by <name>." or nil — conditions the voice via authorship framing.

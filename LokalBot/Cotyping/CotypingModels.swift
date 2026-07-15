@@ -173,6 +173,11 @@ struct CotypingRequest: Sendable, Equatable {
     /// whitespace-leading completion is rejected. Defaults permissive.
     var wordPrefixIsValidWord: Bool = true
 
+    /// Exact hidden conditioning preface included in `prompt`, after renderer
+    /// truncation. This never reaches the UI; the normalizer uses it solely to
+    /// recognize and suppress prompt-context echoes, including streamed prefixes.
+    var conditioningPreface: String?
+
     /// `true` when the caret prefix ends on whitespace, so the normalizer drops
     /// a leading space the model may add (deterministic space management).
     var precedingEndsWithWhitespace: Bool {

@@ -7,6 +7,7 @@ import XCTest
 final class CotypingPromptRendererTests: XCTestCase {
     func testBarePrefixWhenNoPreface() {
         XCTAssertEqual(CotypingPromptRenderer.prompt(prefixText: "Hello wo"), "Hello wo")
+        XCTAssertNil(CotypingPromptRenderer.render(prefixText: "Hello wo").conditioningPreface)
     }
 
     func testTrailingWhitespaceTrimmed() {
@@ -24,6 +25,19 @@ final class CotypingPromptRendererTests: XCTestCase {
             prefixText: "the caret text",
             userName: "Ada", styleNote: "concise", languageHint: "Writes in German.")
         XCTAssertEqual(prompt, "Written by Ada.\nWriting style: concise.\nWrites in German.\n\nthe caret text")
+    }
+
+    func testRenderExposesExactHiddenPreface() {
+        let rendered = CotypingPromptRenderer.render(
+            prefixText: "the caret text",
+            surfaceLines: ["An email being written in Mail."],
+            userName: "Ada",
+            clipboardContext: "release plan")
+
+        XCTAssertEqual(
+            rendered.conditioningPreface,
+            "An email being written in Mail.\nWritten by Ada.\nOn the clipboard: release plan")
+        XCTAssertEqual(rendered.prompt, rendered.conditioningPreface! + "\n\nthe caret text")
     }
 
     func testBlankPersonaIgnored() {

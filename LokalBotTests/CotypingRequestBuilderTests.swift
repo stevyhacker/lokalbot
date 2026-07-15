@@ -52,6 +52,7 @@ final class CotypingRequestBuilderTests: XCTestCase {
         XCTAssertEqual(request.maxTokens, CotypingConfiguration.standard.maxResponseTokens)
         XCTAssertEqual(request.maxWords, 12)
         XCTAssertFalse(request.isMultiLine)
+        XCTAssertNil(request.conditioningPreface)
     }
 
     func testPersonalizationEntersPrompt() throws {
@@ -61,6 +62,7 @@ final class CotypingRequestBuilderTests: XCTestCase {
             field: field(preceding: "Dear team"), config: .standard,
             personalization: personalization, generation: 0))
         XCTAssertTrue(request.prompt.hasPrefix("Written by Sam."))
+        XCTAssertEqual(request.conditioningPreface, "Written by Sam.")
         XCTAssertTrue(request.isMultiLine)
     }
 

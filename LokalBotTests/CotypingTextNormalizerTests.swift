@@ -18,6 +18,37 @@ final class CotypingTextNormalizerTests: XCTestCase {
             repeatPenalty: 1.05, seed: 0, generation: 0)
     }
 
+    private func contextualRequest(prefix: String = "Thanks for ") -> CotypingRequest {
+        let rendered = CotypingPromptRenderer.render(
+            prefixText: prefix,
+            surfaceLines: [
+                "An email being written in Mail.",
+                "The window is titled \"Q3 planning\".",
+                "The text field is labeled \"Reply\".",
+            ],
+            userName: "Sam",
+            styleNote: "concise",
+            languageHint: "The text is usually written in German.",
+            extendedContext: "Acme = our product",
+            clipboardContext: "secret release plan",
+            learnedExamples: ["following up with the final numbers"])
+        return CotypingRequest(
+            prompt: rendered.prompt,
+            prefixText: prefix,
+            trailingText: "",
+            isMultiLine: false,
+            maxTokens: 24,
+            maxWords: 20,
+            temperature: 0.1,
+            topP: 0.7,
+            topK: 20,
+            minP: 0.08,
+            repeatPenalty: 1.05,
+            seed: 0,
+            generation: 0,
+            conditioningPreface: rendered.conditioningPreface)
+    }
+
     func testSingleLineCollapse() {
         let result = CotypingTextNormalizer.normalize("brown fox\nand more", for: request(prefix: "The quick "))
         XCTAssertEqual(result, "brown fox")
@@ -92,6 +123,73 @@ final class CotypingTextNormalizerTests: XCTestCase {
     func testStripsLeadingScaffoldingLabel() {
         let result = CotypingTextNormalizer.normalize("Continuation: hello there", for: request(prefix: "x "))
         XCTAssertEqual(result, "hello there")
+    }
+
+    func testSuppressesEveryRenderedPromptContextLine() {
+        let request = contextualRequest()
+        let leakedLines = [
+            "An email being written in Mail.",
+            "The window is titled \"Q3 planning\".",
+            "The text field is labeled \"Reply\".",
+            "Written by Sam.",
+            "Writing style: concise.",
+            "The text is usually written in German.",
+            "Notes the writer keeps in mind: Acme = our product",
+            "Previously accepted completion: following up with the final numbers",
+            "On the clipboard: secret release plan",
+        ]
+
+        for leakedLine in leakedLines {
+            let detailed = CotypingTextNormalizer.normalizeDetailed(leakedLine, for: request)
+            XCTAssertEqual(detailed.text, "", leakedLine)
+            XCTAssertEqual(detailed.suppression, .promptContextLeak, leakedLine)
+        }
+    }
+
+    func testSuppressesPromptLeakPunctuationAndCaseVariants() {
+        let detailed = CotypingTextNormalizer.normalizeDetailed(
+            "ON THE CLIPBOARD — secret release plan",
+            for: contextualRequest())
+
+        XCTAssertEqual(detailed.text, "")
+        XCTAssertEqual(detailed.suppression, .promptContextLeak)
+    }
+
+    func testSuppressesStreamedPromptPrefixesBeforeTheyBecomeVisible() {
+        let request = contextualRequest()
+        for partial in ["An", "The window", "Previously accepted", "On the clip"] {
+            let detailed = CotypingTextNormalizer.normalizeDetailed(partial, for: request)
+            XCTAssertEqual(detailed.text, "", partial)
+            XCTAssertEqual(detailed.suppression, .promptContextLeak, partial)
+        }
+    }
+
+    func testSuppressesPromptPrefixAfterLegacyWrapperIsRemoved() {
+        let detailed = CotypingTextNormalizer.normalizeDetailed(
+            "Continuation: On the clip",
+            for: contextualRequest())
+
+        XCTAssertEqual(detailed.text, "")
+        XCTAssertEqual(detailed.suppression, .promptContextLeak)
+    }
+
+    func testAllowsContextInformedContinuationThatIsNotScaffolding() {
+        let detailed = CotypingTextNormalizer.normalizeDetailed(
+            "the release plan tomorrow",
+            for: contextualRequest())
+
+        XCTAssertEqual(detailed.text, "the release plan tomorrow")
+        XCTAssertNil(detailed.suppression)
+    }
+
+    func testWholePromptEchoIsRemovedWithoutDiscardingItsContinuation() {
+        let request = contextualRequest()
+        let detailed = CotypingTextNormalizer.normalizeDetailed(
+            request.prompt + " the release plan tomorrow",
+            for: request)
+
+        XCTAssertEqual(detailed.text, "the release plan tomorrow")
+        XCTAssertNil(detailed.suppression)
     }
 
     func testStripsBenignInlineMarkupInsteadOfSuppressingSuggestion() {

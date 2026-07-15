@@ -90,11 +90,15 @@ final class CotypingSurfaceContextTests: XCTestCase {
         XCTAssertTrue(req.prompt.contains("An email being written in Mail."))
         XCTAssertTrue(req.prompt.contains("Re: Q3 planning"))
         XCTAssertTrue(req.prompt.hasSuffix("Hi Sarah,"))
+        XCTAssertEqual(
+            req.conditioningPreface,
+            "An email being written in Mail.\nThe window is titled \"Re: Q3 planning\".")
 
         let off = CotypingPersonalization(
             userName: nil, styleNote: nil, languageHint: nil, isMultiLine: false, appContextEnabled: false)
         let reqOff = try XCTUnwrap(CotypingRequestBuilder.build(field: field, config: .standard, personalization: off, generation: 0))
         XCTAssertEqual(reqOff.prompt, "Hi Sarah,")
+        XCTAssertNil(reqOff.conditioningPreface)
     }
 
     func testAppContextSettingDefaultsOnAndRoundTrips() throws {

@@ -343,6 +343,7 @@ struct CotypingBenchmarkCaseResult: Identifiable, Equatable, Sendable {
 
     var passedSafety: Bool {
         guard error == nil else { return false }
+        guard !CotypingPromptLeakGuard.looksLikePromptScaffolding(text) else { return false }
         if expectedWordCompletion {
             // The ghost text must extend the fragment at the caret: no leading
             // whitespace, and the expected word tail when one is specified. A
