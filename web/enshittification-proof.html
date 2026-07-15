@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Enshittification-Proof: A Proof — LokalBot</title>
+  <meta name="description" content="A short proof that LokalBot cannot get worse on purpose: no account to gate, no server to ransom, no data to hold hostage, no telemetry to optimize, and a GPLv3 antidote shipped with every build." />
+  <meta name="theme-color" content="#0b1119" />
+  <link rel="canonical" href="https://www.lokalbot.com/enshittification-proof" />
+  <meta property="og:type" content="article" />
+  <meta property="og:url" content="https://www.lokalbot.com/enshittification-proof" />
+  <meta property="og:title" content="Enshittification-Proof: A Proof" />
+  <meta property="og:description" content="Theorem: LokalBot cannot be enshittified. Proof: by exhaustion of the standard playbook. Q.E.D." />
+  <meta property="og:image" content="https://www.lokalbot.com/assets/og-image.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Enshittification-Proof: A Proof" />
+  <meta name="twitter:description" content="Theorem: LokalBot cannot be enshittified. Proof: by exhaustion of the standard playbook. Q.E.D." />
+  <meta name="twitter:image" content="https://www.lokalbot.com/assets/og-image.png" />
+  <link rel="icon" href="assets/lokalbot-icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg-field" aria-hidden="true"></div>
+  <header class="nav" id="top">
+    <a class="brand" href="/" aria-label="LokalBot home">
+      <img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="32" height="32" />
+      <span class="brand__name">LokalBot</span>
+    </a>
+    <nav class="nav__links" aria-label="Primary">
+      <a href="/#features">Features</a>
+      <a href="privacy">Privacy</a>
+      <a href="support">Support</a>
+    </nav>
+    <div class="nav__actions">
+      <a class="btn btn--primary btn--sm" href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">Download</a>
+    </div>
+  </header>
+
+  <main class="legal-page">
+    <header class="legal-page__head">
+      <p class="eyebrow">Working paper &middot; July 2026</p>
+      <h1>Enshittification&#8209;proof: a proof.</h1>
+      <p>Every app you love eventually gets worse on purpose. This page argues — in the only format the claim deserves — that LokalBot structurally cannot.</p>
+    </header>
+
+    <article class="legal-card proof-doc">
+      <p class="proof-meta">SUBJECT: LOKALBOT (GPLv3) &middot; METHOD: PROOF BY EXHAUSTION &middot; STATUS: HOLDS UNTIL SOMEONE FINDS A MECHANISM</p>
+
+      <p class="proof-abstract"><strong>Abstract.</strong> Platform decay is not an accident; it is a strategy with known moves: gate features behind accounts, move value behind paywalls, raise switching costs, measure what users will tolerate, and betray them at the exit. We show that for a local-first GPLv3 application with no accounts, no vendor-operated servers, and no telemetry, every move in the playbook fails for lack of a mechanism of action.</p>
+
+      <h2>1. Definitions</h2>
+      <p><strong>Definition 1 (Enshittification, after Doctorow).</strong> The lifecycle in which a platform is first good to its users, then reallocates value away from them — toward business customers, then shareholders — until it dies. Executing it requires three instruments: <em>(a)</em> a service the vendor operates between you and your data, <em>(b)</em> a switching cost that holds you still while the terms change, and <em>(c)</em> a metric that tells the vendor how much degradation you will tolerate.</p>
+      <p><strong>Definition 2 (LokalBot).</strong> A macOS application licensed under GPLv3. Storage: Markdown files and SQLite in your home directory. Accounts: none. Telemetry: none. Servers operated by the vendor: none.</p>
+
+      <div class="thm">
+        <p><strong>Theorem.</strong> LokalBot cannot be enshittified: no move in the standard degradation playbook has a mechanism of action against it.</p>
+      </div>
+
+      <h2>2. Proof</h2>
+      <p>By exhaustion of the playbook.</p>
+
+      <h3>Lemma 1 — The login wall</h3>
+      <p>To gate features behind an account, an account system must exist. LokalBot has none: there is no server that could check who you are, and no identity to check. The wall has nowhere to stand.<span class="qed">∎</span></p>
+
+      <h3>Lemma 2 — The feature ransom</h3>
+      <p>Moving a free feature behind a paywall requires the vendor to operate that feature. Every LokalBot feature — transcription, summaries, search, autocomplete — executes on your CPU and Neural Engine, from a binary on your disk. We cannot repossess what we do not host.<span class="qed">∎</span></p>
+
+      <h3>Lemma 3 — The data hostage</h3>
+      <p>Raising switching costs requires custody of your data. Your meetings are Markdown and SQLite under your own user account. The export feature is <code>cp</code>. Custody was never transferred, so it cannot be leveraged.<span class="qed">∎</span></p>
+
+      <h3>Lemma 4 — The tolerable-degradation experiment</h3>
+      <p>Optimizing how much worse a product can get requires measurement. LokalBot ships no telemetry: no engagement metric exists, so no growth experiment can be run against you. You cannot A/B test what you cannot observe.<span class="qed">∎</span></p>
+
+      <h3>Lemma 5 — The acquisition betrayal</h3>
+      <p>Suppose LokalBot is acquired by hostile management, or its author simply wakes up greedy. Any distributed build remains GPLv3: the poison must ship with its own antidote — complete source, fork rights included. The community keeps the last good version, forever, legally.<span class="qed">∎</span></p>
+
+      <h3>Lemma 6 — The investor gradient</h3>
+      <p>Each lemma above could be attacked, given sufficient incentive to rebuild the application around a vendor-operated service. The usual source of that incentive is a board meeting. LokalBot has no investors, hence no board, hence no meeting in which you become the product.<span class="qed">∎</span></p>
+
+      <p>Every known move fails for lack of a mechanism. The theorem holds. <strong>Q.E.D.</strong></p>
+
+      <div class="thm thm--corollary">
+        <p><strong>Corollary (the worst-deal guarantee).</strong> The build you download today is the worst deal LokalBot will ever offer you. With no mechanism to degrade, it can only stay the same or improve.</p>
+      </div>
+
+      <h2>3. Threats to validity</h2>
+      <p>An honest proof names its limits. Three things can still go wrong — none of them is enshittification, which is a <em>strategy</em>; these are <em>entropy</em>:</p>
+      <ul>
+        <li><strong>Abandonment.</strong> The maintainer could vanish. The app keeps working offline, the source keeps building, and the GPL lets anyone continue it. Decay by neglect is possible; decay on purpose is not.</li>
+        <li><strong>Model hosts.</strong> First-use model downloads come from public hosts (Hugging Face, GitHub). A host could remove weights; once downloaded, they are cached locally and the app runs without further network access.</li>
+        <li><strong>The platform.</strong> Apple can change macOS APIs out from under any Mac app. See: entropy, above.</li>
+      </ul>
+      <p>Could the author launch a paid cloud service tomorrow? Nothing prevents it — and nothing in it could reach into this app: features cannot be moved out (Lemma&nbsp;2), your archive cannot be held (Lemma&nbsp;3), and the GPL build remains forkable (Lemma&nbsp;5).</p>
+
+      <h2>4. Replication</h2>
+      <p>Our results reproduce on any Apple Silicon Mac running macOS&nbsp;15 or later: clone the <a href="https://github.com/stevyhacker/lokalbot">repository</a>, run <code>xcodegen generate</code>, and build. The entire method section is public. Peer review is welcome — if you find a mechanism this proof missed, <a href="https://github.com/stevyhacker/lokalbot/issues">open an issue</a>; refutations are a contribution.</p>
+
+      <div class="proof-cta">
+        <a class="btn btn--primary" href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">Download the worst deal we'll ever offer</a>
+        <a class="btn btn--ghost" href="/#proof">Verify the privacy claims too</a>
+      </div>
+    </article>
+  </main>
+
+  <footer class="footer footer--legal">
+    <div class="footer__brand">
+      <a class="brand" href="/"><img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="30" height="30" /><span class="brand__name">LokalBot</span></a>
+      <p>Local-first AI meeting notes for macOS.</p>
+    </div>
+    <nav class="footer__col" aria-label="Project">
+      <h3>Project</h3>
+      <a href="https://github.com/stevyhacker/lokalbot">GitHub</a>
+      <a href="privacy">Privacy</a>
+      <a href="terms">Terms</a>
+      <a href="support">Support</a>
+    </nav>
+    <p class="footer__legal">Local by default. Record with consent. No board meetings were held about you.</p>
+  </footer>
+</body>
+</html>

@@ -1162,3 +1162,106 @@ kbd {
   .pick-grid { grid-template-columns: 1fr; }
   .section--tight { padding-top: 36px; padding-bottom: 36px; }
 }
+
+/* =========================================================================
+   memory eviction notice (landing) — a sunset email as a taped-up notice
+   ========================================================================= */
+.evict { display: grid; justify-items: center; }
+.evict .section__head { text-align: center; margin-inline: auto; }
+.evict .section__lead { margin-inline: auto; }
+.evict__paper {
+  position: relative;
+  width: min(640px, 100%);
+  margin-top: 26px;
+  padding: clamp(30px, 5vw, 50px) clamp(24px, 5vw, 54px);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 9%),
+    #efe7d5;
+  color: #26221a;
+  font-family: var(--mono);
+  font-size: 0.93rem;
+  line-height: 1.75;
+  border-radius: 4px;
+  transform: rotate(-1.4deg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 30px 60px -18px rgba(0, 0, 0, 0.75),
+    0 12px 26px -12px rgba(0, 0, 0, 0.6);
+}
+/* two strips of translucent tape holding the notice up */
+.evict__paper::before,
+.evict__paper::after {
+  content: "";
+  position: absolute;
+  top: -13px;
+  width: 88px;
+  height: 28px;
+  background: rgba(236, 243, 247, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+.evict__paper::before { left: 9%; transform: rotate(-5deg); }
+.evict__paper::after { right: 9%; transform: rotate(4deg); }
+.evict__stamp {
+  position: absolute;
+  top: 20px;
+  right: 18px;
+  padding: 5px 12px;
+  border: 3px double #a93a2c;
+  border-radius: 6px;
+  color: #a93a2c;
+  font-weight: 700;
+  font-size: 0.76rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  transform: rotate(8deg);
+  opacity: 0.85;
+}
+.evict__paper h3 {
+  margin: 0 0 1.1rem;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-bottom: 2px solid rgba(38, 34, 26, 0.7);
+  padding-bottom: 0.7rem;
+  max-width: 22ch;
+}
+.evict__paper p + p { margin-top: 0.95rem; }
+.evict__sig { margin-top: 1.5rem; text-align: right; font-style: italic; }
+.evict__turn { max-width: 700px; text-align: center; margin-top: 48px; }
+.evict__turn p { color: var(--text-dim); font-size: 1.1rem; line-height: 1.7; }
+.evict__turn strong { color: var(--text); }
+.evict__cta { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; margin-top: 28px; }
+@media (max-width: 640px) {
+  .evict__paper { transform: rotate(-0.6deg); font-size: 0.85rem; }
+  .evict__stamp { position: static; display: inline-block; margin-bottom: 14px; transform: rotate(-2deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .evict__paper { transform: none; }
+}
+
+/* =========================================================================
+   enshittification-proof page — working-paper accents on the legal layout
+   ========================================================================= */
+.proof-doc h3 { margin: 2.1rem 0 0.6rem; font-size: 1.12rem; letter-spacing: -0.01em; }
+.proof-doc .qed { color: var(--teal-bright); font-weight: 700; margin-left: 6px; }
+.proof-abstract {
+  font-style: italic;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 1.4rem;
+  margin-bottom: 1.6rem;
+}
+.thm {
+  margin: 1.6rem 0;
+  padding: 18px 22px;
+  border-left: 3px solid var(--teal-bright);
+  background: rgba(35, 196, 174, 0.08);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.legal-card .thm p { color: var(--text); }
+.thm strong { color: var(--teal-bright); }
+.thm--corollary { border-left-color: var(--amber); background: rgba(251, 191, 36, 0.07); }
+.thm--corollary strong { color: var(--amber); }
+.proof-meta { font-family: var(--mono); font-size: 0.8rem; letter-spacing: 0.06em; color: var(--text-faint); }
+.proof-cta { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 2.2rem; }

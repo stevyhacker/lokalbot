@@ -210,6 +210,7 @@ def render_sitemap() -> str:
         "privacy",
         "terms",
         "support",
+        "enshittification-proof",
         *(page["slug"] for page in PAGES),
     ]
     entries = []
