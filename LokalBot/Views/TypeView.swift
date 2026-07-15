@@ -129,12 +129,13 @@ private struct TypeStatusHeader: View {
         switch app.dictation.state {
         case .recording: return "Listening \(app.dictation.timerLabel)"
         case .transcribing: return "Transcribing \(app.dictation.timerLabel)"
+        case .composing: return "Composing \(app.dictation.timerLabel)"
         case .idle:
             guard app.settings.dictationEnabled else {
                 return "Ready from this screen. Turn on the shortcut for system-wide use."
             }
             return app.dictation.isShortcutMonitoringActive
-                ? "Ready — hold \(DictationShortcut.label) to dictate."
+                ? "Ready — hold \(DictationShortcut.label) to compose."
                 : "Shortcut inactive."
         }
     }

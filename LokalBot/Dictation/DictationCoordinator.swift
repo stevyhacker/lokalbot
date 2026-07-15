@@ -9,6 +9,7 @@ final class DictationCoordinator: ObservableObject {
         case idle
         case recording(startedAt: Date)
         case transcribing(startedAt: Date)
+        case composing(startedAt: Date)
 
         var isRecording: Bool {
             if case .recording = self { true } else { false }
@@ -17,7 +18,7 @@ final class DictationCoordinator: ObservableObject {
         var isWorking: Bool {
             switch self {
             case .idle: false
-            case .recording, .transcribing: true
+            case .recording, .transcribing, .composing: true
             }
         }
 
@@ -26,6 +27,7 @@ final class DictationCoordinator: ObservableObject {
             case .idle: "Ready"
             case .recording: "Recording"
             case .transcribing: "Transcribing"
+            case .composing: "Composing"
             }
         }
     }
@@ -35,6 +37,7 @@ final class DictationCoordinator: ObservableObject {
     @Published private(set) var now = Date()
     @Published private(set) var isShortcutMonitoringActive = false
     @Published private(set) var lastTranscript: String?
+    @Published private(set) var lastComposedText: String?
     @Published private(set) var lastEngine: String?
     @Published private(set) var liveTranscript = DictationLiveTranscript()
     @Published private(set) var livePreviewStatus = ""
@@ -43,6 +46,9 @@ final class DictationCoordinator: ObservableObject {
 
     private let storageRoot: URL
     private let settingsProvider: () -> AppSettings
+    private let makeTextEngine: () async throws -> TextEngine
+    private let screenContextProvider:
+        (DictationScreenTarget, [String]) async -> DictationScreenContext?
     private let canStart: () -> Bool
     private let onBusy: () -> Void
     private let onError: (String) -> Void
@@ -57,6 +63,7 @@ final class DictationCoordinator: ObservableObject {
     private var startTaskGeneration: Int?
     private var livePreviewTask: Task<Void, Never>?
     private var transcribeTask: Task<Void, Never>?
+    private var screenContextTask: Task<DictationScreenContext?, Never>?
     private var mediaCleanupTask: Task<Void, Never>?
     private var mediaCleanupGeneration = 0
     private var activeAudioURL: URL?
@@ -67,13 +74,22 @@ final class DictationCoordinator: ObservableObject {
     init(
         storageRoot: URL,
         settingsProvider: @escaping () -> AppSettings,
+        makeTextEngine: @escaping () async throws -> TextEngine,
         canStart: @escaping () -> Bool,
         onBusy: @escaping () -> Void,
         onError: @escaping (String) -> Void,
-        focusSnapshotExecutor: DictationFocusSnapshotExecutor = .shared
+        focusSnapshotExecutor: DictationFocusSnapshotExecutor = .shared,
+        screenContextProvider: @escaping
+            (DictationScreenTarget, [String]) async -> DictationScreenContext? = {
+                target, excludedApps in
+                await DictationScreenContextCapture.shared.capture(
+                    target: target, excludedApps: excludedApps)
+            }
     ) {
         self.storageRoot = storageRoot
         self.settingsProvider = settingsProvider
+        self.makeTextEngine = makeTextEngine
+        self.screenContextProvider = screenContextProvider
         self.canStart = canStart
         self.onBusy = onBusy
         self.onError = onError
@@ -91,7 +107,9 @@ final class DictationCoordinator: ObservableObject {
     var elapsed: TimeInterval {
         switch state {
         case .idle: return 0
-        case .recording(let startedAt), .transcribing(let startedAt):
+        case .recording(let startedAt),
+             .transcribing(let startedAt),
+             .composing(let startedAt):
             return max(0, now.timeIntervalSince(startedAt))
         }
     }
@@ -105,7 +123,7 @@ final class DictationCoordinator: ObservableObject {
         switch state {
         case .idle: return ""
         case .recording: return timerLabel
-        case .transcribing: return "..."
+        case .transcribing, .composing: return "..."
         }
     }
 
@@ -156,7 +174,7 @@ final class DictationCoordinator: ObservableObject {
             start(source: source)
         case .recording:
             finishRecordingAndTranscribe(source: source)
-        case .transcribing:
+        case .transcribing, .composing:
             cancel()
         }
     }
@@ -172,20 +190,38 @@ final class DictationCoordinator: ObservableObject {
         let session = generation
         startTaskGeneration = session
         isStarting = true
-        let outputMode = settingsProvider().dictationOutputMode
-        let deliveryTargetTask = Task { [focusSnapshotExecutor] in
-            await Self.captureDeliveryTarget(
-                for: outputMode,
-                using: focusSnapshotExecutor)
+        let initialConfig = settingsProvider()
+        let outputMode = initialConfig.dictationOutputMode
+        let screenTarget = DictationScreenTarget.frontmost()
+        let focusCaptureTask = Task { [focusSnapshotExecutor] in
+            await focusSnapshotExecutor.capture()
+        }
+        discardScreenContext()
+        if let screenTarget {
+            let excludedApps = initialConfig.excludedAppList
+            screenContextTask = Task { [screenContextProvider] in
+                let capture = await focusCaptureTask.value
+                guard DictationScreenPrivacy.allowsCapture(
+                        focus: capture, target: screenTarget),
+                      !Task.isCancelled else { return nil }
+                return await screenContextProvider(screenTarget, excludedApps)
+            }
         }
         deliveryTarget = nil
+        lastTranscript = nil
+        lastComposedText = nil
+        lastEngine = nil
         resetLivePreview()
         refreshOverlay()
         let pendingMediaCleanup = mediaCleanupTask
         startTask = Task { [weak self] in
             guard let self else { return }
+            var keepScreenContext = false
             defer {
-                deliveryTargetTask.cancel()
+                focusCaptureTask.cancel()
+                if !keepScreenContext {
+                    self.discardScreenContext()
+                }
                 if self.startTaskGeneration == session {
                     self.startTask = nil
                     self.startTaskGeneration = nil
@@ -200,7 +236,9 @@ final class DictationCoordinator: ObservableObject {
                 self.onError("Microphone permission denied.")
                 return
             }
-            let capturedDeliveryTarget = await deliveryTargetTask.value
+            let focusCapture = await focusCaptureTask.value
+            let capturedDeliveryTarget = Self.deliveryTarget(
+                for: outputMode, capture: focusCapture)
             // An earlier cancel may still be restoring the exact players it
             // paused. Finish that bounded transition before taking a new media
             // snapshot, otherwise its late resume could interrupt this capture.
@@ -227,6 +265,7 @@ final class DictationCoordinator: ObservableObject {
                 localMediaSession = nil
                 self.activeAudioURL = audioURL
                 self.state = .recording(startedAt: startedAt)
+                keepScreenContext = true
                 self.startTick()
                 let config = self.settingsProvider()
                 self.isLivePreviewEnabled = config.dictationShowOverlay && config.dictationLivePreview
@@ -305,6 +344,7 @@ final class DictationCoordinator: ObservableObject {
         transcribeTask = nil
         prewarmTask?.cancel()
         prewarmTask = nil
+        discardScreenContext()
         _ = cancelLivePreview(reset: true)
         if case .recording = state {
             recorder.stop()
@@ -342,15 +382,48 @@ final class DictationCoordinator: ObservableObject {
             try Task.checkCancellation()
             guard generation == session else { return }
 
-            let text = Transcript.normalizedText(
+            let spokenText = Transcript.normalizedText(
                 transcript.segments.map(\.displayText).joined(separator: " "))
-            guard !text.isEmpty else {
+            guard !spokenText.isEmpty else {
                 completeWithMessage("No speech detected.")
                 return
             }
 
-            lastTranscript = text
-            lastEngine = transcript.engine
+            lastTranscript = spokenText
+            state = .composing(startedAt: startedAt)
+            if isLivePreviewEnabled {
+                livePreviewStatus = "Composing"
+            }
+            refreshOverlay()
+
+            let contextTask = screenContextTask
+            screenContextTask = nil
+            let screenContext: DictationScreenContext?
+            if let contextTask {
+                screenContext = await contextTask.value
+            } else {
+                screenContext = nil
+            }
+            try Task.checkCancellation()
+            guard generation == session else { return }
+
+            let engine = try await makeTextEngine()
+            let prompt = DictationComposePrompt.userPrompt(
+                spokenText: spokenText,
+                context: screenContext,
+                profile: DictationComposeProfile(
+                    personalization: config.cotypingPersonalization))
+            let rawOutput = try await engine.generate(
+                system: DictationComposePrompt.system,
+                prompt: prompt,
+                context: [])
+            try Task.checkCancellation()
+            guard generation == session else { return }
+
+            let text = DictationComposePrompt.normalizedOutput(rawOutput)
+            guard !text.isEmpty else { throw DictationComposeError.emptyOutput }
+            lastComposedText = text
+            lastEngine = "\(transcript.engine) → \(engine.displayName)"
             switch await deliver(text, mode: config.dictationOutputMode) {
             case .inserted, .copied:
                 break
@@ -362,13 +435,22 @@ final class DictationCoordinator: ObservableObject {
                 NSPasteboard.general.setString(text, forType: .string)
             }
             complete()
-            lokalbotLog("dictation delivered source=\(source) chars=\(text.count) engine=\(transcript.engine)")
+            lokalbotLog(
+                "dictation composed source=\(source) chars=\(text.count) "
+                    + "asr=\(transcript.engine) llm=\(engine.displayName) "
+                    + "screenChars=\(screenContext?.visibleText.count ?? 0)")
         } catch is CancellationError {
             guard generation == session else { return }
             complete()
         } catch {
             guard generation == session else { return }
-            completeWithMessage("Dictation failed: \(error.localizedDescription)")
+            let prefix: String
+            if case .composing = state {
+                prefix = "Could not compose dictation"
+            } else {
+                prefix = "Dictation failed"
+            }
+            completeWithMessage("\(prefix): \(error.localizedDescription)")
         }
     }
 
@@ -395,6 +477,7 @@ final class DictationCoordinator: ObservableObject {
     }
 
     private func complete() {
+        discardScreenContext()
         state = .idle
         stopTick()
         resetLivePreview()
@@ -402,12 +485,11 @@ final class DictationCoordinator: ObservableObject {
         refreshOverlay()
     }
 
-    nonisolated private static func captureDeliveryTarget(
+    nonisolated private static func deliveryTarget(
         for mode: DictationOutputMode,
-        using executor: DictationFocusSnapshotExecutor
-    ) async -> DictationDeliveryTarget? {
+        capture: DictationFocusCaptureResult
+    ) -> DictationDeliveryTarget? {
         guard mode == .pasteIntoFocusedApp else { return nil }
-        let capture = await executor.capture()
         guard !capture.timedOut, let snapshot = capture.snapshot else { return nil }
         return DictationDeliveryTarget.captured(from: snapshot)
     }
@@ -430,9 +512,15 @@ final class DictationCoordinator: ObservableObject {
         state = .idle
         stopTick()
         deliveryTarget = nil
+        discardScreenContext()
         resetLivePreview()
         refreshOverlay()
         lokalbotLog("dictation start cancelled before capture")
+    }
+
+    private func discardScreenContext() {
+        screenContextTask?.cancel()
+        screenContextTask = nil
     }
 
     private func resumePausedMedia(reason: String) async {

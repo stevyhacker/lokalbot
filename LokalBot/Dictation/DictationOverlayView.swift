@@ -56,7 +56,7 @@ final class DictationOverlayController {
         switch dictation.state {
         case .idle, .recording:
             return CGSize(width: 172, height: 40)
-        case .transcribing:
+        case .transcribing, .composing:
             return CGSize(width: 216, height: 40)
         }
     }
@@ -86,7 +86,7 @@ struct DictationOverlayView: View {
                 EmptyView()
             case .recording:
                 recordingRow
-            case .transcribing:
+            case .transcribing, .composing:
                 workingRow
             }
         }
@@ -103,7 +103,7 @@ struct DictationOverlayView: View {
                         .controlSize(.small)
                 }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(dictation.state.isRecording ? "Dictating" : "Transcribing")
+                    Text(dictation.state.isRecording ? "Dictating" : dictation.state.label)
                         .font(.system(size: 12, weight: .semibold))
                     Text(liveStatusText)
                         .font(.system(size: 11))
@@ -186,7 +186,7 @@ struct DictationOverlayView: View {
                 .controlSize(.small)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 12)
-            Text("Transcribing")
+            Text(dictation.state.label)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -217,7 +217,7 @@ struct DictationOverlayView: View {
         switch dictation.state {
         case .idle, .recording:
             return 172
-        case .transcribing:
+        case .transcribing, .composing:
             return 216
         }
     }
@@ -231,7 +231,7 @@ struct DictationOverlayView: View {
         switch dictation.state {
         case .idle, .recording:
             return 20
-        case .transcribing:
+        case .transcribing, .composing:
             return 18
         }
     }

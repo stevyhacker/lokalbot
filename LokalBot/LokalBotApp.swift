@@ -498,12 +498,21 @@ final class AppState: ObservableObject {
         isInteractive: { [weak self] in self?.interactive ?? false },
         onError: { [weak self] message in self?.lastError = message },
         onMeetingFinished: { [weak self] meeting in self?.meetings.insert(meeting, at: 0) })
-    /// Handy-style press-and-speak dictation. It records mic-only audio, uses
-    /// the selected local transcription model, then inserts the transcript into
-    /// the focused app using the same clipboard-safe path as cotyping.
+    /// Press-and-speak composition. Every dictation is treated as a writing
+    /// request: local ASR captures the instruction, the Main LLM composes against
+    /// ephemeral focused-window context, and focus-safe delivery inserts it.
     private(set) lazy var dictation = DictationCoordinator(
         storageRoot: storage.rootURL,
         settingsProvider: { [store = settingsStore] in store.current },
+        makeTextEngine: { [weak self] in
+            guard let self else {
+                throw TextEngineError.unavailable("LokalBot is shutting down.")
+            }
+            return try await self.pipeline.makeTextEngine(
+                self.settingsStore.current,
+                priority: .interactive,
+                purpose: "dictation compose")
+        },
         canStart: { [weak self] in !(self?.isRecording ?? false) },
         onBusy: { [weak self] in
             self?.lastError = "Stop the current meeting recording before starting dictation."

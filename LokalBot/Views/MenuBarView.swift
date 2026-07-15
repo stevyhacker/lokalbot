@@ -27,7 +27,7 @@ struct MenuBarLabel: View {
         } else if app.dictation.state.isRecording {
             Text("\(Image(systemName: "mic.circle.fill")) \(app.dictation.menuBarLabel)")
                 .monospacedDigit()
-        } else if case .transcribing = app.dictation.state {
+        } else if app.dictation.state.isWorking {
             Image(systemName: "mic.and.signal.meter.fill")
         } else {
             Image(systemName: "waveform.circle")
@@ -154,15 +154,18 @@ struct MenuBarView: View {
         case .idle: return "Not recording"
         case .recording: return "Dictating"
         case .transcribing: return "Transcribing"
+        case .composing: return "Composing"
         }
     }
 
     private var statusSubtitle: String {
         switch app.dictation.state {
         case .recording:
-            return "Release \(DictationShortcut.label) to transcribe"
+            return "Release \(DictationShortcut.label) to compose"
         case .transcribing:
-            return "Preparing text for the focused app"
+            return "Turning speech into a writing request"
+        case .composing:
+            return "Writing for the focused app"
         case .idle:
             break
         }
@@ -186,7 +189,7 @@ struct MenuBarView: View {
             switch app.dictation.state {
             case .idle: Text("00:00")
             case .recording: Text(app.dictation.timerLabel)
-            case .transcribing: Text("...")
+            case .transcribing, .composing: Text("...")
             }
         }
     }
@@ -195,8 +198,8 @@ struct MenuBarView: View {
         if app.isRecording { return "Stop recording" }
         switch app.dictation.state {
         case .idle: return "Record now"
-        case .recording: return "Stop & paste"
-        case .transcribing: return "Cancel dictation"
+        case .recording: return "Stop & compose"
+        case .transcribing, .composing: return "Cancel dictation"
         }
     }
 
@@ -205,7 +208,7 @@ struct MenuBarView: View {
         switch app.dictation.state {
         case .idle: return "record.circle"
         case .recording: return "stop.fill"
-        case .transcribing: return "xmark.circle"
+        case .transcribing, .composing: return "xmark.circle"
         }
     }
 
@@ -326,7 +329,7 @@ struct MenuBarView: View {
         switch app.dictation.state {
         case .idle: "Start"
         case .recording: "Stop"
-        case .transcribing: "Cancel"
+        case .transcribing, .composing: "Cancel"
         }
     }
 
