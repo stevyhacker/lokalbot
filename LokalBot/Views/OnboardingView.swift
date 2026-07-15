@@ -140,7 +140,7 @@ private extension OnboardingView {
                 Text("Welcome to LokalBot")
                     .font(.system(size: 30, weight: .bold, design: .rounded))
 
-                Text("Capture your meetings and day, ask your local library anything, and type with on-device AI — nothing leaves this Mac.")
+                Text("Your private AI memory for work. Remember meetings and the context you choose, recall with evidence, write anywhere, and automate — on-device by default.")
                     .font(.system(size: 15, design: .rounded))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -153,10 +153,10 @@ private extension OnboardingView {
                 .onboardingReveal(2)
 
             HStack(spacing: 8) {
-                OnboardingFeatureChip(systemImage: "lock.fill", label: "On-device")
-                OnboardingFeatureChip(systemImage: "waveform.circle", label: "Capture")
-                OnboardingFeatureChip(systemImage: "sparkle.magnifyingglass", label: "Ask")
-                OnboardingFeatureChip(systemImage: "keyboard", label: "Type")
+                OnboardingFeatureChip(systemImage: "waveform.circle", label: "Remember")
+                OnboardingFeatureChip(systemImage: "sparkle.magnifyingglass", label: "Recall")
+                OnboardingFeatureChip(systemImage: "keyboard", label: "Write")
+                OnboardingFeatureChip(systemImage: "arrow.up.forward.app", label: "Act")
             }
             .onboardingReveal(3)
         }
@@ -169,8 +169,8 @@ private extension OnboardingView {
         VStack(spacing: 24) {
             OnboardingStepHeader(
                 systemImage: "waveform.badge.magnifyingglass",
-                title: "Three pillars: Capture, Ask, Type",
-                subtitle: "Everything LokalBot does hangs off three verbs — all local."
+                title: "Remember. Recall. Write. Act.",
+                subtitle: "One private memory, organized around what you want to do next."
             )
             .onboardingReveal(0)
 
@@ -179,28 +179,37 @@ private extension OnboardingView {
                     number: "1",
                     systemImage: "waveform.circle",
                     tint: Brand.teal,
-                    title: "Capture",
-                    subtitle: "Meetings and your day, recorded, transcribed, and summarized locally."
+                    title: "Remember",
+                    subtitle: "Meetings and the day context you choose, captured and organized locally."
                 )
                 .onboardingReveal(1)
 
                 TimelineCard(
                     number: "2",
                     systemImage: "sparkle.magnifyingglass",
-                    tint: .indigo,
-                    title: "Ask",
-                    subtitle: "One search over everything you captured — press ↵ to ask the local assistant."
+                    tint: Brand.tealBright,
+                    title: "Recall",
+                    subtitle: "Search by words or meaning, ask your library, and open the evidence behind an answer."
                 )
                 .onboardingReveal(2)
 
                 TimelineCard(
                     number: "3",
                     systemImage: "keyboard",
-                    tint: .orange,
-                    title: "Type",
-                    subtitle: "Dictation and Cotyping inline autocomplete, anywhere you type."
+                    tint: Brand.teal,
+                    title: "Write",
+                    subtitle: "Dictation and Cotyping bring local assistance anywhere you type."
                 )
                 .onboardingReveal(3)
+
+                TimelineCard(
+                    number: "4",
+                    systemImage: "arrow.up.forward.app",
+                    tint: Brand.amber,
+                    title: "Act",
+                    subtitle: "Turn remembered work into inspectable drafts, exports, routines, and approved agent sessions."
+                )
+                .onboardingReveal(4)
             }
         }
         .pagePadding()
@@ -234,7 +243,7 @@ private extension OnboardingView {
 
                 PrivacyCard(
                     systemImage: "network.slash",
-                    tint: .purple,
+                    tint: Brand.teal,
                     title: "No account required",
                     subtitle: "Downloads and update checks use the network. Remote model servers are blocked until you explicitly approve sending context to their host."
                 )
@@ -256,7 +265,7 @@ private extension OnboardingView {
         VStack(spacing: 22) {
             OnboardingStepHeader(
                 systemImage: "calendar.day.timeline.left",
-                tint: .indigo,
+                tint: Brand.teal,
                 title: "Remember your day?",
                 subtitle: "The Timeline can log your day locally, and only if you turn it on. Activity, text, and visual context all start off."
             )
@@ -265,7 +274,7 @@ private extension OnboardingView {
             VStack(spacing: 10) {
                 OnboardingOptInCard(
                     systemImage: "macwindow.on.rectangle",
-                    tint: .indigo,
+                    tint: Brand.teal,
                     title: "Track app & window activity",
                     subtitle: "Logs the frontmost app and window title to build the day timeline. Excluded apps (password managers preseeded) show only as \u{201C}Private\u{201D}.",
                     isOn: Binding(
@@ -300,7 +309,7 @@ private extension OnboardingView {
 
                 OnboardingOptInCard(
                     systemImage: "camera.viewfinder",
-                    tint: .purple,
+                    tint: Brand.amber,
                     title: "Add encrypted visual context",
                     subtitle: "Pairs visible text with an encrypted screen capture and uses local OCR only for gaps. Pixels delete after \(app.settings.retentionDays) days by default and need Screen Recording permission.",
                     isOn: Binding(
@@ -460,7 +469,7 @@ private extension OnboardingView {
 
     var relaunchCard: some View {
         HStack(spacing: 12) {
-            IconTile(systemImage: "arrow.triangle.2.circlepath", tint: .orange, size: 34)
+            IconTile(systemImage: "arrow.triangle.2.circlepath", tint: Brand.amber, size: 34)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Relaunch after granting access")
@@ -488,9 +497,10 @@ private struct LokalBotHeroDemo: View {
     @State private var phase = 0
 
     private let phases = [
-        ("Capture", "Google Meet · recording", "Mic + system audio, transcribed locally"),
-        ("Ask", "What did we promise Alex?", "Searches your local meeting library"),
-        ("Type", "Cotyping suggests as you type", "Inline autocomplete, on-device")
+        ("Remember", "Google Meet · recording", "Mic + system audio, organized locally"),
+        ("Recall", "What did we promise Alex?", "Evidence from your private work memory"),
+        ("Write", "Following up on our decision…", "Dictation and autocomplete, on-device"),
+        ("Act", "Weekly work log ready", "A local routine drafted it for review")
     ]
 
     var body: some View {
@@ -506,8 +516,8 @@ private struct LokalBotHeroDemo: View {
 
                 HStack(alignment: .center, spacing: 14) {
                     IconTile(
-                        systemImage: phase == 0 ? "waveform.circle" : phase == 1 ? "sparkle.magnifyingglass" : "keyboard",
-                        tint: phase == 0 ? Brand.teal : phase == 1 ? .indigo : .orange,
+                        systemImage: phaseIcon,
+                        tint: phaseTint,
                         size: 42
                     )
 
@@ -553,6 +563,19 @@ private struct LokalBotHeroDemo: View {
             }
         }
         .accessibilityHidden(true)
+    }
+
+    private var phaseIcon: String {
+        switch phase {
+        case 0: "waveform.circle"
+        case 1: "sparkle.magnifyingglass"
+        case 2: "keyboard"
+        default: "arrow.up.forward.app"
+        }
+    }
+
+    private var phaseTint: Color {
+        phase == 3 ? Brand.amber : Brand.teal
     }
 }
 
@@ -888,9 +911,9 @@ private extension AppPermission {
         case .microphone:
             Brand.teal
         case .screenRecording:
-            .indigo
+            Brand.tealBright
         case .accessibility:
-            .purple
+            Brand.teal
         case .inputMonitoring:
             Brand.amber
         }

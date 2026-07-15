@@ -1,14 +1,12 @@
 import SwiftUI
 
-/// Brand identity, kept in lockstep with the app icon and the marketing site.
-/// The icon is an L-shaped robot on a dark slate plate, drawn in a mint→teal
-/// gradient (`#6ef2dc → #23c4ae`) with a single amber antenna (`#fbbf24`).
-/// These are the only three brand colors — applied as the app accent so the UI
-/// reads as LokalBot, not "default macOS accent", reinforcing the mascot and
-/// the privacy/local-first stance.
+/// Brand identity derived from the app icon and marketing site. The icon is an
+/// L-shaped robot on a dark slate plate, drawn in a mint→teal gradient with a
+/// single amber antenna. The app uses a deeper primary teal than the icon so
+/// tinted text and controls keep sufficient contrast on light materials.
 enum Brand {
-    /// Primary accent (the gradient's mid-point). Used for `.tint`.
-    static let teal = Color(red: 0.137, green: 0.769, blue: 0.682)       // #23c4ae
+    /// Primary app accent. Deep enough for text and white-on-teal controls.
+    static let teal = Color(red: 0.075, green: 0.522, blue: 0.455)       // #138574
     /// Bright end of the gradient — glows, active states, the recording eye.
     static let tealBright = Color(red: 0.431, green: 0.949, blue: 0.863) // #6ef2dc
     /// The single warm note — reserved for the live "recording" indicator,

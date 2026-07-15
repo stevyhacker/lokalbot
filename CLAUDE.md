@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-LokalBot is a 100% on-device macOS AI workspace (meetings recording/transcription/summaries, system-wide inline autocomplete "Cotyping", dictation, day timeline, chat over the meeting library). GPLv3, Apple Silicon, macOS 15+, Swift 5.10.
+LokalBot is a local-first private AI work-memory app for macOS: bot-free meeting capture, transcription and summaries, evidence-backed recall, system-wide inline autocomplete ("Cotyping"), dictation, an opt-in day timeline, local routines, and chat over the user's library. Built-in processing runs on-device by default; disclosed network paths include model/runtime downloads, optional update checks, explicitly approved remote inference origins, and explicitly approved network-capable Agent Mode commands. GPLv3, Apple Silicon, macOS 15+, Swift 5.10.
 
 **The architectural invariant: nothing leaves the Mac.** No accounts, no telemetry, no cloud calls. The only network traffic is model downloads from Hugging Face and the localhost-only llama.cpp server. Clipboard content is read fresh and never persisted. Any change that would send user data off-device is out of scope by design, not by settings.
 

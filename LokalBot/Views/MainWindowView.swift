@@ -131,18 +131,20 @@ struct MainWindowView: View {
 
     private var sidebar: some View {
         List(selection: sidebarSelection) {
-            Section("Library") {
+            Section("Remember") {
                 Label("Timeline", systemImage: "calendar.day.timeline.left")
                     .tag(AppState.NavSection.timeline)
                     .accessibilityIdentifier("sidebar.timeline")
                 Label("Meetings", systemImage: "waveform.circle")
                     .tag(AppState.NavSection.meetings)
                     .accessibilityIdentifier("sidebar.meetings")
+            }
+            Section("Recall") {
                 Label("Ask", systemImage: "sparkle.magnifyingglass")
                     .tag(AppState.NavSection.ask)
                     .accessibilityIdentifier("sidebar.ask")
             }
-            Section("Automation") {
+            Section("Write & act") {
                 Label("Type", systemImage: "keyboard")
                     .tag(AppState.NavSection.type)
                     .accessibilityIdentifier("sidebar.type")
@@ -942,8 +944,8 @@ struct MarkdownText: View {
     }
 }
 
-/// The empty-state card shown when no meeting is selected. Orients across the
-/// three pillars (record → recap → search/ask) and a couple of one-tap setup
+/// The empty-state card shown when no meeting is selected. Orients around the
+/// four product moves (remember → recall → write → act) and one-tap setup
 /// steps, so a brand-new user lands somewhere useful instead of a blank pane.
 /// Dismissed once and remembered via `@AppStorage`.
 struct GettingStartedCard: View {
@@ -968,7 +970,7 @@ struct GettingStartedCard: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Welcome to LokalBot").font(.title2.bold())
                                 .foregroundStyle(.white)
-                            Text("Record meetings, get the recap, and search everything — all on-device.")
+                            Text("Your private AI memory for work — on-device by default.")
                                 .font(.callout).foregroundStyle(.white.opacity(0.65))
                         }
                         Spacer()
@@ -982,14 +984,16 @@ struct GettingStartedCard: View {
                     }
                 }
 
-                HStack(spacing: 12) {
-                    pillar("waveform", "Record",
-                           app.isRecording ? "Recording now…" : "LokalBot auto-detects meetings, or start one here.",
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    pillar("waveform", "Remember",
+                           app.isRecording ? "Recording now…" : "Capture meetings and the day context you choose.",
                            isRecording: app.isRecording)
-                    pillar("doc.text.magnifyingglass", "Recap",
-                           "A transcript and structured summary land the moment a call ends.", isRecording: nil)
-                    pillar("magnifyingglass", "Search & ask",
-                           "Full-text, meaning, and screen-text search — plus chat over your library.", isRecording: nil)
+                    pillar("sparkle.magnifyingglass", "Recall",
+                           "Search, ask, and open the evidence behind an answer.", isRecording: nil)
+                    pillar("keyboard", "Write",
+                           "Dictate or autocomplete text in the app where you're working.", isRecording: nil)
+                    pillar("arrow.up.forward.app", "Act",
+                           "Create inspectable drafts, exports, and approved agent sessions.", isRecording: nil)
                 }
 
                 Text("Get started").font(.headline)
