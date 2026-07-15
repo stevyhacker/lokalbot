@@ -214,8 +214,10 @@ jobs:
 
       - name: Build styled DMG
         run: |
-          python3 -m pip install --quiet 'dmgbuild==1.6.7'
-          python3 Scripts/build_release_dmg.py \
+          dmgbuild_venv="$RUNNER_TEMP/dmgbuild-venv"
+          python3 -m venv "$dmgbuild_venv"
+          "$dmgbuild_venv/bin/python3" -m pip install --quiet 'dmgbuild==1.6.7'
+          "$dmgbuild_venv/bin/python3" Scripts/build_release_dmg.py \
             --app build/export/LokalBot.app \
             --output build/LokalBot.dmg
 
