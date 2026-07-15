@@ -11,10 +11,12 @@ enum PromptTemplates {
     // MARK: - System prompt
 
     static func systemPrompt(for template: NoteTemplate,
-                             summaryLanguage: SummaryLanguage = .matchTranscript) -> String {
+                             summaryLanguage: SummaryLanguage = .matchTranscript,
+                             userSpeakerLabel: String = "Me") -> String {
         var lines: [String] = []
         lines.append(persona(for: template))
         lines.append(rules(for: template))
+        lines.append(userActionabilityRule(userSpeakerLabel: userSpeakerLabel))
         if let directive = languageSystemDirective(summaryLanguage) {
             lines.append(directive)
         }
@@ -42,9 +44,10 @@ enum PromptTemplates {
     /// reinforces inside the body too.
     static func userPrompt(transcript: String,
                            template: NoteTemplate,
-                           summaryLanguage: SummaryLanguage = .matchTranscript) -> String {
+                           summaryLanguage: SummaryLanguage = .matchTranscript,
+                           userSpeakerLabel: String = "Me") -> String {
         var lines: [String] = []
-        lines.append("Transcript follows. \"Me\" is this Mac's user; \"Them\" is the other participants.")
+        lines.append("Transcript follows. The speaker labeled \"\(normalizedSpeakerLabel(userSpeakerLabel))\" is this Mac's user (\"Me\"); every other speaker is another participant.")
         if let rule = languageRule(summaryLanguage) {
             lines.append(rule)
         }
@@ -58,10 +61,14 @@ enum PromptTemplates {
     /// Per-chunk extraction prompt for the map-reduce flow used on long
     /// meetings. The reducer then synthesises a final summary using the
     /// regular `systemPrompt(for:summaryLanguage:)`.
-    static func chunkExtractionSystem(summaryLanguage: SummaryLanguage = .matchTranscript) -> String {
+    static func chunkExtractionSystem(summaryLanguage: SummaryLanguage = .matchTranscript,
+                                      userSpeakerLabel: String = "Me") -> String {
+        let user = normalizedSpeakerLabel(userSpeakerLabel)
         var lines = [
             "Extract the key points, decisions, action items (with [hh:mm:ss] timestamps) and open questions from this part of a meeting transcript as terse Markdown bullets.",
-            "\"Me\" is this Mac's user; \"Them\" is the other participants.",
+            "The speaker labeled \"\(user)\" is this Mac's user (\"Me\"); every other speaker is another participant.",
+            "Perform a separate actionability pass: under ## Action items, use ### Me for commitments made by \"\(user)\", requests or assignments directed to \"\(user)\", and agreed follow-ups \"\(user)\" owns; use ### Others for everyone else's tasks. Write \"None\" under either subgroup when this part contains no qualifying item.",
+            "Do not turn generic advice, optional ideas, or another participant's work into an action for Me.",
             "No preamble.",
         ]
         if let directive = languageSystemDirective(summaryLanguage) {
@@ -120,7 +127,7 @@ enum PromptTemplates {
             ## TL;DR (2-3 sentences), \
             ## Key points (bullets), \
             ## Decisions (bullets, or "None"), \
-            ## Action items (markdown checkboxes "- [ ] owner: task", include the [hh:mm:ss] timestamp where each was mentioned, or "None"), \
+            ## Action items (use the required `### Me` / `### Others` format below), \
             ## Open questions (bullets, or "None"). \
             \(shared)
             """
@@ -131,7 +138,8 @@ enum PromptTemplates {
             ## Concepts (bulleted; one concept per bullet, with sub-bullets for sub-points), \
             ## Definitions (term — definition pairs), \
             ## Examples (concise, faithful to the lecturer's wording), \
-            ## Questions to review (bullets the student should be able to answer after the lecture). \
+            ## Questions to review (bullets the student should be able to answer after the lecture), \
+            ## Action items (use the required `### Me` / `### Others` format below). \
             \(shared)
             """
         case .studyGuide:
@@ -140,7 +148,8 @@ enum PromptTemplates {
             ## TL;DR (2-3 sentences), \
             ## Key concepts (bullets, each with a 1-sentence explanation), \
             ## Flashcards (bullet pairs in the form "Q: … / A: …"), \
-            ## Practice questions (open-ended, no answers — designed to test understanding). \
+            ## Practice questions (open-ended, no answers — designed to test understanding), \
+            ## Action items (use the required `### Me` / `### Others` format below). \
             \(shared)
             """
         case .podcast:
@@ -149,17 +158,46 @@ enum PromptTemplates {
             ## TL;DR (2-3 sentences), \
             ## Topics (bulleted; each topic has a 1-sentence summary), \
             ## Quotes (a few short, accurate quotes attributed to the speaker), \
-            ## Insights (bullets — what a listener should take away). \
+            ## Insights (bullets — what a listener should take away), \
+            ## Action items (use the required `### Me` / `### Others` format below). \
             \(shared)
             """
         case .freeform:
             return """
             Write Markdown notes grouped by topic. Pick whichever section \
             headings best fit the material — each is a `##` heading with a \
-            1-sentence framing, then bullets underneath. Aim for 3-6 sections; \
+            1-sentence framing, then bullets underneath. Aim for 3-6 topical sections, \
+            then finish with ## Action items using the required `### Me` / `### Others` format below; \
             do not invent a "Conclusion" section if the transcript doesn't \
             have one. \(shared)
             """
         }
+    }
+
+    /// Mandatory across every notes template. Separating the user's work from
+    /// everyone else's prevents a generic action-items list from hiding the
+    /// one part of a recap the user most often needs immediately after a call.
+    private static func userActionabilityRule(userSpeakerLabel: String) -> String {
+        let user = normalizedSpeakerLabel(userSpeakerLabel)
+        return """
+        Before finalizing, always perform a separate actionability pass for this Mac's user. \
+        The transcript speaker labeled "\(user)" is the user; call that owner "Me" in the notes. \
+        In `## Action items`, always include both of these subheadings:
+        ### Me
+        Include explicit commitments made by "\(user)", requests or assignments directed to \
+        "\(user)", and agreed follow-ups "\(user)" owns. Use Markdown checkboxes in the form \
+        `- [ ] task — [hh:mm:ss]`; preserve any stated deadline. Write `None` when no supported \
+        action for Me exists.
+        ### Others
+        Include other participants' concrete tasks as `- [ ] owner: task — [hh:mm:ss]`, or \
+        `None`. Never turn generic advice, optional ideas, unresolved possibilities, or work owned \
+        only by someone else into an action for Me. Check the transcript and user-written note \
+        context, but never invent an action.
+        """
+    }
+
+    private static func normalizedSpeakerLabel(_ label: String) -> String {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Me" : trimmed
     }
 }

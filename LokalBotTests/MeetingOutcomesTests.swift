@@ -12,7 +12,7 @@ final class MeetingOutcomesTests: XCTestCase {
 
     func testParseCleanJSON() throws {
         let outcomes = try XCTUnwrap(OutcomesExtractor.parse("""
-            {"action_items": [{"text": "Benchmark failover", "owner": "Ana", "due": "Friday"}],
+            {"action_items": [{"text": "Benchmark failover", "owner": "Ana", "due": "Friday", "for_user": false}],
              "decisions": ["Adopt Redis"],
              "open_questions": ["Who owns the migration?"]}
             """))
@@ -59,6 +59,21 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertTrue(outcomes.isEmpty)
     }
 
+    func testParseMarksNormalizesAndPrioritizesActionsForTheUser() throws {
+        let outcomes = try XCTUnwrap(OutcomesExtractor.parse("""
+            {"action_items": [
+                {"text": "Review the rollout", "owner": "Ana", "due": "", "for_user": false},
+                {"text": "Send the draft", "owner": "Stevan", "due": "Friday", "for_user": true},
+                {"text": "Book the room", "owner": "Stevan", "due": "", "for_user": false}
+             ], "decisions": [], "open_questions": []}
+            """, userSpeakerLabel: "Stevan"))
+
+        XCTAssertEqual(outcomes.actionItems.map(\.text),
+                       ["Send the draft", "Book the room", "Review the rollout"])
+        XCTAssertEqual(outcomes.userActionItems.map(\.owner), ["Me", "Me"])
+        XCTAssertEqual(outcomes.otherActionItems.map(\.owner), ["Ana"])
+    }
+
     // MARK: - Schema and prompt
 
     func testSchemaSerializesAsJSON() throws {
@@ -66,6 +81,20 @@ final class MeetingOutcomesTests: XCTestCase {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertEqual(Set(object["required"] as? [String] ?? []),
                        ["action_items", "decisions", "open_questions"])
+        let properties = try XCTUnwrap(object["properties"] as? [String: Any])
+        let actionItems = try XCTUnwrap(properties["action_items"] as? [String: Any])
+        let item = try XCTUnwrap(actionItems["items"] as? [String: Any])
+        XCTAssertEqual(Set(item["required"] as? [String] ?? []),
+                       ["text", "owner", "due", "for_user"])
+    }
+
+    func testSystemPromptAlwaysChecksWhatTheUserNeedsToDo() {
+        let prompt = OutcomesExtractor.systemPrompt(userSpeakerLabel: "Stevan")
+        XCTAssertTrue(prompt.contains("everything actionable for that user"), prompt)
+        XCTAssertTrue(prompt.contains("commitments made by \"Stevan\""), prompt)
+        XCTAssertTrue(prompt.contains("requests or assignments directed to \"Stevan\""), prompt)
+        XCTAssertTrue(prompt.contains("\"for_user\" to true"), prompt)
+        XCTAssertTrue(prompt.contains("set \"owner\" to \"Me\""), prompt)
     }
 
     func testPromptPrefersTranscriptUntilItOutgrowsTheContext() {
@@ -116,12 +145,17 @@ final class MeetingOutcomesTests: XCTestCase {
             endedAt: Date(timeIntervalSince1970: 1_700_001_800),
             relativePath: "meetings/2026/06/caching")
         var outcomes = MeetingOutcomes()
-        outcomes.actionItems = [.init(text: "Benchmark failover", owner: "Ana", due: "Friday")]
+        outcomes.actionItems = [
+            .init(text: "Send the migration plan", owner: "Me", due: "Thursday"),
+            .init(text: "Benchmark failover", owner: "Ana", due: "Friday"),
+        ]
         outcomes.decisions = ["Adopt Redis"]
         outcomes.openQuestions = ["Who owns the migration?"]
 
         let text = MeetingChatFormat.outcomes([(meeting, outcomes)])
         XCTAssertTrue(text.contains("[11111111] Caching strategy"), text)
+        XCTAssertTrue(text.contains("My action items:\n- Send the migration plan (due: Thursday)"), text)
+        XCTAssertTrue(text.contains("Other action items:"), text)
         XCTAssertTrue(text.contains("- Benchmark failover (owner: Ana, due: Friday)"), text)
         XCTAssertTrue(text.contains("Decisions:\n- Adopt Redis"), text)
         XCTAssertTrue(text.contains("Open questions:\n- Who owns the migration?"), text)

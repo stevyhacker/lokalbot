@@ -448,8 +448,10 @@ final class ProcessingPipeline: ObservableObject {
         // labels can skew NaturalLanguage on short transcripts.
         let language = SummaryLanguage.resolvedForTranscript(config.summaryLanguage,
                                                              transcript: transcript)
+        let userSpeakerLabel = transcript.displaySpeaker(for: "me")
         let systemPrompt = PromptTemplates.systemPrompt(for: config.noteTemplate,
-                                                        summaryLanguage: language)
+                                                        summaryLanguage: language,
+                                                        userSpeakerLabel: userSpeakerLabel)
         // Quick notes the user typed during the meeting ride along as context
         // in the final pass (both paths) — they're the user's own words, so
         // the summary should fold them in rather than rediscover them.
@@ -459,7 +461,9 @@ final class ProcessingPipeline: ObservableObject {
         // Map-reduce long meetings: per-chunk notes, then one synthesis pass.
         if text.count > 24_000 {
             var notes: [String] = []
-            let chunkSystem = PromptTemplates.chunkExtractionSystem(summaryLanguage: language)
+            let chunkSystem = PromptTemplates.chunkExtractionSystem(
+                summaryLanguage: language,
+                userSpeakerLabel: userSpeakerLabel)
             for (index, chunk) in chunked(transcript).enumerated() {
                 let note = try await engine.generate(
                     system: chunkSystem,
@@ -485,7 +489,8 @@ final class ProcessingPipeline: ObservableObject {
                 system: systemPrompt,
                 prompt: PromptTemplates.userPrompt(transcript: text,
                                                    template: config.noteTemplate,
-                                                   summaryLanguage: language),
+                                                   summaryLanguage: language,
+                                                   userSpeakerLabel: userSpeakerLabel),
                 context: noteContext)
         }
 
@@ -513,14 +518,16 @@ final class ProcessingPipeline: ObservableObject {
         do {
             try Task.checkCancellation()
             let engine = try await makeTextEngine(config)
+            let userSpeakerLabel = transcript.displaySpeaker(for: "me")
             let output = try await engine.generate(
-                system: OutcomesExtractor.systemPrompt,
+                system: OutcomesExtractor.systemPrompt(userSpeakerLabel: userSpeakerLabel),
                 prompt: OutcomesExtractor.prompt(transcriptMarkdown: transcript.markdown,
                                                  summary: summary),
                 context: MeetingNotes.promptContext(in: folder),
                 schema: OutcomesExtractor.schema)
             try Task.checkCancellation()
-            guard let outcomes = OutcomesExtractor.parse(output) else {
+            guard let outcomes = OutcomesExtractor.parse(
+                output, userSpeakerLabel: userSpeakerLabel) else {
                 lokalbotLog("outcomes extraction unparseable, skipping")
                 return
             }

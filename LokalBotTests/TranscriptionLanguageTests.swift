@@ -56,3 +56,35 @@ final class SummaryLanguageTests: XCTestCase {
         XCTAssertEqual(SummaryLanguage.resolvedForTranscript(.pt, transcript: transcript), .pt)
     }
 }
+
+final class SummaryPromptActionabilityTests: XCTestCase {
+    func testEveryNotesTemplateRequiresAnExplicitUserActionabilityPass() {
+        for template in NoteTemplate.allCases {
+            let prompt = PromptTemplates.systemPrompt(
+                for: template,
+                userSpeakerLabel: "Stevan")
+
+            XCTAssertTrue(prompt.contains("## Action items"), template.rawValue)
+            XCTAssertTrue(prompt.contains("### Me"), template.rawValue)
+            XCTAssertTrue(prompt.contains("### Others"), template.rawValue)
+            XCTAssertTrue(prompt.contains("commitments made by \"Stevan\""), template.rawValue)
+            XCTAssertTrue(prompt.contains("requests or assignments directed to"), template.rawValue)
+            XCTAssertTrue(prompt.contains("Write `None`"), template.rawValue)
+            XCTAssertTrue(prompt.contains("generic advice"), template.rawValue)
+        }
+    }
+
+    func testShortAndLongMeetingPromptsIdentifyARenamedUserSpeaker() {
+        let short = PromptTemplates.userPrompt(
+            transcript: "**[00:00:01] Stevan:** I'll send the draft.",
+            template: .meeting,
+            userSpeakerLabel: "Stevan")
+        let chunk = PromptTemplates.chunkExtractionSystem(userSpeakerLabel: "Stevan")
+
+        XCTAssertTrue(short.contains("speaker labeled \"Stevan\" is this Mac's user"), short)
+        XCTAssertTrue(chunk.contains("speaker labeled \"Stevan\" is this Mac's user"), chunk)
+        XCTAssertTrue(chunk.contains("requests or assignments directed to \"Stevan\""), chunk)
+        XCTAssertTrue(chunk.contains("### Me"), chunk)
+        XCTAssertTrue(chunk.contains("### Others"), chunk)
+    }
+}

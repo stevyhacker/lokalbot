@@ -18,6 +18,13 @@ struct MeetingOutcomes: Codable, Equatable {
             self.owner = owner
             self.due = due
         }
+
+        var isForUser: Bool {
+            guard let owner = owner?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+                return false
+            }
+            return owner.caseInsensitiveCompare("Me") == .orderedSame
+        }
     }
 
     var actionItems: [ActionItem] = []
@@ -25,6 +32,8 @@ struct MeetingOutcomes: Codable, Equatable {
     var openQuestions: [String] = []
 
     var isEmpty: Bool { actionItems.isEmpty && decisions.isEmpty && openQuestions.isEmpty }
+    var userActionItems: [ActionItem] { actionItems.filter(\.isForUser) }
+    var otherActionItems: [ActionItem] { actionItems.filter { !$0.isForUser } }
 
     static let fileName = "outcomes.json"
 

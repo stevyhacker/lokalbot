@@ -39,13 +39,13 @@ enum NoteTemplate: String, Codable, CaseIterable, Identifiable, Sendable {
         case .meeting:
             return "TL;DR · Key points · Decisions · Action items · Open questions"
         case .lecture:
-            return "TL;DR · Concepts · Definitions · Examples · Questions to review"
+            return "TL;DR · Concepts · Definitions · Examples · Questions to review · Action items"
         case .studyGuide:
-            return "TL;DR · Key concepts · Flashcards · Practice questions"
+            return "TL;DR · Key concepts · Flashcards · Practice questions · Action items"
         case .podcast:
-            return "TL;DR · Topics · Quotes · Insights"
+            return "TL;DR · Topics · Quotes · Insights · Action items"
         case .freeform:
-            return "Topical bullets — the model decides the section headings"
+            return "Topical bullets · Action items"
         }
     }
 }

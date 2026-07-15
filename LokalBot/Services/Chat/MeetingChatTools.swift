@@ -65,9 +65,18 @@ enum MeetingChatFormat {
         for entry in entries {
             lines.append("# [\(SessionLookup.shortID(entry.meeting.id))] \(entry.meeting.title)"
                 + " — \(dateLabel(entry.meeting.startedAt))")
-            if !entry.outcomes.actionItems.isEmpty {
-                lines.append("Action items:")
-                for item in entry.outcomes.actionItems {
+            if !entry.outcomes.userActionItems.isEmpty {
+                lines.append("My action items:")
+                for item in entry.outcomes.userActionItems {
+                    var notes: [String] = []
+                    if let due = item.due { notes.append("due: \(due)") }
+                    lines.append("- \(item.text)"
+                        + (notes.isEmpty ? "" : " (\(notes.joined(separator: ", ")))"))
+                }
+            }
+            if !entry.outcomes.otherActionItems.isEmpty {
+                lines.append("Other action items:")
+                for item in entry.outcomes.otherActionItems {
                     var notes: [String] = []
                     if let owner = item.owner { notes.append("owner: \(owner)") }
                     if let due = item.due { notes.append("due: \(due)") }

@@ -763,9 +763,16 @@ private struct MeetingOutcomesSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if !outcomes.actionItems.isEmpty {
-                group("Action items", icon: "checklist") {
-                    ForEach(Array(outcomes.actionItems.enumerated()), id: \.offset) { _, item in
+            if !outcomes.userActionItems.isEmpty {
+                group("My action items", icon: "person.crop.circle.badge.checkmark") {
+                    ForEach(Array(outcomes.userActionItems.enumerated()), id: \.offset) { _, item in
+                        row(text: item.text, detail: detail(for: item, includeOwner: false))
+                    }
+                }
+            }
+            if !outcomes.otherActionItems.isEmpty {
+                group("Other action items", icon: "checklist") {
+                    ForEach(Array(outcomes.otherActionItems.enumerated()), id: \.offset) { _, item in
                         row(text: item.text, detail: detail(for: item))
                     }
                 }
@@ -787,8 +794,10 @@ private struct MeetingOutcomesSection: View {
         .accessibilityIdentifier("detail.outcomes")
     }
 
-    private func detail(for item: MeetingOutcomes.ActionItem) -> String? {
-        let notes = [item.owner, item.due.map { "due \($0)" }].compactMap { $0 }
+    private func detail(for item: MeetingOutcomes.ActionItem,
+                        includeOwner: Bool = true) -> String? {
+        let owner = includeOwner ? item.owner : nil
+        let notes = [owner, item.due.map { "due \($0)" }].compactMap { $0 }
         return notes.isEmpty ? nil : notes.joined(separator: " · ")
     }
 
