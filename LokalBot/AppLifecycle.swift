@@ -82,10 +82,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Reopening the app (Finder/Launchpad relaunch, Dock click) with nothing on
-    /// screen brings the main window back instead of being a silent no-op.
+    /// Reopening the app (Finder/Launchpad relaunch, Dock click) brings the main
+    /// window back: nothing on screen → open it; visible but buried behind other
+    /// apps' windows → raise it. Returning true keeps AppKit's default
+    /// un-miniaturize behavior.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        if !hasVisibleWindows { WindowAccess.shared.open("main") }
+        if !hasVisibleWindows {
+            WindowAccess.shared.open("main")
+        } else if let main = WindowAccess.visibleMainWindow(in: sender) {
+            main.makeKeyAndOrderFront(nil)
+        }
         return true
     }
 
@@ -282,9 +288,8 @@ final class WindowAccess {
             return
         }
         application.setActivationPolicy(.regular)
-        application.activate(ignoringOtherApps: true)
-        if id == "main",
-           let existing = application.windows.first(where: { $0.isVisible && $0.title == "LokalBot" }) {
+        application.activate()
+        if id == "main", let existing = Self.visibleMainWindow(in: application) {
             existing.makeKeyAndOrderFront(nil)
             return
         }
@@ -293,5 +298,12 @@ final class WindowAccess {
         } else {
             pending.append(id)
         }
+    }
+
+    /// The visible main SwiftUI window, matched by its scene identifier —
+    /// `navigationTitle` retitles the window per tab (e.g. "Timeline"), so
+    /// matching on the title silently stops finding it.
+    static func visibleMainWindow(in application: NSApplication) -> NSWindow? {
+        application.windows.first { $0.isVisible && $0.identifier?.rawValue == "main" }
     }
 }
