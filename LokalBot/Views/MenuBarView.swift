@@ -30,8 +30,59 @@ struct MenuBarLabel: View {
         } else if app.dictation.state.isWorking {
             Image(systemName: "mic.and.signal.meter.fill")
         } else {
-            Image(systemName: "waveform.circle")
+            Image(nsImage: MenuBarIcon.image)
         }
+    }
+}
+
+/// The LokalBot brand mark for the status item: a minimal robot head whose
+/// face is a three-bar waveform — "bot" and "listens locally" in one glyph.
+/// Drawn in code as a template image so it stays crisp at any backing scale
+/// and picks up the menu bar's light/dark/highlight tinting for free.
+enum MenuBarIcon {
+    static let image: NSImage = {
+        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in
+            draw()
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "LokalBot"
+        return image
+    }()
+
+    private static func draw() {
+        NSColor.black.setStroke()
+        NSColor.black.setFill()
+
+        // Head
+        let head = NSBezierPath(
+            roundedRect: NSRect(x: 2.5, y: 1.5, width: 13, height: 10.5),
+            xRadius: 3, yRadius: 3
+        )
+        head.lineWidth = 1.5
+        head.stroke()
+
+        // Antenna — stem long enough that the knob clearly separates from the head
+        let stem = NSBezierPath()
+        stem.lineWidth = 1.5
+        stem.lineCapStyle = .round
+        stem.move(to: NSPoint(x: 9, y: 12))
+        stem.line(to: NSPoint(x: 9, y: 13.9))
+        stem.stroke()
+        NSBezierPath(ovalIn: NSRect(x: 9 - 1.2, y: 15.4 - 1.2, width: 2.4, height: 2.4)).fill()
+
+        // Waveform face — bars pixel-aligned so 1x rasterization keeps the gaps
+        func bar(_ x: CGFloat, _ y0: CGFloat, _ y1: CGFloat) {
+            let path = NSBezierPath()
+            path.lineWidth = 1.5
+            path.lineCapStyle = .round
+            path.move(to: NSPoint(x: x, y: y0))
+            path.line(to: NSPoint(x: x, y: y1))
+            path.stroke()
+        }
+        bar(5.5, 5.2, 7.6)
+        bar(9.0, 3.8, 9.3)
+        bar(12.5, 5.2, 7.6)
     }
 }
 
