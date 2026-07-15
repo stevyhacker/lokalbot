@@ -88,10 +88,42 @@ final class ScreenContextEventMonitor {
     private var globalMonitor: Any?
     private var pasteboardTimer: Timer?
     private var eventCoalescer: ScreenContextEventCoalescer?
+    private var launchObserver: (any NSObjectProtocol)?
     private var lastPasteboardChangeCount = NSPasteboard.general.changeCount
 
     func start() {
         guard globalMonitor == nil else { return }
+        // AppState (and therefore this monitor) is built while AppKit is still
+        // inside `finishLaunching`. Registering a global event monitor that
+        // early corrupts this app's own window-server event subscription: its
+        // windows keep rendering and hit-testing, but never receive another
+        // mouse event. Defer installation until the run loop is actually
+        // pumping events (`isRunning` flips after `finishLaunching` returns).
+        if NSApp?.isRunning == true {
+            install()
+        } else if launchObserver == nil {
+            launchObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didFinishLaunchingNotification,
+                object: nil,
+                queue: .main
+            ) { _ in
+                // One more turn so `run()` has entered its event loop, then
+                // install unconditionally — the notification never fires again.
+                DispatchQueue.main.async {
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        if let token = self.launchObserver {
+                            NotificationCenter.default.removeObserver(token)
+                            self.launchObserver = nil
+                        }
+                        if self.globalMonitor == nil { self.install() }
+                    }
+                }
+            }
+        }
+    }
+
+    private func install() {
         let coalescer = ScreenContextEventCoalescer { [weak self] trigger in
             Task { @MainActor [weak self] in self?.onTrigger?(trigger) }
         }
@@ -119,6 +151,10 @@ final class ScreenContextEventMonitor {
     }
 
     func stop() {
+        if let launchObserver {
+            NotificationCenter.default.removeObserver(launchObserver)
+            self.launchObserver = nil
+        }
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
         globalMonitor = nil
         pasteboardTimer?.invalidate()
