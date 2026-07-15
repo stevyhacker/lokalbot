@@ -21,7 +21,7 @@ struct ScreenMomentDetailView: View {
                 header
                 if screenshot.hasPixels {
                     ScreenThumbnailView(
-                        snapshotID: screenshot.id,
+                        screenshot: screenshot,
                         height: 320,
                         contentMode: .fit,
                         cornerRadius: Brand.Radius.panel)

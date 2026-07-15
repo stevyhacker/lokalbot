@@ -1,5 +1,6 @@
 import CoreGraphics
 import CryptoKit
+import ImageIO
 import XCTest
 @testable import LokalBot
 
@@ -230,14 +231,44 @@ final class ScreenshotProcessingWorkerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    func testThumbnailDecoderBoundsPixelsAndDecodedMemory() throws {
+        let source = try XCTUnwrap(Self.testImage(width: 800, height: 400))
+        let encoded = try Self.pngData(from: source)
+
+        let thumbnail = try XCTUnwrap(ScreenshotService.downsampledThumbnail(
+            data: encoded,
+            maxPixelSize: 160))
+
+        XCTAssertEqual(thumbnail.image.width, 160)
+        XCTAssertEqual(thumbnail.image.height, 80)
+        XCTAssertLessThan(thumbnail.byteCost, source.bytesPerRow * source.height)
+    }
+
     private static func onePixelImage() -> CGImage? {
+        testImage(width: 1, height: 1)
+    }
+
+    private static func testImage(width: Int, height: Int) -> CGImage? {
         guard let context = CGContext(
-            data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         context.setFillColor(CGColor(red: 0.1, green: 0.2, blue: 0.3, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         return context.makeImage()
+    }
+
+    private static func pngData(from image: CGImage) throws -> Data {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data, "public.png" as CFString, 1, nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        return data as Data
     }
 
     private static func decrypt(_ url: URL, key: SymmetricKey) throws -> Data {

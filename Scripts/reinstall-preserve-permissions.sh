@@ -18,6 +18,7 @@ SCHEME="LokalBot"
 CONFIGURATION="${CONFIGURATION:-Debug}"
 EXPECTED_BUNDLE_ID="${EXPECTED_BUNDLE_ID:-me.dotenv.LokalBot}"
 EXPECTED_TEAM_ID="${EXPECTED_TEAM_ID:-3N8B4562P4}"
+SIGNING_IDENTITY="${SIGNING_IDENTITY:-Apple Development}"
 INSTALLED_APP="${LOKALBOT_APP:-/Applications/LokalBot.app}"
 
 TMP_ROOT="/private/tmp"
@@ -37,6 +38,7 @@ Environment:
   LOKALBOT_APP         Installed app path. Default: /Applications/LokalBot.app
   EXPECTED_BUNDLE_ID   Expected bundle id. Default: me.dotenv.LokalBot
   EXPECTED_TEAM_ID     Expected Apple Team ID. Default: 3N8B4562P4
+  SIGNING_IDENTITY     Xcode signing selector. Default: Apple Development
 EOF
 }
 
@@ -174,6 +176,8 @@ if ! xcodebuild \
   -clonedSourcePackagesDirPath "$SPM_CACHE" \
   -destination 'platform=macOS' \
   -allowProvisioningUpdates \
+  DEVELOPMENT_TEAM="$EXPECTED_TEAM_ID" \
+  CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
   -quiet \
   build >"$BUILD_LOG" 2>&1; then
   /usr/bin/tail -80 "$BUILD_LOG" >&2 || true

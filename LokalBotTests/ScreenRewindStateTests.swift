@@ -2,6 +2,13 @@ import XCTest
 @testable import LokalBot
 
 final class ScreenRewindStateTests: XCTestCase {
+    func testThumbnailSizingUsesStableBoundedBuckets() {
+        XCTAssertEqual(ScreenThumbnailSizing.maxPixelSize(forHeight: 42), 256)
+        XCTAssertEqual(ScreenThumbnailSizing.maxPixelSize(forHeight: 84), 512)
+        XCTAssertEqual(ScreenThumbnailSizing.maxPixelSize(forHeight: 150), 1_024)
+        XCTAssertEqual(ScreenThumbnailSizing.maxPixelSize(forHeight: 320), 1_600)
+    }
+
     func testAdjacentNearDuplicatesCollapseToNewestRepresentative() throws {
         let base = Date(timeIntervalSince1970: 1_000)
         let shots = [

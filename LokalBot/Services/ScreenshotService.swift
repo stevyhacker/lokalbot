@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import ImageIO
 import ScreenCaptureKit
 import Vision
 import CryptoKit
@@ -30,6 +31,17 @@ enum ScreenCaptureTrigger: String {
     case interval
     /// Explicit "Capture now" from the menu bar.
     case manual
+}
+
+/// A fully decoded, size-bounded image that can safely cross back from the
+/// detached thumbnail worker. CGImage is immutable, but older SDK annotations
+/// do not consistently mark it Sendable.
+struct ScreenThumbnailImage: @unchecked Sendable {
+    let image: CGImage
+
+    var byteCost: Int {
+        max(1, image.bytesPerRow * image.height)
+    }
 }
 
 /// Pure rate-limiting policy for event-driven capture. Event triggers respect
@@ -642,6 +654,14 @@ final class ScreenshotService: ObservableObject {
         guard let frontmostApp = NSWorkspace.shared.frontmostApplication,
               let frontmost = frontmostApp.localizedName,
               frontmost != "loginwindow" else { lokalbotLog("context skip: lock screen"); return }
+        guard !Self.shouldSkipAutomaticSelfCapture(
+            trigger: trigger,
+            frontmostProcessID: frontmostApp.processIdentifier,
+            ownProcessID: ProcessInfo.processInfo.processIdentifier
+        ) else {
+            lokalbotLog("context skip: LokalBot frontmost")
+            return
+        }
         guard !ScreenshotCaptureLayout.isExcluded(
             appName: frontmost, excludedApps: config.excludedAppList)
         else { lokalbotLog("context skip: excluded app (\(frontmost))"); return }
@@ -914,25 +934,62 @@ final class ScreenshotService: ObservableObject {
         }
     }
 
-    /// Decrypt a stored screenshot to its raw image bytes. `nonisolated` and
-    /// pure given the key, so callers can run the file read + AES open off the
-    /// main actor; the key is read on the caller's actor (cheap, cached) and
-    /// passed in. `Data` is `Sendable`, so the result crosses actors cleanly —
-    /// the (non-`Sendable`) `NSImage` is built on the consuming actor.
+    /// Decrypt a stored screenshot to raw image bytes. `nonisolated` and pure
+    /// given the key, so the thumbnail worker can run file I/O and AES opening
+    /// off the main actor before immediately downsampling the result.
     nonisolated static func decryptedData(path: String, key: SymmetricKey) -> Data? {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let box = try? AES.GCM.SealedBox(combined: data) else { return nil }
         return try? AES.GCM.open(box, using: key)
     }
 
-    /// Resolve a stable snapshot citation and decrypt it away from the main
-    /// actor. Missing/pruned rows intentionally produce nil.
-    func decryptedData(for snapshotID: Int64) async -> Data? {
-        guard let screenshot = store.screenshot(id: snapshotID), !screenshot.path.isEmpty,
+    /// Decode only the pixels needed by the destination view. The immediate
+    /// cache option forces HEIF/PNG decoding to finish on the detached worker
+    /// instead of being deferred until SwiftUI draws on the main actor.
+    nonisolated static func downsampledThumbnail(
+        data: Data,
+        maxPixelSize: Int
+    ) -> ScreenThumbnailImage? {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else {
+            return nil
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(1, maxPixelSize),
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(
+            source, 0, options as CFDictionary
+        ) else { return nil }
+        return ScreenThumbnailImage(image: image)
+    }
+
+    nonisolated static func decryptedThumbnail(
+        path: String,
+        key: SymmetricKey,
+        maxPixelSize: Int
+    ) -> ScreenThumbnailImage? {
+        guard let data = decryptedData(path: path, key: key) else { return nil }
+        return downsampledThumbnail(data: data, maxPixelSize: maxPixelSize)
+    }
+
+    /// Callers that already hold screenshot metadata avoid another synchronous
+    /// SQLite lookup. File I/O, AES opening, and image decoding all stay off the
+    /// main actor and only the bounded CGImage returns to SwiftUI.
+    func decryptedThumbnail(
+        for screenshot: ActivityStore.Screenshot,
+        maxPixelSize: Int
+    ) async -> ScreenThumbnailImage? {
+        guard screenshot.hasPixels,
               let key = try? Self.encryptionKey() else { return nil }
         let path = screenshot.path
         return await Task.detached(priority: .userInitiated) {
-            Self.decryptedData(path: path, key: key)
+            Self.decryptedThumbnail(
+                path: path,
+                key: key,
+                maxPixelSize: maxPixelSize)
         }.value
     }
 
@@ -1014,6 +1071,14 @@ final class ScreenshotService: ObservableObject {
         visualContextEnabled: Bool = false
     ) -> Bool {
         !recordingActive || trigger == .manual || visualContextEnabled
+    }
+
+    nonisolated static func shouldSkipAutomaticSelfCapture(
+        trigger: ScreenCaptureTrigger,
+        frontmostProcessID: pid_t,
+        ownProcessID: pid_t
+    ) -> Bool {
+        trigger != .manual && frontmostProcessID == ownProcessID
     }
 
     nonisolated static func captureFileURL(

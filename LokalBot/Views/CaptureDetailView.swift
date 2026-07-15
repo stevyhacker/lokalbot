@@ -204,7 +204,7 @@ struct CaptureDetailView: View {
                 } else {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 8)], spacing: 8) {
                         ForEach(scoped) { shot in
-                            ScreenThumbnailView(snapshotID: shot.id)
+                            ScreenThumbnailView(screenshot: shot)
                                 .help("\(shot.app) — \(shot.ts.formatted(date: .omitted, time: .shortened))")
                         }
                     }

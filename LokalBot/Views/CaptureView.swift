@@ -12,6 +12,7 @@ final class CaptureModel: ObservableObject {
     @Published var day = Date()
     @Published var blocks: [ActivityBlock] = []
     @Published var shots: [ActivityStore.Screenshot] = []
+    @Published private(set) var rewindFrames: [ScreenRewindFrame] = []
     @Published var selection: ActivityBlock.ID?
     @Published var selectedSnapshotID: Int64?
     @Published var digest: String?
@@ -35,7 +36,9 @@ final class CaptureModel: ObservableObject {
         // The Timeline is the canonical home for both visual captures and
         // accessibility-only moments. Other callers keep the historical
         // pixels-present default unless they opt in explicitly.
-        shots = app.activityStore.screenshots(on: day, includingTextOnly: true)
+        let reloadedShots = app.activityStore.screenshots(on: day, includingTextOnly: true)
+        shots = reloadedShots
+        rewindFrames = ScreenRewindSequence.frames(from: reloadedShots)
         digest = try? String(contentsOf: journalURL(app: app), encoding: .utf8)
         digestError = nil
         selection = nil
@@ -176,9 +179,9 @@ struct CaptureDayView: View {
                     .frame(maxHeight: .infinity)
             } else {
                 summaryRail(meetings: meetings)
-                if !model.shots.isEmpty {
+                if !model.rewindFrames.isEmpty {
                     ScreenRewindView(
-                        screenshots: model.shots,
+                        frames: model.rewindFrames,
                         selectedSnapshotID: screenSelection,
                         onReload: { model.reload(app: app) })
                 }

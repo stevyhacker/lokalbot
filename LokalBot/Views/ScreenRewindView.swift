@@ -8,7 +8,7 @@ struct ScreenRewindView: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    let screenshots: [ActivityStore.Screenshot]
+    let frames: [ScreenRewindFrame]
     @Binding var selectedSnapshotID: Int64?
     let onReload: () -> Void
 
@@ -21,10 +21,6 @@ struct ScreenRewindView: View {
     @State private var confirmingRangeDeletion = false
 
     private let playbackTimer = Timer.publish(every: 1.2, on: .main, in: .common).autoconnect()
-
-    private var frames: [ScreenRewindFrame] {
-        ScreenRewindSequence.frames(from: screenshots)
-    }
 
     private var currentFrame: ScreenRewindFrame? {
         guard !frames.isEmpty else { return nil }
@@ -56,7 +52,7 @@ struct ScreenRewindView: View {
                     .strokeBorder(.quaternary.opacity(0.8))
             }
             .onAppear(perform: synchronizeSelection)
-            .onChange(of: screenshots.map(\.id)) { synchronizeSelection() }
+            .onChange(of: frames) { synchronizeSelection() }
             .onChange(of: selectedSnapshotID) { synchronizeSelection() }
             .onReceive(playbackTimer) { _ in advancePlayback() }
             .onDisappear { isPlaying = false }
@@ -115,7 +111,7 @@ struct ScreenRewindView: View {
                 select(frame)
             } label: {
                 ZStack(alignment: .bottomLeading) {
-                    ScreenThumbnailView(snapshotID: frame.screenshot.id, height: 150)
+                    ScreenThumbnailView(screenshot: frame.screenshot, height: 150)
                     LinearGradient(colors: [.clear, .black.opacity(0.72)],
                                    startPoint: .center, endPoint: .bottom)
                     HStack(alignment: .bottom, spacing: 6) {
@@ -181,9 +177,9 @@ struct ScreenRewindView: View {
     private var filmstrip: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+                LazyHStack(spacing: 6) {
                     ForEach(frames) { frame in
-                        ScreenThumbnailView(snapshotID: frame.screenshot.id, height: 42)
+                        ScreenThumbnailView(screenshot: frame.screenshot, height: 42)
                             .frame(width: 68)
                             .overlay {
                                 RoundedRectangle(cornerRadius: Brand.Radius.control)

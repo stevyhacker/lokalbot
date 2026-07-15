@@ -480,6 +480,29 @@ final class ActivityStoreTests: XCTestCase {
             visualContextEnabled: true))
     }
 
+    func testAutomaticScreenCaptureSkipsTheLokalBotProcessButManualCaptureDoesNot() {
+        let ownProcessID: pid_t = 42
+        let automaticTriggers: [ScreenCaptureTrigger] = [
+            .appSwitch, .windowChange, .click, .typingPause,
+            .scrollSettled, .clipboardChange, .interval,
+        ]
+
+        for trigger in automaticTriggers {
+            XCTAssertTrue(ScreenshotService.shouldSkipAutomaticSelfCapture(
+                trigger: trigger,
+                frontmostProcessID: ownProcessID,
+                ownProcessID: ownProcessID))
+        }
+        XCTAssertFalse(ScreenshotService.shouldSkipAutomaticSelfCapture(
+            trigger: .manual,
+            frontmostProcessID: ownProcessID,
+            ownProcessID: ownProcessID))
+        XCTAssertFalse(ScreenshotService.shouldSkipAutomaticSelfCapture(
+            trigger: .click,
+            frontmostProcessID: 99,
+            ownProcessID: ownProcessID))
+    }
+
     func testCaptureLayoutUsesFocusedWindowDisplayAndExcludesEveryPrivateWindowOnIt() throws {
         let displays = [
             ScreenshotCaptureLayout.Display(
