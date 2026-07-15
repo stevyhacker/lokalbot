@@ -225,17 +225,12 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     private func transcribeWav(_ wav: URL) async throws -> String {
         guard let server else { throw EngineError.serverUnavailable }
         let boundary = "lokalbot-\(UUID().uuidString)"
-        var request = URLRequest(url: server.baseURL.appendingPathComponent("audio/transcriptions"))
-        request.httpMethod = "POST"
-        request.timeoutInterval = 600
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try Self.multipartBody(
+        let authenticationToken = await server.authenticationToken()
+        let request = try Self.makeTranscriptionRequest(
+            serverBaseURL: server.baseURL,
+            authenticationToken: authenticationToken,
             boundary: boundary,
-            fields: [
-                "model": Self.modelFileName,
-                "prompt": Self.prompt,
-            ],
-            fileURL: wav)
+            wav: wav)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw EngineError.transcriptionFailed("no response") }
@@ -248,6 +243,28 @@ actor GraniteSpeechEngine: TranscriptionEngine {
             throw EngineError.transcriptionFailed("invalid response")
         }
         return text
+    }
+
+    nonisolated static func makeTranscriptionRequest(
+        serverBaseURL: URL,
+        authenticationToken: String,
+        boundary: String,
+        wav: URL
+    ) throws -> URLRequest {
+        var request = URLRequest(
+            url: serverBaseURL.appendingPathComponent("audio/transcriptions"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 600
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        LocalLlamaServerAuthentication.apply(to: &request, token: authenticationToken)
+        request.httpBody = try Self.multipartBody(
+            boundary: boundary,
+            fields: [
+                "model": Self.modelFileName,
+                "prompt": Self.prompt,
+            ],
+            fileURL: wav)
+        return request
     }
 
     private nonisolated static func multipartBody(boundary: String,

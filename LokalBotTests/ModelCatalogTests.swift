@@ -78,6 +78,25 @@ final class ModelCatalogTests: XCTestCase {
             "/tmp/lokalbot/granite-speech/4.1-2b/mmproj-model-f16.gguf")
     }
 
+    func testGraniteSpeechRequestAuthenticatesToPrivateServer() throws {
+        let wav = FileManager.default.temporaryDirectory
+            .appendingPathComponent("granite-auth-\(UUID().uuidString).wav")
+        try Data([0x52, 0x49, 0x46, 0x46]).write(to: wav)
+        defer { try? FileManager.default.removeItem(at: wav) }
+
+        let request = try GraniteSpeechEngine.makeTranscriptionRequest(
+            serverBaseURL: URL(string: "http://127.0.0.1:17875/v1")!,
+            authenticationToken: "granite-secret",
+            boundary: "granite-test-boundary",
+            wav: wav)
+
+        XCTAssertEqual(request.url?.absoluteString,
+                       "http://127.0.0.1:17875/v1/audio/transcriptions")
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"),
+                       "Bearer granite-secret")
+    }
+
     func testLlamaServerParsesServedModelNames() {
         let payload = """
         {
