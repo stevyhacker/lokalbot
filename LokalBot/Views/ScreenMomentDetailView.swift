@@ -70,11 +70,13 @@ struct ScreenMomentDetailView: View {
             Button {
                 onClear()
             } label: {
-                Image(systemName: "xmark.circle.fill")
+                Label("Back to day overview", systemImage: "arrow.left")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("Close screen detail")
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .fixedSize()
+            .help("Return to the full-day overview and digest")
+            .accessibilityIdentifier("timeline.screenDetail.backToDayOverview")
         }
     }
 
