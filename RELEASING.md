@@ -217,11 +217,15 @@ xcrun stapler staple build/export/LokalBot.app
 ### 4. Build the styled DMG
 
 ```sh
-pip3 install dmgbuild   # once per machine; pip3 install "dmgbuild[badge_icons]" for a badged volume icon
-python3 Scripts/build_release_dmg.py \
+python3 -m venv /tmp/LokalBot-dmg-venv
+/tmp/LokalBot-dmg-venv/bin/python3 -m pip install 'dmgbuild==1.6.7'
+/tmp/LokalBot-dmg-venv/bin/python3 Scripts/build_release_dmg.py \
   --app build/export/LokalBot.app \
   --output build/LokalBot.dmg
 ```
+
+Keep `dmgbuild` inside the venv. Homebrew Python is PEP 668-managed and rejects
+system-level `pip install` calls on current macOS runners.
 
 This stages `LokalBot.app` beside an `Applications` shortcut, locks the
 drag-to-install icon layout, and reuses the bundle's `AppIcon.icns` as the
