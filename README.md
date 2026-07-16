@@ -109,6 +109,20 @@ Power users: bring your own model (any GGUF, Ollama, an OpenAI-compatible server
 2. **It transcribes and summarizes.** When the call ends, the selected engines turn the audio into a labeled transcript and structured recap. The built-in defaults run on-device; first use may include model downloads.
 3. **Your library stays on your Mac.** Everything lands in local files and SQLite you can search, replay, and hand to trusted tools.
 
+### Example model stack and performance
+
+The current built-in selections, with opt-in Cotyping enabled, occupy about **12.4 GB** after every model below has been downloaded. This example was measured on a **48 GB M4 Max MacBook Pro** using LokalBot's bundled llama.cpp runtime with full Metal offload.
+
+| Role | Model | Quantization / format | Model files | Measured generation |
+| --- | --- | --- | ---: | ---: |
+| Transcription | IBM Granite Speech 4.1 2B | `Q4_K_M` + F16 projector | 2.30 GB | ASR; use realtime factor |
+| Summaries and chat | Qwen3.5 4B | `Q4_K_M` | 2.74 GB | ~100 tokens/s |
+| Cotyping | Gemma 4 E4B | `UD-Q5_K_XL` | 6.66 GB | ~78 tokens/s |
+| Semantic search | Qwen3-Embedding 0.6B | `Q8_0` | 0.64 GB | Embeddings; not generative |
+| Speaker diarization | pyannote-community-1 via FluidAudio | Core ML | ~0.10 GB | Diarization; not generative |
+
+Generation speed varies with context length, thermals, and other workloads. Model files download on first use, so features you do not enable do not incur their full model footprint.
+
 Embeddings live in SQLite with brute-force cosine similarity, because at personal scale brute force is instant.
 
 ## Privacy — verify it
