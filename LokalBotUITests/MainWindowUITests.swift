@@ -49,26 +49,21 @@ final class MainWindowUITests: XCTestCase {
     /// guards the recent split-view stabilization against a control that is
     /// present but detached from NavigationSplitView's column visibility.
     func testToolbarToggleHidesAndRestoresSidebar() {
-        let hide = toolbarSidebarButtons.matching(
-            NSPredicate(format: "label == 'Hide Sidebar'")).firstMatch
-        XCTAssertTrue(hide.waitForExistence(timeout: 4),
-                      "Hide Sidebar control missing")
-        hide.click()
+        XCTAssertTrue(toolbarSidebarButtons.firstMatch.waitForExistence(timeout: 4),
+                      "native sidebar control missing")
+        toolbarSidebarButtons.firstMatch.click()
+        XCTAssertTrue(UITestHarness.waitUntil {
+            !self.app.descendants(matching: .any)["sidebar.settings"].exists
+        }, "sidebar remained exposed after hiding it")
 
-        let show = toolbarSidebarButtons.matching(
-            NSPredicate(format: "label == 'Show Sidebar'")).firstMatch
-        XCTAssertTrue(show.waitForExistence(timeout: 4),
-                      "toolbar did not switch to Show Sidebar")
-        XCTAssertFalse(app.descendants(matching: .any)["sidebar.settings"].exists,
-                       "sidebar remained exposed after hiding it")
-
-        show.click()
+        // Xcode 26.3 keeps the stale "Hide Sidebar" accessibility label after
+        // the native toggle changes state. Re-query the same toggle command and
+        // assert the split view itself, which is the user-visible contract.
+        XCTAssertTrue(toolbarSidebarButtons.firstMatch.waitForExistence(timeout: 4),
+                      "native sidebar control disappeared after hiding")
+        toolbarSidebarButtons.firstMatch.click()
         XCTAssertTrue(app.descendants(matching: .any)["sidebar.timeline"]
             .waitForExistence(timeout: 5), "sidebar did not return")
-        XCTAssertTrue(toolbarSidebarButtons.matching(
-            NSPredicate(format: "label == 'Hide Sidebar'")).firstMatch
-            .waitForExistence(timeout: 4),
-                      "toolbar did not return to Hide Sidebar")
     }
 
     /// Xcode 26.3 exposes the native sidebar control as a Button containing a

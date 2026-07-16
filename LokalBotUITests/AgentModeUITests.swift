@@ -38,8 +38,23 @@ final class AgentModeUITests: XCTestCase {
         XCTAssertEqual(openTabButtons.count, 1, "Agent Mode should start with one session")
         XCTAssertTrue(openTab(named: "Session 1").exists, "initial session title missing")
 
+        // The hosted macOS desktop is only 1024 points wide. Collapse the
+        // sidebar before driving the trailing tab-bar control so the test
+        // exercises the real button without relying on an offscreen click.
+        let sidebarToggle = app.toolbars.firstMatch.children(matching: .button).matching(
+            NSPredicate(format: "label == 'Hide Sidebar' OR label == 'Show Sidebar'"))
+            .firstMatch
+        XCTAssertTrue(sidebarToggle.waitForExistence(timeout: 4),
+                      "native sidebar toggle missing")
+        sidebarToggle.click()
+        XCTAssertTrue(UITestHarness.waitUntil {
+            !self.app.descendants(matching: .any)["sidebar.agent"].exists
+        }, "sidebar did not collapse before using the Agent tab bar")
+
         let add = app.buttons["agent.newSession"]
         XCTAssertTrue(add.waitForExistence(timeout: 4), "new-session control missing")
+        XCTAssertTrue(UITestHarness.waitUntil { add.isHittable },
+                      "new-session control remained outside the visible workspace")
         for _ in 0..<3 { add.click() }
 
         XCTAssertTrue(UITestHarness.waitUntil { self.openTabButtons.count == 4 },
