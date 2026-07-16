@@ -235,8 +235,13 @@ sibling `@2x` for HiDPI) for custom art.
 ### 5. Notarize + staple the DMG
 
 ```sh
+codesign --force --sign "Developer ID Application" --timestamp build/LokalBot.dmg
+codesign --verify --strict --verbose=2 build/LokalBot.dmg
 xcrun notarytool submit build/LokalBot.dmg --keychain-profile "LokalBot-notary" --wait
 xcrun stapler staple build/LokalBot.dmg
+xcrun stapler validate build/LokalBot.dmg
+spctl --assess --type open --context context:primary-signature \
+  --verbose=2 build/LokalBot.dmg
 ```
 
 ### 6. Sparkle-sign + generate the appcast (LAST)
