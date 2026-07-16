@@ -34,6 +34,25 @@ final class ProcessingPipeline: ObservableObject {
             case .failed(let message): "Failed: \(message)"
             }
         }
+
+        /// Compact vocabulary for meeting-list rows. The detail pane keeps
+        /// the more descriptive label above; rows need to stay scannable.
+        var rowLabel: String {
+            switch self {
+            case .queued: "Queued"
+            case .preparingTranscriptionModel: "Preparing speech model"
+            case .preparingDiarizationModel: "Preparing speaker model"
+            case .preparingSummaryModel: "Preparing summary model"
+            case .transcribing: "Transcribing"
+            case .diarizing: "Identifying speakers"
+            case .summarizing: "Summarizing"
+            case .failed: "Failed"
+            }
+        }
+
+        var isFailure: Bool {
+            if case .failed = self { true } else { false }
+        }
     }
 
     struct Job {

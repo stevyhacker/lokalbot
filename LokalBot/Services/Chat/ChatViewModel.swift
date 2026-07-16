@@ -164,9 +164,15 @@ final class ChatStore {
 /// Settings → Models choice and boots the built-in server on first use).
 @MainActor
 final class ChatViewModel: ObservableObject {
+    enum ResponsePhase: Equatable {
+        case preparingEngine
+        case startingAssistant
+    }
+
     @Published private(set) var messages: [ChatMessage] = []
     @Published var draft = ""
     @Published private(set) var isResponding = false
+    @Published private(set) var responsePhase: ResponsePhase?
     /// All saved conversations, most-recently-updated first (drives the list).
     @Published private(set) var conversations: [Conversation] = []
     /// The conversation currently shown in the transcript.
@@ -185,6 +191,11 @@ final class ChatViewModel: ObservableObject {
     private let tools: ChatToolRunner
     private let store: ChatStore
     private var task: Task<Void, Never>?
+    private struct RetryPayload {
+        var prompt: String
+        var displayText: String
+    }
+    private var retryPayloads: [UUID: RetryPayload] = [:]
 
     init(makeEngine: @escaping () async throws -> TextEngine, tools: ChatToolRunner, store: ChatStore) {
         self.makeEngine = makeEngine
@@ -226,6 +237,8 @@ final class ChatViewModel: ObservableObject {
         let assistantID = assistant.id
         messages.append(assistant)
         isResponding = true
+        responsePhase = .preparingEngine
+        retryPayloads[assistantID] = .init(prompt: text, displayText: visibleText)
         persist()
 
         task = Task { [weak self] in
@@ -235,6 +248,31 @@ final class ChatViewModel: ObservableObject {
 
     /// Cancel an in-flight response.
     func stop() { task?.cancel() }
+
+    func canRetry(_ assistantID: UUID) -> Bool {
+        guard !isResponding,
+              let index = messages.firstIndex(where: { $0.id == assistantID }),
+              messages[index].role == .assistant,
+              messages[index].isError else { return false }
+        return retryPayloads[assistantID] != nil
+            || messages[..<index].last(where: { $0.role == .user }) != nil
+    }
+
+    /// Retry an errored assistant turn without duplicating the visible user
+    /// message. In-session retries preserve hidden screen/day context; a
+    /// persisted error safely falls back to the preceding visible question.
+    func retry(_ assistantID: UUID) {
+        guard canRetry(assistantID),
+              let assistantIndex = messages.firstIndex(where: { $0.id == assistantID }),
+              let userIndex = messages[..<assistantIndex].lastIndex(where: { $0.role == .user })
+        else { return }
+        let payload = retryPayloads[assistantID]
+            ?? .init(prompt: messages[userIndex].text, displayText: messages[userIndex].text)
+        messages.remove(at: assistantIndex)
+        messages.remove(at: userIndex)
+        retryPayloads[assistantID] = nil
+        send(payload.prompt, displayText: payload.displayText)
+    }
 
     /// Start a new, empty conversation (persisting the current one first).
     func newConversation() {
@@ -307,27 +345,55 @@ final class ChatViewModel: ObservableObject {
     // MARK: - Run
 
     private func run(latest: String, history: [ChatAgent.Turn], assistantID: UUID) async {
-        defer { isResponding = false; persist() }
+        defer {
+            isResponding = false
+            responsePhase = nil
+            persist()
+        }
         do {
             let engine = try await makeEngine()
+            responsePhase = .startingAssistant
             let agent = ChatAgent(engine: engine, runner: tools)
             let answer = try await agent.respond(history: history, latest: latest) { [weak self] event in
                 self?.apply(event, to: assistantID)
             }
             try Task.checkCancellation()
             update(assistantID) { $0.text = answer; $0.isPending = false }
+            retryPayloads[assistantID] = nil
         } catch is CancellationError {
             update(assistantID) {
                 if $0.text.isEmpty && $0.activity.isEmpty { $0.text = "Stopped." }
                 $0.isPending = false
             }
+            retryPayloads[assistantID] = nil
         } catch {
+            lokalbotLog("chat response failed: \(error.localizedDescription)")
             update(assistantID) {
-                $0.text = error.localizedDescription
+                $0.text = Self.friendlyFailureMessage(for: error)
                 $0.isError = true
                 $0.isPending = false
             }
         }
+    }
+
+    nonisolated static func friendlyFailureMessage(for error: Error) -> String {
+        if error is ModelDownloadManager.PreparationError {
+            return "The assistant model could not be downloaded. Check your connection and free disk space, then try again."
+        }
+        if error is LlamaServer.ServerError {
+            return "The on-device assistant could not start. Close memory-heavy apps or choose a smaller model, then try again."
+        }
+        if let engineError = error as? TextEngineError {
+            switch engineError {
+            case .noModel:
+                return "No Main LLM is selected. Choose one in Settings → Models, then try again."
+            case .serverUnreachable:
+                return "The selected assistant could not be reached. Check its settings, then try again."
+            case .badResponse, .unavailable:
+                break
+            }
+        }
+        return "The assistant could not complete that request. Check the selected model in Settings, then try again."
     }
 
     private func apply(_ event: ChatAgentEvent, to id: UUID) {

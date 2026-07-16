@@ -12,48 +12,59 @@ struct CotypingModelPreparationView: View {
             storage: app.storage,
             downloads: downloads)
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 8) {
-                Image(systemName: iconName(for: status))
-                    .foregroundStyle(color(for: status))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("High-quality cotyping model")
-                        .font(compact ? .caption : .callout)
-                    Text(status.statusText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if case .downloading(_, let progress) = status {
-                    ProgressView(value: progress)
-                        .frame(width: compact ? 58 : 80)
-                }
-                Button(actionTitle(for: status)) {
-                    app.prepareRecommendedCotypingModel()
-                }
-                .controlSize(compact ? .mini : .small)
-                .disabled(status.isDownloading || status == .unavailable || isReadyAndActive(status))
-            }
+            ModelPreparationView(
+                presentation: presentation(for: status),
+                style: compact ? .compact : .standard,
+                action: action(for: status))
             if !CotypingModelPreparer.recommendedIsActive(settings: app.settings) {
-                Text("This switches cotyping to its own llama.cpp runtime and selects Gemma 4 · E4B for high-quality suggestions.")
+                Text("This selects Gemma 4 · E4B and keeps inline suggestions separate from the model used for meetings and Ask.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
     }
 
-    private func actionTitle(for status: CotypingModelPreparationStatus) -> String {
+    private func presentation(
+        for status: CotypingModelPreparationStatus
+    ) -> ModelPreparationPresentation {
         switch status {
-        case .ready:
-            CotypingModelPreparer.recommendedIsActive(settings: app.settings) ? "Ready" : "Use"
-        case .downloading:
-            "Downloading"
-        case .failed:
-            "Retry"
-        case .missing:
-            "Prepare"
+        case .ready(let entry):
+            return .init(
+                state: .ready,
+                title: "High-quality cotyping model",
+                status: "\(entry.displayName) is ready.",
+                actionTitle: isReadyAndActive(status) ? nil : "Use")
+        case .downloading(let entry, let progress):
+            return .init(
+                state: .preparing,
+                title: "Preparing cotyping model",
+                status: "Downloading \(entry.displayName) — \(Int(progress * 100))%",
+                progress: progress)
+        case .failed(let entry, let message):
+            return .init(
+                state: .failed,
+                title: "Cotyping model needs attention",
+                status: "\(entry.displayName): \(message)",
+                actionTitle: "Retry")
+        case .missing(let entry):
+            return .init(
+                state: .waiting,
+                title: "High-quality cotyping model",
+                status: "\(entry.displayName) has not been downloaded yet.",
+                actionTitle: "Prepare")
         case .unavailable:
-            "Unavailable"
+            return .init(
+                state: .failed,
+                title: "Cotyping model unavailable",
+                status: "The recommended model is not in this build.")
         }
+    }
+
+    private func action(for status: CotypingModelPreparationStatus) -> (() -> Void)? {
+        guard !status.isDownloading, status != .unavailable, !isReadyAndActive(status) else {
+            return nil
+        }
+        return { app.prepareRecommendedCotypingModel() }
     }
 
     private func isReadyAndActive(_ status: CotypingModelPreparationStatus) -> Bool {
@@ -63,22 +74,4 @@ struct CotypingModelPreparationView: View {
         return false
     }
 
-    private func iconName(for status: CotypingModelPreparationStatus) -> String {
-        switch status {
-        case .ready: "checkmark.circle.fill"
-        case .downloading: "arrow.down.circle"
-        case .failed: "exclamationmark.triangle.fill"
-        case .missing: "arrow.down.circle"
-        case .unavailable: "xmark.circle"
-        }
-    }
-
-    private func color(for status: CotypingModelPreparationStatus) -> Color {
-        switch status {
-        case .ready: .green
-        case .downloading: .accentColor
-        case .failed, .missing: .orange
-        case .unavailable: .secondary
-        }
-    }
 }

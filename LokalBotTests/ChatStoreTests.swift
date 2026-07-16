@@ -110,6 +110,19 @@ final class ChatStoreTests: XCTestCase {
                        "plaintext must be removed once the sealed copy exists")
     }
 
+    func testChatFailuresUseActionableUserFacingCopy() {
+        let download = ChatViewModel.friendlyFailureMessage(
+            for: ModelDownloadManager.PreparationError.failed("raw transport details"))
+        XCTAssertTrue(download.contains("could not be downloaded"))
+        XCTAssertTrue(download.contains("try again"))
+        XCTAssertFalse(download.contains("raw transport details"))
+
+        let remote = ChatViewModel.friendlyFailureMessage(
+            for: TextEngineError.serverUnreachable("http://127.0.0.1:11434"))
+        XCTAssertTrue(remote.contains("could not be reached"))
+        XCTAssertFalse(remote.contains("127.0.0.1"))
+    }
+
     private func makeStore() -> ChatStore {
         ChatStore(rootURL: root, encryptionKey: { [encryptionKey] in encryptionKey })
     }

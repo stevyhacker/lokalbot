@@ -89,7 +89,10 @@ struct OnboardingView: View {
             if mode == .permissions { step = .permissions }
             permissions.startPolling()
         }
-        .onDisappear { permissions.stopPolling() }
+        .onDisappear {
+            permissions.stopPolling()
+            PermissionGuidanceController.shared.dismiss()
+        }
     }
 
     @ViewBuilder
@@ -140,7 +143,7 @@ private extension OnboardingView {
                 Text("Welcome to LokalBot")
                     .font(.system(size: 30, weight: .bold, design: .rounded))
 
-                Text("Your private AI memory for work. Remember meetings and the context you choose, recall with evidence, write anywhere, and automate — on-device by default.")
+                Text("Your private AI memory for work. Remember meetings and the context you choose, ask with evidence, write anywhere, and automate — on-device by default.")
                     .font(.system(size: 15, design: .rounded))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -154,7 +157,7 @@ private extension OnboardingView {
 
             HStack(spacing: 8) {
                 OnboardingFeatureChip(systemImage: "waveform.circle", label: "Remember")
-                OnboardingFeatureChip(systemImage: "sparkle.magnifyingglass", label: "Recall")
+                OnboardingFeatureChip(systemImage: "sparkle.magnifyingglass", label: "Ask")
                 OnboardingFeatureChip(systemImage: "keyboard", label: "Write")
                 OnboardingFeatureChip(systemImage: "arrow.up.forward.app", label: "Act")
             }
@@ -169,7 +172,7 @@ private extension OnboardingView {
         VStack(spacing: 24) {
             OnboardingStepHeader(
                 systemImage: "waveform.badge.magnifyingglass",
-                title: "Remember. Recall. Write. Act.",
+                title: "Remember. Ask. Write. Act.",
                 subtitle: "One private memory, organized around what you want to do next."
             )
             .onboardingReveal(0)
@@ -188,7 +191,7 @@ private extension OnboardingView {
                     number: "2",
                     systemImage: "sparkle.magnifyingglass",
                     tint: Brand.tealBright,
-                    title: "Recall",
+                    title: "Ask",
                     subtitle: "Search by words or meaning, ask your library, and open the evidence behind an answer."
                 )
                 .onboardingReveal(2)
@@ -229,7 +232,7 @@ private extension OnboardingView {
                     systemImage: "externaldrive.fill",
                     tint: Brand.teal,
                     title: "Stored locally",
-                    subtitle: "Audio, transcripts, summaries, embeddings, and screenshots live under LokalBot's local app support folder."
+                    subtitle: "Audio, transcripts, summaries, search indexes, and screenshots live under LokalBot's local app support folder."
                 )
                 .onboardingReveal(1)
 
@@ -349,11 +352,7 @@ private extension OnboardingView {
                 ForEach(Array(requiredPermissions.enumerated()), id: \.element) { index, permission in
                     PermissionSetupCard(
                         permission: permission,
-                        granted: permissions.granted[permission] ?? permission.isGranted,
-                        request: {
-                            permissions.request(permission)
-                            permissions.openSettings(for: permission)
-                        }
+                        granted: permissions.granted[permission] ?? permission.isGranted
                     )
                     .onboardingReveal(1 + index)
                 }
@@ -362,17 +361,13 @@ private extension OnboardingView {
                     PermissionSetupCard(
                         permission: permission,
                         granted: permissions.granted[permission] ?? permission.isGranted,
-                        isOptional: true,
-                        request: {
-                            permissions.request(permission)
-                            permissions.openSettings(for: permission)
-                        }
+                        isOptional: true
                     )
                     .onboardingReveal(1 + requiredPermissions.count + index)
                 }
             }
 
-            manualAppCard
+            permissionTrustNote
                 .onboardingReveal(2 + requiredPermissions.count + optionalPermissions.count)
 
             relaunchCard
@@ -385,7 +380,7 @@ private extension OnboardingView {
         if missingRequiredCount == 0 {
             return "The microphone is granted — you're ready. Optional grants can wait until you turn their features on."
         }
-        return "Only the microphone is required — it records your side of a call. Everything else is optional and asked for when its feature is enabled."
+        return "Microphone uses the macOS prompt. For list-based permissions, LokalBot opens the right pane and shows exactly where to drag the app."
     }
 }
 
@@ -439,32 +434,15 @@ private extension OnboardingView {
             .shadow(color: Brand.teal.opacity(0.45), radius: 22, y: 8)
     }
 
-    var manualAppCard: some View {
-        HStack(spacing: 14) {
-            Image(nsImage: NSApp.applicationIconImage ?? NSImage())
-                .resizable()
-                .frame(width: 44, height: 44)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .onDrag { NSItemProvider(object: Bundle.main.bundleURL as NSURL) }
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Adding LokalBot manually?")
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                Text("Drag this app icon into System Settings if macOS asks you to add the app to a permission list.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 0)
-
-            Button("Show in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
-            }
-            .controlSize(.regular)
+    var permissionTrustNote: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "lock.fill")
+                .foregroundStyle(Brand.teal)
+            Text("Permission access stays local unless you explicitly approve a remote model.")
         }
-        .padding(16)
-        .onboardingCard(cornerRadius: 14)
+        .font(.system(size: 11, weight: .medium, design: .rounded))
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
     }
 
     var relaunchCard: some View {
@@ -498,7 +476,7 @@ private struct LokalBotHeroDemo: View {
 
     private let phases = [
         ("Remember", "Google Meet · recording", "Mic + system audio, organized locally"),
-        ("Recall", "What did we promise Alex?", "Evidence from your private work memory"),
+        ("Ask", "What did we promise Alex?", "Evidence from your private work memory"),
         ("Write", "Following up on our decision…", "Dictation and autocomplete, on-device"),
         ("Act", "Weekly work log ready", "A local routine drafted it for review")
     ]
@@ -585,7 +563,7 @@ private struct PermissionSetupCard: View {
     let permission: AppPermission
     let granted: Bool
     var isOptional = false
-    let request: () -> Void
+    @State private var actionButtonFrame = CGRect.zero
 
     private var tileTint: Color {
         if granted || isOptional { return permission.onboardingTint }
@@ -593,6 +571,8 @@ private struct PermissionSetupCard: View {
     }
 
     var body: some View {
+        let needsRecovery = permission.requiresSettingsRecovery
+
         HStack(spacing: 14) {
             IconTile(systemImage: permission.systemImageName, tint: tileTint)
 
@@ -611,9 +591,11 @@ private struct PermissionSetupCard: View {
                     }
                 }
 
-                Text(permission.onboardingSubtitle)
+                Text(needsRecovery
+                     ? "Access was denied. Re-enable LokalBot in System Settings to continue."
+                     : permission.onboardingSubtitle)
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(needsRecovery ? .orange : .secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -624,15 +606,23 @@ private struct PermissionSetupCard: View {
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
             } else {
                 if isOptional {
-                    Button("Allow") { request() }
-                        .buttonStyle(.bordered)
-                        .tint(permission.onboardingTint)
-                        .controlSize(.regular)
+                    Button(needsRecovery ? "Open System Settings" : "Allow") {
+                        requestAccess()
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(permission.onboardingTint)
+                    .controlSize(.regular)
+                    .background(PermissionScreenFrameReader(frameInScreen: $actionButtonFrame))
+                    .help(permission.guidanceHint)
                 } else {
-                    Button("Allow") { request() }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.orange)
-                        .controlSize(.regular)
+                    Button(needsRecovery ? "Open System Settings" : "Allow") {
+                        requestAccess()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .controlSize(.regular)
+                    .background(PermissionScreenFrameReader(frameInScreen: $actionButtonFrame))
+                    .help(permission.guidanceHint)
                 }
             }
         }
@@ -640,6 +630,12 @@ private struct PermissionSetupCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .onboardingCard()
         .animation(.spring(response: 0.35, dampingFraction: 0.7), value: granted)
+    }
+
+    private func requestAccess() {
+        PermissionGuidanceController.shared.requestAccess(
+            for: permission,
+            sourceFrameInScreen: actionButtonFrame)
     }
 }
 

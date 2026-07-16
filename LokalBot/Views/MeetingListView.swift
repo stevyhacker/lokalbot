@@ -23,11 +23,19 @@ struct MeetingListView: View {
         }
         .accessibilityIdentifier("meeting.list")
         .overlay {
-            if groupedMeetings.isEmpty {
+            if !app.libraryReady {
+                VStack(spacing: 10) {
+                    ProgressView()
+                    Text("Loading your meeting library…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("meeting.libraryLoading")
+            } else if groupedMeetings.isEmpty {
                 ContentUnavailableView(
                     "No meetings yet",
                     systemImage: "waveform.circle",
-                    description: Text("LokalBot detects meeting apps and records automatically — or press Record in the menu bar.")
+                    description: Text("LokalBot detects meeting apps automatically — or choose Record now in the menu bar.")
                 )
             }
         }
@@ -76,21 +84,56 @@ struct MeetingListView: View {
                         : meeting.startedAt.formatted(date: .omitted, time: .shortened)
         let duration = live ? "\(max(1, Int(now.timeIntervalSince(meeting.startedAt) / 60))) min"
                             : meeting.durationLabel
-        return VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                if live { StatusDot(color: Brand.recording, size: 9) }
-                Text(meeting.title).font(.headline)
-                if live {
-                    Spacer(minLength: 6)
-                    LiveWaveform(barCount: 5, barWidth: 2.5, maxHeight: 10)
+        return HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    if live { StatusDot(color: Brand.recording, size: 9) }
+                    Text(meeting.title).font(.headline)
+                    if live {
+                        Spacer(minLength: 6)
+                        LiveWaveform(barCount: 5, barWidth: 2.5, maxHeight: 10)
+                    }
                 }
+                Text("\(meeting.appName) · \(time) · \(duration)")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            Text("\(meeting.appName) · \(time) · \(duration)")
-                .font(.caption).foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(meeting.title)
+            .accessibilityIdentifier("meeting.row.\(meeting.id.uuidString)")
+
+            if !live, let stage = app.pipeline.stages[meeting.id] {
+                pipelineStatus(stage, meeting: meeting)
+            }
         }
         .padding(.vertical, 1)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(meeting.title)
-        .accessibilityIdentifier("meeting.row.\(meeting.id.uuidString)")
+    }
+
+    @ViewBuilder
+    private func pipelineStatus(_ stage: ProcessingPipeline.Stage, meeting: Meeting) -> some View {
+        if stage.isFailure {
+            VStack(alignment: .trailing, spacing: 2) {
+                Label("Failed", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                Button("Retry") {
+                    app.retryProcessing(meeting)
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+            }
+            .help(stage.label)
+            .accessibilityIdentifier("meeting.retry.\(meeting.id.uuidString)")
+        } else {
+            HStack(spacing: 5) {
+                ProgressView().controlSize(.small).scaleEffect(0.75)
+                Text(stage.rowLabel)
+                    .lineLimit(1)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .help(stage.label)
+            .accessibilityIdentifier("meeting.status.\(meeting.id.uuidString)")
+        }
     }
 }

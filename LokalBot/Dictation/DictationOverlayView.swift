@@ -50,6 +50,9 @@ final class DictationOverlayController {
     }
 
     private static func size(for dictation: DictationCoordinator) -> CGSize {
+        if dictation.shouldShowModelPreparation {
+            return CGSize(width: 360, height: 72)
+        }
         if dictation.shouldShowLiveTranscriptPanel {
             return CGSize(width: 520, height: 156)
         }
@@ -67,7 +70,9 @@ struct DictationOverlayView: View {
 
     var body: some View {
         Group {
-            if dictation.shouldShowLiveTranscriptPanel {
+            if dictation.shouldShowModelPreparation {
+                modelPreparationPanel
+            } else if dictation.shouldShowLiveTranscriptPanel {
                 liveTranscriptPanel
             } else {
                 compactPanel
@@ -77,6 +82,20 @@ struct DictationOverlayView: View {
         .hudCapsule(radius: radius, shadowed: false)
         .animation(.snappy(duration: 0.28), value: dictation.state)
         .animation(.snappy(duration: 0.22), value: dictation.liveTranscript)
+    }
+
+    private var modelPreparationPanel: some View {
+        HStack(spacing: 10) {
+            ModelPreparationView(
+                presentation: dictation.modelPreparationPresentation,
+                style: .hud,
+                action: dictation.modelPreparationError == nil
+                    ? nil
+                    : { dictation.retryModelPreparation() })
+            cancelButton
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
     }
 
     private var compactPanel: some View {
@@ -213,6 +232,7 @@ struct DictationOverlayView: View {
     }
 
     private var width: CGFloat {
+        if dictation.shouldShowModelPreparation { return 360 }
         if dictation.shouldShowLiveTranscriptPanel { return 520 }
         switch dictation.state {
         case .idle, .recording:
@@ -223,10 +243,12 @@ struct DictationOverlayView: View {
     }
 
     private var height: CGFloat {
-        dictation.shouldShowLiveTranscriptPanel ? 156 : 40
+        if dictation.shouldShowModelPreparation { return 72 }
+        return dictation.shouldShowLiveTranscriptPanel ? 156 : 40
     }
 
     private var radius: CGFloat {
+        if dictation.shouldShowModelPreparation { return 16 }
         if dictation.shouldShowLiveTranscriptPanel { return 14 }
         switch dictation.state {
         case .idle, .recording:

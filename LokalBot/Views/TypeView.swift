@@ -74,7 +74,9 @@ private struct TypeStatusHeader: View {
                     Spacer()
                     permissionChip(.accessibility)
                     permissionChip(.inputMonitoring)
-                    permissionChip(.microphone)
+                    if app.typeTab == .dictation {
+                        permissionChip(.microphone)
+                    }
                 }
                 // Slate stays dark in both appearances, so the system-styled
                 // tiles/chips must resolve their semantic colors dark-side.
@@ -112,17 +114,29 @@ private struct TypeStatusHeader: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    @ViewBuilder
     private func permissionChip(_ permission: AppPermission) -> some View {
         let granted = permissions.granted[permission] ?? false
-        return HStack(spacing: 3) {
+        let chip = HStack(spacing: 3) {
             Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.circle")
                 .foregroundStyle(granted ? .green : .orange)
             Text(permission.title)
                 .foregroundStyle(.white.opacity(0.65))
         }
         .font(.caption2)
-        .help(granted ? "\(permission.title): granted"
-                      : "\(permission.title): not granted — see the Permissions section below.")
+
+        if granted {
+            chip.help("\(permission.title): granted")
+        } else {
+            Button {
+                PermissionGuidanceController.shared.requestAccess(for: permission)
+            } label: {
+                chip
+            }
+            .buttonStyle(.plain)
+            .help(permission.guidanceHint)
+            .accessibilityLabel("Grant \(permission.title) access")
+        }
     }
 
     private var dictationStatus: String {

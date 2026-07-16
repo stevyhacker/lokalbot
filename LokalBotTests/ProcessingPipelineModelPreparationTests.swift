@@ -3,6 +3,17 @@ import XCTest
 
 @MainActor
 final class ProcessingPipelineModelPreparationTests: XCTestCase {
+
+    func testMeetingRowStageLabelsStayCompact() {
+        XCTAssertEqual(ProcessingPipeline.Stage.queued.rowLabel, "Queued")
+        XCTAssertEqual(
+            ProcessingPipeline.Stage.preparingTranscriptionModel.rowLabel,
+            "Preparing speech model")
+        XCTAssertEqual(ProcessingPipeline.Stage.diarizing.rowLabel, "Identifying speakers")
+        XCTAssertEqual(ProcessingPipeline.Stage.failed("network").rowLabel, "Failed")
+        XCTAssertTrue(ProcessingPipeline.Stage.failed("network").isFailure)
+        XCTAssertFalse(ProcessingPipeline.Stage.summarizing.isFailure)
+    }
     private actor CancellationInsensitiveWork {
         private var started = false
         private var released = false

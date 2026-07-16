@@ -11,7 +11,12 @@ import CoreGraphics
 /// Pure metadata plus stateless TCC reads: the enum stays off `@MainActor` so
 /// its logic (titles, grant checks) is unit-testable on any thread, while the
 /// observable cache lives on `PermissionManager`.
-enum AppPermission: CaseIterable, Identifiable, Hashable {
+nonisolated enum PermissionGuidanceStyle: Equatable, Sendable {
+    case nativePrompt
+    case guidedOverlay
+}
+
+nonisolated enum AppPermission: CaseIterable, Identifiable, Hashable, Sendable {
     case microphone
     case screenRecording
     case accessibility
@@ -70,6 +75,27 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
         !Self.coreCases.contains(self)
     }
 
+    /// Microphone access is granted through Apple's modal prompt. The other
+    /// privacy lists accept an application bundle, so LokalBot can provide the
+    /// same draggable-app walkthrough as Cotabby.
+    var guidanceStyle: PermissionGuidanceStyle {
+        switch self {
+        case .microphone:
+            .nativePrompt
+        case .screenRecording, .accessibility, .inputMonitoring:
+            .guidedOverlay
+        }
+    }
+
+    var guidanceHint: String {
+        switch guidanceStyle {
+        case .nativePrompt:
+            "Shows the macOS permission prompt. If access was denied, opens the correct Settings pane."
+        case .guidedOverlay:
+            "Opens the correct Settings pane and shows a draggable LokalBot app row."
+        }
+    }
+
     /// One-sentence rationale shown beside each permission row.
     var why: String {
         switch self {
@@ -99,6 +125,21 @@ enum AppPermission: CaseIterable, Identifiable, Hashable {
             AXIsProcessTrusted()
         case .inputMonitoring:
             CGPreflightListenEventAccess()
+        }
+    }
+
+    /// macOS will not show the microphone prompt again after an explicit
+    /// denial. Onboarding uses this to replace a misleading Allow button with
+    /// a direct, clearly labelled recovery path.
+    var requiresSettingsRecovery: Bool {
+        guard self == .microphone else { return false }
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .denied, .restricted:
+            return true
+        case .notDetermined, .authorized:
+            return false
+        @unknown default:
+            return true
         }
     }
 

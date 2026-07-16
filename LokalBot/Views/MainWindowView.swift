@@ -165,7 +165,7 @@ struct MainWindowView: View {
                     .tag(AppState.NavSection.ask)
                     .accessibilityIdentifier("sidebar.ask")
             } header: {
-                sidebarSectionHeader("Recall")
+                sidebarSectionHeader("Find")
             }
             Section {
                 sidebarLabel("Type", systemImage: "keyboard")
@@ -1093,7 +1093,7 @@ struct GettingStartedCard: View {
                     pillar("waveform", "Remember",
                            app.isRecording ? "Recording now…" : "Capture meetings and the day context you choose.",
                            isRecording: app.isRecording)
-                    pillar("sparkle.magnifyingglass", "Recall",
+                    pillar("sparkle.magnifyingglass", "Ask",
                            "Search, ask, and open the evidence behind an answer.", isRecording: nil)
                     pillar("keyboard", "Write",
                            "Dictate or autocomplete text in the app where you're working.", isRecording: nil)

@@ -8,6 +8,7 @@ struct PermissionRow: View {
     let permission: AppPermission
     var why: String?
     @ObservedObject private var permissions = PermissionManager.shared
+    @State private var actionButtonFrame = CGRect.zero
 
     var body: some View {
         let granted = permissions.granted[permission] ?? permission.isGranted
@@ -20,10 +21,13 @@ struct PermissionRow: View {
             }
             Spacer()
             if !granted {
-                Button("Grant…") {
-                    PermissionManager.shared.request(permission)
-                    PermissionManager.shared.openSettings(for: permission)
+                Button("Grant Access") {
+                    PermissionGuidanceController.shared.requestAccess(
+                        for: permission,
+                        sourceFrameInScreen: actionButtonFrame)
                 }
+                .background(PermissionScreenFrameReader(frameInScreen: $actionButtonFrame))
+                .help(permission.guidanceHint)
             }
         }
     }

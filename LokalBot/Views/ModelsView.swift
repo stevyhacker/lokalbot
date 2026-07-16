@@ -78,10 +78,11 @@ struct ModelsView: View {
                 Image(systemName: "memorychip")
                     .foregroundStyle(.tint)
                 if residency.residents.isEmpty {
-                    Text("No GGUF weights in memory — weights load on demand and are evicted "
-                        + "least-recently-used past \(gigabytes(residency.budgetBytes)).")
+                    Text("No local models are using memory. Models load when needed; "
+                        + "above \(gigabytes(residency.budgetBytes)), LokalBot unloads "
+                        + "the model that has been idle longest.")
                 } else {
-                    Text("GGUF weights in memory: **\(gigabytes(residency.totalBytes))** of "
+                    Text("Local models in memory: **\(gigabytes(residency.totalBytes))** of "
                         + "\(gigabytes(residency.budgetBytes)) budget — "
                         + residency.residents.map(\.label).joined(separator: ", "))
                 }
@@ -162,7 +163,7 @@ struct ModelsView: View {
                     }
                     Button("Browse Hugging Face…") { showingHFBrowse = true }
                         .controlSize(.small)
-                    Text("Runs on the included llama.cpp server (Metal). The selected model downloads automatically on first use; Download lets you prepare it earlier.")
+                    Text("Runs entirely on this Mac with Metal acceleration. The selected model downloads on first use; Download lets you prepare it earlier.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             case .appleIntelligence:
@@ -355,7 +356,7 @@ struct ModelsView: View {
                                 .background(.green.opacity(0.2), in: Capsule())
                         }
                     }
-                    Text("Local neural TTS via sherpa-onnx. Downloads Kokoro once, then runs offline.")
+                    Text("Local neural speech. Downloads the Kokoro voice model once, then runs offline.")
                         .font(.caption2).foregroundStyle(.secondary)
                     if let speechModelError {
                         Text(speechModelError).font(.caption2).foregroundStyle(.orange)
@@ -393,7 +394,7 @@ struct ModelsView: View {
                 }
             }
             .frame(maxWidth: 360)
-            Text("Cotyping runs on a dedicated llama.cpp runtime, separate from the Main LLM engine. Gemma 4 · E4B is the recommended quality target; Qwen 3.5 2B and LFM2.5 1.2B are smaller latency options.")
+            Text("Cotyping runs in its own local model process, separate from the Main LLM. Gemma 4 · E4B is the recommended quality choice; Qwen 3.5 2B and LFM2.5 1.2B use less memory and respond faster.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .accessibilityIdentifier("models.cotyping")
@@ -408,7 +409,7 @@ struct ModelsView: View {
             }
             Text("Finds meetings by meaning, not just keywords. Uses Qwen3-Embedding 0.6B, downloaded when semantic search is first enabled (from Ask).")
                 .font(.caption).foregroundStyle(.secondary)
-            Text("Meeting text and captured-screen OCR use Qwen3-Embedding 0.6B. Direct screenshot/slide image vectors with Qwen3-VL-Embedding 2B remain a future pipeline.")
+            Text("Meaning-based search currently indexes meeting text and text captured from your screen.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .accessibilityIdentifier("models.embeddings")
@@ -458,7 +459,7 @@ struct ModelsView: View {
             .padding()
             Divider()
             HStack {
-                TextField("Search GGUF models (e.g. qwen, llama)…", text: $hfSearch.query)
+                TextField("Search downloadable models (e.g. Qwen, Llama)…", text: $hfSearch.query)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { Task { await hfSearch.search() } }
                 Button("Search") { Task { await hfSearch.search() } }
@@ -493,7 +494,7 @@ struct ModelsView: View {
                     .buttonStyle(.plain)
                     if hfSelectedModel == model.id {
                         if hfFiles.isEmpty {
-                            Text("No .gguf files in this repo.")
+                            Text("No compatible model files in this repository.")
                                 .font(.caption2).foregroundStyle(.secondary).padding(.leading, 16)
                         } else {
                             ForEach(hfFiles) { file in

@@ -16,7 +16,7 @@ struct AppSettings: Codable, Equatable {
         var id: String { rawValue }
         var displayName: String {
             switch self {
-            case .builtIn: "Built-in llama.cpp"
+            case .builtIn: "Built-in (on-device)"
             case .appleIntelligence, .ollama, .openAICompatible: rawValue
             }
         }

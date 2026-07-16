@@ -11,6 +11,8 @@ struct CaptureDetailView: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var model: CaptureModel
     @Binding var pendingDelete: Set<Meeting.ID>?
+    @AppStorage("lokalbotv3.gettingStartedDismissed")
+    private var gettingStartedDismissed = false
 
     @ViewBuilder
     var body: some View {
@@ -67,9 +69,32 @@ struct CaptureDetailView: View {
     @ViewBuilder private var noSelection: some View {
         if app.navSection == .timeline {
             dayOverview
+        } else if !app.libraryReady {
+            VStack(spacing: 10) {
+                ProgressView()
+                Text("Loading your meeting library…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
         } else if let live = app.currentMeeting {
             LiveMeetingDetailView(meeting: live)
                 .id(live.id)
+        } else if gettingStartedDismissed {
+            ContentUnavailableView {
+                Label(app.meetings.isEmpty ? "No meetings yet" : "No meeting selected",
+                      systemImage: "waveform.circle")
+            } description: {
+                Text(app.meetings.isEmpty
+                     ? "Choose Record now to capture a meeting."
+                     : "Select a meeting to open its summary and transcript.")
+            } actions: {
+                if app.meetings.isEmpty {
+                    Button("Record now") {
+                        app.startRecording(
+                            context: app.recordingContext(for: app.detector.activeApp))
+                    }
+                }
+            }
         } else {
             GettingStartedCard()
         }
@@ -92,7 +117,7 @@ struct CaptureDetailView: View {
                     StatTile(icon: "square.grid.2x2", value: "\(perApp.count)",
                              label: perApp.count == 1 ? "app" : "apps")
                     StatTile(icon: "camera.viewfinder", value: "\(model.shots.count)",
-                             label: "screens")
+                             label: "moments")
                     if !meetings.isEmpty {
                         StatTile(icon: "waveform", value: "\(meetings.count)",
                                  label: meetings.count == 1 ? "meeting" : "meetings")

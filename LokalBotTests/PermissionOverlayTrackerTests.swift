@@ -1,0 +1,76 @@
+import CoreGraphics
+import XCTest
+@testable import LokalBot
+
+final class PermissionOverlayTrackerTests: XCTestCase {
+    private let settingsFrame = CGRect(x: 120, y: 80, width: 720, height: 620)
+
+    func testPresentsWhenSettingsFirstAppears() {
+        XCTAssertEqual(
+            transition(settingsFrame: settingsFrame, hasPresented: false),
+            .present)
+    }
+
+    func testHidesOnlyWhenVisibleOverlayLosesSettingsWindow() {
+        XCTAssertEqual(
+            transition(settingsFrame: nil, hasPresented: true, isVisible: true),
+            .hide)
+        XCTAssertEqual(
+            transition(settingsFrame: nil, hasPresented: true, isVisible: false),
+            .none)
+    }
+
+    func testRepositionsWhenWindowMovesOrOverlayReturns() {
+        let previousFrame = settingsFrame.offsetBy(dx: -40, dy: 20)
+
+        XCTAssertEqual(
+            transition(
+                settingsFrame: settingsFrame,
+                hasPresented: true,
+                isVisible: true,
+                lastFrame: previousFrame),
+            .reposition)
+        XCTAssertEqual(
+            transition(
+                settingsFrame: settingsFrame,
+                hasPresented: true,
+                isVisible: false,
+                lastFrame: settingsFrame),
+            .reposition)
+    }
+
+    func testStableVisibleWindowDoesNothing() {
+        XCTAssertEqual(
+            transition(
+                settingsFrame: settingsFrame,
+                hasPresented: true,
+                isVisible: true,
+                lastFrame: settingsFrame),
+            .none)
+    }
+
+    func testOnlyListBasedPermissionsUseDragGuidance() {
+        XCTAssertEqual(AppPermission.microphone.guidanceStyle, .nativePrompt)
+
+        for permission in [
+            AppPermission.accessibility,
+            .inputMonitoring,
+            .screenRecording,
+        ] {
+            XCTAssertEqual(permission.guidanceStyle, .guidedOverlay)
+        }
+    }
+
+    private func transition(
+        settingsFrame: CGRect?,
+        hasPresented: Bool,
+        isVisible: Bool = false,
+        lastFrame: CGRect? = nil
+    ) -> PermissionOverlayTracker.Transition {
+        PermissionOverlayTracker.transition(
+            settingsFrame: settingsFrame,
+            hasPresented: hasPresented,
+            isVisible: isVisible,
+            lastFrame: lastFrame)
+    }
+}

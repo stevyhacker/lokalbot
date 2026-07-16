@@ -49,9 +49,16 @@ private struct AskContent: View {
         .onChange(of: selectedScreenApp) { runSearch() }
         .onChange(of: app.askPrefill) { consumePrefill() }
         .onChange(of: app.askScreenContextIDs) { consumeScreenContext() }
+        .onChange(of: app.askSubmitRequested) { consumeSubmitRequest() }
+        .onChange(of: model.currentID) {
+            // A saved conversation selection is an explicit mode switch. An
+            // old search query must not keep masking the selected transcript.
+            query = ""
+        }
         .onAppear {
             consumePrefill()
             consumeScreenContext()
+            consumeSubmitRequest()
             inputFocused = true
             #if LOKALBOT_UI_TEST_HOST
             if query.isEmpty,
@@ -78,6 +85,17 @@ private struct AskContent: View {
             pinnedScreens.append(ScreenAskContext(screenshot: screenshot, ocrText: ocr))
         }
         app.askScreenContextIDs = []
+    }
+
+    private func consumeSubmitRequest() {
+        guard app.askSubmitRequested else { return }
+        // Consume all handoff state in one pass. SwiftUI may coalesce the
+        // individual @Published updates from `openAsk`, so this remains
+        // ordering-independent even when Ask is already visible.
+        consumePrefill()
+        consumeScreenContext()
+        app.askSubmitRequested = false
+        escalate()
     }
 
     // MARK: - Input + facets

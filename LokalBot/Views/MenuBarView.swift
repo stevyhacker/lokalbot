@@ -361,7 +361,7 @@ struct MenuBarView: View {
             Button {
                 WindowAccess.shared.open("quick-recall")
             } label: {
-                Label("Recall", systemImage: "sparkle.magnifyingglass")
+                Label("Ask", systemImage: "sparkle.magnifyingglass")
             }
             .buttonStyle(.plain).foregroundStyle(.tint)
             Button("Open LokalBot") { WindowAccess.shared.open("main") }

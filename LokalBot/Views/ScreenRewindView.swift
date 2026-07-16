@@ -335,7 +335,7 @@ struct ScreenRewindView: View {
             isPlaying = false
             onReload()
         } catch {
-            app.lastError = "Could not delete captured screens: \(error.localizedDescription)"
+            app.lastError = "Could not delete captured moments: \(error.localizedDescription)"
         }
     }
 

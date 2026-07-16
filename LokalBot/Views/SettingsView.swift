@@ -43,7 +43,11 @@ struct SettingsView: View {
             permissions.startPolling()
             app.calendar.refreshAuthorizationStatus()
         }
-        .onDisappear { power.stop(); permissions.stopPolling() }
+        .onDisappear {
+            power.stop()
+            permissions.stopPolling()
+            PermissionGuidanceController.shared.dismiss()
+        }
     }
 
     private var queryIsEmpty: Bool {
@@ -153,7 +157,7 @@ struct SettingsView: View {
                     Text("Run from the menu bar with a live recording timer — no Dock icon, no window at launch. The window stays one click away. Takes full effect once open windows are closed.")
                         .font(.caption).foregroundStyle(.secondary)
                     Divider()
-                    Toggle("Enable system-wide Quick Recall", isOn: $app.settings.quickRecallEnabled)
+                    Toggle("Enable the system-wide Ask shortcut", isOn: $app.settings.quickRecallEnabled)
                     Text("Press \(QuickRecallHotKeyController.shortcutLabel) from any app to search meetings, captured screen text, and saved moments. LokalBot registers only this shortcut and does not inspect other keystrokes.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
@@ -295,7 +299,8 @@ struct SettingsView: View {
                         get: { app.settings.trackingEnabled },
                         set: { app.settings.trackingEnabled = $0
                                if $0 {
-                                   PermissionManager.shared.requestIfNeeded(.accessibility)
+                                   PermissionGuidanceController.shared.requestAccess(
+                                       for: .accessibility)
                                } else {
                                    app.settings.screenContextCaptureMode = .activityOnly
                                    app.settings.screenshotsEnabled = false
@@ -305,8 +310,8 @@ struct SettingsView: View {
                             Text("Accessibility granted").foregroundStyle(.secondary)
                         } else {
                             Button("Grant Accessibility access…") {
-                                PermissionManager.shared.request(.accessibility)
-                                PermissionManager.shared.openSettings(for: .accessibility)
+                                PermissionGuidanceController.shared.requestAccess(
+                                    for: .accessibility)
                             }
                         }
                     }
@@ -317,10 +322,12 @@ struct SettingsView: View {
                             app.settings.screenshotsEnabled = mode.capturesPixels
                             if mode.capturesText {
                                 app.settings.trackingEnabled = true
-                                PermissionManager.shared.requestIfNeeded(.accessibility)
+                                PermissionGuidanceController.shared.requestAccess(
+                                    for: .accessibility)
                             }
                             if mode.capturesPixels {
-                                PermissionManager.shared.requestIfNeeded(.screenRecording)
+                                PermissionGuidanceController.shared.requestAccess(
+                                    for: .screenRecording)
                             }
                         })) {
                         ForEach(AppSettings.ScreenContextCaptureMode.allCases) { mode in
@@ -356,8 +363,8 @@ struct SettingsView: View {
                             + "scrolls, or a clipboard-generation change without storing raw keys, "
                             + "pointer positions, or clipboard contents. Accessible text is preferred; "
                             + "local OCR fills gaps. Private windows, excluded domains, secure fields, "
-                            + "and detected credentials fail closed. Visuals are AES-GCM encrypted "
-                            + "with a Keychain key; extracted text follows the same retention "
+                            + "and detected credentials fail closed. Visuals are encrypted "
+                            + "with a key kept in your Mac's Keychain; extracted text follows the same retention "
                             + "(see Privacy). Saved moments retain their encrypted frame and text "
                             + "until you unsave or delete them. Excluded apps log as “Private”."
                     )
@@ -568,7 +575,7 @@ struct SettingsView: View {
                 Section("Agent CLI") {
                     let installer = LokalBotCLIInstaller.bundled
                     if installer.bundledBinary == nil {
-                        Text("This build doesn't ship lokalbot-cli. Build the lokalbot-cli scheme once before opening Settings.")
+                        Text("The command-line helper is not included in this build. Install a current LokalBot release to use Agent CLI access.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
                         LabeledContent("Status") {

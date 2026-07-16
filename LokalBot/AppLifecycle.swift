@@ -141,7 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false)
-        window.title = showsOnboarding ? "Welcome to LokalBot" : (showsQuickRecall ? "Quick Recall" : "LokalBot")
+        window.title = showsOnboarding ? "Welcome to LokalBot" : (showsQuickRecall ? "Ask" : "LokalBot")
         if showsQuickRecall {
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
@@ -201,6 +201,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if env["LOKALBOT_DISMISS_ONBOARDING"] == "1" {
             UserDefaults.standard.set(true, forKey: "lokalbotv3.gettingStartedDismissed")
+        }
+        if env["LOKALBOT_SHOW_GETTING_STARTED"] == "1" {
+            UserDefaults.standard.set(false, forKey: "lokalbotv3.gettingStartedDismissed")
         }
         if env["LOKALBOT_COTYPING_DEMO"] == "1"
             || env["LOKALBOT_DICTATION_DEMO"] == "1"

@@ -61,7 +61,7 @@ struct LokalBotApp: App {
                 }
                 .keyboardShortcut("k", modifiers: [.command])
 
-                Button("Quick Recall…") {
+                Button("Ask…") {
                     WindowAccess.shared.open("quick-recall")
                 }
             }
@@ -84,7 +84,7 @@ struct LokalBotApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultPosition(.center)
 
-        Window("Quick Recall", id: "quick-recall") {
+        Window("Ask", id: "quick-recall") {
             QuickRecallView()
                 .environmentObject(app)
                 .brandTinted()
@@ -408,6 +408,10 @@ final class AppState: ObservableObject {
     /// AskView consumes and clears it on appear/change.
     @Published var askPrefill: String?
 
+    /// True when an explicitly ask-labelled handoff should send immediately,
+    /// rather than merely placing text in Ask's search field.
+    @Published var askSubmitRequested = false
+
     /// A day handed to the Ask section (the old Timeline "Ask" tab, spec
     /// §2.2): rendered as a removable chip, and prepended to escalated
     /// queries so the assistant scopes its answer to that day.
@@ -430,10 +434,11 @@ final class AppState: ObservableObject {
     /// Navigate to the Ask section, optionally pre-filling the query and/or
     /// scoping it to a day (Timeline's "Ask about this day").
     func openAsk(query: String = "", dayScope: Date? = nil,
-                 screenSnapshotIDs: [Int64] = []) {
+                 screenSnapshotIDs: [Int64] = [], submit: Bool = false) {
         askPrefill = query.isEmpty ? nil : query
         askDayScope = dayScope
         askScreenContextIDs = screenSnapshotIDs
+        askSubmitRequested = submit
         navSection = .ask
     }
 
@@ -652,7 +657,7 @@ final class AppState: ObservableObject {
     private var embeddingIndexTasks: [Meeting.ID: (token: UUID, task: Task<Void, Never>)] = [:]
     private var indexCleanupTasks: [Meeting.ID: (token: UUID, task: Task<Void, Never>)] = [:]
     private var deletedMeetingIDs: Set<Meeting.ID> = []
-    private var libraryReady = false
+    @Published private(set) var libraryReady = false
     private var pendingRecordingStart: (context: MeetingDetectionContext?, source: String)?
     private lazy var searchIndexWorkQueue = SearchIndexWorkQueue(
         databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"),
@@ -1070,6 +1075,14 @@ final class AppState: ObservableObject {
         pipeline.enqueue(meeting, transcribe: transcribe, summarize: summarize)
     }
 
+    /// Row-level recovery intentionally retries the complete durable pipeline.
+    /// It is the safest default when a compact row cannot know which earlier
+    /// artifact came from the failed attempt; the detail Process menu still
+    /// offers narrower transcription- or summary-only choices.
+    func retryProcessing(_ meeting: Meeting) {
+        reprocess(meeting, transcribe: true, summarize: true)
+    }
+
     func saveTranscript(_ transcript: Transcript, for meeting: Meeting) throws {
         try pipeline.saveTranscript(transcript, for: meeting)
         reindexSearchInBackground(meeting)
@@ -1100,7 +1113,7 @@ final class AppState: ObservableObject {
         let registered = quickRecallHotKey.setEnabled(settings.quickRecallEnabled)
         if settings.quickRecallEnabled, !registered {
             settings.quickRecallEnabled = false
-            lastError = "Quick Recall could not register \(QuickRecallHotKeyController.shortcutLabel). Another app may already use it."
+            lastError = "The Ask shortcut could not register \(QuickRecallHotKeyController.shortcutLabel). Another app may already use it."
         }
     }
 

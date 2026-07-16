@@ -22,7 +22,7 @@ struct ChatTranscriptView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 18) {
                     ForEach(model.messages) { message in
-                        EditorialTurn(message: message).id(message.id)
+                        EditorialTurn(message: message, model: model).id(message.id)
                     }
                 }
                 .padding(16)
@@ -44,6 +44,8 @@ struct ChatTranscriptView: View {
 private struct EditorialTurn: View {
     @EnvironmentObject var app: AppState
     let message: ChatMessage
+    @ObservedObject var model: ChatViewModel
+    @ObservedObject private var downloads = ModelDownloadManager.shared
     @State private var speechPlayer: AVAudioPlayer?
     @State private var speechError: String?
     @State private var preparingSpeech = false
@@ -85,7 +87,18 @@ private struct EditorialTurn: View {
                 WorkedLine(activities: message.activity)
             }
             if message.isPending && message.text.isEmpty {
-                TypingIndicator()
+                ModelPreparationView(
+                    presentation: assistantPreparation,
+                    style: .standard)
+            } else if message.isError {
+                ModelPreparationView(
+                    presentation: .init(
+                        state: .failed,
+                        title: "Assistant needs attention",
+                        status: message.text,
+                        actionTitle: model.canRetry(message.id) ? "Retry" : nil),
+                    style: .standard,
+                    action: model.canRetry(message.id) ? { model.retry(message.id) } : nil)
             } else {
                 if !parsed.display.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     HStack(spacing: 6) {
@@ -116,6 +129,42 @@ private struct EditorialTurn: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var assistantPreparation: ModelPreparationPresentation {
+        if app.settings.summarizerBackend == .builtIn,
+           let entry = ModelCatalog.entry(
+                id: app.settings.builtInModelID,
+                custom: app.settings.customBuiltInModels),
+           let progress = downloads.progress[entry.id] {
+            return .init(
+                state: .preparing,
+                title: "Preparing \(entry.displayName)",
+                status: "Downloading the on-device model — \(Int(progress * 100))%",
+                progress: progress)
+        }
+
+        switch model.responsePhase {
+        case .preparingEngine:
+            return .init(
+                state: .preparing,
+                title: "Preparing the assistant",
+                status: app.settings.summarizerBackend == .builtIn
+                    ? "Checking the selected on-device model…"
+                    : "Connecting to the selected model…")
+        case .startingAssistant:
+            return .init(
+                state: .preparing,
+                title: "Starting the assistant",
+                status: app.settings.summarizerBackend == .builtIn
+                    ? "Loading the model into memory…"
+                    : "Waiting for the first response…")
+        case nil:
+            return .init(
+                state: .preparing,
+                title: "Preparing the assistant",
+                status: "Starting the selected model…")
+        }
     }
 
     private var assistantSpeechIcon: String {
@@ -294,23 +343,6 @@ private struct ActivityRow: View {
             Text(activity.text).font(.caption).foregroundStyle(.secondary)
         }
         .chipChrome()
-    }
-}
-
-/// Three pulsing dots shown while the assistant's first token is pending.
-private struct TypingIndicator: View {
-    @State private var phase = 0
-    private let timer = Timer.publish(every: 0.35, on: .main, in: .common).autoconnect()
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(0..<3, id: \.self) { index in
-                Circle().frame(width: 6, height: 6).opacity(phase == index ? 1 : 0.3)
-            }
-        }
-        .foregroundStyle(.secondary)
-        .onReceive(timer) { _ in phase = (phase + 1) % 3 }
-        .accessibilityLabel("Assistant is thinking")
     }
 }
 

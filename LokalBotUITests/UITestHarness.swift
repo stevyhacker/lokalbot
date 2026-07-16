@@ -9,6 +9,7 @@ enum UITestHarness {
     private static let uiTestEnabledKey = "lokalbot.uiTest.enabled"
     private static let uiTestStorageRootKey = "lokalbot.uiTest.storageRoot"
     private static let uiTestDefaultsSuiteKey = "lokalbot.uiTest.defaultsSuite"
+    private static let gettingStartedDismissedKey = "lokalbotv3.gettingStartedDismissed"
 
     struct Launch {
         let app: XCUIApplication
@@ -19,6 +20,7 @@ enum UITestHarness {
         storageRoot: URL,
         suitePrefix: String,
         settingsJSON: String = defaultSettingsJSON,
+        environment: [String: String] = [:],
         file: StaticString = #filePath,
         line: UInt = #line
     ) throws -> Launch {
@@ -29,11 +31,45 @@ enum UITestHarness {
         _ = CFPreferencesAppSynchronize(suiteName as CFString)
         seedAppLaunchDefaults(storageRoot: storageRoot, defaultsSuiteName: suiteName)
 
+        let app = try launchAndVerify(
+            storageRoot: storageRoot,
+            defaultsSuiteName: suiteName,
+            environment: environment,
+            file: file,
+            line: line)
+
+        return Launch(app: app, defaultsSuiteName: suiteName)
+    }
+
+    static func relaunch(
+        storageRoot: URL,
+        defaultsSuiteName: String,
+        environment: [String: String] = [:],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> XCUIApplication {
+        seedAppLaunchDefaults(storageRoot: storageRoot, defaultsSuiteName: defaultsSuiteName)
+        return try launchAndVerify(
+            storageRoot: storageRoot,
+            defaultsSuiteName: defaultsSuiteName,
+            environment: environment,
+            file: file,
+            line: line)
+    }
+
+    private static func launchAndVerify(
+        storageRoot: URL,
+        defaultsSuiteName: String,
+        environment: [String: String],
+        file: StaticString,
+        line: UInt
+    ) throws -> XCUIApplication {
         terminateRunningApp()
 
         let app = try launchApplication(
             storageRoot: storageRoot,
-            defaultsSuiteName: suiteName,
+            defaultsSuiteName: defaultsSuiteName,
+            environment: environment,
             file: file,
             line: line)
 
@@ -54,7 +90,7 @@ enum UITestHarness {
             "LokalBot UI Test Host did not create a visible native window",
             file: file,
             line: line)
-        return Launch(app: app, defaultsSuiteName: suiteName)
+        return app
     }
 
     static func cleanUp(defaultsSuiteName: String?) {
@@ -65,6 +101,7 @@ enum UITestHarness {
         CFPreferencesSetAppValue(uiTestEnabledKey as CFString, nil, appID)
         CFPreferencesSetAppValue(uiTestStorageRootKey as CFString, nil, appID)
         CFPreferencesSetAppValue(uiTestDefaultsSuiteKey as CFString, nil, appID)
+        CFPreferencesSetAppValue(gettingStartedDismissedKey as CFString, nil, appID)
         _ = CFPreferencesAppSynchronize(appID)
     }
 
@@ -125,6 +162,7 @@ enum UITestHarness {
     private static func launchApplication(
         storageRoot: URL,
         defaultsSuiteName: String,
+        environment: [String: String],
         file: StaticString,
         line: UInt
     ) throws -> XCUIApplication {
@@ -149,7 +187,7 @@ enum UITestHarness {
             "LOKALBOT_UI_TEST": "1",
             "LOKALBOT_STORAGE_ROOT": storageRoot.path,
             "LOKALBOT_DEFAULTS_SUITE": defaultsSuiteName,
-        ]) { _, new in new }
+        ]) { _, new in new }.merging(environment) { _, new in new }
         try process.run()
 
         return XCUIApplication(bundleIdentifier: appBundleIdentifier)

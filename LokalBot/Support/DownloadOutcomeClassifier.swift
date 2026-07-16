@@ -33,7 +33,7 @@ extension DownloadOutcome {
         case .httpError(let status):
             return "Download failed (HTTP \(status))."
         case .notGGUF:
-            return "Download failed (response was not a GGUF model)."
+            return "The downloaded file is not a supported local model."
         case .cancelled:
             return "Download cancelled."
         case .transport(let detail):

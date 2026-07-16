@@ -93,7 +93,7 @@ enum TranscriptionModelChoice: String, Codable, CaseIterable, Identifiable {
         case .parakeetV2: "0.6 GB · English only, slightly higher recall"
         case .qwenASR17B: "3.2 GB · MLX, 52 languages/dialects, best Qwen accuracy tier"
         case .qwenASR06B: "0.7 GB · MLX, 52 languages/dialects, compact global tier"
-        case .graniteSpeech: "2B params · Apache-2.0, recommended local ASR via llama.cpp"
+        case .graniteSpeech: "2B parameters · Apache-2.0, recommended local speech recognition"
         case .whisperLarge: "1.6 GB · 99 languages, word timestamps, wide-language legacy fallback"
         case .cohere: "2B params · legacy — no auto language detection, timestamps, or diarization"
         case .senseVoice: "Chinese · Japanese · Korean · Cantonese · English (ONNX, downloaded on first use)"

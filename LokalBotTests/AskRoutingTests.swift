@@ -4,6 +4,7 @@ import XCTest
 /// The Ask surface's phase routing (spec §2.3 "one input, two response
 /// modes"): a non-empty query always shows live results; an empty query
 /// falls back to the conversation when one exists, else the empty state.
+@MainActor
 final class AskRoutingTests: XCTestCase {
 
     func testNonEmptyQueryAlwaysSearches() {
@@ -29,5 +30,18 @@ final class AskRoutingTests: XCTestCase {
         XCTAssertNil(AskFacet.screen.kind)
         XCTAssertEqual(AskFacet.transcripts.kind, .segment)
         XCTAssertEqual(AskFacet.summaries.kind, .summary)
+    }
+
+    func testSubmittingAskHandoffCarriesQueryAndContext() {
+        let app = AppState()
+        app.openAsk(
+            query: "What was I looking at?",
+            screenSnapshotIDs: [42],
+            submit: true)
+
+        XCTAssertEqual(app.navSection, .ask)
+        XCTAssertEqual(app.askPrefill, "What was I looking at?")
+        XCTAssertEqual(app.askScreenContextIDs, [42])
+        XCTAssertTrue(app.askSubmitRequested)
     }
 }

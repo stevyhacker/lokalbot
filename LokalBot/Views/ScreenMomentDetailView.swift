@@ -159,7 +159,8 @@ struct ScreenMomentDetailView: View {
             Button {
                 app.openAsk(
                     query: "What was I looking at here?",
-                    screenSnapshotIDs: [screenshot.id])
+                    screenSnapshotIDs: [screenshot.id],
+                    submit: true)
             } label: {
                 Label("Ask about this", systemImage: "sparkles")
             }

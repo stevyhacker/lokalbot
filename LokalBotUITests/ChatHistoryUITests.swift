@@ -16,6 +16,8 @@ final class ChatHistoryUITests: XCTestCase {
 
     private let conversationTitle = "Pricing decision"
     private let assistantLine = "You chose tiered pricing."
+    private let olderConversationTitle = "Roadmap review"
+    private let olderAssistantLine = "The team moved launch to August."
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -55,6 +57,27 @@ final class ChatHistoryUITests: XCTestCase {
                       "new-chat button missing")
     }
 
+    func testSelectingConversationClearsActiveSearch() {
+        let chat = app.descendants(matching: .any)["sidebar.ask"]
+        XCTAssertTrue(chat.waitForExistence(timeout: 10), "ask sidebar item missing")
+        chat.click()
+
+        let field = app.textFields["search.field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 6), "ask search field missing")
+        field.click()
+        field.typeText("a query that would otherwise mask the transcript")
+        XCTAssertTrue(app.descendants(matching: .any)["ask.escalate"]
+            .waitForExistence(timeout: 4), "search results did not appear")
+
+        let older = text(containing: olderConversationTitle)
+        XCTAssertTrue(older.waitForExistence(timeout: 4), "older conversation missing")
+        older.click()
+
+        XCTAssertTrue(text(containing: olderAssistantLine).waitForExistence(timeout: 6),
+                      "selected conversation remained hidden behind the old search query")
+        XCTAssertEqual(field.value as? String, "", "conversation selection did not clear search")
+    }
+
     private func text(containing fragment: String) -> XCUIElement {
         app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@",
@@ -66,21 +89,39 @@ final class ChatHistoryUITests: XCTestCase {
     private func seedConversation() throws {
         let chats = root.appendingPathComponent("chats", isDirectory: true)
         try FileManager.default.createDirectory(at: chats, withIntermediateDirectories: true)
-        let id = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"
-        let now = ISO8601DateFormatter().string(from: Date())
-        let json = """
+        let formatter = ISO8601DateFormatter()
+        let now = Date()
+        let latest = """
         {
-          "id": "\(id)",
+          "id": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
           "title": "\(conversationTitle)",
-          "createdAt": "\(now)",
-          "updatedAt": "\(now)",
+          "createdAt": "\(formatter.string(from: now))",
+          "updatedAt": "\(formatter.string(from: now))",
           "messages": [
             { "id": "11111111-1111-4111-8111-111111111111", "role": "user", "text": "What did we decide on pricing?" },
             { "id": "22222222-2222-4222-8222-222222222222", "role": "assistant", "text": "\(assistantLine)" }
           ]
         }
         """
-        try json.write(to: chats.appendingPathComponent("\(id).json"),
-                       atomically: true, encoding: .utf8)
+        let older = """
+        {
+          "id": "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB",
+          "title": "\(olderConversationTitle)",
+          "createdAt": "\(formatter.string(from: now.addingTimeInterval(-3_600)))",
+          "updatedAt": "\(formatter.string(from: now.addingTimeInterval(-3_600)))",
+          "messages": [
+            { "id": "33333333-3333-4333-8333-333333333333", "role": "user", "text": "When do we launch?" },
+            { "id": "44444444-4444-4444-8444-444444444444", "role": "assistant", "text": "\(olderAssistantLine)" }
+          ]
+        }
+        """
+        try latest.write(
+            to: chats.appendingPathComponent("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA.json"),
+            atomically: true,
+            encoding: .utf8)
+        try older.write(
+            to: chats.appendingPathComponent("BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB.json"),
+            atomically: true,
+            encoding: .utf8)
     }
 }

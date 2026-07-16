@@ -59,7 +59,7 @@ struct QuickRecallView: View {
             Image(systemName: "sparkle.magnifyingglass")
                 .font(.title2)
                 .foregroundStyle(.tint)
-            TextField("Recall anything from meetings or your screen…", text: $query)
+            TextField("Search meetings and screen context…", text: $query)
                 .textFieldStyle(.plain)
                 .font(.title3)
                 .focused($inputFocused)
@@ -187,7 +187,7 @@ struct QuickRecallView: View {
         case .meeting(let hit):
             app.openSearchHit(hit)
         case .ask(let query):
-            app.openAsk(query: query)
+            app.openAsk(query: query, submit: true)
         }
         WindowAccess.shared.open("main")
         dismiss()

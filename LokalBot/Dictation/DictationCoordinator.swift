@@ -43,6 +43,9 @@ final class DictationCoordinator: ObservableObject {
     @Published private(set) var livePreviewStatus = ""
     @Published private(set) var isLivePreviewWorking = false
     @Published private(set) var isLivePreviewEnabled = false
+    @Published private(set) var modelPreparationStatus: String?
+    @Published private(set) var modelPreparationProgress: Double?
+    @Published private(set) var modelPreparationError: String?
 
     private let storageRoot: URL
     private let settingsProvider: () -> AppSettings
@@ -66,6 +69,13 @@ final class DictationCoordinator: ObservableObject {
     private var screenContextTask: Task<DictationScreenContext?, Never>?
     private var mediaCleanupTask: Task<Void, Never>?
     private var mediaCleanupGeneration = 0
+    private struct PendingTranscriptionRetry {
+        var audioURL: URL
+        var startedAt: Date
+        var source: String
+        var generation: Int
+    }
+    private var pendingTranscriptionRetry: PendingTranscriptionRetry?
     private var activeAudioURL: URL?
     private var pausedMediaSession: MediaPlaybackController.PauseSession?
     private var deliveryTarget: DictationDeliveryTarget?
@@ -130,6 +140,26 @@ final class DictationCoordinator: ObservableObject {
 
     var shouldShowLiveTranscriptPanel: Bool {
         isLivePreviewEnabled && state.isWorking
+    }
+
+    var shouldShowModelPreparation: Bool {
+        guard case .transcribing = state else { return false }
+        return modelPreparationStatus != nil || modelPreparationError != nil
+    }
+
+    var modelPreparationPresentation: ModelPreparationPresentation {
+        if let modelPreparationError {
+            return .init(
+                state: .failed,
+                title: "Dictation model needs attention",
+                status: modelPreparationError,
+                actionTitle: "Retry")
+        }
+        return .init(
+            state: .preparing,
+            title: "Preparing the dictation model",
+            status: modelPreparationStatus ?? "Checking the selected speech model…",
+            progress: modelPreparationProgress)
     }
 
     func applySettings() {
@@ -212,6 +242,7 @@ final class DictationCoordinator: ObservableObject {
         lastTranscript = nil
         lastComposedText = nil
         lastEngine = nil
+        resetModelPreparation()
         resetLivePreview()
         refreshOverlay()
         let pendingMediaCleanup = mediaCleanupTask
@@ -345,6 +376,8 @@ final class DictationCoordinator: ObservableObject {
         transcribeTask = nil
         prewarmTask?.cancel()
         prewarmTask = nil
+        discardPendingTranscriptionRetry()
+        resetModelPreparation()
         discardScreenContext()
         _ = cancelLivePreview(reset: true)
         if case .recording = state {
@@ -372,13 +405,43 @@ final class DictationCoordinator: ObservableObject {
         source: String,
         generation session: Int
     ) async {
+        var preserveAudioForRetry = false
         defer {
-            if !settingsProvider().dictationRetainAudio {
+            if !preserveAudioForRetry, !settingsProvider().dictationRetainAudio {
                 try? FileManager.default.removeItem(at: audioURL)
             }
         }
+        let config = settingsProvider()
+        let choice = config.transcriptionModel
+        beginModelPreparation()
         do {
-            let config = settingsProvider()
+            try await choice.engine.prepare { [weak self] update in
+                self?.receiveModelPreparation(update)
+            }
+            resetModelPreparation()
+        } catch is CancellationError {
+            guard generation == session else { return }
+            complete()
+            return
+        } catch {
+            guard generation == session else { return }
+            preserveAudioForRetry = true
+            pendingTranscriptionRetry = .init(
+                audioURL: audioURL,
+                startedAt: startedAt,
+                source: source,
+                generation: session)
+            modelPreparationStatus = nil
+            modelPreparationProgress = nil
+            modelPreparationError = Self.modelPreparationFailureMessage
+            onError("Dictation is paused while its speech model needs attention. Choose Retry in the dictation panel.")
+            lokalbotLog(
+                "dictation model preparation FAILED model=\(choice.rawValue): "
+                    + error.localizedDescription)
+            refreshOverlay()
+            return
+        }
+        do {
             let transcript = try await Self.transcribe(audioURL, config: config)
             try Task.checkCancellation()
             guard generation == session else { return }
@@ -478,6 +541,8 @@ final class DictationCoordinator: ObservableObject {
     }
 
     private func complete() {
+        pendingTranscriptionRetry = nil
+        resetModelPreparation()
         discardScreenContext()
         state = .idle
         stopTick()
@@ -551,6 +616,25 @@ final class DictationCoordinator: ObservableObject {
     private func completeWithMessage(_ message: String) {
         onError(message)
         complete()
+    }
+
+    func retryModelPreparation() {
+        modelPreparationError = nil
+        if let pending = pendingTranscriptionRetry {
+            pendingTranscriptionRetry = nil
+            beginModelPreparation()
+            transcribeTask?.cancel()
+            transcribeTask = Task { [weak self] in
+                await self?.transcribeAndDeliver(
+                    audioURL: pending.audioURL,
+                    startedAt: pending.startedAt,
+                    source: pending.source,
+                    generation: pending.generation)
+            }
+        } else {
+            prewarmSelectedModel(reason: "retry")
+        }
+        refreshOverlay()
     }
 
     private static func transcribe(_ audioURL: URL, config: AppSettings) async throws -> Transcript {
@@ -804,13 +888,60 @@ final class DictationCoordinator: ObservableObject {
     private func prewarmSelectedModel(reason: String) {
         prewarmTask?.cancel()
         let choice = settingsProvider().transcriptionModel
-        prewarmTask = Task { [choice, reason] in
+        beginModelPreparation()
+        prewarmTask = Task { [weak self, choice, reason] in
+            guard let self else { return }
             do {
-                try await choice.engine.prepare()
+                try await choice.engine.prepare { [weak self] update in
+                    self?.receiveModelPreparation(update)
+                }
+                self.resetModelPreparation()
                 lokalbotLog("dictation prewarm ready model=\(choice.rawValue) reason=\(reason)")
+            } catch is CancellationError {
             } catch {
+                self.modelPreparationStatus = nil
+                self.modelPreparationProgress = nil
+                self.modelPreparationError = Self.modelPreparationFailureMessage
+                self.onError(
+                    "Could not prepare the dictation model. It will retry when recording ends.")
+                self.refreshOverlay()
                 lokalbotLog("dictation prewarm FAILED model=\(choice.rawValue): \(error.localizedDescription)")
             }
+        }
+    }
+
+    private static let modelPreparationFailureMessage =
+        "Check your connection and free disk space, then try again."
+
+    private func beginModelPreparation() {
+        modelPreparationError = nil
+        modelPreparationProgress = nil
+        modelPreparationStatus = "Checking the selected speech model…"
+        refreshOverlay()
+    }
+
+    private func receiveModelPreparation(_ update: ModelPreparationUpdate) {
+        if update.status == "Ready" {
+            resetModelPreparation()
+            return
+        }
+        modelPreparationError = nil
+        modelPreparationProgress = update.fractionCompleted
+        modelPreparationStatus = update.status
+        refreshOverlay()
+    }
+
+    private func resetModelPreparation() {
+        modelPreparationStatus = nil
+        modelPreparationProgress = nil
+        modelPreparationError = nil
+    }
+
+    private func discardPendingTranscriptionRetry() {
+        guard let pending = pendingTranscriptionRetry else { return }
+        pendingTranscriptionRetry = nil
+        if !settingsProvider().dictationRetainAudio {
+            try? FileManager.default.removeItem(at: pending.audioURL)
         }
     }
 

@@ -65,7 +65,11 @@ private struct CotypingContent: View {
         .frame(minWidth: 460)
         .accessibilityIdentifier("cotyping.form")
         .onAppear { permissions.startPolling() }
-        .onDisappear { permissions.stopPolling(); previewTask?.cancel() }
+        .onDisappear {
+            permissions.stopPolling()
+            PermissionGuidanceController.shared.dismiss()
+            previewTask?.cancel()
+        }
         .onChange(of: permissions.granted) { _, _ in
             if app.settings.cotypingEnabled { app.cotyping.applySettings() }
         }
@@ -82,7 +86,7 @@ private struct CotypingContent: View {
                     .frame(width: 34)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Inline AI autocomplete").font(.headline)
-                    Text("As you type in almost any app, a gray suggestion appears next to your cursor. Press Tab to accept it, or keep typing to ignore it. Runs on your selected on-device model — nothing leaves this Mac.")
+                    Text("As you type in almost any app, a gray suggestion appears next to your cursor. Press \(app.settings.cotypingAcceptKey.label) to accept it, or keep typing to ignore it. Runs on your selected on-device model — nothing leaves this Mac.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
             }
@@ -126,8 +130,13 @@ private struct CotypingContent: View {
             PermissionRow(permission: .inputMonitoring,
                           why: "Notices your keystrokes so it knows when to suggest, and catches the Tab key.")
             if !(permissions.granted[.accessibility] ?? false) {
-                Text("Accessibility grants apply at launch — you may need to quit and reopen LokalBot after granting.")
-                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Text("Accessibility access applies after a relaunch.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Relaunch") { PermissionManager.relaunch() }
+                        .controlSize(.small)
+                }
             }
         }
     }
@@ -220,7 +229,7 @@ private struct CotypingContent: View {
     private var generationSection: some View {
         Section("Generation") {
             Toggle("Stream suggestions while generating", isOn: $app.settings.cotypingStreamSuggestionsWhileGenerating)
-            Text("When off, suggestions appear once fully formed, matching Cotypist's default. Turn on to show token-by-token partials sooner.")
+            Text("When off, suggestions appear once they are complete. Turn on to show partial suggestions sooner as they are generated.")
                 .font(.caption).foregroundStyle(.secondary)
             Toggle("Use the fast in-process runtime (recommended)", isOn: $app.settings.cotypingInProcessRuntime)
                 .disabled(!CotypingEngineSelector.isAppleSilicon)
@@ -452,7 +461,7 @@ private struct CotypingContent: View {
     private var tipsSection: some View {
         Section("How it works") {
             tip("keyboard", "Type and pause — a suggestion appears next to your cursor.")
-            tip("return", "Press Tab to accept, Esc or keep typing to dismiss.")
+            tip("return", "Press \(app.settings.cotypingAcceptKey.label) to accept, Esc or keep typing to dismiss.")
             tip("hand.raised", "Never runs in password fields, and skips the apps and sites you exclude above.")
             tip("lock.shield", "Suggestions are generated on-device by your local model. Nothing is sent anywhere.")
         }

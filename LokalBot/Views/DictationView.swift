@@ -24,7 +24,10 @@ struct DictationView: View {
             permissions.startPolling()
             app.dictation.applySettings()
         }
-        .onDisappear { permissions.stopPolling() }
+        .onDisappear {
+            permissions.stopPolling()
+            PermissionGuidanceController.shared.dismiss()
+        }
         .onChange(of: permissions.granted) { _, _ in
             app.dictation.applySettings()
         }
@@ -118,9 +121,14 @@ struct DictationView: View {
             PermissionRow(permission: .accessibility, why: "Validates the focused field and inserts the composed text safely.")
             PermissionRow(permission: .screenRecording, why: "Optionally reads only the focused window for this request. The image and OCR text are never stored.")
             if !app.dictation.isShortcutMonitoringActive {
-                Text("After granting Input Monitoring, quit and reopen LokalBot if the shortcut is still inactive.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack {
+                    Text("Relaunch after granting Input Monitoring if the shortcut is still inactive.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Relaunch") { PermissionManager.relaunch() }
+                        .controlSize(.small)
+                }
             }
         }
     }
