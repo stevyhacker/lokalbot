@@ -37,7 +37,7 @@ Environment:
   CONFIGURATION        Xcode configuration to build. Default: Debug
   LOKALBOT_APP         Installed app path. Default: /Applications/LokalBot.app
   EXPECTED_BUNDLE_ID   Expected bundle id. Default: me.dotenv.LokalBot
-  EXPECTED_TEAM_ID     Expected Apple Team ID. Default: 3N8B4562P4
+  EXPECTED_TEAM_ID     Expected Apple Team ID. Default: K96P3M3997
   SIGNING_IDENTITY     Xcode signing selector. Default: Apple Development
 EOF
 }
@@ -87,11 +87,20 @@ codesign_display() {
 codesign_field() {
   local path="$1"
   local field="$2"
-  codesign_display "$path" | /usr/bin/awk -F= -v field="$field" '$1 == field { print $2; exit }'
+  codesign_display "$path" | /usr/bin/awk -F= -v field="$field" '
+    $1 == field && value == "" { value = $2 }
+    END { if (value != "") print value }
+  '
 }
 
 designated_requirement() {
-  codesign_display "$1" | /usr/bin/awk '/^designated => / { sub(/^designated => /, ""); print; exit }'
+  codesign_display "$1" | /usr/bin/awk '
+    /^designated => / && value == "" {
+      sub(/^designated => /, "")
+      value = $0
+    }
+    END { if (value != "") print value }
+  '
 }
 
 verify_app_identity() {

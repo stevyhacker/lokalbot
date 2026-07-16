@@ -86,6 +86,51 @@ enum MenuBarIcon {
     }
 }
 
+/// A narrowly-observed control for pausing day tracking. `AppState` owns the
+/// sampler but does not rebroadcast its frequent sample updates, so views that
+/// display `isPaused` must observe the sampler directly to refresh immediately.
+struct TrackingPauseButton: View {
+    enum Presentation {
+        case menuBar
+        case toolbar
+    }
+
+    @ObservedObject var sampler: ActivitySampler
+    let presentation: Presentation
+
+    var body: some View {
+        switch presentation {
+        case .menuBar:
+            Button(action: toggle) {
+                Image(systemName: sampler.isPaused ? "play.fill" : "pause.fill")
+                    .font(.caption.weight(.semibold))
+                    .frame(width: 28, height: 28)
+                    .background(Color.secondary.opacity(0.14), in: Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel(actionTitle)
+            .help(actionTitle)
+
+        case .toolbar:
+            Button(action: toggle) {
+                Label(actionTitle,
+                      systemImage: sampler.isPaused ? "play.fill" : "pause.fill")
+            }
+            .help(actionTitle)
+        }
+    }
+
+    private var actionTitle: String {
+        sampler.isPaused ? "Resume activity tracking" : "Pause activity tracking"
+    }
+
+    private func toggle() {
+        sampler.isPaused.toggle()
+    }
+}
+
 /// The dropdown shown when the menu bar item is clicked. The primary surface for
 /// running LokalBot without ever opening the main window: live recording state,
 /// the record/stop control, recent meetings, and app actions (Settings, Quit).
@@ -330,13 +375,7 @@ struct MenuBarView: View {
             Spacer()
 
             if app.settings.trackingEnabled {
-                Button {
-                    app.sampler.isPaused.toggle()
-                } label: {
-                    Image(systemName: app.sampler.isPaused ? "play.circle" : "pause.circle")
-                }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
-                .help(app.sampler.isPaused ? "Resume activity tracking" : "Pause activity tracking")
+                TrackingPauseButton(sampler: app.sampler, presentation: .menuBar)
             }
 
             Button("Quit") { NSApp.terminate(nil) }

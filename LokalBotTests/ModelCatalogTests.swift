@@ -29,32 +29,16 @@ final class ModelCatalogTests: XCTestCase {
 
     func testRecommendedSummarizationAndMaximumQualityModelsExist() {
         XCTAssertNotNil(ModelCatalog.entry(id: ModelCatalog.recommendedSummarizationID))
-        XCTAssertNotNil(ModelCatalog.entry(id: ModelCatalog.compactSummarizationID))
+        XCTAssertNotNil(ModelCatalog.entry(id: ModelCatalog.defaultSummarizationID))
         XCTAssertNotNil(ModelCatalog.entry(id: "qwen3.6-27b"))
         XCTAssertNotNil(ModelCatalog.entry(id: "gemma4-12b"))
         XCTAssertNotNil(ModelCatalog.entry(id: "qwen3.5-4b"))
         XCTAssertNotNil(ModelCatalog.entry(id: "lfm2.5-1.2b-instruct"))
     }
 
-    /// The fresh-install summarizer default is RAM-aware: the recommended
-    /// 17.7 GB model where it fits, the compact 4B where it would be too
-    /// large to load.
-    func testDefaultSummarizationModelIsRAMAware() {
-        let big = HardwareCapability(physicalMemoryBytes: 64 * 1_073_741_824, isAppleSilicon: true)
-        let mid = HardwareCapability(physicalMemoryBytes: 32 * 1_073_741_824, isAppleSilicon: true)
-        let small = HardwareCapability(physicalMemoryBytes: 16 * 1_073_741_824, isAppleSilicon: true)
-
-        XCTAssertEqual(ModelCatalog.defaultSummarizationID(for: big),
-                       ModelCatalog.recommendedSummarizationID)
-        XCTAssertEqual(ModelCatalog.defaultSummarizationID(for: mid),
-                       ModelCatalog.recommendedSummarizationID)
-        XCTAssertEqual(ModelCatalog.defaultSummarizationID(for: small),
-                       ModelCatalog.compactSummarizationID)
-    }
-
-    func testFreshSettingsDefaultMatchesThisMachinesRAMAwareChoice() {
-        XCTAssertEqual(AppSettings().builtInModelID,
-                       ModelCatalog.defaultSummarizationID(for: HardwareCapabilityProbe.current()))
+    func testFreshSettingsDefaultToQwen35FourBOnEveryMac() {
+        XCTAssertEqual(ModelCatalog.defaultSummarizationID, "qwen3.5-4b")
+        XCTAssertEqual(AppSettings().builtInModelID, ModelCatalog.defaultSummarizationID)
     }
 
     func testQwenASRModelsAreRunnableChoices() {

@@ -134,8 +134,8 @@ struct AppSettings: Codable, Equatable {
     /// Settings → Day tracking), never a side effect of finishing setup.
     var trackingEnabled: Bool = false
 
-    /// M6: embedding-based semantic search (Qwen3-Embedding, downloaded when enabled).
-    var semanticSearchEnabled: Bool = false
+    /// M6: embedding-based semantic search (Qwen3-Embedding, downloaded on first use).
+    var semanticSearchEnabled: Bool = true
 
     // M5: screen context. Activity-only is the privacy-preserving default.
     // Text and visual context are separate explicit opt-ins; the legacy boolean
@@ -212,11 +212,9 @@ struct AppSettings: Codable, Equatable {
     }
 
     var summarizerBackend: SummarizerBackend = .builtIn
-    /// RAM-aware: the recommended model where it fits, a compact one elsewhere
-    /// (a 17.7 GB download that can't load is a terrible first run). Existing
+    /// Fresh installs use the fast, broadly compatible 4B model. Existing
     /// installs keep whatever their saved settings blob says.
-    var builtInModelID: String = ModelCatalog.defaultSummarizationID(
-        for: HardwareCapabilityProbe.current())
+    var builtInModelID: String = ModelCatalog.defaultSummarizationID
     var customBuiltInModels: [ModelCatalog.Entry] = []
     var ollamaBaseURL: String = "http://localhost:11434"
     var ollamaModel: String = ""

@@ -68,21 +68,9 @@ struct ModelCatalog {
     static let compactFallbackID = "qwen3.5-0.8b"
     static let recommendedSummarizationID = "qwen3.6-35b-a3b"
     static let recommendedCotypingID = "gemma4-e4b-q5-xl"
-    /// Summarizer preselected on Macs that can't hold the recommended model.
-    static let compactSummarizationID = "qwen3.5-4b"
-
-    /// Fresh-install summarizer default: the recommended long-meeting model
-    /// when this Mac's RAM can hold it, else the compact Qwen3.5 4B. A 17.7 GB
-    /// first download that then fails to load is a worse first run than a
-    /// modest model that just works — the big one stays one click away in
-    /// Settings → Models, labelled "Recommended".
-    static func defaultSummarizationID(for capability: HardwareCapability) -> String {
-        guard let entry = entry(id: recommendedSummarizationID) else {
-            return compactSummarizationID
-        }
-        let fit = ModelFit.evaluate(modelSizeGB: entry.sizeGB, capability: capability)
-        return fit == .tooLarge ? compactSummarizationID : recommendedSummarizationID
-    }
+    /// Main LLM preselected for every fresh install. Larger models remain
+    /// available in Settings → Models for users who prefer maximum quality.
+    static let defaultSummarizationID = "qwen3.5-4b"
 
     /// Local GGUF catalog, roughly ordered from tiny fallbacks to higher-quality
     /// meeting-summary and cotyping options.
@@ -113,7 +101,7 @@ struct ModelCatalog {
               url: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_K_M.gguf",
               sha256: "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
               sizeBytes: 2_740_937_888,
-              sizeGB: 2.8, blurb: "Balanced local summaries with long context. 16 GB Macs.",
+              sizeGB: 2.8, blurb: "Default Main LLM with balanced local summaries and long context. 16 GB Macs.",
               disablesThinking: true),
         Entry(id: "gemma4-e4b", displayName: "Gemma 4 E4B",
               fileName: "gemma-4-E4B-it-Q4_K_M.gguf",
@@ -141,7 +129,7 @@ struct ModelCatalog {
               url: "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/a483e9e6cbd595906af30beda3187c2663a1118c/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf",
               sha256: "649d7508507b84638732c4f52c24c8b15843c6dca2f3ff793ae07c14a67ebbb3",
               sizeBytes: 17_730_509_792,
-              sizeGB: 17.73, blurb: "Recommended long-meeting default; ~3B active. 32 GB+ Macs.",
+              sizeGB: 17.73, blurb: "Higher-quality long-meeting option; ~3B active. 32 GB+ Macs.",
               disablesThinking: true),
         Entry(id: "qwen3.6-27b", displayName: "Qwen3.6 27B",
               fileName: "Qwen3.6-27B-Q4_K_M.gguf",

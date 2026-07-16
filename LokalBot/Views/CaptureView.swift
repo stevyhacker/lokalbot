@@ -129,12 +129,7 @@ struct TimelineContentView: View {
             .onChange(of: app.pendingScreenSnapshotID) { consumePendingScreenMoment() }
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
-                    Button {
-                        app.sampler.isPaused.toggle()
-                    } label: {
-                        Label(app.sampler.isPaused ? "Resume Tracking" : "Pause Tracking",
-                              systemImage: app.sampler.isPaused ? "play.fill" : "pause.fill")
-                    }
+                    TrackingPauseButton(sampler: app.sampler, presentation: .toolbar)
                     Button {
                         model.reload(app: app)
                     } label: {

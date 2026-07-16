@@ -29,6 +29,15 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(AppSettings().multiSpeakerDiarization)
     }
 
+    func testSemanticSearchDefaultsOnButPreservesAnExplicitOffChoice() throws {
+        XCTAssertTrue(AppSettings().semanticSearchEnabled)
+
+        let data = #"{"semanticSearchEnabled":false}"#.data(using: .utf8)!
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertFalse(settings.semanticSearchEnabled)
+    }
+
     func testDictationDefaultsMatchHandyStyleShortcutFlow() {
         let settings = AppSettings()
 
