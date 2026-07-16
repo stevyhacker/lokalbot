@@ -20,6 +20,10 @@ SCRIPT="$PROJECT_DIR/short-script.txt"
 MP3="$PROJECT_DIR/assets/narration-short.mp3"
 WAV="$PROJECT_DIR/assets/narration-short.wav"
 TIMING="$PROJECT_DIR/assets/narration-short-timing.json"
+VOICE_ID="bIHbv24MWmeRgasZH58o"
+VOICE_NAME="Will"
+MODEL_ID="eleven_v3"
+OUTPUT_FORMAT="mp3_44100_128"
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "error: uv is required to prepare the local narration environment" >&2
@@ -44,17 +48,17 @@ if [ ! -f "$WAV" ] || [ "$SCRIPT" -nt "$WAV" ]; then
     --wav "$WAV" \
     --timing "$TIMING" \
     --max-duration 30 \
-    --anchor "Quick Recall=4.95" \
-    --anchor "Context Rewind=8.35" \
+    --voice-id "$VOICE_ID" \
+    --voice-name "$VOICE_NAME" \
+    --model-id "$MODEL_ID" \
+    --output-format "$OUTPUT_FORMAT" \
     --anchor "Dictate=13.20" \
-    --anchor "Cotyping=16.40" \
-    --anchor "No account=20.60" \
-    --anchor "LokalBot:=24.00"
+    --anchor "LokalBot:=23.72"
   if [ -f "$MP3" ] && [ -f "$TIMING" ] && [ ! "$SCRIPT" -nt "$MP3" ]; then
     "$PYTHON" "$PROJECT_DIR/generate_elevenlabs_narration.py" "$@" --reuse-audio
   else
     if [ -z "${ELEVENLABS_API_KEY:-}" ]; then
-      echo "error: ELEVENLABS_API_KEY is required to regenerate the Bella narration" >&2
+      echo "error: ELEVENLABS_API_KEY is required to regenerate the Will narration" >&2
       exit 1
     fi
     "$PYTHON" "$PROJECT_DIR/generate_elevenlabs_narration.py" "$@"
@@ -79,9 +83,9 @@ npx --yes "hyperframes@$HYPERFRAMES_VERSION" render "$CHECK_DIR" \
   --output "$MASTER" --fps 30 --quality high --strict --skill creative-production
 
 ffmpeg -y -v error -i "$MASTER" -t 30 \
+  -map 0:v:0 -map 0:a:0 \
   -filter:a 'loudnorm=I=-16:TP=-1.5:LRA=7' \
-  -c:v libx264 -preset slow -crf 18 -profile:v high -level 4.2 -pix_fmt yuv420p \
-  -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv \
+  -c:v copy \
   -c:a aac -b:a 192k -ar 48000 -movflags +faststart "$FINAL_TMP"
 mv "$FINAL_TMP" "$FINAL"
 

@@ -20,9 +20,10 @@ MP3_PATH = ASSET_DIR / "narration-elevenlabs.mp3"
 WAV_PATH = ASSET_DIR / "narration.wav"
 TIMING_PATH = ASSET_DIR / "narration-elevenlabs-timing.json"
 
-VOICE_ID = "hpp4J3VqNfWAUOO0d1Us"
-MODEL_ID = "eleven_multilingual_v2"
-OUTPUT_FORMAT = "mp3_44100_128"
+DEFAULT_VOICE_ID = "hpp4J3VqNfWAUOO0d1Us"
+DEFAULT_VOICE_NAME = "Bella"
+DEFAULT_MODEL_ID = "eleven_multilingual_v2"
+DEFAULT_OUTPUT_FORMAT = "mp3_44100_128"
 COMPOSITION_DURATION = 55.0
 
 # These lines should begin with the matching product scenes. Silence is inserted
@@ -30,24 +31,46 @@ COMPOSITION_DURATION = 55.0
 SCENE_ANCHORS: list[tuple[str, float]] = []
 
 
-def generate(text: str, api_key: str) -> dict:
-    payload = json.dumps(
-        {
-            "text": text,
-            "model_id": MODEL_ID,
-            "seed": 24817,
-            "voice_settings": {
-                "stability": 0.48,
-                "similarity_boost": 0.80,
-                "style": 0.16,
-                "use_speaker_boost": True,
-                "speed": 1.00,
-            },
+def voice_settings(model_id: str) -> dict:
+    if model_id == "eleven_v3":
+        # Eleven v3's Natural stability mode is 0.5. Speaker boost is not
+        # supported by v3, and style exaggeration is intentionally disabled.
+        return {
+            "stability": 0.50,
+            "similarity_boost": 0.75,
+            "style": 0.0,
+            "speed": 1.00,
         }
+    return {
+        "stability": 0.48,
+        "similarity_boost": 0.80,
+        "style": 0.16,
+        "use_speaker_boost": True,
+        "speed": 1.00,
+    }
+
+
+def generate(
+    text: str,
+    api_key: str,
+    voice_id: str,
+    model_id: str,
+    output_format: str,
+) -> dict:
+    request_body = {
+        "text": text,
+        "model_id": model_id,
+        "seed": 24817,
+        "voice_settings": voice_settings(model_id),
+    }
+    if model_id == "eleven_v3":
+        request_body["language_code"] = "en"
+    payload = json.dumps(
+        request_body
     ).encode("utf-8")
     url = (
-        f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}/with-timestamps"
-        f"?output_format={OUTPUT_FORMAT}"
+        f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/with-timestamps"
+        f"?output_format={output_format}"
     )
     request = urllib.request.Request(
         url,
@@ -174,10 +197,17 @@ def main() -> None:
     parser.add_argument("--wav", type=Path, default=WAV_PATH)
     parser.add_argument("--timing", type=Path, default=TIMING_PATH)
     parser.add_argument("--max-duration", type=float, default=COMPOSITION_DURATION)
+    parser.add_argument("--voice-id", default=DEFAULT_VOICE_ID)
+    parser.add_argument("--voice-name", default=DEFAULT_VOICE_NAME)
+    parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
+    parser.add_argument("--output-format", default=DEFAULT_OUTPUT_FORMAT)
     parser.add_argument(
         "--reuse-audio",
         action="store_true",
-        help="reuse the existing MP3 and raw alignment while rebuilding editorial timing",
+        help=(
+            "reuse the existing MP3 and raw alignment while rebuilding editorial "
+            "timing; mismatched voice/model metadata triggers regeneration"
+        ),
     )
     parser.add_argument(
         "--anchor",
@@ -198,22 +228,53 @@ def main() -> None:
     args.mp3.parent.mkdir(parents=True, exist_ok=True)
     args.wav.parent.mkdir(parents=True, exist_ok=True)
     args.timing.parent.mkdir(parents=True, exist_ok=True)
-    if args.reuse_audio:
+    reuse_audio = args.reuse_audio
+    if reuse_audio:
         if not args.mp3.exists() or not args.timing.exists():
             raise SystemExit("--reuse-audio requires the existing MP3 and timing JSON")
         result = json.loads(args.timing.read_text(encoding="utf-8"))
         alignment = result.get("alignment")
-    else:
+        generation = result.get("generation") or {}
+        expected_generation = {
+            "voiceId": args.voice_id,
+            "modelId": args.model_id,
+            "outputFormat": args.output_format,
+        }
+        if any(
+            generation.get(key) != value
+            for key, value in expected_generation.items()
+        ):
+            reuse_audio = False
+
+    if not reuse_audio:
         api_key = os.environ.get("ELEVENLABS_API_KEY")
         if not api_key:
-            raise SystemExit("ELEVENLABS_API_KEY is required to regenerate narration")
+            raise SystemExit(
+                "ELEVENLABS_API_KEY is required to regenerate narration for the "
+                "selected voice/model"
+            )
         text = args.script.read_text(encoding="utf-8")
-        result = generate(text, api_key)
+        result = generate(
+            text,
+            api_key,
+            args.voice_id,
+            args.model_id,
+            args.output_format,
+        )
         alignment = result.get("alignment")
         audio_base64 = result.pop("audio_base64", None)
         if not alignment or not audio_base64:
             raise SystemExit("ElevenLabs response did not contain audio and alignment data")
         args.mp3.write_bytes(base64.b64decode(audio_base64, validate=True))
+
+    result["generation"] = {
+        "provider": "ElevenLabs",
+        "voice": args.voice_name,
+        "voiceId": args.voice_id,
+        "modelId": args.model_id,
+        "outputFormat": args.output_format,
+        "speed": 1.0,
+    }
 
     if not alignment:
         raise SystemExit("ElevenLabs timing JSON did not contain raw alignment data")
@@ -247,7 +308,7 @@ def main() -> None:
     result["production_alignment"] = shifted_alignment
     args.timing.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     render_timed_wav(pauses, args.mp3, args.wav)
-    print(f"Generated {args.wav} with Bella / {MODEL_ID}")
+    print(f"Generated {args.wav} with {args.voice_name} / {args.model_id}")
 
 
 if __name__ == "__main__":

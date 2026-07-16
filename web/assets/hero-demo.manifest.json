@@ -1,7 +1,7 @@
 {
   "version": 1,
   "output": "hero-demo.mp4",
-  "sha256": "a7afca9b59e94942f93de98bd57bb3e81e727c9f52887acf629d875c0ec03645",
+  "sha256": "399e78eacd804271a510565c93809749c13842c98d8e220477335afe77be240c",
   "production": {
     "engine": "HyperFrames",
     "engineVersion": "0.7.42",
@@ -15,17 +15,23 @@
   },
   "audio": {
     "narration": {
-      "engine": "ElevenLabs Multilingual v2",
-      "voice": "Bella",
-      "voiceId": "hpp4J3VqNfWAUOO0d1Us",
+      "engine": "ElevenLabs Eleven v3",
+      "modelId": "eleven_v3",
+      "voice": "Will",
+      "voiceId": "bIHbv24MWmeRgasZH58o",
       "speed": 1.0,
-      "timing": "natural performance with editorial pauses; no time stretching"
+      "stabilityMode": "Natural",
+      "timing": "natural performance with sentence-boundary pauses; no time stretching"
     },
     "music": "original deterministic score",
     "effects": "original scene-aligned UI sound-design stem",
     "deliveryLoudness": {
       "integratedTargetLufs": -16.0,
       "truePeakTargetDbtp": -1.5
+    },
+    "deliveryEncoding": {
+      "video": "HyperFrames H.264 master stream; no second-generation encode",
+      "audio": "AAC 192 kb/s"
     }
   },
   "captions": {
@@ -82,7 +88,7 @@
         "width": 1872,
         "height": 1276,
         "r_frame_rate": "30/1",
-        "bit_rate": "1882180"
+        "bit_rate": "3626259"
       },
       {
         "index": 1,
@@ -91,13 +97,13 @@
         "sample_rate": "48000",
         "channels": 2,
         "r_frame_rate": "0/0",
-        "bit_rate": "194710"
+        "bit_rate": "195307"
       }
     ],
     "format": {
       "duration": "30.000000",
-      "size": "7822852",
-      "bit_rate": "2086093"
+      "size": "14358736",
+      "bit_rate": "3828996"
     }
   }
 }
