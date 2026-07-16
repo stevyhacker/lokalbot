@@ -49,8 +49,13 @@ final class OnboardingUITests: XCTestCase {
         app.buttons["Continue"].click()
         assertPage(title: "Remember your day?", step: 4)
 
-        XCTAssertEqual(app.switches.count, 3,
-                       "day-memory page should expose its three independent opt-ins")
+        let activity = optIn("Track app & window activity")
+        let textContext = optIn("Capture visible text context")
+        let visualContext = optIn("Add encrypted visual context")
+        for option in [activity, textContext, visualContext] {
+            XCTAssertTrue(option.waitForExistence(timeout: 4),
+                          "day-memory opt-in missing")
+        }
         XCTAssertTrue(text(containing: "Activity, text, and visual context all start off")
             .exists, "day-memory page did not explain its opt-in defaults")
 
@@ -63,7 +68,7 @@ final class OnboardingUITests: XCTestCase {
 
         app.buttons["Back"].click()
         assertPage(title: "Remember your day?", step: 4)
-        app.switches.element(boundBy: 2).click()
+        optIn("Add encrypted visual context").click()
         app.buttons["Continue to permissions"].click()
         assertPage(title: "Grant LokalBot access", step: 5)
         XCTAssertTrue(text(containing: "Screen Recording").waitForExistence(timeout: 5),
@@ -83,5 +88,9 @@ final class OnboardingUITests: XCTestCase {
 
     private func text(containing fragment: String) -> XCUIElement {
         UITestHarness.staticText(containing: fragment, in: app)
+    }
+
+    private func optIn(_ title: String) -> XCUIElement {
+        app.descendants(matching: .any)["onboarding.optIn.\(title)"].firstMatch
     }
 }

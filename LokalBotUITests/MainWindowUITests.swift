@@ -38,8 +38,7 @@ final class MainWindowUITests: XCTestCase {
     /// SwiftUI owns the split-view sidebar toggle. Adding a second custom
     /// navigation toolbar item renders two identical "Hide Sidebar" controls.
     func testToolbarShowsOneSidebarToggle() {
-        let sidebarToggles = app.buttons.matching(NSPredicate(
-            format: "label == 'Hide Sidebar' OR label == 'Show Sidebar'"))
+        let sidebarToggles = toolbarSidebarButtons
         XCTAssertTrue(sidebarToggles.firstMatch.waitForExistence(timeout: 4),
                       "native sidebar toolbar control missing")
         XCTAssertEqual(sidebarToggles.count, 1,
@@ -50,12 +49,14 @@ final class MainWindowUITests: XCTestCase {
     /// guards the recent split-view stabilization against a control that is
     /// present but detached from NavigationSplitView's column visibility.
     func testToolbarToggleHidesAndRestoresSidebar() {
-        let hide = app.buttons["Hide Sidebar"]
+        let hide = toolbarSidebarButtons.matching(
+            NSPredicate(format: "label == 'Hide Sidebar'")).firstMatch
         XCTAssertTrue(hide.waitForExistence(timeout: 4),
                       "Hide Sidebar control missing")
         hide.click()
 
-        let show = app.buttons["Show Sidebar"]
+        let show = toolbarSidebarButtons.matching(
+            NSPredicate(format: "label == 'Show Sidebar'")).firstMatch
         XCTAssertTrue(show.waitForExistence(timeout: 4),
                       "toolbar did not switch to Show Sidebar")
         XCTAssertFalse(app.descendants(matching: .any)["sidebar.settings"].exists,
@@ -64,8 +65,18 @@ final class MainWindowUITests: XCTestCase {
         show.click()
         XCTAssertTrue(app.descendants(matching: .any)["sidebar.timeline"]
             .waitForExistence(timeout: 5), "sidebar did not return")
-        XCTAssertTrue(app.buttons["Hide Sidebar"].waitForExistence(timeout: 4),
+        XCTAssertTrue(toolbarSidebarButtons.matching(
+            NSPredicate(format: "label == 'Hide Sidebar'")).firstMatch
+            .waitForExistence(timeout: 4),
                       "toolbar did not return to Hide Sidebar")
+    }
+
+    /// Xcode 26.3 exposes the native sidebar control as a Button containing a
+    /// nested Button. Querying every descendant reports two controls even
+    /// though the toolbar has only one direct child.
+    private var toolbarSidebarButtons: XCUIElementQuery {
+        app.toolbars.firstMatch.children(matching: .button).matching(NSPredicate(
+            format: "label == 'Hide Sidebar' OR label == 'Show Sidebar'"))
     }
 
     /// Every planted fixture surfaces in the sidebar, grouped by day with
