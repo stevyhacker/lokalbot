@@ -10,6 +10,7 @@
 #
 # Produces in Assets/screenshots/:
 #   *.png      one still per section
+#              plus Quick Recall and Dictation feature surfaces
 #   hero.gif   a tour across sections
 #   recap.gif  browsing meeting recaps + transcript
 #   search.gif searching across meetings
@@ -50,7 +51,8 @@ capture() {
   rm -f "$dest/$name.png"
   env LOKALBOT_UI_TEST=1 LOKALBOT_STORAGE_ROOT="$LIB" LOKALBOT_DEFAULTS_SUITE="$SUITE" \
       LOKALBOT_CAPTURE_FILE="$dest/$name.png" LOKALBOT_CAPTURE_SIZE="$CAPTURE_SIZE" \
-      LOKALBOT_CAPTURE_CONTENT_MAX="$CAPTURE_CONTENT_MAX" "$@" \
+      LOKALBOT_CAPTURE_CONTENT_MAX="$CAPTURE_CONTENT_MAX" \
+      LOKALBOT_SCREEN_MEMORY_DEMO=1 "$@" \
     "$APP" -ApplePersistenceIgnoreState YES -AppleLocale en_US -AppleLanguages "(en)" \
     --lokalbot-ui-test --lokalbot-storage-root "$LIB" --lokalbot-defaults-suite "$SUITE" \
     </dev/null >/dev/null 2>&1 &
@@ -70,9 +72,11 @@ echo "==> Capturing section stills at ${CAPTURE_SIZE}pt (2x, content max ${CAPTU
 capture "$OUT" meetings-summary    LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=0 LOKALBOT_DETAIL_TAB=summary    LOKALBOT_DISMISS_ONBOARDING=1
 capture "$OUT" meetings-transcript LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=0 LOKALBOT_DETAIL_TAB=transcript LOKALBOT_DISMISS_ONBOARDING=1
 capture "$OUT" timeline            LOKALBOT_INITIAL_SECTION=timeline LOKALBOT_DISMISS_ONBOARDING=1
+capture "$OUT" quick-recall        LOKALBOT_UI_TEST_WINDOW=quick-recall LOKALBOT_QUICK_RECALL_QUERY=Redis LOKALBOT_CAPTURE_SIZE=660x480 LOKALBOT_DISMISS_ONBOARDING=1
 capture "$OUT" search              LOKALBOT_INITIAL_SECTION=search LOKALBOT_INITIAL_SEARCH=Redis
 capture "$OUT" models              LOKALBOT_INITIAL_SECTION=models
 capture "$OUT" cotyping            LOKALBOT_INITIAL_SECTION=cotyping LOKALBOT_COTYPING_DEMO=1
+capture "$OUT" dictation           LOKALBOT_INITIAL_SECTION=dictation LOKALBOT_DICTATION_DEMO=1
 capture "$OUT" settings            LOKALBOT_INITIAL_SECTION=settings
 capture "$OUT" chat                LOKALBOT_INITIAL_SECTION=chat LOKALBOT_DISMISS_ONBOARDING=1
 
@@ -98,17 +102,10 @@ python3 Scripts/assemble_gif.py "$OUT/recap.gif" 1720 \
 python3 Scripts/assemble_gif.py "$OUT/search.gif" 1720 \
   "$OUT/search.png" "$FRAMES/search-sso.png" "$FRAMES/search-postgres.png"
 
-echo "==> Directing landing-page product tour"
-# 1872 = 2x the landing page's 936px display slot. The MP4 path adds eased
-# pans/zooms, pointer movement, click cues, and exact feature labels; GIFs keep
-# their compact README treatment.
-python3 Scripts/assemble_gif.py "web/assets/hero-demo.mp4" 1872 \
-  "$OUT/meetings-summary.png" "$OUT/meetings-transcript.png" "$OUT/search.png" "$OUT/chat.png" "$OUT/timeline.png" "$OUT/cotyping.png"
-# Build the poster from the sRGB source rather than round-tripping through the
-# BT.709 video, which would leave JPEG viewers guessing at the transfer curve.
-ffmpeg -y -v error -i "$OUT/meetings-summary.png" \
-  -vf 'pad=iw+80:ih+80:40:40:color=0x0e141c,scale=min(1872\,iw):-2:flags=lanczos' \
-  -frames:v 1 -q:v 3 -pix_fmt yuvj444p "web/assets/hero-poster.jpg"
-echo "    web/assets/hero-poster.jpg"
+echo "==> Rendering narrated landing-page product film"
+# HyperFrames turns these real captures into a directed interaction story with
+# camera choreography, captions, narration, original score, and UI sound design.
+Scripts/render-hero-video.sh
+Scripts/render-hero-video-short.sh
 
-echo "==> Done: $OUT/{*.png, hero.gif, recap.gif, search.gif} + web/assets/hero-demo.{mp4,manifest.json}"
+echo "==> Done: $OUT/{*.png, hero.gif, recap.gif, search.gif} + web/assets/hero-demo{,-short,-long}.mp4"

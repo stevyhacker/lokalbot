@@ -1,116 +1,103 @@
 {
   "version": 1,
   "output": "hero-demo.mp4",
-  "dimensions": [
-    1872,
-    1276
-  ],
-  "fps": 30,
-  "workingColorSpace": "sRGB IEC 61966-2-1",
-  "deliveryColorSpace": "BT.709 limited range",
-  "transitionSeconds": 0.35,
+  "sha256": "a7afca9b59e94942f93de98bd57bb3e81e727c9f52887acf629d875c0ec03645",
+  "production": {
+    "engine": "HyperFrames",
+    "engineVersion": "0.7.42",
+    "source": "Video/hero-demo/short.html",
+    "canvas": [
+      1872,
+      1276
+    ],
+    "fps": 30,
+    "durationSeconds": 30.0
+  },
+  "audio": {
+    "narration": {
+      "engine": "ElevenLabs Multilingual v2",
+      "voice": "Bella",
+      "voiceId": "hpp4J3VqNfWAUOO0d1Us",
+      "speed": 1.0,
+      "timing": "natural performance with editorial pauses; no time stretching"
+    },
+    "music": "original deterministic score",
+    "effects": "original scene-aligned UI sound-design stem",
+    "deliveryLoudness": {
+      "integratedTargetLufs": -16.0,
+      "truePeakTargetDbtp": -1.5
+    }
+  },
+  "captions": {
+    "language": "en",
+    "burnedIn": true,
+    "source": "ElevenLabs character timings"
+  },
   "scenes": [
     {
-      "source": "meetings-summary.png",
-      "label": "Meeting recap",
-      "duration": 3.15,
-      "start_zoom": 1.0,
-      "end_zoom": 1.16,
-      "focus_x": 0.76,
-      "focus_y": 0.31,
-      "cursor_start": [
-        0.54,
-        0.68
-      ],
-      "cursor_end": [
-        0.66,
-        0.24
-      ]
+      "id": "hook",
+      "start": 0.0,
+      "end": 4.2,
+      "purpose": "private on-device AI memory hook"
     },
     {
-      "source": "meetings-transcript.png",
-      "label": "Speaker-labeled transcript",
-      "duration": 2.75,
-      "start_zoom": 1.14,
-      "end_zoom": 1.07,
-      "focus_x": 0.77,
-      "focus_y": 0.34,
-      "cursor_start": [
-        0.66,
-        0.24
-      ],
-      "cursor_end": [
-        0.78,
-        0.61
-      ]
+      "id": "quick-recall",
+      "start": 4.2,
+      "end": 8.12,
+      "purpose": "search meetings and saved screen moments"
     },
     {
-      "source": "search.png",
-      "label": "Search across every word",
-      "duration": 2.85,
-      "start_zoom": 1.0,
-      "end_zoom": 1.19,
-      "focus_x": 0.82,
-      "focus_y": 0.27,
-      "cursor_start": [
-        0.6,
-        0.56
-      ],
-      "cursor_end": [
-        0.75,
-        0.18
-      ]
+      "id": "context-rewind",
+      "start": 8.12,
+      "end": 12.92,
+      "purpose": "scrub play and bookmark the workday timeline"
     },
     {
-      "source": "chat.png",
-      "label": "Answers with citations",
-      "duration": 3.1,
-      "start_zoom": 1.0,
-      "end_zoom": 1.16,
-      "focus_x": 0.7,
-      "focus_y": 0.29,
-      "cursor_start": [
-        0.72,
-        0.62
-      ],
-      "cursor_end": [
-        0.58,
-        0.39
-      ]
+      "id": "dictation",
+      "start": 12.92,
+      "end": 16.14,
+      "purpose": "local speech inserted into the active app"
     },
     {
-      "source": "timeline.png",
-      "label": "Private day timeline",
-      "duration": 3.0,
-      "start_zoom": 1.0,
-      "end_zoom": 1.17,
-      "focus_x": 0.69,
-      "focus_y": 0.3,
-      "cursor_start": [
-        0.48,
-        0.67
-      ],
-      "cursor_end": [
-        0.68,
-        0.36
-      ]
+      "id": "cotyping",
+      "start": 16.14,
+      "end": 20.5,
+      "purpose": "on-device ghost text accepted with Tab"
     },
     {
-      "source": "cotyping.png",
-      "label": "Inline autocomplete",
-      "duration": 3.25,
-      "start_zoom": 1.0,
-      "end_zoom": 1.2,
-      "focus_x": 0.68,
-      "focus_y": 0.53,
-      "cursor_start": [
-        0.68,
-        0.34
-      ],
-      "cursor_end": [
-        0.78,
-        0.63
-      ]
+      "id": "privacy-outro",
+      "start": 20.5,
+      "end": 30.0,
+      "purpose": "privacy proof and brand payoff"
     }
-  ]
+  ],
+  "delivery": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "index": 0,
+        "codec_name": "h264",
+        "codec_type": "video",
+        "width": 1872,
+        "height": 1276,
+        "r_frame_rate": "30/1",
+        "bit_rate": "1882180"
+      },
+      {
+        "index": 1,
+        "codec_name": "aac",
+        "codec_type": "audio",
+        "sample_rate": "48000",
+        "channels": 2,
+        "r_frame_rate": "0/0",
+        "bit_rate": "194710"
+      }
+    ],
+    "format": {
+      "duration": "30.000000",
+      "size": "7822852",
+      "bit_rate": "2086093"
+    }
+  }
 }

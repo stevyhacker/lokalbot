@@ -7,7 +7,12 @@ struct QuickRecallView: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
 
+#if LOKALBOT_UI_TEST_HOST
+    @State private var query = ProcessInfo.processInfo
+        .environment["LOKALBOT_QUICK_RECALL_QUERY"] ?? ""
+#else
     @State private var query = ""
+#endif
     @State private var meetingHits: [SearchIndex.Hit] = []
     @State private var screenHits: [ActivityStore.OCRHit] = []
     @State private var savedMoments: [ActivityStore.SavedMoment] = []
@@ -26,6 +31,9 @@ struct QuickRecallView: View {
         .onAppear {
             inputFocused = true
             savedMoments = app.activityStore.savedMoments(limit: 200)
+            if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                search()
+            }
         }
         .onDisappear { searchTask?.cancel() }
         .onChange(of: query) {

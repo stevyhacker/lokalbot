@@ -1,0 +1,12 @@
+.hyperframes/
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+renders/
+assets/*.png
+assets/*.svg
+assets/*.wav
+assets/*.mp3
+assets/*.json
+!assets/.gitkeep

@@ -1019,9 +1019,19 @@ final class ScreenshotService: ObservableObject {
         for screenshot: ActivityStore.Screenshot,
         maxPixelSize: Int
     ) async -> ScreenThumbnailImage? {
-        guard screenshot.hasPixels,
-              let key = try? Self.encryptionKey() else { return nil }
+        guard screenshot.hasPixels else { return nil }
         let path = screenshot.path
+#if LOKALBOT_UI_TEST_HOST
+        if ProcessInfo.processInfo.environment["LOKALBOT_SCREEN_MEMORY_DEMO"] == "1" {
+            return await Task.detached(priority: .userInitiated) {
+                guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
+                    return nil
+                }
+                return Self.downsampledThumbnail(data: data, maxPixelSize: maxPixelSize)
+            }.value
+        }
+#endif
+        guard let key = try? Self.encryptionKey() else { return nil }
         return await Task.detached(priority: .userInitiated) {
             Self.decryptedThumbnail(
                 path: path,

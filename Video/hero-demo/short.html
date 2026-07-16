@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1872, height=1276" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --canvas: #080d14;
+        --slate: #0f172a;
+        --raised: #1e293b;
+        --text: #ecf3f7;
+        --dim: #a2b4c2;
+        --teal: #23c4ae;
+        --bright: #6ef2dc;
+        --amber: #fbbf24;
+      }
+
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        width: 1872px;
+        height: 1276px;
+        overflow: hidden;
+        background: var(--canvas);
+      }
+      body {
+        color: var(--text);
+        font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .mono, .kicker, .scene-index, .shortcut-key, .caption, .proof, .keycap {
+        font-family: "SF Mono", ui-monospace, Menlo, monospace;
+      }
+      #short-root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        isolation: isolate;
+        background: var(--canvas);
+      }
+      .scene {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background-color: var(--canvas);
+        transform-origin: center;
+      }
+      #scene-hook { z-index: 1; }
+      #scene-recall, #scene-rewind, #scene-dictation, #scene-cotype, #scene-outro { opacity: 0; }
+      .grid {
+        position: absolute;
+        inset: 0;
+        opacity: 0.12;
+        background-image:
+          linear-gradient(rgba(110, 242, 220, 0.14) 1px, rgba(110, 242, 220, 0) 1px),
+          linear-gradient(90deg, rgba(110, 242, 220, 0.1) 1px, rgba(110, 242, 220, 0) 1px);
+        background-size: 72px 72px;
+        mask-image: radial-gradient(circle at 70% 42%, #000 0%, rgba(0, 0, 0, 0.65) 38%, rgba(0, 0, 0, 0) 75%);
+      }
+      .glow {
+        position: absolute;
+        width: 880px;
+        height: 880px;
+        right: -190px;
+        top: -250px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(35, 196, 174, 0.22) 0%, rgba(35, 196, 174, 0.08) 42%, rgba(35, 196, 174, 0) 72%);
+        pointer-events: none;
+      }
+      .amber-glow {
+        position: absolute;
+        width: 460px;
+        height: 460px;
+        left: -120px;
+        bottom: -150px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(251, 191, 36, 0.13) 0%, rgba(251, 191, 36, 0.04) 44%, rgba(251, 191, 36, 0) 74%);
+      }
+      .noise {
+        position: absolute;
+        inset: 0;
+        opacity: 0.05;
+        pointer-events: none;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.88' numOctaves='3' seed='19' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E");
+      }
+      .scene-index {
+        position: absolute;
+        z-index: 30;
+        top: 50px;
+        left: 62px;
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        color: rgba(162, 180, 194, 0.82);
+        font-size: 17px;
+        font-weight: 700;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+      }
+      .scene-index::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--bright);
+        box-shadow: 0 0 18px rgba(110, 242, 220, 0.68);
+      }
+      .kicker {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        color: var(--bright);
+        font-size: 18px;
+        font-weight: 750;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+      .kicker::before {
+        content: "";
+        width: 42px;
+        height: 2px;
+        background: var(--teal);
+      }
+      .app-window {
+        position: absolute;
+        overflow: hidden;
+        border: 1px solid rgba(236, 243, 247, 0.14);
+        border-radius: 22px;
+        background: #151515;
+        box-shadow: 0 54px 100px rgba(0, 0, 0, 0.62), 0 12px 30px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(236, 243, 247, 0.1);
+        will-change: transform, filter;
+      }
+      .app-window > img { display: block; width: 100%; height: auto; user-select: none; }
+      .story h2 {
+        margin: 18px 0;
+        font-size: 76px;
+        font-weight: 850;
+        line-height: 0.96;
+        letter-spacing: -0.052em;
+      }
+      .story h2 span { display: block; color: var(--dim); font-weight: 300; }
+      .story p { margin: 0; color: var(--dim); font-size: 24px; font-weight: 350; line-height: 1.44; }
+      .shortcut-row { display: flex; gap: 9px; margin-top: 24px; }
+      .shortcut-key, .keycap {
+        display: grid;
+        place-items: center;
+        min-width: 52px;
+        height: 52px;
+        padding: 0 13px;
+        border: 1px solid rgba(236, 243, 247, 0.22);
+        border-bottom-width: 4px;
+        border-radius: 12px;
+        background: var(--raised);
+        color: var(--text);
+        font-size: 20px;
+        font-weight: 800;
+        box-shadow: 0 14px 28px rgba(0, 0, 0, 0.32);
+      }
+      .shortcut-key.wide { min-width: 118px; }
+      .cursor {
+        position: absolute;
+        z-index: 40;
+        width: 44px;
+        height: 54px;
+        filter: drop-shadow(0 5px 8px rgba(0, 0, 0, 0.5));
+      }
+      .cursor svg { width: 100%; height: 100%; overflow: visible; }
+      .click-ring {
+        position: absolute;
+        z-index: 39;
+        width: 54px;
+        height: 54px;
+        border: 3px solid rgba(110, 242, 220, 0.82);
+        border-radius: 50%;
+        opacity: 0;
+      }
+
+      .hook-layout {
+        position: relative;
+        z-index: 4;
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        align-items: center;
+        width: 100%;
+        height: 100%;
+        padding: 96px 112px 118px;
+        gap: 72px;
+      }
+      .hook-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 24px; }
+      .hook-title { margin: 0; font-size: 122px; font-weight: 870; line-height: 0.91; letter-spacing: -0.055em; }
+      .hook-title span { display: block; }
+      .hook-title .dim { color: var(--dim); font-weight: 300; }
+      .hook-note { max-width: 690px; color: var(--dim); font-size: 29px; font-weight: 350; line-height: 1.38; }
+      .hook-chips { display: flex; gap: 10px; }
+      .hook-chip {
+        padding: 9px 13px;
+        border: 1px solid rgba(110, 242, 220, 0.22);
+        border-radius: 9px;
+        color: var(--dim);
+        background: rgba(15, 23, 42, 0.75);
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .hook-device { position: relative; display: grid; place-items: center; min-height: 720px; }
+      .orbit { position: absolute; width: 590px; height: 590px; border: 1px solid rgba(110, 242, 220, 0.17); border-radius: 50%; }
+      .orbit::before { content: ""; position: absolute; inset: 54px; border: 1px dashed rgba(162, 180, 194, 0.14); border-radius: 50%; }
+      .orbit::after { content: ""; position: absolute; width: 18px; height: 18px; right: 72px; top: 48px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 24px rgba(251, 191, 36, 0.64); }
+      .icon-card { position: relative; z-index: 3; display: grid; place-items: center; width: 320px; height: 320px; border: 1px solid rgba(236, 243, 247, 0.16); border-radius: 76px; background: rgba(15, 23, 42, 0.9); box-shadow: 0 42px 100px rgba(0, 0, 0, 0.55), 0 0 90px rgba(35, 196, 174, 0.18); }
+      .icon-card img { width: 248px; height: 248px; }
+      .micro-wave { position: absolute; z-index: 4; left: 16px; bottom: 86px; display: flex; align-items: center; gap: 6px; width: 280px; height: 68px; padding: 12px 18px; border: 1px solid rgba(110, 242, 220, 0.24); border-radius: 18px; background: rgba(8, 13, 20, 0.92); }
+      .micro-wave span { width: 8px; height: 38px; border-radius: 99px; background: var(--bright); transform: scaleY(0.28); }
+
+      #recall-window { z-index: 7; left: 620px; top: 112px; width: 1160px; transform-origin: 42% 22%; }
+      .recall-story { position: absolute; z-index: 16; left: 82px; top: 282px; width: 505px; }
+      .recall-selection { position: absolute; z-index: 9; left: 1.15%; top: 18.05%; width: 96.1%; height: 9.35%; border: 3px solid rgba(110, 242, 220, 0.82); border-radius: 20px; opacity: 0; box-shadow: 0 0 0 9999px rgba(8, 13, 20, 0.11), 0 0 32px rgba(35, 196, 174, 0.32); }
+      #recall-cursor { left: 1280px; top: 460px; }
+      #recall-click { left: 1302px; top: 480px; }
+
+      #rewind-window { top: 34px; left: 68px; width: 1736px; transform-origin: 31% 25%; }
+      .rewind-focus { position: absolute; z-index: 10; left: 10%; top: 10%; width: 24.7%; height: 26%; border: 3px solid rgba(110, 242, 220, 0.76); border-radius: 20px; opacity: 0; box-shadow: 0 0 0 9999px rgba(8, 13, 20, 0.18), 0 0 34px rgba(35, 196, 174, 0.34); }
+      .rewind-story { position: absolute; z-index: 20; right: 84px; top: 292px; width: 590px; padding: 32px 34px; border: 1px solid rgba(110, 242, 220, 0.22); border-radius: 22px; background: rgba(8, 13, 20, 0.94); box-shadow: 0 26px 72px rgba(0, 0, 0, 0.54); }
+      .action-row { display: flex; gap: 10px; margin-top: 24px; }
+      .action { padding: 9px 12px; border: 1px solid rgba(110, 242, 220, 0.2); border-radius: 10px; background: rgba(15, 23, 42, 0.78); color: var(--bright); font: 700 15px "SF Mono", monospace; }
+      #rewind-cursor { left: 286px; top: 310px; }
+      #rewind-click { left: 306px; top: 328px; }
+
+      #dictation-window { z-index: 5; left: 58px; top: 136px; width: 1030px; transform-origin: 52% 31%; }
+      .dictation-story { position: absolute; z-index: 16; left: 82px; top: 138px; width: 500px; padding: 30px 32px; border: 1px solid rgba(110, 242, 220, 0.2); border-radius: 22px; background: rgba(8, 13, 20, 0.95); box-shadow: 0 26px 72px rgba(0, 0, 0, 0.5); }
+      .editor { position: absolute; z-index: 12; right: 76px; top: 146px; width: 760px; height: 790px; overflow: hidden; border: 1px solid rgba(236, 243, 247, 0.16); border-radius: 24px; background: #151b25; box-shadow: 0 48px 100px rgba(0, 0, 0, 0.58); }
+      .editor-bar { display: flex; justify-content: space-between; align-items: center; height: 66px; padding: 0 24px; border-bottom: 1px solid rgba(236, 243, 247, 0.1); color: var(--dim); font-size: 17px; }
+      .editor-body { padding: 54px 58px; }
+      .editor-body h3 { margin: 0 0 36px; font-size: 46px; font-weight: 780; letter-spacing: -0.035em; }
+      .editor-body p { margin: 0 0 30px; color: var(--text); font-size: 29px; line-height: 1.55; }
+      #dictation-draft { color: var(--bright); clip-path: inset(0 100% 0 0); }
+      .dictation-pill { position: absolute; z-index: 18; left: 50%; bottom: 42px; display: flex; align-items: center; justify-content: center; gap: 13px; min-width: 320px; height: 58px; padding: 0 20px; transform: translateX(-50%); border: 1px solid rgba(236, 243, 247, 0.16); border-radius: 29px; background: rgba(8, 13, 20, 0.96); font: 700 16px "SF Mono", monospace; box-shadow: 0 18px 44px rgba(0, 0, 0, 0.48); }
+      #dictation-done { color: var(--bright); opacity: 0; }
+      .record-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 18px rgba(251, 191, 36, 0.72); }
+      .mini-wave { display: flex; align-items: center; gap: 4px; height: 26px; }
+      .mini-wave span { width: 4px; height: 22px; border-radius: 99px; background: var(--bright); transform: scaleY(0.28); }
+      .dictation-shortcut { position: absolute; z-index: 19; right: 54px; top: 86px; display: flex; gap: 7px; }
+      .dictation-shortcut .shortcut-key { min-width: 46px; height: 44px; font-size: 16px; }
+
+      #cotype-window { top: -52px; left: -84px; width: 2040px; transform-origin: 61% 55%; }
+      .cotype-story { position: absolute; z-index: 20; top: 205px; left: 84px; width: 520px; }
+      .cotype-cover { position: absolute; z-index: 7; left: 33.1%; top: 51.7%; width: 45%; height: 7.4%; border-radius: 5px; background: #151515; }
+      .cotype-user, .cotype-ghost { position: absolute; top: 52.55%; overflow: hidden; height: 38px; font-size: 23px; font-weight: 550; white-space: nowrap; clip-path: inset(0 100% 0 0); }
+      .cotype-user { z-index: 8; left: 34%; width: 390px; color: var(--text); }
+      .cotype-ghost { z-index: 9; left: 52%; width: 440px; color: var(--teal); font-weight: 650; }
+      #cotype-key { position: absolute; z-index: 24; right: 110px; bottom: 214px; min-width: 174px; color: var(--bright); }
+
+      .outro-layout { position: relative; z-index: 5; display: grid; grid-template-columns: 0.9fr 1.1fr; align-items: center; width: 100%; height: 100%; padding: 98px 112px 128px; gap: 92px; }
+      .outro-mark { position: relative; display: grid; place-items: center; min-height: 700px; }
+      .outro-halo { position: absolute; width: 600px; height: 600px; border: 1px solid rgba(110, 242, 220, 0.17); border-radius: 50%; box-shadow: 0 0 100px rgba(35, 196, 174, 0.12); }
+      .stack-card { position: absolute; width: 430px; height: 300px; overflow: hidden; border: 1px solid rgba(236, 243, 247, 0.14); border-radius: 22px; background-color: var(--slate); background-position: center; background-size: cover; box-shadow: 0 36px 80px rgba(0, 0, 0, 0.48); }
+      #stack-a { transform: translate(-76px, 46px) rotate(-10deg); opacity: 0.72; background-image: url("assets/quick-recall.png"); }
+      #stack-b { transform: translate(82px, -42px) rotate(8deg); opacity: 0.76; background-image: url("assets/timeline.png"); }
+      .outro-icon { position: relative; z-index: 4; display: grid; place-items: center; width: 250px; height: 250px; border: 1px solid rgba(236, 243, 247, 0.17); border-radius: 62px; background-color: rgba(15, 23, 42, 0.95); background-image: url("assets/lokalbot-icon.svg"); background-position: center; background-repeat: no-repeat; background-size: 190px; box-shadow: 0 44px 100px rgba(0, 0, 0, 0.58), 0 0 86px rgba(35, 196, 174, 0.18); }
+      .outro-copy { display: flex; flex-direction: column; align-items: flex-start; }
+      .brand { color: var(--bright); font: 800 18px "SF Mono", monospace; letter-spacing: 0.12em; }
+      .outro-title { margin: 24px 0 30px; font-size: 88px; font-weight: 870; line-height: 0.94; letter-spacing: -0.052em; }
+      .outro-title span { display: block; color: var(--dim); font-weight: 300; }
+      .proof-list { display: grid; width: 100%; gap: 11px; }
+      .proof { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 16px; border: 1px solid rgba(110, 242, 220, 0.2); border-radius: 12px; background: rgba(15, 23, 42, 0.76); color: var(--text); font-size: 17px; font-weight: 700; }
+      .proof::before { content: "✓"; color: var(--bright); }
+      .cta { margin-top: 22px; color: var(--dim); font-size: 22px; }
+
+      #captions { position: absolute; z-index: 100; left: 0; right: 0; bottom: 44px; height: 76px; pointer-events: none; }
+      .caption { position: absolute; left: 70px; right: 70px; bottom: 0; display: flex; align-items: center; justify-content: center; min-height: 70px; padding: 14px 30px; border: 1px solid rgba(236, 243, 247, 0.16); border-radius: 18px; background: rgba(8, 13, 20, 0.94); color: var(--text); font-size: 34px; font-weight: 700; line-height: 1.2; letter-spacing: -0.025em; text-align: center; box-shadow: 0 22px 55px rgba(0, 0, 0, 0.52), inset 0 1px 0 rgba(236, 243, 247, 0.09); opacity: 0; visibility: hidden; }
+      .caption em { color: var(--bright); font-style: normal; }
+    </style>
+  </head>
+  <body>
+    <div id="short-root" data-composition-id="lokalbot-showcase-short" data-start="0" data-duration="30" data-width="1872" data-height="1276">
+      <audio id="short-score" class="clip" data-start="0" data-duration="30" data-track-index="10" data-volume="0.44" src="assets/score-short.wav"></audio>
+      <audio id="short-effects" class="clip" data-start="0" data-duration="30" data-track-index="11" data-volume="0.68" src="assets/effects-short.wav"></audio>
+      <audio id="short-narration" class="clip" data-start="0" data-duration="26.902" data-track-index="12" data-volume="1" src="assets/narration-short.wav"></audio>
+
+      <section id="scene-hook" class="scene">
+        <div class="grid" data-layout-ignore></div><div class="glow" data-layout-ignore></div><div class="amber-glow" data-layout-ignore></div><div class="noise" data-layout-ignore></div>
+        <div class="hook-layout">
+          <div class="hook-copy">
+            <div id="hook-kicker" class="kicker">Entirely on your Mac</div>
+            <h1 class="hook-title"><span id="hook-a">Your private AI</span><span id="hook-b" class="dim">memory for work.</span></h1>
+            <div id="hook-note" class="hook-note">The fastest path back to what you saw, said, and meant to write.</div>
+            <div class="hook-chips"><span id="chip-recall" class="hook-chip mono">Recall</span><span id="chip-rewind" class="hook-chip mono">Rewind</span><span id="chip-write" class="hook-chip mono">Write</span></div>
+          </div>
+          <div class="hook-device">
+            <div id="hook-orbit" class="orbit" data-layout-ignore></div>
+            <div id="hook-icon" class="icon-card"><img src="assets/lokalbot-icon.svg" alt="" /></div>
+            <div id="hook-wave" class="micro-wave" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-recall" class="scene">
+        <div class="glow" data-layout-ignore></div><div class="noise" data-layout-ignore></div><div class="scene-index">01 · Quick Recall</div>
+        <div id="recall-window" class="app-window" data-layout-allow-overflow><img src="assets/quick-recall.png" alt="" /><div id="recall-selection" class="recall-selection"></div></div>
+        <div id="recall-story" class="story recall-story"><div class="kicker">Control · Option · Space</div><h2>Find it.<span>Jump to source.</span></h2><p>Search meetings and saved screen moments without leaving your flow.</p><div id="recall-keys" class="shortcut-row"><span class="shortcut-key">⌃</span><span class="shortcut-key">⌥</span><span class="shortcut-key wide">Space</span></div></div>
+        <div id="recall-cursor" class="cursor" data-layout-ignore><svg viewBox="0 0 44 54"><path d="M5 3 6 42l10-9 10 18 9-5-10-18 15-1Z" fill="#ecf3f7" stroke="#080d14" stroke-width="3" stroke-linejoin="round" /></svg></div><div id="recall-click" class="click-ring" data-layout-ignore></div>
+      </section>
+
+      <section id="scene-rewind" class="scene">
+        <div class="glow" data-layout-ignore></div><div class="scene-index">02 · Context Rewind</div>
+        <div id="rewind-window" class="app-window" data-layout-allow-overflow><img src="assets/timeline.png" alt="" /><div id="rewind-focus" class="rewind-focus"></div></div>
+        <div id="rewind-story" class="story rewind-story" data-layout-allow-overlap><div class="kicker">Context Rewind</div><h2>Scrub the day.<span>Keep the moment.</span></h2><p>Play captured scenes, jump to exact context, and bookmark what matters.</p><div class="action-row"><span id="action-play" class="action">▶ Play</span><span id="action-scrub" class="action">↔ Scrub</span><span id="action-save" class="action">⌑ Save</span></div></div>
+        <div id="rewind-cursor" class="cursor" data-layout-ignore><svg viewBox="0 0 44 54"><path d="M5 3 6 42l10-9 10 18 9-5-10-18 15-1Z" fill="#ecf3f7" stroke="#080d14" stroke-width="3" stroke-linejoin="round" /></svg></div><div id="rewind-click" class="click-ring" data-layout-ignore></div>
+      </section>
+
+      <section id="scene-dictation" class="scene">
+        <div class="amber-glow" data-layout-ignore></div><div class="noise" data-layout-ignore></div><div class="scene-index">03 · Dictation</div>
+        <div id="dictation-window" class="app-window" data-layout-allow-overflow><img src="assets/dictation.png" alt="" /></div>
+        <div id="dictation-story" class="story dictation-story"><div class="kicker">Push to talk</div><h2>Speak it.<span>Insert it.</span></h2><p>Local transcription delivered at the cursor in almost any app.</p></div>
+        <div id="dictation-editor" class="editor"><div class="editor-bar"><span>Follow-up</span><span>Local document</span></div><div class="editor-body"><h3>Redis benchmark</h3><p>Hi Sarah,</p><p id="dictation-draft">Following up on the Redis failover benchmark.</p></div><div id="dictation-listening" class="dictation-pill"><span class="record-dot"></span><span class="mini-wave"><span></span><span></span><span></span><span></span><span></span><span></span></span><span>Listening</span></div><div id="dictation-done" class="dictation-pill">✓ Inserted at cursor</div><div id="dictation-keys" class="dictation-shortcut"><span class="shortcut-key">⌥</span><span class="shortcut-key wide">Space</span></div></div>
+      </section>
+
+      <section id="scene-cotype" class="scene">
+        <div class="glow" data-layout-ignore></div><div class="scene-index" data-layout-allow-overlap>04 · Cotyping</div>
+        <div id="cotype-window" class="app-window" data-layout-allow-overflow data-layout-allow-overlap><img src="assets/cotyping.png" alt="" /><div class="cotype-cover"></div><div id="cotype-user" class="cotype-user">Hi Sarah, thanks for the update.</div><div id="cotype-ghost" class="cotype-ghost">I wanted to follow up on the Postgres migration.</div></div>
+        <div id="cotype-story" class="story cotype-story" data-layout-allow-overlap><div class="kicker">Cotyping · on-device</div><h2>Ghost text.<span>Tab to accept.</span></h2><p>Autocomplete in almost any app from its own local model.</p></div><div id="cotype-key" class="keycap" data-layout-allow-overlap>Tab ↵</div>
+      </section>
+
+      <section id="scene-outro" class="scene">
+        <div class="grid" data-layout-ignore></div><div class="glow" data-layout-ignore></div><div class="amber-glow" data-layout-ignore></div><div class="noise" data-layout-ignore></div>
+        <div class="outro-layout"><div class="outro-mark"><div id="outro-halo" class="outro-halo" data-layout-ignore></div><div id="stack-a" class="stack-card" data-layout-ignore></div><div id="stack-b" class="stack-card" data-layout-ignore></div><div id="outro-icon" class="outro-icon"></div></div><div class="outro-copy"><div id="outro-brand" class="brand">LokalBot</div><h2 id="outro-title" class="outro-title">Your private AI<span>memory for work.</span></h2><div class="proof-list"><div id="proof-account" class="proof">No account</div><div id="proof-telemetry" class="proof">No telemetry</div><div id="proof-local" class="proof">Local by default · GPLv3</div></div><div id="outro-cta" class="cta">Available for macOS.</div></div></div>
+      </section>
+
+      <div id="captions" aria-hidden="true"></div>
+    </div>
+
+    <script src="captions-short.generated.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const CAPTIONS = window.LOKALBOT_SHORT_CAPTIONS || [];
+      const captionHost = document.getElementById("captions");
+      CAPTIONS.forEach((group, index) => {
+        const element = document.createElement("div");
+        element.id = "caption-short-" + index;
+        element.className = "caption";
+        element.setAttribute("data-layout-allow-overlap", "");
+        element.innerHTML = group.html;
+        captionHost.appendChild(element);
+      });
+
+      const tl = gsap.timeline({ paused: true });
+      const entrance = (selector, vars, time) => tl.from(selector, Object.assign({ immediateRender: false }, vars), time);
+      function pushTransition(oldScene, newScene, time, axis) {
+        const distance = axis === "y" ? 1276 : 1872;
+        tl.to(oldScene, { [axis]: -distance, duration: 0.42, ease: "power3.inOut" }, time);
+        tl.fromTo(newScene, { [axis]: distance, opacity: 1 }, { [axis]: 0, opacity: 1, duration: 0.42, ease: "power3.inOut", immediateRender: false }, time);
+        tl.set(oldScene, { opacity: 0 }, time + 0.43);
+      }
+
+      entrance("#hook-kicker", { x: -48, opacity: 0, duration: 0.5, ease: "expo.out" }, 0.12);
+      entrance("#hook-a", { y: 70, opacity: 0, duration: 0.72, ease: "power4.out" }, 0.24);
+      entrance("#hook-b", { x: -66, opacity: 0, duration: 0.82, ease: "circ.out" }, 0.5);
+      entrance("#hook-note", { y: 32, opacity: 0, duration: 0.56, ease: "sine.out" }, 0.8);
+      entrance("#chip-recall", { y: 20, opacity: 0, duration: 0.3, ease: "power3.out" }, 1.12);
+      entrance("#chip-rewind", { scale: 0.8, opacity: 0, duration: 0.34, ease: "back.out(1.4)" }, 1.28);
+      entrance("#chip-write", { x: 22, opacity: 0, duration: 0.34, ease: "expo.out" }, 1.44);
+      entrance("#hook-orbit", { scale: 0.72, rotation: -18, opacity: 0, duration: 1.0, ease: "power2.out" }, 0.2);
+      entrance("#hook-icon", { scale: 0.58, rotation: 7, opacity: 0, duration: 0.78, ease: "back.out(1.3)" }, 0.42);
+      entrance("#hook-wave", { x: 70, y: 24, opacity: 0, duration: 0.58, ease: "power3.out" }, 0.72);
+      tl.to("#hook-orbit", { rotation: 22, duration: 4.1, ease: "sine.inOut" }, 0.28);
+      document.querySelectorAll("#hook-wave span").forEach((bar, index) => {
+        const heights = [0.4, 0.72, 0.54, 0.94, 0.64, 0.45, 0.82, 0.58, 0.88, 0.5];
+        tl.to(bar, { scaleY: heights[index], duration: 0.2 + (index % 3) * 0.04, ease: "sine.inOut", yoyo: true, repeat: 14 }, 0.38 + index * 0.035);
+      });
+
+      tl.to("#scene-hook", { scale: 2.35, opacity: 0, filter: "blur(8px)", duration: 0.46, ease: "power3.in" }, 4.14);
+      tl.fromTo("#scene-recall", { scale: 0.58, opacity: 0, filter: "blur(8px)" }, { scale: 1, opacity: 1, filter: "blur(0px)", duration: 0.5, ease: "power3.out", immediateRender: false }, 4.3);
+      entrance("#scene-recall .scene-index", { x: -30, opacity: 0, duration: 0.34, ease: "expo.out" }, 4.48);
+      entrance("#recall-story", { x: -64, opacity: 0, duration: 0.52, ease: "circ.out" }, 4.46);
+      entrance("#recall-window", { x: 300, scale: 0.88, filter: "blur(5px)", opacity: 0, duration: 0.68, ease: "power4.out" }, 4.36);
+      entrance("#recall-keys .shortcut-key:nth-child(1)", { y: 26, opacity: 0, duration: 0.28, ease: "back.out(1.5)" }, 4.72);
+      entrance("#recall-keys .shortcut-key:nth-child(2)", { y: -20, opacity: 0, duration: 0.3, ease: "power3.out" }, 4.84);
+      entrance("#recall-keys .shortcut-key:nth-child(3)", { scale: 0.78, opacity: 0, duration: 0.32, ease: "back.out(1.45)" }, 4.96);
+      entrance("#recall-cursor", { x: 300, y: 110, opacity: 0, duration: 0.48, ease: "power3.out" }, 5.42);
+      tl.to("#recall-cursor", { x: -180, y: -150, duration: 0.72, ease: "power2.inOut" }, 5.94);
+      tl.fromTo("#recall-selection", { opacity: 0, scale: 0.97 }, { opacity: 1, scale: 1, duration: 0.34, ease: "power3.out" }, 6.5);
+      tl.fromTo("#recall-click", { scale: 0.28, opacity: 0.92 }, { scale: 1.42, opacity: 0, duration: 0.3, ease: "power2.out", immediateRender: false }, 7.2);
+      tl.to("#recall-window", { scale: 1.055, duration: 1.7, ease: "sine.inOut" }, 6.28);
+
+      pushTransition("#scene-recall", "#scene-rewind", 8.12, "x");
+      entrance("#scene-rewind .scene-index", { x: -30, opacity: 0, duration: 0.34, ease: "expo.out" }, 8.3);
+      entrance("#rewind-window", { y: 80, scale: 0.91, opacity: 0, duration: 0.62, ease: "power4.out" }, 8.18);
+      entrance("#rewind-story", { x: 72, opacity: 0, duration: 0.52, ease: "circ.out" }, 8.42);
+      tl.to("#rewind-window", { scale: 1.52, duration: 0.95, ease: "power3.inOut" }, 9.02);
+      tl.fromTo("#rewind-focus", { opacity: 0, scale: 0.96 }, { opacity: 1, scale: 1, duration: 0.38, ease: "power3.out" }, 9.48);
+      entrance("#rewind-cursor", { x: -120, y: 100, opacity: 0, duration: 0.42, ease: "power3.out" }, 9.72);
+      tl.to("#rewind-cursor", { x: 300, y: 2, duration: 1.05, ease: "sine.inOut" }, 10.26);
+      tl.fromTo("#rewind-click", { scale: 0.28, opacity: 0.94 }, { scale: 1.4, opacity: 0, duration: 0.3, ease: "power2.out", immediateRender: false }, 10.3);
+      tl.to("#action-play", { scale: 1.08, color: "#ecf3f7", duration: 0.24, ease: "power2.out", yoyo: true, repeat: 1 }, 10.42);
+      tl.to("#action-scrub", { scale: 1.08, color: "#ecf3f7", duration: 0.24, ease: "power2.out", yoyo: true, repeat: 1 }, 11.28);
+      tl.to("#action-save", { scale: 1.08, color: "#fbbf24", duration: 0.24, ease: "power2.out", yoyo: true, repeat: 1 }, 12.08);
+
+      pushTransition("#scene-rewind", "#scene-dictation", 12.92, "y");
+      entrance("#scene-dictation .scene-index", { x: -30, opacity: 0, duration: 0.3, ease: "expo.out" }, 13.1);
+      entrance("#dictation-window", { x: -150, y: 64, scale: 0.9, opacity: 0, duration: 0.58, ease: "power4.out" }, 12.98);
+      entrance("#dictation-story", { x: -62, opacity: 0, duration: 0.46, ease: "circ.out" }, 13.14);
+      entrance("#dictation-editor", { x: 160, scale: 0.92, opacity: 0, duration: 0.58, ease: "power4.out" }, 13.04);
+      entrance("#dictation-keys", { y: 24, scale: 0.84, opacity: 0, duration: 0.34, ease: "back.out(1.45)" }, 13.38);
+      entrance("#dictation-listening", { y: 34, scale: 0.9, opacity: 0, duration: 0.34, ease: "back.out(1.35)" }, 13.48);
+      document.querySelectorAll("#dictation-listening .mini-wave span").forEach((bar, index) => tl.to(bar, { scaleY: [0.48, 0.92, 0.66, 1, 0.58, 0.82][index], duration: 0.16 + index * 0.02, ease: "sine.inOut", yoyo: true, repeat: 7 }, 13.58 + index * 0.03));
+      tl.to("#dictation-listening", { opacity: 0, scale: 0.94, duration: 0.22, ease: "power2.in" }, 14.44);
+      tl.fromTo("#dictation-done", { opacity: 0, scale: 0.88 }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(1.35)", immediateRender: false }, 14.54);
+      tl.to("#dictation-draft", { clipPath: "inset(0 0% 0 0)", duration: 1.18, ease: "steps(10)" }, 14.5);
+
+      pushTransition("#scene-dictation", "#scene-cotype", 16.14, "x");
+      entrance("#scene-cotype .scene-index", { x: -30, opacity: 0, duration: 0.3, ease: "expo.out" }, 16.32);
+      entrance("#cotype-window", { scale: 0.9, filter: "blur(4px)", opacity: 0, duration: 0.54, ease: "power4.out" }, 16.22);
+      entrance("#cotype-story", { x: -60, opacity: 0, duration: 0.46, ease: "circ.out" }, 16.38);
+      entrance("#cotype-user", { opacity: 0, duration: 0.16, ease: "power2.out" }, 16.48);
+      tl.to("#cotype-user", { clipPath: "inset(0 0% 0 0)", duration: 0.9, ease: "steps(10)" }, 16.54);
+      entrance("#cotype-ghost", { opacity: 0, duration: 0.16, ease: "power2.out" }, 17.46);
+      tl.to("#cotype-ghost", { clipPath: "inset(0 0% 0 0)", duration: 1.0, ease: "steps(10)" }, 17.52);
+      entrance("#cotype-key", { y: 54, scale: 0.76, opacity: 0, duration: 0.34, ease: "back.out(1.7)" }, 18.62);
+      tl.to("#cotype-key", { y: 6, scale: 0.95, duration: 0.16, ease: "power3.inOut" }, 19.02);
+      tl.to("#cotype-ghost", { color: "#ecf3f7", x: -12, duration: 0.32, ease: "power2.out" }, 19.16);
+      tl.to("#cotype-window", { scale: 1.045, duration: 2.4, ease: "sine.inOut" }, 17.18);
+
+      tl.to("#scene-cotype", { filter: "blur(14px)", opacity: 0, duration: 0.46, ease: "power1.in" }, 20.42);
+      tl.fromTo("#scene-outro", { opacity: 0, filter: "blur(14px)", scale: 0.96 }, { opacity: 1, filter: "blur(0px)", scale: 1, duration: 0.54, ease: "power2.out", immediateRender: false }, 20.5);
+      entrance("#outro-halo", { scale: 0.68, opacity: 0, duration: 0.86, ease: "power2.out" }, 20.58);
+      entrance("#stack-a", { x: -150, y: 70, rotation: -16, opacity: 0, duration: 0.58, ease: "power4.out" }, 20.68);
+      entrance("#stack-b", { x: 150, y: -60, rotation: 16, opacity: 0, duration: 0.62, ease: "circ.out" }, 20.76);
+      entrance("#outro-icon", { scale: 0.56, rotation: 6, opacity: 0, duration: 0.68, ease: "back.out(1.35)" }, 20.84);
+      entrance("#proof-account", { x: 52, opacity: 0, duration: 0.36, ease: "circ.out" }, 20.7);
+      entrance("#proof-telemetry", { x: 68, opacity: 0, duration: 0.38, ease: "power3.out" }, 21.02);
+      entrance("#proof-local", { scale: 0.88, opacity: 0, duration: 0.42, ease: "back.out(1.4)" }, 21.4);
+      entrance("#outro-brand", { x: -42, opacity: 0, duration: 0.4, ease: "expo.out" }, 23.72);
+      entrance("#outro-title", { y: 52, opacity: 0, duration: 0.62, ease: "power4.out" }, 23.9);
+      entrance("#outro-cta", { y: 24, opacity: 0, duration: 0.42, ease: "sine.out" }, 26.42);
+      tl.to("#outro-halo", { scale: 1.05, rotation: 6, duration: 7.8, ease: "sine.inOut" }, 21.0);
+      tl.to("#outro-icon", { scale: 1.04, duration: 1.2, ease: "sine.inOut", yoyo: true, repeat: 2 }, 24.2);
+
+      CAPTIONS.forEach((group, index) => {
+        const selector = "#caption-short-" + index;
+        tl.set(selector, { visibility: "visible", opacity: 0 }, group.start);
+        tl.fromTo(selector, { opacity: 0, y: 18, scale: 0.985 }, { opacity: 1, y: 0, scale: 1, duration: 0.18, ease: "power3.out" }, group.start);
+        tl.to(selector, { opacity: 0, y: -8, scale: 0.985, duration: 0.12, ease: "power2.in" }, Math.max(group.start + 0.18, group.end - 0.12));
+        tl.set(selector, { opacity: 0, visibility: "hidden" }, group.end);
+      });
+      tl.to("#scene-outro", { opacity: 0, duration: 0.45, ease: "power2.in" }, 29.5);
+      window.__timelines["lokalbot-showcase-short"] = tl;
+    </script>
+  </body>
+</html>

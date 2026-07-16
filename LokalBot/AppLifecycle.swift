@@ -125,19 +125,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let showsOnboarding = ProcessInfo.processInfo.environment["LOKALBOT_UI_TEST_WINDOW"] == "onboarding"
-        let contentSize = showsOnboarding
-            ? NSSize(width: 640, height: 720)
-            : NSSize(width: 1180, height: 740)
+        let windowKind = ProcessInfo.processInfo.environment["LOKALBOT_UI_TEST_WINDOW"] ?? "main"
+        let showsOnboarding = windowKind == "onboarding"
+        let showsQuickRecall = windowKind == "quick-recall"
+        let contentSize: NSSize
+        if showsOnboarding {
+            contentSize = NSSize(width: 640, height: 720)
+        } else if showsQuickRecall {
+            contentSize = NSSize(width: 660, height: 480)
+        } else {
+            contentSize = NSSize(width: 1180, height: 740)
+        }
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: contentSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false)
-        window.title = showsOnboarding ? "Welcome to LokalBot" : "LokalBot"
-        window.identifier = NSUserInterfaceItemIdentifier(showsOnboarding ? "onboarding.window" : "main.window")
-        let hostingView = NSHostingView(rootView: uiTestRootView(app: app, showsOnboarding: showsOnboarding))
-        hostingView.identifier = NSUserInterfaceItemIdentifier(showsOnboarding ? "onboarding.window.host" : "main.window.host")
+        window.title = showsOnboarding ? "Welcome to LokalBot" : (showsQuickRecall ? "Quick Recall" : "LokalBot")
+        if showsQuickRecall {
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+        }
+        window.identifier = NSUserInterfaceItemIdentifier("\(windowKind).window")
+        let hostingView = NSHostingView(rootView: uiTestRootView(app: app, windowKind: windowKind))
+        hostingView.identifier = NSUserInterfaceItemIdentifier("\(windowKind).window.host")
         window.contentView = hostingView
         window.center()
         window.isReleasedWhenClosed = false
@@ -148,10 +159,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
-    private func uiTestRootView(app: AppState, showsOnboarding: Bool) -> some View {
+    private func uiTestRootView(app: AppState, windowKind: String) -> some View {
         Group {
-            if showsOnboarding {
+            if windowKind == "onboarding" {
                 OnboardingView()
+                    .environmentObject(app)
+                    .brandTinted()
+            } else if windowKind == "quick-recall" {
+                QuickRecallView()
                     .environmentObject(app)
                     .brandTinted()
             } else {
@@ -187,7 +202,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if env["LOKALBOT_DISMISS_ONBOARDING"] == "1" {
             UserDefaults.standard.set(true, forKey: "lokalbotv3.gettingStartedDismissed")
         }
-        if env["LOKALBOT_COTYPING_DEMO"] == "1" || env["LOKALBOT_CAPTURE_SIZE"] != nil {
+        if env["LOKALBOT_COTYPING_DEMO"] == "1"
+            || env["LOKALBOT_DICTATION_DEMO"] == "1"
+            || env["LOKALBOT_CAPTURE_SIZE"] != nil {
             // Apply after launch settles: settings load and window creation both
             // finish after this method runs, and would otherwise undo these.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self, weak app] in
@@ -195,6 +212,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // Render the Cotyping section in its enabled state for
                     // captures; the try-it ghost is seeded in CotypingView.
                     app?.settings.cotypingEnabled = true
+                }
+                if env["LOKALBOT_DICTATION_DEMO"] == "1" {
+                    app?.settings.dictationEnabled = true
                 }
                 if let raw = env["LOKALBOT_CAPTURE_SIZE"] {
                     // e.g. "1280x800" — wider than the default window so

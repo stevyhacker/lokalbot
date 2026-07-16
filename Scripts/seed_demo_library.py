@@ -18,7 +18,7 @@ Usage:
 Point the app at <storage-root> via LOKALBOT_STORAGE_ROOT. See
 Scripts/capture-screenshots.sh for the full capture flow.
 """
-import json, os, shutil, sqlite3, sys, time
+import json, os, shutil, sqlite3, struct, sys, time, zlib
 from datetime import datetime, timezone, timedelta
 
 ENGINE = "on-device demo"
@@ -280,11 +280,105 @@ def seed_chats(root, now):
             json.dump(convo, f, indent=2)
 
 
+def write_demo_png(path, accent, variant):
+    """Draw a small, dependency-free work-screen fixture for Context Rewind.
+
+    The files are only consumed by the UI-test host. Production screenshots are
+    encrypted by ScreenshotService; the host has an explicit capture-only seam
+    for these deterministic plaintext fixtures.
+    """
+    width, height = 960, 600
+    pixels = [bytearray((15, 20, 29) * width) for _ in range(height)]
+
+    def rect(x, y, w, h, color):
+        x0, x1 = max(0, x), min(width, x + w)
+        y0, y1 = max(0, y), min(height, y + h)
+        row = bytes(color) * max(0, x1 - x0)
+        for py in range(y0, y1):
+            pixels[py][x0 * 3:x1 * 3] = row
+
+    def dot(cx, cy, radius, color):
+        r2 = radius * radius
+        for py in range(max(0, cy - radius), min(height, cy + radius + 1)):
+            for px in range(max(0, cx - radius), min(width, cx + radius + 1)):
+                if (px - cx) ** 2 + (py - cy) ** 2 <= r2:
+                    start = px * 3
+                    pixels[py][start:start + 3] = bytes(color)
+
+    # Native-Mac window chrome and a distinct but non-branded work surface.
+    rect(0, 0, width, 54, (27, 34, 46))
+    dot(25, 27, 7, (255, 95, 87))
+    dot(48, 27, 7, (255, 189, 46))
+    dot(71, 27, 7, (40, 201, 64))
+    rect(0, 54, 196, height - 54, (20, 27, 38))
+    rect(24, 84, 148, 12, (78, 91, 111))
+    rect(24, 118, 116, 10, (54, 66, 84))
+    rect(24, 146, 132, 10, accent)
+    rect(24, 174, 92, 10, (54, 66, 84))
+    rect(220, 78, 706, 44, (25, 33, 45))
+    rect(242, 94, 250 + variant * 34, 11, (110, 126, 148))
+
+    if variant % 3 == 0:  # editor-like panes
+        rect(220, 140, 150, 430, (18, 25, 35))
+        for index in range(11):
+            shade = accent if index in (2, 7) else (65, 77, 96)
+            rect(398, 154 + index * 32, 410 - (index % 4) * 54, 11, shade)
+            rect(378, 154 + index * 32, 8, 11, (44, 55, 71))
+    elif variant % 3 == 1:  # browser / document cards
+        rect(242, 148, 660, 90, (27, 36, 49))
+        rect(268, 172, 360, 18, accent)
+        rect(268, 204, 520, 10, (83, 97, 116))
+        for index in range(3):
+            rect(242, 262 + index * 96, 660, 72, (24, 32, 44))
+            rect(266, 281 + index * 96, 132, 12, accent if index == 1 else (93, 107, 127))
+            rect(266, 305 + index * 96, 490 - index * 55, 9, (68, 81, 100))
+    else:  # chat / collaboration rows
+        for index in range(5):
+            dot(270, 174 + index * 76, 18, accent if index % 2 == 0 else (91, 104, 123))
+            rect(308, 158 + index * 76, 180, 12, (111, 126, 146))
+            rect(308, 181 + index * 76, 470 - index * 32, 10, (62, 75, 94))
+            rect(308, 201 + index * 76, 330 + index * 18, 10, (62, 75, 94))
+
+    raw = b"".join(b"\x00" + bytes(row) for row in pixels)
+
+    def chunk(kind, data):
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff))
+
+    png = (b"\x89PNG\r\n\x1a\n"
+           + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(raw, 9))
+           + chunk(b"IEND", b""))
+    with open(path, "wb") as handle:
+        handle.write(png)
+
+
 def seed_activity(root):
     con = sqlite3.connect(os.path.join(root, "lokalbotv3.sqlite"))
     cur = con.cursor()
     cur.execute("""CREATE TABLE IF NOT EXISTS activity_blocks (id INTEGER PRIMARY KEY AUTOINCREMENT,
         app TEXT NOT NULL, title TEXT NOT NULL, start REAL NOT NULL, end REAL NOT NULL);""")
+    cur.executescript("""
+        CREATE TABLE IF NOT EXISTS screenshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts REAL NOT NULL, path TEXT NOT NULL, app TEXT NOT NULL,
+            window_title TEXT NOT NULL DEFAULT '',
+            capture_trigger TEXT NOT NULL DEFAULT 'interval',
+            perceptual_hash TEXT NOT NULL DEFAULT '',
+            similarity_group INTEGER NOT NULL DEFAULT 0,
+            source_url TEXT NOT NULL DEFAULT '',
+            document_name TEXT NOT NULL DEFAULT '',
+            meeting_id TEXT NOT NULL DEFAULT '',
+            privacy_redactions INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS screen_bookmarks (
+            snapshot_id INTEGER PRIMARY KEY,
+            note TEXT NOT NULL DEFAULT '',
+            created_at REAL NOT NULL);
+        CREATE VIRTUAL TABLE IF NOT EXISTS ocr_fts USING fts5(
+            text, window_title, ts UNINDEXED, app UNINDEXED,
+            text_source UNINDEXED, snapshot_id UNINDEXED,
+            tokenize='unicode61 remove_diacritics 2');
+    """)
     days = {
         0: [("Xcode", "TimelineView.swift", 9 * 60, 10 * 60 + 30),
             ("Safari", "Pull request #42 - caching", 10 * 60 + 30, 11 * 60 + 15),
@@ -314,6 +408,49 @@ def seed_activity(root):
         for app, title, a, b in rows:
             cur.execute("INSERT INTO activity_blocks (app,title,start,end) VALUES (?,?,?,?)",
                         (app, title, midnight + a * 60, midnight + b * 60))
+
+    today = time.mktime(datetime.now().replace(hour=0, minute=0, second=0,
+                                               microsecond=0).timetuple())
+    shot_dir = os.path.join(root, "activity", datetime.now().strftime("%Y-%m-%d"), "demo")
+    os.makedirs(shot_dir, exist_ok=True)
+    shots = [
+        ("Xcode", "TimelineView.swift", 9 * 60 + 24,
+         "Context rewind keeps the selected screen moment attached to the workday timeline.",
+         (74, 128, 232)),
+        ("Safari", "Pull request #42 — caching", 10 * 60 + 47,
+         "Redis caching layer review. Benchmark failover latency before enabling cluster mode.",
+         (242, 108, 144)),
+        ("Slack", "#engineering", 11 * 60 + 26,
+         "Redis failover benchmark is booked for Thursday with the search team's load harness.",
+         (69, 196, 174)),
+        ("Notion", "Q3 planning doc", 13 * 60 + 38,
+         "Postgres migration timeline, Q3 priorities, onboarding first and reliability second.",
+         (88, 185, 156)),
+        ("Terminal", "lokalbot build", 14 * 60 + 34,
+         "Build succeeded. Local model, screen memory, dictation, and cotyping checks passed.",
+         (203, 151, 88)),
+    ]
+    snapshot_ids = []
+    for index, (app, title, minute, text, accent) in enumerate(shots, start=1):
+        path = os.path.join(shot_dir, f"scene-{index}.png")
+        write_demo_png(path, accent, index - 1)
+        timestamp = today + minute * 60
+        cur.execute("""
+            INSERT INTO screenshots (
+                ts, path, app, window_title, capture_trigger, perceptual_hash,
+                similarity_group, source_url, document_name, meeting_id,
+                privacy_redactions)
+            VALUES (?, ?, ?, ?, ?, '', ?, '', ?, '', 0)
+            """, (timestamp, path, app, title, "window_change", index, title))
+        snapshot_id = cur.lastrowid
+        snapshot_ids.append(snapshot_id)
+        cur.execute("""
+            INSERT INTO ocr_fts (
+                text, window_title, ts, app, text_source, snapshot_id)
+            VALUES (?, ?, ?, ?, 'accessibility', ?)
+            """, (text, title, timestamp, app, snapshot_id))
+    cur.execute("INSERT INTO screen_bookmarks (snapshot_id, note, created_at) VALUES (?, ?, ?)",
+                (snapshot_ids[2], "Redis benchmark decision", today + 12 * 60 * 60))
     con.commit()
     con.close()
 
@@ -332,7 +469,7 @@ def main():
     seed_chats(root, now)
     seed_activity(root)
     print(f"Seeded demo library at {root} "
-          f"({len(build(now))} meetings, 2 chats, 5 days of activity)")
+          f"({len(build(now))} meetings, 2 chats, 5 days of activity, 5 screen moments)")
 
 
 if __name__ == "__main__":
