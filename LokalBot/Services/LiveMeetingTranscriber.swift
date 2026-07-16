@@ -77,9 +77,13 @@ actor LiveMeetingAudioPreparationWorker {
         let chunkEnd = range.lowerBound + Int64(samples.count)
 
         try Task.checkCancellation()
-        guard LiveTranscriptChunker.hasSpeech(samples, sampleRate: sampleRate) else {
+        guard let speechSamples = LiveTranscriptChunker.speechSamples(
+            from: samples,
+            sampleRate: sampleRate
+        ) else {
             return .advance(toFrame: chunkEnd)
         }
+        samples = speechSamples
 
         let chunk = try scratchDirectory()
             .appendingPathComponent("chunk-\(UUID().uuidString).caf")

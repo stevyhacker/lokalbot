@@ -86,6 +86,23 @@ final class LiveTranscriptChunkerTests: XCTestCase {
             tone(amplitude: 0.25, seconds: 4), sampleRate: rate))
     }
 
+    func testAmplitudeModulatedSubsonicRumbleHasNoSpeech() {
+        // Regression: the live mic tee carried strong 10–50 Hz drift whose
+        // changing amplitude cleared the dynamics gate and made Granite emit
+        // fluent sentences in random languages. It has no speech-band energy.
+        var samples = tone(amplitude: 0.004, seconds: 6, frequency: 15)
+        for second in [1.0, 3.0, 5.0] {
+            burst(
+                into: &samples,
+                at: second,
+                seconds: 0.4,
+                amplitude: 0.04,
+                frequency: 15)
+        }
+        XCTAssertFalse(LiveTranscriptChunker.hasSpeech(samples, sampleRate: rate))
+        XCTAssertNil(LiveTranscriptChunker.speechSamples(from: samples, sampleRate: rate))
+    }
+
     func testSpeechLikeBurstsOverQuietFloorHaveSpeech() {
         // Syllable-like bursts over a quiet floor, 0.9 s total: clearly speech.
         var samples = tone(amplitude: 0.002, seconds: 6)
@@ -113,6 +130,17 @@ final class LiveTranscriptChunkerTests: XCTestCase {
             burst(into: &samples, at: second, seconds: 0.3, amplitude: 0.2)
         }
         XCTAssertTrue(LiveTranscriptChunker.hasSpeech(samples, sampleRate: rate))
+    }
+
+    func testLowVoiceFundamentalAndHarmonicsStillHaveSpeech() {
+        // A 95 Hz fundamental is below the cleanup cutoff, but a natural voice
+        // carries harmonics above it. The rumble filter must not erase that.
+        var samples = [Float](repeating: 0, count: Int(6 * rate))
+        for second in [1.0, 3.0, 5.0] {
+            voicedBurst(into: &samples, at: second, seconds: 0.45)
+        }
+        XCTAssertTrue(LiveTranscriptChunker.hasSpeech(samples, sampleRate: rate))
+        XCTAssertNotNil(LiveTranscriptChunker.speechSamples(from: samples, sampleRate: rate))
     }
 
     func testSingleShortBurstIsBelowMinimumActiveTime() {
@@ -149,19 +177,32 @@ final class LiveTranscriptChunkerTests: XCTestCase {
     /// 400 Hz sine: its 40-sample period at 16 kHz divides the gate's window
     /// and hop exactly, so every full window has RMS = amplitude/√2 and every
     /// test is fully deterministic.
-    private func tone(amplitude: Float, seconds: Double) -> [Float] {
+    private func tone(amplitude: Float, seconds: Double, frequency: Double = 400) -> [Float] {
         (0..<Int((seconds * rate).rounded())).map {
-            amplitude * Float(sin(2 * Double.pi * 400 * Double($0) / rate))
+            amplitude * Float(sin(2 * Double.pi * frequency * Double($0) / rate))
         }
     }
 
     /// Overwrite a hop-aligned stretch of `samples` with a louder 400 Hz
     /// burst, standing in for a run of syllables.
     private func burst(into samples: inout [Float], at second: Double,
-                       seconds: Double, amplitude: Float) {
+                       seconds: Double, amplitude: Float, frequency: Double = 400) {
         let start = Int((second * rate).rounded())
         for i in 0..<Int((seconds * rate).rounded()) {
-            samples[start + i] = amplitude * Float(sin(2 * Double.pi * 400 * Double(i) / rate))
+            samples[start + i] = amplitude * Float(
+                sin(2 * Double.pi * frequency * Double(i) / rate))
+        }
+    }
+
+    private func voicedBurst(into samples: inout [Float], at second: Double,
+                             seconds: Double) {
+        let start = Int((second * rate).rounded())
+        for i in 0..<Int((seconds * rate).rounded()) {
+            let time = Double(i) / rate
+            samples[start + i] =
+                0.05 * Float(sin(2 * Double.pi * 95 * time))
+                + 0.035 * Float(sin(2 * Double.pi * 190 * time))
+                + 0.02 * Float(sin(2 * Double.pi * 285 * time))
         }
     }
 }

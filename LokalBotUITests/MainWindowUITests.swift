@@ -35,6 +35,17 @@ final class MainWindowUITests: XCTestCase {
 
     // MARK: - Library
 
+    /// SwiftUI owns the split-view sidebar toggle. Adding a second custom
+    /// navigation toolbar item renders two identical "Hide Sidebar" controls.
+    func testToolbarShowsOneSidebarToggle() {
+        let sidebarToggles = app.buttons.matching(NSPredicate(
+            format: "label == 'Hide Sidebar' OR label == 'Show Sidebar'"))
+        XCTAssertTrue(sidebarToggles.firstMatch.waitForExistence(timeout: 4),
+                      "native sidebar toolbar control missing")
+        XCTAssertEqual(sidebarToggles.count, 1,
+                       "toolbar should contain exactly one sidebar control")
+    }
+
     /// Every planted fixture surfaces in the sidebar, grouped by day with
     /// the right headers — confirms `StorageManager.loadMeetings()` reads
     /// our on-disk shape, not just a happy-path single meeting.

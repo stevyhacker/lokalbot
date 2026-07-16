@@ -58,6 +58,15 @@ enum LiveTranscriptChunker {
     /// speech time.
     static let gateWindowSeconds = 0.2
     static let gateHopSeconds = 0.1
+    /// Meeting inputs can carry strong DC/subsonic drift from virtual audio
+    /// devices and microphone processing. It has enough amplitude modulation
+    /// to fool the dynamics gate, but no useful speech content. Remove it
+    /// before both gating and transcription.
+    static let gateHighPassCutoffHz = 120.0
+    /// Require a meaningful share of the source energy to survive the rumble
+    /// filter. A real voice still has harmonics above 120 Hz, including low
+    /// male voices; slowly varying device drift does not.
+    static let gateMinimumHighPassedEnergyRatio = 0.15
     /// Ignore anything below ≈ −50 dBFS outright — even hot input gain puts
     /// real speech well above this.
     static let gateAbsoluteFloor: Float = 0.003
@@ -81,21 +90,44 @@ enum LiveTranscriptChunker {
     /// the chunk passes only when enough total time rises both `gateActiveMargin`
     /// above that floor and above `gateAbsoluteFloor`.
     static func hasSpeech(_ samples: [Float], sampleRate: Double) -> Bool {
-        guard sampleRate > 0, !samples.isEmpty else { return false }
+        speechSamples(from: samples, sampleRate: sampleRate) != nil
+    }
+
+    /// Returns a rumble-filtered signal when the chunk looks speech-like, or
+    /// nil when it should advance without an ASR pass. The transcriber writes
+    /// these filtered samples to its scratch file so the model never receives
+    /// the low-frequency signal that the gate intentionally ignored.
+    static func speechSamples(from samples: [Float], sampleRate: Double) -> [Float]? {
+        guard sampleRate.isFinite, sampleRate > 0, !samples.isEmpty else { return nil }
+        let filtered = highPass(samples, sampleRate: sampleRate)
+
+        var sourceEnergy = 0.0
+        var filteredEnergy = 0.0
+        for index in samples.indices {
+            let source = Double(samples[index])
+            let clean = Double(filtered[index])
+            sourceEnergy += source * source
+            filteredEnergy += clean * clean
+        }
+        guard sourceEnergy > 0,
+              filteredEnergy / sourceEnergy >= gateMinimumHighPassedEnergyRatio else {
+            return nil
+        }
+
         let window = Int(gateWindowSeconds * sampleRate)
         let hop = Int(gateHopSeconds * sampleRate)
-        guard window > 0, hop > 0 else { return false }
+        guard window > 0, hop > 0 else { return nil }
 
         // Chunk shorter than one window: fall back to a plain RMS check.
-        guard samples.count >= window else {
-            return rms(samples, 0, samples.count) > gateAbsoluteFloor
+        guard filtered.count >= window else {
+            return rms(filtered, 0, filtered.count) > gateAbsoluteFloor ? filtered : nil
         }
 
         var windowRMS: [Float] = []
-        windowRMS.reserveCapacity(samples.count / hop + 1)
+        windowRMS.reserveCapacity(filtered.count / hop + 1)
         var start = 0
-        while start + window <= samples.count {
-            windowRMS.append(rms(samples, start, window))
+        while start + window <= filtered.count {
+            windowRMS.append(rms(filtered, start, window))
             start += hop
         }
 
@@ -105,7 +137,25 @@ enum LiveTranscriptChunker {
         let threshold = max(gateAbsoluteFloor, floor * gateActiveMargin)
 
         let activeSeconds = Double(windowRMS.count(where: { $0 > threshold })) * gateHopSeconds
-        return activeSeconds >= gateMinActiveSeconds
+        return activeSeconds >= gateMinActiveSeconds ? filtered : nil
+    }
+
+    /// One-pole high-pass filter. Initializing from the first sample avoids
+    /// manufacturing a start-of-chunk impulse when the source has DC offset.
+    private static func highPass(_ samples: [Float], sampleRate: Double) -> [Float] {
+        let rc = 1.0 / (2.0 * Double.pi * gateHighPassCutoffHz)
+        let alpha = Float(rc / (rc + 1.0 / sampleRate))
+        var result = [Float](repeating: 0, count: samples.count)
+        var previousInput = samples[0]
+        var previousOutput: Float = 0
+        for index in samples.indices {
+            let input = samples[index]
+            let output = alpha * (previousOutput + input - previousInput)
+            result[index] = output
+            previousInput = input
+            previousOutput = output
+        }
+        return result
     }
 
     private static func rms(_ samples: [Float], _ start: Int, _ count: Int) -> Float {

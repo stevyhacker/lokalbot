@@ -33,7 +33,6 @@ struct MainWindowView: View {
 
     var body: some View {
         navigation
-        .toolbar(removing: .sidebarToggle)
         .confirmationDialog(
             "Delete \(pendingDelete?.count ?? 0) meeting\((pendingDelete?.count ?? 0) == 1 ? "" : "s")?",
             isPresented: Binding(get: { pendingDelete != nil },
@@ -46,17 +45,6 @@ struct MainWindowView: View {
             Text("This permanently deletes the audio, transcript and summary files.")
         }
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        sidebarVisible.toggle()
-                    }
-                } label: {
-                    Label(sidebarToggleTitle, systemImage: "sidebar.left")
-                }
-                .help(sidebarToggleTitle)
-                .accessibilityIdentifier("toolbar.sidebar")
-            }
             ToolbarItem {
                 Button {
                     openWindow(id: "palette")
@@ -168,10 +156,6 @@ struct MainWindowView: View {
                     .workspaceSurface()
             }
         }
-    }
-
-    private var sidebarToggleTitle: String {
-        sidebarVisible ? "Hide Sidebar" : "Show Sidebar"
     }
 
     /// A hidden three-column sidebar leaves content + detail visible.
