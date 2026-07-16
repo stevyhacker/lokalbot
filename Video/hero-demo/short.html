@@ -216,16 +216,13 @@
       .micro-wave { position: absolute; z-index: 4; left: 16px; bottom: 86px; display: flex; align-items: center; gap: 6px; width: 280px; height: 68px; padding: 12px 18px; border: 1px solid rgba(110, 242, 220, 0.24); border-radius: 18px; background: rgba(8, 13, 20, 0.92); }
       .micro-wave span { width: 8px; height: 38px; border-radius: 99px; background: var(--bright); transform: scaleY(0.28); }
 
-      /* Keep screenshot layers at their maximum animated size and scale them
-         down for the resting shot. Chrome otherwise rasterizes the smaller
-         layer first and compositor-upscales it during the camera push. */
-      #recall-window { z-index: 7; left: 593.204px; top: 101.111px; width: 1223.8px; transform-origin: 42% 22%; }
+      #recall-window { z-index: 7; left: 620px; top: 112px; width: 1160px; transform-origin: 42% 22%; }
       .recall-story { position: absolute; z-index: 16; left: 82px; top: 282px; width: 505px; }
       .recall-selection { position: absolute; z-index: 9; left: 1.15%; top: 18.05%; width: 96.1%; height: 9.35%; border: 3px solid rgba(110, 242, 220, 0.82); border-radius: 20px; opacity: 0; box-shadow: 0 0 0 9999px rgba(8, 13, 20, 0.11), 0 0 32px rgba(35, 196, 174, 0.32); }
       #recall-cursor { left: 1280px; top: 460px; }
       #recall-click { left: 1302px; top: 480px; }
 
-      #rewind-window { top: -117.93px; left: -211.843px; width: 2638.72px; transform-origin: 31% 25%; }
+      #rewind-window { top: 34px; left: 68px; width: 1736px; transform-origin: 31% 25%; }
       .rewind-focus { position: absolute; z-index: 10; left: 10%; top: 10%; width: 24.7%; height: 26%; border: 3px solid rgba(110, 242, 220, 0.76); border-radius: 20px; opacity: 0; box-shadow: 0 0 0 9999px rgba(8, 13, 20, 0.18), 0 0 34px rgba(35, 196, 174, 0.34); }
       .rewind-story { position: absolute; z-index: 20; right: 84px; top: 292px; width: 590px; padding: 32px 34px; border: 1px solid rgba(110, 242, 220, 0.22); border-radius: 22px; background: rgba(8, 13, 20, 0.94); box-shadow: 0 26px 72px rgba(0, 0, 0, 0.54); }
       .action-row { display: flex; gap: 10px; margin-top: 24px; }
@@ -249,7 +246,7 @@
       .dictation-shortcut { position: absolute; z-index: 19; right: 54px; top: 86px; display: flex; gap: 7px; }
       .dictation-shortcut .shortcut-key { min-width: 46px; height: 44px; font-size: 16px; }
 
-      #cotype-window { top: -85.978px; left: -139.998px; width: 2131.8px; transform-origin: 61% 55%; }
+      #cotype-window { top: -52px; left: -84px; width: 2040px; transform-origin: 61% 55%; }
       .cotype-story { position: absolute; z-index: 20; top: 205px; left: 84px; width: 520px; }
       .cotype-cover { position: absolute; z-index: 7; left: 33.1%; top: 51.7%; width: 45%; height: 7.4%; border-radius: 5px; background: #151515; }
       .cotype-user, .cotype-ghost { position: absolute; top: 52.55%; overflow: hidden; height: 38px; font-size: 23px; font-weight: 550; white-space: nowrap; clip-path: inset(0 100% 0 0); }
@@ -282,7 +279,7 @@
     <div id="short-root" data-composition-id="lokalbot-showcase-short" data-start="0" data-duration="30" data-width="1872" data-height="1276">
       <audio id="short-score" class="clip" data-start="0" data-duration="30" data-track-index="10" data-volume="0.44" src="assets/score-short.wav"></audio>
       <audio id="short-effects" class="clip" data-start="0" data-duration="30" data-track-index="11" data-volume="0.68" src="assets/effects-short.wav"></audio>
-      <audio id="short-narration" class="clip" data-start="0" data-duration="30" data-track-index="12" data-volume="1" src="assets/narration-short.wav"></audio>
+      <audio id="short-narration" class="clip" data-start="0" data-duration="26.902" data-track-index="12" data-volume="1" src="assets/narration-short.wav"></audio>
 
       <section id="scene-hook" class="scene">
         <div class="grid" data-layout-ignore></div><div class="glow" data-layout-ignore></div><div class="amber-glow" data-layout-ignore></div><div class="noise" data-layout-ignore></div>
@@ -352,9 +349,6 @@
 
       const tl = gsap.timeline({ paused: true });
       const entrance = (selector, vars, time) => tl.from(selector, Object.assign({ immediateRender: false }, vars), time);
-      tl.set("#recall-window", { scale: 0.947867 }, 0);
-      tl.set("#rewind-window", { scale: 0.657895 }, 0);
-      tl.set("#cotype-window", { scale: 0.956938 }, 0);
       function pushTransition(oldScene, newScene, time, axis) {
         const distance = axis === "y" ? 1276 : 1872;
         tl.to(oldScene, { [axis]: -distance, duration: 0.42, ease: "power3.inOut" }, time);
@@ -382,7 +376,7 @@
       tl.fromTo("#scene-recall", { scale: 0.58, opacity: 0, filter: "blur(8px)" }, { scale: 1, opacity: 1, filter: "blur(0px)", duration: 0.5, ease: "power3.out", immediateRender: false }, 4.3);
       entrance("#scene-recall .scene-index", { x: -30, opacity: 0, duration: 0.34, ease: "expo.out" }, 4.48);
       entrance("#recall-story", { x: -64, opacity: 0, duration: 0.52, ease: "circ.out" }, 4.46);
-      entrance("#recall-window", { x: 300, scale: 0.834123, opacity: 0, duration: 0.68, ease: "power4.out" }, 4.36);
+      entrance("#recall-window", { x: 300, scale: 0.88, filter: "blur(5px)", opacity: 0, duration: 0.68, ease: "power4.out" }, 4.36);
       entrance("#recall-keys .shortcut-key:nth-child(1)", { y: 26, opacity: 0, duration: 0.28, ease: "back.out(1.5)" }, 4.72);
       entrance("#recall-keys .shortcut-key:nth-child(2)", { y: -20, opacity: 0, duration: 0.3, ease: "power3.out" }, 4.84);
       entrance("#recall-keys .shortcut-key:nth-child(3)", { scale: 0.78, opacity: 0, duration: 0.32, ease: "back.out(1.45)" }, 4.96);
@@ -390,13 +384,13 @@
       tl.to("#recall-cursor", { x: -180, y: -150, duration: 0.72, ease: "power2.inOut" }, 5.94);
       tl.fromTo("#recall-selection", { opacity: 0, scale: 0.97 }, { opacity: 1, scale: 1, duration: 0.34, ease: "power3.out" }, 6.5);
       tl.fromTo("#recall-click", { scale: 0.28, opacity: 0.92 }, { scale: 1.42, opacity: 0, duration: 0.3, ease: "power2.out", immediateRender: false }, 7.2);
-      tl.to("#recall-window", { scale: 1, duration: 1.7, ease: "sine.inOut" }, 6.28);
+      tl.to("#recall-window", { scale: 1.055, duration: 1.7, ease: "sine.inOut" }, 6.28);
 
       pushTransition("#scene-recall", "#scene-rewind", 8.12, "x");
       entrance("#scene-rewind .scene-index", { x: -30, opacity: 0, duration: 0.34, ease: "expo.out" }, 8.3);
-      entrance("#rewind-window", { y: 80, scale: 0.598684, opacity: 0, duration: 0.62, ease: "power4.out" }, 8.18);
+      entrance("#rewind-window", { y: 80, scale: 0.91, opacity: 0, duration: 0.62, ease: "power4.out" }, 8.18);
       entrance("#rewind-story", { x: 72, opacity: 0, duration: 0.52, ease: "circ.out" }, 8.42);
-      tl.to("#rewind-window", { scale: 1, duration: 0.95, ease: "power3.inOut" }, 9.02);
+      tl.to("#rewind-window", { scale: 1.52, duration: 0.95, ease: "power3.inOut" }, 9.02);
       tl.fromTo("#rewind-focus", { opacity: 0, scale: 0.96 }, { opacity: 1, scale: 1, duration: 0.38, ease: "power3.out" }, 9.48);
       entrance("#rewind-cursor", { x: -120, y: 100, opacity: 0, duration: 0.42, ease: "power3.out" }, 9.72);
       tl.to("#rewind-cursor", { x: 300, y: 2, duration: 1.05, ease: "sine.inOut" }, 10.26);
@@ -419,7 +413,7 @@
 
       pushTransition("#scene-dictation", "#scene-cotype", 16.14, "x");
       entrance("#scene-cotype .scene-index", { x: -30, opacity: 0, duration: 0.3, ease: "expo.out" }, 16.32);
-      entrance("#cotype-window", { scale: 0.861244, opacity: 0, duration: 0.54, ease: "power4.out" }, 16.22);
+      entrance("#cotype-window", { scale: 0.9, filter: "blur(4px)", opacity: 0, duration: 0.54, ease: "power4.out" }, 16.22);
       entrance("#cotype-story", { x: -60, opacity: 0, duration: 0.46, ease: "circ.out" }, 16.38);
       entrance("#cotype-user", { opacity: 0, duration: 0.16, ease: "power2.out" }, 16.48);
       tl.to("#cotype-user", { clipPath: "inset(0 0% 0 0)", duration: 0.9, ease: "steps(10)" }, 16.54);
@@ -428,7 +422,7 @@
       entrance("#cotype-key", { y: 54, scale: 0.76, opacity: 0, duration: 0.34, ease: "back.out(1.7)" }, 18.62);
       tl.to("#cotype-key", { y: 6, scale: 0.95, duration: 0.16, ease: "power3.inOut" }, 19.02);
       tl.to("#cotype-ghost", { color: "#ecf3f7", x: -12, duration: 0.32, ease: "power2.out" }, 19.16);
-      tl.to("#cotype-window", { scale: 1, duration: 2.4, ease: "sine.inOut" }, 17.18);
+      tl.to("#cotype-window", { scale: 1.045, duration: 2.4, ease: "sine.inOut" }, 17.18);
 
       tl.to("#scene-cotype", { filter: "blur(14px)", opacity: 0, duration: 0.46, ease: "power1.in" }, 20.42);
       tl.fromTo("#scene-outro", { opacity: 0, filter: "blur(14px)", scale: 0.96 }, { opacity: 1, filter: "blur(0px)", scale: 1, duration: 0.54, ease: "power2.out", immediateRender: false }, 20.5);
