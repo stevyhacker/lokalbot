@@ -39,23 +39,22 @@ final class QuickRecallUITests: XCTestCase {
 
         let meetingPrefix = "quickRecall.row.meeting.\(fixture.designReview.id.uuidString).segment."
         let meetingTitle = app.staticTexts.matching(NSPredicate(
-            format: "identifier BEGINSWITH %@ AND identifier ENDSWITH '.title'",
-            meetingPrefix)).firstMatch
+            format: "identifier BEGINSWITH %@ AND (label == %@ OR value == %@)",
+            meetingPrefix, fixture.designReview.title, fixture.designReview.title)).firstMatch
         XCTAssertTrue(meetingTitle.waitForExistence(timeout: 8),
             "Quick Recall did not surface the matching meeting")
-        XCTAssertEqual(meetingTitle.label, fixture.designReview.title)
 
         let meetingSubtitle = app.staticTexts.matching(NSPredicate(
-            format: "identifier BEGINSWITH %@ AND identifier ENDSWITH '.subtitle'",
+            format: "identifier BEGINSWITH %@ AND (label == 'Meeting transcript' OR value == 'Meeting transcript')",
             meetingPrefix)).firstMatch
         XCTAssertTrue(meetingSubtitle.waitForExistence(timeout: 3),
                       "Quick Recall did not identify the local evidence type")
-        XCTAssertEqual(meetingSubtitle.label, "Meeting transcript")
 
-        let askSubtitle = app.staticTexts["quickRecall.row.ask.failover.subtitle"]
+        let askSubtitle = app.staticTexts.matching(NSPredicate(
+            format: "identifier == 'quickRecall.row.ask.failover' AND (label == 'Open Ask' OR value == 'Open Ask')"))
+            .firstMatch
         XCTAssertTrue(askSubtitle.waitForExistence(timeout: 3),
                       "Quick Recall did not include the assistant fallback")
-        XCTAssertEqual(askSubtitle.label, "Open Ask")
     }
 
     func testClearReturnsToSavedMomentEmptyState() {

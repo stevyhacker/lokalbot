@@ -208,12 +208,10 @@ private struct QuickRecallRow: View {
                 Text(row.title)
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
-                    .accessibilityIdentifier("quickRecall.row.\(row.id).title")
                 Text(row.subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .accessibilityIdentifier("quickRecall.row.\(row.id).subtitle")
                 if let snippet = row.snippet, !snippet.isEmpty {
                     Text(snippet).font(.caption).foregroundStyle(.tertiary).lineLimit(2)
                 }
