@@ -134,7 +134,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if showsQuickRecall {
             contentSize = NSSize(width: 660, height: 480)
         } else {
-            contentSize = NSSize(width: 1180, height: 740)
+            // GitHub's hosted macOS desktop is narrower than the production
+            // default. Keep the synthetic host inside the visible frame so
+            // right-edge controls remain genuinely hittable by XCUITest.
+            let visible = NSScreen.main?.visibleFrame.size
+                ?? NSSize(width: 1180, height: 740)
+            contentSize = NSSize(
+                width: min(1180, max(900, visible.width - 40)),
+                height: min(740, max(620, visible.height - 40)))
         }
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: contentSize),

@@ -35,15 +35,39 @@ final class MainWindowUITests: XCTestCase {
 
     // MARK: - Library
 
-    /// SwiftUI owns the split-view sidebar toggle. Adding a second custom
-    /// navigation toolbar item renders two identical "Hide Sidebar" controls.
+    /// LokalBot owns one split-view sidebar toggle so every navigation topology
+    /// shares the same explicit visibility state.
     func testToolbarShowsOneSidebarToggle() {
-        let sidebarToggles = app.buttons.matching(NSPredicate(
-            format: "label == 'Hide Sidebar' OR label == 'Show Sidebar'"))
+        let sidebarToggles = toolbarSidebarButtons
         XCTAssertTrue(sidebarToggles.firstMatch.waitForExistence(timeout: 4),
                       "native sidebar toolbar control missing")
         XCTAssertEqual(sidebarToggles.count, 1,
                        "toolbar should contain exactly one sidebar control")
+    }
+
+    /// The native toolbar item must do real work in both directions. This
+    /// guards the recent split-view stabilization against a control that is
+    /// present but detached from NavigationSplitView's column visibility.
+    func testToolbarToggleHidesAndRestoresSidebar() {
+        XCTAssertTrue(toolbarSidebarButtons.firstMatch.waitForExistence(timeout: 4),
+                      "native sidebar control missing")
+        toolbarSidebarButtons.firstMatch.click()
+        XCTAssertTrue(UITestHarness.waitUntil {
+            !self.app.descendants(matching: .any)["sidebar.settings"].exists
+        }, "sidebar remained exposed after hiding it")
+
+        XCTAssertTrue(toolbarSidebarButtons.firstMatch.waitForExistence(timeout: 4),
+                      "sidebar control disappeared after hiding")
+        toolbarSidebarButtons.firstMatch.click()
+        XCTAssertTrue(app.descendants(matching: .any)["sidebar.timeline"]
+            .waitForExistence(timeout: 5), "sidebar did not return")
+    }
+
+    /// Query the app-owned identifier among direct toolbar children so nested
+    /// accessibility wrappers cannot inflate the count.
+    private var toolbarSidebarButtons: XCUIElementQuery {
+        app.toolbars.firstMatch.children(matching: .button).matching(NSPredicate(
+            format: "identifier == 'toolbar.sidebarToggle'"))
     }
 
     /// Every planted fixture surfaces in the sidebar, grouped by day with

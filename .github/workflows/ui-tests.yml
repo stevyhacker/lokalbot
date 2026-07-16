@@ -1,4 +1,4 @@
-# XCUITest suite (Scripts/ui-tests.sh) — scheduled + on-demand, NOT a PR gate.
+# XCUITest suite (Scripts/ui-tests.sh) — remote, scheduled, and on-demand.
 #
 # UI tests drive the app through the Accessibility APIs, which needs the
 # runner's controlling process to hold two TCC grants (Automation → Xcode and
@@ -9,9 +9,9 @@
 # dies with "Timed out while enabling automation mode.", the runner lost the
 # TCC grant — that is an infrastructure failure, not a test regression.
 #
-# Deliberately not wired into pull_request: the suite takes tens of minutes
-# and an infra-flaky gate is worse than no gate. Weekly schedule + manual
-# dispatch keeps the signal without blocking merges.
+# Runs automatically when app/UI-test code changes on a PR or on master/dev,
+# plus weekly and manual dispatches. Whether it blocks merging remains a branch
+# protection decision; the workflow itself does not mutate repository state.
 
 name: UI Tests
 
@@ -22,12 +22,36 @@ on:
         description: "Optional single test, e.g. MainWindowUITests/testSearchFindsTranscriptHitAndDeepLinks"
         required: false
         default: ""
+  pull_request:
+    paths:
+      - "LokalBot/**"
+      - "LokalBotUITests/**"
+      - "project.yml"
+      - "Scripts/ui-tests.sh"
+      - "Scripts/fetch-llama.sh"
+      - "Scripts/fetch-sherpa.sh"
+      - ".github/workflows/ui-tests.yml"
+  push:
+    branches:
+      - master
+      - dev
+    paths:
+      - "LokalBot/**"
+      - "LokalBotUITests/**"
+      - "project.yml"
+      - "Scripts/ui-tests.sh"
+      - "Scripts/fetch-llama.sh"
+      - "Scripts/fetch-sherpa.sh"
+      - ".github/workflows/ui-tests.yml"
   schedule:
     - cron: "0 5 * * 1" # Mondays 05:00 UTC, runs against the default branch
 
 concurrency:
   group: ui-tests-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   ui-tests:
@@ -77,4 +101,5 @@ jobs:
       - name: Run UI tests
         env:
           CODE_SIGNING_ALLOWED: "NO" # hosted runners hold no dev cert
-        run: Scripts/ui-tests.sh ${{ inputs.filter }}
+          UI_TEST_FILTER: ${{ inputs.filter || '' }}
+        run: Scripts/ui-tests.sh "$UI_TEST_FILTER"

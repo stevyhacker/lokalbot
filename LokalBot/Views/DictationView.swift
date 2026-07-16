@@ -53,6 +53,7 @@ struct DictationView: View {
                     .tint(app.dictation.state.isRecording ? .red : .accentColor)
             }
             Toggle("Enable global shortcut", isOn: $app.settings.dictationEnabled)
+                .accessibilityIdentifier("dictation.enabled")
             Text("Speak the text you want, or ramble an instruction. LokalBot always composes the final wording and can use the focused window as context.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

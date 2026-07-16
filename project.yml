@@ -284,6 +284,12 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_MODULE_NAME: LokalBotUITests
         PRODUCT_BUNDLE_IDENTIFIER: me.dotenv.LokalBotUITests
+        # Xcode synthesizes LokalBotUITests-Runner.app from this target. Give
+        # that runner a stable development signature locally so macOS TCC can
+        # remember its Accessibility/Automation approval across rebuilds.
+        # Hosted CI still passes CODE_SIGNING_ALLOWED=NO in ui-tests.yml.
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 3N8B4562P4
 
   lokalbot-cli:
     type: tool

@@ -707,6 +707,7 @@ private struct OnboardingOptInCard: View {
             Toggle(title, isOn: $isOn)
                 .labelsHidden()
                 .toggleStyle(.switch)
+                .accessibilityIdentifier("onboarding.optIn.\(title)")
         }
         .padding(18)
         .onboardingCard()

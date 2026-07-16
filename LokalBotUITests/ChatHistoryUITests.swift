@@ -40,9 +40,7 @@ final class ChatHistoryUITests: XCTestCase {
     }
 
     func testPersistedConversationLoadsIntoChat() {
-        let chat = app.descendants(matching: .any)["sidebar.ask"]
-        XCTAssertTrue(chat.waitForExistence(timeout: 10), "ask sidebar item missing")
-        chat.click()
+        UITestHarness.clickSidebar("sidebar.ask", in: app)
 
         // The seeded conversation appears in the history list…
         XCTAssertTrue(text(containing: conversationTitle).waitForExistence(timeout: 6),
@@ -58,9 +56,7 @@ final class ChatHistoryUITests: XCTestCase {
     }
 
     func testSelectingConversationClearsActiveSearch() {
-        let chat = app.descendants(matching: .any)["sidebar.ask"]
-        XCTAssertTrue(chat.waitForExistence(timeout: 10), "ask sidebar item missing")
-        chat.click()
+        UITestHarness.clickSidebar("sidebar.ask", in: app)
 
         let field = app.textFields["search.field"]
         XCTAssertTrue(field.waitForExistence(timeout: 6), "ask search field missing")

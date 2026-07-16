@@ -49,6 +49,16 @@ final class AgentRuntimeInstaller: ObservableObject {
     /// pi, and the lockfile, so verification runs on a utility executor rather
     /// than blocking AppState construction and the first SwiftUI frame.
     func refreshInstalledState(manifest: AgentRuntimeManifest = .current) async {
+#if LOKALBOT_UI_TEST_HOST
+        // XCUITests exercise the native tab/session surface without reading a
+        // developer's real Application Support cache or downloading Pi. This
+        // branch is absent from production and requires an explicit opt-in so
+        // capture scripts still render the real installer state by default.
+        if ProcessInfo.processInfo.environment["LOKALBOT_AGENT_UI_TEST_READY"] == "1" {
+            phase = .installed
+            return
+        }
+#endif
         guard phase == .checking, !operationInProgress else { return }
         operationInProgress = true
         let installed = await runtimeVerifier(root, manifest)

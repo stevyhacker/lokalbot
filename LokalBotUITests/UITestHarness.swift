@@ -111,7 +111,10 @@ enum UITestHarness {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        for query in [app.buttons, app.cells, app.staticTexts] where query[id].waitForExistence(timeout: 3) {
+        // Sidebar rows currently expose their labelled text directly on macOS.
+        // Probe that mapping first so every navigation does not spend six
+        // seconds timing out against button and cell queries.
+        for query in [app.staticTexts, app.buttons, app.cells] where query[id].waitForExistence(timeout: 3) {
             let element = query[id]
             if element.isHittable {
                 element.click()
@@ -146,6 +149,65 @@ enum UITestHarness {
         while field.frame.width < 40, Date() < layoutDeadline { usleep(150_000) }
         field.click()
         field.typeText(text)
+    }
+
+    /// Select a SwiftUI segmented-picker item across the two accessibility
+    /// mappings macOS currently emits (button on newer SDKs, radio button on
+    /// older ones). Keeping this in one place makes tab tests less brittle.
+    static func selectSegment(
+        _ name: String,
+        pickerIdentifier: String,
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let picker = app.descendants(matching: .any)[pickerIdentifier]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8),
+                      "segmented picker \(pickerIdentifier) missing", file: file, line: line)
+        let segment = picker.buttons[name].exists
+            ? picker.buttons[name] : picker.radioButtons[name]
+        XCTAssertTrue(segment.waitForExistence(timeout: 4),
+                      "segment \(name) missing", file: file, line: line)
+        segment.click()
+    }
+
+    /// Scroll a lazy SwiftUI Form/ScrollView until an element can be clicked.
+    /// `exists` alone is insufficient because off-screen Form rows are often
+    /// present in the AX tree while remaining non-hittable.
+    static func scrollTo(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        upward: Bool = false,
+        attempts: Int = 12
+    ) {
+        // Fallback for lazily-created rows that are not yet in the AX tree.
+        // Prefer the widest scroll view so a split-view sidebar is not moved
+        // while the content Form remains stationary.
+        let candidates = app.scrollViews.allElementsBoundByIndex
+        let scrollArea = candidates.max {
+            $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+        } ?? app.groups.firstMatch
+        for _ in 0..<attempts {
+            if element.exists && element.isHittable { return }
+            scrollArea.scroll(byDeltaX: 0, deltaY: upward ? 300 : -300)
+            usleep(120_000)
+        }
+    }
+
+    /// Poll lightweight UI state that XCTest cannot express as an element
+    /// predicate, such as a dynamic query count after an async tab close.
+    @discardableResult
+    static func waitUntil(
+        timeout: TimeInterval = 5,
+        pollInterval: TimeInterval = 0.1,
+        _ condition: () -> Bool
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if condition() { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(pollInterval))
+        } while Date() < deadline
+        return condition()
     }
 
     private static let defaultSettingsJSON = """

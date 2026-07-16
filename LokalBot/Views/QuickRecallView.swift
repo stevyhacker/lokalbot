@@ -205,8 +205,13 @@ private struct QuickRecallRow: View {
                 .foregroundStyle(.tint)
                 .frame(width: 26)
             VStack(alignment: .leading, spacing: 2) {
-                Text(row.title).font(.callout.weight(.medium)).lineLimit(1)
-                Text(row.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(row.title)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                Text(row.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 if let snippet = row.snippet, !snippet.isEmpty {
                     Text(snippet).font(.caption).foregroundStyle(.tertiary).lineLimit(2)
                 }

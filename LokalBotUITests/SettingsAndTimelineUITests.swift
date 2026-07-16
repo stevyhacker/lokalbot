@@ -51,8 +51,10 @@ final class SettingsUITests: XCTestCase {
         XCTAssertTrue(segment.waitForExistence(timeout: 4), "Advanced segment missing")
         segment.click()
 
-        XCTAssertTrue(app.descendants(matching: .any)["settings.resourceMonitor.cpu"]
-            .waitForExistence(timeout: 6), "resource monitor CPU metric missing")
+        let cpu = app.descendants(matching: .any)["settings.resourceMonitor.cpu"]
+        UITestHarness.scrollTo(cpu, in: app)
+        XCTAssertTrue(cpu.waitForExistence(timeout: 6),
+                      "resource monitor CPU metric missing")
         XCTAssertTrue(app.descendants(matching: .any)["settings.resourceMonitor.memory"].exists,
                       "resource monitor memory metric missing")
         XCTAssertTrue(app.descendants(matching: .any)["settings.resourceMonitor.models"].exists,
