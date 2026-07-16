@@ -52,18 +52,16 @@ Around that core, one private library connects four moves: **Remember** meetings
 
 ## See it in action
 
-**Records the call, writes the recap.** Pick any meeting and get a structured summary plus a speaker-labeled (Me / Them) transcript.
+**Turn a call into a recap you can act on.** Pick any meeting to review its TL;DR, decisions, action items, open questions, and speaker-labeled transcript.
 
-<div align="center"><img src="Assets/screenshots/recap.gif" alt="Browsing meeting recaps and speaker-labeled transcripts" width="860"></div>
+<div align="center"><img src="Assets/screenshots/meetings-summary.png" alt="LokalBot Meetings showing a meeting recap with a TL;DR, decisions, action items, and open questions" width="880"></div>
 
-**Search everything you've heard.** Full-text and semantic search across transcripts and summaries — click a hit to play from that exact second.
-
-<div align="center"><img src="Assets/screenshots/search.gif" alt="Searching across meetings, results highlighted" width="860"></div>
-
-|  |  |
+| | |
 | :--: | :--: |
-| <img src="Assets/screenshots/timeline.png" alt="Day timeline" width="420"><br>**Day timeline** — see where your time went | <img src="Assets/screenshots/cotyping.png" alt="Cotyping inline autocomplete" width="420"><br>**Cotyping** — inline AI autocomplete |
-| <img src="Assets/screenshots/models.png" alt="Model catalog" width="420"><br>**Models** — pick or download any model | <img src="Assets/screenshots/chat.png" alt="Chat with your meetings" width="420"><br>**Chat** — ask across your library |
+| <img src="Assets/screenshots/quick-recall.png" alt="LokalBot Quick Recall searching Redis across a saved Slack moment, captured screen text, and meeting transcripts" width="420"><br>**Quick Recall** — search meetings and work context from any app | <img src="Assets/screenshots/timeline.png" alt="LokalBot Timeline showing Context Rewind, app usage, meetings, and a generated day digest" width="420"><br>**Context Rewind** — replay the day and keep its digest |
+| <img src="Assets/screenshots/cotyping.png" alt="LokalBot Type showing Cotyping enabled with an inline autocomplete suggestion" width="420"><br>**Cotyping** — private inline autocomplete in almost any app | <img src="Assets/screenshots/models.png" alt="LokalBot model settings with local transcription engines including Granite Speech, Parakeet, Qwen3-ASR, and Whisper" width="420"><br>**Local models** — choose the engine for each job |
+
+<sub>Captured from the real macOS UI with a synthetic demo library; no personal meeting or screen data is shown.</sub>
 
 ## Features
 

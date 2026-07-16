@@ -562,11 +562,26 @@ struct AppSettings: Codable, Equatable {
     }
 
     static func load(from defaults: UserDefaults = Self.defaults) -> AppSettings {
-        guard let data = defaults.data(forKey: key),
-              let s = try? JSONDecoder().decode(AppSettings.self, from: data) else {
-            return AppSettings()
+        let loaded: AppSettings
+        if let data = defaults.data(forKey: key),
+           let saved = try? JSONDecoder().decode(AppSettings.self, from: data) {
+            loaded = saved
+        } else {
+            loaded = AppSettings()
         }
-        return s
+#if LOKALBOT_UI_TEST_HOST
+        // Marketing captures launch more than one AppState while SwiftUI
+        // assembles its scenes. Apply demo state at the source so every one of
+        // those instances renders the same enabled feature state; production
+        // builds never compile this override.
+        var staged = loaded
+        let env = ProcessInfo.processInfo.environment
+        if env["LOKALBOT_COTYPING_DEMO"] == "1" { staged.cotypingEnabled = true }
+        if env["LOKALBOT_DICTATION_DEMO"] == "1" { staged.dictationEnabled = true }
+        return staged
+#else
+        return loaded
+#endif
     }
 
     func save(to defaults: UserDefaults = Self.defaults) {

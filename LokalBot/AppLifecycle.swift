@@ -192,12 +192,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let tab = AppState.TypeTab(captureName: raw) { app.typeTab = tab }
             if let tab = AppState.SettingsTab(captureName: raw) { app.settingsTab = tab }
         }
-        if env["LOKALBOT_SELECT_FIRST"] == "1", let first = app.meetings.first {
-            app.selectedMeetingIDs = [first.id]
-        }
-        if let raw = env["LOKALBOT_SELECT_INDEX"], let idx = Int(raw) {
-            let ordered = app.meetings.sorted { $0.startedAt > $1.startedAt }
-            if ordered.indices.contains(idx) { app.selectedMeetingIDs = [ordered[idx].id] }
+        applyCaptureMeetingSelection(to: app, environment: env)
+        if env["LOKALBOT_SELECT_FIRST"] == "1" || env["LOKALBOT_SELECT_INDEX"] != nil {
+            // Storage discovery and NavigationSplitView restoration can both
+            // update the selection after AppState is created. Reapply once the
+            // synthetic library and list have settled so marketing captures
+            // always show the requested meeting.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self, weak app] in
+                guard let self, let app else { return }
+                self.applyCaptureMeetingSelection(to: app, environment: env)
+            }
         }
         if env["LOKALBOT_DISMISS_ONBOARDING"] == "1" {
             UserDefaults.standard.set(true, forKey: "lokalbotv3.gettingStartedDismissed")
@@ -205,20 +209,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if env["LOKALBOT_SHOW_GETTING_STARTED"] == "1" {
             UserDefaults.standard.set(false, forKey: "lokalbotv3.gettingStartedDismissed")
         }
-        if env["LOKALBOT_COTYPING_DEMO"] == "1"
-            || env["LOKALBOT_DICTATION_DEMO"] == "1"
-            || env["LOKALBOT_CAPTURE_SIZE"] != nil {
-            // Apply after launch settles: settings load and window creation both
-            // finish after this method runs, and would otherwise undo these.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self, weak app] in
-                if env["LOKALBOT_COTYPING_DEMO"] == "1" {
-                    // Render the Cotyping section in its enabled state for
-                    // captures; the try-it ghost is seeded in CotypingView.
-                    app?.settings.cotypingEnabled = true
-                }
-                if env["LOKALBOT_DICTATION_DEMO"] == "1" {
-                    app?.settings.dictationEnabled = true
-                }
+        if env["LOKALBOT_CAPTURE_SIZE"] != nil {
+            // Window creation happens immediately after this method. Resize on
+            // the next settled turn, before the scripted rasterization delay.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 if let raw = env["LOKALBOT_CAPTURE_SIZE"] {
                     // e.g. "1280x800" — wider than the default window so
                     // detail-pane chips don't wrap in captures.
@@ -256,6 +250,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NSApp.terminate(nil)
                 }
             }
+        }
+    }
+
+    @MainActor
+    private func applyCaptureMeetingSelection(to app: AppState,
+                                              environment env: [String: String]) {
+        if env["LOKALBOT_SELECT_FIRST"] == "1", let first = app.meetings.first {
+            app.selectedMeetingIDs = [first.id]
+        }
+        if let raw = env["LOKALBOT_SELECT_INDEX"], let idx = Int(raw) {
+            let ordered = app.meetings.sorted { $0.startedAt > $1.startedAt }
+            if ordered.indices.contains(idx) { app.selectedMeetingIDs = [ordered[idx].id] }
         }
     }
 

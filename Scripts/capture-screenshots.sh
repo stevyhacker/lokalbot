@@ -24,14 +24,31 @@ cd "$(dirname "$0")/.."
 # shell's stdin, which can otherwise garble the rest of this script.
 exec </dev/null
 
+MODE="all"
+case "${1:-}" in
+  "") ;;
+  --stills-only) MODE="stills" ;;
+  -h|--help)
+    echo "usage: $0 [--stills-only]"
+    exit 0
+    ;;
+  *)
+    echo "usage: $0 [--stills-only]" >&2
+    exit 2
+    ;;
+esac
+
 SCHEME="LokalBot UI Test Host"
 OUT="$PWD/Assets/screenshots"
 FRAMES="$(mktemp -d)"          # GIF-only frames (kept out of Assets/)
 LIB="${TMPDIR:-/tmp}/lokalbot-demo-lib"
 SUITE="lokalbot.shots.$(uuidgen)"
 CAPTURE_SIZE="${LOKALBOT_CAPTURE_SIZE:-1480x930}"
-CAPTURE_CONTENT_MAX="${LOKALBOT_CAPTURE_CONTENT_MAX:-600}"
+# A compact middle column keeps the detail inspector readable and stable in
+# three-column marketing captures.
+CAPTURE_CONTENT_MAX="${LOKALBOT_CAPTURE_CONTENT_MAX:-420}"
 CAPTURE_SCALE="${LOKALBOT_CAPTURE_SCALE:-2}"
+CAPTURE_DELAY="${LOKALBOT_CAPTURE_DELAY:-8}"
 mkdir -p "$OUT"
 
 echo "==> Building '$SCHEME'"
@@ -55,6 +72,7 @@ capture() {
       LOKALBOT_CAPTURE_FILE="$dest/$name.png" LOKALBOT_CAPTURE_SIZE="$CAPTURE_SIZE" \
       LOKALBOT_CAPTURE_CONTENT_MAX="$CAPTURE_CONTENT_MAX" \
       LOKALBOT_CAPTURE_SCALE="$CAPTURE_SCALE" \
+      LOKALBOT_CAPTURE_DELAY="$CAPTURE_DELAY" \
       LOKALBOT_SCREEN_MEMORY_DEMO=1 "$@" \
     "$APP" -ApplePersistenceIgnoreState YES -AppleLocale en_US -AppleLanguages "(en)" \
     --lokalbot-ui-test --lokalbot-storage-root "$LIB" --lokalbot-defaults-suite "$SUITE" \
@@ -71,7 +89,7 @@ capture() {
   fi
 }
 
-echo "==> Capturing section stills at ${CAPTURE_SIZE}pt (${CAPTURE_SCALE}x, content max ${CAPTURE_CONTENT_MAX}pt)"
+echo "==> Capturing section stills at ${CAPTURE_SIZE}pt (${CAPTURE_SCALE}x, content max ${CAPTURE_CONTENT_MAX}pt, delay ${CAPTURE_DELAY}s)"
 capture "$OUT" meetings-summary    LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=0 LOKALBOT_DETAIL_TAB=summary    LOKALBOT_DISMISS_ONBOARDING=1
 capture "$OUT" meetings-transcript LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=0 LOKALBOT_DETAIL_TAB=transcript LOKALBOT_DISMISS_ONBOARDING=1
 capture "$OUT" timeline            LOKALBOT_INITIAL_SECTION=timeline LOKALBOT_DISMISS_ONBOARDING=1
@@ -82,6 +100,12 @@ capture "$OUT" cotyping            LOKALBOT_INITIAL_SECTION=cotyping LOKALBOT_CO
 capture "$OUT" dictation           LOKALBOT_INITIAL_SECTION=dictation LOKALBOT_DICTATION_DEMO=1
 capture "$OUT" settings            LOKALBOT_INITIAL_SECTION=settings
 capture "$OUT" chat                LOKALBOT_INITIAL_SECTION=chat LOKALBOT_DISMISS_ONBOARDING=1
+
+if [ "$MODE" = "stills" ]; then
+  pkill -f "LokalBot UI Test Host" >/dev/null 2>&1 || true
+  echo "==> Done: $OUT/*.png"
+  exit 0
+fi
 
 echo "==> Capturing GIF sequence frames"
 capture "$FRAMES" recap-northwind  LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=3 LOKALBOT_DETAIL_TAB=summary LOKALBOT_DISMISS_ONBOARDING=1
