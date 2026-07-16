@@ -23,12 +23,17 @@ struct MainWindowView: View {
     @EnvironmentObject var app: AppState
     @Environment(\.openWindow) private var openWindow
     @Environment(\.colorScheme) private var colorScheme
+    /// One window-scoped source of truth shared by every split-view topology.
+    /// Without this, each section's NavigationSplitView owns a separate hidden
+    /// state and the system sidebar toggle becomes unreliable after navigation.
+    @SceneStorage("mainWindow.sidebarVisible") private var sidebarVisible = true
     @State private var pendingDelete: Set<Meeting.ID>?
     /// Shared by the Capture section's two columns (content ↔ detail).
     @StateObject private var capture = CaptureModel()
 
     var body: some View {
         navigation
+        .toolbar(removing: .sidebarToggle)
         .confirmationDialog(
             "Delete \(pendingDelete?.count ?? 0) meeting\((pendingDelete?.count ?? 0) == 1 ? "" : "s")?",
             isPresented: Binding(get: { pendingDelete != nil },
@@ -41,6 +46,17 @@ struct MainWindowView: View {
             Text("This permanently deletes the audio, transcript and summary files.")
         }
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        sidebarVisible.toggle()
+                    }
+                } label: {
+                    Label(sidebarToggleTitle, systemImage: "sidebar.left")
+                }
+                .help(sidebarToggleTitle)
+                .accessibilityIdentifier("toolbar.sidebar")
+            }
             ToolbarItem {
                 Button {
                     openWindow(id: "palette")
@@ -98,7 +114,7 @@ struct MainWindowView: View {
     /// three-column split; single-surface sections (forms) use two.
     @ViewBuilder private var navigation: some View {
         if app.navSection == .timeline {
-            NavigationSplitView {
+            NavigationSplitView(columnVisibility: threeColumnVisibility) {
                 sidebar
             } content: {
                 TimelineContentView(model: capture)
@@ -106,9 +122,10 @@ struct MainWindowView: View {
                         maximum: scriptedCaptureContentMaximum))
             } detail: {
                 CaptureDetailView(model: capture, pendingDelete: $pendingDelete)
+                    .workspaceSurface()
             }
         } else if app.navSection == .meetings {
-            NavigationSplitView {
+            NavigationSplitView(columnVisibility: threeColumnVisibility) {
                 sidebar
             } content: {
                 MeetingListView(pendingDelete: $pendingDelete)
@@ -117,75 +134,110 @@ struct MainWindowView: View {
                         maximum: scriptedCaptureContentMaximum))
             } detail: {
                 CaptureDetailView(model: capture, pendingDelete: $pendingDelete)
+                    .workspaceSurface()
             }
         } else if app.navSection == .type {
-            NavigationSplitView {
+            NavigationSplitView(columnVisibility: twoColumnVisibility) {
                 sidebar
             } detail: {
                 TypeView()
+                    .workspaceSurface()
             }
         } else if app.navSection == .ask {
-            NavigationSplitView {
+            NavigationSplitView(columnVisibility: threeColumnVisibility) {
                 sidebar
             } content: {
                 ChatConversationList()
                     .navigationSplitViewColumnWidth(min: 220, ideal: 260)
             } detail: {
                 AskView()
+                    .workspaceSurface()
             }
         } else if app.navSection == .agent {
-            NavigationSplitView {
+            NavigationSplitView(columnVisibility: twoColumnVisibility) {
                 sidebar
             } detail: {
                 AgentView(sessions: app.agentSessions, installer: app.agentInstaller)
+                    .workspaceSurface()
             }
         } else {
-            NavigationSplitView {
+            NavigationSplitView(columnVisibility: twoColumnVisibility) {
                 sidebar
             } detail: {
                 SettingsView()
+                    .workspaceSurface()
             }
         }
+    }
+
+    private var sidebarToggleTitle: String {
+        sidebarVisible ? "Hide Sidebar" : "Show Sidebar"
+    }
+
+    /// A hidden three-column sidebar leaves content + detail visible.
+    private var threeColumnVisibility: Binding<NavigationSplitViewVisibility> {
+        Binding(
+            get: { sidebarVisible ? .all : .doubleColumn },
+            set: { visibility in
+                guard visibility != .automatic else { return }
+                sidebarVisible = visibility == .all
+            })
+    }
+
+    /// A hidden two-column sidebar leaves only its detail surface visible.
+    private var twoColumnVisibility: Binding<NavigationSplitViewVisibility> {
+        Binding(
+            get: { sidebarVisible ? .all : .detailOnly },
+            set: { visibility in
+                guard visibility != .automatic else { return }
+                sidebarVisible = visibility != .detailOnly
+            })
     }
 
     private var sidebar: some View {
         List(selection: sidebarSelection) {
             Section {
-                sidebarLabel("Timeline", systemImage: "calendar.day.timeline.left")
+                sidebarLabel(
+                    "Timeline",
+                    systemImage: "calendar.day.timeline.left",
+                    section: .timeline)
                     .tag(AppState.NavSection.timeline)
                     .accessibilityIdentifier("sidebar.timeline")
-                sidebarLabel("Meetings", systemImage: "waveform.circle")
+                sidebarLabel("Meetings", systemImage: "waveform.circle", section: .meetings)
                     .tag(AppState.NavSection.meetings)
                     .accessibilityIdentifier("sidebar.meetings")
             } header: {
                 sidebarSectionHeader("Remember")
             }
             Section {
-                sidebarLabel("Ask", systemImage: "sparkle.magnifyingglass")
+                sidebarLabel("Ask", systemImage: "sparkle.magnifyingglass", section: .ask)
                     .tag(AppState.NavSection.ask)
                     .accessibilityIdentifier("sidebar.ask")
             } header: {
                 sidebarSectionHeader("Find")
             }
             Section {
-                sidebarLabel("Type", systemImage: "keyboard")
+                sidebarLabel("Type", systemImage: "keyboard", section: .type)
                     .tag(AppState.NavSection.type)
                     .accessibilityIdentifier("sidebar.type")
-                sidebarLabel("Agent", systemImage: "wand.and.sparkles")
+                sidebarLabel("Agent", systemImage: "wand.and.sparkles", section: .agent)
                     .tag(AppState.NavSection.agent)
                     .accessibilityIdentifier("sidebar.agent")
             } header: {
                 sidebarSectionHeader("Write & act")
             }
             Section {
-                sidebarLabel("Settings", systemImage: "gearshape")
+                sidebarLabel("Settings", systemImage: "gearshape", section: .settings)
                     .tag(AppState.NavSection.settings)
                     .accessibilityIdentifier("sidebar.settings")
             } header: {
                 sidebarSectionHeader("Configure")
             }
         }
-        .navigationSplitViewColumnWidth(min: 180, ideal: 210)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            SidebarBrandHeader()
+        }
+        .navigationSplitViewColumnWidth(min: 180, ideal: 204, max: 230)
     }
 
     /// `cacheDisplay` does not flatten the sidebar's vibrancy text correctly:
@@ -193,25 +245,38 @@ struct MainWindowView: View {
     /// composited label color. Use resolved colors only for scripted exports;
     /// normal app and UI-test windows keep the native sidebar rendering.
     @ViewBuilder
-    private func sidebarLabel(_ title: String, systemImage: String) -> some View {
-        if isScriptedCapture {
-            Label {
-                Text(title).foregroundStyle(scriptedSidebarLabelColor)
-            } icon: {
-                Image(systemName: systemImage).foregroundStyle(Color.accentColor)
-            }
-        } else {
-            Label(title, systemImage: systemImage)
+    private func sidebarLabel(
+        _ title: String,
+        systemImage: String,
+        section: AppState.NavSection
+    ) -> some View {
+        let selected = app.navSection == section
+
+        HStack(spacing: 9) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(
+                    selected
+                        ? Brand.teal
+                        : (isScriptedCapture ? scriptedSidebarHeaderColor : Color.secondary))
+                .frame(width: 17)
+
+            Text(title)
+                .font(.system(size: 13, weight: selected ? .semibold : .medium))
+                .foregroundStyle(isScriptedCapture ? scriptedSidebarLabelColor : Color.primary)
+
+            Spacer(minLength: 0)
         }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder
     private func sidebarSectionHeader(_ title: String) -> some View {
-        if isScriptedCapture {
-            Text(title).foregroundStyle(scriptedSidebarHeaderColor)
-        } else {
-            Text(title)
-        }
+        Text(title.uppercased())
+            .font(.system(size: 9, weight: .semibold))
+            .tracking(0.7)
+            .foregroundStyle(isScriptedCapture ? scriptedSidebarHeaderColor : Color.secondary)
     }
 
     private var scriptedSidebarLabelColor: Color {
@@ -244,6 +309,31 @@ struct MainWindowView: View {
 #endif
     }
 
+}
+
+private struct SidebarBrandHeader: View {
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(nsImage: NSApp.applicationIconImage ?? NSImage())
+                .resizable()
+                .scaledToFit()
+                .frame(width: 28, height: 28)
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("LokalBot")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("Private work memory")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .accessibilityElement(children: .combine)
+    }
 }
 
 struct MeetingDetailView: View {

@@ -108,6 +108,7 @@ struct LokalBotApp: App {
             SettingsView()
                 .environmentObject(app)
                 .brandTinted()
+                .workspaceSurface()
         }
     }
 

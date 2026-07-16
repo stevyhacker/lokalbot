@@ -30,6 +30,8 @@ struct SettingsView: View {
                     }
                 }
                 .formStyle(.grouped)
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
                 // Keep this identifier off the enclosing VStack: a container
                 // identifier propagates onto every child AX element and
                 // clobbers settings.search / settings.tab in the header.
@@ -57,19 +59,21 @@ struct SettingsView: View {
     /// Search field + tab strip, above the tabbed content so search works
     /// from any tab (including Models).
     private var header: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search settings…", text: $settingsQuery)
-                    .textFieldStyle(.plain)
-                    .accessibilityIdentifier("settings.search")
-                if !settingsQuery.isEmpty {
-                    Button { settingsQuery = "" } label: {
-                        Image(systemName: "xmark.circle.fill")
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 14) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 18) {
+                    settingsHeaderTitle
+                    Spacer(minLength: 12)
+                    settingsSearchField
+                        .frame(width: 230)
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    settingsHeaderTitle
+                    settingsSearchField
                 }
             }
+
             Picker("", selection: $app.settingsTab) {
                 ForEach(AppState.SettingsTab.allCases, id: \.self) { tab in
                     Text(tab.displayName).tag(tab)
@@ -77,10 +81,59 @@ struct SettingsView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .frame(maxWidth: 520, alignment: .leading)
             .accessibilityIdentifier("settings.tab")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 22)
+        .padding(.top, 20)
+        .padding(.bottom, 16)
+    }
+
+    private var settingsHeaderTitle: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(app.settingsTab.displayName)
+                .font(.system(size: 22, weight: .semibold))
+                .tracking(-0.35)
+            Text(settingsTabSubtitle)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var settingsSearchField: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Search settings…", text: $settingsQuery)
+                .textFieldStyle(.plain)
+                .accessibilityIdentifier("settings.search")
+            if !settingsQuery.isEmpty {
+                Button { settingsQuery = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 32)
+        .workspaceControl()
+    }
+
+    private var settingsTabSubtitle: String {
+        switch app.settingsTab {
+        case .general:
+            "Startup, shortcuts, permissions, storage, and updates."
+        case .recording:
+            "Meeting capture, processing, summaries, day memory, and routines."
+        case .models:
+            "Choose and prepare local or remote model backends."
+        case .privacy:
+            "Control retention, exclusions, encryption, and remote processing."
+        case .advanced:
+            "Inspect memory health, resources, diagnostics, and Agent CLI."
+        }
     }
 
     /// Spec §2.5 tab distribution: SettingsView's existing sections spread

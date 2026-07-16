@@ -23,6 +23,102 @@ extension Brand {
     }
 }
 
+// MARK: - Workspace shell
+
+/// Warm, low-contrast workspace colors inspired by focused writing tools.
+/// Every role has a dark equivalent so LokalBot still follows the Mac's
+/// appearance instead of forcing a fixed light theme.
+enum WorkspacePalette {
+    static func canvas(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark
+            ? Color(red: 0.075, green: 0.078, blue: 0.071)
+            : Color(red: 0.953, green: 0.945, blue: 0.929)
+    }
+
+    static func surface(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark
+            ? Color(red: 0.105, green: 0.109, blue: 0.101)
+            : Color(red: 0.995, green: 0.992, blue: 0.982)
+    }
+
+    static func control(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark
+            ? Color(red: 0.145, green: 0.149, blue: 0.137)
+            : Color(red: 0.941, green: 0.932, blue: 0.915)
+    }
+
+    static func border(
+        for colorScheme: ColorScheme,
+        contrast: ColorSchemeContrast
+    ) -> Color {
+        if colorScheme == .dark {
+            return Color.white.opacity(contrast == .increased ? 0.18 : 0.09)
+        }
+        return Color.black.opacity(contrast == .increased ? 0.18 : 0.08)
+    }
+
+    static func shadow(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark
+            ? Color.black.opacity(0.32)
+            : Color(red: 0.24, green: 0.21, blue: 0.16).opacity(0.12)
+    }
+}
+
+private struct WorkspaceSurfaceModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+
+        content
+            .background(WorkspacePalette.surface(for: colorScheme))
+            .clipShape(shape)
+            .overlay {
+                shape.strokeBorder(
+                    WorkspacePalette.border(for: colorScheme, contrast: contrast),
+                    lineWidth: 1)
+            }
+            .shadow(
+                color: WorkspacePalette.shadow(for: colorScheme),
+                radius: colorScheme == .dark ? 14 : 18,
+                y: 6)
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+            .padding(.bottom, 10)
+            .background(WorkspacePalette.canvas(for: colorScheme))
+    }
+}
+
+private struct WorkspaceControlModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous)
+
+        content
+            .background(WorkspacePalette.control(for: colorScheme), in: shape)
+            .overlay {
+                shape.strokeBorder(
+                    WorkspacePalette.border(for: colorScheme, contrast: contrast),
+                    lineWidth: 1)
+            }
+    }
+}
+
+extension View {
+    /// Insets a detail pane into the soft canvas used by the main workspace.
+    func workspaceSurface() -> some View {
+        modifier(WorkspaceSurfaceModifier())
+    }
+
+    /// Quiet control chrome for search and other shell-level fields.
+    func workspaceControl() -> some View {
+        modifier(WorkspaceControlModifier())
+    }
+}
+
 // MARK: - Chips
 
 enum ChipSize {
