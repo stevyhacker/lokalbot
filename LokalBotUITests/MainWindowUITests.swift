@@ -46,6 +46,28 @@ final class MainWindowUITests: XCTestCase {
                        "toolbar should contain exactly one sidebar control")
     }
 
+    /// The native toolbar item must do real work in both directions. This
+    /// guards the recent split-view stabilization against a control that is
+    /// present but detached from NavigationSplitView's column visibility.
+    func testToolbarToggleHidesAndRestoresSidebar() {
+        let hide = app.buttons["Hide Sidebar"]
+        XCTAssertTrue(hide.waitForExistence(timeout: 4),
+                      "Hide Sidebar control missing")
+        hide.click()
+
+        let show = app.buttons["Show Sidebar"]
+        XCTAssertTrue(show.waitForExistence(timeout: 4),
+                      "toolbar did not switch to Show Sidebar")
+        XCTAssertFalse(app.descendants(matching: .any)["sidebar.settings"].exists,
+                       "sidebar remained exposed after hiding it")
+
+        show.click()
+        XCTAssertTrue(app.descendants(matching: .any)["sidebar.timeline"]
+            .waitForExistence(timeout: 5), "sidebar did not return")
+        XCTAssertTrue(app.buttons["Hide Sidebar"].waitForExistence(timeout: 4),
+                      "toolbar did not return to Hide Sidebar")
+    }
+
     /// Every planted fixture surfaces in the sidebar, grouped by day with
     /// the right headers — confirms `StorageManager.loadMeetings()` reads
     /// our on-disk shape, not just a happy-path single meeting.

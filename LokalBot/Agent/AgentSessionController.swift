@@ -80,6 +80,16 @@ final class AgentSessionController: ObservableObject {
     func start() async {
         guard !failureTeardownInProgress,
               state == .idle || isFailed else { return }
+#if LOKALBOT_UI_TEST_HOST
+        // Keep Agent Mode UI tests hermetic: no model warm-up, capability
+        // issuance, subprocess, or network. Production builds never compile
+        // this path, and host runs must opt in explicitly.
+        if ProcessInfo.processInfo.environment["LOKALBOT_AGENT_UI_TEST_READY"] == "1" {
+            recoveryAction = nil
+            state = .ready
+            return
+        }
+#endif
         lifecycleGeneration += 1
         let generation = lifecycleGeneration
         state = .starting
