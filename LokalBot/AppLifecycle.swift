@@ -256,14 +256,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Render the window's frame view (titlebar + content) into a 2x PNG via
-    /// `cacheDisplay`, independent of the display's backing scale.
+    /// Render the window's frame view (titlebar + content) into a configurable
+    /// high-density PNG via `cacheDisplay`, independent of the display's
+    /// backing scale. README captures default to 2x; video experiments can ask
+    /// for up to 4x through LOKALBOT_CAPTURE_SCALE.
     @MainActor
     private static func writeWindowCapture(_ window: NSWindow?, to path: String) {
         guard let window, let content = window.contentView else { return }
         let view: NSView = content.superview ?? content
         let bounds = view.bounds
-        let scale: CGFloat = 2
+        let requestedScale = Double(
+            ProcessInfo.processInfo.environment["LOKALBOT_CAPTURE_SCALE"] ?? ""
+        ) ?? 2
+        let scale = CGFloat(min(max(requestedScale, 1), 4))
         guard bounds.width > 0, bounds.height > 0,
               let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
                                          pixelsWide: Int(bounds.width * scale),

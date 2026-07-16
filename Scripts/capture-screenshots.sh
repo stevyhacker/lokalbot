@@ -5,7 +5,8 @@
 # Builds the UI-test host, seeds a synthetic meeting library, then lands the
 # host on each section via the LOKALBOT_* capture env vars (handled in the app
 # only under the LOKALBOT_UI_TEST_HOST build flag). The host renders its own
-# window to a 2x PNG in-process (LOKALBOT_CAPTURE_FILE) and quits -- so a
+# window to a configurable-density PNG in-process (2x by default via
+# LOKALBOT_CAPTURE_SCALE) and quits -- so a
 # running production LokalBot is never touched and no TCC grant is needed.
 #
 # Produces in Assets/screenshots/:
@@ -30,6 +31,7 @@ LIB="${TMPDIR:-/tmp}/lokalbot-demo-lib"
 SUITE="lokalbot.shots.$(uuidgen)"
 CAPTURE_SIZE="${LOKALBOT_CAPTURE_SIZE:-1480x930}"
 CAPTURE_CONTENT_MAX="${LOKALBOT_CAPTURE_CONTENT_MAX:-600}"
+CAPTURE_SCALE="${LOKALBOT_CAPTURE_SCALE:-2}"
 mkdir -p "$OUT"
 
 echo "==> Building '$SCHEME'"
@@ -52,6 +54,7 @@ capture() {
   env LOKALBOT_UI_TEST=1 LOKALBOT_STORAGE_ROOT="$LIB" LOKALBOT_DEFAULTS_SUITE="$SUITE" \
       LOKALBOT_CAPTURE_FILE="$dest/$name.png" LOKALBOT_CAPTURE_SIZE="$CAPTURE_SIZE" \
       LOKALBOT_CAPTURE_CONTENT_MAX="$CAPTURE_CONTENT_MAX" \
+      LOKALBOT_CAPTURE_SCALE="$CAPTURE_SCALE" \
       LOKALBOT_SCREEN_MEMORY_DEMO=1 "$@" \
     "$APP" -ApplePersistenceIgnoreState YES -AppleLocale en_US -AppleLanguages "(en)" \
     --lokalbot-ui-test --lokalbot-storage-root "$LIB" --lokalbot-defaults-suite "$SUITE" \
@@ -68,7 +71,7 @@ capture() {
   fi
 }
 
-echo "==> Capturing section stills at ${CAPTURE_SIZE}pt (2x, content max ${CAPTURE_CONTENT_MAX}pt)"
+echo "==> Capturing section stills at ${CAPTURE_SIZE}pt (${CAPTURE_SCALE}x, content max ${CAPTURE_CONTENT_MAX}pt)"
 capture "$OUT" meetings-summary    LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=0 LOKALBOT_DETAIL_TAB=summary    LOKALBOT_DISMISS_ONBOARDING=1
 capture "$OUT" meetings-transcript LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=0 LOKALBOT_DETAIL_TAB=transcript LOKALBOT_DISMISS_ONBOARDING=1
 capture "$OUT" timeline            LOKALBOT_INITIAL_SECTION=timeline LOKALBOT_DISMISS_ONBOARDING=1

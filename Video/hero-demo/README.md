@@ -3,7 +3,8 @@
 This HyperFrames project renders the narrated product films used on the website
 and in the repository README. It deliberately keeps generated screenshot copies,
 audio stems, review renders, and local tool environments out of Git: the source
-captures remain canonical under `Assets/screenshots/`.
+captures remain canonical under `Assets/screenshots/`, while the short film's
+high-density sources live under `Assets/video-screenshots/`.
 
 Both productions are 1872×1276 at 30 fps so they map exactly to the website's
 936×638 display slot at 2× density:
@@ -41,8 +42,14 @@ npm run check
 npm run render -- --output renders/lokalbot-hero-demo.mp4 --fps 30 --quality high
 ```
 
-The production narration uses ElevenLabs Multilingual v2 with the Bella voice
-at its natural 1.0× speed—there is no time stretching or editorial speed-up.
-The original score and UI effects are synthesized by `generate_audio.py`. The
-final video contains narration, an ambient music bed, UI sound design, and
-burned-in captions aligned to ElevenLabs character timings.
+The short/default production uses Eleven v3 with the young male Will narration
+voice in Natural mode at its native 1.0× speed. The preserved long cut uses the
+original ElevenLabs Multilingual v2/Bella performance. Neither production uses
+time stretching or an editorial speed-up. The original score and UI effects are
+synthesized by `generate_audio.py`. The final video contains narration, an
+ambient music bed, UI sound design, and burned-in captions aligned to
+ElevenLabs character timings. The short delivery remuxes the HyperFrames master
+video stream directly, avoiding a second lossy pass over small interface text.
+Screenshot sharpness comes from those denser source PNGs; the composition keeps
+its native 1872×1276 coordinate system and original window geometry so labels,
+focus rings, cursor targets, and story panels stay aligned.

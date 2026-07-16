@@ -66,15 +66,21 @@ def main() -> None:
         },
         "audio": {
             "narration": {
-                "engine": "ElevenLabs Multilingual v2",
-                "voice": "Bella",
-                "voiceId": "hpp4J3VqNfWAUOO0d1Us",
+                "engine": "ElevenLabs Eleven v3",
+                "modelId": "eleven_v3",
+                "voice": "Will",
+                "voiceId": "bIHbv24MWmeRgasZH58o",
                 "speed": 1.0,
-                "timing": "natural performance with editorial pauses; no time stretching",
+                "stabilityMode": "Natural",
+                "timing": "natural performance with sentence-boundary pauses; no time stretching",
             },
             "music": "original deterministic score",
             "effects": "original scene-aligned UI sound-design stem",
             "deliveryLoudness": {"integratedTargetLufs": -16.0, "truePeakTargetDbtp": -1.5},
+            "deliveryEncoding": {
+                "video": "HyperFrames H.264 master stream; no second-generation encode",
+                "audio": "AAC 192 kb/s",
+            },
         },
         "captions": {
             "language": "en",
