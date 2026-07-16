@@ -35,8 +35,8 @@ final class MainWindowUITests: XCTestCase {
 
     // MARK: - Library
 
-    /// SwiftUI owns the split-view sidebar toggle. Adding a second custom
-    /// navigation toolbar item renders two identical "Hide Sidebar" controls.
+    /// LokalBot owns one split-view sidebar toggle so every navigation topology
+    /// shares the same explicit visibility state.
     func testToolbarShowsOneSidebarToggle() {
         let sidebarToggles = toolbarSidebarButtons
         XCTAssertTrue(sidebarToggles.firstMatch.waitForExistence(timeout: 4),
@@ -56,22 +56,18 @@ final class MainWindowUITests: XCTestCase {
             !self.app.descendants(matching: .any)["sidebar.settings"].exists
         }, "sidebar remained exposed after hiding it")
 
-        // Xcode 26.3 keeps the stale "Hide Sidebar" accessibility label after
-        // the native toggle changes state. Re-query the same toggle command and
-        // assert the split view itself, which is the user-visible contract.
         XCTAssertTrue(toolbarSidebarButtons.firstMatch.waitForExistence(timeout: 4),
-                      "native sidebar control disappeared after hiding")
+                      "sidebar control disappeared after hiding")
         toolbarSidebarButtons.firstMatch.click()
         XCTAssertTrue(app.descendants(matching: .any)["sidebar.timeline"]
             .waitForExistence(timeout: 5), "sidebar did not return")
     }
 
-    /// Xcode 26.3 exposes the native sidebar control as a Button containing a
-    /// nested Button. Querying every descendant reports two controls even
-    /// though the toolbar has only one direct child.
+    /// Query the app-owned identifier among direct toolbar children so nested
+    /// accessibility wrappers cannot inflate the count.
     private var toolbarSidebarButtons: XCUIElementQuery {
         app.toolbars.firstMatch.children(matching: .button).matching(NSPredicate(
-            format: "label == 'Hide Sidebar' OR label == 'Show Sidebar'"))
+            format: "identifier == 'toolbar.sidebarToggle'"))
     }
 
     /// Every planted fixture surfaces in the sidebar, grouped by day with
