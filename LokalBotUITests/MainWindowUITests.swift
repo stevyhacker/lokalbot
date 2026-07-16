@@ -93,6 +93,8 @@ final class MainWindowUITests: XCTestCase {
                       "transcription model card identifier missing")
         XCTAssertTrue(app.descendants(matching: .any)["models.summarization"].exists,
                       "summarization model card identifier missing")
+        XCTAssertTrue(app.descendants(matching: .any)["models.dictationComposition"].exists,
+                      "dictation composition model card identifier missing")
         XCTAssertTrue(app.descendants(matching: .any)["models.cotyping"].exists,
                       "cotyping model card identifier missing")
         XCTAssertTrue(app.descendants(matching: .any)["models.embeddings"].exists,

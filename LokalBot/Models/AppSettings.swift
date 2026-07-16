@@ -125,6 +125,9 @@ struct AppSettings: Codable, Equatable {
     var dictationShowOverlay: Bool = true
     var dictationLivePreview: Bool = true
     var dictationRetainAudio: Bool = false
+    /// Optional built-in model used only for dictation composition/rewrite.
+    /// Empty preserves the historical behavior of using the Main LLM setting.
+    var dictationCompositionBuiltInModelID: String = ""
 
     /// M4: app/window activity sampling. Off by default — recording which apps
     /// and windows you use all day is opt-in (the onboarding day-memory step or
@@ -441,6 +444,24 @@ struct AppSettings: Codable, Equatable {
         return s
     }
 
+    /// Settings used by the compose pass after dictation ASR. A valid override
+    /// is pinned to the local built-in backend without changing the Main LLM
+    /// configuration used by summaries, Ask, and Agent Mode. Missing or stale
+    /// model IDs safely inherit the Main LLM instead of falling through to an
+    /// unrelated catalog default.
+    var dictationCompositionTextEngineSettings: AppSettings {
+        guard !dictationCompositionBuiltInModelID.isEmpty,
+              ModelCatalog.entry(
+                id: dictationCompositionBuiltInModelID,
+                custom: customBuiltInModels) != nil else {
+            return self
+        }
+        var s = self
+        s.summarizerBackend = .builtIn
+        s.builtInModelID = dictationCompositionBuiltInModelID
+        return s
+    }
+
     /// UserDefaults key for the encoded settings blob. Internal (not private)
     /// so `DataMigration` can copy a prior install's settings under it.
     static let key = "lokalbotv3.settings"
@@ -477,6 +498,7 @@ struct AppSettings: Codable, Equatable {
         case dictationShowOverlay
         case dictationLivePreview
         case dictationRetainAudio
+        case dictationCompositionBuiltInModelID
         case trackingEnabled
         case semanticSearchEnabled
         case screenContextCaptureMode
@@ -584,6 +606,9 @@ struct AppSettings: Codable, Equatable {
         try c.encode(dictationShowOverlay, forKey: .dictationShowOverlay)
         try c.encode(dictationLivePreview, forKey: .dictationLivePreview)
         try c.encode(dictationRetainAudio, forKey: .dictationRetainAudio)
+        try c.encode(
+            dictationCompositionBuiltInModelID,
+            forKey: .dictationCompositionBuiltInModelID)
         try c.encode(trackingEnabled, forKey: .trackingEnabled)
         try c.encode(semanticSearchEnabled, forKey: .semanticSearchEnabled)
         try c.encode(effectiveScreenContextCaptureMode, forKey: .screenContextCaptureMode)
@@ -685,6 +710,9 @@ struct AppSettings: Codable, Equatable {
         dictationShowOverlay = (try? c.decode(Bool.self, forKey: .dictationShowOverlay)) ?? defaults.dictationShowOverlay
         dictationLivePreview = (try? c.decode(Bool.self, forKey: .dictationLivePreview)) ?? defaults.dictationLivePreview
         dictationRetainAudio = (try? c.decode(Bool.self, forKey: .dictationRetainAudio)) ?? defaults.dictationRetainAudio
+        dictationCompositionBuiltInModelID =
+            (try? c.decode(String.self, forKey: .dictationCompositionBuiltInModelID))
+            ?? defaults.dictationCompositionBuiltInModelID
         trackingEnabled = (try? c.decode(Bool.self, forKey: .trackingEnabled)) ?? defaults.trackingEnabled
         semanticSearchEnabled = (try? c.decode(Bool.self, forKey: .semanticSearchEnabled)) ?? defaults.semanticSearchEnabled
         let legacyScreenshotsEnabled =

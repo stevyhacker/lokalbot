@@ -38,6 +38,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(settings.dictationShowOverlay)
         XCTAssertTrue(settings.dictationLivePreview)
         XCTAssertFalse(settings.dictationRetainAudio)
+        XCTAssertTrue(settings.dictationCompositionBuiltInModelID.isEmpty)
     }
 
     func testSpeechDefaultsUseKokoroHeartAtNormalSpeed() {
@@ -271,6 +272,7 @@ final class AppSettingsTests: XCTestCase {
         settings.dictationShowOverlay = false
         settings.dictationLivePreview = false
         settings.dictationRetainAudio = true
+        settings.dictationCompositionBuiltInModelID = "qwen3.5-2b"
 
         let data = try JSONEncoder().encode(settings)
         let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
@@ -281,6 +283,44 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(decoded.dictationShowOverlay)
         XCTAssertFalse(decoded.dictationLivePreview)
         XCTAssertTrue(decoded.dictationRetainAudio)
+        XCTAssertEqual(decoded.dictationCompositionBuiltInModelID, "qwen3.5-2b")
+    }
+
+    func testDictationCompositionDefaultsToMainLLMSettings() {
+        var settings = AppSettings()
+        settings.summarizerBackend = .ollama
+        settings.ollamaModel = "fast-local-model"
+
+        let resolved = settings.dictationCompositionTextEngineSettings
+
+        XCTAssertEqual(resolved.summarizerBackend, .ollama)
+        XCTAssertEqual(resolved.ollamaModel, "fast-local-model")
+        XCTAssertEqual(resolved.builtInModelID, settings.builtInModelID)
+    }
+
+    func testDictationCompositionCanOverrideMainLLMWithSmallerBuiltInModel() {
+        var settings = AppSettings()
+        settings.summarizerBackend = .ollama
+        settings.ollamaModel = "large-main-model"
+        settings.dictationCompositionBuiltInModelID = "qwen3.5-2b"
+
+        let resolved = settings.dictationCompositionTextEngineSettings
+
+        XCTAssertEqual(resolved.summarizerBackend, .builtIn)
+        XCTAssertEqual(resolved.builtInModelID, "qwen3.5-2b")
+        XCTAssertEqual(settings.summarizerBackend, .ollama)
+        XCTAssertEqual(settings.ollamaModel, "large-main-model")
+    }
+
+    func testInvalidDictationCompositionModelFallsBackToMainLLM() {
+        var settings = AppSettings()
+        settings.summarizerBackend = .appleIntelligence
+        settings.dictationCompositionBuiltInModelID = "removed-model"
+
+        let resolved = settings.dictationCompositionTextEngineSettings
+
+        XCTAssertEqual(resolved.summarizerBackend, .appleIntelligence)
+        XCTAssertEqual(resolved.builtInModelID, settings.builtInModelID)
     }
 
     func testDecodesSettingsWithoutDictationLivePreviewKeyAsDefault() throws {
@@ -289,6 +329,7 @@ final class AppSettingsTests: XCTestCase {
         let settings = try JSONDecoder().decode(AppSettings.self, from: data)
 
         XCTAssertTrue(settings.dictationLivePreview)
+        XCTAssertTrue(settings.dictationCompositionBuiltInModelID.isEmpty)
         XCTAssertFalse(settings.autoTranscribe)
     }
 

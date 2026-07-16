@@ -546,8 +546,9 @@ final class AppState: ObservableObject {
         onError: { [weak self] message in self?.lastError = message },
         onMeetingFinished: { [weak self] meeting in self?.meetings.insert(meeting, at: 0) })
     /// Press-and-speak composition. Every dictation is treated as a writing
-    /// request: local ASR captures the instruction, the Main LLM composes against
-    /// ephemeral focused-window context, and focus-safe delivery inserts it.
+    /// request: local ASR captures the instruction, the configured composition
+    /// LLM writes against ephemeral focused-window context, and focus-safe
+    /// delivery inserts it.
     private(set) lazy var dictation = DictationCoordinator(
         storageRoot: storage.rootURL,
         settingsProvider: { [store = settingsStore] in store.current },
@@ -555,8 +556,9 @@ final class AppState: ObservableObject {
             guard let self else {
                 throw TextEngineError.unavailable("LokalBot is shutting down.")
             }
+            let config = self.settingsStore.current.dictationCompositionTextEngineSettings
             return try await self.pipeline.makeTextEngine(
-                self.settingsStore.current,
+                config,
                 priority: .interactive,
                 purpose: "dictation compose")
         },

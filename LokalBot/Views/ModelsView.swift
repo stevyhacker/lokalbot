@@ -2,8 +2,9 @@ import SwiftUI
 import AppKit
 
 /// The Models tab of Settings (spec §2.5). All model selection and management
-/// lives here, a dedicated card-per-role surface: Transcription, Main LLM
-/// engine, Cotyping, and Embeddings each pick and manage their own model.
+/// lives here, a dedicated card-per-role surface: Transcription, dictation
+/// composition, Main LLM, Cotyping, and Embeddings each pick and manage their
+/// own model.
 /// Downloads come from the local catalog or Hugging Face.
 struct ModelsView: View {
     @EnvironmentObject var app: AppState
@@ -37,6 +38,7 @@ struct ModelsView: View {
             VStack(alignment: .leading, spacing: 16) {
                 ModelMemoryBanner()
                 transcriptionCard
+                dictationCompositionCard
                 summarizationCard
                 speechCard
                 cotypingCard
@@ -154,6 +156,7 @@ struct ModelsView: View {
                     ForEach(ModelCatalog.selectableEntries(custom: app.settings.customBuiltInModels)) { entry in
                         ModelCatalogRow(
                             entry: entry,
+                            selectedModelID: $app.settings.builtInModelID,
                             recommendedLabel: entry.id == ModelCatalog.recommendedSummarizationID
                                 ? "RECOMMENDED SUMMARY" : nil)
                     }
@@ -229,6 +232,45 @@ struct ModelsView: View {
             }
         }
         .accessibilityIdentifier("models.summarization")
+    }
+
+    private var dictationCompositionCard: some View {
+        ModelCard(
+            icon: "text.bubble",
+            title: "Dictation composition",
+            subtitle: "Compose and rewrite spoken requests before insertion"
+        ) {
+            Picker(
+                "Composition model",
+                selection: $app.settings.dictationCompositionBuiltInModelID
+            ) {
+                Text("Use Main LLM setting").tag("")
+                ForEach(ModelCatalog.selectableEntries(
+                    custom: app.settings.customBuiltInModels
+                )) { entry in
+                    Text(entry.displayName).tag(entry.id)
+                }
+            }
+            .frame(maxWidth: 380)
+
+            if let entry = selectedDictationCompositionEntry {
+                ModelCatalogRow(
+                    entry: entry,
+                    selectedModelID: $app.settings.dictationCompositionBuiltInModelID,
+                    recommendedLabel: entry.id == "qwen3.5-2b" ? "FAST" : nil)
+            }
+
+            Text("Use Main LLM preserves the current behavior. Choose a smaller built-in model to keep dictation composition responsive without changing the model used for summaries, Ask, or Agent Mode. Qwen3.5 2B or 4B are good low-latency options; the transcription model is unchanged.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityIdentifier("models.dictationComposition")
+    }
+
+    private var selectedDictationCompositionEntry: ModelCatalog.Entry? {
+        let id = app.settings.dictationCompositionBuiltInModelID
+        guard !id.isEmpty else { return nil }
+        return ModelCatalog.entry(id: id, custom: app.settings.customBuiltInModels)
     }
 
     @ViewBuilder
@@ -517,17 +559,18 @@ struct ModelsView: View {
         @EnvironmentObject var app: AppState
         @ObservedObject var downloads = ModelDownloadManager.shared
         let entry: ModelCatalog.Entry
+        @Binding var selectedModelID: String
         var recommendedLabel: String?
 
         var body: some View {
             let available = ModelCatalog.localURL(for: entry, storage: app.storage) != nil
-            let selected = app.settings.builtInModelID == entry.id
+            let selected = selectedModelID == entry.id
             let fit = ModelFit.evaluate(modelSizeGB: entry.sizeGB,
                                         capability: HardwareCapabilityProbe.current())
             HStack(spacing: 8) {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
                     .foregroundStyle(selected ? Color.accentColor : .secondary)
-                    .onTapGesture { if available { app.settings.builtInModelID = entry.id } }
+                    .onTapGesture { if available { selectedModelID = entry.id } }
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(entry.displayName).font(.system(size: 12.5, weight: .medium))
