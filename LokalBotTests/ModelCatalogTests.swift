@@ -114,4 +114,39 @@ final class ModelCatalogTests: XCTestCase {
                             "\(entry.id) has an invalid SHA-256 digest")
         }
     }
+
+    func testKeystrokeScaleEntriesOmitHeavyAndLegacyModels() {
+        let ids = ModelCatalog.keystrokeScaleEntries(custom: []).map(\.id)
+        XCTAssertFalse(ids.contains("qwen3.6-35b-a3b"), "17 GB models are not keystroke-scale")
+        XCTAssertFalse(ids.contains("qwen3.6-27b"))
+        XCTAssertFalse(ids.contains("gemma4-12b"))
+        XCTAssertFalse(ids.contains("gemma4-e4b"), "the legacy Gemma quant is superseded")
+        XCTAssertTrue(ids.contains(ModelCatalog.recommendedCotypingID))
+        XCTAssertTrue(ids.contains("qwen3.5-2b"))
+        XCTAssertTrue(ids.contains("lfm2.5-1.2b-instruct"))
+    }
+
+    func testKeystrokeScaleEntriesKeepTheActiveSelection() {
+        let ids = ModelCatalog.keystrokeScaleEntries(
+            custom: [], keeping: "qwen3.6-27b").map(\.id)
+        XCTAssertTrue(ids.contains("qwen3.6-27b"),
+                      "an existing selection must stay pickable, filter or not")
+    }
+
+    func testKeystrokeScaleEntriesAlwaysIncludeCustomModels() {
+        let custom = ModelCatalog.Entry(
+            id: "my-local-model", displayName: "My local model",
+            fileName: "my-local-model.gguf", url: "https://example.invalid/x.gguf",
+            sha256: "", sizeBytes: nil, sizeGB: 42, blurb: "",
+            disablesThinking: false)
+        let ids = ModelCatalog.keystrokeScaleEntries(custom: [custom]).map(\.id)
+        XCTAssertTrue(ids.contains("my-local-model"),
+                      "user-added models are never filtered, whatever their size")
+    }
+
+    func testCatalogDisplayNamesAreUnique() {
+        let names = ModelCatalog.entries.map(\.displayName)
+        XCTAssertEqual(Set(names).count, names.count,
+                       "two catalog entries render identically in pickers: \(names)")
+    }
 }

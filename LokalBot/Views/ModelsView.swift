@@ -389,7 +389,9 @@ struct ModelsView: View {
                   subtitle: "Inline AI autocomplete as you type") {
             CotypingModelPreparationView(compact: true)
             Picker("Cotyping model", selection: $app.settings.cotypingBuiltInModelID) {
-                ForEach(ModelCatalog.selectableEntries(custom: app.settings.customBuiltInModels)) { entry in
+                ForEach(ModelCatalog.keystrokeScaleEntries(
+                    custom: app.settings.customBuiltInModels,
+                    keeping: app.settings.cotypingBuiltInModelID)) { entry in
                     Text(entry.displayName).tag(entry.id)
                 }
             }
