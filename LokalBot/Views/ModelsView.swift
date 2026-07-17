@@ -120,7 +120,8 @@ struct ModelsView: View {
             stackRow(.type, name: "Type", model: typeModelName,
                      detail: "Completes your sentences as you type")
         }
-        .accessibilityIdentifier("models.stack")
+        // No identifier on the card container: it would propagate onto the
+        // rows and clobber the models.stack.change.* button identifiers.
     }
 
     private func stackRow(_ role: StackRole, name: String,

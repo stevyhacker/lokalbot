@@ -119,7 +119,9 @@ final class MainWindowUITests: XCTestCase {
             ? tabs.buttons["Models"] : tabs.radioButtons["Models"]
         XCTAssertTrue(segment.waitForExistence(timeout: 4), "Models segment missing")
         segment.click()
-        XCTAssertTrue(app.descendants(matching: .any)["models.stack"]
+        // The stack card is probed by its Change buttons: the card container
+        // itself stays unidentified so those leaf identifiers survive.
+        XCTAssertTrue(app.buttons["models.stack.change.transcribe"]
             .waitForExistence(timeout: 6),
                       "Models pane did not render the Your stack card")
         XCTAssertTrue(app.descendants(matching: .any)["models.dictationComposition"].exists,
