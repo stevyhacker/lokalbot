@@ -143,8 +143,28 @@ final class DictationCoordinator: ObservableObject {
     }
 
     var shouldShowModelPreparation: Bool {
-        guard case .transcribing = state else { return false }
-        return modelPreparationStatus != nil || modelPreparationError != nil
+        Self.shouldShowModelPreparation(
+            state: state,
+            hasStatus: modelPreparationStatus != nil,
+            hasProgress: modelPreparationProgress != nil,
+            hasError: modelPreparationError != nil)
+    }
+
+    /// Whether the HUD surfaces model preparation. Preparation begins
+    /// synchronously on every recording start, so `.recording` waits for
+    /// real download progress (or a failure) — a warm model never flashes
+    /// the panel — while `.transcribing` shows any status at all.
+    static func shouldShowModelPreparation(
+        state: State, hasStatus: Bool, hasProgress: Bool, hasError: Bool
+    ) -> Bool {
+        switch state {
+        case .transcribing:
+            return hasStatus || hasError
+        case .recording:
+            return hasProgress || hasError
+        case .idle, .composing:
+            return false
+        }
     }
 
     var modelPreparationPresentation: ModelPreparationPresentation {
