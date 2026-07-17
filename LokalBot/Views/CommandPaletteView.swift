@@ -68,6 +68,8 @@ struct CommandPaletteView: View {
                 app.isRecording ? app.stopRecording()
                                 : app.startRecording(context: app.recordingContext(for: app.detector.activeApp), source: "palette")
             }),
+            .init(id: "nav.today", icon: "sun.max", title: "Go to Today",
+                  subtitle: "Home", action: { app.navSection = .today }),
             .init(id: "nav.timeline", icon: "calendar.day.timeline.left", title: "Go to Timeline",
                   subtitle: "Library", action: { app.navSection = .timeline }),
             .init(id: "nav.meetings", icon: "waveform.circle", title: "Go to Meetings",

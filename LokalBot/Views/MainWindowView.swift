@@ -309,7 +309,7 @@ struct MainWindowView: View {
     }
 
     private var sidebarSelection: Binding<AppState.NavSection?> {
-        Binding(get: { app.navSection }, set: { app.navSection = $0 ?? .timeline })
+        Binding(get: { app.navSection }, set: { app.navSection = $0 ?? .today })
     }
 
     private var scriptedCaptureContentMaximum: CGFloat? {
