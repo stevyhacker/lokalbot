@@ -62,15 +62,6 @@ struct MainWindowView: View {
                 .keyboardShortcut("s", modifiers: [.command, .control])
                 .accessibilityIdentifier("toolbar.sidebarToggle")
             }
-            ToolbarItem {
-                Button {
-                    openWindow(id: "palette")
-                } label: {
-                    Label("Commands", systemImage: "command")
-                }
-                .help("Command palette (⌘K)")
-                .accessibilityIdentifier("toolbar.palette")
-            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     app.isRecording
@@ -84,7 +75,6 @@ struct MainWindowView: View {
                 .accessibilityIdentifier("toolbar.record")
             }
         }
-        .background(WindowToolbarStyle())
         .overlay(alignment: .bottom) {
             if app.micRecoveryNeeded {
                 ErrorToast(
@@ -456,40 +446,47 @@ struct MeetingDetailView: View {
             stopSpokenSummary(clearError: false)
         }
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    toggleSummarySpeech()
-                } label: {
-                    Label(summarySpeechButtonTitle,
-                          systemImage: isReadingSummarySpeech ? "stop.fill" : "speaker.wave.2")
-                }
-                .disabled(!isReadingSummarySpeech && spokenSummaryText == nil)
-                Button {
-                    exportSpokenSummary()
-                } label: {
-                    Label(isExportingSpeech ? "Exporting Speech" : "Export Spoken Summary",
-                          systemImage: "waveform")
-                }
-                .disabled(isExportingSpeech || spokenSummaryText == nil)
-                Button {
-                    exportAudioRecording()
-                } label: {
-                    Label(isExportingAudio ? "Exporting Audio" : "Export Audio",
-                          systemImage: "square.and.arrow.up")
-                }
-                .disabled(isExportingAudio || !player.isLoaded)
-                Button {
-                    NSWorkspace.shared.activateFileViewerSelecting([folder])
-                } label: {
-                    Label("Show in Finder", systemImage: "folder")
-                }
+            ToolbarItem(placement: .primaryAction) {
                 Menu {
-                    Button("Transcribe & Summarize") { app.reprocess(meeting, transcribe: true, summarize: true) }
-                    Button("Transcribe Only") { app.reprocess(meeting, transcribe: true, summarize: false) }
-                    Button("Re-summarize (Keep Transcript)") { app.reprocess(meeting, transcribe: false, summarize: true) }
+                    Button {
+                        toggleSummarySpeech()
+                    } label: {
+                        Label(summarySpeechButtonTitle,
+                              systemImage: isReadingSummarySpeech ? "stop.fill" : "speaker.wave.2")
+                    }
+                    .disabled(!isReadingSummarySpeech && spokenSummaryText == nil)
+                    Button {
+                        exportSpokenSummary()
+                    } label: {
+                        Label(isExportingSpeech ? "Exporting Speech" : "Export Spoken Summary",
+                              systemImage: "waveform")
+                    }
+                    .disabled(isExportingSpeech || spokenSummaryText == nil)
+                    Divider()
+                    Menu {
+                        Button("Transcribe & Summarize") { app.reprocess(meeting, transcribe: true, summarize: true) }
+                        Button("Transcribe Only") { app.reprocess(meeting, transcribe: true, summarize: false) }
+                        Button("Re-summarize (Keep Transcript)") { app.reprocess(meeting, transcribe: false, summarize: true) }
+                    } label: {
+                        Label("Process", systemImage: "wand.and.stars")
+                    }
+                    Divider()
+                    Button {
+                        exportAudioRecording()
+                    } label: {
+                        Label(isExportingAudio ? "Exporting Audio" : "Export Audio",
+                              systemImage: "square.and.arrow.up")
+                    }
+                    .disabled(isExportingAudio || !player.isLoaded)
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([folder])
+                    } label: {
+                        Label("Show in Finder", systemImage: "folder")
+                    }
                 } label: {
-                    Label("Process", systemImage: "wand.and.stars")
+                    Label("Meeting Actions", systemImage: "ellipsis.circle")
                 }
+                .accessibilityIdentifier("toolbar.meetingActions")
             }
         }
     }
@@ -1308,40 +1305,6 @@ struct GettingStartedCard: View {
                 .foregroundStyle(done == true ? Color.green : Brand.teal)
                 .padding(.top, 2)
             content().font(.callout)
-        }
-    }
-}
-
-/// Forces the host window's toolbar to show icons *and* their labels — macOS
-/// otherwise renders SwiftUI toolbar items icon-only. Attached as a hidden
-/// background view so it configures whichever `NSWindow` ends up hosting the UI
-/// (the production scene or the UI-test host) once its toolbar exists, then
-/// stays out of the way so a user's later "Icon Only" choice sticks.
-private struct WindowToolbarStyle: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView(frame: .zero)
-        context.coordinator.apply(to: view)
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {}
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    final class Coordinator {
-        private var applied = false
-
-        func apply(to view: NSView, attemptsLeft: Int = 12) {
-            guard !applied else { return }
-            DispatchQueue.main.async { [weak self, weak view] in
-                guard let self, let view else { return }
-                if let toolbar = view.window?.toolbar {
-                    toolbar.displayMode = .iconAndLabel
-                    self.applied = true
-                } else if attemptsLeft > 0 {
-                    self.apply(to: view, attemptsLeft: attemptsLeft - 1)
-                }
-            }
         }
     }
 }
