@@ -197,8 +197,8 @@ struct StatusDot: View {
 /// their bubbles.
 struct ErrorToast: View {
     let message: String
-    var actionTitle: String? = nil
-    var action: (() -> Void)? = nil
+    var actionTitle: String?
+    var action: (() -> Void)?
     let dismiss: () -> Void
 
     var body: some View {
