@@ -5,14 +5,12 @@ import AppKit
 /// §2.2): a selected meeting opens the unchanged `MeetingDetailView`, a
 /// selected activity block gets its card + per-app context + block-scoped
 /// screenshots, and no selection shows the day overview (stat tiles,
-/// per-app proportion bar + totals, digest) in Timeline or the
-/// getting-started card in Meetings.
+/// per-app proportion bar + totals, digest) in Timeline or an empty
+/// state in Meetings.
 struct CaptureDetailView: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var model: CaptureModel
     @Binding var pendingDelete: Set<Meeting.ID>?
-    @AppStorage("lokalbotv3.gettingStartedDismissed")
-    private var gettingStartedDismissed = false
 
     @ViewBuilder
     var body: some View {
@@ -64,8 +62,8 @@ struct CaptureDetailView: View {
 
     /// Meetings shows the in-progress recording by default while one is
     /// running (the live view is the whole point of opening the app
-    /// mid-meeting), the getting-started card otherwise (it is the new-user
-    /// landing surface); Timeline shows the day overview.
+    /// mid-meeting), an empty state otherwise (the getting-started card now
+    /// lives on the Today home); Timeline shows the day overview.
     @ViewBuilder private var noSelection: some View {
         if app.navSection == .timeline {
             dayOverview
@@ -79,7 +77,7 @@ struct CaptureDetailView: View {
         } else if let live = app.currentMeeting {
             LiveMeetingDetailView(meeting: live)
                 .id(live.id)
-        } else if gettingStartedDismissed {
+        } else {
             ContentUnavailableView {
                 Label(app.meetings.isEmpty ? "No meetings yet" : "No meeting selected",
                       systemImage: "waveform.circle")
@@ -95,8 +93,6 @@ struct CaptureDetailView: View {
                     }
                 }
             }
-        } else {
-            GettingStartedCard()
         }
     }
 
@@ -110,19 +106,11 @@ struct CaptureDetailView: View {
         return ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Day overview").font(.title3.bold())
-                HStack(spacing: 8) {
-                    StatTile(icon: "clock",
-                             value: CaptureStyle.hm(perApp.reduce(0) { $0 + $1.value }),
-                             label: "tracked")
-                    StatTile(icon: "square.grid.2x2", value: "\(perApp.count)",
-                             label: perApp.count == 1 ? "app" : "apps")
-                    StatTile(icon: "camera.viewfinder", value: "\(model.shots.count)",
-                             label: "moments")
-                    if !meetings.isEmpty {
-                        StatTile(icon: "waveform", value: "\(meetings.count)",
-                                 label: meetings.count == 1 ? "meeting" : "meetings")
-                    }
-                }
+                DayStatRow(
+                    trackedSeconds: perApp.reduce(0) { $0 + $1.value },
+                    appCount: perApp.count,
+                    momentCount: model.shots.count,
+                    meetingCount: meetings.count)
                 if !perApp.isEmpty {
                     totalsSection(perApp)
                 }

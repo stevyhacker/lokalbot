@@ -7,11 +7,16 @@ import SwiftUI
 struct TodayView: View {
     @EnvironmentObject var app: AppState
     @StateObject private var model = CaptureModel()
+    @AppStorage("lokalbotv3.gettingStartedDismissed")
+    private var gettingStartedDismissed = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
+                if !gettingStartedDismissed {
+                    GettingStartedCard()
+                }
                 nowCard
                 daySoFar
                 meetingsSection
@@ -24,6 +29,10 @@ struct TodayView: View {
         .navigationTitle("Today")
         .task(id: app.navSection) {
             guard app.navSection == .today else { return }
+            // Re-anchor to the current day on every arrival: the model is
+            // created once, so a Mac left running past midnight would
+            // otherwise keep showing yesterday.
+            model.day = Date()
             model.reload(app: app)
         }
     }
@@ -100,19 +109,11 @@ struct TodayView: View {
                     Button("Open timeline") { app.navSection = .timeline }
                         .buttonStyle(.link)
                 }
-                HStack(spacing: 8) {
-                    StatTile(icon: "clock", value: CaptureStyle.hm(apps.reduce(0) { $0 + $1.value }),
-                             label: "tracked")
-                    StatTile(icon: "square.grid.2x2", value: "\(apps.count)",
-                             label: apps.count == 1 ? "app" : "apps")
-                    StatTile(icon: "rectangle.and.text.magnifyingglass", value: "\(model.shots.count)",
-                             label: "moments")
-                    if !todaysMeetings.isEmpty {
-                        StatTile(icon: "waveform", value: "\(todaysMeetings.count)",
-                                 label: todaysMeetings.count == 1 ? "meeting" : "meetings")
-                    }
-                    Spacer()
-                }
+                DayStatRow(
+                    trackedSeconds: apps.reduce(0) { $0 + $1.value },
+                    appCount: apps.count,
+                    momentCount: model.shots.count,
+                    meetingCount: todaysMeetings.count)
                 if !apps.isEmpty {
                     ProportionBar(segments: ProportionBarMath.segments(
                         perApp: apps.map { (label: $0.key, seconds: $0.value) }

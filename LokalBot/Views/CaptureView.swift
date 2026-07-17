@@ -113,6 +113,31 @@ enum CaptureStyle {
     }
 }
 
+/// The day's four stat chips — tracked time, apps, captured moments,
+/// meetings. One definition serves the Timeline rail, the day overview,
+/// and the Today home so the chips can never drift again.
+struct DayStatRow: View {
+    let trackedSeconds: TimeInterval
+    let appCount: Int
+    let momentCount: Int
+    let meetingCount: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            StatTile(icon: "clock", value: CaptureStyle.hm(trackedSeconds), label: "tracked")
+            StatTile(icon: "square.grid.2x2", value: "\(appCount)",
+                     label: appCount == 1 ? "app" : "apps")
+            StatTile(icon: "rectangle.and.text.magnifyingglass", value: "\(momentCount)",
+                     label: "moments")
+            if meetingCount > 0 {
+                StatTile(icon: "waveform", value: "\(meetingCount)",
+                         label: meetingCount == 1 ? "meeting" : "meetings")
+            }
+            Spacer()
+        }
+    }
+}
+
 // MARK: - Content column — the day track
 
 struct TimelineContentView: View {
@@ -246,17 +271,8 @@ struct CaptureDayView: View {
     private func summaryRail(meetings: [Meeting]) -> some View {
         let total = model.blocks.reduce(0) { $0 + $1.duration }
         let apps = Set(model.blocks.map(\.app)).count
-        return HStack(spacing: 8) {
-            StatTile(icon: "clock", value: CaptureStyle.hm(total), label: "tracked")
-            StatTile(icon: "square.grid.2x2", value: "\(apps)", label: apps == 1 ? "app" : "apps")
-            StatTile(icon: "rectangle.and.text.magnifyingglass", value: "\(model.shots.count)",
-                     label: "moments")
-            if !meetings.isEmpty {
-                StatTile(icon: "waveform", value: "\(meetings.count)",
-                         label: meetings.count == 1 ? "meeting" : "meetings")
-            }
-            Spacer()
-        }
+        return DayStatRow(trackedSeconds: total, appCount: apps,
+                          momentCount: model.shots.count, meetingCount: meetings.count)
     }
 }
 
