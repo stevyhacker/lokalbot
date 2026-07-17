@@ -165,6 +165,8 @@ final class PipelineJobStoreTests: XCTestCase {
         for _ in 0..<PipelineJobStore.maxAutoResumeAttempts {
             store.markStarted(meetingID: id)
         }
+        XCTAssertEqual(store.parkedJobs().count, 1,
+                       "re-exhausting attempts must park the job again")
         XCTAssertEqual(store.parkedJobs().first?.lastError, nil,
                        "an explicit retry must clear the stale failure message")
     }
