@@ -32,7 +32,8 @@ final class PipelineJobStore {
         self.databaseURL = databaseURL
         database = SQLiteDatabase(url: databaseURL)
         do {
-            try requiredDatabase().execute("""
+            let database = try requiredDatabase()
+            try database.execute("""
                 CREATE TABLE IF NOT EXISTS pipeline_jobs (
                     meeting_id TEXT PRIMARY KEY,
                     transcribe INTEGER NOT NULL,
@@ -41,6 +42,14 @@ final class PipelineJobStore {
                     enqueued_at REAL NOT NULL
                 );
                 """)
+            let columns: [String] = try database.queryChecked(
+                "PRAGMA table_info(pipeline_jobs)") { statement in
+                sqlite3_column_text(statement, 1).map { String(cString: $0) }
+            }
+            if !columns.contains("last_error") {
+                try database.runChecked(
+                    "ALTER TABLE pipeline_jobs ADD COLUMN last_error TEXT")
+            }
         } catch {
             lokalbotLog("pipeline queue initialization failed: \(error.localizedDescription)")
         }
@@ -66,6 +75,7 @@ final class PipelineJobStore {
                     transcribe = excluded.transcribe,
                     summarize = excluded.summarize,
                     attempts = 0,
+                    last_error = NULL,
                     enqueued_at = excluded.enqueued_at
                 """, bind: [meetingID.uuidString, transcribe ? 1 : 0, summarize ? 1 : 0,
                              date.timeIntervalSince1970])
@@ -89,6 +99,42 @@ final class PipelineJobStore {
             try database.runChecked(
                 "DELETE FROM pipeline_jobs WHERE meeting_id = ?1",
                 bind: [meetingID.uuidString])
+        }
+    }
+
+    /// Persist why the last processing attempt failed, so a job that ends up
+    /// parked (attempts exhausted) can still explain itself after a relaunch.
+    @discardableResult
+    func markFailed(meetingID: UUID, message: String) -> Bool {
+        write("mark failed") { database in
+            try database.runChecked(
+                "UPDATE pipeline_jobs SET last_error = ?2 WHERE meeting_id = ?1",
+                bind: [meetingID.uuidString, message])
+        }
+    }
+
+    struct ParkedJob {
+        let meetingID: UUID
+        let lastError: String?
+    }
+
+    /// Jobs that burned through the auto-resume attempt cap. They never
+    /// re-enter the launch queue, but the UI surfaces them as failed rows so
+    /// the user can retry explicitly.
+    func parkedJobs() -> [ParkedJob] {
+        do {
+            return try requiredDatabase().queryChecked("""
+                SELECT meeting_id, last_error FROM pipeline_jobs
+                WHERE attempts >= ?1 ORDER BY enqueued_at
+                """, bind: [Self.maxAutoResumeAttempts]) { statement -> ParkedJob? in
+                guard let text = sqlite3_column_text(statement, 0),
+                      let id = UUID(uuidString: String(cString: text)) else { return nil }
+                let message = sqlite3_column_text(statement, 1).map { String(cString: $0) }
+                return ParkedJob(meetingID: id, lastError: message)
+            }
+        } catch {
+            lokalbotLog("pipeline queue parked read failed: \(error.localizedDescription)")
+            return []
         }
     }
 
