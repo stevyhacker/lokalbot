@@ -411,6 +411,17 @@ final class MainWindowUITests: XCTestCase {
                       "untouched meeting must remain in the list")
     }
 
+    // MARK: - Settings
+
+    /// ⌘, must land on the one in-window Settings home — the separate
+    /// macOS Settings scene is gone (spec: one home per concern).
+    func testSettingsShortcutLandsInWindow() {
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(app.descendants(matching: .any)["settings.form"]
+            .waitForExistence(timeout: 6),
+                      "⌘, did not open Settings in the main window")
+    }
+
     // MARK: - Helpers
 
     /// Click a sidebar entry by accessibility identifier. The identifier

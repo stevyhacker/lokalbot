@@ -2,9 +2,9 @@ import SwiftUI
 import AppKit
 
 /// The Models tab of Settings (spec §2.5). All model selection and management
-/// lives here, a dedicated card-per-role surface: Transcription, dictation
-/// composition, Main LLM, Cotyping, and Embeddings each pick and manage their
-/// own model.
+/// lives here: a "Your stack" summary card leads, with the Transcription,
+/// Main LLM, and Cotyping cards collapsed behind its per-role Change buttons;
+/// dictation composition, speech, and embeddings keep their own cards below.
 /// Downloads come from the local catalog or Hugging Face.
 struct ModelsView: View {
     @EnvironmentObject var app: AppState

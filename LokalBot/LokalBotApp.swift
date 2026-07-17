@@ -65,6 +65,15 @@ struct LokalBotApp: App {
                     WindowAccess.shared.open("quick-recall")
                 }
             }
+            // Deleting the Settings scene removes the automatic ⌘, — reclaim
+            // it so the shortcut lands on the one in-window Settings home.
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    app.navSection = .settings
+                    WindowAccess.shared.open("main")
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
         }
 
         Window("Welcome to LokalBot", id: "onboarding") {
@@ -103,13 +112,6 @@ struct LokalBotApp: App {
         }
         .menuBarExtraStyle(.window)
 #endif
-
-        Settings {
-            SettingsView()
-                .environmentObject(app)
-                .brandTinted()
-                .workspaceSurface()
-        }
     }
 
     private var mainWindow: some View {

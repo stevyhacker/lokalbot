@@ -218,17 +218,18 @@ struct SettingsView: View {
 
     }
 
-    /// The one everyday cotyping knob kept in Settings; the feature's full
-    /// form (enable, model, exclusions, advanced) lives in Type → Cotyping.
-    /// Both bind the same setting, so they can never disagree.
+    /// A pointer, not a settings surface: cotyping's one home (enable, model,
+    /// suggestions, exclusions, advanced) is Type → Cotyping. This section
+    /// only keeps it findable from Settings search.
     @ViewBuilder private var cotypingSection: some View {
         if shows("Cotyping", ["cotyping", "autocomplete", "suggestion", "suggestions",
                               "length", "words", "max words", "ghost", "inline",
                               "completion", "typing"]) {
             Section("Cotyping") {
-                Stepper("Suggestion length: up to \(app.settings.cotypingMaxWords) words",
-                        value: $app.settings.cotypingMaxWords, in: 2...50)
-                Text("How much text one inline suggestion may add. Everything else about cotyping is in Type → Cotyping.")
+                LabeledContent("Inline autocomplete") {
+                    Button("Open Type → Cotyping") { app.openType(.cotyping) }
+                }
+                Text("Enable cotyping, pick its model, and tune suggestions in Type → Cotyping — its one home.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

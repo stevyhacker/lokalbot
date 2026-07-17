@@ -58,7 +58,7 @@ Around that core, one private library connects four moves: **Remember** meetings
 
 | | |
 | :--: | :--: |
-| <img src="Assets/screenshots/quick-recall.png" alt="LokalBot Quick Recall searching Redis across a saved Slack moment, captured screen text, and meeting transcripts" width="420"><br>**Quick Recall** — search meetings and work context from any app | <img src="Assets/screenshots/timeline.png" alt="LokalBot Timeline showing Context Rewind, app usage, meetings, and a generated day digest" width="420"><br>**Context Rewind** — replay the day and keep its digest |
+| <img src="Assets/screenshots/quick-recall.png" alt="LokalBot Quick Recall searching Redis across a saved Slack moment, captured screen text, and meeting transcripts" width="420"><br>**Ask** — search meetings and work context from any app | <img src="Assets/screenshots/timeline.png" alt="LokalBot Timeline showing Context Rewind, app usage, meetings, and a generated day digest" width="420"><br>**Context Rewind** — replay the day and keep its digest |
 | <img src="Assets/screenshots/cotyping.png" alt="LokalBot Type showing Cotyping enabled with an inline autocomplete suggestion" width="420"><br>**Cotyping** — private inline autocomplete in almost any app | <img src="Assets/screenshots/models.png" alt="LokalBot model settings with local transcription engines including Granite Speech, Parakeet, Qwen3-ASR, and Whisper" width="420"><br>**Local models** — choose the engine for each job |
 
 <sub>Captured from the real macOS UI with a synthetic demo library; no personal meeting or screen data is shown.</sub>

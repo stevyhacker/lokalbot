@@ -225,8 +225,6 @@ struct MainWindowView: View {
                 sidebarLabel("Ask", systemImage: "sparkle.magnifyingglass", section: .ask)
                     .tag(AppState.NavSection.ask)
                     .accessibilityIdentifier("sidebar.ask")
-            } header: {
-                sidebarSectionHeader("Find")
             }
             Section {
                 sidebarLabel("Type", systemImage: "keyboard", section: .type)
@@ -242,8 +240,6 @@ struct MainWindowView: View {
                 sidebarLabel("Settings", systemImage: "gearshape", section: .settings)
                     .tag(AppState.NavSection.settings)
                     .accessibilityIdentifier("sidebar.settings")
-            } header: {
-                sidebarSectionHeader("Configure")
             }
         }
         .tint(Brand.teal)

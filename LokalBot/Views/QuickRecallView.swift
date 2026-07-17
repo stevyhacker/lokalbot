@@ -134,7 +134,7 @@ struct QuickRecallView: View {
             QuickRecallRowModel.screen(
                 snapshotID: hit.snapshotID,
                 title: hit.windowTitle.isEmpty ? hit.app : hit.windowTitle,
-                subtitle: "Screen · \(hit.app) · \(hit.ts.formatted(date: .abbreviated, time: .shortened))",
+                subtitle: "Moment · \(hit.app) · \(hit.ts.formatted(date: .abbreviated, time: .shortened))",
                 snippet: hit.snippet)
         }
         let meetings = meetingHits.map { hit in
