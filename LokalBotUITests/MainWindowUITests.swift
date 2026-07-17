@@ -119,21 +119,25 @@ final class MainWindowUITests: XCTestCase {
             ? tabs.buttons["Models"] : tabs.radioButtons["Models"]
         XCTAssertTrue(segment.waitForExistence(timeout: 4), "Models segment missing")
         segment.click()
-        XCTAssertTrue(textWithContent("Transcription").firstMatch
+        XCTAssertTrue(app.descendants(matching: .any)["models.stack"]
             .waitForExistence(timeout: 6),
-                      "Models pane did not render the Transcription card")
-        XCTAssertTrue(textWithContent("Main LLM engine").firstMatch.exists,
-                      "Models pane missing the Main LLM engine card")
-        XCTAssertTrue(app.descendants(matching: .any)["models.transcription"].exists,
-                      "transcription model card identifier missing")
-        XCTAssertTrue(app.descendants(matching: .any)["models.summarization"].exists,
-                      "summarization model card identifier missing")
+                      "Models pane did not render the Your stack card")
         XCTAssertTrue(app.descendants(matching: .any)["models.dictationComposition"].exists,
                       "dictation composition model card identifier missing")
-        XCTAssertTrue(app.descendants(matching: .any)["models.cotyping"].exists,
-                      "cotyping model card identifier missing")
         XCTAssertTrue(app.descendants(matching: .any)["models.embeddings"].exists,
                       "embeddings model card identifier missing")
+
+        for (change, card) in [("models.stack.change.transcribe", "models.transcription"),
+                               ("models.stack.change.think", "models.summarization"),
+                               ("models.stack.change.type", "models.cotyping")] {
+            let button = app.buttons[change]
+            XCTAssertTrue(button.waitForExistence(timeout: 4), "\(change) button missing")
+            UITestHarness.scrollTo(button, in: app)
+            button.click()
+            XCTAssertTrue(app.descendants(matching: .any)[card]
+                .waitForExistence(timeout: 4),
+                          "\(card) did not expand from its Change button")
+        }
     }
 
     // MARK: - Timeline
