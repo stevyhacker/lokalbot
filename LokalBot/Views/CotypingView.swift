@@ -362,7 +362,7 @@ private struct CotypingContent: View {
     private var previewAttributed: AttributedString {
         var result = AttributedString(previewTextTail)
         var continuation = AttributedString(ghost)
-        continuation.foregroundColor = .accentColor
+        continuation.foregroundColor = Brand.teal
         result.append(continuation)
         return result
     }

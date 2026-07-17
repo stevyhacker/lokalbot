@@ -50,7 +50,7 @@ struct DictationView: View {
                 Button(actionTitle) { app.dictation.toggle() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .tint(app.dictation.state.isRecording ? .red : .accentColor)
+                    .tint(app.dictation.state.isRecording ? .red : Brand.teal)
             }
             Toggle("Enable global shortcut", isOn: $app.settings.dictationEnabled)
                 .accessibilityIdentifier("dictation.enabled")

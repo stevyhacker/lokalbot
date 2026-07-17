@@ -160,9 +160,9 @@ private struct PaletteRow: View {
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(selected ? Color.accentColor.opacity(0.15) : .clear,
+        .background(selected ? Brand.teal.opacity(0.15) : .clear,
                     in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8)
-            .strokeBorder(selected ? Color.accentColor.opacity(0.4) : .clear, lineWidth: 1))
+            .strokeBorder(selected ? Brand.teal.opacity(0.4) : .clear, lineWidth: 1))
     }
 }

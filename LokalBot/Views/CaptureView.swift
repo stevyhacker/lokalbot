@@ -336,7 +336,7 @@ private struct CaptureTrackView: View {
                 }
             }
             .overlay(RoundedRectangle(cornerRadius: 4)
-                .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2))
+                .strokeBorder(isSelected ? Brand.teal : .clear, lineWidth: 2))
             .frame(width: width, height: h, alignment: .topLeading)
             .offset(x: x, y: y)
             .help("\(block.app)\(block.title.isEmpty ? "" : " — \(block.title)")\n\(block.start.formatted(date: .omitted, time: .shortened))–\(block.end.formatted(date: .omitted, time: .shortened)) · \(CaptureStyle.hm(block.duration))")
@@ -366,7 +366,7 @@ private struct CaptureTrackView: View {
                 .padding(.horizontal, 6).padding(.top, 4)
             }
             .overlay(RoundedRectangle(cornerRadius: 4)
-                .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2))
+                .strokeBorder(isSelected ? Brand.teal : .clear, lineWidth: 2))
             .frame(width: width, height: h, alignment: .topLeading)
             .offset(x: x, y: y)
             .help("\(meeting.title)\n\(meeting.startedAt.formatted(date: .omitted, time: .shortened)) · \(meeting.durationLabel)")

@@ -127,7 +127,7 @@ struct ModelPreparationView: View {
     private var tint: Color {
         switch presentation.state {
         case .waiting: .orange
-        case .preparing: .accentColor
+        case .preparing: Brand.teal
         case .ready: .green
         case .failed: .orange
         }

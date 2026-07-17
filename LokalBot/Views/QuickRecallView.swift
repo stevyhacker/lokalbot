@@ -225,7 +225,7 @@ private struct QuickRecallRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
-        .background(selected ? Color.accentColor.opacity(0.14) : .clear,
+        .background(selected ? Brand.teal.opacity(0.14) : .clear,
                     in: RoundedRectangle(cornerRadius: 9))
     }
 }

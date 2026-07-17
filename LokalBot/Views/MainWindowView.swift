@@ -234,6 +234,7 @@ struct MainWindowView: View {
                 sidebarSectionHeader("Configure")
             }
         }
+        .tint(Brand.teal)
         .safeAreaInset(edge: .top, spacing: 0) {
             SidebarBrandHeader()
         }
@@ -731,7 +732,7 @@ struct MeetingDetailView: View {
         }
         .padding(.vertical, 4).padding(.horizontal, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isCurrent ? Color.accentColor.opacity(0.10) : .clear,
+        .background(isCurrent ? Brand.teal.opacity(0.10) : .clear,
                     in: RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
         .onTapGesture { player.play(at: display.segment.start) }   // click a sentence → jump audio
@@ -742,7 +743,7 @@ struct MeetingDetailView: View {
             .font(.caption.bold())
             .padding(.horizontal, 7).padding(.vertical, 2)
             .background(display.speakerKey == "me"
-                        ? Color.accentColor.opacity(0.18)
+                        ? Brand.teal.opacity(0.18)
                         : Color.secondary.opacity(0.15),
                         in: Capsule())
             .contentShape(Capsule())

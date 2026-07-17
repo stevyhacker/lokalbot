@@ -265,7 +265,7 @@ private struct AskContent: View {
                 .font(.caption.weight(on ? .semibold : .regular))
                 .foregroundStyle(on ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                 .padding(.horizontal, 9).padding(.vertical, 4)
-                .background(on ? AnyShapeStyle(Color.accentColor)
+                .background(on ? AnyShapeStyle(Brand.teal)
                                : AnyShapeStyle(.quaternary.opacity(0.5)),
                             in: Capsule())
         }

@@ -570,7 +570,7 @@ struct ModelsView: View {
                                         capability: HardwareCapabilityProbe.current())
             HStack(spacing: 8) {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected ? Color.accentColor : .secondary)
+                    .foregroundStyle(selected ? Brand.teal : .secondary)
                     .onTapGesture { if available { selectedModelID = entry.id } }
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
@@ -578,7 +578,7 @@ struct ModelsView: View {
                         if let recommendedLabel {
                             Text(recommendedLabel).font(.system(size: 8.5, weight: .bold))
                                 .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(Color.accentColor.opacity(0.18), in: Capsule())
+                                .background(Brand.teal.opacity(0.18), in: Capsule())
                         }
                     }
                     Text("\(String(format: "%.1f", entry.sizeGB)) GB · \(entry.blurb)")
@@ -624,7 +624,7 @@ struct ModelsView: View {
             let selected = app.settings.transcriptionModel == choice
             HStack(spacing: 8) {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected ? Color.accentColor : .secondary)
+                    .foregroundStyle(selected ? Brand.teal : .secondary)
                     .onTapGesture { app.settings.transcriptionModel = choice }
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
@@ -632,7 +632,7 @@ struct ModelsView: View {
                         if choice == TranscriptionModelChoice.recommended {
                             Text("RECOMMENDED").font(.system(size: 8.5, weight: .bold))
                                 .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(Color.accentColor.opacity(0.18), in: Capsule())
+                                .background(Brand.teal.opacity(0.18), in: Capsule())
                         }
                         if choice.isLegacy {
                             Text("LEGACY").font(.system(size: 8.5, weight: .bold))
