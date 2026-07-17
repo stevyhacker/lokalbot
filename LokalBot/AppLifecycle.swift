@@ -193,6 +193,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private func applyCaptureEnvironment(to app: AppState) {
         let env = ProcessInfo.processInfo.environment
+        if let style = env["LOKALBOT_CAPTURE_APPEARANCE"] {
+            // Marketing captures must not depend on the host machine's
+            // appearance: the committed README set is dark, and the scripted
+            // sidebar colors resolve per scheme. Pin the app-level appearance
+            // before the capture window exists so exports are reproducible.
+            NSApp.appearance = NSAppearance(
+                named: style == "dark" ? .darkAqua : .aqua)
+        }
         if let raw = env["LOKALBOT_INITIAL_SECTION"],
            let section = AppState.NavSection(captureName: raw) {
             app.navSection = section
