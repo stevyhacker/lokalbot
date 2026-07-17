@@ -107,7 +107,8 @@ struct TodayView: View {
                     Text("Day so far").font(.title3.bold())
                     Spacer()
                     Button("Open timeline") { app.navSection = .timeline }
-                        .buttonStyle(.link)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Brand.teal)
                 }
                 DayStatRow(
                     trackedSeconds: apps.reduce(0) { $0 + $1.value },
