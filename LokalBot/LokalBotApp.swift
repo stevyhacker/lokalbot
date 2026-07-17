@@ -298,6 +298,10 @@ final class AppState: ObservableObject {
 
     @Published private(set) var meetings: [Meeting] = []
     @Published var lastError: String?
+    /// A recording or dictation start was refused because microphone access
+    /// is denied at the system level. Cleared when the user opens System
+    /// Settings from the recovery toast or dismisses it.
+    @Published var micRecoveryNeeded = false
 
     /// The always-alive settings owner; services capture this, never AppState.
     let settingsStore = SettingsStore()
@@ -550,6 +554,7 @@ final class AppState: ObservableObject {
         pipeline: pipeline,
         isInteractive: { [weak self] in self?.interactive ?? false },
         onError: { [weak self] message in self?.lastError = message },
+        onMicPermissionDenied: { [weak self] in self?.micRecoveryNeeded = true },
         onMeetingFinished: { [weak self] meeting in self?.meetings.insert(meeting, at: 0) })
     /// Press-and-speak composition. Every dictation is treated as a writing
     /// request: local ASR captures the instruction, the configured composition
@@ -574,6 +579,9 @@ final class AppState: ObservableObject {
         },
         onError: { [weak self] message in
             self?.lastError = message
+        },
+        onMicPermissionDenied: { [weak self] in
+            self?.micRecoveryNeeded = true
         })
     /// Cotyping (inline AI autocomplete). Always runs its own model on the
     /// dedicated `LlamaServer.cotyping` instance so it never thrashes the

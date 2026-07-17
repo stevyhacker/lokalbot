@@ -86,7 +86,15 @@ struct MainWindowView: View {
         }
         .background(WindowToolbarStyle())
         .overlay(alignment: .bottom) {
-            if let error = app.lastError {
+            if app.micRecoveryNeeded {
+                ErrorToast(
+                    message: "Microphone access is off for LokalBot. Turn it on in System Settings to record.",
+                    actionTitle: "Open System Settings",
+                    action: {
+                        PermissionManager.shared.openSettings(for: .microphone)
+                        app.micRecoveryNeeded = false
+                    }) { app.micRecoveryNeeded = false }
+            } else if let error = app.lastError {
                 ErrorToast(message: error) { app.lastError = nil }
             }
         }

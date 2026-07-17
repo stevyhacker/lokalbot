@@ -141,6 +141,18 @@ struct MenuBarView: View {
                     .font(.caption).foregroundStyle(.orange).lineLimit(2)
             }
 
+            if app.micRecoveryNeeded {
+                Button {
+                    PermissionManager.shared.openSettings(for: .microphone)
+                    app.micRecoveryNeeded = false
+                } label: {
+                    Label("Turn on microphone access in System Settings",
+                          systemImage: "mic.slash.fill")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain).foregroundStyle(.orange)
+            }
+
             if !permissions.allGranted {
                 Button { WindowAccess.shared.open("onboarding") } label: {
                     Label("Grant permissions to record", systemImage: "exclamationmark.shield.fill")

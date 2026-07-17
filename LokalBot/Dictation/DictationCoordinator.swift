@@ -55,6 +55,7 @@ final class DictationCoordinator: ObservableObject {
     private let canStart: () -> Bool
     private let onBusy: () -> Void
     private let onError: (String) -> Void
+    private let onMicPermissionDenied: () -> Void
     private let focusSnapshotExecutor: DictationFocusSnapshotExecutor
     private let recorder = MicRecorder()
     private let inputMonitor = DictationInputMonitor()
@@ -88,6 +89,7 @@ final class DictationCoordinator: ObservableObject {
         canStart: @escaping () -> Bool,
         onBusy: @escaping () -> Void,
         onError: @escaping (String) -> Void,
+        onMicPermissionDenied: @escaping () -> Void = {},
         focusSnapshotExecutor: DictationFocusSnapshotExecutor = .shared,
         screenContextProvider: @escaping (
             DictationScreenTarget,
@@ -104,6 +106,7 @@ final class DictationCoordinator: ObservableObject {
         self.canStart = canStart
         self.onBusy = onBusy
         self.onError = onError
+        self.onMicPermissionDenied = onMicPermissionDenied
         self.focusSnapshotExecutor = focusSnapshotExecutor
         inputMonitor.triggerModeProvider = { [weak self] in
             self?.settingsProvider().dictationTriggerMode ?? .pushToTalk
@@ -285,7 +288,7 @@ final class DictationCoordinator: ObservableObject {
             }
             guard await MicRecorder.requestPermission() else {
                 guard self.generation == session, !Task.isCancelled else { return }
-                self.onError("Microphone permission denied.")
+                self.onMicPermissionDenied()
                 return
             }
             let focusCapture = await focusCaptureTask.value

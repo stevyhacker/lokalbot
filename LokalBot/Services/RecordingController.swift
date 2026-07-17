@@ -54,6 +54,7 @@ final class RecordingController: ObservableObject {
     private let pipeline: ProcessingPipeline
     /// Surfaces user-facing problems (feeds `AppState.lastError`).
     private let onError: (String) -> Void
+    private let onMicPermissionDenied: () -> Void
     /// A finished meeting leaves the controller here; the app inserts it into
     /// the library list.
     private let onMeetingFinished: (Meeting) -> Void
@@ -104,6 +105,7 @@ final class RecordingController: ObservableObject {
          pipeline: ProcessingPipeline,
          isInteractive: @escaping () -> Bool,
          onError: @escaping (String) -> Void,
+         onMicPermissionDenied: @escaping () -> Void = {},
          onMeetingFinished: @escaping (Meeting) -> Void) {
         self.storage = storage
         self.settingsStore = settingsStore
@@ -111,6 +113,7 @@ final class RecordingController: ObservableObject {
         self.pipeline = pipeline
         self.isInteractive = isInteractive
         self.onError = onError
+        self.onMicPermissionDenied = onMicPermissionDenied
         self.onMeetingFinished = onMeetingFinished
         systemRecorder.onCapturedProcessTerminated = { [weak self] pid in
             self?.handleCapturedProcessTermination(pid)
@@ -224,7 +227,7 @@ final class RecordingController: ObservableObject {
             }
             guard await MicRecorder.requestPermission() else {
                 guard !Task.isCancelled else { return }
-                onError("Microphone permission denied.")
+                onMicPermissionDenied()
                 audioMonitor.isRecordingActive = false
                 audioMonitor.reseed()
                 return

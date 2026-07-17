@@ -197,12 +197,19 @@ struct StatusDot: View {
 /// their bubbles.
 struct ErrorToast: View {
     let message: String
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
     let dismiss: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
             Text(message).font(.callout).lineLimit(2)
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
             Button(action: dismiss) { Image(systemName: "xmark.circle.fill") }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
         }
