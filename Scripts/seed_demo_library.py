@@ -280,6 +280,30 @@ def seed_chats(root, now):
             json.dump(convo, f, indent=2)
 
 
+def seed_journal(root):
+    """Give the Timeline inspector a useful, already-generated day digest.
+
+    The screenshot fixture should demonstrate the finished local-memory flow,
+    not a mostly empty pane with a Generate button. Keep the copy concise so it
+    remains readable in the balanced marketing-capture layout.
+    """
+    journal = os.path.join(root, "journal")
+    os.makedirs(journal, exist_ok=True)
+    day = datetime.now().strftime("%Y-%m-%d")
+    digest = """## Today at a glance
+
+Redis stays the caching layer; cluster mode waits for Thursday's failover benchmark. The Postgres migration continues after the data-team review.
+
+## Next
+
+- Draft the eviction-policy document.
+- Run the failover benchmark with the search team's load harness.
+- Unblock the Postgres index rebuild.
+"""
+    with open(os.path.join(journal, f"{day}.md"), "w") as f:
+        f.write(digest)
+
+
 def write_demo_png(path, accent, variant):
     """Draw a small, dependency-free work-screen fixture for Context Rewind.
 
@@ -467,6 +491,7 @@ def main():
     for mm in build(now):
         write_meeting(root, mm)
     seed_chats(root, now)
+    seed_journal(root)
     seed_activity(root)
     print(f"Seeded demo library at {root} "
           f"({len(build(now))} meetings, 2 chats, 5 days of activity, 5 screen moments)")

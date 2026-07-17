@@ -229,7 +229,7 @@
       #recall-click { left: 1302px; top: 480px; }
 
       #rewind-window { top: 34px; left: 68px; width: 1736px; transform-origin: 31% 25%; }
-      .rewind-focus { position: absolute; z-index: 10; left: 10%; top: 10%; width: 24.7%; height: 26%; border: 3px solid rgba(110, 242, 220, 0.76); border-radius: 20px; opacity: 0; box-shadow: 0 0 0 9999px rgba(8, 13, 20, 0.18), 0 0 34px rgba(35, 196, 174, 0.34); }
+      .rewind-focus { position: absolute; z-index: 10; left: 16.8%; top: 15.4%; width: 28.1%; height: 40.4%; border: 3px solid rgba(110, 242, 220, 0.76); border-radius: 24px; opacity: 0; box-shadow: 0 0 0 9999px rgba(8, 13, 20, 0.18), 0 0 34px rgba(35, 196, 174, 0.34); }
       .rewind-story { position: absolute; z-index: 20; right: 84px; top: 292px; width: 590px; padding: 32px 34px; border: 1px solid rgba(110, 242, 220, 0.22); border-radius: 22px; background: rgba(8, 13, 20, 0.94); box-shadow: 0 26px 72px rgba(0, 0, 0, 0.54); }
       .action-row { display: flex; gap: 10px; margin-top: 24px; }
       .action { padding: 9px 12px; border: 1px solid rgba(110, 242, 220, 0.2); border-radius: 10px; background: rgba(15, 23, 42, 0.78); color: var(--bright); font: 700 15px "SF Mono", monospace; }
@@ -255,9 +255,10 @@
       #cotype-window { top: -52px; left: -84px; width: 2040px; transform-origin: 61% 55%; }
       .cotype-story { position: absolute; z-index: 20; top: 205px; left: 82px; width: 520px; padding: 30px 32px; border: 1px solid rgba(110, 242, 220, 0.2); border-radius: 22px; background: rgba(8, 13, 20, 0.95); box-shadow: 0 26px 72px rgba(0, 0, 0, 0.5); }
       .cotype-cover { position: absolute; z-index: 7; left: 33.1%; top: 51.7%; width: 45%; height: 7.4%; border-radius: 5px; background: #151515; }
-      .cotype-user, .cotype-ghost { position: absolute; top: 52.55%; overflow: hidden; height: 38px; font-size: 23px; font-weight: 550; white-space: nowrap; clip-path: inset(0 100% 0 0); }
+      .cotype-user, .cotype-ghost { position: absolute; top: 52.55%; height: 38px; overflow: visible; font-size: 23px; font-weight: 550; white-space: nowrap; }
+      .cotype-user span, .cotype-ghost span { visibility: hidden; }
       .cotype-user { z-index: 8; left: 34%; width: 390px; color: var(--text); }
-      .cotype-ghost { z-index: 9; left: 52%; width: 440px; color: var(--teal); font-weight: 650; }
+      .cotype-ghost { z-index: 9; left: 52%; width: 650px; color: var(--teal); font-weight: 650; }
       #cotype-key { position: absolute; z-index: 24; right: 110px; bottom: 214px; min-width: 174px; color: var(--bright); }
 
       .outro-layout { position: relative; z-index: 5; display: grid; grid-template-columns: 0.9fr 1.1fr; align-items: center; width: 100%; height: 100%; padding: 98px 112px 128px; gap: 92px; }
@@ -353,6 +354,21 @@
         captionHost.appendChild(element);
       });
 
+      function charactersFor(selector) {
+        const element = document.querySelector(selector);
+        const characters = Array.from(element.textContent);
+        element.textContent = "";
+        return characters.map((character) => {
+          const span = document.createElement("span");
+          span.textContent = character === " " ? "\u00a0" : character;
+          element.appendChild(span);
+          return span;
+        });
+      }
+
+      const cotypeUserCharacters = charactersFor("#cotype-user");
+      const cotypeGhostCharacters = charactersFor("#cotype-ghost");
+
       const tl = gsap.timeline({ paused: true });
       const entrance = (selector, vars, time) => tl.from(selector, Object.assign({ immediateRender: false }, vars), time);
       function pushTransition(oldScene, newScene, time, axis) {
@@ -422,12 +438,12 @@
       entrance("#cotype-window", { scale: 0.9, opacity: 0, duration: 0.54, ease: "power4.out" }, 16.22);
       entrance("#cotype-story", { x: -60, opacity: 0, duration: 0.46, ease: "circ.out" }, 16.38);
       entrance("#cotype-user", { opacity: 0, duration: 0.16, ease: "power2.out" }, 16.48);
-      tl.to("#cotype-user", { clipPath: "inset(0 0% 0 0)", duration: 0.9, ease: "steps(10)" }, 16.54);
+      cotypeUserCharacters.forEach((character, index) => tl.set(character, { visibility: "visible" }, 16.54 + index * (0.9 / (cotypeUserCharacters.length - 1))));
       entrance("#cotype-ghost", { opacity: 0, duration: 0.16, ease: "power2.out" }, 17.46);
-      tl.to("#cotype-ghost", { clipPath: "inset(0 0% 0 0)", duration: 1.0, ease: "steps(10)" }, 17.52);
+      cotypeGhostCharacters.forEach((character, index) => tl.set(character, { visibility: "visible" }, 17.52 + index * (1.0 / (cotypeGhostCharacters.length - 1))));
       entrance("#cotype-key", { y: 54, scale: 0.76, opacity: 0, duration: 0.34, ease: "back.out(1.7)" }, 18.62);
       tl.to("#cotype-key", { y: 6, scale: 0.95, duration: 0.16, ease: "power3.inOut" }, 19.02);
-      tl.to("#cotype-ghost", { color: "#ecf3f7", x: -12, duration: 0.32, ease: "power2.out" }, 19.16);
+      tl.to("#cotype-ghost", { color: "#ecf3f7", duration: 0.32, ease: "power2.out" }, 19.16);
       tl.to("#cotype-window", { scale: 1.045, duration: 2.4, ease: "sine.inOut" }, 17.18);
 
       tl.to("#scene-cotype", { filter: "blur(14px)", opacity: 0, duration: 0.46, ease: "power1.in" }, 20.42);

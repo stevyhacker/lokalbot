@@ -1,7 +1,7 @@
 {
   "version": 1,
   "output": "hero-demo-short.mp4",
-  "sha256": "c143a98e991d4367c2ed6f51f3e7339cbf268d6da9613ff48c95c550fa0c1965",
+  "sha256": "dff83c10ccdcb4a1814e16c0f607f50c7c9ca16b564266d53410fe7c2253a351",
   "production": {
     "engine": "HyperFrames",
     "engineVersion": "0.7.42",
@@ -88,7 +88,7 @@
         "width": 1872,
         "height": 1276,
         "r_frame_rate": "30/1",
-        "bit_rate": "3527252"
+        "bit_rate": "3602625"
       },
       {
         "index": 1,
@@ -102,8 +102,8 @@
     ],
     "format": {
       "duration": "30.000000",
-      "size": "13989883",
-      "bit_rate": "3730635"
+      "size": "14272535",
+      "bit_rate": "3806009"
     }
   }
 }

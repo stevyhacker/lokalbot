@@ -44,7 +44,24 @@ struct MainWindowView: View {
         } message: {
             Text("This permanently deletes the audio, transcript and summary files.")
         }
+        // NavigationSplitView's generated sidebar item can drift away from the
+        // explicit `sidebarVisible` binding when this view swaps between its
+        // two- and three-column topologies. Own the command so the toolbar,
+        // keyboard shortcut, and split-view state always use one source of
+        // truth.
+        .toolbar(removing: .sidebarToggle)
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    sidebarVisible.toggle()
+                } label: {
+                    Label(sidebarVisible ? "Hide Sidebar" : "Show Sidebar",
+                          systemImage: "sidebar.left")
+                }
+                .help(sidebarVisible ? "Hide Sidebar" : "Show Sidebar")
+                .keyboardShortcut("s", modifiers: [.command, .control])
+                .accessibilityIdentifier("toolbar.sidebarToggle")
+            }
             ToolbarItem {
                 Button {
                     openWindow(id: "palette")

@@ -111,6 +111,7 @@ private struct AgentSessionTabBar: View {
             }
             .buttonStyle(.borderless)
             .help("New Agent Session")
+            .keyboardShortcut("t", modifiers: .command)
             .accessibilityLabel("New Agent Session")
             .accessibilityIdentifier("agent.newSession")
 

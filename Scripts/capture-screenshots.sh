@@ -30,7 +30,10 @@ FRAMES="$(mktemp -d)"          # GIF-only frames (kept out of Assets/)
 LIB="${TMPDIR:-/tmp}/lokalbot-demo-lib"
 SUITE="lokalbot.shots.$(uuidgen)"
 CAPTURE_SIZE="${LOKALBOT_CAPTURE_SIZE:-1480x930}"
-CAPTURE_CONTENT_MAX="${LOKALBOT_CAPTURE_CONTENT_MAX:-600}"
+# Keep the master/list column compact so the inspector gets a stable, generous
+# share of three-column marketing captures. 600pt let SwiftUI restore a much
+# wider list in some launches, which made otherwise identical shots look uneven.
+CAPTURE_CONTENT_MAX="${LOKALBOT_CAPTURE_CONTENT_MAX:-420}"
 CAPTURE_SCALE="${LOKALBOT_CAPTURE_SCALE:-2}"
 mkdir -p "$OUT"
 

@@ -10,10 +10,17 @@ final class QuickRecallUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         fixture = try SyntheticFixture.plant()
+        var environment = ["LOKALBOT_UI_TEST_WINDOW": "quick-recall"]
+        if name.contains("testSearchShowsLocalMeetingEvidenceAndAskFallback") {
+            // Seed the complete query before SwiftUI mounts. The clear test
+            // below still drives real typing, while this result test avoids a
+            // race among eight per-character debounce tasks on hosted Macs.
+            environment["LOKALBOT_QUICK_RECALL_QUERY"] = "failover"
+        }
         let launch = try UITestHarness.launch(
             storageRoot: fixture.root,
             suitePrefix: "QuickRecall",
-            environment: ["LOKALBOT_UI_TEST_WINDOW": "quick-recall"])
+            environment: environment)
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
         XCTAssertTrue(input.waitForExistence(timeout: 8),
@@ -27,16 +34,28 @@ final class QuickRecallUITests: XCTestCase {
     }
 
     func testSearchShowsLocalMeetingEvidenceAndAskFallback() {
-        input.click()
-        input.typeText("failover")
+        XCTAssertEqual(input.value as? String, "failover",
+                       "seeded Quick Recall query did not render")
 
-        XCTAssertTrue(text(containing: fixture.designReview.title)
-            .waitForExistence(timeout: 6),
+        let meetingPrefix = "quickRecall.row.meeting.\(fixture.designReview.id.uuidString).segment."
+        let meetingTitle = app.staticTexts.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND identifier ENDSWITH '.title'",
+            meetingPrefix)).firstMatch
+        XCTAssertTrue(meetingTitle.waitForExistence(timeout: 8),
             "Quick Recall did not surface the matching meeting")
-        XCTAssertTrue(text(containing: "Meeting transcript").exists,
+        XCTAssertEqual(meetingTitle.label, fixture.designReview.title)
+
+        let meetingSubtitle = app.staticTexts.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND identifier ENDSWITH '.subtitle'",
+            meetingPrefix)).firstMatch
+        XCTAssertTrue(meetingSubtitle.waitForExistence(timeout: 3),
                       "Quick Recall did not identify the local evidence type")
-        XCTAssertTrue(text(containing: "Open Ask").exists,
+        XCTAssertEqual(meetingSubtitle.label, "Meeting transcript")
+
+        let askSubtitle = app.staticTexts["quickRecall.row.ask.failover.subtitle"]
+        XCTAssertTrue(askSubtitle.waitForExistence(timeout: 3),
                       "Quick Recall did not include the assistant fallback")
+        XCTAssertEqual(askSubtitle.label, "Open Ask")
     }
 
     func testClearReturnsToSavedMomentEmptyState() {
