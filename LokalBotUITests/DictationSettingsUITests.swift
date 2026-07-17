@@ -17,8 +17,8 @@ final class DictationSettingsUITests: XCTestCase {
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
 
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
-            .waitForExistence(timeout: 10), "main window never rendered")
+        XCTAssertTrue(app.descendants(matching: .any)["today.header"]
+            .waitForExistence(timeout: 10), "main window never rendered its Today landing")
         UITestHarness.clickSidebar("sidebar.type", in: app)
         XCTAssertTrue(dictationForm.waitForExistence(timeout: 8),
                       "Dictation should be the default Type tab")
@@ -96,8 +96,8 @@ final class DictationSettingsUITests: XCTestCase {
         app = try UITestHarness.relaunch(
             storageRoot: fixture.root,
             defaultsSuiteName: try XCTUnwrap(defaultsSuiteName))
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
-            .waitForExistence(timeout: 10), "main window did not return after relaunch")
+        XCTAssertTrue(app.descendants(matching: .any)["today.header"]
+            .waitForExistence(timeout: 10), "main window did not return to Today after relaunch")
         openModels()
 
         picker = compositionModelPicker

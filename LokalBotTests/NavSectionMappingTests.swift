@@ -59,6 +59,11 @@ final class NavSectionMappingTests: XCTestCase {
         XCTAssertNil(AppState.TypeTab(captureName: "type"))
         XCTAssertNil(AppState.TypeTab(captureName: "capture"))
     }
+
+    func testTodayCaptureNameMapsToToday() {
+        XCTAssertEqual(AppState.NavSection(captureName: "today"), .today)
+        XCTAssertEqual(AppState.NavSection(captureName: "Today"), .today)
+    }
 }
 
 /// Agent Mode's sidebar section (Task 16): the "agent" capture name resolves
@@ -67,5 +72,14 @@ final class NavSectionAgentTests: XCTestCase {
     func testAgentSectionRoundTripsCaptureName() {
         XCTAssertEqual(AppState.NavSection(captureName: "agent"), .agent)
         XCTAssertEqual(AppState.NavSection(captureName: "Agent"), .agent)
+    }
+}
+
+/// The ruling's landing surface: a fresh state opens on Today, the
+/// glanceable summary — not on the forensic Timeline.
+@MainActor
+final class TodayLandingTests: XCTestCase {
+    func testFreshAppStateLandsOnToday() {
+        XCTAssertEqual(AppState().navSection, .today)
     }
 }

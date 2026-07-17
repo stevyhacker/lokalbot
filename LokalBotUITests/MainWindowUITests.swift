@@ -19,12 +19,12 @@ final class MainWindowUITests: XCTestCase {
         let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "MainWindow")
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
-        // Wait until the main window has rendered the Timeline's hour track —
+        // Wait until the main window has rendered Today's header —
         // every test starts from a known surface, otherwise XCUITest races
-        // the initial `loadMeetings()` + reindex sweep. (Timeline is the
+        // the initial `loadMeetings()` + reindex sweep. (Today is the
         // default section, so the meeting list is NOT on screen yet.)
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
-            .waitForExistence(timeout: 10), "timeline track never rendered")
+        XCTAssertTrue(app.descendants(matching: .any)["today.header"]
+            .waitForExistence(timeout: 10), "today header never rendered")
     }
 
     override func tearDownWithError() throws {

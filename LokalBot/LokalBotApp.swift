@@ -225,7 +225,7 @@ actor SearchIndexWorkQueue {
 final class AppState: ObservableObject {
 
     enum NavSection: Hashable {
-        case timeline, meetings, type, ask, agent, settings
+        case today, timeline, meetings, type, ask, agent, settings
 
         /// Section names accepted from the UI-test capture environment and
         /// deep links. Legacy names keep working: "capture" (the pre-split
@@ -234,6 +234,7 @@ final class AppState: ObservableObject {
         /// Settings, which absorbed it as a tab (spec §2.5).
         init?(captureName: String) {
             switch captureName.lowercased() {
+            case "today": self = .today
             case "timeline", "capture": self = .timeline
             case "meetings": self = .meetings
             case "type", "dictation", "cotyping": self = .type
@@ -399,7 +400,7 @@ final class AppState: ObservableObject {
 
     // Navigation (main window): sidebar section, selected meeting, and a
     // pending "jump to timestamp" handed from search to the detail player.
-    @Published var navSection: NavSection = .timeline
+    @Published var navSection: NavSection = .today
     @Published var typeTab: TypeTab = .dictation
     @Published var settingsTab: SettingsTab = .general
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []

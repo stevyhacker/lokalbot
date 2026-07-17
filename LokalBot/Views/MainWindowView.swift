@@ -116,7 +116,14 @@ struct MainWindowView: View {
     /// Master/detail sections (Timeline, Meetings, Ask) use the native
     /// three-column split; single-surface sections (forms) use two.
     @ViewBuilder private var navigation: some View {
-        if app.navSection == .timeline {
+        if app.navSection == .today {
+            NavigationSplitView(columnVisibility: twoColumnVisibility) {
+                sidebar
+            } detail: {
+                TodayView()
+                    .workspaceSurface()
+            }
+        } else if app.navSection == .timeline {
             NavigationSplitView(columnVisibility: threeColumnVisibility) {
                 sidebar
             } content: {
@@ -196,6 +203,11 @@ struct MainWindowView: View {
 
     private var sidebar: some View {
         List(selection: sidebarSelection) {
+            Section {
+                sidebarLabel("Today", systemImage: "sun.max", section: .today)
+                    .tag(AppState.NavSection.today)
+                    .accessibilityIdentifier("sidebar.today")
+            }
             Section {
                 sidebarLabel(
                     "Timeline",
