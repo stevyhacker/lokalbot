@@ -88,9 +88,9 @@ struct CommandPaletteView: View {
             .init(id: "nav.agent", icon: "wand.and.sparkles", title: "Go to Agent",
                   subtitle: "Automation", action: { app.navSection = .agent }),
             .init(id: "nav.models", icon: "brain", title: "Go to Models",
-                  subtitle: "Configure", action: { app.openSettings(tab: .models) }),
+                  subtitle: "Settings", action: { app.openSettings(tab: .models) }),
             .init(id: "nav.settings", icon: "gearshape", title: "Go to Settings",
-                  subtitle: "Configure", action: { app.navSection = .settings })
+                  subtitle: "Settings", action: { app.navSection = .settings })
         ]
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         // Empty query: commands + recent meetings (quick navigation).

@@ -52,6 +52,10 @@ Around that core, one private library connects four moves: **Remember** meetings
 
 ## See it in action
 
+**See your workday at a glance.** Today opens with capture status, day stats, a digest with next steps, the day's meetings, and an ask-your-day box.
+
+<div align="center"><img src="Assets/screenshots/today.png" alt="LokalBot Today home showing recording status, day stats, a generated day digest with next steps, today's meetings, and an ask-your-day box" width="880"></div>
+
 **Turn a call into a recap you can act on.** Pick any meeting to review its TL;DR, decisions, action items, open questions, and speaker-labeled transcript.
 
 <div align="center"><img src="Assets/screenshots/meetings-summary.png" alt="LokalBot Meetings showing a meeting recap with a TL;DR, decisions, action items, and open questions" width="880"></div>

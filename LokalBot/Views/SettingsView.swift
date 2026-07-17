@@ -444,7 +444,8 @@ struct SettingsView: View {
                                    : URL(fileURLWithPath: app.settings.dailyMemoryExportFolder).lastPathComponent) {
                                 chooseDailyExportFolder()
                             }
-                            .buttonStyle(.link)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Brand.teal)
                         }
                         Stepper(
                             "Refresh at \(String(format: "%02d:00", app.settings.dailyMemoryExportHour))",
@@ -478,7 +479,8 @@ struct SettingsView: View {
                                : URL(fileURLWithPath: app.settings.memoryRoutineFolder).lastPathComponent) {
                             chooseMemoryRoutineFolder()
                         }
-                        .buttonStyle(.link)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Brand.teal)
                     }
                     Stepper(
                         "Daily time: \(String(format: "%02d:00", app.settings.memoryRoutineHour))",
@@ -560,7 +562,8 @@ struct SettingsView: View {
                         Button(app.storage.rootURL.path(percentEncoded: false)) {
                             NSWorkspace.shared.activateFileViewerSelecting([app.storage.rootURL])
                         }
-                        .buttonStyle(.link)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Brand.teal)
                     }
                 }
             }
