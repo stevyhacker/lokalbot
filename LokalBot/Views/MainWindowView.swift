@@ -136,10 +136,11 @@ struct MainWindowView: View {
                 sidebar
             } content: {
                 ChatConversationList()
-                    .navigationSplitViewColumnWidth(min: 220, ideal: 260)
+                    .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
             } detail: {
                 AskView()
                     .workspaceSurface()
+                    .navigationSplitViewColumnWidth(min: 420, ideal: 680)
             }
         } else if app.navSection == .agent {
             NavigationSplitView(columnVisibility: twoColumnVisibility) {

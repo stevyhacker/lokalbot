@@ -91,7 +91,7 @@ enum MenuBarIcon {
 /// display `isPaused` must observe the sampler directly to refresh immediately.
 struct TrackingPauseButton: View {
     enum Presentation {
-        case menuBar
+        case overflowMenu
         case toolbar
     }
 
@@ -100,18 +100,11 @@ struct TrackingPauseButton: View {
 
     var body: some View {
         switch presentation {
-        case .menuBar:
+        case .overflowMenu:
             Button(action: toggle) {
-                Image(systemName: sampler.isPaused ? "play.fill" : "pause.fill")
-                    .font(.caption.weight(.semibold))
-                    .frame(width: 28, height: 28)
-                    .background(Color.secondary.opacity(0.14), in: Circle())
-                    .contentShape(Circle())
+                Label(actionTitle,
+                      systemImage: sampler.isPaused ? "play.fill" : "pause.fill")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .accessibilityLabel(actionTitle)
-            .help(actionTitle)
 
         case .toolbar:
             Button(action: toggle) {
@@ -140,7 +133,7 @@ struct MenuBarView: View {
     @ObservedObject private var permissions = PermissionManager.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             statusCard
 
             if let error = app.lastError {
@@ -156,16 +149,11 @@ struct MenuBarView: View {
                 .buttonStyle(.plain).foregroundStyle(.orange)
             }
 
-            Divider()
             recentSection
-            Divider()
-            dictationRow
-            Divider()
-            cotypingRow
-            Divider()
+            toolsSection
             footer
         }
-        .padding(14)
+        .padding(12)
         .frame(width: 320)
         .onAppear {
             // Register so non-View code (AppDelegate reopen, AppState first-run
@@ -325,31 +313,77 @@ struct MenuBarView: View {
     // MARK: Recent
 
     private var recentSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(text: "Recent")
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                SectionHeader(text: "Recent")
+                Spacer()
+                if !app.meetings.isEmpty {
+                    Button("View all") {
+                        app.navSection = .meetings
+                        WindowAccess.shared.open("main")
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+
             if app.meetings.isEmpty {
                 Text("No meetings yet").font(.caption).foregroundStyle(.secondary)
             } else {
-                ForEach(app.meetings.prefix(3)) { meeting in
-                    Button {
-                        app.openMeeting(meeting.id)
-                        WindowAccess.shared.open("main")
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "waveform")
-                                .foregroundStyle(.secondary).font(.caption)
-                            VStack(alignment: .leading, spacing: 0) {
-                                Text(shortMenuTitle(meeting.title))
-                                    .font(.callout).lineLimit(1)
-                                Text("\(meeting.appName) · \(meeting.durationLabel)")
-                                    .font(.caption2).foregroundStyle(.secondary)
+                VStack(spacing: 2) {
+                    ForEach(app.meetings.prefix(2)) { meeting in
+                        Button {
+                            app.openMeeting(meeting.id)
+                            WindowAccess.shared.open("main")
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "waveform")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 18)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(shortMenuTitle(meeting.title))
+                                        .font(.callout.weight(.medium))
+                                        .lineLimit(1)
+                                    Text(meeting.appName)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer(minLength: 8)
+                                Text(meeting.durationLabel)
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(.secondary)
                             }
-                            Spacer()
+                            .padding(.vertical, 4)
+                            .contentShape(Rectangle())
                         }
-                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
+            }
+        }
+    }
+
+    // MARK: Quick tools
+
+    private var toolsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SectionHeader(text: "Tools")
+            VStack(spacing: 0) {
+                dictationRow
+                Divider().padding(.leading, 28)
+                cotypingRow
+            }
+            .padding(.horizontal, 10)
+            .background(
+                .quaternary.opacity(0.32),
+                in: RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.06))
             }
         }
     }
@@ -357,67 +391,108 @@ struct MenuBarView: View {
     // MARK: Footer
 
     private var footer: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             Button {
                 WindowAccess.shared.open("quick-recall")
             } label: {
                 Label("Ask", systemImage: "sparkle.magnifyingglass")
+                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.plain).foregroundStyle(.tint)
-            Button("Open LokalBot") { WindowAccess.shared.open("main") }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
-            Button("Settings") {
-                app.navSection = .settings
+            .buttonStyle(.bordered)
+
+            Button {
                 WindowAccess.shared.open("main")
+            } label: {
+                Label("Open App", systemImage: "macwindow")
+                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.plain).foregroundStyle(.secondary)
+            .buttonStyle(.bordered)
 
-            Spacer()
+            Menu {
+                Button {
+                    app.navSection = .settings
+                    WindowAccess.shared.open("main")
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
 
-            if app.settings.trackingEnabled {
-                TrackingPauseButton(sampler: app.sampler, presentation: .menuBar)
+                if app.settings.trackingEnabled {
+                    TrackingPauseButton(
+                        sampler: app.sampler,
+                        presentation: .overflowMenu
+                    )
+                }
+
+                Divider()
+                Button("Quit LokalBot", role: .destructive) { NSApp.terminate(nil) }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .frame(width: 24, height: 24)
             }
-
-            Button("Quit") { NSApp.terminate(nil) }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("More actions")
+            .accessibilityLabel("More actions")
         }
         .font(.callout)
+        .controlSize(.regular)
     }
 
     private var cotypingRow: some View {
-        Toggle(isOn: $app.settings.cotypingEnabled) {
-            Label("Cotyping (inline autocomplete)", systemImage: "text.cursor")
+        HStack(spacing: 8) {
+            Image(systemName: "text.cursor")
                 .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Cotyping").font(.callout.weight(.medium))
+                Text("Inline autocomplete")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Toggle("Cotyping", isOn: $app.settings.cotypingEnabled)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .help("Turn inline autocomplete on or off")
         }
-        .toggleStyle(.switch)
-        .controlSize(.mini)
+        .padding(.vertical, 8)
     }
 
     private var dictationRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("Dictation", systemImage: "mic.badge.plus")
-                    .font(.callout)
-                Spacer()
-                Text(DictationShortcut.label)
-                    .font(.caption.monospaced())
+        HStack(spacing: 8) {
+            Image(systemName: "mic")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Dictation").font(.callout.weight(.medium))
+                Text("Shortcut · \(DictationShortcut.label)")
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            HStack(spacing: 8) {
-                Toggle("Shortcut", isOn: $app.settings.dictationEnabled)
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                Spacer()
-                Button {
-                    app.dictation.toggle(source: "menubar")
-                } label: {
-                    Text(dictationButtonTitle)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(app.isRecording && !app.dictation.state.isWorking)
+            Spacer()
+            Toggle("Dictation shortcut", isOn: $app.settings.dictationEnabled)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .help("Enable the \(DictationShortcut.label) dictation shortcut")
+            Button {
+                app.dictation.toggle(source: "menubar")
+            } label: {
+                Image(systemName: dictationButtonIcon)
+                    .frame(width: 14, height: 14)
             }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(app.dictation.state.isRecording ? .red : nil)
+            .disabled(app.isRecording && !app.dictation.state.isWorking)
+            .help("\(dictationButtonTitle) dictation")
+            .accessibilityLabel("\(dictationButtonTitle) dictation")
         }
+        .padding(.vertical, 8)
     }
 
     private var dictationButtonTitle: String {
@@ -425,6 +500,14 @@ struct MenuBarView: View {
         case .idle: "Start"
         case .recording: "Stop"
         case .transcribing, .composing: "Cancel"
+        }
+    }
+
+    private var dictationButtonIcon: String {
+        switch app.dictation.state {
+        case .idle: "mic.fill"
+        case .recording: "stop.fill"
+        case .transcribing, .composing: "xmark"
         }
     }
 
