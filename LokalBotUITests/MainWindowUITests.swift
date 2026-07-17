@@ -19,12 +19,12 @@ final class MainWindowUITests: XCTestCase {
         let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "MainWindow")
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
-        // Wait until the main window has rendered the Timeline's hour track —
+        // Wait until the main window has rendered Today's header —
         // every test starts from a known surface, otherwise XCUITest races
-        // the initial `loadMeetings()` + reindex sweep. (Timeline is the
+        // the initial `loadMeetings()` + reindex sweep. (Today is the
         // default section, so the meeting list is NOT on screen yet.)
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
-            .waitForExistence(timeout: 10), "timeline track never rendered")
+        XCTAssertTrue(app.descendants(matching: .any)["today.header"]
+            .waitForExistence(timeout: 10), "today header never rendered")
     }
 
     override func tearDownWithError() throws {
@@ -119,21 +119,27 @@ final class MainWindowUITests: XCTestCase {
             ? tabs.buttons["Models"] : tabs.radioButtons["Models"]
         XCTAssertTrue(segment.waitForExistence(timeout: 4), "Models segment missing")
         segment.click()
-        XCTAssertTrue(textWithContent("Transcription").firstMatch
+        // The stack card is probed by its Change buttons: the card container
+        // itself stays unidentified so those leaf identifiers survive.
+        XCTAssertTrue(app.buttons["models.stack.change.transcribe"]
             .waitForExistence(timeout: 6),
-                      "Models pane did not render the Transcription card")
-        XCTAssertTrue(textWithContent("Main LLM engine").firstMatch.exists,
-                      "Models pane missing the Main LLM engine card")
-        XCTAssertTrue(app.descendants(matching: .any)["models.transcription"].exists,
-                      "transcription model card identifier missing")
-        XCTAssertTrue(app.descendants(matching: .any)["models.summarization"].exists,
-                      "summarization model card identifier missing")
+                      "Models pane did not render the Your stack card")
         XCTAssertTrue(app.descendants(matching: .any)["models.dictationComposition"].exists,
                       "dictation composition model card identifier missing")
-        XCTAssertTrue(app.descendants(matching: .any)["models.cotyping"].exists,
-                      "cotyping model card identifier missing")
         XCTAssertTrue(app.descendants(matching: .any)["models.embeddings"].exists,
                       "embeddings model card identifier missing")
+
+        for (change, card) in [("models.stack.change.transcribe", "models.transcription"),
+                               ("models.stack.change.think", "models.summarization"),
+                               ("models.stack.change.type", "models.cotyping")] {
+            let button = app.buttons[change]
+            XCTAssertTrue(button.waitForExistence(timeout: 4), "\(change) button missing")
+            UITestHarness.scrollTo(button, in: app)
+            button.click()
+            XCTAssertTrue(app.descendants(matching: .any)[card]
+                .waitForExistence(timeout: 4),
+                          "\(card) did not expand from its Change button")
+        }
     }
 
     // MARK: - Timeline
@@ -405,6 +411,17 @@ final class MainWindowUITests: XCTestCase {
                        "planning folder must be removed from disk")
         XCTAssertTrue(meetingRow(for: fixture.designReview).exists,
                       "untouched meeting must remain in the list")
+    }
+
+    // MARK: - Settings
+
+    /// ⌘, must land on the one in-window Settings home — the separate
+    /// macOS Settings scene is gone (spec: one home per concern).
+    func testSettingsShortcutLandsInWindow() {
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(app.descendants(matching: .any)["settings.form"]
+            .waitForExistence(timeout: 6),
+                      "⌘, did not open Settings in the main window")
     }
 
     // MARK: - Helpers

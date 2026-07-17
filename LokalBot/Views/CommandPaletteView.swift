@@ -68,6 +68,8 @@ struct CommandPaletteView: View {
                 app.isRecording ? app.stopRecording()
                                 : app.startRecording(context: app.recordingContext(for: app.detector.activeApp), source: "palette")
             }),
+            .init(id: "nav.today", icon: "sun.max", title: "Go to Today",
+                  subtitle: "Home", action: { app.navSection = .today }),
             .init(id: "nav.timeline", icon: "calendar.day.timeline.left", title: "Go to Timeline",
                   subtitle: "Library", action: { app.navSection = .timeline }),
             .init(id: "nav.meetings", icon: "waveform.circle", title: "Go to Meetings",
@@ -86,9 +88,9 @@ struct CommandPaletteView: View {
             .init(id: "nav.agent", icon: "wand.and.sparkles", title: "Go to Agent",
                   subtitle: "Automation", action: { app.navSection = .agent }),
             .init(id: "nav.models", icon: "brain", title: "Go to Models",
-                  subtitle: "Configure", action: { app.openSettings(tab: .models) }),
+                  subtitle: "Settings", action: { app.openSettings(tab: .models) }),
             .init(id: "nav.settings", icon: "gearshape", title: "Go to Settings",
-                  subtitle: "Configure", action: { app.navSection = .settings })
+                  subtitle: "Settings", action: { app.navSection = .settings })
         ]
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         // Empty query: commands + recent meetings (quick navigation).
@@ -160,9 +162,9 @@ private struct PaletteRow: View {
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(selected ? Color.accentColor.opacity(0.15) : .clear,
+        .background(selected ? Brand.teal.opacity(0.15) : .clear,
                     in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8)
-            .strokeBorder(selected ? Color.accentColor.opacity(0.4) : .clear, lineWidth: 1))
+            .strokeBorder(selected ? Brand.teal.opacity(0.4) : .clear, lineWidth: 1))
     }
 }

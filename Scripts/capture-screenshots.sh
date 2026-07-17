@@ -50,6 +50,10 @@ CAPTURE_SIZE="${LOKALBOT_CAPTURE_SIZE:-1480x930}"
 CAPTURE_CONTENT_MAX="${LOKALBOT_CAPTURE_CONTENT_MAX:-420}"
 CAPTURE_SCALE="${LOKALBOT_CAPTURE_SCALE:-2}"
 CAPTURE_DELAY="${LOKALBOT_CAPTURE_DELAY:-8}"
+# The committed README set is dark; captures must not follow the host machine's
+# appearance or a light-mode Mac exports a mismatched (and, for the selected
+# sidebar row, unreadable) set. Pinned in the host via NSApp.appearance.
+CAPTURE_APPEARANCE="${LOKALBOT_CAPTURE_APPEARANCE:-dark}"
 mkdir -p "$OUT"
 
 echo "==> Building '$SCHEME'"
@@ -74,6 +78,7 @@ capture() {
       LOKALBOT_CAPTURE_CONTENT_MAX="$CAPTURE_CONTENT_MAX" \
       LOKALBOT_CAPTURE_SCALE="$CAPTURE_SCALE" \
       LOKALBOT_CAPTURE_DELAY="$CAPTURE_DELAY" \
+      LOKALBOT_CAPTURE_APPEARANCE="$CAPTURE_APPEARANCE" \
       LOKALBOT_SCREEN_MEMORY_DEMO=1 "$@" \
     "$APP" -ApplePersistenceIgnoreState YES -AppleLocale en_US -AppleLanguages "(en)" \
     --lokalbot-ui-test --lokalbot-storage-root "$LIB" --lokalbot-defaults-suite "$SUITE" \
@@ -94,6 +99,7 @@ echo "==> Capturing section stills at ${CAPTURE_SIZE}pt (${CAPTURE_SCALE}x, cont
 capture "$OUT" meetings-summary    LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=0 LOKALBOT_DETAIL_TAB=summary    LOKALBOT_DISMISS_ONBOARDING=1
 capture "$OUT" meetings-transcript LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=0 LOKALBOT_DETAIL_TAB=transcript LOKALBOT_DISMISS_ONBOARDING=1
 capture "$OUT" timeline            LOKALBOT_INITIAL_SECTION=timeline LOKALBOT_DISMISS_ONBOARDING=1
+capture "$OUT" today               LOKALBOT_INITIAL_SECTION=today LOKALBOT_DISMISS_ONBOARDING=1
 capture "$OUT" quick-recall        LOKALBOT_UI_TEST_WINDOW=quick-recall LOKALBOT_QUICK_RECALL_QUERY=Redis LOKALBOT_CAPTURE_SIZE=660x480 LOKALBOT_DISMISS_ONBOARDING=1
 capture "$OUT" search              LOKALBOT_INITIAL_SECTION=search LOKALBOT_INITIAL_SEARCH=Redis
 capture "$OUT" models              LOKALBOT_INITIAL_SECTION=models

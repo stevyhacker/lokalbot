@@ -65,6 +65,15 @@ struct LokalBotApp: App {
                     WindowAccess.shared.open("quick-recall")
                 }
             }
+            // Deleting the Settings scene removes the automatic ⌘, — reclaim
+            // it so the shortcut lands on the one in-window Settings home.
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    app.navSection = .settings
+                    WindowAccess.shared.open("main")
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
         }
 
         Window("Welcome to LokalBot", id: "onboarding") {
@@ -103,13 +112,6 @@ struct LokalBotApp: App {
         }
         .menuBarExtraStyle(.window)
 #endif
-
-        Settings {
-            SettingsView()
-                .environmentObject(app)
-                .brandTinted()
-                .workspaceSurface()
-        }
     }
 
     private var mainWindow: some View {
@@ -225,7 +227,7 @@ actor SearchIndexWorkQueue {
 final class AppState: ObservableObject {
 
     enum NavSection: Hashable {
-        case timeline, meetings, type, ask, agent, settings
+        case today, timeline, meetings, type, ask, agent, settings
 
         /// Section names accepted from the UI-test capture environment and
         /// deep links. Legacy names keep working: "capture" (the pre-split
@@ -234,6 +236,7 @@ final class AppState: ObservableObject {
         /// Settings, which absorbed it as a tab (spec §2.5).
         init?(captureName: String) {
             switch captureName.lowercased() {
+            case "today": self = .today
             case "timeline", "capture": self = .timeline
             case "meetings": self = .meetings
             case "type", "dictation", "cotyping": self = .type
@@ -298,6 +301,10 @@ final class AppState: ObservableObject {
 
     @Published private(set) var meetings: [Meeting] = []
     @Published var lastError: String?
+    /// A recording or dictation start was refused because microphone access
+    /// is denied at the system level. Cleared when the user opens System
+    /// Settings from the recovery toast or dismisses it.
+    @Published var micRecoveryNeeded = false
 
     /// The always-alive settings owner; services capture this, never AppState.
     let settingsStore = SettingsStore()
@@ -395,7 +402,7 @@ final class AppState: ObservableObject {
 
     // Navigation (main window): sidebar section, selected meeting, and a
     // pending "jump to timestamp" handed from search to the detail player.
-    @Published var navSection: NavSection = .timeline
+    @Published var navSection: NavSection = .today
     @Published var typeTab: TypeTab = .dictation
     @Published var settingsTab: SettingsTab = .general
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []
@@ -550,6 +557,7 @@ final class AppState: ObservableObject {
         pipeline: pipeline,
         isInteractive: { [weak self] in self?.interactive ?? false },
         onError: { [weak self] message in self?.lastError = message },
+        onMicPermissionDenied: { [weak self] in self?.micRecoveryNeeded = true },
         onMeetingFinished: { [weak self] meeting in self?.meetings.insert(meeting, at: 0) })
     /// Press-and-speak composition. Every dictation is treated as a writing
     /// request: local ASR captures the instruction, the configured composition
@@ -574,6 +582,9 @@ final class AppState: ObservableObject {
         },
         onError: { [weak self] message in
             self?.lastError = message
+        },
+        onMicPermissionDenied: { [weak self] in
+            self?.micRecoveryNeeded = true
         })
     /// Cotyping (inline AI autocomplete). Always runs its own model on the
     /// dedicated `LlamaServer.cotyping` instance so it never thrashes the

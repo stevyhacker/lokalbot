@@ -62,15 +62,6 @@ struct MainWindowView: View {
                 .keyboardShortcut("s", modifiers: [.command, .control])
                 .accessibilityIdentifier("toolbar.sidebarToggle")
             }
-            ToolbarItem {
-                Button {
-                    openWindow(id: "palette")
-                } label: {
-                    Label("Commands", systemImage: "command")
-                }
-                .help("Command palette (⌘K)")
-                .accessibilityIdentifier("toolbar.palette")
-            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     app.isRecording
@@ -84,9 +75,16 @@ struct MainWindowView: View {
                 .accessibilityIdentifier("toolbar.record")
             }
         }
-        .background(WindowToolbarStyle())
         .overlay(alignment: .bottom) {
-            if let error = app.lastError {
+            if app.micRecoveryNeeded {
+                ErrorToast(
+                    message: "Microphone access is off for LokalBot. Turn it on in System Settings to record.",
+                    actionTitle: "Open System Settings",
+                    action: {
+                        PermissionManager.shared.openSettings(for: .microphone)
+                        app.micRecoveryNeeded = false
+                    }) { app.micRecoveryNeeded = false }
+            } else if let error = app.lastError {
                 ErrorToast(message: error) { app.lastError = nil }
             }
         }
@@ -118,7 +116,14 @@ struct MainWindowView: View {
     /// Master/detail sections (Timeline, Meetings, Ask) use the native
     /// three-column split; single-surface sections (forms) use two.
     @ViewBuilder private var navigation: some View {
-        if app.navSection == .timeline {
+        if app.navSection == .today {
+            NavigationSplitView(columnVisibility: twoColumnVisibility) {
+                sidebar
+            } detail: {
+                TodayView()
+                    .workspaceSurface()
+            }
+        } else if app.navSection == .timeline {
             NavigationSplitView(columnVisibility: threeColumnVisibility) {
                 sidebar
             } content: {
@@ -199,6 +204,11 @@ struct MainWindowView: View {
     private var sidebar: some View {
         List(selection: sidebarSelection) {
             Section {
+                sidebarLabel("Today", systemImage: "sun.max", section: .today)
+                    .tag(AppState.NavSection.today)
+                    .accessibilityIdentifier("sidebar.today")
+            }
+            Section {
                 sidebarLabel(
                     "Timeline",
                     systemImage: "calendar.day.timeline.left",
@@ -215,8 +225,6 @@ struct MainWindowView: View {
                 sidebarLabel("Ask", systemImage: "sparkle.magnifyingglass", section: .ask)
                     .tag(AppState.NavSection.ask)
                     .accessibilityIdentifier("sidebar.ask")
-            } header: {
-                sidebarSectionHeader("Find")
             }
             Section {
                 sidebarLabel("Type", systemImage: "keyboard", section: .type)
@@ -232,10 +240,9 @@ struct MainWindowView: View {
                 sidebarLabel("Settings", systemImage: "gearshape", section: .settings)
                     .tag(AppState.NavSection.settings)
                     .accessibilityIdentifier("sidebar.settings")
-            } header: {
-                sidebarSectionHeader("Configure")
             }
         }
+        .tint(Brand.teal)
         .safeAreaInset(edge: .top, spacing: 0) {
             SidebarBrandHeader()
         }
@@ -298,7 +305,7 @@ struct MainWindowView: View {
     }
 
     private var sidebarSelection: Binding<AppState.NavSection?> {
-        Binding(get: { app.navSection }, set: { app.navSection = $0 ?? .timeline })
+        Binding(get: { app.navSection }, set: { app.navSection = $0 ?? .today })
     }
 
     private var scriptedCaptureContentMaximum: CGFloat? {
@@ -448,40 +455,47 @@ struct MeetingDetailView: View {
             stopSpokenSummary(clearError: false)
         }
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    toggleSummarySpeech()
-                } label: {
-                    Label(summarySpeechButtonTitle,
-                          systemImage: isReadingSummarySpeech ? "stop.fill" : "speaker.wave.2")
-                }
-                .disabled(!isReadingSummarySpeech && spokenSummaryText == nil)
-                Button {
-                    exportSpokenSummary()
-                } label: {
-                    Label(isExportingSpeech ? "Exporting Speech" : "Export Spoken Summary",
-                          systemImage: "waveform")
-                }
-                .disabled(isExportingSpeech || spokenSummaryText == nil)
-                Button {
-                    exportAudioRecording()
-                } label: {
-                    Label(isExportingAudio ? "Exporting Audio" : "Export Audio",
-                          systemImage: "square.and.arrow.up")
-                }
-                .disabled(isExportingAudio || !player.isLoaded)
-                Button {
-                    NSWorkspace.shared.activateFileViewerSelecting([folder])
-                } label: {
-                    Label("Show in Finder", systemImage: "folder")
-                }
+            ToolbarItem(placement: .primaryAction) {
                 Menu {
-                    Button("Transcribe & Summarize") { app.reprocess(meeting, transcribe: true, summarize: true) }
-                    Button("Transcribe Only") { app.reprocess(meeting, transcribe: true, summarize: false) }
-                    Button("Re-summarize (Keep Transcript)") { app.reprocess(meeting, transcribe: false, summarize: true) }
+                    Button {
+                        toggleSummarySpeech()
+                    } label: {
+                        Label(summarySpeechButtonTitle,
+                              systemImage: isReadingSummarySpeech ? "stop.fill" : "speaker.wave.2")
+                    }
+                    .disabled(!isReadingSummarySpeech && spokenSummaryText == nil)
+                    Button {
+                        exportSpokenSummary()
+                    } label: {
+                        Label(isExportingSpeech ? "Exporting Speech" : "Export Spoken Summary",
+                              systemImage: "waveform")
+                    }
+                    .disabled(isExportingSpeech || spokenSummaryText == nil)
+                    Divider()
+                    Menu {
+                        Button("Transcribe & Summarize") { app.reprocess(meeting, transcribe: true, summarize: true) }
+                        Button("Transcribe Only") { app.reprocess(meeting, transcribe: true, summarize: false) }
+                        Button("Re-summarize (Keep Transcript)") { app.reprocess(meeting, transcribe: false, summarize: true) }
+                    } label: {
+                        Label("Process", systemImage: "wand.and.stars")
+                    }
+                    Divider()
+                    Button {
+                        exportAudioRecording()
+                    } label: {
+                        Label(isExportingAudio ? "Exporting Audio" : "Export Audio",
+                              systemImage: "square.and.arrow.up")
+                    }
+                    .disabled(isExportingAudio || !player.isLoaded)
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([folder])
+                    } label: {
+                        Label("Show in Finder", systemImage: "folder")
+                    }
                 } label: {
-                    Label("Process", systemImage: "wand.and.stars")
+                    Label("Meeting Actions", systemImage: "ellipsis.circle")
                 }
+                .accessibilityIdentifier("toolbar.meetingActions")
             }
         }
     }
@@ -726,7 +740,7 @@ struct MeetingDetailView: View {
         }
         .padding(.vertical, 4).padding(.horizontal, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isCurrent ? Color.accentColor.opacity(0.10) : .clear,
+        .background(isCurrent ? Brand.teal.opacity(0.10) : .clear,
                     in: RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
         .onTapGesture { player.play(at: display.segment.start) }   // click a sentence → jump audio
@@ -737,7 +751,7 @@ struct MeetingDetailView: View {
             .font(.caption.bold())
             .padding(.horizontal, 7).padding(.vertical, 2)
             .background(display.speakerKey == "me"
-                        ? Color.accentColor.opacity(0.18)
+                        ? Brand.teal.opacity(0.18)
                         : Color.secondary.opacity(0.15),
                         in: Capsule())
             .contentShape(Capsule())
@@ -1300,40 +1314,6 @@ struct GettingStartedCard: View {
                 .foregroundStyle(done == true ? Color.green : Brand.teal)
                 .padding(.top, 2)
             content().font(.callout)
-        }
-    }
-}
-
-/// Forces the host window's toolbar to show icons *and* their labels — macOS
-/// otherwise renders SwiftUI toolbar items icon-only. Attached as a hidden
-/// background view so it configures whichever `NSWindow` ends up hosting the UI
-/// (the production scene or the UI-test host) once its toolbar exists, then
-/// stays out of the way so a user's later "Icon Only" choice sticks.
-private struct WindowToolbarStyle: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView(frame: .zero)
-        context.coordinator.apply(to: view)
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {}
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    final class Coordinator {
-        private var applied = false
-
-        func apply(to view: NSView, attemptsLeft: Int = 12) {
-            guard !applied else { return }
-            DispatchQueue.main.async { [weak self, weak view] in
-                guard let self, let view else { return }
-                if let toolbar = view.window?.toolbar {
-                    toolbar.displayMode = .iconAndLabel
-                    self.applied = true
-                } else if attemptsLeft > 0 {
-                    self.apply(to: view, attemptsLeft: attemptsLeft - 1)
-                }
-            }
         }
     }
 }

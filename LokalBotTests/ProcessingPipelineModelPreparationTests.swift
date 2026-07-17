@@ -105,4 +105,62 @@ final class ProcessingPipelineModelPreparationTests: XCTestCase {
         let cleanupReturnedAfterRelease = await work.didCleanupReturn()
         XCTAssertTrue(cleanupReturnedAfterRelease)
     }
+
+    func testResumePendingSurfacesParkedJobsAsFailedStages() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+
+        let storage = StorageManager(rootURL: root)
+        let jobStore = PipelineJobStore(
+            databaseURL: root.appendingPathComponent("test.sqlite"))
+        let meeting = Meeting(id: UUID(), title: "Standup", appName: "Zoom",
+                              startedAt: Date(), endedAt: Date(),
+                              relativePath: "meetings/2026/07/17-standup")
+        jobStore.enqueue(meetingID: meeting.id, transcribe: true, summarize: true)
+        for _ in 0..<PipelineJobStore.maxAutoResumeAttempts {
+            jobStore.markStarted(meetingID: meeting.id)
+        }
+        jobStore.markFailed(meetingID: meeting.id,
+                            message: "The selected model is not downloaded.")
+
+        let pipeline = ProcessingPipeline(storage: storage, jobStore: jobStore) {
+            AppSettings()
+        }
+        pipeline.resumePending(meetings: [meeting])
+
+        guard case .failed(let message)? = pipeline.stages[meeting.id] else {
+            return XCTFail("parked job did not surface as a failed stage")
+        }
+        XCTAssertEqual(message, "The selected model is not downloaded.")
+    }
+
+    func testResumePendingParkedFallbackMessageWhenNoneRecorded() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+
+        let storage = StorageManager(rootURL: root)
+        let jobStore = PipelineJobStore(
+            databaseURL: root.appendingPathComponent("test.sqlite"))
+        let meeting = Meeting(id: UUID(), title: "Standup", appName: "Zoom",
+                              startedAt: Date(), endedAt: Date(),
+                              relativePath: "meetings/2026/07/17-standup")
+        jobStore.enqueue(meetingID: meeting.id, transcribe: true, summarize: true)
+        for _ in 0..<PipelineJobStore.maxAutoResumeAttempts {
+            jobStore.markStarted(meetingID: meeting.id)
+        }
+
+        let pipeline = ProcessingPipeline(storage: storage, jobStore: jobStore) {
+            AppSettings()
+        }
+        pipeline.resumePending(meetings: [meeting])
+
+        guard case .failed(let message)? = pipeline.stages[meeting.id] else {
+            return XCTFail("parked job without a recorded error did not surface")
+        }
+        XCTAssertEqual(message, "Processing didn't finish after several attempts.")
+    }
 }

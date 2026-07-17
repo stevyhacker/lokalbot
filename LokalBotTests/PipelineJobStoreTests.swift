@@ -120,4 +120,54 @@ final class PipelineJobStoreTests: XCTestCase {
             meetingID: UUID(), transcribe: true, summarize: true))
         XCTAssertTrue(store.pendingJobs().isEmpty)
     }
+
+    func testMarkFailedSurfacesParkedJobWithMessage() {
+        let store = makeStore()
+        let id = UUID()
+        store.enqueue(meetingID: id, transcribe: true, summarize: true)
+        for _ in 0..<PipelineJobStore.maxAutoResumeAttempts {
+            store.markStarted(meetingID: id)
+        }
+        store.markFailed(meetingID: id, message: "The selected model is not downloaded.")
+
+        XCTAssertTrue(store.pendingJobs().isEmpty,
+                      "a parked job must stay out of the auto-resume queue")
+        let parked = store.parkedJobs()
+        XCTAssertEqual(parked.count, 1)
+        XCTAssertEqual(parked.first?.meetingID, id)
+        XCTAssertEqual(parked.first?.lastError, "The selected model is not downloaded.")
+    }
+
+    func testParkedJobsExcludeJobsWithRemainingAttempts() {
+        let store = makeStore()
+        let id = UUID()
+        store.enqueue(meetingID: id, transcribe: true, summarize: true)
+        store.markStarted(meetingID: id)
+        store.markFailed(meetingID: id, message: "transient")
+
+        XCTAssertTrue(store.parkedJobs().isEmpty,
+                      "a job with attempts left auto-resumes; it is not parked")
+        XCTAssertEqual(store.pendingJobs().count, 1)
+    }
+
+    func testEnqueueClearsLastError() {
+        let store = makeStore()
+        let id = UUID()
+        store.enqueue(meetingID: id, transcribe: true, summarize: true)
+        for _ in 0..<PipelineJobStore.maxAutoResumeAttempts {
+            store.markStarted(meetingID: id)
+        }
+        store.markFailed(meetingID: id, message: "old failure")
+        store.enqueue(meetingID: id, transcribe: true, summarize: true)
+
+        XCTAssertTrue(store.parkedJobs().isEmpty,
+                      "an explicit retry resets attempts, so nothing is parked")
+        for _ in 0..<PipelineJobStore.maxAutoResumeAttempts {
+            store.markStarted(meetingID: id)
+        }
+        XCTAssertEqual(store.parkedJobs().count, 1,
+                       "re-exhausting attempts must park the job again")
+        XCTAssertEqual(store.parkedJobs().first?.lastError, nil,
+                       "an explicit retry must clear the stale failure message")
+    }
 }

@@ -146,7 +146,9 @@ private struct CotypingContent: View {
     private var modelSection: some View {
         Section("Model") {
             Picker("Cotyping model", selection: $app.settings.cotypingBuiltInModelID) {
-                ForEach(ModelCatalog.selectableEntries(custom: app.settings.customBuiltInModels)) { entry in
+                ForEach(ModelCatalog.keystrokeScaleEntries(
+                    custom: app.settings.customBuiltInModels,
+                    keeping: app.settings.cotypingBuiltInModelID)) { entry in
                     Text(entry.displayName).tag(entry.id)
                 }
             }
@@ -362,7 +364,7 @@ private struct CotypingContent: View {
     private var previewAttributed: AttributedString {
         var result = AttributedString(previewTextTail)
         var continuation = AttributedString(ghost)
-        continuation.foregroundColor = .accentColor
+        continuation.foregroundColor = Brand.teal
         result.append(continuation)
         return result
     }

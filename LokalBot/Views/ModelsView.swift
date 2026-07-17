@@ -2,9 +2,9 @@ import SwiftUI
 import AppKit
 
 /// The Models tab of Settings (spec §2.5). All model selection and management
-/// lives here, a dedicated card-per-role surface: Transcription, dictation
-/// composition, Main LLM, Cotyping, and Embeddings each pick and manage their
-/// own model.
+/// lives here: a "Your stack" summary card leads, with the Transcription,
+/// Main LLM, and Cotyping cards collapsed behind its per-role Change buttons;
+/// dictation composition, speech, and embeddings keep their own cards below.
 /// Downloads come from the local catalog or Hugging Face.
 struct ModelsView: View {
     @EnvironmentObject var app: AppState
@@ -33,15 +33,19 @@ struct ModelsView: View {
     @State private var didLoadOpenAIAPIKey = false
     @State private var openAIAPIKeySaved = false
 
+    private enum StackRole: String { case transcribe, think, type }
+    @State private var expandedRoles: Set<StackRole> = []
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 ModelMemoryBanner()
-                transcriptionCard
+                yourStackCard
+                if expandedRoles.contains(.transcribe) { transcriptionCard }
                 dictationCompositionCard
-                summarizationCard
+                if expandedRoles.contains(.think) { summarizationCard }
                 speechCard
-                cotypingCard
+                if expandedRoles.contains(.type) { cotypingCard }
                 embeddingsCard
             }
             .padding(20)
@@ -98,6 +102,63 @@ struct ModelsView: View {
         private func gigabytes(_ bytes: Int64) -> String {
             String(format: "%.1f GB", Double(bytes) / 1_073_741_824)
         }
+    }
+
+    /// The three models doing the actual work, named plainly. The full
+    /// per-role pickers stay one "Change…" away — new users see a stack,
+    /// not a zoo.
+    private var yourStackCard: some View {
+        ModelCard(icon: "square.stack.3d.up", title: "Your stack",
+                  subtitle: "The three models doing today's work") {
+            stackRow(.transcribe, name: "Transcribe",
+                     model: app.settings.transcriptionModel.displayName,
+                     detail: "Turns meeting audio into transcripts")
+            Divider()
+            stackRow(.think, name: "Think", model: thinkModelName,
+                     detail: "Writes summaries, answers Ask, runs Agent Mode")
+            Divider()
+            stackRow(.type, name: "Type", model: typeModelName,
+                     detail: "Completes your sentences as you type")
+        }
+        // No identifier on the card container: it would propagate onto the
+        // rows and clobber the models.stack.change.* button identifiers.
+    }
+
+    private func stackRow(_ role: StackRole, name: String,
+                          model: String, detail: String) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name).font(.subheadline.weight(.semibold))
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(model).font(.callout).foregroundStyle(.secondary)
+                .lineLimit(1)
+            Button(expandedRoles.contains(role) ? "Done" : "Change…") {
+                if expandedRoles.contains(role) {
+                    expandedRoles.remove(role)
+                } else {
+                    expandedRoles.insert(role)
+                }
+            }
+            .controlSize(.small)
+            .accessibilityIdentifier("models.stack.change.\(role.rawValue)")
+        }
+    }
+
+    private var thinkModelName: String {
+        if app.settings.summarizerBackend == .builtIn {
+            return ModelCatalog.entry(id: app.settings.builtInModelID,
+                                      custom: app.settings.customBuiltInModels)?.displayName
+                ?? app.settings.builtInModelID
+        }
+        return app.settings.summarizerBackend.displayName
+    }
+
+    private var typeModelName: String {
+        ModelCatalog.entry(id: app.settings.cotypingBuiltInModelID,
+                           custom: app.settings.customBuiltInModels)?.displayName
+            ?? app.settings.cotypingBuiltInModelID
     }
 
     private var transcriptionCard: some View {
@@ -389,7 +450,9 @@ struct ModelsView: View {
                   subtitle: "Inline AI autocomplete as you type") {
             CotypingModelPreparationView(compact: true)
             Picker("Cotyping model", selection: $app.settings.cotypingBuiltInModelID) {
-                ForEach(ModelCatalog.selectableEntries(custom: app.settings.customBuiltInModels)) { entry in
+                ForEach(ModelCatalog.keystrokeScaleEntries(
+                    custom: app.settings.customBuiltInModels,
+                    keeping: app.settings.cotypingBuiltInModelID)) { entry in
                     Text(entry.displayName).tag(entry.id)
                 }
             }
@@ -422,6 +485,8 @@ struct ModelsView: View {
         let title: String
         let subtitle: String
         @ViewBuilder var content: () -> Content
+        @Environment(\.colorScheme) private var scheme
+        @Environment(\.colorSchemeContrast) private var contrast
 
         var body: some View {
             VStack(alignment: .leading, spacing: 12) {
@@ -440,10 +505,11 @@ struct ModelsView: View {
                 content()
             }
             .padding(16)
-            .background(Color(nsColor: .controlBackgroundColor),
-                        in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
+            .background(WorkspacePalette.surface(for: scheme),
+                        in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
+            .overlay(RoundedRectangle(cornerRadius: Brand.Radius.panel)
+                .strokeBorder(WorkspacePalette.border(for: scheme, contrast: contrast),
+                              lineWidth: 1))
         }
     }
 
@@ -570,7 +636,7 @@ struct ModelsView: View {
                                         capability: HardwareCapabilityProbe.current())
             HStack(spacing: 8) {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected ? Color.accentColor : .secondary)
+                    .foregroundStyle(selected ? Brand.teal : .secondary)
                     .onTapGesture { if available { selectedModelID = entry.id } }
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
@@ -578,7 +644,7 @@ struct ModelsView: View {
                         if let recommendedLabel {
                             Text(recommendedLabel).font(.system(size: 8.5, weight: .bold))
                                 .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(Color.accentColor.opacity(0.18), in: Capsule())
+                                .background(Brand.teal.opacity(0.18), in: Capsule())
                         }
                     }
                     Text("\(String(format: "%.1f", entry.sizeGB)) GB · \(entry.blurb)")
@@ -624,7 +690,7 @@ struct ModelsView: View {
             let selected = app.settings.transcriptionModel == choice
             HStack(spacing: 8) {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected ? Color.accentColor : .secondary)
+                    .foregroundStyle(selected ? Brand.teal : .secondary)
                     .onTapGesture { app.settings.transcriptionModel = choice }
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
@@ -632,7 +698,7 @@ struct ModelsView: View {
                         if choice == TranscriptionModelChoice.recommended {
                             Text("RECOMMENDED").font(.system(size: 8.5, weight: .bold))
                                 .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(Color.accentColor.opacity(0.18), in: Capsule())
+                                .background(Brand.teal.opacity(0.18), in: Capsule())
                         }
                         if choice.isLegacy {
                             Text("LEGACY").font(.system(size: 8.5, weight: .bold))

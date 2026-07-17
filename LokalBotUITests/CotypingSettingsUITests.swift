@@ -28,10 +28,10 @@ final class CotypingSettingsUITests: XCTestCase {
         let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "CotypingSettings")
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
-        // Timeline is the default section; with seeded activity the hour
-        // track renders, so wait on it rather than the meeting list.
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
-            .waitForExistence(timeout: 10), "main window never rendered")
+        // Today is the default section; its header renders unconditionally,
+        // so wait on it rather than the meeting list.
+        XCTAssertTrue(app.descendants(matching: .any)["today.header"]
+            .waitForExistence(timeout: 10), "main window never rendered its Today landing")
         UITestHarness.clickSidebar("sidebar.type", in: app)
         openCotypingTab()
     }

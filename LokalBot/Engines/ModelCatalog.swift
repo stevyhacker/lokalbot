@@ -72,6 +72,17 @@ struct ModelCatalog {
     /// available in Settings → Models for users who prefer maximum quality.
     static let defaultSummarizationID = "qwen3.5-4b"
 
+    /// Ceiling for models offered in the cotyping pickers. Cotyping runs at
+    /// keystroke latency; the heavyweight summarization models above this
+    /// size are counterproductive there (and still selectable for the Main
+    /// LLM, where they belong).
+    static let keystrokeScaleMaxGB = 7.0
+
+    /// Superseded cotyping options hidden from new picks. A deny-set rather
+    /// than an `Entry` field: `Entry` is Codable and persisted in
+    /// `AppSettings.customBuiltInModels`, so its stored shape must not churn.
+    private static let legacyCotypingIDs: Set<String> = ["gemma4-e4b"]
+
     /// Local GGUF catalog, roughly ordered from tiny fallbacks to higher-quality
     /// meeting-summary and cotyping options.
     static let entries: [Entry] = [
@@ -103,7 +114,7 @@ struct ModelCatalog {
               sizeBytes: 2_740_937_888,
               sizeGB: 2.8, blurb: "Default Main LLM with balanced local summaries and long context. 16 GB Macs.",
               disablesThinking: true),
-        Entry(id: "gemma4-e4b", displayName: "Gemma 4 E4B",
+        Entry(id: "gemma4-e4b", displayName: "Gemma 4 E4B (Legacy)",
               fileName: "gemma-4-E4B-it-Q4_K_M.gguf",
               url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/0720adb23527c2cd5ea01d1db067cd960327fdac/gemma-4-E4B-it-Q4_K_M.gguf",
               sha256: "519b9793ed6ce0ff530f1b7c96e848e08e49e7af4d57bb97f76215963a54146d",
@@ -152,6 +163,20 @@ struct ModelCatalog {
     static func selectableEntries(custom: [Entry]) -> [Entry] {
         entries + custom.filter { customEntry in
             !entries.contains { $0.id == customEntry.id || $0.fileName == customEntry.fileName }
+        }
+    }
+
+    /// The cotyping pickers' catalog: keystroke-scale built-ins plus every
+    /// custom entry, always keeping the currently selected model visible so
+    /// an existing choice never silently disappears from its own picker.
+    static func keystrokeScaleEntries(custom: [Entry],
+                                      keeping selectedID: String? = nil) -> [Entry] {
+        let customIDs = Set(custom.map(\.id))
+        return selectableEntries(custom: custom).filter { entry in
+            if entry.id == selectedID { return true }
+            if customIDs.contains(entry.id) { return true }
+            return entry.sizeGB < keystrokeScaleMaxGB
+                && !legacyCotypingIDs.contains(entry.id)
         }
     }
 

@@ -11,10 +11,10 @@ final class SettingsUITests: XCTestCase {
         let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "Settings")
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
-        // Timeline is the default section; with seeded activity the hour
-        // track renders, so wait on it rather than the meeting list.
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
-            .waitForExistence(timeout: 10), "main window never rendered")
+        // Today is the default section; its header renders unconditionally,
+        // so wait on it rather than the meeting list.
+        XCTAssertTrue(app.descendants(matching: .any)["today.header"]
+            .waitForExistence(timeout: 10), "main window never rendered its Today landing")
     }
 
     override func tearDownWithError() throws {
@@ -113,8 +113,8 @@ final class SettingsUITests: XCTestCase {
             settingsJSON: settingsJSON)
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
-            .waitForExistence(timeout: 10), "main window never rendered after relaunch")
+        XCTAssertTrue(app.descendants(matching: .any)["today.header"]
+            .waitForExistence(timeout: 10), "main window never rendered its Today landing after relaunch")
     }
 }
 
@@ -131,8 +131,13 @@ final class TimelineWithoutActivityUITests: XCTestCase {
         let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "TimelineWithoutActivity")
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
+        XCTAssertTrue(app.descendants(matching: .any)["today.header"]
+            .waitForExistence(timeout: 10), "main window never rendered its Today landing")
+        // This class pins Timeline behavior; the app now lands on Today, so
+        // step onto the Timeline explicitly before each test begins.
+        UITestHarness.clickSidebar("sidebar.timeline", in: app)
         XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
-            .waitForExistence(timeout: 10), "main window never rendered")
+            .waitForExistence(timeout: 6), "timeline section did not render")
     }
 
     override func tearDownWithError() throws {

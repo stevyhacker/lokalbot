@@ -151,6 +151,11 @@ final class ProcessingPipeline: ObservableObject {
                              resumed: true))
             stages[meeting.id] = .queued
         }
+        for parked in jobStore.parkedJobs() {
+            guard byID[parked.meetingID] != nil, stages[parked.meetingID] == nil else { continue }
+            stages[parked.meetingID] = .failed(
+                parked.lastError ?? "Processing didn't finish after several attempts.")
+        }
         drain()
     }
 
@@ -269,7 +274,9 @@ final class ProcessingPipeline: ObservableObject {
         } catch {
             // The persisted job row stays — the next launch re-enqueues it
             // (until the attempt cap) so a crash or transient failure never
-            // silently drops a meeting.
+            // silently drops a meeting. The message is persisted so a job
+            // that ends up parked still explains itself after a relaunch.
+            jobStore?.markFailed(meetingID: meeting.id, message: error.localizedDescription)
             stages[meeting.id] = .failed(error.localizedDescription)
         }
     }

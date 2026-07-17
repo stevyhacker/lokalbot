@@ -134,7 +134,7 @@ struct QuickRecallView: View {
             QuickRecallRowModel.screen(
                 snapshotID: hit.snapshotID,
                 title: hit.windowTitle.isEmpty ? hit.app : hit.windowTitle,
-                subtitle: "Screen · \(hit.app) · \(hit.ts.formatted(date: .abbreviated, time: .shortened))",
+                subtitle: "Moment · \(hit.app) · \(hit.ts.formatted(date: .abbreviated, time: .shortened))",
                 snippet: hit.snippet)
         }
         let meetings = meetingHits.map { hit in
@@ -225,7 +225,7 @@ private struct QuickRecallRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
-        .background(selected ? Color.accentColor.opacity(0.14) : .clear,
+        .background(selected ? Brand.teal.opacity(0.14) : .clear,
                     in: RoundedRectangle(cornerRadius: 9))
     }
 }

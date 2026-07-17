@@ -19,8 +19,8 @@ final class AgentModeUITests: XCTestCase {
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
 
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
-            .waitForExistence(timeout: 10), "main window never rendered")
+        XCTAssertTrue(app.descendants(matching: .any)["today.header"]
+            .waitForExistence(timeout: 10), "main window never rendered its Today landing")
         UITestHarness.clickSidebar("sidebar.agent", in: app)
         XCTAssertTrue(app.descendants(matching: .any)["agent.tabs"]
             .waitForExistence(timeout: 8), "Agent session tabs did not render")

@@ -14,7 +14,7 @@ struct MeetingListView: View {
             ForEach(groupedMeetings, id: \.label) { group in
                 Section {
                     ForEach(group.items) { meeting in
-                        meetingRow(meeting).tag(meeting.id)
+                        MeetingRowView(meeting: meeting).tag(meeting.id)
                     }
                 } header: {
                     SectionHeader(text: group.label)
@@ -67,18 +67,26 @@ struct MeetingListView: View {
         return "\(day.formatted(.dateTime.weekday(.wide)).uppercased()) — \(datePart)"
     }
 
-    @ViewBuilder
-    private func meetingRow(_ meeting: Meeting) -> some View {
+}
+
+/// One meeting row — status dot, live waveform, metadata line, and the
+/// processing/failed pipeline state. Shared by the Meetings list and the
+/// Today home so the two surfaces can never drift.
+struct MeetingRowView: View {
+    @EnvironmentObject var app: AppState
+    let meeting: Meeting
+
+    var body: some View {
         if meeting.endedAt == nil {
             TimelineView(.periodic(from: .now, by: 1)) { context in
-                meetingRowContent(meeting, now: context.date)
+                content(now: context.date)
             }
         } else {
-            meetingRowContent(meeting, now: Date())
+            content(now: Date())
         }
     }
 
-    private func meetingRowContent(_ meeting: Meeting, now: Date) -> some View {
+    private func content(now: Date) -> some View {
         let live = meeting.endedAt == nil
         let time = live ? "in progress"
                         : meeting.startedAt.formatted(date: .omitted, time: .shortened)
@@ -103,14 +111,14 @@ struct MeetingListView: View {
             .accessibilityIdentifier("meeting.row.\(meeting.id.uuidString)")
 
             if !live, let stage = app.pipeline.stages[meeting.id] {
-                pipelineStatus(stage, meeting: meeting)
+                status(stage)
             }
         }
         .padding(.vertical, 1)
     }
 
     @ViewBuilder
-    private func pipelineStatus(_ stage: ProcessingPipeline.Stage, meeting: Meeting) -> some View {
+    private func status(_ stage: ProcessingPipeline.Stage) -> some View {
         if stage.isFailure {
             VStack(alignment: .trailing, spacing: 2) {
                 Label("Failed", systemImage: "exclamationmark.triangle.fill")

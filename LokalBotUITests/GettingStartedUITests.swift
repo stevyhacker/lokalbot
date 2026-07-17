@@ -1,7 +1,7 @@
 import XCTest
 
-/// Pins down the one-time Meetings welcome card: dismissing it must reveal a
-/// useful empty state and the choice must survive a fresh app process.
+/// Pins down the Today home's one-time welcome card: dismissing it must leave
+/// a useful home and the choice must survive a fresh app process.
 final class GettingStartedUITests: XCTestCase {
     private var root: URL!
     private var app: XCUIApplication!
@@ -30,22 +30,21 @@ final class GettingStartedUITests: XCTestCase {
     }
 
     func testDismissedCardStaysDismissedAcrossRelaunch() throws {
-        UITestHarness.clickSidebar("sidebar.meetings", in: app)
         let dismiss = app.buttons["welcome.dismiss"]
-        XCTAssertTrue(dismiss.waitForExistence(timeout: 8), "getting-started card did not appear")
+        XCTAssertTrue(dismiss.waitForExistence(timeout: 8),
+                      "getting-started card did not appear on the Today home")
         dismiss.click()
-
-        XCTAssertTrue(UITestHarness.staticText(containing: "No meetings yet", in: app)
-            .waitForExistence(timeout: 4), "dismiss did not reveal the Meetings empty state")
         XCTAssertFalse(dismiss.exists, "getting-started card remained visible after dismissal")
+
+        UITestHarness.clickSidebar("sidebar.meetings", in: app)
+        XCTAssertTrue(UITestHarness.staticText(containing: "No meetings yet", in: app)
+            .waitForExistence(timeout: 4), "Meetings empty state missing after dismissal")
 
         app = try UITestHarness.relaunch(
             storageRoot: root,
             defaultsSuiteName: try XCTUnwrap(defaultsSuiteName))
-        UITestHarness.clickSidebar("sidebar.meetings", in: app)
-
-        XCTAssertTrue(UITestHarness.staticText(containing: "No meetings yet", in: app)
-            .waitForExistence(timeout: 8), "dismissed state did not survive relaunch")
+        XCTAssertTrue(app.descendants(matching: .any)["today.header"]
+            .waitForExistence(timeout: 8), "main window did not return after relaunch")
         XCTAssertFalse(app.buttons["welcome.dismiss"].exists,
                        "getting-started card returned after relaunch")
     }

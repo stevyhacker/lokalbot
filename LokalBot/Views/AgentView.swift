@@ -238,11 +238,11 @@ private struct AgentSessionTabItem: View {
         }
         .padding(.vertical, 2)
         .padding(.trailing, 3)
-        .background(isSelected ? Color.accentColor.opacity(0.16) : Color.clear,
+        .background(isSelected ? Brand.teal.opacity(0.16) : Color.clear,
                     in: RoundedRectangle(cornerRadius: 7))
         .overlay {
             RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(isSelected ? Color.accentColor.opacity(0.32) : Color.secondary.opacity(0.16))
+                .strokeBorder(isSelected ? Brand.teal.opacity(0.32) : Color.secondary.opacity(0.16))
         }
     }
 
