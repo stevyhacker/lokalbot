@@ -276,6 +276,35 @@ final class MainWindowUITests: XCTestCase {
                       "pinned escalation row missing while searching")
     }
 
+    /// Restored split widths from Timeline or Meetings must not let the
+    /// conversation list consume the Ask workspace. Push the detail divider
+    /// toward the window edge and verify both column constraints hold.
+    func testAskDetailResistsConversationListSqueeze() {
+        clickSidebar("sidebar.ask")
+
+        let field = app.textFields["search.field"]
+        let conversations = app.outlines["chat.conversationList"]
+        XCTAssertTrue(field.waitForExistence(timeout: 6), "ask input field missing")
+        XCTAssertTrue(conversations.waitForExistence(timeout: 6),
+                      "conversation list missing")
+
+        let splitters = app.splitters
+        XCTAssertGreaterThanOrEqual(splitters.count, 2,
+                                    "Ask should expose sidebar and detail dividers")
+        let detailDivider = splitters.element(boundBy: 1)
+        XCTAssertTrue(detailDivider.waitForExistence(timeout: 4),
+                      "Ask detail divider missing")
+
+        let destination = app.windows.firstMatch.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5))
+        detailDivider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: destination)
+
+        XCTAssertTrue(UITestHarness.waitUntil {
+            conversations.frame.width <= 330 && field.frame.width >= 300
+        }, "conversation history squeezed Ask below its readable width")
+    }
+
     /// ↵ escalates the query to the assistant: the pane switches from
     /// results to the conversation transcript with the query as the user
     /// turn. The model reply itself is not awaited (no local LLM in the
