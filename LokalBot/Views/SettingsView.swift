@@ -557,7 +557,7 @@ struct SettingsView: View {
                     }
                 }
                 Text("While your Mac is otherwise idle after the chosen hour, LokalBot compiles the previous day — meetings, outcomes, the day digest, and time totals — into a morning retrospective and an evolving structured memory of active projects and goals, shown on Today. "
-                     + "Nights the Mac slept through catch up at the next launch. Everything is read from and written to the local library; if no model is reachable, a plain evidence summary is written instead.")
+                     + "Nights the Mac slept through catch up at the next launch. Evidence and generated files stay in the local library. Generation uses your configured Main LLM, so an approved remote backend receives the compiled evidence; if no model is reachable, a plain evidence summary is written instead.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

@@ -48,11 +48,13 @@ struct DreamStore {
         return nil
     }
 
+    /// The report JSON is the scheduler's durable completion marker, so its
+    /// Markdown sibling must be durable before the marker appears.
     func save(_ report: DreamReport) throws {
-        try write(report, to: reportJSONURL(forDayKey: report.day))
         try writeMarkdown(report.markdown(),
                           to: dreamsDirectory.appendingPathComponent("\(report.day).md",
                                                                      isDirectory: false))
+        try write(report, to: reportJSONURL(forDayKey: report.day))
     }
 
     func loadMemory() -> DreamMemory? {
@@ -68,6 +70,14 @@ struct DreamStore {
         try writeMarkdown(memory.markdown(),
                           to: memoryDirectory.appendingPathComponent("\(Self.memoryFileName).md",
                                                                      isDirectory: false))
+    }
+
+    /// Persist one complete dream. Memory is committed first, followed by the
+    /// report rendering, and the report JSON marker last. Any earlier failure
+    /// therefore leaves `hasReport` false so the scheduler can retry safely.
+    func save(report: DreamReport, memory: DreamMemory) throws {
+        try save(memory)
+        try save(report)
     }
 
     // MARK: - Plumbing

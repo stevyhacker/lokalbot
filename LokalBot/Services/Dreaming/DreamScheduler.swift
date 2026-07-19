@@ -11,6 +11,10 @@ import Foundation
 ///   processing, dictation, or cotyping — it simply waits for the next tick.
 @MainActor
 final class DreamScheduler: ObservableObject {
+    /// Match screen-memory's definition of an inactive session: no keyboard,
+    /// pointer, or other combined-session input for three minutes.
+    nonisolated static let minimumSystemIdleSeconds: TimeInterval = 180
+
     struct Configuration: Equatable, Sendable {
         var enabled: Bool
         /// Local wall-clock hour (0...23) after which the previous day may be
@@ -164,5 +168,12 @@ final class DreamScheduler: ObservableObject {
                                    minute: 0, second: 0, of: date)
             ?? calendar.startOfDay(for: date)
         return date >= target
+    }
+
+    nonisolated static func isSystemIdle(
+        for idleSeconds: TimeInterval,
+        minimum: TimeInterval = minimumSystemIdleSeconds
+    ) -> Bool {
+        idleSeconds.isFinite && idleSeconds >= max(0, minimum)
     }
 }

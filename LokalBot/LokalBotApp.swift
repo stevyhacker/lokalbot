@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import AVFoundation
+import CoreGraphics
 
 /// Process entry point. Parses any headless subcommand before SwiftUI exists,
 /// and disables AppKit window restoration *before* SwiftUI launches when
@@ -1218,11 +1219,15 @@ final class AppState: ObservableObject {
                 } else {
                     cotypingGenerating = false
                 }
-                return !self.recording.isRecording
+                let lokalBotIsIdle = !self.recording.isRecording
                     && !self.recording.isStarting
                     && !self.dictation.state.isWorking
                     && !cotypingGenerating
                     && !self.pipeline.hasActiveWork
+                guard lokalBotIsIdle else { return false }
+                let userIdleSeconds = CGEventSource.secondsSinceLastEventType(
+                    .combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+                return DreamScheduler.isSystemIdle(for: userIdleSeconds)
             },
             dream: { [weak self] day in
                 guard let self else {
@@ -1234,10 +1239,12 @@ final class AppState: ObservableObject {
                         guard let self else {
                             throw TextEngineError.unavailable("LokalBot is shutting down.")
                         }
-                        return try await self.pipeline.makeTextEngine(
-                            self.settings,
+                        let engineSettings = self.settings
+                        let engine = try await self.pipeline.makeTextEngine(
+                            engineSettings,
                             priority: .background,
                             purpose: "dreaming")
+                        return (engine, DreamInferenceProvenance(settings: engineSettings))
                     })
                 let report = try await service.dream(day: day)
                 self.latestDreamReport = report

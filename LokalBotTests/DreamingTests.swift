@@ -80,6 +80,12 @@ final class DreamingTests: XCTestCase {
             try date("2026-06-30T00:00:00Z"))
     }
 
+    func testSystemIdleRequiresThreeMinutesWithoutInput() {
+        XCTAssertFalse(DreamScheduler.isSystemIdle(for: 179.9))
+        XCTAssertTrue(DreamScheduler.isSystemIdle(for: 180))
+        XCTAssertFalse(DreamScheduler.isSystemIdle(for: .nan))
+    }
+
     @MainActor
     func testStopCancelsInFlightDream() async throws {
         let current = try date("2026-07-19T04:00:00Z")
@@ -120,6 +126,7 @@ final class DreamingTests: XCTestCase {
             day: "2026-07-18",
             generatedAt: try date("2026-07-19T04:01:00Z"),
             engineName: "Built-in — Test",
+            inferenceProvenance: .init(location: .local),
             narrative: "A focused day.",
             attention: ["CI is red — `abcd1234`"],
             topActions: ["Fix CI first"])
@@ -152,6 +159,41 @@ final class DreamingTests: XCTestCase {
             encoding: .utf8)
         XCTAssertTrue(markdown.hasPrefix(DreamStore.generatedMarker))
         XCTAssertTrue(markdown.contains("Morning brief — 2026-07-18"))
+    }
+
+    func testCombinedSaveWritesReportMarkerOnlyAfterMemorySucceeds() throws {
+        let root = try temporaryRoot()
+        let store = DreamStore(root: root)
+        let report = DreamReport(
+            day: "2026-07-18",
+            generatedAt: try date("2026-07-19T04:01:00Z"),
+            engineName: "Built-in — Test",
+            inferenceProvenance: .init(location: .local),
+            narrative: "A focused day.")
+        let memory = DreamMemory(updatedAt: try date("2026-07-19T04:01:00Z"))
+
+        // A regular file where the memory directory belongs forces the first
+        // persistence phase to fail. The scheduler marker must remain absent.
+        try Data("blocked".utf8).write(to: store.memoryDirectory)
+        XCTAssertThrowsError(try store.save(report: report, memory: memory))
+        XCTAssertFalse(store.hasReport(forDayKey: report.day))
+    }
+
+    func testTodayDreamSelectionUsesCurrentDateWhenViewCrossedMidnight() throws {
+        let store = DreamStore(root: try temporaryRoot())
+        let latest = DreamReport(
+            day: "2026-07-18",
+            generatedAt: try date("2026-07-19T04:01:00Z"),
+            engineName: "Built-in — Test",
+            inferenceProvenance: .init(location: .local),
+            narrative: "Yesterday's report.")
+
+        let selected = TodayDreamSelection.report(
+            referenceDate: try date("2026-07-19T04:02:00Z"),
+            latest: latest,
+            store: store,
+            calendar: calendar)
+        XCTAssertEqual(selected, latest)
     }
 
     // MARK: - Prompts / parsing
@@ -190,15 +232,57 @@ final class DreamingTests: XCTestCase {
         """))
     }
 
+    func testInferenceProvenanceDistinguishesLocalAndApprovedRemoteBackends() {
+        var local = AppSettings()
+        local.summarizerBackend = .builtIn
+        XCTAssertEqual(
+            DreamInferenceProvenance(settings: local),
+            .init(location: .local))
+
+        var remote = AppSettings()
+        remote.summarizerBackend = .openAICompatible
+        remote.openAIBaseURL = "https://inference.example.com/v1"
+        remote.approvedRemoteInferenceOrigins = ["https://inference.example.com"]
+        XCTAssertEqual(
+            DreamInferenceProvenance(settings: remote),
+            .init(location: .remote, origin: "https://inference.example.com"))
+    }
+
+    func testReportProvenanceExplainsRemoteAndUnparseableGeneration() throws {
+        let generatedAt = try date("2026-07-19T04:01:00Z")
+        let remote = DreamReport(
+            day: "2026-07-18",
+            generatedAt: generatedAt,
+            engineName: "OpenAI-compatible — test",
+            inferenceProvenance: .init(
+                location: .remote,
+                origin: "https://inference.example.com"),
+            narrative: "A focused day.")
+        XCTAssertTrue(remote.provenanceDescription.contains("approved remote inference"))
+        XCTAssertTrue(remote.provenanceDescription.contains("https://inference.example.com"))
+        XCTAssertFalse(remote.provenanceDescription.contains("Nothing left this Mac"))
+
+        let fallback = DreamReport(
+            day: "2026-07-18",
+            generatedAt: generatedAt,
+            engineName: nil,
+            fallbackReason: .unparseableResponse,
+            narrative: "Evidence only.")
+        XCTAssertTrue(fallback.provenanceDescription.contains("response could not be read"))
+        XCTAssertFalse(fallback.provenanceDescription.contains("No model was reachable"))
+    }
+
     // MARK: - Fallback compilation
 
     func testFallbackReportIsEvidenceOnlyAndDeterministic() throws {
         let evidence = try sampleEvidence()
         let generatedAt = try date("2026-07-19T04:01:00Z")
         let report = DreamCompiler.fallbackReport(
-            from: evidence, generatedAt: generatedAt, note: "No model.")
+            from: evidence, generatedAt: generatedAt,
+            reason: .engineUnavailable, note: "No model.")
         XCTAssertNil(report.engineName)
         XCTAssertTrue(report.isFallback)
+        XCTAssertEqual(report.fallbackReason, .engineUnavailable)
         XCTAssertEqual(report.day, "2026-07-18")
         XCTAssertTrue(report.narrative.contains("1 recorded meeting"))
         XCTAssertTrue(report.narrative.contains("4h 0m"))
@@ -209,13 +293,30 @@ final class DreamingTests: XCTestCase {
         XCTAssertEqual(report.topActions.count, 1)
         XCTAssertTrue(try XCTUnwrap(report.topActions.first)
             .contains("Send the launch checklist"))
+        XCTAssertTrue(try XCTUnwrap(report.topActions.first)
+            .contains("completion not tracked"))
         XCTAssertTrue(report.repeatedWork.isEmpty)
         XCTAssertTrue(report.suggestedChecks.isEmpty)
         XCTAssertTrue(report.frictions.isEmpty)
         XCTAssertEqual(
             report,
             DreamCompiler.fallbackReport(from: evidence, generatedAt: generatedAt,
-                                         note: "No model."))
+                                         reason: .engineUnavailable, note: "No model."))
+    }
+
+    func testFallbackDoesNotPromoteAnotherOwnersAction() throws {
+        var evidence = try sampleEvidence()
+        evidence.meetings[0].outcomes.actionItems = [
+            .init(text: "Review the appcast", owner: "Ana"),
+        ]
+        evidence.openActions = ["- [ ] Review the appcast (owner: Ana) — `abcd1234`"]
+
+        let report = DreamCompiler.fallbackReport(
+            from: evidence,
+            generatedAt: try date("2026-07-19T04:01:00Z"),
+            reason: .engineUnavailable,
+            note: "No model.")
+        XCTAssertTrue(report.topActions.isEmpty)
     }
 
     func testEvidencePackCitesMeetingsAndKeepsWindowLabeled() throws {

@@ -23,12 +23,60 @@ enum DreamDay {
     }
 }
 
+/// Where the configured Main LLM processed a dream. Reports retain this
+/// alongside the engine name so the morning surface can describe the actual
+/// privacy boundary instead of assuming every successful engine was local.
+struct DreamInferenceProvenance: Codable, Equatable, Sendable {
+    enum Location: String, Codable, Equatable, Sendable {
+        case local
+        case remote
+    }
+
+    var location: Location
+    /// Canonical scheme/host/port for approved remote inference. Paths, query
+    /// strings, credentials, and API keys are deliberately never persisted.
+    var origin: String?
+
+    init(location: Location, origin: String? = nil) {
+        self.location = location
+        self.origin = location == .remote ? origin : nil
+    }
+
+    init(settings: AppSettings) {
+        let rawURL: String?
+        switch settings.summarizerBackend {
+        case .builtIn, .appleIntelligence:
+            self.init(location: .local)
+            return
+        case .ollama:
+            rawURL = settings.ollamaBaseURL
+        case .openAICompatible:
+            rawURL = settings.openAIBaseURL
+        }
+
+        guard let rawURL, let url = URL(string: rawURL),
+              InferenceEndpointPolicy.requiresApproval(url) else {
+            self.init(location: .local)
+            return
+        }
+        self.init(location: .remote, origin: InferenceEndpointPolicy.origin(for: url))
+    }
+}
+
+/// Why an evidence-only brief was written. This is separate from engine
+/// availability: a reachable model can still return an unreadable payload.
+enum DreamFallbackReason: String, Codable, Equatable, Sendable {
+    case engineUnavailable
+    case unparseableResponse
+}
+
 /// One overnight retrospective of a single local calendar day. Persisted as
 /// `dreams/<day>.json` (+ a rendered `.md` sibling) and shown on Today the
-/// next morning. `engineName == nil` marks the deterministic evidence-only
-/// fallback written when no model was reachable overnight.
+/// next morning. `engineName == nil` marks a deterministic evidence-only
+/// fallback; `fallbackReason` records whether the engine was unavailable or
+/// returned an unreadable response.
 struct DreamReport: Codable, Equatable, Sendable {
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     var version: Int = DreamReport.currentVersion
     /// The analyzed local calendar day ("yyyy-MM-dd"), i.e. yesterday at
@@ -36,6 +84,10 @@ struct DreamReport: Codable, Equatable, Sendable {
     var day: String
     var generatedAt: Date
     var engineName: String?
+    /// Nil only for version-1 reports written before provenance was tracked.
+    var inferenceProvenance: DreamInferenceProvenance?
+    /// Nil for model-generated reports and legacy evidence-only reports.
+    var fallbackReason: DreamFallbackReason?
     var narrative: String
     /// Critical items and regressions that deserve attention first.
     var attention: [String] = []
@@ -50,11 +102,36 @@ struct DreamReport: Codable, Equatable, Sendable {
 
     var isFallback: Bool { engineName == nil }
 
+    /// Shared by Today and the Markdown rendering so both surfaces tell the
+    /// same truth about local/remote inference and fallback cause.
+    var provenanceDescription: String {
+        if let engineName {
+            switch inferenceProvenance?.location {
+            case .local:
+                return "Dreamed by \(engineName) on this Mac."
+            case .remote:
+                let destination = inferenceProvenance?.origin.map { " at \($0)" } ?? ""
+                return "Dreamed by \(engineName) using approved remote inference\(destination). "
+                    + "The report was saved in your local library."
+            case nil:
+                return "Dreamed by \(engineName) using your configured Main LLM. "
+                    + "The report was saved in your local library."
+            }
+        }
+        switch fallbackReason {
+        case .engineUnavailable:
+            return "No model was reachable overnight; this evidence-only brief was saved locally."
+        case .unparseableResponse:
+            return "The model replied, but its response could not be read; "
+                + "this evidence-only brief was saved locally."
+        case nil:
+            return "Written as an evidence-only fallback and saved locally."
+        }
+    }
+
     func markdown() -> String {
         var lines = ["# Morning brief — \(day)", ""]
-        lines.append(engineName.map {
-            "_Dreamed overnight by \($0). Everything stayed on this Mac._"
-        } ?? "_Written without a model — evidence only. Everything stayed on this Mac._")
+        lines.append("_\(provenanceDescription)_")
         if !narrative.isEmpty { lines += ["", narrative] }
         appendSection("Needs attention first", attention, to: &lines)
         appendSection("Top actions today", topActions, to: &lines, numbered: true)

@@ -18,11 +18,13 @@ struct DreamSynthesis: Equatable {
             && memory.isEmpty
     }
 
-    func report(dayKey: String, generatedAt: Date, engineName: String) -> DreamReport {
+    func report(dayKey: String, generatedAt: Date, engineName: String,
+                inferenceProvenance: DreamInferenceProvenance) -> DreamReport {
         DreamReport(
             day: dayKey,
             generatedAt: generatedAt,
             engineName: engineName,
+            inferenceProvenance: inferenceProvenance,
             narrative: narrative,
             attention: attention,
             repeatedWork: repeatedWork,

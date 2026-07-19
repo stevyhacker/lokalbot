@@ -169,7 +169,7 @@ enum DreamCompiler {
     /// questions, and carry-forward action candidates. It never analyzes,
     /// so it can never invent.
     static func fallbackReport(from evidence: DreamEvidence, generatedAt: Date,
-                               note: String) -> DreamReport {
+                               reason: DreamFallbackReason, note: String) -> DreamReport {
         let meetingCount = evidence.meetings.count
         let meetingPhrase = meetingCount == 1 ? "1 recorded meeting" : "\(meetingCount) recorded meetings"
         let narrative = note + " Yesterday: \(meetingPhrase), "
@@ -181,19 +181,20 @@ enum DreamCompiler {
         }
 
         let userActions = evidence.meetings.flatMap { meeting in
-            meeting.outcomes.userActionItems.map { actionLine($0, shortID: meeting.shortID) }
+            meeting.outcomes.userActionItems.map {
+                actionDescription($0, shortID: meeting.shortID)
+                    + " (completion not tracked)"
+            }
         }
-        let topActions = userActions.isEmpty
-            ? Array(evidence.openActions.prefix(3))
-            : Array(userActions.prefix(3))
 
         return DreamReport(
             day: evidence.dayKey,
             generatedAt: generatedAt,
             engineName: nil,
+            fallbackReason: reason,
             narrative: narrative,
             attention: Array(attention.prefix(5)),
-            topActions: topActions)
+            topActions: Array(userActions.prefix(3)))
     }
 
     private static func outcomes(for meeting: Meeting, storageRoot: URL) -> MeetingOutcomes {
@@ -204,10 +205,15 @@ enum DreamCompiler {
 
     private static func actionLine(_ item: MeetingOutcomes.ActionItem,
                                    shortID: String) -> String {
+        "- [ ] " + actionDescription(item, shortID: shortID)
+    }
+
+    private static func actionDescription(_ item: MeetingOutcomes.ActionItem,
+                                          shortID: String) -> String {
         var suffix: [String] = []
         if let owner = item.owner, !owner.isEmpty { suffix.append("owner: \(clean(owner))") }
         if let due = item.due, !due.isEmpty { suffix.append("due: \(clean(due))") }
-        return "- [ ] \(clean(item.text))"
+        return clean(item.text)
             + (suffix.isEmpty ? "" : " (\(suffix.joined(separator: ", ")))")
             + " — `\(shortID)`"
     }
