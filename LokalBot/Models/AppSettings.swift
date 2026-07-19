@@ -193,6 +193,18 @@ struct AppSettings: Codable, Equatable {
     /// refreshed. The scheduler clamps decoded values defensively.
     var dailyMemoryExportHour: Int = 18
 
+    // MARK: - Dreaming
+
+    /// Overnight retrospective: while the Mac is otherwise idle after
+    /// `dreamingHour`, compile the previous day's evidence into a morning
+    /// brief plus a structured local memory of active projects and goals,
+    /// shown on Today. Off by default — an explicit automation choice, like
+    /// routines; everything it reads and writes stays inside the storage root.
+    var dreamingEnabled: Bool = false
+    /// Local wall-clock hour (0...23) after which the overnight dream may run.
+    /// Nights the Mac slept through catch up at the next launch or wake.
+    var dreamingHour: Int = 4
+
     // MARK: - Safe routines
 
     /// Curated local writers only: routines have fixed read scopes, cannot run
@@ -512,6 +524,8 @@ struct AppSettings: Codable, Equatable {
         case dailyMemoryExportFolder
         case dailyMemoryExportFormat
         case dailyMemoryExportHour
+        case dreamingEnabled
+        case dreamingHour
         case memoryRoutinesEnabled
         case memoryRoutineFolder
         case enabledMemoryRoutines
@@ -637,6 +651,8 @@ struct AppSettings: Codable, Equatable {
         try c.encode(dailyMemoryExportFolder, forKey: .dailyMemoryExportFolder)
         try c.encode(dailyMemoryExportFormat, forKey: .dailyMemoryExportFormat)
         try c.encode(min(23, max(0, dailyMemoryExportHour)), forKey: .dailyMemoryExportHour)
+        try c.encode(dreamingEnabled, forKey: .dreamingEnabled)
+        try c.encode(min(23, max(0, dreamingHour)), forKey: .dreamingHour)
         try c.encode(memoryRoutinesEnabled, forKey: .memoryRoutinesEnabled)
         try c.encode(memoryRoutineFolder, forKey: .memoryRoutineFolder)
         try c.encode(enabledMemoryRoutines, forKey: .enabledMemoryRoutines)
@@ -760,6 +776,13 @@ struct AppSettings: Codable, Equatable {
             23,
             max(0, (try? c.decode(Int.self, forKey: .dailyMemoryExportHour))
                 ?? defaults.dailyMemoryExportHour))
+        dreamingEnabled =
+            (try? c.decode(Bool.self, forKey: .dreamingEnabled))
+            ?? defaults.dreamingEnabled
+        dreamingHour = min(
+            23,
+            max(0, (try? c.decode(Int.self, forKey: .dreamingHour))
+                ?? defaults.dreamingHour))
         memoryRoutinesEnabled =
             (try? c.decode(Bool.self, forKey: .memoryRoutinesEnabled))
             ?? defaults.memoryRoutinesEnabled

@@ -60,6 +60,8 @@ On-disk library (rooted at the bundle id, overridable with `LOKALBOT_STORAGE_ROO
 ~/Library/Application Support/me.dotenv.LokalBot/
 ├── meetings/YYYY/MM/dd-slug/   # mic.m4a, system.m4a, meta.json, transcript.{json,md}, summary.md
 ├── journal/YYYY-MM-DD.md       # day digests
+├── dreams/YYYY-MM-DD.{json,md} # overnight "dreaming" retrospectives (per analyzed day)
+├── memory/memory.{json,md}     # structured work memory (projects/goals) maintained by dreaming
 ├── activity/YYYY-MM-DD/shots/  # <epoch>.heic.enc (AES-GCM sealed, per-install Keychain key, 14-day retention)
 ├── control/                    # agent-access marker + wake files (Privacy toggle / MCP)
 ├── models/                     # downloaded GGUFs

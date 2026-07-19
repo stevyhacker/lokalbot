@@ -144,6 +144,7 @@ struct SettingsView: View {
             generalSection; cotypingSection; permissionsSection; storageSection; updatesSection
         case .recording:
             meetingsSection; processingSection; summarizationSection; dayTrackingSection; routinesSection
+            dreamingSection
         case .models:
             EmptyView() // handled by the ModelsView branch in body
         case .privacy:
@@ -158,7 +159,7 @@ struct SettingsView: View {
     /// plus a jump row into the Models tab when its keywords match.
     @ViewBuilder private var searchResults: some View {
         generalSection; cotypingSection; permissionsSection; meetingsSection
-        processingSection; summarizationSection; dayTrackingSection; routinesSection; privacySection
+        processingSection; summarizationSection; dayTrackingSection; routinesSection; dreamingSection; privacySection
         storageSection; updatesSection; memoryHealthSection; resourceMonitorSection; systemSection; agentCLISection
         if shows("Models", ["model", "models", "transcription", "summarization",
                             "cotyping", "embeddings", "llm", "whisper", "download",
@@ -524,6 +525,39 @@ struct SettingsView: View {
                     }
                 }
                 Text("Each routine has a fixed local read scope and writes Markdown only inside the chosen folder. Missed daily/weekly runs catch up after wake, each run stops after 30 seconds, and every attempt is recorded in the local database. Routines cannot execute scripts, contact services, send messages, or change source meetings.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder private var dreamingSection: some View {
+        if shows("Dreaming", ["dream", "dreaming", "overnight", "retrospective", "morning",
+                              "brief", "memory", "projects", "goals", "downtime", "sleep"]) {
+            Section("Dreaming") {
+                Toggle("Dream overnight", isOn: $app.settings.dreamingEnabled)
+                if app.settings.dreamingEnabled {
+                    Stepper(
+                        "Dream after \(String(format: "%02d:00", app.settings.dreamingHour))",
+                        value: $app.settings.dreamingHour,
+                        in: 0...23)
+                    HStack(spacing: 8) {
+                        Button("Dream now") { app.dreaming.dreamNow() }
+                            .disabled(app.dreaming.isDreaming)
+                        if app.dreaming.isDreaming {
+                            ProgressView().controlSize(.small)
+                            Text("Dreaming…").font(.caption).foregroundStyle(.secondary)
+                        } else if let last = app.dreaming.lastDreamedAt {
+                            Text("Last dreamed " + last.formatted(.relative(presentation: .named)))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    if let error = app.dreaming.lastError {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                }
+                Text("While your Mac is otherwise idle after the chosen hour, LokalBot compiles the previous day — meetings, outcomes, the day digest, and time totals — into a morning retrospective and an evolving structured memory of active projects and goals, shown on Today. "
+                     + "Nights the Mac slept through catch up at the next launch. Everything is read from and written to the local library; if no model is reachable, a plain evidence summary is written instead.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

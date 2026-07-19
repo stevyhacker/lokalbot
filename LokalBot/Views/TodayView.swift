@@ -17,6 +17,7 @@ struct TodayView: View {
                 if !gettingStartedDismissed {
                     GettingStartedCard()
                 }
+                dreamCard
                 nowCard
                 daySoFar
                 meetingsSection
@@ -34,7 +35,9 @@ struct TodayView: View {
             // otherwise keep showing yesterday.
             model.day = Date()
             model.reload(app: app)
+            loadDream()
         }
+        .onChange(of: app.latestDreamReport) { _, _ in loadDream() }
     }
 
     private var header: some View {
@@ -48,6 +51,65 @@ struct TodayView: View {
     }
 
     @State private var question = ""
+
+    // MARK: Dream (morning brief)
+
+    @State private var dream: DreamReport?
+
+    /// The overnight brief covers yesterday relative to the page's day; an
+    /// older leftover report is not shown as if it were fresh.
+    private func loadDream() {
+        let calendar = Calendar.current
+        let yesterday = DreamScheduler.previousDay(of: model.day, calendar: calendar)
+        let key = DreamDay.key(for: yesterday, calendar: calendar)
+        if let latest = app.latestDreamReport, latest.day == key {
+            dream = latest
+        } else {
+            dream = app.dreamStore.report(forDayKey: key)
+        }
+    }
+
+    @ViewBuilder private var dreamCard: some View {
+        if let dream {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "moon.zzz.fill")
+                        .foregroundStyle(Brand.teal)
+                    Text("While you were away")
+                        .font(.title3.bold())
+                        .accessibilityIdentifier("today.dream")
+                    Spacer()
+                    Text("Dreamed " + dream.generatedAt.formatted(.relative(presentation: .named)))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if !dream.narrative.isEmpty {
+                    Text(dream.narrative)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                if !dream.topActions.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Top actions today").font(.headline)
+                        ForEach(Array(dream.topActions.enumerated()), id: \.offset) { index, action in
+                            Text("\(index + 1). \(action)")
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+                DisclosureGroup("Full retrospective") {
+                    MarkdownText(dream.markdown())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(.top, 6)
+                }
+                Text(dream.engineName.map { "Dreamed by \($0) from your local library. Nothing left this Mac." }
+                    ?? "No model was reachable overnight — this brief lists evidence only. Dream again from Settings → Recording.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 12).fill(.quaternary.opacity(0.4)))
+        }
+    }
 
     // MARK: Now
 

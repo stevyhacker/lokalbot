@@ -357,6 +357,9 @@ final class AppState: ObservableObject {
                 if Self.memoryRoutinesChanged(from: oldValue, to: settings) {
                     applyMemoryRoutineSetting()
                 }
+                if Self.dreamingChanged(from: oldValue, to: settings) {
+                    applyDreamingSetting()
+                }
             }
         }
     }
@@ -398,6 +401,12 @@ final class AppState: ObservableObject {
             || old.enabledMemoryRoutines != new.enabledMemoryRoutines
             || old.memoryRoutineHour != new.memoryRoutineHour
             || old.memoryRoutineWeekday != new.memoryRoutineWeekday
+    }
+
+    private static func dreamingChanged(from old: AppSettings,
+                                        to new: AppSettings) -> Bool {
+        old.dreamingEnabled != new.dreamingEnabled
+            || old.dreamingHour != new.dreamingHour
     }
 
     // Navigation (main window): sidebar section, selected meeting, and a
@@ -502,6 +511,19 @@ final class AppState: ObservableObject {
                 && !cotypingGenerating
                 && !self.pipeline.hasActiveWork
         })
+    /// Overnight dreaming: the scheduler is observed by Settings (progress /
+    /// last-run), the store is read by Today, and `latestDreamReport` lets an
+    /// open Today window pick up a dream that finishes while it's visible.
+    @Published var latestDreamReport: DreamReport?
+    private var dreamObserver: AnyCancellable?
+    private(set) lazy var dreamStore = DreamStore(root: storage.rootURL)
+    private(set) lazy var dreaming: DreamScheduler = {
+        let scheduler = DreamScheduler()
+        dreamObserver = scheduler.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
+        return scheduler
+    }()
     /// Read-only calendar access (EventKit): confirms meetings and titles
     /// recordings. Concrete type so the settings UI observes its permission
     /// state; handed to the detector as the `CalendarEventProviding` seam.
@@ -842,6 +864,7 @@ final class AppState: ObservableObject {
         applyQuickRecallSetting()
         applyDailyMemoryExportSetting()
         applyMemoryRoutineSetting()
+        applyDreamingSetting()
         // First-run check. A genuinely-new user with missing permissions gets
         // onboarding (windowed — see AppDelegate). We persist the flag in every
         // case so established/permissioned users are recognised next launch and
@@ -992,6 +1015,7 @@ final class AppState: ObservableObject {
             quickRecallHotKey.stop()
             dailyMemoryExportScheduler.stop()
             memoryRoutines.stop()
+            dreaming.stop()
             chat.stop()
             dictation.stop()
             cotyping.stop()
@@ -1174,6 +1198,53 @@ final class AppState: ObservableObject {
         )) { [weak self] message in
             self?.lastError = message
         }
+    }
+
+    func applyDreamingSetting() {
+        let snapshot = settings
+        let storageRoot = storage.rootURL
+        dreaming.configure(
+            DreamScheduler.Configuration(
+                enabled: snapshot.dreamingEnabled,
+                hour: snapshot.dreamingHour),
+            hasReport: { dayKey in
+                DreamStore(root: storageRoot).hasReport(forDayKey: dayKey)
+            },
+            canRun: { [weak self] in
+                guard let self else { return false }
+                let cotypingGenerating: Bool
+                if case .generating = self.cotyping.state {
+                    cotypingGenerating = true
+                } else {
+                    cotypingGenerating = false
+                }
+                return !self.recording.isRecording
+                    && !self.recording.isStarting
+                    && !self.dictation.state.isWorking
+                    && !cotypingGenerating
+                    && !self.pipeline.hasActiveWork
+            },
+            dream: { [weak self] day in
+                guard let self else {
+                    throw TextEngineError.unavailable("LokalBot is shutting down.")
+                }
+                let service = DreamService(
+                    storageRoot: storageRoot,
+                    makeEngine: { [weak self] in
+                        guard let self else {
+                            throw TextEngineError.unavailable("LokalBot is shutting down.")
+                        }
+                        return try await self.pipeline.makeTextEngine(
+                            self.settings,
+                            priority: .background,
+                            purpose: "dreaming")
+                    })
+                let report = try await service.dream(day: day)
+                self.latestDreamReport = report
+            },
+            onError: { [weak self] message in
+                self?.lastError = message
+            })
     }
 
     func restartMemoryCapture() {
