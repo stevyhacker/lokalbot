@@ -6,7 +6,7 @@
 
 **A local LLM workhorse that keeps a private memory of your workday. Open source, on-device by default.**
 
-Records both sides of meetings without a bot, turns conversations and the workday context you choose into searchable memory, and helps you recall, dictate, write, and automate. No account, no telemetry, no LokalBot cloud. Don't take that on faith: with the built-in backend, required models already downloaded, and automatic update checks off, [point Little Snitch at it](#privacy--verify-it) while it records, transcribes, and summarizes a meeting, and watch the processing path stay silent.
+Records both sides of meetings without a bot, turns conversations and the workday context you choose into searchable memory, and helps you recall, dictate, write, and automate. No account, no telemetry, no LokalBot cloud. Don't take that on faith: with the built-in backend, required models already downloaded, and automatic update checks turned off in Settings, [point Little Snitch at it](#privacy--verify-it) while it records, transcribes, and summarizes a meeting, and watch the processing path stay silent.
 
 [![Download LokalBot for macOS](https://img.shields.io/badge/%E2%80%82Download%20for%20macOS%E2%80%82-LokalBot.dmg-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/stevyhacker/lokalbot/releases/latest/download/LokalBot.dmg)
 
@@ -136,7 +136,7 @@ Depending on the features and backends you enable, LokalBot may make these outbo
 1. **One-time model downloads** the first time you use a local engine — weights from Hugging Face, sherpa-onnx archives from GitHub. Once cached, those local engines no longer need network access.
 2. **A backend you explicitly configure** — point summaries, chat, or Agent Mode at Ollama or any OpenAI-compatible server and traffic goes only where you send it, after a per-origin approval. The built-in llama.cpp runtime is localhost-only.
 3. **Agent Mode setup, if you enable it** — a one-time, checksum-verified download of the Bun runtime and the lockfile-pinned pi package. The pi runtime disables its own telemetry and version checks; LLM requests stay local when you select the built-in backend.
-4. **App updates** via Sparkle — off by default; run a manual check or opt into scheduled checks.
+4. **App updates** via Sparkle — automatic checks are on by default for new installs and can be disabled in Settings; update downloads come from GitHub Releases.
 5. **Agent Mode commands you approve** — approved shell commands run with your macOS user permissions and can access any network destination available to your account. Their destinations and data handling are outside LokalBot's control.
 
 To verify the built-in path, download the required models first, select the built-in backend, turn off automatic update checks, then run Little Snitch (or `lsof -i -nP | grep LokalBot`) while it records, transcribes, and summarizes a meeting. LokalBot should make no outbound connection during that processing cycle; approved shell tools are separate processes and may connect when you permit them.
@@ -220,7 +220,7 @@ LokalBot is a personal recorder, not a covert bot — and you're responsible for
 <details>
 <summary>Known limitations</summary>
 
-- Automatic Sparkle update checks are off by default to avoid background network traffic; enable scheduled checks in Settings if you want them.
+- Automatic Sparkle update checks are on by default for new installs and can be disabled in Settings.
 - If system-audio tap creation fails, recording falls back gracefully to mic-only, with a warning.
 - AAC encoding assumes Float32 tap/mic formats — verified on M-series hardware.
 </details>

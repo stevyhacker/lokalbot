@@ -31,7 +31,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>LokalBot records your side of meetings from the microphone. Audio stays on this Mac; transcript text is sent off-device only if you explicitly approve a remote inference server.</string>
 	<key>SUEnableAutomaticChecks</key>
-	<false/>
+	<true/>
 	<key>SUFeedURL</key>
 	<string>https://github.com/stevyhacker/lokalbot/releases/latest/download/appcast.xml</string>
 	<key>SUPublicEDKey</key>

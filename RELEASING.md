@@ -92,7 +92,7 @@ Add the Sparkle Info.plist keys via `project.yml` (so xcodegen writes them into
 ```yaml
         SUFeedURL: https://github.com/stevyhacker/lokalbot/releases/latest/download/appcast.xml
         SUPublicEDKey: R1A2lIfQ82UnkmUd12kwgpiS3tOlb6D0pVK8sKSrZdA=
-        SUEnableAutomaticChecks: true        # optional: opt-in auto-update checks
+        SUEnableAutomaticChecks: true        # default on for new installs
 ```
 
 `SUPublicEDKey` must match the private key used by `sign_update` at release time.

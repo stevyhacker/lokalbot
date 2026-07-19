@@ -37,8 +37,9 @@ The app may make these outbound connections:
 - **Models:** model metadata and model files from Hugging Face or a model
   publisher's download host. Selected first-use models can download
   automatically; other downloads start when you request them.
-- **Updates:** the public GitHub Releases appcast and a signed update when you
-  check for updates or enable automatic update checks.
+- **Updates:** the public GitHub Releases appcast and a signed update. Automatic
+  checks are enabled for new installs and can be disabled in Settings; you can
+  also run a manual check.
 - **Optional remote inference:** an Ollama or OpenAI-compatible URL that you
   configure. Loopback URLs stay on your Mac. Before a non-loopback server can
   receive meeting, workday, or agent context, LokalBot requires approval for

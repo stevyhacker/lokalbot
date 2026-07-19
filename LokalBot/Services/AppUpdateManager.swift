@@ -36,8 +36,8 @@ final class AppUpdateManager: ObservableObject {
     }
 
     /// Sparkle's automatic-check preference, surfaced as a Settings toggle.
-    /// Local-first default is off (`SUEnableAutomaticChecks=false` in Info.plist);
-    /// flipping this persists through Sparkle.
+    /// New installs default on (`SUEnableAutomaticChecks=true` in Info.plist);
+    /// changing this persists through Sparkle and overrides the bundled default.
     var automaticallyChecksForUpdates: Bool {
         get { updaterController.updater.automaticallyChecksForUpdates }
         set {

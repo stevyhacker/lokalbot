@@ -161,7 +161,8 @@ targetTemplates:
         SUFeedURL: https://github.com/stevyhacker/lokalbot/releases/latest/download/appcast.xml
         SUPublicEDKey: R1A2lIfQ82UnkmUd12kwgpiS3tOlb6D0pVK8sKSrZdA=
         SUScheduledCheckInterval: 86400
-        SUEnableAutomaticChecks: false
+        # New installs check automatically; Sparkle persists later user changes.
+        SUEnableAutomaticChecks: true
     settings:
       base:
         SWIFT_VERSION: "5.10"

@@ -14,7 +14,7 @@ Two deliverables:
 
 - **Focus on** (no notification pop-ins), Dark Mode, tidy menu bar, hide desktop icons: `defaults write com.apple.finder CreateDesktop false && killall Finder` (revert with `true` after).
 - Record with **⌘⇧5 → Record Selected Portion**, a 16:9 region (e.g. 1920×1080). No voiceover — social autoplays muted; captions carry the story in the edit.
-- LokalBot window ~1280×800, centered. Automatic update checks stay **off** (default) — matters for Demo B's honesty.
+- LokalBot window ~1280×800, centered. Turn automatic update checks **off** in Settings — matters for Demo B's honesty.
 - Keep every raw take. When someone on HN asks "is the demo edited?", the answer is a link to the uncut file.
 
 ## Demo A — "The recap writes itself"
