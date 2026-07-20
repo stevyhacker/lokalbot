@@ -207,7 +207,9 @@ final class DreamingTests: XCTestCase {
     }
 
     func testDreamingActivationBoundaryDefaultsAndRoundTrips() throws {
-        XCTAssertNil(AppSettings().dreamingFirstEligibleDayKey)
+        let defaults = AppSettings()
+        XCTAssertTrue(defaults.dreamingEnabled)
+        XCTAssertNil(defaults.dreamingFirstEligibleDayKey)
 
         var settings = AppSettings()
         settings.dreamingEnabled = true
@@ -220,6 +222,7 @@ final class DreamingTests: XCTestCase {
         let legacy = try JSONDecoder().decode(
             AppSettings.self,
             from: Data(#"{"autoTranscribe":false}"#.utf8))
+        XCTAssertTrue(legacy.dreamingEnabled)
         XCTAssertNil(legacy.dreamingFirstEligibleDayKey)
     }
 

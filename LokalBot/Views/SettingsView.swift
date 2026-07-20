@@ -213,7 +213,7 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                     Divider()
                     Toggle("Enable the system-wide Ask shortcut", isOn: $app.settings.quickRecallEnabled)
-                    Text("Press \(QuickRecallHotKeyController.shortcutLabel) from any app to search meetings, captured screen text, and saved moments. LokalBot registers only this shortcut and does not inspect other keystrokes.")
+                    Text("Press \(QuickRecallHotKeyController.shortcutLabel) from any app to search meetings, captured screen text, and saved moments—or ask the assistant without opening the main window. LokalBot registers only this shortcut and does not inspect other keystrokes.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }

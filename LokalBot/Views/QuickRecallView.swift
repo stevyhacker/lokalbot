@@ -1,11 +1,21 @@
 import AppKit
 import SwiftUI
 
-/// Compact system-wide recall surface. It intentionally stays a search/launch
-/// window: richer filtering and the assistant conversation continue in Ask.
+/// Compact system-wide search and assistant surface. Typing keeps local recall
+/// instant; the pinned Ask row (or Return) answers in this window, with the full
+/// Ask section still available when a conversation needs more room.
 struct QuickRecallView: View {
     @EnvironmentObject private var app: AppState
+
+    var body: some View {
+        QuickRecallContent(model: app.chat)
+    }
+}
+
+private struct QuickRecallContent: View {
+    @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject var model: ChatViewModel
 
 #if LOKALBOT_UI_TEST_HOST
     @State private var query = ProcessInfo.processInfo
@@ -17,6 +27,7 @@ struct QuickRecallView: View {
     @State private var screenHits: [ActivityStore.OCRHit] = []
     @State private var savedMoments: [ActivityStore.SavedMoment] = []
     @State private var selection = 0
+    @State private var showingConversation = false
     @State private var searchTask: Task<Void, Never>?
     @FocusState private var inputFocused: Bool
 
@@ -24,13 +35,16 @@ struct QuickRecallView: View {
         VStack(spacing: 0) {
             searchField
             Divider()
-            resultList
+            content
         }
         .frame(width: 660, height: 480)
         .background(.regularMaterial)
         .onAppear {
             inputFocused = true
             savedMoments = app.activityStore.savedMoments(limit: 200)
+            if model.isResponding {
+                showingConversation = true
+            }
             if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 search()
             }
@@ -38,13 +52,17 @@ struct QuickRecallView: View {
         .onDisappear { searchTask?.cancel() }
         .onChange(of: query) {
             selection = 0
-            search()
+            if !showingConversation {
+                search()
+            }
         }
         .onKeyPress(.upArrow) {
+            guard !showingConversation else { return .ignored }
             moveSelection(by: -1)
             return .handled
         }
         .onKeyPress(.downArrow) {
+            guard !showingConversation else { return .ignored }
             moveSelection(by: 1)
             return .handled
         }
@@ -56,22 +74,51 @@ struct QuickRecallView: View {
 
     private var searchField: some View {
         HStack(spacing: 10) {
-            Image(systemName: "sparkle.magnifyingglass")
+            if showingConversation {
+                Button(action: showRecall) {
+                    Image(systemName: "chevron.left")
+                }
+                .buttonStyle(.plain)
                 .font(.title2)
                 .foregroundStyle(.tint)
-            TextField("Search meetings and screen context…", text: $query)
+                .accessibilityLabel("Back to recall")
+            } else {
+                Image(systemName: "sparkle.magnifyingglass")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+            }
+            TextField(
+                showingConversation ? "Ask a follow-up…" : "Search or ask anything…",
+                text: $query)
                 .textFieldStyle(.plain)
                 .font(.title3)
                 .focused($inputFocused)
                 .onSubmit { runSelectedResult() }
                 .accessibilityIdentifier("quickRecall.input")
-            if !query.isEmpty {
+            if showingConversation && model.isResponding {
+                Button(action: model.stop) {
+                    Image(systemName: "stop.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Stop")
+                .accessibilityLabel("Stop answer")
+            } else if !query.isEmpty {
                 Button { query = "" } label: {
                     Image(systemName: "xmark.circle.fill")
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("Clear")
+            }
+            if showingConversation {
+                Button(action: openFullAsk) {
+                    Image(systemName: "arrow.up.right.square")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Open full Ask")
+                .accessibilityLabel("Open full Ask")
             }
             Text(QuickRecallHotKeyController.shortcutLabel)
                 .font(.caption.monospaced())
@@ -81,15 +128,46 @@ struct QuickRecallView: View {
         .padding(.vertical, 16)
     }
 
+    @ViewBuilder private var content: some View {
+        if showingConversation {
+            ChatTranscriptView(model: model)
+        } else {
+            resultList
+        }
+    }
+
     @ViewBuilder private var resultList: some View {
         if rows.isEmpty {
-            ContentUnavailableView(
-                query.isEmpty ? "No saved moments yet" : "No local matches",
-                systemImage: query.isEmpty ? "bookmark" : "magnifyingglass",
-                description: Text(query.isEmpty
-                    ? "Bookmark a frame in Timeline and it will appear here."
-                    : "Press Return to ask the assistant instead."))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ContentUnavailableView {
+                Label("Ask anything", systemImage: "sparkle.magnifyingglass")
+            } description: {
+                Text("Type a question and press Return. Local meeting, screen, and saved-moment matches appear as you type.")
+                    .frame(maxWidth: 420)
+            } actions: {
+                VStack(spacing: 7) {
+                    ForEach(Array(model.suggestions.prefix(3).enumerated()), id: \.offset) { index, suggestion in
+                        Button { ask(suggestion) } label: {
+                            HStack {
+                                Text(suggestion)
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                Spacer(minLength: 8)
+                                Image(systemName: "arrow.up.circle.fill")
+                                    .foregroundStyle(.tint)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: 420)
+                            .background(.quaternary.opacity(0.5),
+                                        in: RoundedRectangle(cornerRadius: Brand.Radius.control))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("quickRecall.suggestion.\(index)")
+                    }
+                }
+                .padding(.top, 4)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
@@ -144,15 +222,15 @@ struct QuickRecallView: View {
                 subtitle: hit.kind == .segment ? "Meeting transcript" : "Meeting \(hit.kind.rawValue)",
                 snippet: hit.snippet)
         }
-        return saved + screens + meetings + [
-            .ask(query: trimmed, title: "Ask about “\(trimmed)”", subtitle: "Open Ask", snippet: nil),
-        ]
+        return [
+            .ask(query: trimmed, title: "Ask about “\(trimmed)”", subtitle: "Answer here", snippet: nil),
+        ] + saved + screens + meetings
     }
 
     private func search() {
         searchTask?.cancel()
         let currentQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !currentQuery.isEmpty else {
+        guard !showingConversation, !currentQuery.isEmpty else {
             meetingHits = []
             screenHits = []
             return
@@ -166,15 +244,19 @@ struct QuickRecallView: View {
     }
 
     private func moveSelection(by offset: Int) {
-        guard !rows.isEmpty else { return }
+        guard !showingConversation, !rows.isEmpty else { return }
         selection = (selection + offset + rows.count) % rows.count
     }
 
     private func runSelectedResult() {
+        let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if showingConversation {
+            ask(value)
+            return
+        }
         if rows.indices.contains(selection) {
             run(rows[selection])
         } else {
-            let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !value.isEmpty else { return }
             run(.ask(query: value, title: value, subtitle: "", snippet: nil))
         }
@@ -187,8 +269,34 @@ struct QuickRecallView: View {
         case .meeting(let hit):
             app.openSearchHit(hit)
         case .ask(let query):
-            app.openAsk(query: query, submit: true)
+            ask(query)
+            return
         }
+        WindowAccess.shared.open("main")
+        dismiss()
+    }
+
+    private func ask(_ question: String) {
+        let value = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, !model.isResponding else { return }
+        searchTask?.cancel()
+        showingConversation = true
+        query = ""
+        selection = 0
+        model.send(value)
+        inputFocused = true
+    }
+
+    private func showRecall() {
+        query = ""
+        selection = 0
+        showingConversation = false
+        savedMoments = app.activityStore.savedMoments(limit: 200)
+        inputFocused = true
+    }
+
+    private func openFullAsk() {
+        app.openAsk()
         WindowAccess.shared.open("main")
         dismiss()
     }

@@ -198,9 +198,9 @@ struct AppSettings: Codable, Equatable {
     /// Overnight retrospective: while the Mac is otherwise idle after
     /// `dreamingHour`, compile the previous day's evidence into a morning
     /// brief plus a structured local memory of active projects and goals,
-    /// shown on Today. Off by default — an explicit automation choice, like
-    /// routines; everything it reads and writes stays inside the storage root.
-    var dreamingEnabled: Bool = false
+    /// shown on Today. On by default; everything it reads and writes stays
+    /// inside the storage root, and users can turn it off at any time.
+    var dreamingEnabled: Bool = true
     /// Local wall-clock hour (0...23) after which the overnight dream may run.
     /// Nights the Mac slept through catch up at the next launch or wake.
     var dreamingHour: Int = 4

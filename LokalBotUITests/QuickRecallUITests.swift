@@ -11,7 +11,7 @@ final class QuickRecallUITests: XCTestCase {
         continueAfterFailure = false
         fixture = try SyntheticFixture.plant()
         var environment = ["LOKALBOT_UI_TEST_WINDOW": "quick-recall"]
-        if name.contains("testSearchShowsLocalMeetingEvidenceAndAskFallback") {
+        if name.contains("testSearchShowsLocalMeetingEvidenceAndInlineAsk") {
             // Seed the complete query before SwiftUI mounts. The clear test
             // below still drives real typing, while this result test avoids a
             // race among eight per-character debounce tasks on hosted Macs.
@@ -33,7 +33,7 @@ final class QuickRecallUITests: XCTestCase {
         UITestHarness.cleanUp(defaultsSuiteName: defaultsSuiteName)
     }
 
-    func testSearchShowsLocalMeetingEvidenceAndAskFallback() {
+    func testSearchShowsLocalMeetingEvidenceAndInlineAsk() {
         XCTAssertEqual(input.value as? String, "failover",
                        "seeded Quick Recall query did not render")
 
@@ -51,26 +51,28 @@ final class QuickRecallUITests: XCTestCase {
                       "Quick Recall did not identify the local evidence type")
 
         let askSubtitle = app.staticTexts.matching(NSPredicate(
-            format: "identifier == 'quickRecall.row.ask.failover' AND (label == 'Open Ask' OR value == 'Open Ask')"))
+            format: "identifier == 'quickRecall.row.ask.failover' AND (label == 'Answer here' OR value == 'Answer here')"))
             .firstMatch
         XCTAssertTrue(askSubtitle.waitForExistence(timeout: 3),
-                      "Quick Recall did not include the assistant fallback")
+                      "Quick Recall did not include the inline assistant action")
     }
 
-    func testClearReturnsToSavedMomentEmptyState() {
-        XCTAssertTrue(text(containing: "No saved moments yet")
-            .waitForExistence(timeout: 5), "initial Quick Recall empty state missing")
+    func testClearReturnsToAskEmptyState() {
+        XCTAssertTrue(text(containing: "Ask anything")
+            .waitForExistence(timeout: 5), "initial Quick Recall Ask state missing")
+        XCTAssertTrue(app.buttons["quickRecall.suggestion.0"].exists,
+                      "Quick Recall did not offer an inline question suggestion")
         input.click()
         input.typeText("nothing-local-matches-this")
 
         let clear = app.buttons["Clear"]
         XCTAssertTrue(clear.waitForExistence(timeout: 4), "Quick Recall clear control missing")
-        XCTAssertTrue(text(containing: "Open Ask").waitForExistence(timeout: 4),
-                      "assistant fallback missing for an unmatched query")
+        XCTAssertTrue(text(containing: "Answer here").waitForExistence(timeout: 4),
+                      "inline assistant action missing for an unmatched query")
         clear.click()
 
-        XCTAssertTrue(text(containing: "No saved moments yet")
-            .waitForExistence(timeout: 5), "clearing did not restore the empty state")
+        XCTAssertTrue(text(containing: "Ask anything")
+            .waitForExistence(timeout: 5), "clearing did not restore the Ask state")
         XCTAssertFalse(clear.exists, "clear control remained visible for an empty query")
     }
 
