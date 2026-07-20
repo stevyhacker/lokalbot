@@ -517,6 +517,9 @@ final class AppState: ObservableObject {
     /// last-run), the store is read by Today, and `latestDreamReport` lets an
     /// open Today window pick up a dream that finishes while it's visible.
     @Published var latestDreamReport: DreamReport?
+    /// Settings' user-managed pin controls. The store remains the source of
+    /// truth; mutations reload it before saving to avoid stale-view writes.
+    @Published private(set) var dreamMemory: DreamMemory?
     private var dreamObserver: AnyCancellable?
     private(set) lazy var dreamStore = DreamStore(root: storage.rootURL)
     private(set) lazy var dreaming: DreamScheduler = {
@@ -1309,6 +1312,7 @@ final class AppState: ObservableObject {
                     })
                 let report = try await service.dream(target: target)
                 self.latestDreamReport = report
+                self.refreshDreamMemory()
             },
             onError: { [weak self] message in
                 self?.lastError = message
@@ -1337,6 +1341,32 @@ final class AppState: ObservableObject {
             return
         }
         dreaming.dreamNow()
+    }
+
+    func refreshDreamMemory() {
+        do {
+            dreamMemory = try dreamStore.loadMemory()
+        } catch {
+            dreamMemory = nil
+            lastError = "Could not load dream memory: \(error.localizedDescription)"
+        }
+    }
+
+    func setDreamMemoryPinned(_ pinned: Bool, for entry: DreamMemoryEntry) {
+        guard !dreaming.isDreaming else {
+            lastError = "Wait for the current dream to finish before changing pins."
+            return
+        }
+        do {
+            guard let updated = try dreamStore.setPinned(pinned, for: entry) else {
+                refreshDreamMemory()
+                lastError = "That dream memory item is no longer available."
+                return
+            }
+            dreamMemory = updated
+        } catch {
+            lastError = "Could not update dream memory: \(error.localizedDescription)"
+        }
     }
 
     func restartMemoryCapture() {

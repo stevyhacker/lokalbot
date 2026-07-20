@@ -50,6 +50,48 @@ enum HeadlessCommand: Equatable {
         }
         return nil
     }
+
+    /// Resolve the CLI's optional day without allowing a current/future day
+    /// to advance the durable memory watermark past days that have not yet
+    /// happened. Requiring the canonical key also rejects normalized dates
+    /// such as 2026-02-30 and ambiguous shorthand such as 2026-7-2.
+    static func validatedDreamTarget(
+        dayKey: String?,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) throws -> DreamScheduler.Target {
+        let day: Date
+        if let dayKey {
+            guard let parsed = DreamDay.date(fromKey: dayKey, calendar: calendar),
+                  DreamDay.key(for: parsed, calendar: calendar) == dayKey else {
+                throw DreamDayArgumentError.invalidFormat(dayKey)
+            }
+            day = parsed
+        } else {
+            day = DreamScheduler.previousDay(of: now, calendar: calendar)
+        }
+
+        let target = DreamScheduler.target(for: day, calendar: calendar)
+        let latestAllowed = DreamScheduler.previousDay(of: now, calendar: calendar)
+        guard target.day <= latestAllowed else {
+            throw DreamDayArgumentError.notHistorical(target.dayKey)
+        }
+        return target
+    }
+}
+
+enum DreamDayArgumentError: LocalizedError, Equatable {
+    case invalidFormat(String)
+    case notHistorical(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidFormat(let dayKey):
+            return "invalid day \(dayKey) (expected yyyy-MM-dd)"
+        case .notHistorical(let dayKey):
+            return "day \(dayKey) must be yesterday or earlier"
+        }
+    }
 }
 
 /// Executes headless subcommands against the app's real subsystems (pipeline,
@@ -169,17 +211,15 @@ struct HeadlessCommandRunner {
     /// pipeline, same spirit as --digest.
     private func runDream(dayKey: String?) {
         let calendar = Calendar.current
-        let day: Date
-        if let dayKey {
-            guard let parsed = DreamDay.date(fromKey: dayKey, calendar: calendar) else {
-                print("LokalBot --dream: invalid day \(dayKey) (expected yyyy-MM-dd)")
-                exit(2)
-            }
-            day = parsed
-        } else {
-            day = DreamScheduler.previousDay(of: Date(), calendar: calendar)
+        let target: DreamScheduler.Target
+        do {
+            target = try HeadlessCommand.validatedDreamTarget(
+                dayKey: dayKey,
+                calendar: calendar)
+        } catch {
+            print("LokalBot --dream: \(error.localizedDescription)")
+            exit(2)
         }
-        let target = DreamScheduler.target(for: day, calendar: calendar)
         Task { @MainActor in
             do {
                 let service = DreamService(

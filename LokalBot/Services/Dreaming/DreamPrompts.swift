@@ -127,9 +127,10 @@ enum DreamPrompts {
                             "reinforced_today": ["type": "boolean"],
                             "expired": ["type": "boolean"],
                         ],
-                        // expired stays out of required so a small model
-                        // omitting it still satisfies the grammar.
-                        "required": ["text", "horizon", "reinforced_today"],
+                        // Strict structured outputs require every declared
+                        // property. The prompt tells the model to return false
+                        // when the goal is still active.
+                        "required": ["text", "horizon", "reinforced_today", "expired"],
                     ],
                 ],
                 "recurring_patterns": stringList,

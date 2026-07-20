@@ -44,6 +44,7 @@ struct SettingsView: View {
             power.start()
             permissions.startPolling()
             app.calendar.refreshAuthorizationStatus()
+            app.refreshDreamMemory()
         }
         .onDisappear {
             power.stop()
@@ -532,7 +533,8 @@ struct SettingsView: View {
 
     @ViewBuilder private var dreamingSection: some View {
         if shows("Dreaming", ["dream", "dreaming", "overnight", "retrospective", "morning",
-                              "brief", "memory", "projects", "goals", "downtime", "sleep"]) {
+                              "brief", "memory", "projects", "goals", "pin", "pinned",
+                              "downtime", "sleep"]) {
             Section("Dreaming") {
                 Toggle("Dream overnight", isOn: Binding(
                     get: { app.settings.dreamingEnabled },
@@ -558,11 +560,62 @@ struct SettingsView: View {
                             .font(.caption).foregroundStyle(.orange)
                     }
                 }
+                if let memory = app.dreamMemory,
+                   !memory.activeProjects.isEmpty || !memory.workGoals.isEmpty {
+                    DisclosureGroup("Projects and goals") {
+                        Text("Pin items that should never age out, be evicted, or be expired by overnight dreaming.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !memory.activeProjects.isEmpty {
+                            Text("Active projects")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            ForEach(memory.activeProjects, id: \.name) { project in
+                                dreamMemoryPinRow(
+                                    title: project.name,
+                                    detail: project.status,
+                                    isPinned: project.pinned,
+                                    entry: .project(name: project.name))
+                            }
+                        }
+                        if !memory.workGoals.isEmpty {
+                            Text("Current goals")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            ForEach(memory.workGoals, id: \.text) { goal in
+                                dreamMemoryPinRow(
+                                    title: goal.text,
+                                    detail: goal.horizon,
+                                    isPinned: goal.pinned,
+                                    entry: .goal(text: goal.text))
+                            }
+                        }
+                    }
+                }
                 Text("While your Mac is otherwise idle after the chosen hour, LokalBot compiles the previous day — meetings, outcomes, the day digest, and time totals — into a morning retrospective and an evolving structured memory of active projects and goals, shown on Today. "
                      + "Nights the Mac slept through catch up at the next launch. Evidence and generated files stay in the local library. Generation uses your configured Main LLM, so an approved remote backend receives the compiled evidence; if no model is reachable, a plain evidence summary is written instead.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
+    }
+
+    private func dreamMemoryPinRow(
+        title: String,
+        detail: String,
+        isPinned: Bool,
+        entry: DreamMemoryEntry
+    ) -> some View {
+        Toggle(isOn: Binding(
+            get: { isPinned },
+            set: { app.setDreamMemoryPinned($0, for: entry) })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .disabled(app.dreaming.isDreaming)
     }
 
     @ViewBuilder private var privacySection: some View {

@@ -898,7 +898,7 @@ final class DreamingTests: XCTestCase {
         XCTAssertEqual(synthesis.memory.workGoals.map(\.expired), [true, false])
     }
 
-    func testSystemPromptAndSchemaCoverExpiredGoalsAsOptional() throws {
+    func testSystemPromptAndStrictSchemaRequireExpiredGoals() throws {
         XCTAssertTrue(DreamPrompts.system.contains("expired"))
 
         let properties = try XCTUnwrap(DreamPrompts.schema["properties"] as? [String: Any])
@@ -906,9 +906,8 @@ final class DreamingTests: XCTestCase {
         let items = try XCTUnwrap(goals["items"] as? [String: Any])
         let goalProperties = try XCTUnwrap(items["properties"] as? [String: Any])
         XCTAssertNotNil(goalProperties["expired"])
-        // Optional: a small model omitting it must still satisfy the grammar.
         let required = try XCTUnwrap(items["required"] as? [String])
-        XCTAssertFalse(required.contains("expired"))
+        XCTAssertTrue(required.contains("expired"))
     }
 
     // MARK: - Pinned memory
@@ -972,6 +971,34 @@ final class DreamingTests: XCTestCase {
         XCTAssertEqual(pinMentions, 2)
     }
 
+    func testStorePersistsProjectAndGoalPins() throws {
+        let store = DreamStore(root: try temporaryRoot())
+        let initial = DreamMemory(
+            updatedAt: try date("2026-07-19T04:01:00Z"),
+            activeProjects: [.init(name: "Anchor", status: "long-running",
+                                   lastActiveDay: "2026-07-18")],
+            workGoals: [.init(text: "North star", horizon: "always",
+                              lastReinforcedDay: "2026-07-18")])
+        try store.save(initial)
+
+        let projectUpdate = try XCTUnwrap(store.setPinned(
+            true,
+            for: .project(name: "anchor"),
+            at: try date("2026-07-19T05:00:00Z")))
+        XCTAssertTrue(try XCTUnwrap(projectUpdate.activeProjects.first).pinned)
+
+        let goalUpdate = try XCTUnwrap(store.setPinned(
+            true,
+            for: .goal(text: "north star"),
+            at: try date("2026-07-19T05:01:00Z")))
+        XCTAssertTrue(try XCTUnwrap(goalUpdate.workGoals.first).pinned)
+
+        let reloaded = try XCTUnwrap(store.loadMemory())
+        XCTAssertTrue(try XCTUnwrap(reloaded.activeProjects.first).pinned)
+        XCTAssertTrue(try XCTUnwrap(reloaded.workGoals.first).pinned)
+        XCTAssertEqual(reloaded.updatedAt, try date("2026-07-19T05:01:00Z"))
+    }
+
     // MARK: - Power gate
 
     func testDreamingRequiresACPowerAndNormalPowerMode() {
@@ -993,6 +1020,42 @@ final class DreamingTests: XCTestCase {
         // A following flag is not a day key.
         XCTAssertEqual(HeadlessCommand.parse(["LokalBot", "--dream", "--verbose"]),
                        .dream(dayKey: nil))
+    }
+
+    func testHeadlessDreamTargetDefaultsToYesterdayAndAcceptsOlderDays() throws {
+        let now = try date("2026-07-20T12:00:00Z")
+        let defaultTarget = try HeadlessCommand.validatedDreamTarget(
+            dayKey: nil,
+            now: now,
+            calendar: calendar)
+        XCTAssertEqual(defaultTarget.dayKey, "2026-07-19")
+
+        let historicalTarget = try HeadlessCommand.validatedDreamTarget(
+            dayKey: "2026-07-18",
+            now: now,
+            calendar: calendar)
+        XCTAssertEqual(historicalTarget.dayKey, "2026-07-18")
+    }
+
+    func testHeadlessDreamTargetRejectsCurrentAndFutureDays() throws {
+        let now = try date("2026-07-20T12:00:00Z")
+        for dayKey in ["2026-07-20", "2026-07-21"] {
+            XCTAssertThrowsError(try HeadlessCommand.validatedDreamTarget(
+                dayKey: dayKey,
+                now: now,
+                calendar: calendar)) { error in
+                    XCTAssertEqual(error as? DreamDayArgumentError, .notHistorical(dayKey))
+                }
+        }
+    }
+
+    func testHeadlessDreamTargetRejectsNonCanonicalDay() throws {
+        XCTAssertThrowsError(try HeadlessCommand.validatedDreamTarget(
+            dayKey: "2026-7-18",
+            now: try date("2026-07-20T12:00:00Z"),
+            calendar: calendar)) { error in
+                XCTAssertEqual(error as? DreamDayArgumentError, .invalidFormat("2026-7-18"))
+            }
     }
 
     // MARK: - Redaction

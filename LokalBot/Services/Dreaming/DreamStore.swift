@@ -18,6 +18,13 @@ enum DreamStoreError: LocalizedError {
     }
 }
 
+/// A user-manageable item in the durable work memory. Values identify entries
+/// by the same case-insensitive keys the nightly merge uses.
+enum DreamMemoryEntry: Equatable, Sendable {
+    case project(name: String)
+    case goal(text: String)
+}
+
 /// Persistence for dreaming artifacts, entirely inside the private storage
 /// root (never a user-chosen folder, unlike routines/exports — so plain
 /// overwrite is safe and no ownership sidecars are needed):
@@ -117,6 +124,37 @@ struct DreamStore {
         try writeMarkdown(memory.markdown(),
                           to: memoryDirectory.appendingPathComponent("\(Self.memoryFileName).md",
                                                                      isDirectory: false))
+    }
+
+    /// Reload before changing a pin so a Settings view cannot overwrite memory
+    /// written by a dream since the view appeared. Returns nil when the memory
+    /// or selected entry no longer exists.
+    @discardableResult
+    func setPinned(
+        _ pinned: Bool,
+        for entry: DreamMemoryEntry,
+        at date: Date = Date()
+    ) throws -> DreamMemory? {
+        guard var memory = try loadMemory() else { return nil }
+
+        switch entry {
+        case .project(let name):
+            guard let index = memory.activeProjects.firstIndex(where: {
+                $0.name.caseInsensitiveCompare(name) == .orderedSame
+            }) else { return nil }
+            guard memory.activeProjects[index].pinned != pinned else { return memory }
+            memory.activeProjects[index].pinned = pinned
+        case .goal(let text):
+            guard let index = memory.workGoals.firstIndex(where: {
+                $0.text.caseInsensitiveCompare(text) == .orderedSame
+            }) else { return nil }
+            guard memory.workGoals[index].pinned != pinned else { return memory }
+            memory.workGoals[index].pinned = pinned
+        }
+
+        memory.updatedAt = date
+        try save(memory)
+        return memory
     }
 
     /// Persist one complete dream. Memory is committed first, followed by the
