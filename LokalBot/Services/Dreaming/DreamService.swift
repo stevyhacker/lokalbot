@@ -52,44 +52,55 @@ struct DreamService {
         var report: DreamReport
         var updatedMemory = memory
 
-        do {
-            let selection = try await makeEngine()
-            let output = try await selection.engine.generate(
-                system: DreamPrompts.system,
-                prompt: DreamPrompts.prompt(evidence: evidence),
-                context: DreamPrompts.context(evidence: evidence, memory: contextMemory),
-                schema: DreamPrompts.schema)
-            try Task.checkCancellation()
-            if let synthesis = DreamPrompts.parse(output) {
-                report = synthesis.report(dayKey: evidence.dayKey,
-                                          generatedAt: now(),
-                                          engineName: selection.engine.displayName,
-                                          inferenceProvenance: selection.provenance)
-                if advancesMemory {
-                    updatedMemory = memory.merging(synthesis.memory,
-                                                   dreamDay: evidence.dayKey,
-                                                   at: now(),
-                                                   calendar: target.calendar)
-                }
-            } else {
-                lokalbotLog("dreaming: model reply was unparseable, writing evidence-only brief")
-                report = DreamCompiler.fallbackReport(
-                    from: evidence, generatedAt: now(),
-                    reason: .unparseableResponse,
-                    note: "The model's reply could not be read, so this brief lists evidence only.")
-            }
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            // Engine unavailable (no model prepared, server down, remote origin
-            // unapproved…). Still deliver the morning surface — evidence only,
-            // memory untouched — and mark the day done so the scheduler doesn't
-            // hammer a broken backend all night. "Dream now" can redo the day.
-            lokalbotLog("dreaming: engine unavailable, writing evidence-only brief error=\(error.localizedDescription)")
+        if evidence.isSubstantivelyEmpty {
+            // Nothing happened that day. Don't wake a model to say so — write
+            // the deterministic stub through the same save path so the day is
+            // durably marked dreamed and catch-up moves on. Memory carries
+            // forward untouched.
             report = DreamCompiler.fallbackReport(
                 from: evidence, generatedAt: now(),
-                reason: .engineUnavailable,
-                note: "No model was reachable overnight, so this brief lists evidence only.")
+                reason: .emptyDay,
+                note: "Nothing substantive was recorded, so there is no retrospective.")
+        } else {
+            do {
+                let selection = try await makeEngine()
+                let output = try await selection.engine.generate(
+                    system: DreamPrompts.system,
+                    prompt: DreamPrompts.prompt(evidence: evidence),
+                    context: DreamPrompts.context(evidence: evidence, memory: contextMemory),
+                    schema: DreamPrompts.schema)
+                try Task.checkCancellation()
+                if let synthesis = DreamPrompts.parse(output) {
+                    report = synthesis.report(dayKey: evidence.dayKey,
+                                              generatedAt: now(),
+                                              engineName: selection.engine.displayName,
+                                              inferenceProvenance: selection.provenance)
+                    if advancesMemory {
+                        updatedMemory = memory.merging(synthesis.memory,
+                                                       dreamDay: evidence.dayKey,
+                                                       at: now(),
+                                                       calendar: target.calendar)
+                    }
+                } else {
+                    lokalbotLog("dreaming: model reply was unparseable, writing evidence-only brief")
+                    report = DreamCompiler.fallbackReport(
+                        from: evidence, generatedAt: now(),
+                        reason: .unparseableResponse,
+                        note: "The model's reply could not be read, so this brief lists evidence only.")
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Engine unavailable (no model prepared, server down, remote origin
+                // unapproved…). Still deliver the morning surface — evidence only,
+                // memory untouched — and mark the day done so the scheduler doesn't
+                // hammer a broken backend all night. "Dream now" can redo the day.
+                lokalbotLog("dreaming: engine unavailable, writing evidence-only brief error=\(error.localizedDescription)")
+                report = DreamCompiler.fallbackReport(
+                    from: evidence, generatedAt: now(),
+                    reason: .engineUnavailable,
+                    note: "No model was reachable overnight, so this brief lists evidence only.")
+            }
         }
 
         report = report.redacted()

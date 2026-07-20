@@ -15,6 +15,7 @@ enum HeadlessCommand: Equatable {
     case record(seconds: Int)
     case shotTest
     case digest
+    case dream(dayKey: String?)
     case chat(question: String)
     case agent(prompt: String)
     case cotypingBench
@@ -36,6 +37,10 @@ enum HeadlessCommand: Equatable {
         }
         if args.contains("--shot-test") { return .shotTest }
         if args.contains("--digest") { return .digest }
+        if let flag = args.firstIndex(of: "--dream") {
+            let next = args.count > flag + 1 ? args[flag + 1] : nil
+            return .dream(dayKey: next.flatMap { $0.hasPrefix("--") ? nil : $0 })
+        }
         if args.contains("--cotyping-bench") { return .cotypingBench }
         if let flag = args.firstIndex(of: "--chat"), args.count > flag + 1 {
             return .chat(question: args[flag + 1])
@@ -61,6 +66,7 @@ struct HeadlessCommandRunner {
         case .record(let seconds): runRecord(seconds: seconds)
         case .shotTest: runShotTest()
         case .digest: runDigest()
+        case .dream(let dayKey): runDream(dayKey: dayKey)
         case .chat(let question): runChat(question: question)
         case .agent(let prompt): runAgent(prompt: prompt)
         case .cotypingBench: runCotypingBench()
@@ -157,6 +163,49 @@ struct HeadlessCommandRunner {
         }
     }
 
+    /// `LokalBot --dream [yyyy-MM-dd]`: dream one day (default: yesterday) and
+    /// exit. Bypasses the scheduler's hour/downtime/power gates like "Dream
+    /// now" — the caller explicitly asked. Test hook for the dreaming
+    /// pipeline, same spirit as --digest.
+    private func runDream(dayKey: String?) {
+        let calendar = Calendar.current
+        let day: Date
+        if let dayKey {
+            guard let parsed = DreamDay.date(fromKey: dayKey, calendar: calendar) else {
+                print("LokalBot --dream: invalid day \(dayKey) (expected yyyy-MM-dd)")
+                exit(2)
+            }
+            day = parsed
+        } else {
+            day = DreamScheduler.previousDay(of: Date(), calendar: calendar)
+        }
+        let target = DreamScheduler.target(for: day, calendar: calendar)
+        Task { @MainActor in
+            do {
+                let service = DreamService(
+                    storageRoot: app.storage.rootURL,
+                    makeEngine: {
+                        let settings = await app.settings
+                        let engine = try await app.pipeline.makeTextEngine(
+                            settings, purpose: "dreaming")
+                        return (engine, DreamInferenceProvenance(settings: settings))
+                    })
+                let report = try await service.dream(target: target)
+                let kind = report.isFallback
+                    ? "fallback (\(report.fallbackReason?.rawValue ?? "legacy"))"
+                    : "model (\(report.engineName ?? "?"))"
+                print("LokalBot --dream: \(kind) → "
+                      + app.dreamStore.reportJSONURL(forDayKey: target.dayKey).path)
+                await LlamaServer.shared.stop()
+                exit(0)
+            } catch {
+                print("LokalBot --dream: FAILED — \(error.localizedDescription)")
+                await LlamaServer.shared.stop()
+                exit(1)
+            }
+        }
+    }
+
     /// `LokalBot --chat "<question>"`: run the meeting chat agent once against
     /// the real engine + tools and print the answer. Test hook for the chat
     /// assistant, same spirit as --search / --digest.
@@ -170,7 +219,10 @@ struct HeadlessCommandRunner {
                     storage: app.storage, searchIndex: app.searchIndex, embeddingIndex: app.embeddingIndex,
                     activityStore: app.activityStore,
                     settings: { [store = app.settingsStore] in store.current })
-                let agent = ChatAgent(engine: engine, runner: tools)
+                var agent = ChatAgent(engine: engine, runner: tools)
+                agent.workMemory = ChatPrompt.workMemoryContext(
+                    memory: (try? app.dreamStore.loadMemory()) ?? nil,
+                    dreamingEnabled: app.settings.dreamingEnabled)
                 let answer = try await agent.respond(history: [], latest: question) { event in
                     switch event {
                     case .toolStarted(let call):

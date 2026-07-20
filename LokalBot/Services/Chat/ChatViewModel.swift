@@ -190,6 +190,9 @@ final class ChatViewModel: ObservableObject {
     private let makeEngine: () async throws -> TextEngine
     private let tools: ChatToolRunner
     private let store: ChatStore
+    /// Re-read per send so an overnight dream lands in the next question
+    /// without restarting the app. Empty when dreaming is off or has nothing.
+    private let workMemory: () -> String
     private var task: Task<Void, Never>?
     private struct RetryPayload {
         var prompt: String
@@ -197,10 +200,12 @@ final class ChatViewModel: ObservableObject {
     }
     private var retryPayloads: [UUID: RetryPayload] = [:]
 
-    init(makeEngine: @escaping () async throws -> TextEngine, tools: ChatToolRunner, store: ChatStore) {
+    init(makeEngine: @escaping () async throws -> TextEngine, tools: ChatToolRunner,
+         store: ChatStore, workMemory: @escaping () -> String = { "" }) {
         self.makeEngine = makeEngine
         self.tools = tools
         self.store = store
+        self.workMemory = workMemory
         let saved = store.loadAll()
         if let latest = saved.first {
             conversations = saved
@@ -353,7 +358,8 @@ final class ChatViewModel: ObservableObject {
         do {
             let engine = try await makeEngine()
             responsePhase = .startingAssistant
-            let agent = ChatAgent(engine: engine, runner: tools)
+            var agent = ChatAgent(engine: engine, runner: tools)
+            agent.workMemory = workMemory()
             let answer = try await agent.respond(history: history, latest: latest) { [weak self] event in
                 self?.apply(event, to: assistantID)
             }

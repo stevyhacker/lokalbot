@@ -30,6 +30,15 @@ struct DreamEvidence: Equatable {
     var priorMeetings: [PriorMeeting]
     /// Pre-rendered action-candidate lines from the window, `- [ ] …` style.
     var openActions: [String]
+
+    /// True when the analyzed day itself produced nothing worth a model pass:
+    /// no meetings, no digest, no saved moments, and less tracked time than a
+    /// brief wake-and-glance. The comparison window never counts — it is
+    /// context about other days, not evidence of this one.
+    var isSubstantivelyEmpty: Bool {
+        meetings.isEmpty && digest == nil && savedMoments.isEmpty
+            && stats.trackedSeconds < DreamCompiler.emptyDayTrackedSecondsFloor
+    }
 }
 
 /// Deterministic evidence gathering for one dreamed day plus the model-free
@@ -42,6 +51,9 @@ enum DreamCompiler {
     static let comparisonWindowDays = 14
     static let evidenceCharacterLimit = 24_000
     static let maxOpenActions = 30
+    /// Under five tracked minutes a day is treated as empty rather than worth
+    /// waking a model for.
+    static let emptyDayTrackedSecondsFloor: TimeInterval = 300
 
     static func compile(day: Date, storageRoot: URL,
                         calendar: Calendar = .current) throws -> DreamEvidence {

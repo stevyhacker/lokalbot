@@ -68,6 +68,7 @@ struct DreamInferenceProvenance: Codable, Equatable, Sendable {
 enum DreamFallbackReason: String, Codable, Equatable, Sendable {
     case engineUnavailable
     case unparseableResponse
+    case emptyDay
 }
 
 /// One overnight retrospective of a single local calendar day. Persisted as
@@ -124,6 +125,9 @@ struct DreamReport: Codable, Equatable, Sendable {
         case .unparseableResponse:
             return "The model replied, but its response could not be read; "
                 + "this evidence-only brief was saved locally."
+        case .emptyDay:
+            return "Nothing substantive was recorded that day, so no model ran; "
+                + "this placeholder just keeps the record complete."
         case nil:
             return "Written as an evidence-only fallback and saved locally."
         }
@@ -183,6 +187,9 @@ struct DreamMemoryUpdate: Equatable, Sendable {
         /// True only when evidence from the analyzed day, rather than the
         /// existing memory echoed in the prompt, reinforced this goal.
         var reinforcedToday: Bool
+        /// True when the day's evidence shows the goal was completed or
+        /// abandoned; the merge removes it instead of carrying it forward.
+        var expired: Bool = false
     }
 
     var activeProjects: [Project] = []
@@ -216,6 +223,9 @@ struct DreamMemory: Codable, Equatable, Sendable {
         /// Last day ("yyyy-MM-dd") a dream saw evidence of this project.
         var lastActiveDay: String
         var evidence: [String] = []
+        /// User-pinned entries are exempt from retention age-out and cap
+        /// eviction; a dream can update them but never remove them.
+        var pinned: Bool = false
     }
 
     struct Goal: Codable, Equatable, Sendable {
@@ -224,6 +234,9 @@ struct DreamMemory: Codable, Equatable, Sendable {
         /// normalized date.
         var horizon: String
         var lastReinforcedDay: String
+        /// User-pinned entries are exempt from retention age-out, cap
+        /// eviction, and model-proposed expiry.
+        var pinned: Bool = false
     }
 
     var version: Int = DreamMemory.currentVersion
@@ -242,8 +255,12 @@ struct DreamMemory: Codable, Equatable, Sendable {
     ///   refreshing the day stamp only when new or actually changed;
     /// - goals refresh (and new goals insert) only when the model explicitly
     ///   ties them to evidence from the analyzed day;
+    /// - a goal marked expired is removed (never inserted) — the one sanctioned
+    ///   removal besides age-out, because it requires day evidence, not absence;
     /// - entries the model did not mention are kept (a small model forgetting
     ///   a project must not erase it) but age out after the retention window;
+    /// - pinned entries sort first and skip the freshness filter, so neither
+    ///   retention, cap eviction, nor expiry can remove them;
     /// - patterns are a full replacement list, including an explicit empty list;
     /// - everything is capped so memory can never grow unbounded.
     func merging(_ update: DreamMemoryUpdate, dreamDay: String, at date: Date,
@@ -271,19 +288,27 @@ struct DreamMemory: Codable, Equatable, Sendable {
         merged.activeProjects = Array(
             projects
                 .filter {
-                    Self.isFresh($0.lastActiveDay, asOf: dreamDay,
-                                 retentionDays: Self.projectRetentionDays,
-                                 calendar: calendar)
+                    $0.pinned || Self.isFresh($0.lastActiveDay, asOf: dreamDay,
+                                              retentionDays: Self.projectRetentionDays,
+                                              calendar: calendar)
                 }
                 .sorted {
-                    $0.lastActiveDay == $1.lastActiveDay
+                    if $0.pinned != $1.pinned { return $0.pinned }
+                    return $0.lastActiveDay == $1.lastActiveDay
                         ? $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
                         : $0.lastActiveDay > $1.lastActiveDay
                 }
                 .prefix(Self.maxProjects))
 
         var goals = workGoals
-        for proposed in update.workGoals.prefix(Self.maxGoals) {
+        for proposed in update.workGoals where proposed.expired {
+            if let index = goals.firstIndex(where: {
+                $0.text.caseInsensitiveCompare(proposed.text) == .orderedSame
+            }), !goals[index].pinned {
+                goals.remove(at: index)
+            }
+        }
+        for proposed in update.workGoals.filter({ !$0.expired }).prefix(Self.maxGoals) {
             if let index = goals.firstIndex(where: {
                 $0.text.caseInsensitiveCompare(proposed.text) == .orderedSame
             }) {
@@ -299,12 +324,13 @@ struct DreamMemory: Codable, Equatable, Sendable {
         merged.workGoals = Array(
             goals
                 .filter {
-                    Self.isFresh($0.lastReinforcedDay, asOf: dreamDay,
-                                 retentionDays: Self.goalRetentionDays,
-                                 calendar: calendar)
+                    $0.pinned || Self.isFresh($0.lastReinforcedDay, asOf: dreamDay,
+                                              retentionDays: Self.goalRetentionDays,
+                                              calendar: calendar)
                 }
                 .sorted {
-                    $0.lastReinforcedDay == $1.lastReinforcedDay
+                    if $0.pinned != $1.pinned { return $0.pinned }
+                    return $0.lastReinforcedDay == $1.lastReinforcedDay
                         ? $0.text.localizedCaseInsensitiveCompare($1.text) == .orderedAscending
                         : $0.lastReinforcedDay > $1.lastReinforcedDay
                 }
@@ -322,7 +348,8 @@ struct DreamMemory: Codable, Equatable, Sendable {
             lines.append("_None observed yet._")
         } else {
             for project in activeProjects {
-                lines.append("- **\(project.name)** — \(project.status) _(last active \(project.lastActiveDay))_")
+                let stamp = (project.pinned ? "pinned, " : "") + "last active \(project.lastActiveDay)"
+                lines.append("- **\(project.name)** — \(project.status) _(\(stamp))_")
                 lines += project.evidence.map { "  - \($0)" }
             }
         }
@@ -330,7 +357,9 @@ struct DreamMemory: Codable, Equatable, Sendable {
         if workGoals.isEmpty {
             lines.append("_None observed yet._")
         } else {
-            lines += workGoals.map { "- \($0.text) _(\($0.horizon), reinforced \($0.lastReinforcedDay))_" }
+            lines += workGoals.map {
+                "- \($0.text) _(\($0.horizon), \($0.pinned ? "pinned, " : "")reinforced \($0.lastReinforcedDay))_"
+            }
         }
         lines += ["", "## Recurring patterns", ""]
         lines += recurringPatterns.isEmpty
@@ -370,5 +399,38 @@ struct DreamMemory: Codable, Equatable, Sendable {
         guard let cutoff = calendar.date(byAdding: .day, value: -retentionDays,
                                          to: reference) else { return true }
         return day >= cutoff
+    }
+}
+
+// `pinned` postdates the first memory files. Custom decoding (in extensions,
+// so the memberwise initializers keep their defaults) treats a missing key as
+// false; encoding stays synthesized and old readers ignore the extra key, so
+// the format version stays 1.
+extension DreamMemory.Project {
+    private enum DecodingKeys: String, CodingKey {
+        case name, status, lastActiveDay, evidence, pinned
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DecodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        status = try container.decode(String.self, forKey: .status)
+        lastActiveDay = try container.decode(String.self, forKey: .lastActiveDay)
+        evidence = try container.decodeIfPresent([String].self, forKey: .evidence) ?? []
+        pinned = try container.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
+    }
+}
+
+extension DreamMemory.Goal {
+    private enum DecodingKeys: String, CodingKey {
+        case text, horizon, lastReinforcedDay, pinned
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DecodingKeys.self)
+        text = try container.decode(String.self, forKey: .text)
+        horizon = try container.decode(String.self, forKey: .horizon)
+        lastReinforcedDay = try container.decode(String.self, forKey: .lastReinforcedDay)
+        pinned = try container.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
     }
 }

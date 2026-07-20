@@ -666,7 +666,13 @@ final class AppState: ObservableObject {
             embeddingIndex: embeddingIndex,
             activityStore: activityStore,
             settings: { [store = settingsStore] in store.current }),
-        store: ChatStore(rootURL: storage.rootURL))
+        store: ChatStore(rootURL: storage.rootURL),
+        workMemory: { [weak self] in
+            guard let self else { return "" }
+            return ChatPrompt.workMemoryContext(
+                memory: (try? self.dreamStore.loadMemory()) ?? nil,
+                dreamingEnabled: self.settings.dreamingEnabled)
+        })
 
     // Agent Mode (pi). Installer and tab manager are cheap; each tab lazily
     // spawns its own controller/process when AgentView mounts it.
@@ -1275,6 +1281,11 @@ final class AppState: ObservableObject {
                     && !cotypingGenerating
                     && !self.pipeline.hasActiveWork
                 guard lokalBotIsIdle else { return false }
+                guard DreamScheduler.powerAllowsDreaming(
+                    isOnBattery: PowerSourceMonitor.currentlyOnBattery(),
+                    isLowPower: ProcessInfo.processInfo.isLowPowerModeEnabled) else {
+                    return false
+                }
                 let userIdleSeconds = CGEventSource.secondsSinceLastEventType(
                     .combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
                 return DreamScheduler.isSystemIdle(for: userIdleSeconds)

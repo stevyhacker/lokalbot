@@ -228,6 +228,23 @@ final class DailyMemoryExportServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
     }
 
+    /// A freshly booted install has a `lokalbotv3.sqlite` file whose tables
+    /// are created lazily — a read-only snapshot taken in that window (the
+    /// headless `--dream` case) must see an empty day, not throw.
+    func testSnapshotToleratesDatabaseFileWithoutSchema() throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        FileManager.default.createFile(
+            atPath: root.appendingPathComponent("lokalbotv3.sqlite").path,
+            contents: Data())
+        let fileSource = FileDailyMemoryExportSource(root: root, calendar: calendar)
+        let start = calendar.startOfDay(for: day)
+        let snapshot = try fileSource.snapshot(
+            for: day, interval: DateInterval(start: start, duration: 86_400))
+        XCTAssertEqual(snapshot.stats.trackedSeconds, 0)
+        XCTAssertTrue(snapshot.savedMoments.isEmpty)
+        XCTAssertTrue(snapshot.appUsage.isEmpty)
+    }
+
     private func sampleSnapshot() -> DailyMemoryExportSnapshot {
         DailyMemoryExportSnapshot(
             day: day,

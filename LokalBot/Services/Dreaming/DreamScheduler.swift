@@ -294,6 +294,14 @@ final class DreamScheduler: ObservableObject {
         return date >= target
     }
 
+    /// Dreaming is deferred on battery or in Low Power Mode — an unattended
+    /// overnight model pass must never be the thing that drains the machine.
+    /// Sleep already pauses the minute tick; this covers the lid-open case.
+    nonisolated static func powerAllowsDreaming(isOnBattery: Bool,
+                                                isLowPower: Bool) -> Bool {
+        !isOnBattery && !isLowPower
+    }
+
     nonisolated static func isSystemIdle(
         for idleSeconds: TimeInterval,
         minimum: TimeInterval = minimumSystemIdleSeconds

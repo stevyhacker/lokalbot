@@ -101,7 +101,16 @@ protocol ChatToolRunner: AnyObject {
 /// tested without an engine.
 enum ChatPrompt {
 
-    static func systemPrompt(tools: [ChatToolSpec], libraryOverview: String) -> String {
+    /// The dream-maintained work memory as ambient chat context. Empty unless
+    /// dreaming is enabled and the memory actually holds something, so the
+    /// prompt never grows a vacant section.
+    static func workMemoryContext(memory: DreamMemory?, dreamingEnabled: Bool) -> String {
+        guard dreamingEnabled, let memory, !memory.isEmpty else { return "" }
+        return PromptContextSanitizer.sanitize(memory.markdown(), maxCharacters: 6_000)
+    }
+
+    static func systemPrompt(tools: [ChatToolSpec], libraryOverview: String,
+                             workMemory: String = "") -> String {
         var lines: [String] = []
         lines.append("""
         You are LokalBot's assistant. You answer questions about the user's \
@@ -153,6 +162,15 @@ enum ChatPrompt {
             lines.append("")
             lines.append("Current meeting library (for reference):")
             lines.append(libraryOverview)
+        }
+        if !workMemory.isEmpty {
+            lines.append("")
+            lines.append("""
+            The user's work memory — projects and goals distilled overnight from \
+            their recent workdays. Background context only: it may lag reality, \
+            so verify with tools before citing it as fact.
+            """)
+            lines.append(workMemory)
         }
         return lines.joined(separator: "\n")
     }
@@ -432,6 +450,9 @@ struct ChatAgent {
     var maxSteps = 4
     /// How many prior turns of the conversation to replay as context.
     var historyWindow = 8
+    /// Ambient work-memory context (see `ChatPrompt.workMemoryContext`);
+    /// empty when dreaming is off or has nothing yet.
+    var workMemory = ""
 
     struct Turn: Equatable {
         let role: ChatRole
@@ -444,7 +465,8 @@ struct ChatAgent {
                  onEvent: (ChatAgentEvent) -> Void) async throws -> String {
         let toolNames = Set(runner.specs.map(\.name))
         let system = ChatPrompt.systemPrompt(tools: runner.specs,
-                                             libraryOverview: runner.libraryOverview())
+                                             libraryOverview: runner.libraryOverview(),
+                                             workMemory: workMemory)
         var transcript: [String] = history.suffix(historyWindow).map {
             "\($0.role == .user ? "User" : "Assistant"): \($0.text)"
         }

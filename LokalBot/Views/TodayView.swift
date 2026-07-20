@@ -68,6 +68,17 @@ struct TodayView: View {
             store: app.dreamStore)
     }
 
+    /// A brief surfaced from an earlier day (empty days in between were
+    /// skipped) is labeled with the day it covers instead of "Dreamed …".
+    private func dreamCaption(_ dream: DreamReport) -> String {
+        if TodayDreamSelection.isCurrent(dream, referenceDate: model.day) {
+            return "Dreamed " + dream.generatedAt.formatted(.relative(presentation: .named))
+        }
+        let day = DreamDay.date(fromKey: dream.day)
+            .map { $0.formatted(date: .abbreviated, time: .omitted) } ?? dream.day
+        return "Your last working day — \(day)"
+    }
+
     @ViewBuilder private var dreamCard: some View {
         if let dream {
             VStack(alignment: .leading, spacing: 10) {
@@ -78,7 +89,7 @@ struct TodayView: View {
                         .font(.title3.bold())
                         .accessibilityIdentifier("today.dream")
                     Spacer()
-                    Text("Dreamed " + dream.generatedAt.formatted(.relative(presentation: .named)))
+                    Text(dreamCaption(dream))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if !dream.narrative.isEmpty {
@@ -261,15 +272,41 @@ struct TodayView: View {
 /// Pure report selection keeps the overnight/current-day boundary testable
 /// without mounting SwiftUI or relying on a stale `CaptureModel.day` value.
 enum TodayDreamSelection {
+    /// How many days back (yesterday included) the card will reach for a
+    /// substantive brief before going quiet.
+    static let lookbackDays = 5
+
+    /// Yesterday's brief when there is one; otherwise the newest substantive
+    /// brief within the lookback. Empty-day stubs exist only to mark their day
+    /// dreamed — they are never surfaced, and a returning user sees their last
+    /// real morning brief instead of "nothing was recorded".
     static func report(
         referenceDate: Date,
         latest: DreamReport?,
         store: DreamStore,
         calendar: Calendar = .current
     ) -> DreamReport? {
+        var day = DreamScheduler.previousDay(of: referenceDate, calendar: calendar)
+        for _ in 0..<lookbackDays {
+            let key = DreamDay.key(for: day, calendar: calendar)
+            let candidate = (latest?.day == key) ? latest : store.report(forDayKey: key)
+            if let candidate, candidate.fallbackReason != .emptyDay { return candidate }
+            guard let previous = calendar.date(byAdding: .day, value: -1, to: day) else {
+                return nil
+            }
+            day = previous
+        }
+        return nil
+    }
+
+    /// False when the report covers an older day than yesterday, so the card
+    /// can label it instead of presenting it as fresh.
+    static func isCurrent(
+        _ report: DreamReport,
+        referenceDate: Date,
+        calendar: Calendar = .current
+    ) -> Bool {
         let yesterday = DreamScheduler.previousDay(of: referenceDate, calendar: calendar)
-        let key = DreamDay.key(for: yesterday, calendar: calendar)
-        if let latest, latest.day == key { return latest }
-        return store.report(forDayKey: key)
+        return report.day == DreamDay.key(for: yesterday, calendar: calendar)
     }
 }

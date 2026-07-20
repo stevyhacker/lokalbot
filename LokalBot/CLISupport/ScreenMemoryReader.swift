@@ -335,7 +335,8 @@ struct SQLiteScreenMemoryReader: ScreenMemoryReading {
     func appUsage(from start: Date, to end: Date, limit: Int) throws
         -> [ScreenMemoryAppUsage] {
         try withConnection { connection in
-            try connection.query("""
+            guard try connection.tableExists("activity_blocks") else { return [] }
+            return try connection.query("""
                 SELECT app,
                        SUM(MIN(end, ?2) - MAX(start, ?1)) AS duration,
                        COUNT(*)
@@ -444,26 +445,38 @@ struct SQLiteScreenMemoryReader: ScreenMemoryReading {
 
     func daySummary(from start: Date, to end: Date) throws -> ScreenMemoryDaySummary {
         try withConnection { connection in
-            let activity = try connection.query("""
-                SELECT COALESCE(SUM(MIN(end, ?2) - MAX(start, ?1)), 0),
-                       COUNT(DISTINCT app), COUNT(*)
-                FROM activity_blocks WHERE end > ?1 AND start < ?2
-                """, bindings: [
-                    .double(start.timeIntervalSince1970),
-                    .double(end.timeIntervalSince1970),
-                ]) { row in
-                (
-                    sqlite3_column_double(row, 0),
-                    Int(sqlite3_column_int64(row, 1)),
-                    Int(sqlite3_column_int64(row, 2))
-                )
-            }.first ?? (0, 0, 0)
-            let screenshotCount = try connection.scalarInt("""
-                SELECT COUNT(*) FROM screenshots WHERE ts >= ?1 AND ts < ?2
-                """, bindings: [
-                    .double(start.timeIntervalSince1970),
-                    .double(end.timeIntervalSince1970),
-                ])
+            // Tables are created lazily by their writers, so a fresh install's
+            // database can legitimately have none of them yet.
+            let activity: (Double, Int, Int)
+            if try connection.tableExists("activity_blocks") {
+                activity = try connection.query("""
+                    SELECT COALESCE(SUM(MIN(end, ?2) - MAX(start, ?1)), 0),
+                           COUNT(DISTINCT app), COUNT(*)
+                    FROM activity_blocks WHERE end > ?1 AND start < ?2
+                    """, bindings: [
+                        .double(start.timeIntervalSince1970),
+                        .double(end.timeIntervalSince1970),
+                    ]) { row in
+                    (
+                        sqlite3_column_double(row, 0),
+                        Int(sqlite3_column_int64(row, 1)),
+                        Int(sqlite3_column_int64(row, 2))
+                    )
+                }.first ?? (0, 0, 0)
+            } else {
+                activity = (0, 0, 0)
+            }
+            let screenshotCount: Int
+            if try connection.tableExists("screenshots") {
+                screenshotCount = try connection.scalarInt("""
+                    SELECT COUNT(*) FROM screenshots WHERE ts >= ?1 AND ts < ?2
+                    """, bindings: [
+                        .double(start.timeIntervalSince1970),
+                        .double(end.timeIntervalSince1970),
+                    ])
+            } else {
+                screenshotCount = 0
+            }
             let savedCount: Int
             if try connection.tableExists("screen_bookmarks") {
                 savedCount = try connection.scalarInt("""

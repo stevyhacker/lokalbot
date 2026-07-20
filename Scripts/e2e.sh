@@ -146,6 +146,23 @@ else
   fail "digest: $OUT"
 fi
 
+echo "== T8b: dreaming (day retrospective → dreams/*.json + work memory) =="
+# The T2 fixture day has a real meeting → a substantive brief (model-written,
+# or the evidence-only fallback if no model is reachable — never an empty stub).
+OUT=$("$BIN" --dream 2026-06-10 2>/dev/null | tail -1)
+DREAM="$ROOT/dreams/2026-06-10.json"
+if [[ "$OUT" == *"--dream:"* && -s "$DREAM" && -s "$ROOT/memory/memory.json" ]] \
+   && ! grep -q '"emptyDay"' "$DREAM"; then
+  pass "fixture day dreamed: ${OUT#*--dream: }"
+else fail "fixture-day dream: $OUT"; fi
+# Yesterday is empty in this hermetic library → the model must be skipped and
+# a durable empty-day stub written so catch-up moves past the day.
+YDAY=$(date -v-1d +%F)
+OUT=$("$BIN" --dream 2>/dev/null | tail -1)
+if [[ "$OUT" == *"--dream: fallback (emptyDay)"* && -s "$ROOT/dreams/$YDAY.json" ]]; then
+  pass "empty yesterday stubbed without waking a model"
+else fail "empty-day dream: $OUT"; fi
+
 echo "== T9: chat assistant (tool-calling Q&A over meetings) =="
 # Reuses the T2 fixture (Redis / eviction policy) in the test library.
 # The agent must search/read the meeting and ground its answer in it.

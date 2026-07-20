@@ -193,6 +193,38 @@ final class ChatAgentTests: XCTestCase {
         XCTAssertTrue(prompt.contains("JSON"))
     }
 
+    func testSystemPromptIncludesWorkMemoryOnlyWhenProvided() {
+        let without = ChatPrompt.systemPrompt(tools: [], libraryOverview: "")
+        XCTAssertFalse(without.contains("work memory"))
+
+        let with = ChatPrompt.systemPrompt(
+            tools: [],
+            libraryOverview: "",
+            workMemory: "## Active projects\n- Atlas — in review")
+        XCTAssertTrue(with.contains("work memory"))
+        XCTAssertTrue(with.contains("Atlas — in review"))
+        // Memory is background context, not ground truth the model may cite as fact.
+        XCTAssertTrue(with.contains("may lag reality"))
+    }
+
+    func testWorkMemoryContextGatesOnSettingAndContent() throws {
+        let memory = DreamMemory(
+            updatedAt: Date(),
+            activeProjects: [.init(name: "Atlas", status: "in review",
+                                   lastActiveDay: "2026-07-18", evidence: [])])
+
+        XCTAssertEqual(ChatPrompt.workMemoryContext(memory: memory,
+                                                    dreamingEnabled: false), "")
+        XCTAssertEqual(ChatPrompt.workMemoryContext(memory: nil,
+                                                    dreamingEnabled: true), "")
+        XCTAssertEqual(ChatPrompt.workMemoryContext(memory: DreamMemory(updatedAt: Date()),
+                                                    dreamingEnabled: true), "")
+
+        let context = ChatPrompt.workMemoryContext(memory: memory, dreamingEnabled: true)
+        XCTAssertTrue(context.contains("Atlas"))
+        XCTAssertLessThanOrEqual(context.count, 6_100)
+    }
+
     // MARK: - Agent loop
 
     func testAgentRunsToolThenAnswers() async throws {

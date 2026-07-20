@@ -62,10 +62,16 @@ final class PowerSourceMonitor: ObservableObject {
         isOnBattery = Self.readIsOnBattery()
     }
 
+    /// One-shot battery read for callers that need the current state without
+    /// owning a monitor (e.g. the dreaming downtime gate, checked per tick).
+    nonisolated static func currentlyOnBattery() -> Bool {
+        readIsOnBattery()
+    }
+
     /// True when the providing power source is the internal battery. Defaults to
     /// false (treat as AC) when IOKit can't name a providing source — desktop Macs
     /// have no battery and report none, and "not on battery" is the safe read there.
-    private static func readIsOnBattery() -> Bool {
+    private nonisolated static func readIsOnBattery() -> Bool {
         let snapshot = IOPSCopyPowerSourcesInfo().takeRetainedValue()
         guard let providing = IOPSGetProvidingPowerSourceType(snapshot) else {
             return false

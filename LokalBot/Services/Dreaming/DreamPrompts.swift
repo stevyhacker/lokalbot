@@ -53,7 +53,8 @@ enum DreamPrompts {
     {"narrative": "...", "attention": ["..."], "repeated_work": ["..."], \
     "suggested_checks": ["..."], "frictions": ["..."], "top_actions": ["..."], \
     "active_projects": [{"name": "...", "status": "...", "evidence": ["..."]}], \
-    "work_goals": [{"text": "...", "horizon": "...", "reinforced_today": true}], \
+    "work_goals": [{"text": "...", "horizon": "...", "reinforced_today": true, \
+    "expired": false}], \
     "recurring_patterns": ["..."]}
 
     Rules:
@@ -80,6 +81,9 @@ enum DreamPrompts {
     evidence from the analyzed day directly reinforces that goal. Set it to \
     false when carrying a goal forward solely from current memory. Never infer \
     reinforcement from the goal's presence in current memory or the comparison window.
+    - Set "expired": true on a work goal only when the analyzed day's evidence \
+    shows it was completed or abandoned; it is then removed from memory. A goal \
+    merely absent from the day is not expired — omit the field or set false.
     - recurring_patterns is always the complete current list. Return [] when no \
     recurring patterns remain; an empty list intentionally clears stored patterns.
     - Keep every string to one short sentence. Use empty arrays when nothing \
@@ -121,7 +125,10 @@ enum DreamPrompts {
                             "text": ["type": "string"],
                             "horizon": ["type": "string"],
                             "reinforced_today": ["type": "boolean"],
+                            "expired": ["type": "boolean"],
                         ],
+                        // expired stays out of required so a small model
+                        // omitting it still satisfies the grammar.
                         "required": ["text", "horizon", "reinforced_today"],
                     ],
                 ],
@@ -188,7 +195,8 @@ enum DreamPrompts {
             goals.append(DreamMemoryUpdate.Goal(
                 text: text,
                 horizon: horizon,
-                reinforcedToday: goal.reinforcedToday))
+                reinforcedToday: goal.reinforcedToday,
+                expired: goal.expired ?? false))
         }
 
         let synthesis = DreamSynthesis(
@@ -217,11 +225,13 @@ enum DreamPrompts {
             let text: String
             let horizon: String
             let reinforcedToday: Bool
+            let expired: Bool?
 
             enum CodingKeys: String, CodingKey {
                 case text
                 case horizon
                 case reinforcedToday = "reinforced_today"
+                case expired
             }
         }
 
