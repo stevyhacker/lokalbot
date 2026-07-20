@@ -180,6 +180,9 @@ struct DreamMemoryUpdate: Equatable, Sendable {
     struct Goal: Equatable, Sendable {
         var text: String
         var horizon: String
+        /// True only when evidence from the analyzed day, rather than the
+        /// existing memory echoed in the prompt, reinforced this goal.
+        var reinforcedToday: Bool
     }
 
     var activeProjects: [Project] = []
@@ -235,11 +238,13 @@ struct DreamMemory: Codable, Equatable, Sendable {
     }
 
     /// Deterministic merge of one night's proposed update:
-    /// - proposed projects/goals update or insert by case-insensitive name,
+    /// - proposed projects update or insert by case-insensitive name,
     ///   refreshing the day stamp only when new or actually changed;
+    /// - goals refresh (and new goals insert) only when the model explicitly
+    ///   ties them to evidence from the analyzed day;
     /// - entries the model did not mention are kept (a small model forgetting
     ///   a project must not erase it) but age out after the retention window;
-    /// - patterns are replaced only when the update proposes a non-empty list;
+    /// - patterns are a full replacement list, including an explicit empty list;
     /// - everything is capped so memory can never grow unbounded.
     func merging(_ update: DreamMemoryUpdate, dreamDay: String, at date: Date,
                  calendar: Calendar = .current) -> DreamMemory {
@@ -282,9 +287,11 @@ struct DreamMemory: Codable, Equatable, Sendable {
             if let index = goals.firstIndex(where: {
                 $0.text.caseInsensitiveCompare(proposed.text) == .orderedSame
             }) {
-                goals[index].horizon = proposed.horizon
-                goals[index].lastReinforcedDay = dreamDay
-            } else {
+                if proposed.reinforcedToday {
+                    goals[index].horizon = proposed.horizon
+                    goals[index].lastReinforcedDay = dreamDay
+                }
+            } else if proposed.reinforcedToday {
                 goals.append(Goal(text: proposed.text, horizon: proposed.horizon,
                                   lastReinforcedDay: dreamDay))
             }
@@ -303,9 +310,7 @@ struct DreamMemory: Codable, Equatable, Sendable {
                 }
                 .prefix(Self.maxGoals))
 
-        if !update.recurringPatterns.isEmpty {
-            merged.recurringPatterns = Array(update.recurringPatterns.prefix(Self.maxPatterns))
-        }
+        merged.recurringPatterns = Array(update.recurringPatterns.prefix(Self.maxPatterns))
         return merged
     }
 

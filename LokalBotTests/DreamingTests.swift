@@ -86,6 +86,44 @@ final class DreamingTests: XCTestCase {
         XCTAssertFalse(DreamScheduler.isSystemIdle(for: .nan))
     }
 
+    func testOldestMissingTargetCatchesUpGapAcrossMultipleDays() throws {
+        let completed: Set<String> = ["2026-07-15", "2026-07-16", "2026-07-18"]
+        let target = try XCTUnwrap(DreamScheduler.oldestMissingTarget(
+            firstEligibleDayKey: "2026-07-15",
+            through: try date("2026-07-21T00:00:00Z"),
+            hasReport: { completed.contains($0) },
+            calendar: calendar))
+
+        XCTAssertEqual(target.dayKey, "2026-07-17")
+        XCTAssertEqual(target.day, try date("2026-07-17T00:00:00Z"))
+        XCTAssertEqual(target.calendar.timeZone, calendar.timeZone)
+    }
+
+    func testOldestMissingTargetReturnsNilWhenCatchUpIsComplete() throws {
+        let completed: Set<String> = ["2026-07-18", "2026-07-19", "2026-07-20"]
+        XCTAssertNil(DreamScheduler.oldestMissingTarget(
+            firstEligibleDayKey: "2026-07-18",
+            through: try date("2026-07-20T00:00:00Z"),
+            hasReport: { completed.contains($0) },
+            calendar: calendar))
+    }
+
+    func testInvalidBoundaryClampsButFutureOptInBoundaryWaits() throws {
+        let yesterday = try date("2026-07-20T00:00:00Z")
+        let malformedTarget = try XCTUnwrap(DreamScheduler.oldestMissingTarget(
+            firstEligibleDayKey: "not-a-day",
+            through: yesterday,
+            hasReport: { _ in false },
+            calendar: calendar))
+        XCTAssertEqual(malformedTarget.dayKey, "2026-07-20")
+
+        XCTAssertNil(DreamScheduler.oldestMissingTarget(
+            firstEligibleDayKey: "2026-08-01",
+            through: yesterday,
+            hasReport: { _ in false },
+            calendar: calendar))
+    }
+
     @MainActor
     func testStopCancelsInFlightDream() async throws {
         let current = try date("2026-07-19T04:00:00Z")
@@ -96,7 +134,7 @@ final class DreamingTests: XCTestCase {
         reportedError.isInverted = true
 
         scheduler.configure(
-            .init(enabled: true, hour: 4),
+            .init(enabled: true, hour: 4, firstEligibleDayKey: "2026-07-18"),
             hasReport: { _ in false },
             canRun: { true },
             dream: { _ in
@@ -115,6 +153,74 @@ final class DreamingTests: XCTestCase {
         await fulfillment(of: [cancelled], timeout: 5)
         await fulfillment(of: [reportedError], timeout: 0.5)
         XCTAssertFalse(scheduler.isDreaming)
+    }
+
+    @MainActor
+    func testSuccessfulCatchUpDoesNotApplyFailureBackoffToNextDay() async throws {
+        let current = try date("2026-07-21T04:00:00Z")
+        let scheduler = DreamScheduler(calendar: calendar, now: { current })
+        var completed: Set<String> = ["2026-07-20"]
+        var dreamed: [String] = []
+        let first = expectation(description: "first missing day dreamed")
+        let second = expectation(description: "second missing day dreamed")
+
+        scheduler.configure(
+            .init(enabled: true, hour: 4, firstEligibleDayKey: "2026-07-18"),
+            hasReport: { completed.contains($0) },
+            canRun: { true },
+            dream: { target in
+                dreamed.append(target.dayKey)
+                completed.insert(target.dayKey)
+                if dreamed.count == 1 { first.fulfill() }
+                if dreamed.count == 2 { second.fulfill() }
+            },
+            onError: { XCTFail($0) })
+
+        await fulfillment(of: [first], timeout: 5)
+        while scheduler.isDreaming { await Task.yield() }
+        scheduler.tick()
+        await fulfillment(of: [second], timeout: 5)
+        XCTAssertEqual(dreamed, ["2026-07-18", "2026-07-19"])
+        scheduler.stop()
+    }
+
+    @MainActor
+    func testCaughtUpSchedulerDoesNotRescanHistoryEveryMinute() throws {
+        let current = try date("2026-07-21T04:00:00Z")
+        let scheduler = DreamScheduler(calendar: calendar, now: { current })
+        var reportChecks = 0
+
+        scheduler.configure(
+            .init(enabled: true, hour: 4, firstEligibleDayKey: "2026-07-18"),
+            hasReport: { _ in
+                reportChecks += 1
+                return true
+            },
+            canRun: { true },
+            dream: { _ in XCTFail("All days are already complete") },
+            onError: { XCTFail($0) })
+
+        XCTAssertEqual(reportChecks, 3)
+        scheduler.tick()
+        XCTAssertEqual(reportChecks, 3)
+        scheduler.stop()
+    }
+
+    func testDreamingActivationBoundaryDefaultsAndRoundTrips() throws {
+        XCTAssertNil(AppSettings().dreamingFirstEligibleDayKey)
+
+        var settings = AppSettings()
+        settings.dreamingEnabled = true
+        settings.dreamingFirstEligibleDayKey = "2026-07-18"
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONEncoder().encode(settings))
+        XCTAssertEqual(decoded.dreamingFirstEligibleDayKey, "2026-07-18")
+
+        let legacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data(#"{"autoTranscribe":false}"#.utf8))
+        XCTAssertNil(legacy.dreamingFirstEligibleDayKey)
     }
 
     // MARK: - Store
@@ -150,9 +256,9 @@ final class DreamingTests: XCTestCase {
             lastDreamDay: "2026-07-18",
             activeProjects: [.init(name: "Atlas", status: "in review",
                                    lastActiveDay: "2026-07-18", evidence: ["`abcd1234`"])])
-        XCTAssertNil(store.loadMemory())
+        XCTAssertNil(try store.loadMemory())
         try store.save(memory)
-        XCTAssertEqual(store.loadMemory(), memory)
+        XCTAssertEqual(try store.loadMemory(), memory)
 
         let markdown = try String(
             contentsOf: store.dreamsDirectory.appendingPathComponent("2026-07-18.md"),
@@ -177,6 +283,180 @@ final class DreamingTests: XCTestCase {
         try Data("blocked".utf8).write(to: store.memoryDirectory)
         XCTAssertThrowsError(try store.save(report: report, memory: memory))
         XCTAssertFalse(store.hasReport(forDayKey: report.day))
+    }
+
+    func testCorruptOrUnsupportedMemoryIsNeverTreatedAsAbsent() throws {
+        let store = DreamStore(root: try temporaryRoot())
+        try FileManager.default.createDirectory(
+            at: store.memoryDirectory,
+            withIntermediateDirectories: true)
+        let memoryURL = store.memoryDirectory.appendingPathComponent(
+            "\(DreamStore.memoryFileName).json")
+        let corrupt = Data(#"{"version":1,"activeProjects":"broken"}"#.utf8)
+        try corrupt.write(to: memoryURL)
+
+        XCTAssertThrowsError(try store.loadMemory()) { error in
+            guard let storeError = error as? DreamStoreError,
+                  case .invalidJSON = storeError else {
+                return XCTFail("Expected invalidJSON, got \(error)")
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: memoryURL), corrupt)
+
+        var future = DreamMemory(updatedAt: try date("2026-07-19T04:01:00Z"))
+        future.version = DreamMemory.currentVersion + 1
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(future).write(to: memoryURL)
+        XCTAssertThrowsError(try store.loadMemory()) { error in
+            guard let storeError = error as? DreamStoreError,
+                  case .unsupportedMemoryVersion = storeError else {
+                return XCTFail("Expected unsupportedMemoryVersion, got \(error)")
+            }
+        }
+    }
+
+    func testMalformedOrDayMismatchedReportIsNotACompletionMarker() throws {
+        let store = DreamStore(root: try temporaryRoot())
+        let report = DreamReport(
+            day: "2026-07-17",
+            generatedAt: try date("2026-07-18T04:01:00Z"),
+            engineName: "Built-in — Test",
+            inferenceProvenance: .init(location: .local),
+            narrative: "A focused day.")
+        try store.save(report)
+
+        let mismatchedKey = "2026-07-18"
+        try Data(contentsOf: store.reportJSONURL(forDayKey: report.day))
+            .write(to: store.reportJSONURL(forDayKey: mismatchedKey))
+        XCTAssertFalse(store.hasReport(forDayKey: mismatchedKey))
+
+        let malformedKey = "2026-07-19"
+        try Data("{not json".utf8).write(
+            to: store.reportJSONURL(forDayKey: malformedKey))
+        XCTAssertFalse(store.hasReport(forDayKey: malformedKey))
+        XCTAssertEqual(store.latestReport()?.day, report.day)
+    }
+
+    func testInvalidatingReportRemovesDurableMarkerAndRendering() throws {
+        let store = DreamStore(root: try temporaryRoot())
+        let report = DreamReport(
+            day: "2026-07-18",
+            generatedAt: try date("2026-07-19T04:01:00Z"),
+            engineName: "Built-in — Test",
+            inferenceProvenance: .init(location: .local),
+            narrative: "Before recovered processing finished.")
+        try store.save(report)
+
+        try store.invalidateReport(forDayKey: report.day)
+
+        XCTAssertFalse(store.hasReport(forDayKey: report.day))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: store.dreamsDirectory.appendingPathComponent("\(report.day).md").path))
+    }
+
+    func testDreamServiceUsesScheduledCalendarThroughPersistence() async throws {
+        let root = try temporaryRoot()
+        var targetCalendar = Calendar(identifier: .gregorian)
+        targetCalendar.timeZone = TimeZone(secondsFromGMT: 14 * 3_600)!
+        let target = DreamScheduler.target(
+            for: try date("2026-07-18T12:00:00Z"),
+            calendar: targetCalendar)
+        let ambientKey = DreamDay.key(for: target.day, calendar: calendar)
+        XCTAssertNotEqual(ambientKey, target.dayKey)
+        let journalDirectory = root.appendingPathComponent("journal", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: journalDirectory,
+            withIntermediateDirectories: true)
+        try Data("correct target digest".utf8).write(
+            to: journalDirectory.appendingPathComponent("\(target.dayKey).md"))
+        try Data("wrong adjacent digest".utf8).write(
+            to: journalDirectory.appendingPathComponent("\(ambientKey).md"))
+
+        let evidence = try DreamCompiler.compile(
+            day: target.day,
+            storageRoot: root,
+            calendar: target.calendar)
+        XCTAssertEqual(evidence.digest, "correct target digest")
+        XCTAssertEqual(
+            DreamPrompts.context(evidence: evidence, memory: DreamMemory(updatedAt: Date())).first,
+            "Analyzed local day: \(target.dayKey)")
+
+        let generatedAt = try date("2026-07-19T04:01:00Z")
+        let service = DreamService(
+            storageRoot: root,
+            makeEngine: { throw TextEngineError.unavailable("Test backend offline") },
+            now: { generatedAt })
+
+        let report = try await service.dream(target: target)
+
+        XCTAssertEqual(report.day, target.dayKey)
+        XCTAssertTrue(DreamStore(root: root).hasReport(forDayKey: target.dayKey))
+    }
+
+    func testDreamServiceRefusesToOverwriteCorruptMemory() async throws {
+        let root = try temporaryRoot()
+        let store = DreamStore(root: root)
+        try FileManager.default.createDirectory(
+            at: store.memoryDirectory,
+            withIntermediateDirectories: true)
+        let memoryURL = store.memoryDirectory.appendingPathComponent(
+            "\(DreamStore.memoryFileName).json")
+        let corrupt = Data(#"{"version":1,"workGoals":"broken"}"#.utf8)
+        try corrupt.write(to: memoryURL)
+        let target = DreamScheduler.target(
+            for: try date("2026-07-18T12:00:00Z"),
+            calendar: calendar)
+        let service = DreamService(
+            storageRoot: root,
+            makeEngine: {
+                XCTFail("The engine must not run when durable memory is corrupt")
+                throw TextEngineError.unavailable("unused")
+            })
+
+        do {
+            _ = try await service.dream(target: target)
+            XCTFail("Expected corrupt memory to abort the dream")
+        } catch let error as DreamStoreError {
+            guard case .invalidJSON = error else {
+                return XCTFail("Expected invalidJSON, got \(error)")
+            }
+        }
+
+        XCTAssertEqual(try Data(contentsOf: memoryURL), corrupt)
+        XCTAssertFalse(store.hasReport(forDayKey: target.dayKey))
+    }
+
+    func testHistoricalReportRepairNeverRegressesNewerMemory() async throws {
+        let root = try temporaryRoot()
+        let store = DreamStore(root: root)
+        let newerMemory = DreamMemory(
+            updatedAt: try date("2026-07-19T04:01:00Z"),
+            lastDreamDay: "2026-07-18",
+            activeProjects: [.init(
+                name: "Atlas",
+                status: "released",
+                lastActiveDay: "2026-07-18",
+                evidence: ["release verified"])],
+            workGoals: [.init(
+                text: "Ship 0.5",
+                horizon: "done",
+                lastReinforcedDay: "2026-07-18")],
+            recurringPatterns: ["Protect the current state"])
+        try store.save(newerMemory)
+        let historicalTarget = DreamScheduler.target(
+            for: try date("2026-07-17T12:00:00Z"),
+            calendar: calendar)
+        let regeneratedAt = try date("2026-07-20T04:01:00Z")
+        let service = DreamService(
+            storageRoot: root,
+            makeEngine: { throw TextEngineError.unavailable("Test backend offline") },
+            now: { regeneratedAt })
+
+        _ = try await service.dream(target: historicalTarget)
+
+        XCTAssertTrue(store.hasReport(forDayKey: historicalTarget.dayKey))
+        XCTAssertEqual(try store.loadMemory(), newerMemory)
     }
 
     func testTodayDreamSelectionUsesCurrentDateWhenViewCrossedMidnight() throws {
@@ -208,7 +488,8 @@ final class DreamingTests: XCTestCase {
          "top_actions": ["Fix CI", "Merge the PR", "Draft notes", "Extra item"],
          "active_projects": [{"name": "Atlas", "status": "in review",
                               "evidence": ["`abcd1234`", "e2", "e3", "e4", "e5"]}],
-         "work_goals": [{"text": "Ship 0.5", "horizon": "next week"}],
+         "work_goals": [{"text": "Ship 0.5", "horizon": "next week",
+                          "reinforced_today": true}],
          "recurring_patterns": ["Mornings go to review"]}
         ```
         """
@@ -220,7 +501,8 @@ final class DreamingTests: XCTestCase {
         XCTAssertEqual(synthesis.memory.activeProjects.first?.evidence.count,
                        DreamMemory.maxEvidencePerProject)
         XCTAssertEqual(synthesis.memory.workGoals,
-                       [.init(text: "Ship 0.5", horizon: "next week")])
+                       [.init(text: "Ship 0.5", horizon: "next week",
+                              reinforcedToday: true)])
     }
 
     func testParseRejectsUnusableOutput() {
@@ -230,6 +512,44 @@ final class DreamingTests: XCTestCase {
          "frictions": [], "top_actions": [], "active_projects": [], "work_goals": [],
          "recurring_patterns": []}
         """))
+    }
+
+    func testParseRejectsPartialMistypedOrSemanticallyEmptyPayloads() {
+        XCTAssertNil(DreamPrompts.parse("""
+        {"narrative": "A focused day.", "attention": [], "repeated_work": [],
+         "suggested_checks": [], "frictions": [], "top_actions": [],
+         "active_projects": [], "work_goals": []}
+        """))
+        XCTAssertNil(DreamPrompts.parse("""
+        {"narrative": "A focused day.", "attention": [], "repeated_work": [],
+         "suggested_checks": [], "frictions": [], "top_actions": "none",
+         "active_projects": [], "work_goals": [], "recurring_patterns": []}
+        """))
+        XCTAssertNil(DreamPrompts.parse("""
+        {"narrative": "A focused day.", "attention": [], "repeated_work": [],
+         "suggested_checks": [], "frictions": [], "top_actions": [],
+         "active_projects": [{"name": "Atlas", "status": "   ", "evidence": []}],
+         "work_goals": [], "recurring_patterns": []}
+        """))
+        XCTAssertNil(DreamPrompts.parse("""
+        {"narrative": "A focused day.", "attention": [], "repeated_work": [],
+         "suggested_checks": [], "frictions": [], "top_actions": [],
+         "active_projects": [],
+         "work_goals": [{"text": "Ship 0.5", "horizon": "Q3"}],
+         "recurring_patterns": []}
+        """))
+    }
+
+    func testStrictSchemaClosesEveryObjectShape() throws {
+        let schema = DreamPrompts.schema
+        XCTAssertEqual(schema["additionalProperties"] as? Bool, false)
+        let properties = try XCTUnwrap(schema["properties"] as? [String: Any])
+
+        for key in ["active_projects", "work_goals"] {
+            let arraySchema = try XCTUnwrap(properties[key] as? [String: Any])
+            let itemSchema = try XCTUnwrap(arraySchema["items"] as? [String: Any])
+            XCTAssertEqual(itemSchema["additionalProperties"] as? Bool, false, key)
+        }
     }
 
     func testInferenceProvenanceDistinguishesLocalAndApprovedRemoteBackends() {
@@ -352,7 +672,8 @@ final class DreamingTests: XCTestCase {
                 .init(name: "Steady", status: "background refactor", evidence: []),
                 .init(name: "Beacon", status: "kickoff scheduled", evidence: []),
             ],
-            workGoals: [.init(text: "ship 0.5", horizon: "next week")],
+            workGoals: [.init(text: "ship 0.5", horizon: "next week",
+                              reinforcedToday: true)],
             recurringPatterns: ["Deep work lands after 15:00"])
 
         let merged = existing.merging(update, dreamDay: "2026-07-18",
@@ -379,11 +700,37 @@ final class DreamingTests: XCTestCase {
         XCTAssertEqual(merged.workGoals.first?.horizon, "next week")
         XCTAssertEqual(merged.recurringPatterns, ["Deep work lands after 15:00"])
 
-        // An empty pattern proposal keeps the previous patterns.
-        let unchanged = merged.merging(DreamMemoryUpdate(), dreamDay: "2026-07-19",
-                                       at: try date("2026-07-20T04:01:00Z"),
-                                       calendar: calendar)
-        XCTAssertEqual(unchanged.recurringPatterns, ["Deep work lands after 15:00"])
+        // The model returns a full replacement list, so [] intentionally clears.
+        let cleared = merged.merging(DreamMemoryUpdate(), dreamDay: "2026-07-19",
+                                     at: try date("2026-07-20T04:01:00Z"),
+                                     calendar: calendar)
+        XCTAssertTrue(cleared.recurringPatterns.isEmpty)
+    }
+
+    func testUnreinforcedGoalEchoDoesNotRefreshOrInsertAndStillAgesOut() throws {
+        let existing = DreamMemory(
+            updatedAt: try date("2026-07-17T04:00:00Z"),
+            workGoals: [
+                .init(text: "Ship 0.5", horizon: "Q3",
+                      lastReinforcedDay: "2026-07-10"),
+                .init(text: "Retire legacy API", horizon: "someday",
+                      lastReinforcedDay: "2026-05-01"),
+            ])
+        let update = DreamMemoryUpdate(workGoals: [
+            .init(text: "Ship 0.5", horizon: "next week", reinforcedToday: false),
+            .init(text: "Retire legacy API", horizon: "someday", reinforcedToday: false),
+            .init(text: "Invented carry-forward", horizon: "unknown", reinforcedToday: false),
+        ])
+
+        let merged = existing.merging(
+            update,
+            dreamDay: "2026-07-18",
+            at: try date("2026-07-19T04:01:00Z"),
+            calendar: calendar)
+
+        XCTAssertEqual(merged.workGoals.map(\.text), ["Ship 0.5"])
+        XCTAssertEqual(merged.workGoals.first?.horizon, "Q3")
+        XCTAssertEqual(merged.workGoals.first?.lastReinforcedDay, "2026-07-10")
     }
 
     // MARK: - Redaction

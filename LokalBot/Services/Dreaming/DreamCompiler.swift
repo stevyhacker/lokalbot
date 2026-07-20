@@ -49,7 +49,9 @@ enum DreamCompiler {
         let end = calendar.date(byAdding: .day, value: 1, to: start)
             ?? start.addingTimeInterval(86_400)
         let interval = DateInterval(start: start, end: end)
-        let snapshot = try FileDailyMemoryExportSource(root: storageRoot).snapshot(
+        let snapshot = try FileDailyMemoryExportSource(
+            root: storageRoot,
+            calendar: calendar).snapshot(
             for: start, interval: interval)
         let all = try SessionLookup.loadAllMeetings(root: storageRoot)
 

@@ -408,6 +408,7 @@ final class AppState: ObservableObject {
                                         to new: AppSettings) -> Bool {
         old.dreamingEnabled != new.dreamingEnabled
             || old.dreamingHour != new.dreamingHour
+            || old.dreamingFirstEligibleDayKey != new.dreamingFirstEligibleDayKey
     }
 
     // Navigation (main window): sidebar section, selected meeting, and a
@@ -798,6 +799,25 @@ final class AppState: ObservableObject {
                 self.reindexEmbeddingInBackground(meeting)
             }
             self.memoryRoutines.tick()
+            // A parked/failed recovery job may complete after dreaming already
+            // wrote that day's durable marker. Invalidate the generated brief
+            // so the next quiet tick incorporates the recovered artifacts.
+            let calendar = Calendar.current
+            let dayKey = DreamDay.key(for: meeting.startedAt, calendar: calendar)
+            let reportURL = self.dreamStore.reportJSONURL(forDayKey: dayKey)
+            let activationKey = self.settings.dreamingFirstEligibleDayKey ?? dayKey
+            if self.settings.dreamingEnabled,
+               dayKey >= activationKey,
+               FileManager.default.fileExists(atPath: reportURL.path) {
+                do {
+                    try self.dreamStore.invalidateReport(forDayKey: dayKey)
+                } catch {
+                    self.lastError = "Could not refresh the dream for \(dayKey): "
+                        + error.localizedDescription
+                }
+                self.latestDreamReport = self.dreamStore.latestReport()
+                self.dreaming.reconsiderReports()
+            }
         }
         if needsSynchronousLibrary {
             searchIndex.reindexAll(meetings, storage: storage)
@@ -910,6 +930,11 @@ final class AppState: ObservableObject {
             self.meetings = merged
             self.libraryReady = true
             self.pipeline.resumePending(meetings: merged)
+            // Dreaming was deliberately gated while launch recovery rebuilt
+            // the library and durable processing queue. Re-check immediately;
+            // pending pipeline work will keep the downtime gate closed until a
+            // later timer tick.
+            self.dreaming.tick()
             self.reindexLibraryInBackground(merged)
             self.libraryLoadTask = nil
             if let pending = self.pendingRecordingStart {
@@ -1203,16 +1228,41 @@ final class AppState: ObservableObject {
 
     func applyDreamingSetting() {
         let snapshot = settings
+
+        // Persist the beginning of each opt-in period. This keeps catch-up
+        // bounded instead of interpreting a first launch as permission to
+        // backfill every historical workday.
+        if snapshot.dreamingEnabled,
+           snapshot.dreamingFirstEligibleDayKey?.isEmpty != false {
+            let calendar = Calendar.current
+            var updated = snapshot
+            updated.dreamingFirstEligibleDayKey = DreamDay.key(
+                for: DreamScheduler.previousDay(of: Date(), calendar: calendar),
+                calendar: calendar)
+            settings = updated
+            return
+        }
+
+        if !snapshot.dreamingEnabled,
+           snapshot.dreamingFirstEligibleDayKey != nil {
+            var updated = snapshot
+            updated.dreamingFirstEligibleDayKey = nil
+            settings = updated
+            return
+        }
+
         let storageRoot = storage.rootURL
         dreaming.configure(
             DreamScheduler.Configuration(
                 enabled: snapshot.dreamingEnabled,
-                hour: snapshot.dreamingHour),
+                hour: snapshot.dreamingHour,
+                firstEligibleDayKey: snapshot.dreamingFirstEligibleDayKey ?? ""),
             hasReport: { dayKey in
                 DreamStore(root: storageRoot).hasReport(forDayKey: dayKey)
             },
             canRun: { [weak self] in
                 guard let self else { return false }
+                guard self.libraryReady else { return false }
                 let cotypingGenerating: Bool
                 if case .generating = self.cotyping.state {
                     cotypingGenerating = true
@@ -1229,7 +1279,7 @@ final class AppState: ObservableObject {
                     .combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
                 return DreamScheduler.isSystemIdle(for: userIdleSeconds)
             },
-            dream: { [weak self] day in
+            dream: { [weak self] target in
                 guard let self else {
                     throw TextEngineError.unavailable("LokalBot is shutting down.")
                 }
@@ -1246,12 +1296,36 @@ final class AppState: ObservableObject {
                             purpose: "dreaming")
                         return (engine, DreamInferenceProvenance(settings: engineSettings))
                     })
-                let report = try await service.dream(day: day)
+                let report = try await service.dream(target: target)
                 self.latestDreamReport = report
             },
             onError: { [weak self] message in
                 self?.lastError = message
             })
+    }
+
+    func setDreamingEnabled(_ enabled: Bool) {
+        guard settings.dreamingEnabled != enabled else { return }
+
+        var updated = settings
+        updated.dreamingEnabled = enabled
+        if enabled {
+            let calendar = Calendar.current
+            updated.dreamingFirstEligibleDayKey = DreamDay.key(
+                for: DreamScheduler.previousDay(of: Date(), calendar: calendar),
+                calendar: calendar)
+        } else {
+            updated.dreamingFirstEligibleDayKey = nil
+        }
+        settings = updated
+    }
+
+    func dreamNow() {
+        guard libraryReady else {
+            lastError = "Preparing your meeting library; dreaming will be available when it is ready."
+            return
+        }
+        dreaming.dreamNow()
     }
 
     func restartMemoryCapture() {

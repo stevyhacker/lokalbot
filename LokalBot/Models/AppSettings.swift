@@ -204,6 +204,11 @@ struct AppSettings: Codable, Equatable {
     /// Local wall-clock hour (0...23) after which the overnight dream may run.
     /// Nights the Mac slept through catch up at the next launch or wake.
     var dreamingHour: Int = 4
+    /// First local calendar day eligible for dreaming during the current
+    /// enabled period. Persisting the boundary prevents a multi-day sleep from
+    /// silently skipping the last workday, without backfilling history from
+    /// before the user opted in.
+    var dreamingFirstEligibleDayKey: String?
 
     // MARK: - Safe routines
 
@@ -526,6 +531,7 @@ struct AppSettings: Codable, Equatable {
         case dailyMemoryExportHour
         case dreamingEnabled
         case dreamingHour
+        case dreamingFirstEligibleDayKey
         case memoryRoutinesEnabled
         case memoryRoutineFolder
         case enabledMemoryRoutines
@@ -653,6 +659,9 @@ struct AppSettings: Codable, Equatable {
         try c.encode(min(23, max(0, dailyMemoryExportHour)), forKey: .dailyMemoryExportHour)
         try c.encode(dreamingEnabled, forKey: .dreamingEnabled)
         try c.encode(min(23, max(0, dreamingHour)), forKey: .dreamingHour)
+        try c.encodeIfPresent(
+            dreamingFirstEligibleDayKey,
+            forKey: .dreamingFirstEligibleDayKey)
         try c.encode(memoryRoutinesEnabled, forKey: .memoryRoutinesEnabled)
         try c.encode(memoryRoutineFolder, forKey: .memoryRoutineFolder)
         try c.encode(enabledMemoryRoutines, forKey: .enabledMemoryRoutines)
@@ -783,6 +792,9 @@ struct AppSettings: Codable, Equatable {
             23,
             max(0, (try? c.decode(Int.self, forKey: .dreamingHour))
                 ?? defaults.dreamingHour))
+        dreamingFirstEligibleDayKey = try? c.decodeIfPresent(
+            String.self,
+            forKey: .dreamingFirstEligibleDayKey)
         memoryRoutinesEnabled =
             (try? c.decode(Bool.self, forKey: .memoryRoutinesEnabled))
             ?? defaults.memoryRoutinesEnabled

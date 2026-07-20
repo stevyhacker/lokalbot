@@ -534,15 +534,17 @@ struct SettingsView: View {
         if shows("Dreaming", ["dream", "dreaming", "overnight", "retrospective", "morning",
                               "brief", "memory", "projects", "goals", "downtime", "sleep"]) {
             Section("Dreaming") {
-                Toggle("Dream overnight", isOn: $app.settings.dreamingEnabled)
+                Toggle("Dream overnight", isOn: Binding(
+                    get: { app.settings.dreamingEnabled },
+                    set: { app.setDreamingEnabled($0) }))
                 if app.settings.dreamingEnabled {
                     Stepper(
                         "Dream after \(String(format: "%02d:00", app.settings.dreamingHour))",
                         value: $app.settings.dreamingHour,
                         in: 0...23)
                     HStack(spacing: 8) {
-                        Button("Dream now") { app.dreaming.dreamNow() }
-                            .disabled(app.dreaming.isDreaming)
+                        Button("Dream now") { app.dreamNow() }
+                            .disabled(app.dreaming.isDreaming || !app.libraryReady)
                         if app.dreaming.isDreaming {
                             ProgressView().controlSize(.small)
                             Text("Dreaming…").font(.caption).foregroundStyle(.secondary)

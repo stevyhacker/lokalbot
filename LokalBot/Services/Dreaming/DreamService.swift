@@ -18,22 +18,37 @@ struct DreamService {
     /// Resolved per-dream so backend/model changes apply to the next night;
     /// same seam as chat/dictation (`ProcessingPipeline.makeTextEngine`).
     var makeEngine: () async throws -> EngineSelection
-    var calendar: Calendar = .current
     var now: () -> Date = Date.init
 
     @discardableResult
-    func dream(day: Date) async throws -> DreamReport {
+    func dream(target: DreamScheduler.Target) async throws -> DreamReport {
         let root = storageRoot
-        let dreamCalendar = calendar
         // Evidence compilation walks the whole meeting library; keep that off
         // the main actor (the scheduler calls this from a MainActor task).
         let evidence = try await Task.detached(priority: .utility) {
-            try DreamCompiler.compile(day: day, storageRoot: root, calendar: dreamCalendar)
+            try DreamCompiler.compile(
+                day: target.day,
+                storageRoot: root,
+                calendar: target.calendar)
         }.value
         try Task.checkCancellation()
+        guard evidence.dayKey == target.dayKey else {
+            throw TargetError.dayKeyMismatch(expected: target.dayKey, actual: evidence.dayKey)
+        }
 
         let store = DreamStore(root: storageRoot)
-        let memory = store.loadMemory() ?? DreamMemory(updatedAt: now())
+        let memory = try store.loadMemory() ?? DreamMemory(updatedAt: now())
+        // A missing/corrupt historical report may need regeneration after
+        // later days have already advanced durable memory. Rebuild that report
+        // from its own evidence, but never replay an older synthesis over newer
+        // project/goal/pattern state.
+        let durableDayWatermark = [memory.lastDreamDay, store.latestReport()?.day]
+            .compactMap { $0 }
+            .max()
+        let advancesMemory = durableDayWatermark.map { $0 <= evidence.dayKey } ?? true
+        let contextMemory = advancesMemory
+            ? memory
+            : DreamMemory(updatedAt: target.day)
         var report: DreamReport
         var updatedMemory = memory
 
@@ -42,7 +57,7 @@ struct DreamService {
             let output = try await selection.engine.generate(
                 system: DreamPrompts.system,
                 prompt: DreamPrompts.prompt(evidence: evidence),
-                context: DreamPrompts.context(evidence: evidence, memory: memory),
+                context: DreamPrompts.context(evidence: evidence, memory: contextMemory),
                 schema: DreamPrompts.schema)
             try Task.checkCancellation()
             if let synthesis = DreamPrompts.parse(output) {
@@ -50,10 +65,12 @@ struct DreamService {
                                           generatedAt: now(),
                                           engineName: selection.engine.displayName,
                                           inferenceProvenance: selection.provenance)
-                updatedMemory = memory.merging(synthesis.memory,
-                                               dreamDay: evidence.dayKey,
-                                               at: now(),
-                                               calendar: calendar)
+                if advancesMemory {
+                    updatedMemory = memory.merging(synthesis.memory,
+                                                   dreamDay: evidence.dayKey,
+                                                   at: now(),
+                                                   calendar: target.calendar)
+                }
             } else {
                 lokalbotLog("dreaming: model reply was unparseable, writing evidence-only brief")
                 report = DreamCompiler.fallbackReport(
@@ -76,12 +93,26 @@ struct DreamService {
         }
 
         report = report.redacted()
-        updatedMemory.lastDreamDay = evidence.dayKey
-        updatedMemory.updatedAt = now()
-        updatedMemory = updatedMemory.redacted()
-
         try Task.checkCancellation()
-        try store.save(report: report, memory: updatedMemory)
+        if advancesMemory {
+            updatedMemory.lastDreamDay = evidence.dayKey
+            updatedMemory.updatedAt = now()
+            updatedMemory = updatedMemory.redacted()
+            try store.save(report: report, memory: updatedMemory)
+        } else {
+            try store.save(report)
+        }
         return report
+    }
+
+    private enum TargetError: LocalizedError {
+        case dayKeyMismatch(expected: String, actual: String)
+
+        var errorDescription: String? {
+            switch self {
+            case let .dayKeyMismatch(expected, actual):
+                return "Dream evidence day \(actual) did not match scheduled day \(expected)."
+            }
+        }
     }
 }

@@ -58,18 +58,21 @@ protocol DailyMemoryExportSource {
 struct FileDailyMemoryExportSource: DailyMemoryExportSource {
     var root: URL
     var screenReader: any ScreenMemoryReading
+    var calendar: Calendar
 
     init(
         root: URL = SessionLookup.storageRootURL,
-        screenReader: (any ScreenMemoryReading)? = nil
+        screenReader: (any ScreenMemoryReading)? = nil,
+        calendar: Calendar = .current
     ) {
         self.root = root
         self.screenReader = screenReader ?? SQLiteScreenMemoryReader(
             databaseURL: root.appendingPathComponent("lokalbotv3.sqlite"))
+        self.calendar = calendar
     }
 
     func snapshot(for day: Date, interval: DateInterval) throws -> DailyMemoryExportSnapshot {
-        let dayName = Self.dayName(day, calendar: .current)
+        let dayName = Self.dayName(day, calendar: calendar)
         let digestURL = root.appendingPathComponent("journal/\(dayName).md")
         let digest: String?
         if FileManager.default.fileExists(atPath: digestURL.path) {

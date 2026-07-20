@@ -21,17 +21,31 @@ final class DreamScheduler: ObservableObject {
         /// dreamed. Before it, the previous day is considered still "in use"
         /// (a late session past midnight belongs to the evening's context).
         var hour: Int
+        /// Persisted activation boundary for catch-up. The scheduler walks
+        /// forward from this local day and dreams the oldest missing report.
+        var firstEligibleDayKey: String
 
         var normalizedHour: Int { min(23, max(0, hour)) }
     }
 
-    typealias Dream = @MainActor (_ day: Date) async throws -> Void
+    /// One immutable local-day interpretation shared by scheduling, evidence
+    /// compilation, and persistence. `Calendar.current` may change when the
+    /// user travels, so a run must not reconstruct any part of this target.
+    struct Target: Equatable, Sendable {
+        let day: Date
+        let dayKey: String
+        let calendar: Calendar
+    }
+
+    typealias Dream = @MainActor (_ target: Target) async throws -> Void
 
     @Published private(set) var isDreaming = false
     @Published private(set) var lastDreamedAt: Date?
     @Published private(set) var lastError: String?
 
-    private let calendar: Calendar
+    /// Nil in production so every tick snapshots the then-current calendar.
+    /// Tests can inject a fixed calendar through `init(calendar:now:)`.
+    private let fixedCalendar: Calendar?
     private let now: () -> Date
     private var configuration: Configuration?
     private var dream: Dream?
@@ -40,11 +54,21 @@ final class DreamScheduler: ObservableObject {
     private var errorHandler: ((String) -> Void)?
     private var timer: Timer?
     private var dreamTask: Task<Void, Never>?
-    private var lastAttempt: Date?
+    private var lastFailure: Date?
+    /// In-memory high-water mark for the current calendar snapshot. A launch
+    /// may scan the persisted activation range once, but subsequent minute
+    /// ticks start at the first day not already proven complete.
+    private var scanCursorDayKey: String?
+    private var scanCalendar: Calendar?
     private var generation = 0
 
-    init(calendar: Calendar = .current, now: @escaping () -> Date = Date.init) {
-        self.calendar = calendar
+    init(now: @escaping () -> Date = Date.init) {
+        fixedCalendar = nil
+        self.now = now
+    }
+
+    init(calendar: Calendar, now: @escaping () -> Date = Date.init) {
+        fixedCalendar = calendar
         self.now = now
     }
 
@@ -66,7 +90,9 @@ final class DreamScheduler: ObservableObject {
             dreamTask?.cancel()
             dreamTask = nil
             isDreaming = false
-            lastAttempt = nil
+            lastFailure = nil
+            scanCursorDayKey = nil
+            scanCalendar = nil
         }
         timer?.invalidate()
         timer = nil
@@ -88,6 +114,14 @@ final class DreamScheduler: ObservableObject {
         isDreaming = false
     }
 
+    /// A generated artifact changed behind the in-memory scan cursor. Reset
+    /// the high-water mark so the next tick can find and repair the hole.
+    func reconsiderReports() {
+        scanCursorDayKey = nil
+        scanCalendar = nil
+        tick()
+    }
+
     func tick() {
         guard dreamTask == nil,
               let configuration,
@@ -95,21 +129,44 @@ final class DreamScheduler: ObservableObject {
               let hasReport,
               dream != nil else { return }
         let current = now()
-        let target = Self.previousDay(of: current, calendar: calendar)
+        let calendar = calendarSnapshot()
+        if scanCalendar != calendar {
+            scanCalendar = calendar
+            scanCursorDayKey = nil
+        }
+        let yesterday = Self.previousDay(of: current, calendar: calendar)
         guard Self.shouldRun(
             at: current,
             hour: configuration.normalizedHour,
-            hasReportForPreviousDay: hasReport(DreamDay.key(for: target, calendar: calendar)),
+            hasReportForPreviousDay: false,
             calendar: calendar) else { return }
         // A failed dream (model unreachable mid-boot, disk error) should be
         // visible but not retried every minute; generation can also take a
         // while, so give the system room between attempts.
-        if let lastAttempt, current.timeIntervalSince(lastAttempt) < 15 * 60 { return }
+        if let lastFailure, current.timeIntervalSince(lastFailure) < 15 * 60 { return }
         // Not downtime yet — recording, processing, dictation, or cotyping is
         // active. Don't burn the backoff; just wait for a quieter tick.
         guard canRun() else { return }
-        lastAttempt = current
-        start(day: target)
+        let scanStart = scanCursorDayKey ?? configuration.firstEligibleDayKey
+        guard let target = Self.oldestMissingTarget(
+            firstEligibleDayKey: scanStart,
+            through: yesterday,
+            hasReport: hasReport,
+            calendar: calendar) else {
+            // A canonical start after yesterday is either a future opt-in
+            // boundary or the cursor parked on the next not-yet-eligible day.
+            // Keep it intact. Otherwise the scanned range is complete, so park
+            // directly after yesterday and avoid decoding it again next minute.
+            if !Self.isCanonicalFutureDayKey(
+                scanStart,
+                after: yesterday,
+                calendar: calendar),
+               let next = calendar.date(byAdding: .day, value: 1, to: yesterday) {
+                scanCursorDayKey = DreamDay.key(for: next, calendar: calendar)
+            }
+            return
+        }
+        start(target: target, advancesScanCursor: true)
     }
 
     /// Manual run from Settings: ignores the hour, the existing report (the
@@ -120,23 +177,34 @@ final class DreamScheduler: ObservableObject {
               let configuration,
               configuration.enabled,
               dream != nil else { return }
-        start(day: Self.previousDay(of: now(), calendar: calendar))
+        let calendar = calendarSnapshot()
+        let day = Self.previousDay(of: now(), calendar: calendar)
+        start(target: Self.target(for: day, calendar: calendar), advancesScanCursor: false)
     }
 
-    private func start(day: Date) {
+    private func start(target: Target, advancesScanCursor: Bool) {
         guard let dream else { return }
         let runGeneration = generation
         isDreaming = true
         lastError = nil
         dreamTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            var continueCatchUp = false
             do {
-                try await dream(day)
+                try await dream(target)
                 guard !Task.isCancelled, generation == runGeneration else { return }
                 lastDreamedAt = now()
+                lastFailure = nil
+                if advancesScanCursor,
+                   let next = target.calendar.date(byAdding: .day, value: 1, to: target.day) {
+                    scanCalendar = target.calendar
+                    scanCursorDayKey = DreamDay.key(for: next, calendar: target.calendar)
+                }
+                continueCatchUp = advancesScanCursor
             } catch is CancellationError {
             } catch {
                 guard generation == runGeneration else { return }
+                lastFailure = now()
                 let message = "Dreaming failed: \(error.localizedDescription)"
                 lastError = message
                 errorHandler?(message)
@@ -144,7 +212,63 @@ final class DreamScheduler: ObservableObject {
             guard generation == runGeneration else { return }
             isDreaming = false
             dreamTask = nil
+            if continueCatchUp { tick() }
         }
+    }
+
+    private func calendarSnapshot() -> Calendar {
+        fixedCalendar ?? Calendar.current
+    }
+
+    /// Finds the oldest undreamed local day between the persisted activation
+    /// boundary and yesterday (inclusive). A malformed boundary is narrowed to
+    /// yesterday for safe migration; a valid future boundary waits, preserving
+    /// the user's opt-in boundary across date-line travel.
+    nonisolated static func oldestMissingTarget(
+        firstEligibleDayKey: String,
+        through yesterday: Date,
+        hasReport: (String) -> Bool,
+        calendar: Calendar
+    ) -> Target? {
+        let lastDay = calendar.startOfDay(for: yesterday)
+        let parsedStart = DreamDay.date(fromKey: firstEligibleDayKey, calendar: calendar)
+        let canonicalStart = parsedStart.map { DreamDay.key(for: $0, calendar: calendar) }
+        var day: Date
+        if let parsedStart, canonicalStart == firstEligibleDayKey {
+            day = calendar.startOfDay(for: parsedStart)
+            guard day <= lastDay else { return nil }
+        } else {
+            day = lastDay
+        }
+
+        while day <= lastDay {
+            let target = target(for: day, calendar: calendar)
+            if !hasReport(target.dayKey) { return target }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day),
+                  next > day else { return nil }
+            day = next
+        }
+        return nil
+    }
+
+    nonisolated static func target(for day: Date, calendar: Calendar) -> Target {
+        let start = calendar.startOfDay(for: day)
+        return Target(
+            day: start,
+            dayKey: DreamDay.key(for: start, calendar: calendar),
+            calendar: calendar)
+    }
+
+    nonisolated private static func isCanonicalFutureDayKey(
+        _ dayKey: String,
+        after day: Date,
+        calendar: Calendar
+    ) -> Bool {
+        guard let parsed = DreamDay.date(fromKey: dayKey, calendar: calendar),
+              DreamDay.key(for: parsed, calendar: calendar) == dayKey else {
+            return false
+        }
+        return calendar.startOfDay(for: parsed) > calendar.startOfDay(for: day)
     }
 
     /// The day a dream analyzes: the local calendar day before `date`.

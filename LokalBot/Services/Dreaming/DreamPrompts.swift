@@ -53,7 +53,8 @@ enum DreamPrompts {
     {"narrative": "...", "attention": ["..."], "repeated_work": ["..."], \
     "suggested_checks": ["..."], "frictions": ["..."], "top_actions": ["..."], \
     "active_projects": [{"name": "...", "status": "...", "evidence": ["..."]}], \
-    "work_goals": [{"text": "...", "horizon": "..."}], "recurring_patterns": ["..."]}
+    "work_goals": [{"text": "...", "horizon": "...", "reinforced_today": true}], \
+    "recurring_patterns": ["..."]}
 
     Rules:
     - Analysis and recommendations only. You changed nothing and must never claim otherwise.
@@ -75,6 +76,12 @@ enum DreamPrompts {
     memory. Update statuses from the day's evidence, add new entries only with \
     clear evidence, keep entries you still believe active even if untouched \
     today, and drop an entry only when the evidence shows it finished.
+    - Every work goal must include reinforced_today. Set it to true only when \
+    evidence from the analyzed day directly reinforces that goal. Set it to \
+    false when carrying a goal forward solely from current memory. Never infer \
+    reinforcement from the goal's presence in current memory or the comparison window.
+    - recurring_patterns is always the complete current list. Return [] when no \
+    recurring patterns remain; an empty list intentionally clears stored patterns.
     - Keep every string to one short sentence. Use empty arrays when nothing \
     qualifies — generic advice is worse than an empty list.
     """
@@ -84,6 +91,7 @@ enum DreamPrompts {
         let stringList: [String: Any] = ["type": "array", "items": ["type": "string"]]
         return [
             "type": "object",
+            "additionalProperties": false,
             "properties": [
                 "narrative": ["type": "string"],
                 "attention": stringList,
@@ -95,6 +103,7 @@ enum DreamPrompts {
                     "type": "array",
                     "items": [
                         "type": "object",
+                        "additionalProperties": false,
                         "properties": [
                             "name": ["type": "string"],
                             "status": ["type": "string"],
@@ -107,11 +116,13 @@ enum DreamPrompts {
                     "type": "array",
                     "items": [
                         "type": "object",
+                        "additionalProperties": false,
                         "properties": [
                             "text": ["type": "string"],
                             "horizon": ["type": "string"],
+                            "reinforced_today": ["type": "boolean"],
                         ],
-                        "required": ["text", "horizon"],
+                        "required": ["text", "horizon", "reinforced_today"],
                     ],
                 ],
                 "recurring_patterns": stringList,
@@ -129,7 +140,7 @@ enum DreamPrompts {
 
     static func context(evidence: DreamEvidence, memory: DreamMemory) -> [String] {
         var context = [
-            "Analyzed day: \(evidence.day.formatted(date: .complete, time: .omitted))",
+            "Analyzed local day: \(evidence.dayKey)",
         ]
         if memory.isEmpty {
             context.append("Current structured work memory: empty — this is the first dream.")
@@ -140,59 +151,114 @@ enum DreamPrompts {
         return context
     }
 
-    /// Tolerant parse of the model's reply: balanced-brace JSON extraction,
-    /// per-line cleanup, and hard caps so a rambling model can't oversize the
-    /// report or the memory. Nil when no usable object is found, which sends
-    /// the service down the deterministic fallback path.
+    /// Tolerant extraction of the model's JSON object followed by strict typed
+    /// decoding. Every declared field must be present with the right type and
+    /// every supplied string must remain meaningful after cleanup. Hard caps
+    /// keep a rambling but otherwise valid model from oversizing artifacts.
+    /// Nil sends the service down the deterministic fallback path.
     static func parse(_ output: String) -> DreamSynthesis? {
         guard let json = ChatPrompt.extractJSONObject(strippingReasoning(output)),
               let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+              let payload = try? JSONDecoder().decode(Payload.self, from: data),
+              let narrative = cleaned(payload.narrative, cap: 1_200),
+              let attention = cleanedList(payload.attention),
+              let repeatedWork = cleanedList(payload.repeatedWork),
+              let suggestedChecks = cleanedList(payload.suggestedChecks),
+              let frictions = cleanedList(payload.frictions),
+              let topActions = cleanedList(payload.topActions),
+              let recurringPatterns = cleanedList(payload.recurringPatterns) else {
             return nil
         }
-        let projects = (object["active_projects"] as? [Any] ?? [])
-            .prefix(DreamMemory.maxProjects)
-            .compactMap { raw -> DreamMemoryUpdate.Project? in
-                guard let item = raw as? [String: Any],
-                      let name = cleaned(item["name"]) else { return nil }
-                return DreamMemoryUpdate.Project(
-                    name: name,
-                    status: cleaned(item["status"]) ?? "",
-                    evidence: Array(strings(item["evidence"])
-                        .prefix(DreamMemory.maxEvidencePerProject)))
-            }
-        let goals = (object["work_goals"] as? [Any] ?? [])
-            .prefix(DreamMemory.maxGoals)
-            .compactMap { raw -> DreamMemoryUpdate.Goal? in
-                guard let item = raw as? [String: Any],
-                      let text = cleaned(item["text"]) else { return nil }
-                return DreamMemoryUpdate.Goal(text: text, horizon: cleaned(item["horizon"]) ?? "")
-            }
+
+        var projects: [DreamMemoryUpdate.Project] = []
+        for project in payload.activeProjects {
+            guard let name = cleaned(project.name),
+                  let status = cleaned(project.status),
+                  let evidence = cleanedList(project.evidence) else { return nil }
+            projects.append(DreamMemoryUpdate.Project(
+                name: name,
+                status: status,
+                evidence: Array(evidence.prefix(DreamMemory.maxEvidencePerProject))))
+        }
+
+        var goals: [DreamMemoryUpdate.Goal] = []
+        for goal in payload.workGoals {
+            guard let text = cleaned(goal.text),
+                  let horizon = cleaned(goal.horizon) else { return nil }
+            goals.append(DreamMemoryUpdate.Goal(
+                text: text,
+                horizon: horizon,
+                reinforcedToday: goal.reinforcedToday))
+        }
+
         let synthesis = DreamSynthesis(
-            narrative: cleaned(object["narrative"], cap: 1_200) ?? "",
-            attention: list(object["attention"]),
-            repeatedWork: list(object["repeated_work"]),
-            suggestedChecks: list(object["suggested_checks"]),
-            frictions: list(object["frictions"]),
-            topActions: Array(list(object["top_actions"]).prefix(maxTopActions)),
+            narrative: narrative,
+            attention: Array(attention.prefix(maxListItems)),
+            repeatedWork: Array(repeatedWork.prefix(maxListItems)),
+            suggestedChecks: Array(suggestedChecks.prefix(maxListItems)),
+            frictions: Array(frictions.prefix(maxListItems)),
+            topActions: Array(topActions.prefix(maxTopActions)),
             memory: DreamMemoryUpdate(
-                activeProjects: Array(projects),
-                workGoals: Array(goals),
-                recurringPatterns: Array(strings(object["recurring_patterns"])
-                    .prefix(DreamMemory.maxPatterns))))
+                activeProjects: Array(projects.prefix(DreamMemory.maxProjects)),
+                workGoals: Array(goals.prefix(DreamMemory.maxGoals)),
+                recurringPatterns: Array(
+                    recurringPatterns.prefix(DreamMemory.maxPatterns))))
         return synthesis.isEmpty ? nil : synthesis
     }
 
-    private static func list(_ value: Any?) -> [String] {
-        Array(strings(value).prefix(maxListItems))
+    private struct Payload: Decodable {
+        struct Project: Decodable {
+            let name: String
+            let status: String
+            let evidence: [String]
+        }
+
+        struct Goal: Decodable {
+            let text: String
+            let horizon: String
+            let reinforcedToday: Bool
+
+            enum CodingKeys: String, CodingKey {
+                case text
+                case horizon
+                case reinforcedToday = "reinforced_today"
+            }
+        }
+
+        let narrative: String
+        let attention: [String]
+        let repeatedWork: [String]
+        let suggestedChecks: [String]
+        let frictions: [String]
+        let topActions: [String]
+        let activeProjects: [Project]
+        let workGoals: [Goal]
+        let recurringPatterns: [String]
+
+        enum CodingKeys: String, CodingKey {
+            case narrative
+            case attention
+            case repeatedWork = "repeated_work"
+            case suggestedChecks = "suggested_checks"
+            case frictions
+            case topActions = "top_actions"
+            case activeProjects = "active_projects"
+            case workGoals = "work_goals"
+            case recurringPatterns = "recurring_patterns"
+        }
     }
 
-    private static func strings(_ value: Any?) -> [String] {
-        (value as? [Any] ?? []).compactMap { cleaned($0) }
+    private static func cleanedList(_ values: [String]) -> [String]? {
+        var result: [String] = []
+        result.reserveCapacity(values.count)
+        for value in values {
+            guard let cleaned = cleaned(value) else { return nil }
+            result.append(cleaned)
+        }
+        return result
     }
 
-    private static func cleaned(_ value: Any?, cap: Int = maxLineCharacters) -> String? {
-        guard let raw = value as? String else { return nil }
+    private static func cleaned(_ raw: String, cap: Int = maxLineCharacters) -> String? {
         let collapsed = raw.split(whereSeparator: \Character.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
