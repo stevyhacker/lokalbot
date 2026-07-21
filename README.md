@@ -16,9 +16,9 @@ Records both sides of meetings without a bot, turns conversations and the workda
 ![macOS 15.0+](https://img.shields.io/badge/macOS-15.0%2B-000000?logo=apple&logoColor=white)
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-2ea043)](LICENSE)
 
-<a href="web/assets/hero-demo.mp4"><img src="web/assets/hero-poster.jpg" alt="Watch the 30-second LokalBot tour: Quick Recall, Context Rewind, local Dictation, Cotyping, and privacy by default" width="880" /></a>
+<video src="https://github.com/user-attachments/assets/6764ed3b-df44-45fd-8569-13c440091aec" controls title="LokalBot 30-second feature demo: bot-free meeting capture, cited recall, local dictation and autocomplete, daily summaries, and privacy by default"></video>
 
-<sub><a href="web/assets/hero-demo.mp4"><strong>Watch the 30-second product tour →</strong></a> · Quick Recall, Context Rewind, Dictation, and Cotyping.</sub>
+<sub><strong>30-second feature demo with voiceover</strong> · Meetings, cited recall, Dictation, Cotyping, daily summaries, and local privacy · <a href="web/assets/feature-demo.mp4">open the MP4 directly</a></sub>
 
 [Features](#features) · [How it works](#how-it-works) · [Privacy — verify it](#privacy--verify-it) · [Download](#download) · [FAQ](#faq) · [Build from source](#build-from-source)
 
