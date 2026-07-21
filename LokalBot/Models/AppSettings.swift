@@ -129,19 +129,19 @@ struct AppSettings: Codable, Equatable {
     /// Empty preserves the historical behavior of using the Main LLM setting.
     var dictationCompositionBuiltInModelID: String = ""
 
-    /// M4: app/window activity sampling. Off by default — recording which apps
-    /// and windows you use all day is opt-in (the onboarding day-memory step or
-    /// Settings → Day tracking), never a side effect of finishing setup.
-    var trackingEnabled: Bool = false
+    /// M4: app/window activity sampling. Fresh installs enable the local day
+    /// timeline; macOS Accessibility still gates window-title collection.
+    var trackingEnabled: Bool = true
 
     /// M6: embedding-based semantic search (Qwen3-Embedding, downloaded on first use).
     var semanticSearchEnabled: Bool = true
 
-    // M5: screen context. Activity-only is the privacy-preserving default.
-    // Text and visual context are separate explicit opt-ins; the legacy boolean
-    // remains encoded so older builds can read a new settings blob safely.
-    var screenContextCaptureMode: ScreenContextCaptureMode = .activityOnly
-    var screenshotsEnabled: Bool = false
+    // M5: screen context. Fresh installs select encrypted visual context, while
+    // macOS Accessibility and Screen Recording permissions still gate capture.
+    // The legacy boolean remains encoded so older builds can read a new settings
+    // blob safely.
+    var screenContextCaptureMode: ScreenContextCaptureMode = .visualContext
+    var screenshotsEnabled: Bool = true
     /// Compatibility bridge for callers/settings blobs that still set only the
     /// pre-mode screenshot switch.
     var effectiveScreenContextCaptureMode: ScreenContextCaptureMode {
@@ -293,9 +293,9 @@ struct AppSettings: Codable, Equatable {
     /// marked text does not swallow accepted completions. Briefly uses the
     /// clipboard and restores it.
     var cotypingPasteInsertion: Bool = true
-    /// Soft length target; drives the per-request token budget. The default
-    /// mirrors Cotypist/Cotabby's longest shipped preset (12-20 words).
-    var cotypingMaxWords: Int = 20
+    /// Soft length target; drives the per-request token budget. Keep the default
+    /// concise so inline suggestions offer the next few words, not a sentence.
+    var cotypingMaxWords: Int = 3
     /// Idle time after the last keystroke before asking the model. Low enough
     /// to feel interactive, but high enough that normal typing does not pile
     /// cancelled model requests onto the runtime.
@@ -331,9 +331,9 @@ struct AppSettings: Codable, Equatable {
     /// titles via Accessibility (already required for cotyping), stays on-device.
     var cotypingUseAppContext: Bool = true
     /// Fold the current clipboard into the prompt as context, so suggestions can
-    /// build on what you just copied. Off by default (privacy); read fresh at
-    /// generation time, never cached or persisted.
-    var cotypingUseClipboard: Bool = false
+    /// build on what you just copied. On by default; read fresh at generation
+    /// time, never persisted, and ignored while cotyping itself is disabled.
+    var cotypingUseClipboard: Bool = true
     /// Match the host field's font and text color so ghost text reads as a
     /// continuation. On by default; reads via Accessibility (cached per field).
     var cotypingMatchHostStyle: Bool = true
@@ -455,8 +455,8 @@ struct AppSettings: Codable, Equatable {
             extendedContext: notes.isEmpty ? nil : notes)
     }
 
-    /// Token ceiling for one completion. Matches Cotypist/Cotabby's English
-    /// default: ceil(words * 1.3), floor 5, doubled for multi-line up to 120.
+    /// Token ceiling for one completion: ceil(words * 1.3), floor 5, doubled for
+    /// multi-line up to 120.
     var cotypingMaxResponseTokens: Int {
         let languageAware = (cotypingMaxWords * 13 + 9) / 10
         let base = max(5, languageAware)

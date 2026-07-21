@@ -1,6 +1,6 @@
 # LokalBot Privacy Policy
 
-Effective: July 12, 2026
+Effective: July 21, 2026
 
 LokalBot is a local-first macOS application. It has no LokalBot account,
 analytics service, advertising SDK, or telemetry backend. The project does not
@@ -14,20 +14,21 @@ LokalBot can store the following under its Application Support directory:
 - meeting microphone and system-audio tracks;
 - transcripts, summaries, notes, search indexes, and meeting metadata;
 - downloaded transcription, embedding, speech, and language models;
-- opt-in app/window activity history;
-- opt-in visible screen text and optional encrypted screenshots;
+- permission-gated app/window activity history;
+- permission-gated visible screen text and encrypted screenshots;
 - saved screen moments, optional unencrypted daily-memory exports, and optional
   routine drafts at folders you choose;
 - opt-in Agent Mode sessions and the agent runtime; and
 - preferences, diagnostic logs, and encryption keys.
 
-Screen context is off by default. You can enable accessible text without pixels
-or pair it with encrypted screenshots. Pixels are deleted after 14 days by
-default, and captured text follows the same retention unless you explicitly
-choose to keep it. Saved moments remain until you unsave or delete them.
-Dictation scratch audio is deleted after transcription by default. You can
-delete an individual meeting in the app or remove the entire LokalBot
-Application Support directory.
+Fresh installs select day tracking with visible text and encrypted screenshots
+by default, but collection remains blocked until you grant macOS Accessibility
+and Screen Recording access. You can switch to activity only, accessible text
+without pixels, or fully off. Pixels are deleted after 14 days by default, and
+captured text follows the same retention unless you explicitly choose to keep
+it. Saved moments remain until you unsave or delete them. Dictation scratch
+audio is deleted after transcription by default. You can delete an individual
+meeting in the app or remove the entire LokalBot Application Support directory.
 
 ## Network access
 
@@ -55,16 +56,18 @@ use those requests to track you.
 
 ## Permissions
 
-LokalBot asks only for permissions needed by features you choose:
+LokalBot asks only for permissions needed by enabled features. macOS does not
+grant optional permissions until you approve them:
 
 - Microphone and system audio for recording meetings.
 - Calendar access for meeting detection and titles.
 - Accessibility for browser-meeting detection, Cotyping, dictation insertion,
   visible-text context, and approved agent interaction.
-- Screen Recording only when you opt into visual screen context.
+- Screen Recording when visual screen context is selected.
 
-Recording defaults to manual on a fresh install. You are responsible for
-obtaining any consent required before recording other people.
+Recording defaults to automatic detection on a fresh install. You are
+responsible for informing participants and obtaining any consent required
+before recording other people.
 
 ## External-agent access
 

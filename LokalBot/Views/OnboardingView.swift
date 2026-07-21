@@ -42,11 +42,11 @@ struct OnboardingView: View {
         AppPermission.coreCases
     }
 
-    /// Welcome mode shows only the optional grants the user's own choices made
+    /// Welcome mode shows only the optional grants the current settings make
     /// relevant (Accessibility always helps meeting detection; Screen Recording
-    /// only once screenshots were opted in). Input Monitoring waits until
-    /// dictation/cotyping are enabled in the Type tab. Repair mode lists every
-    /// optional grant so nothing is unreachable.
+    /// when visual context is selected). Input Monitoring waits until dictation
+    /// or cotyping is enabled in the Type tab. Repair mode lists every optional
+    /// grant so nothing is unreachable.
     private var optionalPermissions: [AppPermission] {
         guard isWelcomeMode else {
             return AppPermission.allCases.filter(\.isOptionalOnboardingEnhancement)
@@ -270,7 +270,7 @@ private extension OnboardingView {
                 systemImage: "calendar.day.timeline.left",
                 tint: Brand.teal,
                 title: "Remember your day?",
-                subtitle: "The Timeline can log your day locally, and only if you turn it on. Activity, text, and visual context all start off."
+                subtitle: "The Timeline starts with app activity, visible text, and encrypted visual context selected. Turn off any layer you do not want before granting its macOS permission."
             )
             .onboardingReveal(0)
 
@@ -378,7 +378,7 @@ private extension OnboardingView {
 
     var permissionSubtitle: String {
         if missingRequiredCount == 0 {
-            return "The microphone is granted — you're ready. Optional grants can wait until you turn their features on."
+            return "The microphone is granted — you're ready. Optional grants control day-memory detail and can be skipped."
         }
         return "Microphone uses the macOS prompt. For list-based permissions, LokalBot opens the right pane and shows exactly where to drag the app."
     }

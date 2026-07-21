@@ -54,7 +54,7 @@ PAGES = [
             ),
             (
                 'Day timeline',
-                '<i class="ph ph-check" aria-hidden="true"></i>Opt-in screenshots + OCR, deleted after 14 days by default',
+                '<i class="ph ph-check" aria-hidden="true"></i>Permission-gated screenshots + OCR, selected by default and deleted after 14 days',
                 '<i class="ph ph-x" aria-hidden="true"></i>No',
             ),
             (
@@ -127,7 +127,7 @@ PAGES = [
             ),
             (
                 'Screen memory',
-                'Periodic screenshots + OCR, opt-in, searchable by every word',
+                'Periodic screenshots + OCR, selected by default but permission-gated, searchable by every word',
                 'Continuous compressed screen recording, always on',
             ),
             (
@@ -181,7 +181,7 @@ PAGES = [
         "lokal_pick_sub": "You want the Rewind workflow on today's Mac — with source you can read.",
         "lokal_pick_items": [
             'A colour-coded day timeline with time-by-app totals',
-            "Search every word you've seen — opt-in screenshots + OCR",
+            "Search every word you've seen — permission-gated screenshots + OCR",
             'Ask your day questions and get answers from a local model, not a cloud API',
             'It cleans up after itself: 14-day retention by default, encrypted at rest',
         ],
@@ -234,7 +234,7 @@ PAGES = [
             ),
             (
                 'Day timeline',
-                '<i class="ph ph-check" aria-hidden="true"></i>Opt-in screenshots + OCR with app tracking',
+                '<i class="ph ph-check" aria-hidden="true"></i>Permission-gated screenshots + OCR with app tracking',
                 '<i class="ph ph-x" aria-hidden="true"></i>No',
             ),
             (
@@ -331,7 +331,7 @@ PAGES = [
             ),
             (
                 'Day timeline',
-                '<i class="ph ph-check" aria-hidden="true"></i>Opt-in screenshots + OCR with app tracking',
+                '<i class="ph ph-check" aria-hidden="true"></i>Permission-gated screenshots + OCR with app tracking',
                 '<i class="ph ph-x" aria-hidden="true"></i>No',
             ),
             (

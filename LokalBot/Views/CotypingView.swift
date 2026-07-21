@@ -213,7 +213,7 @@ private struct CotypingContent: View {
             Text("Allows VS Code, Cursor, and browser xterm.js terminals. Standalone terminal apps stay off because shell completions conflict with ghost text.")
                 .font(.caption).foregroundStyle(.secondary)
             Toggle("Use the clipboard as context", isOn: $app.settings.cotypingUseClipboard)
-            Text("Folds what you just copied into the prompt so suggestions can build on it. Read fresh each time and never stored. Off by default — turn on only if you want the model to see your clipboard.")
+            Text("Folds what you just copied into the prompt so suggestions can build on it. Read fresh each time and never stored. On by default — turn it off if you do not want the model to see your clipboard.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

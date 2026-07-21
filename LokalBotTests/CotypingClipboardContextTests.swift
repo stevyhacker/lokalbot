@@ -81,8 +81,15 @@ final class CotypingClipboardContextTests: XCTestCase {
         XCTAssertLessThanOrEqual(line.count, "On the clipboard: ".count + CotypingPromptRenderer.maxClipboardLineCharacters)
     }
 
-    func testUseClipboardDefaultsOff() {
-        XCTAssertFalse(AppSettings().cotypingUseClipboard)
+    func testUseClipboardDefaultsOnAndExplicitOptOutRoundTrips() throws {
+        XCTAssertTrue(AppSettings().cotypingUseClipboard)
+
+        var settings = AppSettings()
+        settings.cotypingUseClipboard = false
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self, from: JSONEncoder().encode(settings))
+
+        XCTAssertFalse(decoded.cotypingUseClipboard)
     }
 
     func testClipboardSignificantTokensIgnoreShortTokensAndCase() {

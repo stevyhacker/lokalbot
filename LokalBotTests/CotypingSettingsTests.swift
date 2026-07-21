@@ -54,7 +54,7 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertEqual(settings.cotypingDebounceMs, AppSettings.defaultCotypingDebounceMs)
     }
 
-    func testUnversionedPreviewDefaultsMigrateToCurrentCotypistTargets() throws {
+    func testUnversionedPreviewDefaultsMigrateToCurrentTargets() throws {
         let data = #"{"cotypingDebounceMs":150,"cotypingMaxWords":2}"#.data(using: .utf8)!
         let settings = try JSONDecoder().decode(AppSettings.self, from: data)
 
@@ -131,14 +131,14 @@ final class CotypingSettingsTests: XCTestCase {
         XCTAssertTrue(decoded.cotypingInProcessRuntime)
     }
 
-    func testDefaultsKeepCotypingResponsiveWithoutAggressiveModelChurn() {
+    func testDefaultsKeepCotypingSuggestionsConcise() {
         let settings = AppSettings()
-        XCTAssertEqual(settings.cotypingMaxWords, 20)
+        XCTAssertEqual(settings.cotypingMaxWords, 3)
         XCTAssertEqual(settings.cotypingDebounceMs, 160)
         XCTAssertFalse(settings.cotypingStreamSuggestionsWhileGenerating)
         XCTAssertTrue(settings.cotypingAutoAcceptTrailingPunctuation)
         XCTAssertFalse(settings.cotypingAddSpaceAfterAccept)
-        XCTAssertEqual(settings.cotypingMaxResponseTokens, 26)
+        XCTAssertEqual(settings.cotypingMaxResponseTokens, 5)
     }
 
     func testMaxResponseTokensMirrorCotypistBudget() {

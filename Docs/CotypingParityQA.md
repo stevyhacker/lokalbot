@@ -2,12 +2,12 @@
 
 This checklist keeps LokalBot's cotyping work aligned with the quality bar observed in Cotypist: a dedicated local model, prompt context, accepted-completion learning, streaming feedback, and measurable latency.
 
-Parity defaults:
+LokalBot defaults:
 
 - Gemma 4 E4B Q5 XL is the default cotyping model. Cotyping always runs its own
   dedicated model on a separate `llama-server` instance — there is no option to
   reuse the summarization model, and no fallback to the bundled tiny model.
-- Suggestion length defaults to 20 words, matching Cotypist/Cotabby's 12-20 word preset upper bound.
+- Suggestion length defaults to 3 words for short inline continuations.
 - Debounce defaults to 160 ms; users can still tune it down to 20 ms when they
   prefer maximum eagerness over lower background model churn.
 - Streaming partial suggestions default off, matching Cotypist/Cotabby.

@@ -15,7 +15,7 @@ SCENES = [
     {"id": "remember", "start": 8.62, "end": 13.03, "purpose": "bot-free meeting capture and recap"},
     {"id": "evidence", "start": 13.03, "end": 17.12, "purpose": "speaker-labeled transcript evidence"},
     {"id": "quick-recall", "start": 17.12, "end": 24.48, "purpose": "search meetings and saved screen moments"},
-    {"id": "context-rewind", "start": 24.48, "end": 31.30, "purpose": "scrub play and bookmark the opt-in workday timeline"},
+    {"id": "context-rewind", "start": 24.48, "end": 31.30, "purpose": "scrub play and bookmark the permission-gated workday timeline"},
     {"id": "dictation", "start": 31.30, "end": 40.92, "purpose": "local push-to-talk transcription inserted at the cursor"},
     {"id": "cotyping", "start": 40.92, "end": 46.82, "purpose": "on-device ghost-text autocomplete with Tab acceptance"},
     {"id": "ask", "start": 46.82, "end": 49.28, "purpose": "answer work questions with citations"},

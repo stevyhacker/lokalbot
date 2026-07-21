@@ -99,16 +99,27 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.transcriptionModel, TranscriptionModelChoice.recommended)
     }
 
-    /// Day memory is strictly opt-in: neither activity tracking nor screen
-    /// capture may ever default on — accepting onboarding must not silently
-    /// start watching the screen.
-    func testDayTrackingAndScreenshotsDefaultOff() {
+    func testDayTrackingAndVisualContextDefaultOn() {
         let settings = AppSettings()
-        XCTAssertFalse(settings.trackingEnabled)
-        XCTAssertFalse(settings.screenshotsEnabled)
-        XCTAssertEqual(settings.screenContextCaptureMode, .activityOnly)
+        XCTAssertTrue(settings.trackingEnabled)
+        XCTAssertTrue(settings.screenshotsEnabled)
+        XCTAssertEqual(settings.screenContextCaptureMode, .visualContext)
         XCTAssertFalse(settings.meetingVisualContextEnabled)
         XCTAssertFalse(settings.capturePrivateWindows)
+    }
+
+    func testPersistedDayTrackingOptOutSurvivesDefaultFlip() throws {
+        var settings = AppSettings()
+        settings.trackingEnabled = false
+        settings.screenContextCaptureMode = .activityOnly
+        settings.screenshotsEnabled = false
+
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self, from: JSONEncoder().encode(settings))
+
+        XCTAssertFalse(decoded.trackingEnabled)
+        XCTAssertFalse(decoded.screenshotsEnabled)
+        XCTAssertEqual(decoded.screenContextCaptureMode, .activityOnly)
     }
 
     func testFreshInstallRecordsMeetingsAutomatically() {
@@ -143,9 +154,9 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(settings.approvedRemoteInferenceOrigins.isEmpty)
     }
 
-    /// A settings blob saved by an existing install keeps whatever the user
-    /// had — the new opt-in default only applies to fresh installs.
-    func testExistingScreenshotChoiceSurvivesDefaultFlip() throws {
+    /// Legacy settings that predate the typed screen-context mode still map the
+    /// old screenshot switch to visual context.
+    func testLegacyScreenshotChoiceMapsToVisualContext() throws {
         let data = #"{"trackingEnabled":true,"screenshotsEnabled":true}"#.data(using: .utf8)!
 
         let settings = try JSONDecoder().decode(AppSettings.self, from: data)

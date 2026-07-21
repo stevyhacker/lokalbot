@@ -202,7 +202,7 @@ Yes. Use the built-in llama.cpp runtime with any GGUF you download (there's a Hu
 <details>
 <summary>Is my screen being watched?</summary>
 
-Day tracking is off by default. If you enable it, you can keep only app/window activity, add visible text through Accessibility without storing pixels, or pair that text with encrypted screen captures. Visuals are deleted after 14 days by default; a moment you explicitly save is retained until you unsave or delete it. Private/incognito windows, excluded apps and domains, and focused secure fields are skipped. Detected credentials are redacted and the associated pixels are dropped. No detector is perfect, so exclude any app or domain whose content should never be retained.
+Fresh installs select day tracking with text and encrypted visual context by default. Collection starts only after you grant macOS Accessibility and Screen Recording permissions, and you can turn off tracking or choose a less detailed mode at any time. Visuals are deleted after 14 days by default; a moment you explicitly save is retained until you unsave or delete it. Private/incognito windows, excluded apps and domains, and focused secure fields are skipped. Detected credentials are redacted and the associated pixels are dropped. No detector is perfect, so exclude any app or domain whose content should never be retained.
 </details>
 
 <details>

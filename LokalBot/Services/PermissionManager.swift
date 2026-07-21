@@ -102,7 +102,7 @@ nonisolated enum AppPermission: CaseIterable, Identifiable, Hashable, Sendable {
         case .microphone:
             "Records your side of the meeting from the microphone."
         case .screenRecording:
-            "Captures optional encrypted visuals behind day memory. Only used in Text + visual context mode; system-audio capture does not use this permission."
+            "Captures encrypted visuals for day memory. Only used in Text + visual context mode; system-audio capture does not use this permission."
         case .accessibility:
             "Reads window titles and visible interface text for activity and text-context features."
         case .inputMonitoring:

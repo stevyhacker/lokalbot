@@ -117,7 +117,7 @@ GUIDES = [
           <li>A downloaded speech engine creates the transcript on Apple Silicon.</li>
           <li>The built-in llama.cpp backend can generate a summary locally.</li>
           <li>SQLite stores the library and full-text search index.</li>
-          <li>Optional screenshots are off by default, encrypted at rest, and deleted after 14 days by default.</li>
+          <li>Fresh installs select encrypted visual context by default; capture remains permission-gated, encrypted at rest, and deleted after 14 days by default.</li>
         </ol>
         <p>Then identify the exceptions. LokalBot connects to download models and updates, to set up optional Agent Mode, and to call any non-loopback inference origin you explicitly approve. That distinction is more useful than an absolute “never connects” claim.</p>
 
@@ -271,7 +271,7 @@ GUIDES = [
           <li><strong>Compact setup:</strong> a roughly 0.7 GB Qwen3-ASR speech model plus a small 0.53–1.28 GB language model.</li>
           <li><strong>Broader transcription:</strong> Whisper large-v3 turbo is roughly 1.6 GB; Qwen3-ASR 1.7B is roughly 3.2 GB.</li>
           <li><strong>Quality-focused summaries:</strong> larger catalog choices add about 5–18 GB each.</li>
-          <li><strong>Meetings:</strong> audio, transcripts, and optional screenshots use additional space over time.</li>
+          <li><strong>Meetings and day memory:</strong> audio, transcripts, and visual captures use additional space over time.</li>
         </ul>
         <p>These numbers describe model downloads and may change when publishers update packaging. LokalBot lets you choose rather than downloading every model.</p>
 
@@ -279,11 +279,11 @@ GUIDES = [
         <p>Grant only the permissions for features you intend to use:</p>
         <ul>
           <li><strong>Microphone</strong> records your voice.</li>
-          <li><strong>System audio / Screen Recording</strong> enables the selected meeting-app audio capture and opt-in screen context.</li>
+          <li><strong>System audio / Screen Recording</strong> enables the selected meeting-app audio capture and visual screen context.</li>
           <li><strong>Calendar</strong> helps detect and title scheduled meetings.</li>
           <li><strong>Accessibility</strong> supports meeting detection, Cotyping, dictation insertion, and approved agent interaction.</li>
         </ul>
-        <p>Manual recording is the default on a fresh install. Screenshots are separately opt-in, encrypted at rest, and deleted after 14 days by default.</p>
+        <p>Automatic meeting recording and encrypted visual context are selected on a fresh install. Both remain gated by macOS permissions; visual captures are deleted after 14 days by default.</p>
 
         <h2>Before an important meeting</h2>
         <ol>
@@ -302,4 +302,3 @@ GUIDES = [
         "related": ["local-transcription-models-mac", "offline-meeting-transcription-mac", "record-both-sides-mac-meeting-without-bot"],
     },
 ]
-

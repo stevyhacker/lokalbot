@@ -57,9 +57,9 @@ enum CotypingPromptContextSanitizer {
 /// here; reading the pasteboard is a thin runtime wrapper
 /// (`CotypingClipboardProvider`).
 ///
-/// Privacy: off by default; snippets may be memoized in memory for one focused
-/// field/pasteboard state to keep the prompt prefix stable, but are never
-/// persisted or logged.
+/// Enabled by default when cotyping runs; snippets may be memoized in memory for
+/// one focused field/pasteboard state to keep the prompt prefix stable, but are
+/// never persisted or logged.
 enum CotypingClipboardContext {
     /// Hard cap on the snippet included in the prompt (mirrors Cotabby's 1_200).
     static let maxSnippetCharacters = 1_200

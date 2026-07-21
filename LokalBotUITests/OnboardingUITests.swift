@@ -1,7 +1,7 @@
 import XCTest
 
-/// Drives the real first-run wizard and pins down the privacy contract that
-/// day-memory features begin off and remain explicit opt-ins.
+/// Drives the real first-run wizard and pins down the permission contract for
+/// the day-memory layers selected by default.
 final class OnboardingUITests: XCTestCase {
     private var root: URL!
     private var app: XCUIApplication!
@@ -21,8 +21,8 @@ final class OnboardingUITests: XCTestCase {
             settingsJSON: """
             {
               "menuBarOnly": false,
-              "trackingEnabled": false,
-              "screenshotsEnabled": false,
+              "trackingEnabled": true,
+              "screenshotsEnabled": true,
               "calendarDetectionEnabled": false,
               "semanticSearchEnabled": false,
               "cotypingEnabled": false,
@@ -40,7 +40,7 @@ final class OnboardingUITests: XCTestCase {
         UITestHarness.cleanUp(defaultsSuiteName: defaultsSuiteName)
     }
 
-    func testWizardExplainsValueAndKeepsDayMemoryOptIn() {
+    func testWizardExplainsDayMemoryDefaultsAndPermissionGates() {
         assertPage(title: "Welcome to LokalBot", step: 1)
         app.buttons["Continue"].click()
         assertPage(title: "Remember. Ask. Write. Act.", step: 2)
@@ -56,23 +56,22 @@ final class OnboardingUITests: XCTestCase {
             XCTAssertTrue(option.waitForExistence(timeout: 4),
                           "day-memory opt-in missing")
         }
-        XCTAssertTrue(text(containing: "Activity, text, and visual context all start off")
-            .exists, "day-memory page did not explain its opt-in defaults")
+        XCTAssertTrue(text(containing: "app activity, visible text, and encrypted visual context selected")
+            .exists, "day-memory page did not explain its enabled defaults")
 
-        // With visual context still off, Screen Recording is intentionally not
-        // requested by the permissions step.
+        // Visual context starts selected, so onboarding exposes its macOS grant.
         app.buttons["Continue to permissions"].click()
         assertPage(title: "Grant LokalBot access", step: 5)
-        XCTAssertFalse(text(containing: "Screen Recording").exists,
-                       "onboarding requested Screen Recording before visual opt-in")
+        XCTAssertTrue(text(containing: "Screen Recording").waitForExistence(timeout: 5),
+                      "visual-context default did not expose its required permission")
 
         app.buttons["Back"].click()
         assertPage(title: "Remember your day?", step: 4)
         optIn("Add encrypted visual context").click()
         app.buttons["Continue to permissions"].click()
         assertPage(title: "Grant LokalBot access", step: 5)
-        XCTAssertTrue(text(containing: "Screen Recording").waitForExistence(timeout: 5),
-                      "visual-context opt-in did not add its required permission")
+        XCTAssertFalse(text(containing: "Screen Recording").exists,
+                       "visual-context opt-out kept requesting Screen Recording")
         XCTAssertTrue(text(containing: "Permission access stays local")
             .waitForExistence(timeout: 5), "permission privacy reassurance missing")
     }

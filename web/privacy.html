@@ -29,7 +29,7 @@
 
   <main class="legal-page">
     <header class="legal-page__head">
-      <p class="eyebrow">Effective July 12, 2026</p>
+      <p class="eyebrow">Effective July 21, 2026</p>
       <h1>Privacy Policy</h1>
       <p>LokalBot is local-first. It has no LokalBot account, analytics service, advertising SDK, telemetry backend, or hosted AI service.</p>
     </header>
@@ -41,11 +41,11 @@
         <li>meeting microphone and system-audio tracks;</li>
         <li>transcripts, summaries, notes, search indexes, and meeting metadata;</li>
         <li>downloaded speech, embedding, and language models;</li>
-        <li>opt-in app/window activity, screenshots, and locally extracted text;</li>
+        <li>permission-gated app/window activity, screenshots, and locally extracted text;</li>
         <li>opt-in Agent Mode sessions and runtime files; and</li>
         <li>preferences, diagnostic logs, and encryption keys.</li>
       </ul>
-      <p>Screenshots are off by default, encrypted at rest, and deleted after 14 days by default. Their extracted text follows the same retention unless you explicitly keep it. Dictation scratch audio is deleted after transcription by default.</p>
+      <p>Fresh installs select day tracking with encrypted visual context by default, but collection still requires macOS Accessibility and Screen Recording permission. Screenshots are encrypted at rest and deleted after 14 days by default. Their extracted text follows the same retention unless you explicitly keep it. Dictation scratch audio is deleted after transcription by default.</p>
 
       <h2>When LokalBot uses the network</h2>
       <ul>
@@ -57,8 +57,8 @@
       <p>Those services receive ordinary connection metadata such as IP address and request headers. LokalBot adds no advertising identifier and does not use those requests for tracking. A remote server's operator controls its own privacy terms.</p>
 
       <h2>Permissions and consent</h2>
-      <p>Microphone and system-audio permissions enable recording. Calendar access helps detect and title meetings. Accessibility enables browser-meeting detection, Cotyping, dictation insertion, and approved agent interaction. Screen Recording enables opt-in screen context.</p>
-      <p>Recording defaults to manual on a fresh install. You are responsible for obtaining any consent required before recording other people.</p>
+      <p>Microphone and system-audio permissions enable recording. Calendar access helps detect and title meetings. Accessibility enables browser-meeting detection, Cotyping, dictation insertion, and approved agent interaction. Screen Recording enables visual screen context when selected.</p>
+      <p>Recording defaults to automatic detection on a fresh install. You are responsible for informing participants and obtaining any consent required before recording other people.</p>
 
       <h2>External-agent access</h2>
       <p>The bundled CLI and MCP interface are read-only and refuse library access until you enable Agent Access under Settings → Privacy. An enabled external tool runs as your macOS user, so connect only tools you trust.</p>
