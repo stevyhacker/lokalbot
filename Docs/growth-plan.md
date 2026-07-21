@@ -1,133 +1,110 @@
 # LokalBot — Growth Plan
 
-_Date: 2026-07-21. Companion to `product-roadmap.md` (which covers what to build). This covers how people find out the product exists. Grounded in the actual constraints: free, GPLv3, no telemetry, no cloud, Apple Silicon + macOS 15+ only, one maintainer, distribution outside the App Store._
+_Date: 2026-07-21. Companion to `product-roadmap.md`. The premise: skip the generic open-source playbook (that's a checklist at the end, not a strategy) and build growth mechanics only LokalBot can run — each one exploits a property competitors structurally cannot copy: cloud notetakers can't go silent on the network, bot-based tools can't be invisible in the call, and closed-source apps can't invite an audit._
 
-## The shape of the problem
+## The seven mechanics
 
-LokalBot has no paid acquisition budget, no sales motion, and — by architectural invariant — no telemetry to run funnels on. That rules out most of the standard growth playbook and leaves the channels where free, open-source, privacy-first products actually win: **launch spikes, search, word-of-mouth loops, and ecosystem placement.** The good news: the product's strongest properties (verifiable privacy, no-bot capture, free) are exactly the properties those channels reward.
+### 1. The standing bounty: "Catch LokalBot phoning home"
 
-The asset inventory is already unusually good: a polished README with a 30-second demo video, five SEO guide pages and four dated competitor comparisons on lokalbot.com, a signed/notarized DMG, an MCP server, and a `LokalBot for LLMs` block for AI-search answers. What's missing is **distribution**: nobody has pointed the firehoses at these assets yet.
+**Exploits: the privacy claim is falsifiable. Cloud competitors cannot run this play at any price.**
 
-Everything below is ranked by (audience reached × conversion likelihood) ÷ effort, and nothing requires adding a network surface to the app.
+Turn the README's Little Snitch paragraph from a defensive FAQ into an offensive spectacle: a permanent, public challenge — *catch the built-in processing path making an outbound connection during record → transcribe → summarize, win the bounty and a place on the wall.* Even a modest pot ($500–1000) works, because the money isn't the point; the dare is.
 
----
+- A `web/bounty.html` page with precise rules (built-in backend, models pre-downloaded, update checks off — the same conditions the README already states), a hall-of-fame for anyone who finds *any* undisclosed network path, and instructions for capturing evidence.
+- Every failed attempt is a third-party endorsement someone else publishes for you. A successful catch is a free security audit plus an honest disclosure post — which, for this audience, also builds trust.
+- This is the launch asset: "Show HN: I'm paying anyone who can catch my meeting transcriber making a network request" is a far stronger headline than a feature list, and it *is* the product's thesis in one sentence.
+- Cost: bounty pot + rigor in the rules (get the disclosed-exceptions list airtight first — Sparkle, model downloads, approved origins are already documented in PRIVACY.md).
 
-## 1. Launch moments — the spikes that seed everything else
+**Done when:** the page is live, the challenge has been posted, and at least one outsider has published an attempt.
 
-**Effort: S per launch. One-time each, but they permanently seed search, stars, and word of mouth.**
+### 2. Local Wrapped — the shareable artifact computed off-cloud
 
-A free local-AI Mac app is close to ideal Show HN / r/LocalLLaMA material, and there's no evidence any launch has happened. Do these as discrete, spaced events (2–3 weeks apart), each pegged to a release with something demonstrable:
+**Exploits: the app sees a year of someone's work life and can prove it never left the Mac.**
 
-1. **Show HN.** Title formula that fits HN culture: concrete capability + verifiable privacy claim, e.g. *"Show HN: LokalBot – records both sides of a Mac meeting without a bot, fully on-device (GPLv3)"*. The README's "point Little Snitch at it" challenge is the comment-thread ace: invite skeptics to verify, don't ask them to trust. First comment from the maintainer should cover the three questions HN will ask anyway: why no sandbox (Core Audio taps), why Apple Silicon only, what exactly touches the network.
-2. **r/LocalLLaMA** (~1M members, exactly the target user). Lead with the model stack table from the README — that audience wants tokens/s, quantizations, and the fact that you can point it at your own GGUF/Ollama. Separate later posts for standalone capabilities: Cotyping as "system-wide local autocomplete," the Parakeet ~190× realtime benchmark.
-3. **r/macapps, r/MacOS, r/privacy, r/selfhosted, r/ObsidianMD** (the Markdown/Obsidian export is the hook for the last one). One post each, native to each subreddit's norms, spaced out — not a same-day blast, which reads as spam and gets cross-reported.
-4. **Product Hunt** last, once the GitHub social proof exists from 1–3. PH loves polished video; the hero-demo assets in `Video/` are already built for this.
+Spotify Wrapped mechanics are the most reliable consumer viral loop that exists, and every cloud tool that copies it has to mumble past the "we mined your data" part. LokalBot gets the loop *and* the counter-positioning: **"Computed on my Mac. Shared by me, not by a server."**
 
-**Rule for all of them:** the maintainer posts as themselves, answers every comment for the first 24 h, and never astroturfs. For a privacy product, being caught doing fake-grassroots marketing is fatal; being visibly one honest developer is itself the marketing.
+- A locally rendered, screenshot-ready card: hours of meetings transcribed, words dictated, Cotyping completions accepted, busiest day, longest meeting survived — and the kicker line: **"Cloud equivalent: ~$34/mo across Otter + Superwhisper + Rewind. Paid: $0."** All computable today from `SQLiteDatabase` + the meetings library; rendering is a SwiftUI view exported to PNG.
+- Ship a small always-available version first (a "your stats" card in Today with a share button — the savings counter alone is a flex people screenshot), then the full year-in-review in **early December**, timed to Wrapped season when the format is ambient.
+- Nothing leaves the Mac; the user shares an image or doesn't. The invariant is the punchline, printed on the card.
 
-**Done when:** each channel has had its post; HN + r/LocalLLaMA drive the first meaningful star/download spike.
+**Done when:** a stats card exists with one-tap image export, and the December build ships a year-in-review.
 
-## 2. Homebrew cask — meet developers where they install
+### 3. The switch kit — destroy the exit cost of every competitor
 
-**Effort: S. Permanent, compounding.**
+**Exploits: cloud notetakers hold users hostage via their archives; LokalBot's file-based library can eat them.**
 
-There is no cask today. `brew install --cask lokalbot` is how a large fraction of the exact target user (developer with an Apple Silicon Mac) installs apps, and a cask listing is itself discovery (`brew search meeting`, casks are indexed by every "best Mac apps" scraper).
+Everyone deciding to leave Otter/Granola/Limitless faces the same wall: years of meetings stuck in someone's cloud. Build importers for their export formats (Otter bulk export, Granola, Limitless/Rewind takeout) that land straight into `meetings/` + FTS + embeddings — searchable next to new local recordings.
 
-1. Submit a cask to `homebrew/cask` (requirements already met: stable versioned DMG on GitHub Releases, signed + notarized). Sparkle's appcast can feed `livecheck` so version bumps are automated.
-2. Add the install command to README + website download sections.
-3. Same motion for **AlternativeTo** (create the listing, seed it as an alternative to Granola, Otter, Rewind/Limitless, Superwhisper, Krisp — the comparison pages already make the case), **Privacy Guides forum**, and the awesome-lists: `awesome-mac`, `awesome-macos`, `awesome-privacy`, `open-source-mac-os-apps`. Each is a one-time PR/listing that ranks forever.
+- One importer per competitor, plus a matching page: *"Leave Otter. Take your meetings with you."* These rank for high-intent exit queries ("export otter transcripts", "granola export") that competitors' own help docs currently monopolize.
+- **Churn-jack the news cycle.** Keyword-watch Reddit/X/HN for the recurring anger moments — a price hike, the next Rewind-style cloud pivot, and the evergreen genre of *"an Otter bot joined our call and recorded us after the employee left"* incident posts. Each one gets a same-day, genuinely helpful reply and, for the big ones, a dedicated response page. The `enshittification-proof.html` page already exists as the ideological landing zone; importers make it actionable within the hour of someone's rage-quit.
+- The GPL angle closes the loop: switching *to* LokalBot is the last migration they'll need, because a rug-pull fork is legally impossible to close-source.
 
-**Done when:** `brew install --cask lokalbot` works and AlternativeTo shows LokalBot on the Granola/Otter/Rewind alternatives pages.
+**Done when:** at least the Otter importer ships and each importer has its exit-intent landing page.
 
-## 3. Widen the SEO engine that already exists
+### 4. Become the benchmark Mac reviewers run
 
-**Effort: M, ongoing but batchable.**
+**Exploits: reproducible local-AI numbers on Apple Silicon — content nobody else produces and reviewers need every chip cycle.**
 
-The comparison pages (`web/lokalbot-vs-*.html`) target the right high-intent queries. Extend the same machinery:
+Every M-series launch, YouTube reviewers scramble for "AI performance" tests and end up timing Ollama token counts. Give them a one-command, camera-friendly benchmark: `lokalbot-cli benchmark` — transcription realtime-factor, summary tokens/s, embedding throughput on a bundled sample meeting, with a clean printed scorecard.
 
-1. **More comparisons** — the missing high-volume ones: vs Otter.ai, vs Fireflies, vs Fathom, vs Limitless (distinct query from Rewind now), vs MacWhisper, vs Krisp. Same dated-and-sourced format that already exists; it's a template job.
-2. **"Alternative" pages** — "Granola alternative," "Otter alternative (no bot, free)" are distinct queries from "X vs Y" and convert better. One page per major competitor.
-3. **Benchmarks as content** — `Benchmarks/` exists in the repo. Publish a living "local transcription speed on Apple Silicon (M1→M4)" page. Nobody else publishes reproducible numbers; it earns backlinks from the local-AI community and ranks for model-name queries (Parakeet, Granite Speech, Qwen3-ASR) with near-zero competition.
-4. **AI-search optimization** — the `LokalBot for LLMs` README block is ahead of the curve. Mirror it as `web/llms.txt`, and keep competitor-page claims dated/sourced, since LLM answer engines increasingly cite exactly such pages for "private Granola alternative" questions.
-5. Keep the discipline from `web/CLAUDE.md`: extensionless canonicals, sitemap entries per page.
+- A public leaderboard (repo or page) seeded with the numbers already in the README (M4 Max: Parakeet ~190× realtime, ~100 tok/s summaries), accepting submissions by PR — UGC that is also stars and contributors.
+- Pitch it directly to the Mac-review circuit before the next chip launch: "the meeting-transcription benchmark" is a more relatable AI test than synthetic tokens/s, and every video that runs it shows the app by name.
+- Cost is small: the timing hooks exist (`Benchmarks/`, the headless harness); this is packaging plus a scorecard printer.
 
-**Done when:** every major competitor query has both a "vs" and an "alternative" page, and the benchmarks page is live and linked from README.
+**Done when:** the subcommand exists, the leaderboard has third-party submissions, and one reviewer has used it on camera.
 
-## 4. Ecosystem placement — the MCP/agent surface is a growth channel
+### 5. The IT-approval kit — bottom-up enterprise without an enterprise
 
-**Effort: S. Rides someone else's growth curve.**
+**Exploits: security teams are actively banning cloud notetaker bots; a local-only recorder is the one thing they can approve.**
 
-`lokalbot-cli mcp` + the one-click `.mcpb` bundle is a real differentiator ("give Claude/Cursor memory of your meetings — locally") aimed at the fastest-growing developer audience there is.
+The trend is real and accelerating: companies block Otter/Fireflies bots from calls and prohibit employees pasting meeting audio into cloud tools. Every such ban strands employees who still want notes — and one approved employee converts a whole company, for free.
 
-1. Submit the MCP server to the registries agents actually browse: the official MCP registry, Anthropic's directory when open for desktop-extension listings, Cursor's directory, plus the `awesome-mcp-servers` lists.
-2. A dedicated `web/mcp.html` page: "Give your coding agent a memory of your meetings" with the three-line setup for Claude Code / Claude Desktop / Cursor.
-3. A short screen-capture demo (agent answering "what did we decide about the auth refactor?" from the local library) — this clip is independently shareable on r/LocalLLaMA and X.
+- A downloadable **security-review packet**: architecture one-pager, complete network-egress inventory (the PRIVACY.md disclosure list, restated for a reviewer), data-at-rest details (AES-GCM, Keychain, retention), GPL auditability, and the bounty (§1) as evidence of confidence. Written for the person filling in the vendor-assessment spreadsheet.
+- MDM/Jamf deployment notes (it's a signed, notarized, sandbox-free Developer ID app — document the PPPC profile for Mic/Screen Recording/Accessibility so IT can pre-grant).
+- Landing page: *"The meeting notetaker your security team will approve."* It ranks for the queries IT people and blocked employees actually type.
 
-**Done when:** LokalBot appears in at least the official MCP registry and one awesome-list, with a landing page to link to.
+**Done when:** the packet is downloadable and one org has deployed via MDM.
 
-## 5. Build the shareable-moment loop (the only "viral" mechanics that fit)
+### 6. Confidentiality verticals — the users who legally cannot use the competition
 
-**Effort: S–M. The only in-product growth surface that doesn't violate the invariant.**
+**Exploits: for privileged conversations, local-only isn't a preference, it's the only compliant option.**
 
-No telemetry and no cloud means no referral links, no "invite your team." What a local-first app *can* do is make its outputs travel:
+Lawyers (privilege), therapists and physicians (confidentiality), journalists (source protection), HR (investigations), and EU workplaces (GDPR; German works councils routinely veto cloud recording outright). Cloud notetakers are disqualified at the policy level in all of these — LokalBot competes in these niches *unopposed*.
 
-1. **Opt-in export attribution.** A single settings toggle (default **off** — brand demands it): appends `Summarized locally by LokalBot — lokalbot.com` to exported/copied summaries. People paste recaps into Slack/email/Notion after every meeting; each paste is an impression in front of exactly the right audience (other meeting attendees). Off-by-default with a one-time "help others find LokalBot?" nudge post-export keeps it consensual.
-2. **The verification challenge as a repeatable asset.** "Watch Little Snitch stay silent while it transcribes" is a 20-second clip nobody else in the category can film. Make it once, pin it on the website/README, repost it with every release. Invite others to reproduce it — reproduction posts are third-party endorsements.
-3. **Obsidian/Logseq community.** The scheduled Markdown export makes LokalBot a "meeting notes into your vault, locally" tool. A forum post + share-your-setup thread in those communities reaches high-word-of-mouth users cheaply.
+- One landing page per vertical in the existing `web/` template: "AI meeting notes for lawyers — the audio never leaves your Mac," same for therapy notes, source-protected interviews, HR conversations. Each states the compliance logic plainly and honestly (including what LokalBot does *not* claim, e.g. it is not itself a HIPAA-certified system — it's an on-device tool, which is precisely why the data-processor question disappears).
+- A German-language page targeting *"DSGVO-konforme Meeting-Transkription"* and the works-council (Betriebsrat) angle — a wedge where the entire cloud category is often contractually forbidden.
+- These communities are small, dense, and high word-of-mouth: one respected lawyer or journalist advocating in their professional forum outperforms any general launch. Seed each page into the profession's own watering holes (legal-tech newsletters, Freedom of the Press Foundation orbit, therapist tech groups) rather than general tech channels.
 
-**Done when:** the attribution toggle ships (off by default) and the Little Snitch clip exists as a standalone shareable asset.
+**Done when:** four vertical pages + the German GDPR page are live and each has been introduced into one professional community.
 
-## 6. Release-cadence marketing — turn shipping into content
+### 7. Arm the in-meeting moment
 
-**Effort: S per release, ongoing.**
+**Exploits: every meeting a user attends contains 2–15 perfectly qualified prospects who just watched the product work.**
 
-Releases already happen (0.5.0, 0.5.1 in the log). Attach a lightweight ritual to each:
+The conversion moment already happens organically: the user shares a recap or references the transcript, someone asks *"wait, which bot was that? I didn't see a bot."* — and the answer ("there is no bot, it runs on my Mac, it's free") is the entire pitch. The hack is reducing that answer to one action:
 
-1. **Release notes as posts.** Each notable release gets a short write-up (what shipped, one GIF) cross-posted to a repo Discussions "announcements" category and, when substantial, to the relevant subreddit. Feature-sized releases justify a fresh Show HN (HN norms allow reposts of substantially updated projects).
-2. **One demo GIF per feature.** The `Docs/demo-film-kit.md` + `Video/hero-demo` tooling already exists; a 10-second GIF per headline feature is the unit of social content. GIFs of Cotyping ghost-text and Dictation are inherently demo-able.
-3. **Engineering blog posts** for the deep material: "How we record both sides of a call without a bot (Core Audio process taps)," "Running four local models on one Mac without swapping" (the `InferenceBroker` story), "Why App Sandbox is off." Each is HN-frontpage-shaped and earns technical credibility that a landing page can't. Host on lokalbot.com to compound the domain.
+- After a recap is exported/copied, a one-time nudge offers an **opt-in, default-off** provenance footer — *"Summarized locally by LokalBot — no bot was in this call · lokalbot.com"*. Every pasted recap becomes an impression in front of exactly the people who were in the room.
+- A share-ready one-liner in the app ("how I take notes without a bot" + link) for answering the question in chat without typing the pitch.
+- Hard line, stated in the doc because it's brand-critical: LokalBot never messages meeting participants itself, and the footer never turns on without explicit consent. The no-bot product must never behave like a bot.
 
-**Done when:** the last two releases each produced at least one public post with a visual.
-
-## 7. Measurement without telemetry
-
-**Effort: S. Do this first, it's the scoreboard for everything above.**
-
-The invariant forbids app telemetry; it does not forbid counting public signals:
-
-1. **GitHub Releases download counts** (per-asset, via API) — the closest thing to installs. A tiny script snapshotting weekly into a CSV gives a trend line for free.
-2. **Stars, traffic, referrers** — GitHub's built-in traffic tab (14-day window, so snapshot it), plus star history.
-3. **Website analytics** — server-side/privacy-preserving only (Vercel Analytics or self-hosted Plausible on lokalbot.com). Cookieless site analytics is consistent with the brand; app telemetry is not — keep that line bright, and say so on the privacy page.
-4. **Sparkle appcast fetches** — update checks hit the appcast on GitHub Releases/website; count them server-side for an active-installs proxy. Disclose it in PRIVACY.md as part of the already-disclosed update-check path (no new data, just counting requests that already occur).
-5. Weekly 15-minute review: downloads, stars, top referrers → double down on whichever channel above actually moved.
-
-**Done when:** a weekly snapshot exists and each launch/post can be matched to its download spike.
+**Done when:** the footer + nudge ship (off by default) and the recap-share path is one tap.
 
 ---
 
-## Explicit non-goals
+## Table stakes (do them, but they're a checklist, not the plan)
 
-- **No paid ads, no influencer payments.** Wrong economics for a free product; the budget is maintainer hours.
-- **No telemetry, ever, framed as growth necessity.** The absence of telemetry *is* the growth story.
-- **No growth mechanics that spam meeting participants** (auto-emailing recaps to attendees, bot-style "this call was recorded by LokalBot" notices used as ads). The no-bot positioning dies the day the product starts advertising itself to non-users without the user's explicit intent.
-- **No Windows/Linux/Intel port for reach** — out of scope per architecture; the comparison pages should keep saying so plainly, since honesty about scope converts better in this audience than pretending.
+Homebrew cask (`livecheck` off the Sparkle appcast) · Show HN / r/LocalLLaMA / r/macapps / Product Hunt launches, spaced, maintainer on comment duty · AlternativeTo + awesome-lists · remaining "vs" and "alternative" SEO pages (Otter, Fireflies, Limitless, Fathom) · `web/llms.txt` mirroring the "LokalBot for LLMs" block · MCP registry + directory submissions for the `.mcpb` · per-release GIF + notes ritual.
 
-## 90-day sequencing
+## Measurement without telemetry
 
-**Weeks 1–2 — instrument and stock the shelves (all S-effort, no code):**
-Measurement scripts (§7) · Homebrew cask PR · AlternativeTo + awesome-list submissions (§2) · Little Snitch verification clip (§5.2).
+Public-signal scoreboard only, refreshed weekly by script: GitHub release download counts (installs proxy), stars + repo-traffic snapshots, privacy-preserving site analytics on lokalbot.com, and server-side counting of appcast fetches (an active-installs proxy using requests that already occur — disclose in PRIVACY.md). Every mechanic above must be attributable to a spike in this scoreboard or it gets cut. App telemetry stays forbidden; its absence is mechanic §1's ammunition.
 
-**Weeks 3–6 — launch season (§1):**
-Show HN → r/LocalLLaMA → r/macapps + r/privacy + r/ObsidianMD, spaced, each pegged to whatever release is current. Maintainer availability for comment duty is the gating resource — schedule launches for weeks it exists.
+## Sequencing
 
-**Weeks 7–10 — the search engine (§3, §4):**
-Otter/Fireflies/Limitless comparison + alternative pages · benchmarks page · `llms.txt` · MCP registry submissions + `web/mcp.html` + agent demo clip.
+1. **First:** §1 bounty (cheap, pure leverage, and it *is* the launch headline) + measurement scripts + the table-stakes checklist items that take an afternoon each (cask, listings).
+2. **Launch season:** Show HN built around the bounty; r/LocalLLaMA built around the model stack; then §4 benchmark packaging so the leaderboard exists before the next Apple chip event.
+3. **Next:** §3 Otter importer + exit pages, and the churn-jack keyword watch (starts paying immediately and forever).
+4. **Then:** §5 IT packet and §6 vertical pages (writing-heavy, code-light — batchable).
+5. **December:** §2 Local Wrapped, timed to Wrapped season. The always-on stats card and §7 footer ship whenever a release window allows before that.
 
-**Weeks 11–13 — loops and cadence (§5, §6):**
-Opt-in export attribution toggle (the one code change in this plan) · Product Hunt launch on the next feature release · first engineering blog post · release-ritual in place.
-
-Then steady state: §6's per-release ritual + §7's weekly review, with §3 pages added opportunistically.
-
-## Dependencies on the product roadmap
-
-Growth amplifies whatever the first-run experience is. Two roadmap items disproportionately affect launch-spike conversion and should ideally land before the biggest launches: **Auto model + onboarding prefetch** (roadmap item 5 — a Show HN visitor who waits ten minutes for a first recap doesn't come back) and **consent-default `.ask`** (roadmap item 2 — the top HN comment will otherwise be about silent auto-recording). Neither blocks weeks 1–2.
+**Roadmap dependencies:** the consent-default `.ask` fix (roadmap item 2) should precede any big launch — for a product whose story is trust, silent-auto-record is the one comment thread that can sink it — and Auto-model onboarding (item 5) protects launch-spike conversion from ten-minute first-recap waits.
