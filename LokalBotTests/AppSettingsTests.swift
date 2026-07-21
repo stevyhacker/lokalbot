@@ -111,8 +111,18 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(settings.capturePrivateWindows)
     }
 
-    func testFreshInstallRequiresManualMeetingRecording() {
-        XCTAssertEqual(AppSettings().autoRecordMode, .manual)
+    func testFreshInstallRecordsMeetingsAutomatically() {
+        XCTAssertEqual(AppSettings().autoRecordMode, .automatic)
+    }
+
+    func testPersistedManualMeetingRecordingSurvivesDefaultFlip() throws {
+        var settings = AppSettings()
+        settings.autoRecordMode = .manual
+
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self, from: JSONEncoder().encode(settings))
+
+        XCTAssertEqual(decoded.autoRecordMode, .manual)
     }
 
     func testApprovedRemoteInferenceOriginsRoundTrip() throws {

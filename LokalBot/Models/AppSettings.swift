@@ -81,9 +81,9 @@ struct AppSettings: Codable, Equatable {
         var isWeekly: Bool { self == .weeklyWorkLog }
     }
 
-    /// New installs start manually. Recording other people is a consequential
-    /// action, so automatic detection only records after the user opts in.
-    var autoRecordMode: AutoRecordMode = .manual
+    /// New installs record detected meetings automatically. Users can switch
+    /// to notification approval or manual recording in Meeting settings.
+    var autoRecordMode: AutoRecordMode = .automatic
     /// Seconds the meeting app's own audio must be gone before a meeting counts
     /// as ended.
     var stopDebounceSeconds: TimeInterval = Self.defaultStopDebounceSeconds

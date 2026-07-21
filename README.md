@@ -107,7 +107,7 @@ Power users: bring your own model (any GGUF, Ollama, an OpenAI-compatible server
 
 </div>
 
-1. **It notices the meeting.** LokalBot can auto-start when it detects a call (configurable: auto / ask / manual — manual on a fresh install), or you start it from the menu bar.
+1. **It notices the meeting.** LokalBot automatically starts when it detects a call by default (configurable: auto / ask / manual), or you start it from the menu bar.
 2. **It transcribes and summarizes.** When the call ends, the selected engines turn the audio into a labeled transcript and structured recap. The built-in defaults run on-device; first use may include model downloads.
 3. **Your library stays on your Mac.** Everything lands in local files and SQLite you can search, replay, and hand to trusted tools.
 
