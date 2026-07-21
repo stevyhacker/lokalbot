@@ -65,8 +65,12 @@ final class LocalLlamaCotypingEngine: CotypingCompleting {
 
     /// Frees the in-process model + context. Called when the selector routes
     /// away from local (flag toggled off, or the model stops resolving) so the
-    /// ~6.66 GB of weights don't stay resident while completions go to HTTP.
-    func unload() async { await runtime.unload() }
+    /// selected model's weights don't stay resident while completions go to HTTP.
+    func unload() async {
+        inflightPrewarmTask?.cancel()
+        inflightPrewarmTask = nil
+        await runtime.unload()
+    }
 
     func generate(_ request: CotypingRequest) async throws -> CotypingNormalizationResult {
         try await run(request) { _ in }

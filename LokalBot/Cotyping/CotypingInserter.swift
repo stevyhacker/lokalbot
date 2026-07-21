@@ -99,7 +99,10 @@ final class CotypingInserter {
     @discardableResult
     func replace(deletingCharacters count: Int, with text: String) -> Bool {
         let scrubbed = text.replacingOccurrences(of: "\r", with: "")
-        guard count > 0 || !scrubbed.isEmpty else { return false }
+        guard CotypingSyntheticEditPolicy.allowsBackwardDeletion(count),
+              count > 0 || !scrubbed.isEmpty else {
+            return false
+        }
         var events: [CGEvent] = []
         for _ in 0..<max(0, count) {
             guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: true),
@@ -132,7 +135,10 @@ final class CotypingInserter {
     @discardableResult
     func replaceForward(deletingCharacters count: Int, with text: String) -> Bool {
         let scrubbed = text.replacingOccurrences(of: "\r", with: "")
-        guard count > 0 || !scrubbed.isEmpty else { return false }
+        guard CotypingSyntheticEditPolicy.allowsForwardDeletion(count),
+              count > 0 || !scrubbed.isEmpty else {
+            return false
+        }
         var events: [CGEvent] = []
         for _ in 0..<max(0, count) {
             guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 117, keyDown: true),
@@ -161,9 +167,9 @@ final class CotypingInserter {
 
     /// Inserts `text` by placing it on the pasteboard and synthesizing a synthetic
     /// Cmd-V, then restoring the user's clipboard shortly after. A trimmed port of
-    /// Cotabby's `insertViaPaste`. Used for large / multi-line accepts that some
-    /// hosts mishandle as synthetic keystrokes. Returns false on any setup failure
-    /// (after restoring the clipboard) so the caller can fall back to keystrokes.
+    /// Cotabby's `insertViaPaste`. Used by dictation commits outside the consuming
+    /// cotyping event tap. Returns false on any setup failure (after restoring the
+    /// clipboard) so the caller can fall back to keystrokes.
     @discardableResult
     func insertViaPaste(_ text: String) -> Bool {
         let scrubbed = text.replacingOccurrences(of: "\r", with: "")

@@ -44,10 +44,10 @@ Models auto-download on first use (Hugging Face; the ONNX specialists fetch sher
 | Model | Size | Best for |
 | --- | --- | --- |
 | Qwen 3.5 · 0.8B | ~0.5 GB | tiny downloadable fallback |
-| LFM2.5 · 1.2B Instruct | ~0.9 GB | fast cotyping |
+| LFM2.5 · 1.2B Instruct | ~0.7 GB | recommended cotyping |
 | Qwen 3.5 · 2B | 1.3 GB | lightweight cotyping |
 | Qwen 3.5 · 4B | ~2.8 GB | balanced summaries |
-| Gemma 4 · E4B | ~6.7 GB | recommended cotyping |
+| Gemma 4 · E4B | ~6.7 GB | higher-capacity cotyping |
 | LFM2.5 · 8B MoE | 5.2 GB | fast summaries |
 | Qwen 3.6 · 35B-A3B | 17.7 GB | recommended summaries on 32 GB+ Macs |
 | Qwen 3.6 · 27B | ~16.8 GB | maximum-quality dense summaries |
@@ -79,7 +79,7 @@ Models auto-download on first use (Hugging Face; the ONNX specialists fetch sher
 ## Cotyping — inline AI autocomplete
 
 - **Ghost text everywhere:** as you type in almost any macOS text field, a gray suggestion appears next to the cursor; press **Tab** to accept (a word at a time, or the whole thing — Type → Cotyping), or keep typing / press **Esc** to dismiss. Built on the same loop as [Cotabby](https://cotabby.app): an Accessibility poll resolves the focused field + caret, a `CGEventTap` watches keystrokes (and swallows the accept key only while a suggestion shows), a borderless click-through `NSPanel` renders the ghost at the caret, and accepted text is inserted as synthetic Unicode keystrokes.
-- **Its own dedicated on-device model:** cotyping decodes a dedicated model (recommended **Gemma 4 · E4B**) **in-process via libllama** for low latency, with the localhost `llama-server` as the fallback. The prompt treats the model as a pure text-continuer; raw output is cleaned by a shared normalizer (strips chat/`<think>` scaffolding, prompt echoes, and trailing-text duplication; collapses to one line).
+- **Its own dedicated on-device model:** cotyping decodes a dedicated model (recommended **LFM2.5 · 1.2B Instruct**) **in-process via libllama** for low latency, with the localhost `llama-server` as the fallback. The prompt treats the model as a pure text-continuer; raw output is cleaned by a shared normalizer (strips chat/`<think>` scaffolding, prompt echoes, and trailing-text duplication; collapses to one line).
 - **Opt-in & private:** off by default; needs **Accessibility** + **Input Monitoring**. Never reads password/secure fields; honors a per-user app exclusion list (preseeded with password managers and terminals).
 - **In-app preview:** the **Type** section has a live playground that runs the real pipeline on text typed *inside LokalBot* — try it with zero system permissions. Quick-toggle from the menu bar.
 

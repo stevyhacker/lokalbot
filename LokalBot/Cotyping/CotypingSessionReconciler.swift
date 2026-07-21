@@ -110,6 +110,17 @@ enum CotypingSessionReconciler {
         return true
     }
 
+    /// Destructive replacement suggestions (correction, emoji, macro) require
+    /// the exact field snapshot that produced the visible ghost. Unlike a normal
+    /// continuation, they must not tolerate text growth or a best-effort
+    /// same-process fallback because they delete existing host text.
+    static func isExactAcceptanceTarget(
+        _ session: CotypingSession,
+        liveField: CotypingField?
+    ) -> Bool {
+        isCurrentGenerationTarget(session.field, liveField: liveField)
+    }
+
     /// Rebases a continuation session onto the host-published field. Handles
     /// both plain typing that matches the suggestion tail (advancing the
     /// consumed prefix) and the host catching up to an already-optimistically-
@@ -192,22 +203,6 @@ enum CotypingSessionReconciler {
         return currentPrecedingText == acceptedPrecedingText
     }
 
-    /// The field snapshot as it will look once the host publishes an accepted
-    /// insertion — the target for speculative post-acceptance generation.
-    static func optimisticFieldAfterAcceptance(
-        _ field: CotypingField,
-        insertionText: String,
-        deletingTrailingCharacters: Int = 0
-    ) -> CotypingField {
-        var copy = field
-        copy.precedingText += insertionText
-        if deletingTrailingCharacters > 0 {
-            copy.trailingText = String(copy.trailingText.dropFirst(deletingTrailingCharacters))
-        }
-        copy.selectionLength = 0
-        return copy
-    }
-
     // MARK: - Private
 
     private static func knownFocusIdentityDidMove(
@@ -253,5 +248,66 @@ enum CotypingSessionReconciler {
             length -= 1
         }
         return false
+    }
+}
+
+struct CotypingReplacementAcceptancePlan: Equatable, Sendable {
+    let deletingCharacters: Int
+    let replacementText: String
+}
+
+/// Builds the destructive edit for a visible non-continuation suggestion only
+/// after exact field and trigger validation. Keeping this pure makes the safety
+/// boundary testable without an Accessibility element or a global event tap.
+enum CotypingReplacementAcceptancePlanner {
+    static func plan(
+        for session: CotypingSession,
+        liveField: CotypingField?
+    ) -> CotypingReplacementAcceptancePlan? {
+        guard let liveField,
+              CotypingSessionReconciler.isExactAcceptanceTarget(
+                  session,
+                  liveField: liveField) else {
+            return nil
+        }
+
+        switch session.kind {
+        case .continuation:
+            return nil
+        case .correction(let typoWord):
+            guard let correction = CotypingCorrectionPlan.plan(
+                precedingText: liveField.precedingText,
+                expectedTypo: typoWord,
+                correctedWord: session.fullText),
+                  CotypingSyntheticEditPolicy.allowsBackwardDeletion(
+                      correction.deletingCharacters) else {
+                return nil
+            }
+            return CotypingReplacementAcceptancePlan(
+                deletingCharacters: correction.deletingCharacters,
+                replacementText: correction.replacementText)
+        case .emoji(let expectedShortcode):
+            guard let emoji = CotypingEmoji.match(trailing: liveField.precedingText),
+                  emoji.shortcode == expectedShortcode,
+                  emoji.glyph == session.fullText,
+                  CotypingSyntheticEditPolicy.allowsBackwardDeletion(
+                      emoji.typedLength) else {
+                return nil
+            }
+            return CotypingReplacementAcceptancePlan(
+                deletingCharacters: emoji.typedLength,
+                replacementText: session.fullText)
+        case .macro(let expectedQuery):
+            guard CotypingMacro.trailingQuery(in: liveField.precedingText) == expectedQuery,
+                  let tokenLength = CotypingMacro.trailingTokenLength(
+                      in: liveField.precedingText),
+                  CotypingSyntheticEditPolicy.allowsBackwardDeletion(
+                      tokenLength) else {
+                return nil
+            }
+            return CotypingReplacementAcceptancePlan(
+                deletingCharacters: tokenLength,
+                replacementText: session.fullText)
+        }
     }
 }

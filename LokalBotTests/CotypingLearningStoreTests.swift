@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import XCTest
 @testable import LokalBot
 
@@ -141,4 +142,136 @@ final class CotypingLearningRankerTests: XCTestCase {
         XCTAssertEqual(ranked.first, "I can send the final version today")
         XCTAssertEqual(ranked.count, 2)
     }
+}
+
+final class CotypingAcceptedSuggestionBatchTests: XCTestCase {
+    private func field(preceding: String = "Please send") -> CotypingField {
+        CotypingField(
+            appName: "Mail", bundleID: "com.apple.mail", processID: 1,
+            role: "AXTextArea", precedingText: preceding, trailingText: "",
+            selectionLength: 0, caretRect: .zero, isSecure: false,
+            caretIsExact: true)
+    }
+
+    func testAggregatesAcceptedChunksIntoOneLearningRecord() {
+        var batch = CotypingAcceptedSuggestionBatch()
+
+        batch.append(field: field(), acceptedText: " the", learningEnabled: true)
+        batch.append(field: field(preceding: "Please send the"),
+                     acceptedText: " final version", learningEnabled: true)
+        let completion = batch.complete()
+
+        XCTAssertEqual(completion?.acceptedChunkCount, 2)
+        XCTAssertEqual(completion?.learningRecord?.field.precedingText, "Please send")
+        XCTAssertEqual(completion?.learningRecord?.acceptedText, " the final version")
+        XCTAssertTrue(batch.isEmpty)
+        XCTAssertNil(batch.complete(), "a completed batch must not flush twice")
+    }
+
+    func testTracksStatsBoundaryWithoutLearningWhenDisabled() {
+        var batch = CotypingAcceptedSuggestionBatch()
+        batch.append(field: field(), acceptedText: " this", learningEnabled: false)
+
+        let completion = batch.complete()
+
+        XCTAssertEqual(completion?.acceptedChunkCount, 1)
+        XCTAssertNil(completion?.learningRecord)
+    }
+
+    func testDiscardLearningPreservesPendingStatsBoundary() {
+        var batch = CotypingAcceptedSuggestionBatch()
+        batch.append(field: field(), acceptedText: " private text", learningEnabled: true)
+
+        batch.discardLearningRecord()
+        let completion = batch.complete()
+
+        XCTAssertEqual(completion?.acceptedChunkCount, 1)
+        XCTAssertNil(completion?.learningRecord)
+    }
+}
+
+final class CotypingLearningStorePersistenceTests: XCTestCase {
+    private func field() -> CotypingField {
+        CotypingField(
+            appName: "Mail", bundleID: "com.apple.mail", processID: 1,
+            role: "AXTextArea", precedingText: "Please send", trailingText: "",
+            selectionLength: 0, caretRect: .zero, isSecure: false,
+            caretIsExact: true)
+    }
+
+    @MainActor
+    func testCompletedSuggestionQueuesOneSnapshotWrite() async throws {
+        let persistence = RecordingCotypingLearningPersistence()
+        let store = CotypingLearningStore(
+            storageRoot: FileManager.default.temporaryDirectory,
+            persistence: persistence,
+            initialSnapshot: .init())
+
+        var batch = CotypingAcceptedSuggestionBatch()
+        batch.append(field: field(), acceptedText: " the", learningEnabled: true)
+        batch.append(field: field(), acceptedText: " final version", learningEnabled: true)
+        let completion = try XCTUnwrap(batch.complete())
+        let record = try XCTUnwrap(completion.learningRecord)
+        store.recordCompletedSuggestion(field: record.field, acceptedText: record.acceptedText)
+        await store.waitForPendingPersistence()
+
+        let snapshots = await persistence.recordedSnapshots()
+        XCTAssertEqual(snapshots.count, 1)
+        XCTAssertEqual(snapshots[0].examples.count, 1)
+        XCTAssertEqual(snapshots[0].examples[0].acceptedText, "the final version")
+        XCTAssertEqual(store.exampleCount, 1)
+    }
+
+    @MainActor
+    func testTerminationFlushWaitsForQueuedLearningWrite() async {
+        let persistence = RecordingCotypingLearningPersistence()
+        let store = CotypingLearningStore(
+            storageRoot: FileManager.default.temporaryDirectory,
+            persistence: persistence,
+            initialSnapshot: .init())
+        store.recordCompletedSuggestion(field: field(), acceptedText: "the final version")
+
+        await store.flushPersistence()
+
+        let snapshots = await persistence.recordedSnapshots()
+        XCTAssertEqual(snapshots.count, 1)
+    }
+
+    func testEncryptedPersistenceKeepsLegacyCombinedAESGCMFormat() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cotyping-learning-codec-\(UUID().uuidString)", isDirectory: true)
+        let url = root.appendingPathComponent("cotyping-learning.enc")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let key = SymmetricKey(size: .bits256)
+        let snapshot = CotypingLearningSnapshot(examples: [
+            CotypingLearningExample(
+                id: UUID(), createdAt: Date(timeIntervalSince1970: 123),
+                appName: "Mail", bundleID: "com.apple.mail", surfaceClass: "email",
+                contextHint: "Q3 planning", prefixTail: "Please send",
+                acceptedText: "the final version"),
+        ])
+        let persistence = EncryptedCotypingLearningPersistence(url: url, key: key)
+
+        await persistence.persist(snapshot)
+
+        let encrypted = try Data(contentsOf: url)
+        let sealed = try AES.GCM.SealedBox(combined: encrypted)
+        let plaintext = try AES.GCM.open(sealed, using: key)
+        XCTAssertEqual(try JSONDecoder().decode(CotypingLearningSnapshot.self, from: plaintext), snapshot)
+    }
+}
+
+private actor RecordingCotypingLearningPersistence: CotypingLearningPersisting {
+    private var snapshots: [CotypingLearningSnapshot] = []
+    private var removeCount = 0
+
+    func persist(_ snapshot: CotypingLearningSnapshot) {
+        snapshots.append(snapshot)
+    }
+
+    func remove() {
+        removeCount += 1
+    }
+
+    func recordedSnapshots() -> [CotypingLearningSnapshot] { snapshots }
 }

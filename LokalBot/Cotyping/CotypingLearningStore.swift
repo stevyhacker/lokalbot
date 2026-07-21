@@ -17,6 +17,61 @@ struct CotypingLearningSnapshot: Codable, Equatable, Sendable {
     var examples: [CotypingLearningExample] = []
 }
 
+/// Accumulates one visible suggestion's accepted chunks until the coordinator
+/// closes that suggestion. Stats can still count each accept gesture, while
+/// encrypted learning stores one coherent example and performs one write.
+struct CotypingAcceptedSuggestionBatch: Equatable, Sendable {
+    struct LearningRecord: Equatable, Sendable {
+        var field: CotypingField
+        var acceptedText: String
+    }
+
+    struct Completion: Equatable, Sendable {
+        var acceptedChunkCount: Int
+        var learningRecord: LearningRecord?
+    }
+
+    private(set) var acceptedChunkCount = 0
+    private var learningField: CotypingField?
+    private var learningText = ""
+
+    var isEmpty: Bool { acceptedChunkCount == 0 }
+
+    mutating func append(
+        field: CotypingField,
+        acceptedText: String,
+        learningEnabled: Bool
+    ) {
+        guard !acceptedText.isEmpty else { return }
+        acceptedChunkCount += 1
+        guard learningEnabled else { return }
+        if learningField == nil { learningField = field }
+        learningText += acceptedText
+    }
+
+    /// Forgets the private text accumulated for the current suggestion while
+    /// preserving its accept count so stats can still close on the normal
+    /// suggestion boundary.
+    mutating func discardLearningRecord() {
+        learningField = nil
+        learningText = ""
+    }
+
+    /// Returns one completed persistence unit and resets the accumulator.
+    /// Calling it repeatedly without another accepted chunk is a no-op.
+    mutating func complete() -> Completion? {
+        guard acceptedChunkCount > 0 else { return nil }
+        let learningRecord = learningField.map {
+            LearningRecord(field: $0, acceptedText: learningText)
+        }
+        let completion = Completion(
+            acceptedChunkCount: acceptedChunkCount,
+            learningRecord: learningRecord)
+        self = .init()
+        return completion
+    }
+}
+
 enum CotypingLearningRanker {
     static let maxAcceptedCharacters = 240
     static let maxPrefixCharacters = 180
@@ -137,6 +192,49 @@ enum CotypingLearningRanker {
     }
 }
 
+/// Async persistence seam. The production actor keeps JSON encoding,
+/// encryption, and atomic file replacement off the main actor; tests inject a
+/// recorder without touching the user's Keychain.
+protocol CotypingLearningPersisting: Sendable {
+    func persist(_ snapshot: CotypingLearningSnapshot) async
+    func remove() async
+}
+
+actor EncryptedCotypingLearningPersistence: CotypingLearningPersisting {
+    private let url: URL
+    private let key: SymmetricKey?
+
+    init(url: URL, key: SymmetricKey?) {
+        self.url = url
+        self.key = key
+    }
+
+    func persist(_ snapshot: CotypingLearningSnapshot) {
+        guard let key else { return }
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            let data = try JSONEncoder().encode(snapshot)
+            let sealed = try AES.GCM.seal(data, using: key)
+            guard let combined = sealed.combined else {
+                throw NSError(
+                    domain: "LokalBot",
+                    code: 22,
+                    userInfo: [NSLocalizedDescriptionKey: "Could not seal cotyping learning data."])
+            }
+            try combined.write(to: url, options: .atomic)
+        } catch {
+            // Learning is opportunistic. Match the previous best-effort write
+            // behavior without blocking typing or surfacing private content.
+        }
+    }
+
+    func remove() {
+        try? FileManager.default.removeItem(at: url)
+    }
+}
+
 @MainActor
 final class CotypingLearningStore: ObservableObject {
     private static let keychainAccount = "cotyping-learning-key"
@@ -144,21 +242,43 @@ final class CotypingLearningStore: ObservableObject {
 
     @Published private(set) var exampleCount = 0
 
-    private let url: URL
     private let maxExamples: Int
+    private let persistence: any CotypingLearningPersisting
+    private var persistenceTask: Task<Void, Never>?
+    private var revision = 0
+    private var enqueuedRevision = 0
     private var snapshot: CotypingLearningSnapshot {
         didSet { exampleCount = snapshot.examples.count }
     }
 
-    init(storageRoot: URL, maxExamples: Int = 500) {
-        self.url = storageRoot.appendingPathComponent(Self.fileName)
+    init(
+        storageRoot: URL,
+        maxExamples: Int = 500,
+        persistence: (any CotypingLearningPersisting)? = nil,
+        initialSnapshot: CotypingLearningSnapshot? = nil
+    ) {
+        let url = storageRoot.appendingPathComponent(Self.fileName)
         self.maxExamples = maxExamples
-        self.snapshot = .init()
-        self.snapshot = Self.load(from: url)
+        let key: SymmetricKey?
+        if let initialSnapshot {
+            key = nil
+            self.snapshot = initialSnapshot
+        } else {
+            key = try? KeychainSecrets.symmetricKey(account: Self.keychainAccount)
+            self.snapshot = Self.load(from: url, key: key)
+        }
+        self.persistence = persistence
+            ?? EncryptedCotypingLearningPersistence(url: url, key: key)
         self.exampleCount = snapshot.examples.count
     }
 
+    /// Compatibility entry point. Production coordinator code should call the
+    /// completed-suggestion name after aggregating its accepted chunks.
     func recordAccepted(field: CotypingField, acceptedText rawText: String) {
+        recordCompletedSuggestion(field: field, acceptedText: rawText)
+    }
+
+    func recordCompletedSuggestion(field: CotypingField, acceptedText rawText: String) {
         guard CotypingLearningRanker.canLearn(from: field),
               let acceptedText = CotypingLearningRanker.acceptedText(rawText) else { return }
 
@@ -175,7 +295,8 @@ final class CotypingLearningStore: ObservableObject {
         if snapshot.examples.count > maxExamples {
             snapshot.examples.removeFirst(snapshot.examples.count - maxExamples)
         }
-        try? persist()
+        revision &+= 1
+        enqueuePersistence()
     }
 
     func examples(for field: CotypingField, limit: Int) -> [String] {
@@ -184,28 +305,45 @@ final class CotypingLearningStore: ObservableObject {
 
     func clear() {
         snapshot = .init()
-        try? FileManager.default.removeItem(at: url)
-    }
-
-    private func persist() throws {
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true)
-        let data = try JSONEncoder().encode(snapshot)
-        let key = try KeychainSecrets.symmetricKey(account: Self.keychainAccount)
-        let sealed = try AES.GCM.seal(data, using: key)
-        guard let combined = sealed.combined else {
-            throw NSError(
-                domain: "LokalBot",
-                code: 22,
-                userInfo: [NSLocalizedDescriptionKey: "Could not seal cotyping learning data."])
+        revision &+= 1
+        enqueuedRevision = revision
+        let previous = persistenceTask
+        let persistence = persistence
+        persistenceTask = Task.detached(priority: .utility) {
+            if let previous { await previous.value }
+            await persistence.remove()
         }
-        try combined.write(to: url, options: .atomic)
     }
 
-    private static func load(from url: URL) -> CotypingLearningSnapshot {
+    /// Forces any dirty in-memory snapshot into the background queue, then
+    /// waits for it. Used at app termination; ordinary typing never awaits IO.
+    func flushPersistence() async {
+        if revision != enqueuedRevision { enqueuePersistence() }
+        let pending = persistenceTask
+        await pending?.value
+    }
+
+    /// Waits only for already-enqueued work. Kept internal for deterministic
+    /// tests of the completed-suggestion batching boundary.
+    func waitForPendingPersistence() async {
+        let pending = persistenceTask
+        await pending?.value
+    }
+
+    private func enqueuePersistence() {
+        let persistedSnapshot = snapshot
+        enqueuedRevision = revision
+        let previous = persistenceTask
+        let persistence = persistence
+        persistenceTask = Task.detached(priority: .utility) {
+            if let previous { await previous.value }
+            await persistence.persist(persistedSnapshot)
+        }
+    }
+
+    private static func load(from url: URL, key: SymmetricKey?) -> CotypingLearningSnapshot {
         guard let encrypted = try? Data(contentsOf: url),
-              let key = try? KeychainSecrets.symmetricKey(account: keychainAccount),
+              let key,
               let sealed = try? AES.GCM.SealedBox(combined: encrypted),
               let data = try? AES.GCM.open(sealed, using: key),
               let snapshot = try? JSONDecoder().decode(CotypingLearningSnapshot.self, from: data)

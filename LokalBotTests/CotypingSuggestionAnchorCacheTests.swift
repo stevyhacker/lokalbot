@@ -6,6 +6,7 @@ import XCTest
 
 final class CotypingSuggestionAnchorCacheTests: XCTestCase {
     private var clock = Date(timeIntervalSince1970: 1_000_000)
+    private let requestFingerprint = "request-a"
 
     private func makeCache() -> CotypingSuggestionAnchorCache {
         CotypingSuggestionAnchorCache(now: { self.clock })
@@ -13,64 +14,71 @@ final class CotypingSuggestionAnchorCacheTests: XCTestCase {
 
     func testFreshAnchorMatchesAtZeroConsumed() {
         var cache = makeCache()
-        cache.record(identityKey: "field", precedingText: "Hello", fullText: " world again")
-        XCTAssertEqual(cache.remainder(identityKey: "field", precedingText: "Hello"), " world again")
+        cache.record(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello", fullText: " world again")
+        XCTAssertEqual(cache.remainder(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello"), " world again")
     }
 
     func testTypeThroughConsumesPrefix() {
         var cache = makeCache()
-        cache.record(identityKey: "field", precedingText: "Hello", fullText: " world again")
-        XCTAssertEqual(cache.remainder(identityKey: "field", precedingText: "Hello wo"), "rld again")
+        cache.record(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello", fullText: " world again")
+        XCTAssertEqual(cache.remainder(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello wo"), "rld again")
     }
 
     func testBackspaceRollbackRestoresEarlierPosition() {
         var cache = makeCache()
-        cache.record(identityKey: "field", precedingText: "Hello", fullText: " world again")
-        XCTAssertEqual(cache.remainder(identityKey: "field", precedingText: "Hello wo"), "rld again")
-        XCTAssertEqual(cache.remainder(identityKey: "field", precedingText: "Hello"), " world again")
+        cache.record(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello", fullText: " world again")
+        XCTAssertEqual(cache.remainder(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello wo"), "rld again")
+        XCTAssertEqual(cache.remainder(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello"), " world again")
     }
 
     func testFullyConsumedSuggestionNeverReoffersItsTail() {
         var cache = makeCache()
-        cache.record(identityKey: "field", precedingText: "Hello", fullText: " world")
-        XCTAssertNil(cache.remainder(identityKey: "field", precedingText: "Hello world"))
+        cache.record(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello", fullText: " world")
+        XCTAssertNil(cache.remainder(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello world"))
     }
 
     func testDivergentTypingDoesNotMatch() {
         var cache = makeCache()
-        cache.record(identityKey: "field", precedingText: "Hello", fullText: " world again")
-        XCTAssertNil(cache.remainder(identityKey: "field", precedingText: "Hello wa"))
+        cache.record(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello", fullText: " world again")
+        XCTAssertNil(cache.remainder(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello wa"))
     }
 
     func testDifferentFieldDoesNotMatch() {
         var cache = makeCache()
-        cache.record(identityKey: "first", precedingText: "Hello", fullText: " world")
-        XCTAssertNil(cache.remainder(identityKey: "second", precedingText: "Hello"))
+        cache.record(identityKey: "first", requestFingerprint: requestFingerprint, precedingText: "Hello", fullText: " world")
+        XCTAssertNil(cache.remainder(identityKey: "second", requestFingerprint: requestFingerprint, precedingText: "Hello"))
+    }
+
+    func testDifferentRequestFingerprintDoesNotMatch() {
+        var cache = makeCache()
+        cache.record(identityKey: "field", requestFingerprint: "request-a", precedingText: "Hello", fullText: " world")
+        XCTAssertNil(cache.remainder(identityKey: "field", requestFingerprint: "request-b", precedingText: "Hello"))
     }
 
     func testDeepestConsumedMatchWins() {
         var cache = makeCache()
-        cache.record(identityKey: "field", precedingText: "Hello", fullText: " world again")
-        cache.record(identityKey: "field", precedingText: "Hello wo", fullText: "rld forever")
-        XCTAssertEqual(cache.remainder(identityKey: "field", precedingText: "Hello wor"), "ld again")
+        cache.record(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello", fullText: " world again")
+        cache.record(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello wo", fullText: "rld forever")
+        XCTAssertEqual(cache.remainder(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello wor"), "ld again")
     }
 
     func testEntriesExpire() {
         var cache = makeCache()
-        cache.record(identityKey: "field", precedingText: "Hello", fullText: " world")
+        cache.record(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello", fullText: " world")
         clock = clock.addingTimeInterval(CotypingSuggestionAnchorCache.maxEntryAge + 1)
-        XCTAssertNil(cache.remainder(identityKey: "field", precedingText: "Hello"))
+        XCTAssertNil(cache.remainder(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello"))
     }
 
     func testCapacityEvictsOldest() {
         var cache = makeCache()
         for index in 0..<(CotypingSuggestionAnchorCache.capacity + 4) {
-            cache.record(identityKey: "field", precedingText: "prefix \(index)", fullText: "suffix \(index)")
+            cache.record(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "prefix \(index)", fullText: "suffix \(index)")
         }
-        XCTAssertNil(cache.remainder(identityKey: "field", precedingText: "prefix 0"))
+        XCTAssertNil(cache.remainder(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "prefix 0"))
         XCTAssertEqual(
             cache.remainder(
                 identityKey: "field",
+                requestFingerprint: requestFingerprint,
                 precedingText: "prefix \(CotypingSuggestionAnchorCache.capacity + 3)"),
             "suffix \(CotypingSuggestionAnchorCache.capacity + 3)")
     }
@@ -78,14 +86,99 @@ final class CotypingSuggestionAnchorCacheTests: XCTestCase {
     func testLongPrefixesMatchOnTheBoundedTail() {
         var cache = makeCache()
         let longPrefix = String(repeating: "a", count: 2_000) + " ending here"
-        cache.record(identityKey: "field", precedingText: longPrefix, fullText: " and more")
-        XCTAssertEqual(cache.remainder(identityKey: "field", precedingText: longPrefix + " and"), " more")
+        cache.record(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: longPrefix, fullText: " and more")
+        XCTAssertEqual(cache.remainder(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: longPrefix + " and"), " more")
     }
 
     func testRemoveAllEmptiesTheCache() {
         var cache = makeCache()
-        cache.record(identityKey: "field", precedingText: "Hello", fullText: " world")
+        cache.record(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello", fullText: " world")
         cache.removeAll()
-        XCTAssertNil(cache.remainder(identityKey: "field", precedingText: "Hello"))
+        XCTAssertNil(cache.remainder(identityKey: "field", requestFingerprint: requestFingerprint, precedingText: "Hello"))
+    }
+}
+
+final class CotypingSuggestionCacheFingerprintTests: XCTestCase {
+    private func request(
+        prefix: String = "Hello",
+        trailing: String = "",
+        conditioningPreface: String? = "Written by Ada.",
+        generation: UInt64 = 1
+    ) -> CotypingRequest {
+        CotypingRequest(
+            prompt: [conditioningPreface, prefix].compactMap { $0 }.joined(separator: "\n"),
+            prefixText: prefix,
+            trailingText: trailing,
+            isMultiLine: false,
+            maxTokens: 5,
+            maxWords: 3,
+            temperature: 0.1,
+            topP: 0.7,
+            topK: 20,
+            minP: 0.08,
+            repeatPenalty: 1.05,
+            seed: 0x00C0_FFEE,
+            generation: generation,
+            conditioningPreface: conditioningPreface)
+    }
+
+    func testFingerprintChangesWithOutputAffectingSettingsAndRequestContext() {
+        var settings = AppSettings()
+        let baselineRequest = request()
+        let baseline = CotypingSuggestionCacheFingerprint.make(
+            request: baselineRequest,
+            settings: settings)
+
+        settings.cotypingBuiltInModelID = ModelCatalog.compactFallbackID
+        XCTAssertNotEqual(
+            baseline,
+            CotypingSuggestionCacheFingerprint.make(request: baselineRequest, settings: settings))
+
+        settings = AppSettings()
+        settings.cotypingInProcessRuntime.toggle()
+        XCTAssertNotEqual(
+            baseline,
+            CotypingSuggestionCacheFingerprint.make(request: baselineRequest, settings: settings))
+
+        settings = AppSettings()
+        settings.cotypingUserName = "Grace"
+        XCTAssertNotEqual(
+            baseline,
+            CotypingSuggestionCacheFingerprint.make(request: baselineRequest, settings: settings))
+
+        settings = AppSettings()
+        settings.cotypingUseClipboard.toggle()
+        XCTAssertNotEqual(
+            baseline,
+            CotypingSuggestionCacheFingerprint.make(request: baselineRequest, settings: settings))
+
+        settings = AppSettings()
+        settings.cotypingLearningExamplesInPrompt += 1
+        XCTAssertNotEqual(
+            baseline,
+            CotypingSuggestionCacheFingerprint.make(request: baselineRequest, settings: settings))
+
+        XCTAssertNotEqual(
+            baseline,
+            CotypingSuggestionCacheFingerprint.make(
+                request: request(conditioningPreface: "Learned example: ship it."),
+                settings: AppSettings()))
+        XCTAssertNotEqual(
+            baseline,
+            CotypingSuggestionCacheFingerprint.make(
+                request: request(trailing: " after the caret"),
+                settings: AppSettings()))
+    }
+
+    func testFingerprintIgnoresOnlyLivePrefixAndGenerationForTypeThroughReuse() {
+        let settings = AppSettings()
+        let original = CotypingSuggestionCacheFingerprint.make(
+            request: request(prefix: "Hello", generation: 1),
+            settings: settings)
+        let typedThrough = CotypingSuggestionCacheFingerprint.make(
+            request: request(prefix: "Hello wo", generation: 2),
+            settings: settings)
+
+        XCTAssertEqual(original, typedThrough)
     }
 }

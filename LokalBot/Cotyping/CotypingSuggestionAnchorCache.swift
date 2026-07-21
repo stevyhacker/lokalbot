@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Bounded memory of recently shown continuation suggestions. It lets common
@@ -11,6 +12,7 @@ nonisolated struct CotypingSuggestionAnchorCache {
 
     private struct Anchor: Equatable {
         let identityKey: String
+        let requestFingerprint: String
         let prefixTail: String
         let fullText: String
     }
@@ -39,10 +41,18 @@ nonisolated struct CotypingSuggestionAnchorCache {
         self.now = now
     }
 
-    mutating func record(identityKey: String, precedingText: String, fullText: String) {
-        guard !identityKey.isEmpty, !fullText.isEmpty else { return }
+    mutating func record(
+        identityKey: String,
+        requestFingerprint: String,
+        precedingText: String,
+        fullText: String
+    ) {
+        guard !identityKey.isEmpty,
+              !requestFingerprint.isEmpty,
+              !fullText.isEmpty else { return }
         let anchor = Anchor(
             identityKey: identityKey,
+            requestFingerprint: requestFingerprint,
             prefixTail: Self.tail(of: precedingText),
             fullText: fullText)
         entries.removeAll { $0.anchor == anchor }
@@ -52,11 +62,17 @@ nonisolated struct CotypingSuggestionAnchorCache {
         }
     }
 
-    mutating func remainder(identityKey: String, precedingText: String) -> String? {
+    mutating func remainder(
+        identityKey: String,
+        requestFingerprint: String,
+        precedingText: String
+    ) -> String? {
         pruneExpired()
         let liveTail = Self.tail(of: precedingText)
         var best: Match?
-        for entry in entries.reversed() where entry.anchor.identityKey == identityKey {
+        for entry in entries.reversed()
+        where entry.anchor.identityKey == identityKey
+            && entry.anchor.requestFingerprint == requestFingerprint {
             guard let consumed = Self.consumedPrefixLength(
                 liveTail: liveTail,
                 anchorTail: entry.anchor.prefixTail,
@@ -104,5 +120,58 @@ nonisolated struct CotypingSuggestionAnchorCache {
 
     private static func tail(of text: String) -> String {
         String(text.suffix(prefixTailLength))
+    }
+}
+
+/// Stable, deterministic identity for the parts of a generation request that
+/// are allowed to outlive the active session in `CotypingSuggestionAnchorCache`.
+/// The live caret prefix is intentionally excluded: typing through a displayed
+/// suggestion is exactly what the cache accelerates. Everything else that can
+/// change the model or its output is included.
+enum CotypingSuggestionCacheFingerprint {
+    static func make(request: CotypingRequest, settings: AppSettings) -> String {
+        let selectedModel = ModelCatalog.entry(
+            id: settings.cotypingBuiltInModelID,
+            custom: settings.customBuiltInModels)
+            ?? ModelCatalog.entry(id: ModelCatalog.recommendedCotypingID)
+
+        let personalization = settings.cotypingPersonalization
+        let components: [String] = [
+            settings.cotypingBuiltInModelID,
+            selectedModel?.id ?? "",
+            selectedModel?.fileName ?? "",
+            selectedModel?.url ?? "",
+            selectedModel?.expectedSHA256 ?? "",
+            selectedModel?.expectedSizeBytes.map(String.init) ?? "",
+            settings.cotypingInProcessRuntime ? "local" : "http",
+            settings.cotypingUseClipboard ? "clipboard:on" : "clipboard:off",
+            settings.cotypingUseLocalLearning ? "learning:on" : "learning:off",
+            String(settings.cotypingLearningExamplesInPrompt),
+            personalization.userName ?? "",
+            personalization.styleNote ?? "",
+            personalization.languageHint ?? "",
+            personalization.isMultiLine ? "multiline" : "singleline",
+            personalization.appContextEnabled ? "app-context:on" : "app-context:off",
+            personalization.extendedContext ?? "",
+            request.conditioningPreface ?? "",
+            request.trailingText,
+            request.isMultiLine ? "multiline" : "singleline",
+            String(request.maxTokens),
+            String(request.maxWords),
+            String(request.temperature.bitPattern),
+            String(request.topP.bitPattern),
+            String(request.topK),
+            String(request.minP.bitPattern),
+            String(request.repeatPenalty.bitPattern),
+            String(request.seed),
+        ]
+
+        // Length-prefix every component so embedded separators cannot collide.
+        let payload = components
+            .map { "\($0.utf8.count):\($0)" }
+            .joined(separator: "|")
+        return SHA256.hash(data: Data(payload.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 }

@@ -82,6 +82,9 @@ enum CotypingRequestBuilder {
 /// tests without a live server.
 @MainActor
 protocol CotypingCompleting: AnyObject {
+    /// Debounce behavior for the route currently serving completions.
+    /// Selectors override this as they move between local and model-server paths.
+    var debounceProfile: CotypingDebouncePolicy.RuntimeProfile { get }
     func generate(_ request: CotypingRequest) async throws -> CotypingNormalizationResult
     /// Streaming variant: `onPartial` receives normalized partials as they
     /// arrive. Default (below) is non-streaming.
@@ -94,15 +97,16 @@ protocol CotypingCompleting: AnyObject {
     /// Best-effort focus-time prompt prefill for in-process engines. This lets
     /// the first real keystroke reuse prompt KV when the user pauses after focus.
     func prewarm(for request: CotypingRequest) async throws
-    /// Frees any in-process resources the engine holds. Default is a no-op:
-    /// only the in-process `LocalLlamaCotypingEngine` holds a loaded model; the
-    /// HTTP engine has nothing to free. The `CotypingEngineSelector` calls this
-    /// when it routes away from the local engine so the model's weights don't
-    /// stay resident while completions go to HTTP.
+    /// Frees resources owned by the engine. The in-process engine releases its
+    /// model/context; the HTTP engine stops its dedicated `llama-server`.
+    /// Selectors await this hook before changing routes so two copies of the
+    /// cotyping model cannot remain resident at once.
     func unload() async
 }
 
 extension CotypingCompleting {
+    var debounceProfile: CotypingDebouncePolicy.RuntimeProfile { .modelServer }
+
     func generateStreaming(_ request: CotypingRequest,
                            onPartial: @escaping @Sendable (CotypingNormalizationResult) -> Void) async throws -> CotypingNormalizationResult {
         let result = try await generate(request)
@@ -129,9 +133,21 @@ final class CotypingEngine: CotypingCompleting {
     /// `ProcessingPipeline.makeTextEngine(settings)`, which also boots the
     /// built-in llama-server with the selected model on first use.
     private let makeEngine: () async throws -> TextEngine
+    private let stopRuntime: () async -> Void
 
-    init(makeEngine: @escaping () async throws -> TextEngine) {
+    init(
+        makeEngine: @escaping () async throws -> TextEngine,
+        stopRuntime: @escaping () async -> Void = {}
+    ) {
         self.makeEngine = makeEngine
+        self.stopRuntime = stopRuntime
+    }
+
+    /// The resolved `TextEngine` is intentionally short-lived, but its
+    /// dedicated built-in server is process-wide. Give the lifecycle owner an
+    /// explicit, awaitable way to release that server.
+    func unload() async {
+        await stopRuntime()
     }
 
     func generate(_ request: CotypingRequest) async throws -> CotypingNormalizationResult {

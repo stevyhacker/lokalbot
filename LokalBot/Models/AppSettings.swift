@@ -288,17 +288,12 @@ struct AppSettings: Codable, Equatable {
     var cotypingStyleNote: String = ""
     /// Allow multi-line completions (off keeps suggestions to one line).
     var cotypingMultiLine: Bool = false
-    /// Insert large / multi-line accepts via paste (more reliable than synthetic
-    /// keystrokes in some hosts). Composing IMEs always use the paste path so
-    /// marked text does not swallow accepted completions. Briefly uses the
-    /// clipboard and restores it.
-    var cotypingPasteInsertion: Bool = true
     /// Soft length target; drives the per-request token budget. Keep the default
     /// concise so inline suggestions offer the next few words, not a sentence.
     var cotypingMaxWords: Int = 3
-    /// Idle time after the last keystroke before asking the model. Low enough
-    /// to feel interactive, but high enough that normal typing does not pile
-    /// cancelled model requests onto the runtime.
+    /// Initial idle time before the first measured in-process request, and the
+    /// minimum pause on the model-server fallback. Once local latency is known,
+    /// the in-process route switches to its documented adaptive tiers.
     var cotypingDebounceMs: Int = Self.defaultCotypingDebounceMs
     /// Paint partial suggestions token-by-token while the model is decoding.
     /// Off by default to match Cotypist/Cotabby's shipped behavior: suggestions
@@ -570,7 +565,6 @@ struct AppSettings: Codable, Equatable {
         case cotypingUserName
         case cotypingStyleNote
         case cotypingMultiLine
-        case cotypingPasteInsertion
         case cotypingSettingsVersion
         case cotypingMaxWords
         case cotypingDebounceMs
@@ -703,7 +697,6 @@ struct AppSettings: Codable, Equatable {
         try c.encode(cotypingUserName, forKey: .cotypingUserName)
         try c.encode(cotypingStyleNote, forKey: .cotypingStyleNote)
         try c.encode(cotypingMultiLine, forKey: .cotypingMultiLine)
-        try c.encode(cotypingPasteInsertion, forKey: .cotypingPasteInsertion)
         try c.encode(Self.currentCotypingSettingsVersion, forKey: .cotypingSettingsVersion)
         try c.encode(cotypingMaxWords, forKey: .cotypingMaxWords)
         try c.encode(
@@ -860,7 +853,6 @@ struct AppSettings: Codable, Equatable {
         cotypingUserName = (try? c.decode(String.self, forKey: .cotypingUserName)) ?? defaults.cotypingUserName
         cotypingStyleNote = (try? c.decode(String.self, forKey: .cotypingStyleNote)) ?? defaults.cotypingStyleNote
         cotypingMultiLine = (try? c.decode(Bool.self, forKey: .cotypingMultiLine)) ?? defaults.cotypingMultiLine
-        cotypingPasteInsertion = (try? c.decode(Bool.self, forKey: .cotypingPasteInsertion)) ?? defaults.cotypingPasteInsertion
         let cotypingSettingsVersion = (try? c.decode(Int.self, forKey: .cotypingSettingsVersion)) ?? 0
         let decodedCotypingMaxWords = (try? c.decode(Int.self, forKey: .cotypingMaxWords)) ?? defaults.cotypingMaxWords
         cotypingMaxWords = Self.migratedCotypingMaxWords(

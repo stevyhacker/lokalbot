@@ -63,6 +63,8 @@ private func llamaCotypingAbortCallback(_ rawState: UnsafeMutableRawPointer?) ->
 ///
 /// Pinned to llama.cpp `b9844`; symbols verified against the vendored dylib.
 actor LlamaCotypingRuntime {
+    typealias PostLoadAdmissionHook = @Sendable () async -> Void
+
     private var model: OpaquePointer?
     private var ctx: OpaquePointer?
     private var vocab: OpaquePointer?
@@ -73,6 +75,16 @@ actor LlamaCotypingRuntime {
     /// weights twice while `willLoad` is suspended.
     private var loadInProgress = false
     private var loadWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Invalidates a load that was already in flight when `unload()` ran.
+    /// Actor isolation alone is insufficient here: `loadIfNeeded` suspends while
+    /// consulting the main-actor residency ledger, so `unload()` can otherwise
+    /// observe an empty runtime and return before that older load resumes and
+    /// installs its model.
+    private var unloadEpoch: UInt64 = 0
+    /// Test seam placed immediately after residency admission. Production uses
+    /// the no-op default; tests suspend here to deterministically exercise the
+    /// unload-vs-load race without loading a multi-gigabyte GGUF.
+    private let postLoadAdmissionHook: PostLoadAdmissionHook
     /// The prompt most recently prefilled into the context (basis for the
     /// incremental KV-reuse probe against the next prompt).
     private var cachedTokens: [Int32] = []
@@ -93,6 +105,10 @@ actor LlamaCotypingRuntime {
         llama_backend_init()
     }()
 
+    init(postLoadAdmissionHook: @escaping PostLoadAdmissionHook = {}) {
+        self.postLoadAdmissionHook = postLoadAdmissionHook
+    }
+
     var isLoaded: Bool { model != nil && ctx != nil }
 
     var canReusePromptPrefix: Bool { supportsPartialReuse }
@@ -104,26 +120,29 @@ actor LlamaCotypingRuntime {
     // MARK: - Lifecycle
 
     func loadIfNeeded(modelPath: String) async throws {
+        let loadEpoch = unloadEpoch
         while loadInProgress {
             await withCheckedContinuation { continuation in
                 loadWaiters.append(continuation)
             }
         }
-        try Task.checkCancellation()
+        try requireActiveLoad(epoch: loadEpoch)
         if isLoaded, loadedModelPath == modelPath {
             await ModelResidency.shared.touch(id: Self.residencyID)
+            try requireActiveLoad(epoch: loadEpoch)
             return
         }
         loadInProgress = true
         defer { finishLoad() }
-        unload()
+        releaseLoadedResources()
         // Make room before llama mmaps the weights: evict LRU models first
         // if this load would push total resident weights past the budget.
         let loadReservation = await ModelResidency.shared.willLoad(
             id: Self.residencyID,
             bytes: ModelResidency.weightBytes(at: URL(fileURLWithPath: modelPath)))
+        await postLoadAdmissionHook()
         do {
-            try Task.checkCancellation()
+            try requireActiveLoad(epoch: loadEpoch)
         } catch {
             await ModelResidency.shared.cancelLoad(loadReservation)
             throw error
@@ -138,7 +157,7 @@ actor LlamaCotypingRuntime {
             throw LlamaRuntimeError.modelLoadFailed(modelPath)
         }
         do {
-            try Task.checkCancellation()
+            try requireActiveLoad(epoch: loadEpoch)
         } catch {
             llama_model_free(m)
             await ModelResidency.shared.cancelLoad(loadReservation)
@@ -157,7 +176,7 @@ actor LlamaCotypingRuntime {
             throw LlamaRuntimeError.contextInitFailed
         }
         do {
-            try Task.checkCancellation()
+            try requireActiveLoad(epoch: loadEpoch)
         } catch {
             llama_free(c)
             llama_model_free(m)
@@ -187,6 +206,21 @@ actor LlamaCotypingRuntime {
             bytes: ModelResidency.weightBytes(at: URL(fileURLWithPath: modelPath)),
             generation: generation,
             unload: { [weak self] in await self?.unload() })
+        do {
+            try requireActiveLoad(epoch: loadEpoch)
+        } catch {
+            // If the epoch moved, the explicit unload already freed the pointers.
+            // If only this task was cancelled while registration was suspended,
+            // free them here. In both cases remove only this load's ledger row;
+            // a replacement runtime may already have registered under the same ID.
+            if unloadEpoch == loadEpoch {
+                releaseLoadedResources(scheduleResidencyUnregister: false)
+            }
+            await ModelResidency.shared.unregister(
+                id: Self.residencyID,
+                ifGenerationMatches: generation)
+            throw error
+        }
     }
 
     /// One in-process runtime holds weights at a time, so a single ledger row.
@@ -213,6 +247,11 @@ actor LlamaCotypingRuntime {
         let waiters = loadWaiters
         loadWaiters.removeAll(keepingCapacity: true)
         waiters.forEach { $0.resume() }
+    }
+
+    private func requireActiveLoad(epoch: UInt64) throws {
+        try Task.checkCancellation()
+        guard unloadEpoch == epoch else { throw CancellationError() }
     }
 
     /// Prewarm == load + the priming decode `loadIfNeeded` already performs.
@@ -261,6 +300,14 @@ actor LlamaCotypingRuntime {
     }
 
     func unload() {
+        unloadEpoch &+= 1
+        releaseLoadedResources()
+    }
+
+    /// Frees the currently installed pointers without invalidating the load that
+    /// intentionally called it while switching model paths. External teardown
+    /// must go through `unload()`, which advances `unloadEpoch` first.
+    private func releaseLoadedResources(scheduleResidencyUnregister: Bool = true) {
         let generation = residencyGeneration
         residencyGeneration = nil
         if let c = ctx { llama_free(c) }
@@ -274,7 +321,7 @@ actor LlamaCotypingRuntime {
         // Keep this path synchronous for memory pressure, but only remove the
         // generation that was actually freed. A reload may register before
         // this main-actor task gets its turn.
-        if let generation {
+        if scheduleResidencyUnregister, let generation {
             Task { @MainActor in
                 ModelResidency.shared.unregister(
                     id: Self.residencyID,

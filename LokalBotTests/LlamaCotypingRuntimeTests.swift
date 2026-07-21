@@ -78,6 +78,33 @@ final class LlamaCotypingRuntimeTests: XCTestCase {
         XCTAssertFalse(after)
     }
 
+    func testUnloadInvalidatesLoadSuspendedAfterResidencyAdmission() async {
+        let admitted = AsyncGate()
+        let resumeAdmission = AsyncGate()
+        let runtime = LlamaCotypingRuntime(postLoadAdmissionHook: {
+            await admitted.open()
+            await resumeAdmission.wait()
+        })
+        let load = Task {
+            try await runtime.loadIfNeeded(modelPath: "/model-that-must-not-load.gguf")
+        }
+
+        await admitted.wait()
+        await runtime.unload()
+        await resumeAdmission.open()
+
+        do {
+            try await load.value
+            XCTFail("A load admitted before unload must not resume and install weights.")
+        } catch is CancellationError {
+            // Expected: the unload epoch invalidates the suspended load.
+        } catch {
+            XCTFail("Expected cancellation from the unload epoch, got \(error).")
+        }
+        let loaded = await runtime.isLoaded
+        XCTAssertFalse(loaded, "unload must remain final after the stale load resumes")
+    }
+
     func testReusedPrefixIsReflectedInPrefillTokenCount() async throws {
         // Validates the IncrementalPrefill reuse SIGNAL — the logical
         // `lastPrefillTokenCount` (prompt.count - sharedPrefix) — not the physical

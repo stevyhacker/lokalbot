@@ -31,6 +31,16 @@ enum CotypingAvailability {
             return "Disabled on \(focus.host ?? "this site")."
         }
 
+        // A configured site exclusion is a privacy boundary, not a best-effort
+        // hint. If AX cannot prove the current browser host, pause there rather
+        // than treating a failed URL read as permission. Non-browser apps remain
+        // usable because they do not have a meaningful tab URL to authorize.
+        if CotypingBrowserDomain.hasConfiguredExclusions(excludedDomains),
+           CotypingSurfaceClassifier.classify(bundleID: focus.bundleID) == .browser,
+           focus.host == nil {
+            return "Cannot verify this browser site — Cotyping paused."
+        }
+
         if CotypingSurfaceClassifier.classify(bundleID: focus.bundleID) == .terminal {
             return "Not available in terminal apps."
         }

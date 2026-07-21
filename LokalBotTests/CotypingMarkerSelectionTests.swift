@@ -89,3 +89,50 @@ final class CotypingWebAccessibilityPrimingTests: XCTestCase {
         XCTAssertFalse(CotypingAXHelper.needsWebAccessibilityPriming(bundleID: "com.electron.random"))
     }
 }
+
+final class CotypingAXHitTestFocusValidatorTests: XCTestCase {
+    func testAcceptsOnlyFocusedEditableOwnedByExpectedFrontmostProcess() {
+        XCTAssertTrue(CotypingAXHitTestFocusValidator.canUseCandidate(
+            frontmostProcessID: 42,
+            expectedProcessID: 42,
+            candidateProcessID: 42,
+            isEditable: true,
+            isFocused: true))
+    }
+
+    func testRejectsElementUnderPointerWhenItIsNotFocused() {
+        XCTAssertFalse(CotypingAXHitTestFocusValidator.canUseCandidate(
+            frontmostProcessID: 42,
+            expectedProcessID: 42,
+            candidateProcessID: 42,
+            isEditable: true,
+            isFocused: false))
+    }
+
+    func testRejectsFocusedElementOwnedByAnotherProcess() {
+        XCTAssertFalse(CotypingAXHitTestFocusValidator.canUseCandidate(
+            frontmostProcessID: 42,
+            expectedProcessID: 42,
+            candidateProcessID: 77,
+            isEditable: true,
+            isFocused: true))
+    }
+
+    func testRejectsCandidateWhenExpectedProcessIsNoLongerFrontmost() {
+        XCTAssertFalse(CotypingAXHitTestFocusValidator.canUseCandidate(
+            frontmostProcessID: 77,
+            expectedProcessID: 42,
+            candidateProcessID: 42,
+            isEditable: true,
+            isFocused: true))
+    }
+
+    func testRejectsFocusedNonEditableCandidate() {
+        XCTAssertFalse(CotypingAXHitTestFocusValidator.canUseCandidate(
+            frontmostProcessID: 42,
+            expectedProcessID: 42,
+            candidateProcessID: 42,
+            isEditable: false,
+            isFocused: true))
+    }
+}

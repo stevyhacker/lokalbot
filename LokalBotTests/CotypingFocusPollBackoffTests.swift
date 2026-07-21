@@ -247,6 +247,44 @@ final class CotypingFocusPollBackoffTests: XCTestCase {
                        "same-key callers must share the active surface capture")
     }
 
+    func testSurfaceCaptureMaximumAgeRefreshesAuthorizationContext() {
+        let store = CotypingSurfaceCaptureSingleFlight()
+        var now: TimeInterval = 10
+        var resolveCount = 0
+
+        func capture(_ url: String) -> CotypingSurfaceCapture {
+            store.capture(forKey: "browser-field", maxAge: 0.25, clock: { now }) {
+                resolveCount += 1
+                return CotypingSurfaceCapture(windowTitle: nil, fieldPlaceholder: nil, urlString: url)
+            }
+        }
+
+        XCTAssertEqual(capture("https://allowed.example").urlString, "https://allowed.example")
+        now = 10.2
+        XCTAssertEqual(capture("https://blocked.example").urlString, "https://allowed.example")
+        now = 10.251
+        XCTAssertEqual(capture("https://blocked.example").urlString, "https://blocked.example")
+        XCTAssertEqual(resolveCount, 2)
+    }
+
+    func testSurfaceCaptureInvalidationPreventsSequentialReuse() {
+        let store = CotypingSurfaceCaptureSingleFlight()
+        var resolveCount = 0
+        _ = store.capture(forKey: "browser-field") {
+            resolveCount += 1
+            return CotypingSurfaceCapture(windowTitle: nil, fieldPlaceholder: nil, urlString: "https://first.example")
+        }
+
+        store.removeAll()
+        let refreshed = store.capture(forKey: "browser-field") {
+            resolveCount += 1
+            return CotypingSurfaceCapture(windowTitle: nil, fieldPlaceholder: nil, urlString: "https://second.example")
+        }
+
+        XCTAssertEqual(refreshed.urlString, "https://second.example")
+        XCTAssertEqual(resolveCount, 2)
+    }
+
     @MainActor
     func testValidationCaptureFailsClosedOnTimeout() async {
         let executor = CotypingAXSnapshotExecutor(deadlineMilliseconds: 20) { _ in

@@ -6,6 +6,12 @@ import Foundation
 /// Accessibility elsewhere (`CotypingAXHelper.webURL`); this stays pure and
 /// trivially testable.
 enum CotypingBrowserDomain {
+    static func hasConfiguredExclusions(_ excludedDomains: [String]) -> Bool {
+        excludedDomains.contains {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
     /// Lowercased host from a URL string, dropping a leading "www." so
     /// "www.bank.com" and "bank.com" compare equal. Nil for URLs with no network
     /// host (`file://`, `about:`, empty, unparseable), so non-web focus never

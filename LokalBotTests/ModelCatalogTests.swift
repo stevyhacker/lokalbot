@@ -20,11 +20,16 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertNotNil(ModelCatalog.entry(id: ModelCatalog.recommendedCotypingID))
     }
 
-    func testRecommendedCotypingModelUsesGemmaQ5XLQuant() throws {
+    func testRecommendedCotypingModelUsesBenchmarkedLFMQuant() throws {
         let entry = try XCTUnwrap(ModelCatalog.entry(id: ModelCatalog.recommendedCotypingID))
-        XCTAssertEqual(entry.id, "gemma4-e4b-q5-xl")
-        XCTAssertEqual(entry.fileName, "gemma-4-E4B-it-UD-Q5_K_XL.gguf")
-        XCTAssertTrue(entry.url.contains("gemma-4-E4B-it-UD-Q5_K_XL.gguf"))
+        XCTAssertEqual(entry.id, "lfm2.5-1.2b-instruct")
+        XCTAssertEqual(entry.fileName, "LFM2.5-1.2B-Instruct-Q4_K_M.gguf")
+        XCTAssertTrue(entry.url.contains("LFM2.5-1.2B-Instruct-Q4_K_M.gguf"))
+        XCTAssertEqual(entry.sizeBytes, 730_895_584)
+        XCTAssertEqual(entry.sizeGB, 0.73)
+        XCTAssertEqual(
+            ModelCatalog.recommendedCotypingLicenseURL.absoluteString,
+            "https://docs.liquid.ai/lfm/help/model-license")
     }
 
     func testRecommendedSummarizationAndMaximumQualityModelsExist() {

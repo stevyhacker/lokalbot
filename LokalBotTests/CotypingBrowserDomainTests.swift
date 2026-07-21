@@ -61,10 +61,22 @@ final class CotypingDomainGateTests: XCTestCase {
             enabled: true, excludedApps: [], excludedDomains: [],
             selfBundleID: nil, focus: supportedFocus(host: "bank.com")))
     }
-    func testNilHostNeverGated() {
+    func testBrowserWithConfiguredRuleAndUnknownHostIsConservativelyGated() {
+        XCTAssertEqual(CotypingAvailability.disabledReason(
+            enabled: true, excludedApps: [], excludedDomains: ["bank.com"],
+            selfBundleID: nil, focus: supportedFocus(host: nil)),
+            "Cannot verify this browser site — Cotyping paused.")
+    }
+
+    func testUnknownHostDoesNotGateNonBrowserApps() {
+        var focus = supportedFocus(host: nil)
+        focus.appName = "Pages"
+        focus.bundleID = "com.apple.iWork.Pages"
+        focus.field?.appName = "Pages"
+        focus.field?.bundleID = "com.apple.iWork.Pages"
         XCTAssertNil(CotypingAvailability.disabledReason(
             enabled: true, excludedApps: [], excludedDomains: ["bank.com"],
-            selfBundleID: nil, focus: supportedFocus(host: nil)))
+            selfBundleID: nil, focus: focus))
     }
 
     func testExcludedDomainListParse() {

@@ -6,24 +6,22 @@ import Foundation
 /// drift apart between the anchor cache, prewarm dedupe, and reconciliation.
 enum CotypingFieldIdentity {
 
-    /// Identity for anchoring a suggestion to a field across host publishes:
-    /// process + app + role + window/placeholder. Content-independent, so the
-    /// anchor survives the field's text changing.
+    /// Identity for anchoring a suggestion to one concrete focused field across
+    /// host publishes. The AX identity is the strongest signal; apps that do not
+    /// expose one fall back to the field frame, then surface metadata. Content is
+    /// deliberately excluded so typing through a suggestion keeps the anchor.
     static func suggestionAnchor(for field: CotypingField) -> String {
-        [
-            String(field.processID),
-            field.bundleID ?? "",
-            field.appName,
-            field.role,
-            field.windowTitle ?? "",
-            field.fieldPlaceholder ?? "",
-        ].joined(separator: "\u{1f}")
+        fieldIdentity(for: field)
     }
 
     /// Identity for deduplicating engine prewarms per focused field. Prefers
     /// the AX focus identity, falls back to the input frame, then to
     /// window/placeholder text.
     static func prewarm(for field: CotypingField) -> String {
+        fieldIdentity(for: field)
+    }
+
+    private static func fieldIdentity(for field: CotypingField) -> String {
         let fieldPart: String
         if let focusIdentityKey = field.focusIdentityKey, !focusIdentityKey.isEmpty {
             fieldPart = "focus:\(focusIdentityKey)"

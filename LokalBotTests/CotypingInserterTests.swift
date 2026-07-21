@@ -59,6 +59,28 @@ final class CotypingInserterTests: XCTestCase {
         XCTAssertFalse(inserter.replaceForward(deletingCharacters: 0, with: "\r"))
     }
 
+    func testSyntheticDeletionPolicyHasSmallInclusiveCaps() {
+        XCTAssertTrue(CotypingSyntheticEditPolicy.allowsBackwardDeletion(0))
+        XCTAssertTrue(CotypingSyntheticEditPolicy.allowsBackwardDeletion(64))
+        XCTAssertFalse(CotypingSyntheticEditPolicy.allowsBackwardDeletion(-1))
+        XCTAssertFalse(CotypingSyntheticEditPolicy.allowsBackwardDeletion(65))
+
+        XCTAssertTrue(CotypingSyntheticEditPolicy.allowsForwardDeletion(0))
+        XCTAssertTrue(CotypingSyntheticEditPolicy.allowsForwardDeletion(64))
+        XCTAssertFalse(CotypingSyntheticEditPolicy.allowsForwardDeletion(-1))
+        XCTAssertFalse(CotypingSyntheticEditPolicy.allowsForwardDeletion(65))
+    }
+
+    @MainActor
+    func testReplaceRejectsOversizedDeletionBeforePostingEvents() {
+        let inserter = CotypingInserter()
+
+        XCTAssertFalse(inserter.replace(deletingCharacters: 65, with: ""))
+        XCTAssertFalse(inserter.replace(deletingCharacters: -1, with: "replacement"))
+        XCTAssertFalse(inserter.replaceForward(deletingCharacters: 65, with: ""))
+        XCTAssertFalse(inserter.replaceForward(deletingCharacters: -1, with: "replacement"))
+    }
+
     @MainActor
     func testInsertViaPasteRejectsEmptyText() {
         let inserter = CotypingInserter()

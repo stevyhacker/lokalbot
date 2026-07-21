@@ -16,10 +16,19 @@ struct CotypingModelPreparationView: View {
                 presentation: presentation(for: status),
                 style: compact ? .compact : .standard,
                 action: action(for: status))
-            if !CotypingModelPreparer.recommendedIsActive(settings: app.settings) {
-                Text("This selects Gemma 4 · E4B and keeps inline suggestions separate from the model used for meetings and Ask.")
+            if !CotypingModelPreparer.recommendedIsActive(settings: app.settings),
+               let entry = status.entry {
+                Text("This selects \(entry.displayName) and keeps inline suggestions separate from the model used for meetings and Ask.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            if status.entry?.id == ModelCatalog.recommendedCotypingID {
+                HStack(spacing: 4) {
+                    Text("LFM uses its own commercial and redistribution terms.")
+                    Link("Review license", destination: ModelCatalog.recommendedCotypingLicenseURL)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
     }
@@ -31,7 +40,7 @@ struct CotypingModelPreparationView: View {
         case .ready(let entry):
             return .init(
                 state: .ready,
-                title: "High-quality cotyping model",
+                title: "Recommended cotyping model",
                 status: "\(entry.displayName) is ready.",
                 actionTitle: isReadyAndActive(status) ? nil : "Use")
         case .downloading(let entry, let progress):
@@ -49,7 +58,7 @@ struct CotypingModelPreparationView: View {
         case .missing(let entry):
             return .init(
                 state: .waiting,
-                title: "High-quality cotyping model",
+                title: "Recommended cotyping model",
                 status: "\(entry.displayName) has not been downloaded yet.",
                 actionTitle: "Prepare")
         case .unavailable:

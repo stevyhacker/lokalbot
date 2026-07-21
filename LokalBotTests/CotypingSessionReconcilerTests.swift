@@ -122,6 +122,100 @@ final class CotypingContinuationTests: XCTestCase {
         XCTAssertFalse(CotypingSessionReconciler.isCurrentGenerationTarget(original, liveField: live))
     }
 
+    func testReplacementPlannerRejectsSameProcessFieldWithDifferentIdentity() {
+        let original = field("Please send :wave:", focusIdentityKey: "field-a")
+        let session = CotypingSession(
+            field: original,
+            fullText: "👋",
+            kind: .emoji(shortcode: "wave"))
+        let other = field("Please send :wave:", focusIdentityKey: "field-b")
+
+        XCTAssertNil(CotypingReplacementAcceptancePlanner.plan(
+            for: session,
+            liveField: other))
+    }
+
+    func testReplacementPlannerRequiresExactEmojiTriggerAndGlyph() throws {
+        let live = field("Please send :wave:", focusIdentityKey: "field-a")
+        let valid = CotypingSession(
+            field: live,
+            fullText: "👋",
+            kind: .emoji(shortcode: "wave"))
+        let plan = try XCTUnwrap(CotypingReplacementAcceptancePlanner.plan(
+            for: valid,
+            liveField: live))
+
+        XCTAssertEqual(plan.deletingCharacters, 6)
+        XCTAssertEqual(plan.replacementText, "👋")
+
+        let stale = CotypingSession(
+            field: live,
+            fullText: "😄",
+            kind: .emoji(shortcode: "smile"))
+        XCTAssertNil(CotypingReplacementAcceptancePlanner.plan(
+            for: stale,
+            liveField: live))
+    }
+
+    func testReplacementPlannerInsertsPreviewedMacroWithoutReevaluation() throws {
+        let live = field("Roll /d20", focusIdentityKey: "field-a")
+        let session = CotypingSession(
+            field: live,
+            fullText: "7",
+            kind: .macro(query: "d20"))
+        let plan = try XCTUnwrap(CotypingReplacementAcceptancePlanner.plan(
+            for: session,
+            liveField: live))
+
+        XCTAssertEqual(plan.deletingCharacters, 4)
+        XCTAssertEqual(plan.replacementText, "7")
+    }
+
+    func testReplacementPlannerRejectsChangedMacroQuery() {
+        let live = field("Date /today", focusIdentityKey: "field-a")
+        let session = CotypingSession(
+            field: live,
+            fullText: "Jul 21, 2026",
+            kind: .macro(query: "tomorrow"))
+
+        XCTAssertNil(CotypingReplacementAcceptancePlanner.plan(
+            for: session,
+            liveField: live))
+    }
+
+    func testReplacementPlannerBuildsCorrectionOnlyForExactFieldSnapshot() throws {
+        let live = field("Please recieve", focusIdentityKey: "field-a")
+        let session = CotypingSession(
+            field: live,
+            fullText: "receive",
+            kind: .correction(typoWord: "recieve"))
+        let plan = try XCTUnwrap(CotypingReplacementAcceptancePlanner.plan(
+            for: session,
+            liveField: live))
+
+        XCTAssertEqual(plan.deletingCharacters, 7)
+        XCTAssertEqual(plan.replacementText, "receive")
+
+        var changed = live
+        changed.precedingText += " later"
+        XCTAssertNil(CotypingReplacementAcceptancePlanner.plan(
+            for: session,
+            liveField: changed))
+    }
+
+    func testReplacementPlannerRejectsCorrectionBeyondEventTapDeletionCap() {
+        let typo = String(repeating: "a", count: 65)
+        let live = field(typo, focusIdentityKey: "field-a")
+        let session = CotypingSession(
+            field: live,
+            fullText: "replacement",
+            kind: .correction(typoWord: typo))
+
+        XCTAssertNil(CotypingReplacementAcceptancePlanner.plan(
+            for: session,
+            liveField: live))
+    }
+
     func testCurrentGenerationTargetAllowsMissingFocusIdentityButStillRequiresAnchorIdentity() {
         var original = field("I wanted to follow")
         original.windowTitle = "Draft"
@@ -150,11 +244,11 @@ final class CotypingContinuationTests: XCTestCase {
         XCTAssertTrue(CotypingSessionReconciler.hostPublishDidMove(from: original, to: live))
     }
 
-    func testHostPublishKeepsSameTextFallbackWhenIdentityIsMissing() {
+    func testHostPublishTreatsIdentityLossAsMovement() {
         let original = field("I wanted to follow", focusIdentityKey: "field-a")
         let live = field("I wanted to follow")
 
-        XCTAssertFalse(CotypingSessionReconciler.hostPublishDidMove(from: original, to: live))
+        XCTAssertTrue(CotypingSessionReconciler.hostPublishDidMove(from: original, to: live))
     }
 
     func testPublishedTypingAdvancesSuggestionTail() throws {
@@ -327,28 +421,5 @@ final class CotypingContinuationTests: XCTestCase {
             acceptedChunk: " ",
             currentPrecedingText: "what's on your mind",
             acceptedPrecedingText: "what's on your mind"))
-    }
-
-    func testOptimisticFieldAfterAcceptanceAppendsInsertedText() {
-        let optimistic = CotypingSessionReconciler.optimisticFieldAfterAcceptance(
-            field("what's on your mind"),
-            insertionText: " today")
-
-        XCTAssertEqual(optimistic.precedingText, "what's on your mind today")
-        XCTAssertEqual(optimistic.trailingText, "")
-        XCTAssertEqual(optimistic.selectionLength, 0)
-    }
-
-    func testOptimisticFieldAfterAcceptanceDropsForwardDeletedTrailingOverlap() {
-        var live = field("rec")
-        live.trailingText = "eive the files"
-
-        let optimistic = CotypingSessionReconciler.optimisticFieldAfterAcceptance(
-            live,
-            insertionText: "eive",
-            deletingTrailingCharacters: 4)
-
-        XCTAssertEqual(optimistic.precedingText, "receive")
-        XCTAssertEqual(optimistic.trailingText, " the files")
     }
 }

@@ -4,12 +4,15 @@ This checklist keeps LokalBot's cotyping work aligned with the quality bar obser
 
 LokalBot defaults:
 
-- Gemma 4 E4B Q5 XL is the default cotyping model. Cotyping always runs its own
-  dedicated model on a separate `llama-server` instance — there is no option to
-  reuse the summarization model, and no fallback to the bundled tiny model.
+- LFM2.5 1.2B Instruct Q4_K_M is the benchmarked default cotyping model.
+  Cotyping runs its own dedicated model in-process on Apple Silicon, with a
+  separate `llama-server` as the conservative fallback — it never reuses the
+  summarization model.
 - Suggestion length defaults to 3 words for short inline continuations.
-- Debounce defaults to 160 ms; users can still tune it down to 20 ms when they
-  prefer maximum eagerness over lower background model churn.
+- The initial/server pause defaults to 160 ms. It controls the first local
+  request and the model-server floor; after the first latency sample, the
+  in-process route uses 20/25/55 ms adaptive tiers. The settings label states
+  that distinction instead of implying a fixed local delay.
 - Streaming partial suggestions default off, matching Cotypist/Cotabby.
 - Suggestions appear instantly with no fade-in animation, and ghost text is
   always bare, matching Cotypist's understated inline presentation — the accept
@@ -44,11 +47,13 @@ LokalBot defaults:
   (`CotypingSpellLanguageGate`) — otherwise every word would be flagged as a
   "typo" by whichever dictionary is active and cotyping would silently go dark
   for the whole language, while Cotypist keeps completing.
-- Accepted continuation text follows Cotabby's IME-safe path: while a composing
-  input source is active, the accept path uses paste instead of a synthetic
-  Unicode keystroke so marked-text input methods do not swallow the commit.
-  The paste path first presses the host app's real Paste menu item, then falls
-  back to a session-sourced Cmd-V event.
+- Accept-key ownership is fail-closed around input methods and opaque editors.
+  A composing or unknown input source, active marked text, a live selection, or
+  a field without bounded native/marker range APIs passes the original key
+  through and dismisses the ghost; cotyping never touches the pasteboard or
+  walks a host menu from its consuming event tap. Direct-input fields use one
+  synthetic Unicode event pair only after bounded live context, selection, and
+  exact-field checks.
 - Word-by-word acceptance follows Cotabby's space-less-script cadence: CJK,
   Japanese, Korean, Thai, and related runs are split with word segmentation
   instead of being accepted as one long whitespace-delimited token. Phrase
@@ -78,10 +83,11 @@ cooperating layers:
   whitespace-leading completion after a non-word fragment ("follo" + " up")
   is suppressed as `wordCompletionMismatch` rather than shown broken.
 
-Note: Cotypist ships the *base* Gemma 4 E4B GGUF (`gemma-4-E4B-UD-Q5_K_XL`);
-LokalBot uses the instruct variant (`gemma-4-E4B-it-UD-Q5_K_XL`). Base models
-are stronger raw continuers; if completions still trail Cotypist in tone,
-trialing the base GGUF as the cotyping model is the next lever.
+Note: Cotypist ships the *base* Gemma 4 E4B GGUF
+(`gemma-4-E4B-UD-Q5_K_XL`). LokalBot now defaults to LFM2.5 1.2B Instruct and
+keeps Gemma 4 E4B Instruct as its higher-capacity option. The 2026-07-21 model
+matrix also tested Cotabby's E2B base and the E4B base; both missed LokalBot's
+current safety/word-completion gate, so they were not added as defaults.
 
 ## Automated Check
 
@@ -139,8 +145,8 @@ Record (per prompt, and overall):
 - Whether word-by-word acceptance in space-less scripts advances by a single
   word-sized segment, and phrase acceptance stops on CJK commas without stopping
   at ordinary English commas.
-- Whether accepting under a composing IME commits the suggestion instead of
-  reopening or extending marked text.
+- Whether an accept key under a composing IME passes through without inserting
+  the suggestion, reopening marked text, or swallowing the IME's candidate key.
 - Whether switching to another field while generation is running prevents the
   old field's suggestion from appearing.
 - Whether terminal apps and integrated terminals stay quiet by default.
@@ -180,7 +186,7 @@ the screenshot and write `*.accepted.txt`, which is the source of truth for
 spacing/partial-accept behavior. It requires
 Accessibility for the shell and Screen Recording for `screencapture`.
 Set `COTYPING_COMPARE_FIRST_WAIT_SECONDS` or `COTYPING_COMPARE_WAIT_SECONDS` if
-the first Q5 XL model load needs more time on a cold run.
+the selected model's first load or Metal compilation needs more time.
 
 If the shell does not have Accessibility and fails with
 `osascript is not allowed assistive access`, the fallback probe can capture a
@@ -199,16 +205,20 @@ or Tab acceptance, and many cotyping apps deliberately ignore one-shot value
 changes, so a no-suggestion probe is weak evidence rather than a product
 failure.
 
-For repeatable backend latency/output checks against LokalBot's dedicated
-Gemma Q5 XL `llama-server`:
+For repeatable backend latency/output checks against a temporary dedicated
+`llama-server`, pass the exact model file under test:
 
 ```bash
-Benchmarks/Cotyping/run_llama_server_benchmark.py --surface-context --repetitions 3
+Benchmarks/Cotyping/run_llama_server_benchmark.py \
+  --model LFM2.5-1.2B-Instruct-Q4_K_M.gguf \
+  --surface-context --repetitions 3
 ```
 
 This records first streamed chunk latency, final latency, stop reason and raw
-model text for the same prompts. It is a backend microbenchmark, not a UI
-parity test; use it to verify prompt/sampling/server changes before doing the
+model text for the same prompts. The script's no-argument model remains the
+Cotabby Gemma base baseline for historical comparisons, so current-default runs
+must pass `--model` explicitly. It is a backend microbenchmark, not a UI parity
+test; use it to verify prompt/sampling/server changes before doing the
 side-by-side screenshot pass.
 
 ## Local Learning Check
@@ -221,16 +231,18 @@ side-by-side screenshot pass.
 
 ## Model Prep Check
 
-Cotyping always runs its own dedicated model. Use "Prepare high-quality cotyping"
-in Cotyping, Models, or Settings to fetch it.
+Cotyping always runs its own dedicated model. Use "Prepare" on the recommended
+cotyping model card in Cotyping, Models, or Settings to fetch it.
 
 Expected behavior:
 
-- Gemma 4 E4B Q5 XL is the selected cotyping model by default.
-- The Hugging Face download starts if the model is missing (~6.66 GB).
+- LFM2.5 1.2B Instruct Q4_K_M is selected for fresh settings.
+- The Hugging Face download starts if the model is missing (~0.73 GB), and the
+  card links to the model's separate LFM Open License terms.
 - Until the model is present, cotyping reports that it needs the download — there
   is no fallback to the bundled summarization model.
-- Once downloaded, the status shows ready and cotyping uses the dedicated server.
+- Once downloaded, the status shows ready and cotyping uses the in-process
+  runtime on Apple Silicon, with its dedicated server as the fallback.
 
 LokalBot always downloads and manages its own copy of the model under its storage
 folder. It does not reuse another app's model files.

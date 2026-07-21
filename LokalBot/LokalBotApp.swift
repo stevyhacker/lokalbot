@@ -333,8 +333,7 @@ final class AppState: ObservableObject {
                 if settings.cotypingEnabled != oldValue.cotypingEnabled {
                     cotyping.applySettings()
                     if !settings.cotypingEnabled {
-                        cotypingPrewarmTask?.cancel()
-                        cotypingPrewarmTask = nil
+                        scheduleCotypingRuntimeUnload()
                     }
                 }
                 if Self.cotypingRuntimeChanged(from: oldValue, to: settings) {
@@ -629,14 +628,16 @@ final class AppState: ObservableObject {
     /// dedicated `LlamaServer.cotyping` instance so it never thrashes the
     /// shared summarizer server. Resolved per-completion, so changes apply live.
     private(set) lazy var cotypingEngine = CotypingEngineSelector(
-        http: CotypingEngine(makeEngine: { [weak self] in
-            guard let self else { throw TextEngineError.unavailable("LokalBot is shutting down.") }
-            return try await self.pipeline.makeTextEngine(
-                self.settings.cotypingTextEngineSettings,
-                server: .cotyping,
-                priority: .interactive,
-                purpose: "cotyping")
-        }),
+        http: CotypingEngine(
+            makeEngine: { [weak self] in
+                guard let self else { throw TextEngineError.unavailable("LokalBot is shutting down.") }
+                return try await self.pipeline.makeTextEngine(
+                    self.settings.cotypingTextEngineSettings,
+                    server: .cotyping,
+                    priority: .interactive,
+                    purpose: "cotyping")
+            },
+            stopRuntime: { await LlamaServer.cotyping.stop() }),
         makeLocal: { modelPath in
             LocalLlamaCotypingEngine(runtime: LlamaCotypingRuntime(), modelPath: modelPath)
         },
@@ -709,7 +710,11 @@ final class AppState: ObservableObject {
     /// gates recording notifications and first-run onboarding.
     private var interactive = false
     private var terminationCleanupTask: Task<Void, Never>?
-    private var cotypingPrewarmTask: Task<Void, Never>?
+    /// Serializes cotyping model lifecycle transitions. A disable must finish
+    /// unloading both runtimes before a rapid re-enable can prewarm a fresh
+    /// model, otherwise the old and new routes can overlap in memory.
+    private var cotypingRuntimeTask: Task<Void, Never>?
+    private var cotypingRuntimeTaskID: UUID?
     private var libraryLoadTask: Task<Void, Never>?
     private var embeddingIndexTasks: [Meeting.ID: (token: UUID, task: Task<Void, Never>)] = [:]
     private var indexCleanupTasks: [Meeting.ID: (token: UUID, task: Task<Void, Never>)] = [:]
@@ -1027,13 +1032,43 @@ final class AppState: ObservableObject {
         indexCleanupTasks[meetingID] = (token, task)
     }
 
+    private enum CotypingRuntimeOperation {
+        case unload
+        case prewarm
+    }
+
+    private func scheduleCotypingRuntimeUnload() {
+        scheduleCotypingRuntimeOperation(.unload)
+    }
+
     private func scheduleCotypingPrewarm() {
-        cotypingPrewarmTask?.cancel()
-        cotypingPrewarmTask = Task { @MainActor [weak self] in
-            guard let self, !Task.isCancelled, self.settings.cotypingEnabled else { return }
-            await self.cotypingEngine.prewarm()
-            guard !Task.isCancelled else { return }
-            self.cotypingPrewarmTask = nil
+        scheduleCotypingRuntimeOperation(.prewarm)
+    }
+
+    /// Queue lifecycle changes instead of launching independent tasks. An
+    /// unload intentionally runs even if a later operation cancels its task:
+    /// the later operation awaits it before loading another model.
+    private func scheduleCotypingRuntimeOperation(_ operation: CotypingRuntimeOperation) {
+        let previous = cotypingRuntimeTask
+        previous?.cancel()
+        let taskID = UUID()
+        cotypingRuntimeTaskID = taskID
+        cotypingRuntimeTask = Task { @MainActor [weak self] in
+            if let previous { await previous.value }
+            guard let self else { return }
+            defer {
+                if self.cotypingRuntimeTaskID == taskID {
+                    self.cotypingRuntimeTask = nil
+                    self.cotypingRuntimeTaskID = nil
+                }
+            }
+            switch operation {
+            case .unload:
+                await self.cotypingEngine.unload()
+            case .prewarm:
+                guard !Task.isCancelled, self.settings.cotypingEnabled else { return }
+                await self.cotypingEngine.prewarm()
+            }
         }
     }
 
@@ -1045,8 +1080,11 @@ final class AppState: ObservableObject {
         let task = Task { @MainActor in
             interactive = false
             settingsStore.flush()
-            cotypingPrewarmTask?.cancel()
-            cotypingPrewarmTask = nil
+            let pendingCotypingRuntimeTask = self.cotypingRuntimeTask
+            pendingCotypingRuntimeTask?.cancel()
+            await pendingCotypingRuntimeTask?.value
+            self.cotypingRuntimeTask = nil
+            cotypingRuntimeTaskID = nil
             libraryLoadTask?.cancel()
             libraryLoadTask = nil
             for entry in embeddingIndexTasks.values { entry.task.cancel() }
@@ -1067,6 +1105,8 @@ final class AppState: ObservableObject {
             chat.stop()
             dictation.stop()
             cotyping.stop()
+            await cotypingLearning.flushPersistence()
+            await CotypingStatsStore.shared.flushPersistence()
             await agentSessions.shutdownAll()
             await cotypingEngine.unload()
             await LlamaServer.shared.stop()

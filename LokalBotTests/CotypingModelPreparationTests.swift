@@ -30,7 +30,7 @@ final class CotypingModelPreparationTests: XCTestCase {
 
     func testRecommendedActiveTracksModelID() {
         var settings = AppSettings()
-        // Cotyping always runs its own model; the recommended Gemma id is the default.
+        // Cotyping always runs its own model; the recommended model id is the default.
         XCTAssertTrue(CotypingModelPreparer.recommendedIsActive(settings: settings))
         settings.cotypingBuiltInModelID = ModelCatalog.compactFallbackID
         XCTAssertFalse(CotypingModelPreparer.recommendedIsActive(settings: settings))

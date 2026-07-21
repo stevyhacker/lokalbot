@@ -26,10 +26,13 @@ the vendor fetch scripts, and `AgentRuntimeManifest`.
 | ONNX Runtime | MIT | https://github.com/microsoft/onnxruntime |
 | Bun (optional Agent Mode runtime) | MIT | https://github.com/oven-sh/bun |
 | pi agent packages (optional, installed on request) | MIT | https://github.com/earendil-works/pi |
+| LFM models (downloaded on request) | LFM Open License v1.0 | https://docs.liquid.ai/lfm/help/model-license |
 
 Downloaded AI models are not bundled with LokalBot. Each model remains subject
 to the license shown by its publisher; review that license before downloading
-or using a model, especially in a commercial setting.
+or using a model, especially in a commercial setting. LFM's terms include a
+commercial-use revenue threshold and redistribution notice obligations; users
+outside those terms must obtain a separate license from Liquid AI.
 
 ## MIT License
 

@@ -27,9 +27,12 @@ enum CotypingMacro {
 
     /// Best macro for the trailing `/query` at the caret, or nil. Uses the live
     /// clock/RNG by default; tests inject a deterministic `Engine`.
-    static func match(trailing precedingText: String, engine: Engine = .standard) -> (result: Result, tokenLength: Int)? {
+    static func match(
+        trailing precedingText: String,
+        engine: Engine = .standard
+    ) -> (result: Result, tokenLength: Int, query: String)? {
         guard let token = scanToken(in: precedingText), let result = engine.evaluate(token.query) else { return nil }
-        return (result, token.tokenLength)
+        return (result, token.tokenLength, token.query)
     }
 
     /// Length of the trailing `/query` run (`/` + query), regardless of whether it

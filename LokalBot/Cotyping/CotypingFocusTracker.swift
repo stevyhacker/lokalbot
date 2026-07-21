@@ -38,15 +38,6 @@ final class CotypingFocusTracker: ObservableObject {
 
     var isRunning: Bool { timer != nil }
 
-    /// Milliseconds since the last completed AX capture, or nil before the
-    /// first capture. Hot-path callers use this to avoid a redundant
-    /// synchronous Accessibility walk moments after the host-publish poll.
-    var millisecondsSinceLastCapture: Int? {
-        Self.millisecondsSinceCapture(
-            lastCaptureUptimeNanoseconds: lastCaptureUptimeNanoseconds,
-            nowUptimeNanoseconds: DispatchTime.now().uptimeNanoseconds)
-    }
-
     func start() {
         guard timer == nil else { return }
         pollBackoff.reset()

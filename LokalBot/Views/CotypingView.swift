@@ -152,7 +152,7 @@ private struct CotypingContent: View {
                     Text(entry.displayName).tag(entry.id)
                 }
             }
-            Text("Cotyping runs its own dedicated model, separate from the Main LLM engine. Gemma 4 · E4B is the recommended quality target; Qwen 3.5 2B and LFM2.5 1.2B are smaller latency options.")
+            Text("Cotyping runs its own dedicated model, separate from the Main LLM engine. LFM2.5 1.2B is the benchmarked low-latency default; Gemma 4 · E4B remains available as a higher-capacity option.")
                 .font(.caption).foregroundStyle(.secondary)
             CotypingModelPreparationView(compact: true)
         }
@@ -162,13 +162,15 @@ private struct CotypingContent: View {
 
     private var suggestionsSection: some View {
         Section("Suggestions") {
-            LabeledContent("Pause before suggesting") {
+            LabeledContent("Initial / server pause") {
                 Text("\(app.settings.cotypingDebounceMs) ms").foregroundStyle(.secondary)
             }
             Slider(value: Binding(
                 get: { Double(app.settings.cotypingDebounceMs) },
                 set: { app.settings.cotypingDebounceMs = Int($0) }),
                 in: 20...1000, step: 20)
+            Text("Used until local latency is measured and as the model-server floor. In-process suggestions then adapt to 20–55 ms.")
+                .font(.caption).foregroundStyle(.secondary)
             Stepper("Suggestion length: up to \(app.settings.cotypingMaxWords) words",
                     value: $app.settings.cotypingMaxWords, in: 2...50)
             Toggle("Allow multi-line suggestions", isOn: $app.settings.cotypingMultiLine)
@@ -242,7 +244,9 @@ private struct CotypingContent: View {
             if app.settings.cotypingUseLocalLearning {
                 Stepper("Use \(app.settings.cotypingLearningExamplesInPrompt) learned examples",
                         value: $app.settings.cotypingLearningExamplesInPrompt, in: 1...5)
-                CotypingLearningControls(store: app.cotypingLearning)
+                CotypingLearningControls(
+                    store: app.cotypingLearning,
+                    onClear: coordinator.clearLearnedWritingData)
             }
         }
     }
@@ -278,9 +282,6 @@ private struct CotypingContent: View {
                    isOn: $app.settings.cotypingAutoAcceptTrailingPunctuation)
             Toggle("Add space after accepting words",
                    isOn: $app.settings.cotypingAddSpaceAfterAccept)
-            Toggle("Paste large / multi-line accepts", isOn: $app.settings.cotypingPasteInsertion)
-            Text("Commits big, multi-line, or composing-IME suggestions via paste instead of synthetic keystrokes. Briefly uses the clipboard, then restores it.")
-                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -480,6 +481,7 @@ private struct CotypingContent: View {
 
 private struct CotypingLearningControls: View {
     @ObservedObject var store: CotypingLearningStore
+    let onClear: () -> Void
 
     var body: some View {
         LabeledContent("Learned examples") {
@@ -487,7 +489,7 @@ private struct CotypingLearningControls: View {
         }
         if store.exampleCount > 0 {
             Button("Delete learned writing data", role: .destructive) {
-                store.clear()
+                onClear()
             }
             .font(.caption)
         }

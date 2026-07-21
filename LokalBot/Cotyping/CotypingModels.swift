@@ -193,9 +193,10 @@ enum CotypingSuggestionKind: Equatable, Sendable {
     case correction(typoWord: String)
     /// Replace the trailing `:shortcode` token with the emoji glyph (`fullText`).
     case emoji(shortcode: String)
-    /// Replace the trailing `/query` run with the macro result (`fullText`); the
-    /// run is re-scanned and re-evaluated against the live text on accept.
-    case macro
+    /// Replace the trailing `/query` run with the already-previewed macro result
+    /// (`fullText`). Keeping the exact query prevents a stale session from acting
+    /// on a different macro and avoids re-rolling random macros during accept.
+    case macro(query: String)
 }
 
 /// An active suggestion: the field it was generated against, the full completion,
@@ -216,6 +217,16 @@ struct CotypingSession: Equatable, Sendable {
         var copy = self
         copy.consumedCount = min(fullText.count, consumedCount + count)
         return copy
+    }
+}
+
+/// The consuming event tap may own an accept key only while there is a visible
+/// suggestion backed by a live session. In particular, generation in flight is
+/// never enough: swallowing Tab while no suggestion is visible breaks ordinary
+/// keyboard navigation and can accept output the user has not reviewed.
+enum CotypingAcceptanceOwnershipPolicy {
+    static func shouldOwnAcceptKey(overlayIsVisible: Bool, hasSession: Bool) -> Bool {
+        overlayIsVisible && hasSession
     }
 }
 

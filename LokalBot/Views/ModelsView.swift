@@ -457,7 +457,7 @@ struct ModelsView: View {
                 }
             }
             .frame(maxWidth: 360)
-            Text("Cotyping runs in its own local model process, separate from the Main LLM. Gemma 4 · E4B is the recommended quality choice; Qwen 3.5 2B and LFM2.5 1.2B use less memory and respond faster.")
+            Text("Cotyping runs in its own local model process, separate from the Main LLM. LFM2.5 1.2B is the benchmarked low-latency default; Gemma 4 · E4B is a higher-capacity option.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .accessibilityIdentifier("models.cotyping")

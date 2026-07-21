@@ -9,8 +9,8 @@ enum CotypingCompositionInputModeClassifier {
         "com.apple.inputmethod.Roman"
     ]
 
-    static func isComposingInputMode(isKeyboardLayout: Bool, inputModeID: String?) -> Bool {
-        if isKeyboardLayout {
+    static func isComposingInputMode(isKeyboardLayout: Bool?, inputModeID: String?) -> Bool {
+        if isKeyboardLayout == true {
             return false
         }
         if let inputModeID, nonComposingInputModeIDs.contains(inputModeID) {
@@ -20,8 +20,8 @@ enum CotypingCompositionInputModeClassifier {
     }
 }
 
-/// Caches the current Text Input Source composition state so acceptance can
-/// choose an IME-safe insertion path without touching Carbon from the event tap.
+/// Caches the current Text Input Source composition state so the accept tap can
+/// pass IME-owned keys through without touching Carbon at event time.
 @MainActor
 final class CotypingKeyboardInputSourceMonitor {
     private(set) var isComposingIMEActive = false
@@ -53,12 +53,14 @@ final class CotypingKeyboardInputSourceMonitor {
 
     func refresh() {
         guard let unmanagedSource = TISCopyCurrentKeyboardInputSource() else {
-            isComposingIMEActive = false
+            // Carbon could not prove a direct-input keyboard layout. Fail
+            // closed for suggestion ownership so Tab remains with the host.
+            isComposingIMEActive = true
             return
         }
         let source = unmanagedSource.takeRetainedValue()
-        let isKeyboardLayout = Self.stringProperty(source, kTISPropertyInputSourceType)
-            == (kTISTypeKeyboardLayout as String)
+        let inputSourceType = Self.stringProperty(source, kTISPropertyInputSourceType)
+        let isKeyboardLayout = inputSourceType.map { $0 == (kTISTypeKeyboardLayout as String) }
         let inputModeID = Self.stringProperty(source, kTISPropertyInputModeID)
         isComposingIMEActive = CotypingCompositionInputModeClassifier.isComposingInputMode(
             isKeyboardLayout: isKeyboardLayout,

@@ -75,7 +75,7 @@ final class CotypingStatsTests: XCTestCase {
 
 final class CotypingStatsStoreTests: XCTestCase {
     @MainActor
-    func testPersistAndReload() {
+    func testPersistAndReload() async {
         let name = "cotyping-stats-test"
         UserDefaults().removePersistentDomain(forName: name)
         let suite = UserDefaults(suiteName: name)!
@@ -86,6 +86,8 @@ final class CotypingStatsStoreTests: XCTestCase {
         store.recordGeneration(latencyMs: 120)
         store.recordAccept(charsAccepted: 7)
         store.recordError()
+        store.suggestionCompleted()
+        await store.flushPersistence()
 
         // A fresh store loading the same suite sees the persisted values.
         let reloaded = CotypingStatsStore(defaults: suite)
@@ -95,8 +97,66 @@ final class CotypingStatsStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.stats.errors, 1)
 
         reloaded.clear()
+        await reloaded.flushPersistence()
         XCTAssertEqual(CotypingStatsStore(defaults: suite).stats, CotypingStats())
 
         suite.removePersistentDomain(forName: name)
     }
+
+    @MainActor
+    func testAcceptedChunksPersistOnceAtSuggestionCompletion() async {
+        let persistence = RecordingCotypingStatsPersistence()
+        let name = "cotyping-stats-batch-\(UUID().uuidString)"
+        let suite = UserDefaults(suiteName: name)!
+        let store = CotypingStatsStore(defaults: suite, persistence: persistence)
+
+        store.recordAccept(charsAccepted: 4)
+        store.recordAccept(charsAccepted: 6)
+        store.recordAccept(charsAccepted: 2)
+        await store.waitForPendingPersistence()
+        let beforeCompletion = await persistence.recordedStats()
+        XCTAssertTrue(beforeCompletion.isEmpty,
+                      "accepted chunks must not each trigger a defaults write")
+
+        store.suggestionCompleted()
+        await store.waitForPendingPersistence()
+
+        let snapshots = await persistence.recordedStats()
+        XCTAssertEqual(snapshots.count, 1)
+        XCTAssertEqual(snapshots[0].accepts, 3)
+        XCTAssertEqual(snapshots[0].charsAccepted, 12)
+        suite.removePersistentDomain(forName: name)
+    }
+
+    @MainActor
+    func testTerminationFlushPersistsDirtyAcceptedChunks() async {
+        let persistence = RecordingCotypingStatsPersistence()
+        let name = "cotyping-stats-flush-\(UUID().uuidString)"
+        let suite = UserDefaults(suiteName: name)!
+        let store = CotypingStatsStore(defaults: suite, persistence: persistence)
+        store.recordAccept(charsAccepted: 9)
+
+        await store.flushPersistence()
+
+        let snapshots = await persistence.recordedStats()
+        XCTAssertEqual(snapshots.count, 1)
+        XCTAssertEqual(snapshots[0].accepts, 1)
+        XCTAssertEqual(snapshots[0].charsAccepted, 9)
+        suite.removePersistentDomain(forName: name)
+    }
+}
+
+private actor RecordingCotypingStatsPersistence: CotypingStatsPersisting {
+    private var snapshots: [CotypingStats] = []
+    private var removeCount = 0
+
+    func persist(_ stats: CotypingStats) {
+        snapshots.append(stats)
+    }
+
+    func remove() {
+        removeCount += 1
+    }
+
+    func recordedStats() -> [CotypingStats] { snapshots }
 }

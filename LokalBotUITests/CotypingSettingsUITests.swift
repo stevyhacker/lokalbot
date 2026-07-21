@@ -111,7 +111,7 @@ final class CotypingSettingsUITests: XCTestCase {
         setMaster(on: true)
 
         let everydayLabels = [
-            "Pause before suggesting",           // suggestions tuning
+            "Initial / server pause",             // suggestions tuning
             "Emoji autocomplete",                // extras
             "Macros (",                          // inline macros
             "Never suggest in",                  // privacy exclusions
@@ -131,7 +131,6 @@ final class CotypingSettingsUITests: XCTestCase {
         let advancedLabels = [
             "Match the app",                     // host font/color match
             "Show suggestions",                  // mirror render-mode picker
-            "Paste large / multi-line accepts",  // insertion strategy (paste)
             "Suggestions generated",             // quality metrics
         ]
         for fragment in advancedLabels {

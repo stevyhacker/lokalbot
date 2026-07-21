@@ -67,7 +67,9 @@ struct ModelCatalog {
 
     static let compactFallbackID = "qwen3.5-0.8b"
     static let recommendedSummarizationID = "qwen3.6-35b-a3b"
-    static let recommendedCotypingID = "gemma4-e4b-q5-xl"
+    static let recommendedCotypingID = "lfm2.5-1.2b-instruct"
+    static let recommendedCotypingLicenseURL = URL(
+        string: "https://docs.liquid.ai/lfm/help/model-license")!
     /// Main LLM preselected for every fresh install. Larger models remain
     /// available in Settings → Models for users who prefer maximum quality.
     static let defaultSummarizationID = "qwen3.5-4b"
@@ -93,12 +95,12 @@ struct ModelCatalog {
               sizeBytes: 532_517_120,
               sizeGB: 0.53, blurb: "Tiny downloadable fallback for short meetings and cotyping.",
               disablesThinking: true),
-        Entry(id: "lfm2.5-1.2b-instruct", displayName: "LFM2.5 1.2B Instruct",
+        Entry(id: recommendedCotypingID, displayName: "LFM2.5 1.2B Instruct",
               fileName: "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
               url: "https://huggingface.co/unsloth/LFM2.5-1.2B-Instruct-GGUF/resolve/bf1ebe055f24ddd24f3622d933a63b42606773f3/LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
               sha256: "856aeee6d85ac684b1db8dee48795b44fc06731ecda03aee36ece682413a9b9a",
               sizeBytes: 730_895_584,
-              sizeGB: 0.85, blurb: "Fast English-first cotyping mode. Under 1 GB.",
+              sizeGB: 0.73, blurb: "Recommended fast, English-first cotyping model. Under 1 GB.",
               disablesThinking: false),
         Entry(id: "qwen3.5-2b", displayName: "Qwen3.5 2B",
               fileName: "Qwen3.5-2B-Q4_K_M.gguf",
@@ -121,12 +123,12 @@ struct ModelCatalog {
               sizeBytes: 4_977_169_568,
               sizeGB: 4.98, blurb: "Legacy edge-optimized option. 16 GB Macs.",
               disablesThinking: false),
-        Entry(id: recommendedCotypingID, displayName: "Gemma 4 · E4B",
+        Entry(id: "gemma4-e4b-q5-xl", displayName: "Gemma 4 · E4B",
               fileName: "gemma-4-E4B-it-UD-Q5_K_XL.gguf",
               url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/0720adb23527c2cd5ea01d1db067cd960327fdac/gemma-4-E4B-it-UD-Q5_K_XL.gguf",
               sha256: "5fb55145c335edd0c2e0cdd7505ed1557cd346787449479be65094c6f5b016c6",
               sizeBytes: 6_656_152_736,
-              sizeGB: 6.66, blurb: "Recommended cotyping quality target (Q5 XL quant). 16 GB+ Macs.",
+              sizeGB: 6.66, blurb: "Higher-capacity cotyping option (Q5 XL quant). 16 GB+ Macs.",
               disablesThinking: false),
         Entry(id: "lfm2.5-8b-a1b", displayName: "LFM2.5 8B (MoE)",
               fileName: "LFM2.5-8B-A1B-Q4_K_M.gguf",

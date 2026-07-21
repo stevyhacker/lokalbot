@@ -1,25 +1,43 @@
 import Foundation
 
-/// Chooses the prediction debounce from the last generation's latency. Ported in
-/// spirit from Cotabby's `DebouncePolicy`: keep the user's configured delay as
-/// the floor (snappy on fast machines), but back off when generations run slow
-/// so keystrokes don't pile doomed requests onto a model that can't keep up.
+/// Chooses the prediction debounce from the last generation's latency.
+/// In-process inference can use Cotabby-style short tiers because cancellation
+/// stops local work directly. Model-server requests retain the conservative
+/// latency backoff: cancelling the client does not guarantee the server stops.
 enum CotypingDebouncePolicy {
+    enum RuntimeProfile: Equatable, Sendable {
+        case inProcess
+        case modelServer
+    }
+
     static let minimumMilliseconds = 20
-    /// Largest backoff we'll add regardless of how slow the model is.
+    /// Largest model-server backoff regardless of how slow the request is.
     static let maxBackoffMilliseconds = 600
 
     static func milliseconds(
         lastLatencyMilliseconds: Int?,
         configured: Int,
+        profile: RuntimeProfile = .modelServer,
         consumedDelayMilliseconds: Int = 0
     ) -> Int {
-        let floor = max(minimumMilliseconds, configured)
+        let fallback = max(minimumMilliseconds, configured)
         let total: Int
-        if let last = lastLatencyMilliseconds, last > 0 {
-            total = max(floor, min(last / 2, maxBackoffMilliseconds))
-        } else {
-            total = floor
+        switch profile {
+        case .inProcess:
+            guard let last = lastLatencyMilliseconds, last > 0 else {
+                return max(0, fallback - max(0, consumedDelayMilliseconds))
+            }
+            switch last {
+            case ...70: total = minimumMilliseconds
+            case ...140: total = 25
+            default: total = 55
+            }
+        case .modelServer:
+            if let last = lastLatencyMilliseconds, last > 0 {
+                total = max(fallback, min(last / 2, maxBackoffMilliseconds))
+            } else {
+                total = fallback
+            }
         }
         return max(0, total - max(0, consumedDelayMilliseconds))
     }

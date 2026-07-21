@@ -37,6 +37,22 @@ final class CotypingStreamedGhostTextPolicyTests: XCTestCase {
             candidate: " tomorrow",
             currentlyRendered: " today"))
     }
+
+    func testFirstAcceptanceConsumesInFlightStreamFenceExactlyOnce() {
+        var fence = CotypingStreamAcceptanceFence()
+        fence.markPresented(work: 42)
+
+        XCTAssertEqual(fence.consumeForAcceptance(), 42)
+        XCTAssertNil(fence.consumeForAcceptance())
+    }
+
+    func testFinalOrClearedPresentationResetsStreamFence() {
+        var fence = CotypingStreamAcceptanceFence()
+        fence.markPresented(work: 42)
+        fence.reset()
+
+        XCTAssertNil(fence.consumeForAcceptance())
+    }
 }
 
 // MARK: - Streaming SSE parsing
