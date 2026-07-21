@@ -174,6 +174,20 @@ struct AppSettings: Codable, Equatable {
     /// is an explicit automation choice.
     var quickRecallEnabled: Bool = false
 
+    // MARK: - Day digest
+
+    /// Generate the day digest automatically once the clock passes
+    /// `dayDigestHour`, so the Timeline's journal fills in without a click.
+    /// Runs only when the day has recorded activity or finished meetings; a
+    /// digest generated manually earlier in the day is refreshed with the
+    /// fuller day at the scheduled hour.
+    var dayDigestAutoEnabled: Bool = true
+    /// Local wall-clock hour (0...23) after which today's digest is generated.
+    var dayDigestHour: Int = 18
+    /// Optional guidance folded into the digest prompt — scheduled, manual,
+    /// and `--digest` CLI generation alike. Empty keeps the built-in prompt.
+    var dayDigestCustomPrompt: String = ""
+
     // MARK: - Daily memory export
 
     enum DailyMemoryExportFormat: String, Codable, CaseIterable, Identifiable {
@@ -525,6 +539,9 @@ struct AppSettings: Codable, Equatable {
         case retentionDays
         case keepOCRTextForever
         case quickRecallEnabled
+        case dayDigestAutoEnabled
+        case dayDigestHour
+        case dayDigestCustomPrompt
         case dailyMemoryExportEnabled
         case dailyMemoryExportFolder
         case dailyMemoryExportFormat
@@ -653,6 +670,9 @@ struct AppSettings: Codable, Equatable {
         try c.encode(retentionDays, forKey: .retentionDays)
         try c.encode(keepOCRTextForever, forKey: .keepOCRTextForever)
         try c.encode(quickRecallEnabled, forKey: .quickRecallEnabled)
+        try c.encode(dayDigestAutoEnabled, forKey: .dayDigestAutoEnabled)
+        try c.encode(min(23, max(0, dayDigestHour)), forKey: .dayDigestHour)
+        try c.encode(dayDigestCustomPrompt, forKey: .dayDigestCustomPrompt)
         try c.encode(dailyMemoryExportEnabled, forKey: .dailyMemoryExportEnabled)
         try c.encode(dailyMemoryExportFolder, forKey: .dailyMemoryExportFolder)
         try c.encode(dailyMemoryExportFormat, forKey: .dailyMemoryExportFormat)
@@ -772,6 +792,16 @@ struct AppSettings: Codable, Equatable {
         retentionDays = (try? c.decode(Int.self, forKey: .retentionDays)) ?? defaults.retentionDays
         keepOCRTextForever = (try? c.decode(Bool.self, forKey: .keepOCRTextForever)) ?? defaults.keepOCRTextForever
         quickRecallEnabled = (try? c.decode(Bool.self, forKey: .quickRecallEnabled)) ?? defaults.quickRecallEnabled
+        dayDigestAutoEnabled =
+            (try? c.decode(Bool.self, forKey: .dayDigestAutoEnabled))
+            ?? defaults.dayDigestAutoEnabled
+        dayDigestHour = min(
+            23,
+            max(0, (try? c.decode(Int.self, forKey: .dayDigestHour))
+                ?? defaults.dayDigestHour))
+        dayDigestCustomPrompt =
+            (try? c.decode(String.self, forKey: .dayDigestCustomPrompt))
+            ?? defaults.dayDigestCustomPrompt
         dailyMemoryExportEnabled =
             (try? c.decode(Bool.self, forKey: .dailyMemoryExportEnabled))
             ?? defaults.dailyMemoryExportEnabled

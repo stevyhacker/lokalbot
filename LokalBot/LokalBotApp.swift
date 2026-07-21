@@ -352,6 +352,9 @@ final class AppState: ObservableObject {
                 if Self.dailyMemoryExportChanged(from: oldValue, to: settings) {
                     applyDailyMemoryExportSetting()
                 }
+                if Self.dayDigestChanged(from: oldValue, to: settings) {
+                    applyDayDigestSetting()
+                }
                 if Self.screenContextChanged(from: oldValue, to: settings) {
                     applyTrackingSetting()
                 }
@@ -385,6 +388,14 @@ final class AppState: ObservableObject {
             || old.dailyMemoryExportFolder != new.dailyMemoryExportFolder
             || old.dailyMemoryExportFormat != new.dailyMemoryExportFormat
             || old.dailyMemoryExportHour != new.dailyMemoryExportHour
+    }
+
+    /// The custom prompt is deliberately absent: it is read fresh from
+    /// `settings` at generation time, so editing it never resets the scheduler.
+    private static func dayDigestChanged(from old: AppSettings,
+                                         to new: AppSettings) -> Bool {
+        old.dayDigestAutoEnabled != new.dayDigestAutoEnabled
+            || old.dayDigestHour != new.dayDigestHour
     }
 
     private static func screenContextChanged(from old: AppSettings,
@@ -496,6 +507,7 @@ final class AppState: ObservableObject {
         return controller
     }()
     private let dailyMemoryExportScheduler = DailyMemoryExportScheduler()
+    private let dayDigestScheduler = DayDigestScheduler()
     private(set) lazy var memoryRoutines = MemoryRoutineScheduler(
         storageRoot: storage.rootURL,
         databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"),
@@ -893,6 +905,7 @@ final class AppState: ObservableObject {
         screenMemoryAccess.start()
         applyQuickRecallSetting()
         applyDailyMemoryExportSetting()
+        applyDayDigestSetting()
         applyMemoryRoutineSetting()
         applyDreamingSetting()
         // First-run check. A genuinely-new user with missing permissions gets
@@ -1220,6 +1233,54 @@ final class AppState: ObservableObject {
         } onError: { [weak self] message in
             self?.lastError = message
         }
+    }
+
+    func applyDayDigestSetting() {
+        let snapshot = settings
+        let storageRoot = storage.rootURL
+        dayDigestScheduler.configure(
+            DayDigestScheduler.Configuration(
+                enabled: snapshot.dayDigestAutoEnabled,
+                hour: snapshot.dayDigestHour),
+            digestModifiedAt: { day in
+                let name = day.formatted(.iso8601.year().month().day())
+                let url = storageRoot.appendingPathComponent("journal/\(name).md")
+                let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+                return attributes?[.modificationDate] as? Date
+            },
+            canRun: { [weak self] in
+                guard let self, self.libraryReady else { return false }
+                let cotypingGenerating: Bool
+                if case .generating = self.cotyping.state {
+                    cotypingGenerating = true
+                } else {
+                    cotypingGenerating = false
+                }
+                return !self.recording.isRecording
+                    && !self.recording.isStarting
+                    && !self.dictation.state.isWorking
+                    && !cotypingGenerating
+                    && !self.pipeline.hasActiveWork
+            },
+            generate: { [weak self] day in
+                guard let self else {
+                    throw TextEngineError.unavailable("LokalBot is shutting down.")
+                }
+                let blocks = self.activityStore.blocks(on: day)
+                let finished = self.meetings.filter {
+                    Calendar.current.isDate($0.startedAt, inSameDayAs: day)
+                        && $0.endedAt != nil
+                }
+                guard !blocks.isEmpty || !finished.isEmpty else { return false }
+                _ = try await self.pipeline.generateDayDigest(
+                    for: day, blocks: blocks, meetings: finished,
+                    ocr: self.activityStore.ocrText(on: day),
+                    config: self.settings)
+                return true
+            },
+            onError: { [weak self] message in
+                self?.lastError = message
+            })
     }
 
     func applyMemoryRoutineSetting() {

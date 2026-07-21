@@ -349,7 +349,8 @@ struct SettingsView: View {
             if shows("Day tracking", ["tracking", "activity", "screenshots", "screen", "capture",
                                       "ocr", "window", "accessibility", "retention", "private",
                                       "excluded apps", "never capture", "export", "obsidian",
-                                      "logseq", "markdown", "daily note", "vault"]) {
+                                      "logseq", "markdown", "daily note", "vault", "digest",
+                                      "journal", "schedule", "prompt"]) {
                 Section("Day tracking") {
                     Toggle("Track app & window activity", isOn: Binding(
                         get: { app.settings.trackingEnabled },
@@ -424,6 +425,21 @@ struct SettingsView: View {
                             + "(see Privacy). Saved moments retain their encrypted frame and text "
                             + "until you unsave or delete them. Excluded apps log as “Private”."
                     )
+                        .font(.caption).foregroundStyle(.secondary)
+                    Divider()
+                    Toggle("Generate the day digest automatically",
+                           isOn: $app.settings.dayDigestAutoEnabled)
+                    if app.settings.dayDigestAutoEnabled {
+                        Stepper(
+                            "Generate at \(String(format: "%02d:00", app.settings.dayDigestHour))",
+                            value: $app.settings.dayDigestHour,
+                            in: 0...23)
+                    }
+                    TextField("Digest instructions (optional)",
+                              text: $app.settings.dayDigestCustomPrompt,
+                              axis: .vertical)
+                        .lineLimit(1...3)
+                    Text("Writes the Timeline's Day digest to your local journal once the day has activity or finished meetings; a digest you generated earlier is refreshed with the full day. Instructions shape scheduled and manual generation alike.")
                         .font(.caption).foregroundStyle(.secondary)
                     Divider()
                     Toggle("Export a daily memory note", isOn: Binding(

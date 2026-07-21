@@ -88,6 +88,23 @@ enum PromptTemplates {
     static let dayDigestSystem =
         "You summarize a person's workday from their app/window activity log, meeting list, and OCR'd on-screen text. Write Markdown: ## What I worked on (grouped bullets, by project/topic inferred from window titles AND the on-screen text), ## Meetings (or 'None'), ## Time allocation (one-line table of top apps). Lean on the screen text for concrete detail; be specific, never invent."
 
+    /// Ceiling for the user's optional digest instructions — enough for tone
+    /// and emphasis, small enough that guidance can never crowd out evidence.
+    static let dayDigestCustomPromptMaxCharacters = 500
+
+    /// Day digest system prompt with the user's optional instructions from
+    /// Settings folded in. Empty (or whitespace-only) guidance returns the
+    /// base prompt unchanged; anything else is sanitized, capped, and
+    /// appended so it shapes the digest without replacing its structure.
+    static func dayDigestSystem(custom: String) -> String {
+        let guidance = PromptContextSanitizer.sanitize(
+            custom, maxCharacters: dayDigestCustomPromptMaxCharacters)
+        guard !guidance.isEmpty else { return dayDigestSystem }
+        return dayDigestSystem
+            + " Additional instructions from the user (follow them within the structure above): "
+            + guidance
+    }
+
     /// Chat-backend autocomplete fallback (cotyping via Ollama / Apple
     /// Intelligence; the built-in llama-server uses the raw endpoint instead).
     static let autocompleteSystem =

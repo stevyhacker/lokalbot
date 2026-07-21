@@ -588,7 +588,7 @@ final class ProcessingPipeline: ObservableObject {
             (meetingLines + lines).joined(separator: "\n"), maxCharacters: 24_000)
         let context = Self.digestContext(date: day, ocr: ocr)
         let text = try await engine.generate(
-            system: PromptTemplates.dayDigestSystem,
+            system: PromptTemplates.dayDigestSystem(custom: config.dayDigestCustomPrompt),
             prompt: material.isEmpty ? "No activity was recorded this day." : material,
             context: context)
         let name = day.formatted(.iso8601.year().month().day())

@@ -207,6 +207,40 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(decoded.keepOCRTextForever)
     }
 
+    /// Fresh installs generate the evening digest without a click; 18:00
+    /// matches the daily memory export's default refresh hour.
+    func testDayDigestDefaultsToAutomaticEveningGeneration() {
+        let settings = AppSettings()
+        XCTAssertTrue(settings.dayDigestAutoEnabled)
+        XCTAssertEqual(settings.dayDigestHour, 18)
+        XCTAssertEqual(settings.dayDigestCustomPrompt, "")
+    }
+
+    func testDayDigestSettingsRoundTripAndClampHour() throws {
+        var settings = AppSettings()
+        settings.dayDigestAutoEnabled = false
+        settings.dayDigestHour = 99
+        settings.dayDigestCustomPrompt = "Focus on deep work; keep it under 10 bullets."
+
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self, from: JSONEncoder().encode(settings))
+
+        XCTAssertFalse(decoded.dayDigestAutoEnabled)
+        XCTAssertEqual(decoded.dayDigestHour, 23)
+        XCTAssertEqual(decoded.dayDigestCustomPrompt,
+                       "Focus on deep work; keep it under 10 bullets.")
+    }
+
+    /// Settings blobs from builds without the day-digest keys decode to the
+    /// new defaults instead of failing or disabling the schedule.
+    func testLegacySettingsDecodeWithDayDigestDefaults() throws {
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self, from: Data("{}".utf8))
+        XCTAssertTrue(decoded.dayDigestAutoEnabled)
+        XCTAssertEqual(decoded.dayDigestHour, 18)
+        XCTAssertEqual(decoded.dayDigestCustomPrompt, "")
+    }
+
     func testScreenMemoryAutomationDefaultsOff() {
         let settings = AppSettings()
 
