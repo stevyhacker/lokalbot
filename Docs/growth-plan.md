@@ -50,6 +50,7 @@ Every M-series launch, YouTube reviewers scramble for "AI performance" tests and
 - A public leaderboard (repo or page) seeded with the numbers already in the README (M4 Max: Parakeet ~190× realtime, ~100 tok/s summaries), accepting submissions by PR — UGC that is also stars and contributors.
 - Pitch it directly to the Mac-review circuit before the next chip launch: "the meeting-transcription benchmark" is a more relatable AI test than synthetic tokens/s, and every video that runs it shows the app by name.
 - Cost is small: the timing hooks exist (`Benchmarks/`, the headless harness); this is packaging plus a scorecard printer.
+- Full spec — workloads, fixture, fairness rules, leaderboard CI, outreach playbook, build order: `benchmark-mechanic.md`.
 
 **Done when:** the subcommand exists, the leaderboard has third-party submissions, and one reviewer has used it on camera.
 
