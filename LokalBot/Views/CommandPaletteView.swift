@@ -61,6 +61,24 @@ struct CommandPaletteView: View {
     /// plus recent meetings when idle; typed queries add one handoff row into
     /// Ask — the palette stays a command surface, Ask is the search surface.
     private var results: [PaletteItem] {
+        let dictationTitle: String
+        let dictationIcon: String
+        if app.dictation.isStarting {
+            dictationTitle = "Cancel dictation"
+            dictationIcon = "xmark.circle"
+        } else {
+            switch app.dictation.state {
+            case .idle:
+                dictationTitle = "Start dictation"
+                dictationIcon = "mic.badge.plus"
+            case .recording:
+                dictationTitle = "Stop & compose dictation"
+                dictationIcon = "stop.circle.fill"
+            case .transcribing, .composing:
+                dictationTitle = "Cancel dictation"
+                dictationIcon = "xmark.circle"
+            }
+        }
         let actions: [PaletteItem] = [
             .init(id: "record", icon: app.isRecording ? "stop.circle.fill" : "record.circle",
                   title: app.isRecording ? "Stop recording" : "Record now",
@@ -76,8 +94,8 @@ struct CommandPaletteView: View {
                   subtitle: "Library", action: { app.navSection = .meetings }),
             .init(id: "nav.ask", icon: "sparkle.magnifyingglass", title: "Go to Ask",
                   subtitle: "Library", action: { app.openAsk() }),
-            .init(id: "dictation", icon: app.dictation.state.isRecording ? "stop.circle.fill" : "mic.badge.plus",
-                  title: app.dictation.state.isRecording ? "Stop dictation" : "Start dictation",
+            .init(id: "dictation", icon: dictationIcon,
+                  title: dictationTitle,
                   subtitle: "Automation", action: { app.dictation.toggle(source: "palette") }),
             .init(id: "nav.dictation", icon: "mic.badge.plus",
                   title: app.settings.dictationEnabled ? "Go to Dictation (on)" : "Go to Dictation (off)",

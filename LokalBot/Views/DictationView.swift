@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DictationView: View {
     @EnvironmentObject var app: AppState
+    @ObservedObject var dictation: DictationCoordinator
     @StateObject private var permissions = PermissionManager.shared
 
     var body: some View {
@@ -50,7 +51,7 @@ struct DictationView: View {
                 Button(actionTitle) { app.dictation.toggle() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .tint(app.dictation.state.isRecording ? .red : Brand.teal)
+                    .tint(app.dictation.state.isRecording || app.dictation.isStarting ? .red : Brand.teal)
             }
             Toggle("Enable global shortcut", isOn: $app.settings.dictationEnabled)
                 .accessibilityIdentifier("dictation.enabled")
@@ -164,6 +165,7 @@ struct DictationView: View {
     }
 
     private var statusText: String {
+        if app.dictation.isStarting { return "Starting the microphone…" }
         switch app.dictation.state {
         case .idle:
             if app.settings.dictationEnabled {
@@ -182,7 +184,8 @@ struct DictationView: View {
     }
 
     private var actionTitle: String {
-        switch app.dictation.state {
+        if app.dictation.isStarting { return "Cancel" }
+        return switch app.dictation.state {
         case .idle: "Start"
         case .recording: "Stop & Compose"
         case .transcribing, .composing: "Cancel"

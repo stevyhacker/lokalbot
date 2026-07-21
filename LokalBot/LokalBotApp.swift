@@ -50,7 +50,12 @@ struct LokalBotApp: App {
 
                 Divider()
 
-                Button(app.dictation.state.isRecording ? "Stop Dictation" : "Start Dictation") {
+                Button(
+                    app.dictation.state.isRecording
+                        ? "Stop & Compose Dictation"
+                        : app.dictation.isStarting || app.dictation.state.isWorking
+                            ? "Cancel Dictation" : "Start Dictation"
+                ) {
                     app.dictation.toggle(source: "command")
                 }
             }
@@ -105,11 +110,11 @@ struct LokalBotApp: App {
 
 #if !LOKALBOT_UI_TEST_HOST
         MenuBarExtra {
-            MenuBarView()
+            MenuBarView(dictation: app.dictation)
                 .environmentObject(app)
                 .brandTinted()
         } label: {
-            MenuBarLabel(app: app)
+            MenuBarLabel(app: app, dictation: app.dictation)
         }
         .menuBarExtraStyle(.window)
 #endif
@@ -520,6 +525,7 @@ final class AppState: ObservableObject {
             }
             return !self.recording.isRecording
                 && !self.recording.isStarting
+                && !self.dictation.isStarting
                 && !self.dictation.state.isWorking
                 && !cotypingGenerating
                 && !self.pipeline.hasActiveWork
@@ -614,7 +620,12 @@ final class AppState: ObservableObject {
                 priority: .interactive,
                 purpose: "dictation compose")
         },
-        canStart: { [weak self] in !(self?.isRecording ?? false) },
+        canStart: { [weak self] in
+            guard let self else { return false }
+            return !self.recording.isRecording
+                && !self.recording.isStarting
+                && self.pendingRecordingStart == nil
+        },
         onBusy: { [weak self] in
             self?.lastError = "Stop the current meeting recording before starting dictation."
         },
@@ -701,6 +712,7 @@ final class AppState: ObservableObject {
     }
 
     private var pipelineObserver: AnyCancellable?
+    private var dictationObserver: AnyCancellable?
     private var recordingObserver: AnyCancellable?
     private var recordingStatusObserver: AnyCancellable?
     private var audioMonitorObserver: AnyCancellable?
@@ -733,6 +745,10 @@ final class AppState: ObservableObject {
 
     func startRecording(context: MeetingDetectionContext? = nil, source: String = "ui") {
         RecordingNotifier.shared.invalidateMeetingDetections()
+        guard !dictation.isStarting, !dictation.state.isWorking else {
+            lastError = "Finish or cancel dictation before starting a meeting recording."
+            return
+        }
         guard libraryReady else {
             pendingRecordingStart = (context, source)
             lastError = "Preparing your meeting library; recording will start when it is ready."
@@ -788,6 +804,16 @@ final class AppState: ObservableObject {
         // audio-monitor / calendar change notifications so MainWindowView
         // refreshes when those sub-ObservableObjects publish.
         pipelineObserver = pipeline.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
+        dictationObserver = Publishers.MergeMany([
+            dictation.$state.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            dictation.$isStarting.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            dictation.$isShortcutMonitoringActive.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            dictation.$lastTranscript.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            dictation.$lastComposedText.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            dictation.$lastEngine.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        ]).sink { [weak self] in
             self?.objectWillChange.send()
         }
         // Forward lifecycle changes, but not RecordingController's one-second
@@ -967,7 +993,7 @@ final class AppState: ObservableObject {
             if let pending = self.pendingRecordingStart {
                 self.pendingRecordingStart = nil
                 self.lastError = nil
-                self.recording.start(context: pending.context, source: pending.source)
+                self.startRecording(context: pending.context, source: pending.source)
             }
         }
     }
@@ -1298,6 +1324,7 @@ final class AppState: ObservableObject {
                 }
                 return !self.recording.isRecording
                     && !self.recording.isStarting
+                    && !self.dictation.isStarting
                     && !self.dictation.state.isWorking
                     && !cotypingGenerating
                     && !self.pipeline.hasActiveWork
@@ -1381,6 +1408,7 @@ final class AppState: ObservableObject {
                 }
                 let lokalBotIsIdle = !self.recording.isRecording
                     && !self.recording.isStarting
+                    && !self.dictation.isStarting
                     && !self.dictation.state.isWorking
                     && !cotypingGenerating
                     && !self.pipeline.hasActiveWork

@@ -226,6 +226,37 @@ final class SystemAudioRecorderCopyTests: XCTestCase {
         XCTAssertEqual(pool.availableBufferCount, 1)
     }
 
+    func testMicrophoneBufferPoolBrokerAdoptsNegotiatedTapFormat() throws {
+        let staleFormat = makeFormat(interleaved: false)
+        let negotiatedFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 24_000,
+            channels: 1,
+            interleaved: false)!
+        let source = makeBuffer(format: negotiatedFormat, frames: frameCount)
+        let broker = MicAudioBufferPoolBroker(
+            bufferCount: 2,
+            frameCapacity: frameCount)
+        XCTAssertTrue(broker.install(format: staleFormat))
+
+        guard case .refreshNeeded(let requestedFormat) = broker.borrow(for: source) else {
+            return XCTFail("A negotiated tap mismatch must request a replacement pool")
+        }
+        XCTAssertEqual(requestedFormat.sampleRate, 24_000)
+        XCTAssertEqual(requestedFormat.channelCount, 1)
+        guard case .unavailable = broker.borrow(for: source) else {
+            return XCTFail("Only one off-thread refresh should be scheduled at a time")
+        }
+
+        XCTAssertTrue(broker.install(format: requestedFormat))
+        guard case .borrowed(let buffer, let pool) = broker.borrow(for: source) else {
+            return XCTFail("The negotiated format must become borrowable after refresh")
+        }
+        XCTAssertEqual(buffer.format.sampleRate, 24_000)
+        XCTAssertEqual(buffer.format.channelCount, 1)
+        pool.returnBuffer(buffer)
+    }
+
     func testMicrophoneDropCounterNeverWaitsForContendedHealthLock() {
         let lock = NSLock()
         let counter = MicRealtimeDropCounter(lock: lock)
@@ -238,6 +269,41 @@ final class SystemAudioRecorderCopyTests: XCTestCase {
         XCTAssertEqual(counter.snapshot(), 1)
         counter.reset()
         XCTAssertEqual(counter.snapshot(), 0)
+    }
+
+    // MARK: - Recovery silence commit gate
+
+    func testFailedMicrophoneRecoveryCannotCreateSilencePlan() {
+        var gate = AudioRecoverySilenceCommitGate()
+
+        XCTAssertNil(gate.consumeAfterCapturedBuffer(forElapsed: 5))
+        gate.stage()
+        gate.cancel() // A failed engine retry never delivered a buffer.
+
+        XCTAssertFalse(gate.isPending)
+        XCTAssertNil(gate.consumeAfterCapturedBuffer(forElapsed: 5))
+    }
+
+    func testRecoveredMicrophoneBufferCommitsGapExactlyOnce() throws {
+        var gate = AudioRecoverySilenceCommitGate()
+        gate.stage()
+
+        let plan = try XCTUnwrap(gate.consumeAfterCapturedBuffer(forElapsed: 2.5))
+
+        XCTAssertEqual(plan.duration, 2.5, accuracy: 0.000_001)
+        XCTAssertFalse(plan.wasCapped)
+        XCTAssertFalse(gate.isPending)
+        XCTAssertNil(gate.consumeAfterCapturedBuffer(forElapsed: 2.5))
+    }
+
+    func testRecoveredMicrophoneGapRetainsPlannerCap() throws {
+        var gate = AudioRecoverySilenceCommitGate()
+        gate.stage()
+
+        let plan = try XCTUnwrap(gate.consumeAfterCapturedBuffer(forElapsed: 90))
+
+        XCTAssertEqual(plan.duration, AudioRecoverySilencePlanner.maximumDuration)
+        XCTAssertTrue(plan.wasCapped)
     }
 
     private func assertLosslessMicrophoneCopy(

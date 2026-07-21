@@ -9,7 +9,7 @@ struct TypeView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
-                TypeStatusHeader(coordinator: app.cotyping)
+                TypeStatusHeader(coordinator: app.cotyping, dictation: app.dictation)
                 Picker("Tool", selection: $app.typeTab) {
                     Text("Dictation").tag(AppState.TypeTab.dictation)
                     Text("Cotyping").tag(AppState.TypeTab.cotyping)
@@ -22,7 +22,7 @@ struct TypeView: View {
             .padding(.bottom, 8)
 
             switch app.typeTab {
-            case .dictation: DictationView()
+            case .dictation: DictationView(dictation: app.dictation)
             case .cotyping: CotypingView()
             }
         }
@@ -36,6 +36,7 @@ struct TypeView: View {
 private struct TypeStatusHeader: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var coordinator: CotypingCoordinator
+    @ObservedObject var dictation: DictationCoordinator
     @ObservedObject private var stats = CotypingStatsStore.shared
     @ObservedObject private var permissions = PermissionManager.shared
 
@@ -140,6 +141,7 @@ private struct TypeStatusHeader: View {
     }
 
     private var dictationStatus: String {
+        if app.dictation.isStarting { return "Starting the microphone…" }
         switch app.dictation.state {
         case .recording: return "Listening \(app.dictation.timerLabel)"
         case .transcribing: return "Transcribing \(app.dictation.timerLabel)"

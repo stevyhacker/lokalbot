@@ -43,6 +43,7 @@ final class DictationCoordinator: ObservableObject {
     @Published private(set) var livePreviewStatus = ""
     @Published private(set) var isLivePreviewWorking = false
     @Published private(set) var isLivePreviewEnabled = false
+    @Published private(set) var captureStatus = ""
     @Published private(set) var modelPreparationStatus: String?
     @Published private(set) var modelPreparationProgress: Double?
     @Published private(set) var modelPreparationError: String?
@@ -66,6 +67,11 @@ final class DictationCoordinator: ObservableObject {
     private var startTask: Task<Void, Never>?
     private var startTaskGeneration: Int?
     private var livePreviewTask: Task<Void, Never>?
+    /// Every preview and authoritative pass joins this chain. A cancelled
+    /// decoder that does not cooperate immediately therefore remains owned and
+    /// cannot overlap the shared model runtime with the next dictation.
+    private var asrHandoffTask: Task<Void, Never>?
+    private var livePreviewTaskID = 0
     private var transcribeTask: Task<Void, Never>?
     private var screenContextTask: Task<DictationScreenContext?, Never>?
     private var mediaCleanupTask: Task<Void, Never>?
@@ -80,6 +86,7 @@ final class DictationCoordinator: ObservableObject {
     private var activeAudioURL: URL?
     private var pausedMediaSession: MediaPlaybackController.PauseSession?
     private var deliveryTarget: DictationDeliveryTarget?
+    private var pendingFinishSource: String?
     private var generation = 0
 
     init(
@@ -189,8 +196,11 @@ final class DictationCoordinator: ObservableObject {
         let config = settingsProvider()
         if config.dictationEnabled {
             isShortcutMonitoringActive = inputMonitor.start()
+            if !isShortcutMonitoringActive {
+                lokalbotLog("dictation shortcut monitor unavailable; Input Monitoring access may be missing")
+            }
         } else {
-            inputMonitor.stop()
+            inputMonitor.stop(releasingHeldShortcut: true)
             isShortcutMonitoringActive = false
         }
         if case .recording = state, let activeAudioURL {
@@ -204,7 +214,7 @@ final class DictationCoordinator: ObservableObject {
                         generation: generation)
                 }
             } else {
-                _ = cancelLivePreview(reset: true)
+                cancelLivePreview(reset: true)
             }
         }
         refreshOverlay()
@@ -262,6 +272,8 @@ final class DictationCoordinator: ObservableObject {
             }
         }
         deliveryTarget = nil
+        pendingFinishSource = nil
+        captureStatus = ""
         lastTranscript = nil
         lastComposedText = nil
         lastEngine = nil
@@ -301,8 +313,10 @@ final class DictationCoordinator: ObservableObject {
             guard self.generation == session, !Task.isCancelled else { return }
             self.deliveryTarget = capturedDeliveryTarget
             var localMediaSession: MediaPlaybackController.PauseSession?
+            var candidateAudioURL: URL?
             do {
                 let audioURL = try self.nextAudioURL(startedAt: startedAt)
+                candidateAudioURL = audioURL
                 let pausedMedia = await MediaPlaybackController.pauseActiveMediaPlayers(
                     reason: "dictation")
                 localMediaSession = pausedMedia
@@ -329,6 +343,11 @@ final class DictationCoordinator: ObservableObject {
                 self.prewarmSelectedModel(reason: source)
                 self.startLivePreviewIfNeeded(audioURL: audioURL, config: config, generation: session)
                 lokalbotLog("dictation recording started source=\(source)")
+                if let pendingFinishSource = self.pendingFinishSource {
+                    self.pendingFinishSource = nil
+                    self.isStarting = false
+                    self.finishRecordingAndTranscribe(source: pendingFinishSource)
+                }
             } catch is CancellationError {
                 if let localMediaSession {
                     await MediaPlaybackController.resume(
@@ -337,6 +356,9 @@ final class DictationCoordinator: ObservableObject {
                     await self.resumePausedMedia(reason: "cancelled dictation start")
                 }
                 self.recorder.stop()
+                if let candidateAudioURL {
+                    try? FileManager.default.removeItem(at: candidateAudioURL)
+                }
                 self.activeAudioURL = nil
             } catch {
                 if let localMediaSession {
@@ -345,7 +367,12 @@ final class DictationCoordinator: ObservableObject {
                 } else {
                     await self.resumePausedMedia(reason: "failed dictation start")
                 }
-                self.onError("Could not start dictation: \(error.localizedDescription)")
+                let message = "Could not start dictation: \(error.localizedDescription)"
+                self.onError(message)
+                lokalbotLog("dictation start FAILED source=\(source): \(error.localizedDescription)")
+                if let candidateAudioURL {
+                    try? FileManager.default.removeItem(at: candidateAudioURL)
+                }
                 self.activeAudioURL = nil
                 self.state = .idle
                 self.stopTick()
@@ -357,17 +384,24 @@ final class DictationCoordinator: ObservableObject {
 
     func finishRecordingAndTranscribe(source: String = "ui") {
         if isStarting {
-            invalidateStartingSession()
+            // Push-to-talk key-up can arrive while permission, focus, or media
+            // setup is still finishing. Remember the release instead of
+            // cancelling the start and silently dropping the invocation.
+            pendingFinishSource = source
             return
         }
         guard case .recording(let startedAt) = state, let audioURL = activeAudioURL else { return }
-        let previewTask = cancelLivePreview(reset: false)
+        let captureDuration = recorder.captureHealth().duration
+        cancelLivePreview(reset: false)
         let mediaSession = pausedMediaSession
         pausedMediaSession = nil
         recorder.stop()
         activeAudioURL = nil
         stopTick()
         state = .transcribing(startedAt: startedAt)
+        lokalbotLog(
+            "dictation recording stopped source=\(source) duration="
+                + String(format: "%.2f", captureDuration))
         if isLivePreviewEnabled {
             livePreviewStatus = "Finalizing"
         }
@@ -380,7 +414,6 @@ final class DictationCoordinator: ObservableObject {
         transcribeTask?.cancel()
         transcribeTask = Task { [weak self] in
             if let mediaCleanup { await mediaCleanup.value }
-            if let previewTask { await previewTask.value }
             guard !Task.isCancelled else { return }
             await self?.transcribeAndDeliver(audioURL: audioURL, startedAt: startedAt,
                                              source: source, generation: session)
@@ -388,7 +421,7 @@ final class DictationCoordinator: ObservableObject {
     }
 
     func cancel() {
-        if startTask != nil {
+        if isStarting {
             invalidateStartingSession()
             prewarmTask?.cancel()
             prewarmTask = nil
@@ -402,7 +435,7 @@ final class DictationCoordinator: ObservableObject {
         discardPendingTranscriptionRetry()
         resetModelPreparation()
         discardScreenContext()
-        _ = cancelLivePreview(reset: true)
+        cancelLivePreview(reset: true)
         if case .recording = state {
             recorder.stop()
         }
@@ -413,6 +446,8 @@ final class DictationCoordinator: ObservableObject {
         state = .idle
         stopTick()
         deliveryTarget = nil
+        pendingFinishSource = nil
+        captureStatus = ""
         let mediaSession = pausedMediaSession
         pausedMediaSession = nil
         refreshOverlay()
@@ -439,8 +474,10 @@ final class DictationCoordinator: ObservableObject {
         beginModelPreparation()
         do {
             try await choice.engine.prepare { [weak self] update in
-                self?.receiveModelPreparation(update)
+                self?.receiveModelPreparation(update, generation: session)
             }
+            try Task.checkCancellation()
+            guard generation == session else { return }
             resetModelPreparation()
         } catch is CancellationError {
             guard generation == session else { return }
@@ -465,7 +502,7 @@ final class DictationCoordinator: ObservableObject {
             return
         }
         do {
-            let transcript = try await Self.transcribe(audioURL, config: config)
+            let transcript = try await transcribeSerialized(audioURL, config: config)
             try Task.checkCancellation()
             guard generation == session else { return }
 
@@ -477,6 +514,9 @@ final class DictationCoordinator: ObservableObject {
             }
 
             lastTranscript = spokenText
+            if isLivePreviewEnabled {
+                liveTranscript = .init(committed: spokenText, tentative: "")
+            }
             state = .composing(startedAt: startedAt)
             if isLivePreviewEnabled {
                 livePreviewStatus = "Composing"
@@ -511,7 +551,11 @@ final class DictationCoordinator: ObservableObject {
             guard !text.isEmpty else { throw DictationComposeError.emptyOutput }
             lastComposedText = text
             lastEngine = "\(transcript.engine) → \(engine.displayName)"
-            switch await deliver(text, mode: config.dictationOutputMode) {
+            switch await deliver(
+                text,
+                mode: config.dictationOutputMode,
+                generation: session
+            ) {
             case .inserted, .copied:
                 break
             case .focusChanged:
@@ -520,6 +564,8 @@ final class DictationCoordinator: ObservableObject {
                 onError("Dictation finished, but LokalBot could not insert the text. It was copied to the clipboard.")
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
+            case .cancelled:
+                return
             }
             complete()
             lokalbotLog(
@@ -546,18 +592,28 @@ final class DictationCoordinator: ObservableObject {
         case copied
         case focusChanged
         case failed
+        case cancelled
     }
 
-    private func deliver(_ text: String, mode: DictationOutputMode) async -> DeliveryResult {
+    private func deliver(
+        _ text: String,
+        mode: DictationOutputMode,
+        generation session: Int
+    ) async -> DeliveryResult {
+        guard !Task.isCancelled, generation == session else { return .cancelled }
         switch mode {
         case .pasteIntoFocusedApp:
-            guard await deliveryTargetMatchesCurrentFocus() else {
+            let targetMatches = await deliveryTargetMatchesCurrentFocus()
+            guard !Task.isCancelled, generation == session else { return .cancelled }
+            guard targetMatches else {
                 NSPasteboard.general.clearContents()
                 return NSPasteboard.general.setString(text, forType: .string)
                     ? .focusChanged : .failed
             }
+            guard !Task.isCancelled, generation == session else { return .cancelled }
             return inserter.insertViaPaste(text) || inserter.insert(text) ? .inserted : .failed
         case .copyToClipboard:
+            guard !Task.isCancelled, generation == session else { return .cancelled }
             NSPasteboard.general.clearContents()
             return NSPasteboard.general.setString(text, forType: .string) ? .copied : .failed
         }
@@ -570,6 +626,7 @@ final class DictationCoordinator: ObservableObject {
         state = .idle
         stopTick()
         resetLivePreview()
+        captureStatus = ""
         deliveryTarget = nil
         refreshOverlay()
     }
@@ -601,6 +658,8 @@ final class DictationCoordinator: ObservableObject {
         state = .idle
         stopTick()
         deliveryTarget = nil
+        pendingFinishSource = nil
+        captureStatus = ""
         discardScreenContext()
         resetLivePreview()
         refreshOverlay()
@@ -637,6 +696,7 @@ final class DictationCoordinator: ObservableObject {
     }
 
     private func completeWithMessage(_ message: String) {
+        lokalbotLog("dictation ended without delivery: \(message)")
         onError(message)
         complete()
     }
@@ -673,28 +733,58 @@ final class DictationCoordinator: ObservableObject {
             language: config.transcriptionLanguage.code)
     }
 
+    private func transcribeSerialized(
+        _ audioURL: URL,
+        config: AppSettings
+    ) async throws -> Transcript {
+        let precedingTask = asrHandoffTask
+        let result = DictationASRResultBox()
+        let task = Task {
+            if let precedingTask { await precedingTask.value }
+            do {
+                try Task.checkCancellation()
+                result.store(.success(try await Self.transcribe(audioURL, config: config)))
+            } catch {
+                result.store(.failure(error))
+            }
+        }
+        asrHandoffTask = task
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        return try result.resolve()
+    }
+
     private func startLivePreviewIfNeeded(
         audioURL: URL,
         config: AppSettings,
         generation session: Int
     ) {
         guard config.dictationShowOverlay, config.dictationLivePreview else { return }
+        livePreviewTaskID += 1
+        let taskID = livePreviewTaskID
         livePreviewTask?.cancel()
-        livePreviewTask = Task { [weak self] in
+        let task = Task { [weak self] in
+            guard !Task.isCancelled else { return }
             await self?.runLivePreviewLoop(
                 audioURL: audioURL,
                 config: config,
-                generation: session)
+                generation: session,
+                taskID: taskID)
         }
+        livePreviewTask = task
     }
 
     private func runLivePreviewLoop(
         audioURL: URL,
         config: AppSettings,
-        generation session: Int
+        generation session: Int,
+        taskID: Int
     ) async {
         defer {
-            if generation == session {
+            if generation == session, livePreviewTaskID == taskID {
                 livePreviewTask = nil
                 isLivePreviewWorking = false
             }
@@ -704,7 +794,9 @@ final class DictationCoordinator: ObservableObject {
         do {
             try await Task.sleep(for: .milliseconds(1_200))
             while !Task.isCancelled {
-                guard generation == session, state.isRecording else { return }
+                guard generation == session,
+                      livePreviewTaskID == taskID,
+                      state.isRecording else { return }
                 let duration = recorder.captureHealth().duration
                 let minimumAdvance = duration < 10 ? 1.25 : 2.0
                 guard duration >= 1.25,
@@ -720,16 +812,18 @@ final class DictationCoordinator: ObservableObject {
                         previousEnd: lastPreviewedDuration)
                     defer { try? FileManager.default.removeItem(at: window.url) }
                     try Task.checkCancellation()
-                    guard generation == session, state.isRecording else { return }
+                    guard generation == session,
+                          livePreviewTaskID == taskID,
+                          state.isRecording else { return }
 
                     isLivePreviewWorking = true
                     livePreviewStatus = liveTranscript.isEmpty ? "Listening" : "Updating"
                     refreshOverlay()
 
                     do {
-                        let transcript = try await Self.transcribe(window.url, config: config)
+                        let transcript = try await transcribeSerialized(window.url, config: config)
                         try Task.checkCancellation()
-                        guard generation == session else { return }
+                        guard generation == session, livePreviewTaskID == taskID else { return }
                         let text = Transcript.normalizedText(
                             transcript.segments.map(\.displayText).joined(separator: " "))
                         lastPreviewedDuration = window.endTime
@@ -758,35 +852,39 @@ final class DictationCoordinator: ObservableObject {
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {
-                    if generation == session {
+                    if generation == session, livePreviewTaskID == taskID {
                         livePreviewStatus = liveTranscript.isEmpty ? "Listening" : "Live"
                         lokalbotLog("dictation live preview skipped: \(error.localizedDescription)")
                     }
                 }
-                guard generation == session, state.isRecording else { return }
+                guard generation == session,
+                      livePreviewTaskID == taskID,
+                      state.isRecording else { return }
                 isLivePreviewWorking = false
                 refreshOverlay()
                 try await Task.sleep(
                     for: .milliseconds(Int(Self.livePreviewInterval(after: duration) * 1_000)))
             }
         } catch is CancellationError {
-            isLivePreviewWorking = false
+            if generation == session, livePreviewTaskID == taskID {
+                isLivePreviewWorking = false
+            }
         } catch {
-            isLivePreviewWorking = false
-            lokalbotLog("dictation live preview stopped: \(error.localizedDescription)")
+            if generation == session, livePreviewTaskID == taskID {
+                isLivePreviewWorking = false
+                lokalbotLog("dictation live preview stopped: \(error.localizedDescription)")
+            }
         }
     }
 
-    @discardableResult
-    private func cancelLivePreview(reset: Bool) -> Task<Void, Never>? {
-        let task = livePreviewTask
-        task?.cancel()
+    private func cancelLivePreview(reset: Bool) {
+        livePreviewTaskID += 1
+        livePreviewTask?.cancel()
         livePreviewTask = nil
         isLivePreviewWorking = false
         if reset {
             resetLivePreview()
         }
-        return task
     }
 
     private func resetLivePreview() {
@@ -844,11 +942,14 @@ final class DictationCoordinator: ObservableObject {
             throw DictationError.noAudio
         }
 
-        let startFrame = min(
-            AVAudioFramePosition(range.start * format.sampleRate),
-            reader.length)
-        let endFrame = reader.length
-        guard endFrame > startFrame else { throw DictationError.noAudio }
+        guard let frameBounds = DictationPreviewWindowPlanner.frameBounds(
+            for: range,
+            sampleRate: format.sampleRate,
+            totalFrameCount: Int64(reader.length)) else {
+            throw DictationError.noAudio
+        }
+        let startFrame = AVAudioFramePosition(frameBounds.lowerBound)
+        let endFrame = AVAudioFramePosition(frameBounds.upperBound)
 
         let scratch = storageRoot.appendingPathComponent(
             previewScratchDirectoryName, isDirectory: true)
@@ -911,17 +1012,20 @@ final class DictationCoordinator: ObservableObject {
     private func prewarmSelectedModel(reason: String) {
         prewarmTask?.cancel()
         let choice = settingsProvider().transcriptionModel
+        let session = generation
         beginModelPreparation()
-        prewarmTask = Task { [weak self, choice, reason] in
+        prewarmTask = Task { [weak self, choice, reason, session] in
             guard let self else { return }
             do {
                 try await choice.engine.prepare { [weak self] update in
-                    self?.receiveModelPreparation(update)
+                    self?.receiveModelPreparation(update, generation: session)
                 }
+                guard self.generation == session, !Task.isCancelled else { return }
                 self.resetModelPreparation()
                 lokalbotLog("dictation prewarm ready model=\(choice.rawValue) reason=\(reason)")
             } catch is CancellationError {
             } catch {
+                guard self.generation == session, !Task.isCancelled else { return }
                 self.modelPreparationStatus = nil
                 self.modelPreparationProgress = nil
                 self.modelPreparationError = Self.modelPreparationFailureMessage
@@ -943,7 +1047,11 @@ final class DictationCoordinator: ObservableObject {
         refreshOverlay()
     }
 
-    private func receiveModelPreparation(_ update: ModelPreparationUpdate) {
+    private func receiveModelPreparation(
+        _ update: ModelPreparationUpdate,
+        generation session: Int
+    ) {
+        guard generation == session else { return }
         if update.status == "Ready" {
             resetModelPreparation()
             return
@@ -979,7 +1087,10 @@ final class DictationCoordinator: ObservableObject {
         now = Date()
         tick = Timer.publish(every: 1, on: .main, in: .common)
             .autoconnect()
-            .sink { [weak self] date in self?.now = date }
+            .sink { [weak self] date in
+                self?.now = date
+                self?.refreshCaptureHealth()
+            }
     }
 
     private func stopTick() {
@@ -987,8 +1098,59 @@ final class DictationCoordinator: ObservableObject {
         tick = nil
     }
 
+    private func refreshCaptureHealth() {
+        guard case .recording = state else {
+            captureStatus = ""
+            return
+        }
+        let health = recorder.captureHealth()
+        switch health.recoveryState {
+        case .healthy:
+            if health.isEngineRunning {
+                captureStatus = ""
+            } else {
+                captureStatus = "Reconnecting microphone"
+                do {
+                    try recorder.restartCapture()
+                } catch {
+                    lokalbotLog(
+                        "dictation microphone restart retrying after: "
+                            + error.localizedDescription)
+                }
+            }
+        case .recovering(let attempt):
+            captureStatus = attempt == 0
+                ? "Reconnecting microphone"
+                : "Reconnecting microphone (\(attempt)/\(MicRecorder.maximumReconfigurationAttempts))"
+        case .degraded(let errorDescription):
+            captureStatus = ""
+            lokalbotLog("dictation microphone recovery FAILED: \(errorDescription)")
+            cancel()
+            onError("Dictation stopped because the microphone could not recover: \(errorDescription)")
+        }
+    }
+
     private func refreshOverlay() {
         overlay.update(for: self, visible: settingsProvider().dictationShowOverlay)
+    }
+}
+
+private final class DictationASRResultBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<Transcript, Error>?
+
+    func store(_ result: Result<Transcript, Error>) {
+        lock.lock()
+        self.result = result
+        lock.unlock()
+    }
+
+    func resolve() throws -> Transcript {
+        lock.lock()
+        let result = self.result
+        lock.unlock()
+        guard let result else { throw CancellationError() }
+        return try result.get()
     }
 }
 

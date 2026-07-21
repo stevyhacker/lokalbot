@@ -30,6 +30,8 @@ enum DictationOutputMode: String, Codable, CaseIterable, Identifiable {
 }
 
 struct DictationLiveTranscript: Equatable, Sendable {
+    private static let sentenceBoundaryCharacters = Set(".!?。！？؟۔｡።।॥")
+
     var committed: String = ""
     var tentative: String = ""
 
@@ -47,7 +49,7 @@ struct DictationLiveTranscript: Equatable, Sendable {
         let normalized = Transcript.normalizedText(text)
         guard !normalized.isEmpty else { return .init() }
 
-        if let last = normalized.last, ".!?".contains(last) {
+        if let last = normalized.last, sentenceBoundaryCharacters.contains(last) {
             return .init(committed: normalized, tentative: "")
         }
 
@@ -70,7 +72,7 @@ struct DictationLiveTranscript: Equatable, Sendable {
 
     private static func lastSentenceBoundary(in text: String) -> String.Index? {
         text.indices
-            .filter { ".!?".contains(text[$0]) }
+            .filter { sentenceBoundaryCharacters.contains(text[$0]) }
             .last
     }
 }
@@ -251,23 +253,44 @@ struct DictationPreviewAudioRange: Equatable, Sendable {
 /// recording again.
 enum DictationPreviewWindowPlanner {
     static let defaultOverlapSeconds: TimeInterval = 2.5
+    static let defaultMaximumNewAudioSeconds: TimeInterval = 6
 
     static func range(previousEnd: TimeInterval,
                       currentEnd: TimeInterval) -> DictationPreviewAudioRange? {
         range(previousEnd: previousEnd,
               currentEnd: currentEnd,
-              overlapSeconds: defaultOverlapSeconds)
+              overlapSeconds: defaultOverlapSeconds,
+              maximumNewAudioSeconds: defaultMaximumNewAudioSeconds)
     }
 
     static func range(previousEnd: TimeInterval,
                       currentEnd: TimeInterval,
-                      overlapSeconds: TimeInterval) -> DictationPreviewAudioRange? {
+                      overlapSeconds: TimeInterval,
+                      maximumNewAudioSeconds: TimeInterval = defaultMaximumNewAudioSeconds)
+        -> DictationPreviewAudioRange? {
         let previous = max(0, previousEnd)
         guard currentEnd > previous else { return nil }
+        let end = min(currentEnd, previous + max(0.5, maximumNewAudioSeconds))
         return .init(
             start: max(0, previous - max(0, overlapSeconds)),
-            end: currentEnd
+            end: end
         )
+    }
+
+    static func frameBounds(
+        for range: DictationPreviewAudioRange,
+        sampleRate: Double,
+        totalFrameCount: Int64
+    ) -> Range<Int64>? {
+        guard range.start.isFinite,
+              range.end.isFinite,
+              sampleRate.isFinite,
+              sampleRate > 0,
+              totalFrameCount > 0 else { return nil }
+        let start = min(Int64(max(0, range.start) * sampleRate), totalFrameCount)
+        let end = min(Int64(max(0, range.end) * sampleRate), totalFrameCount)
+        guard end > start else { return nil }
+        return start..<end
     }
 }
 
@@ -276,6 +299,9 @@ enum DictationPreviewWindowPlanner {
 /// wins, while a window with no trustworthy two-word overlap is appended rather
 /// than risking the loss of already-visible speech.
 enum DictationPreviewTextStitcher {
+    private static let maximumOverlapGraphemes = 64
+    private static let minimumOverlapGraphemes = 4
+
     static func stitch(previous: String,
                        incoming: String,
                        maximumOverlapWords: Int = 32,
@@ -303,7 +329,102 @@ enum DictationPreviewTextStitcher {
             }
         }
 
+        // Keep the character fallback for unsegmented scripts. Applying it to
+        // ordinary text can mistake an English word suffix for the beginning
+        // of an unrelated word (for example, broadcast/cast iron), even when
+        // only one side contains whitespace.
+        if oldWords.count == 1 || newWords.count == 1,
+           containsUnsegmentedScript(in: oldText),
+           containsUnsegmentedScript(in: newText),
+           let stitched = stitchByGrapheme(previous: oldText, incoming: newText) {
+            return stitched
+        }
+
         return oldText + " " + newText
+    }
+
+    /// Languages such as Chinese and Japanese generally do not put spaces
+    /// between words, so whitespace tokenization turns an entire ASR window
+    /// into one token. Fall back to a conservative grapheme match, retaining
+    /// the incoming window's latest punctuation and capitalization just as the
+    /// word-based path does.
+    private static func stitchByGrapheme(previous: String, incoming: String) -> String? {
+        let oldGraphemes = semanticGraphemes(in: previous)
+        let newGraphemes = semanticGraphemes(in: incoming)
+        let upperBound = min(
+            maximumOverlapGraphemes,
+            oldGraphemes.count,
+            newGraphemes.count)
+        guard upperBound >= minimumOverlapGraphemes else { return nil }
+
+        for count in stride(
+            from: upperBound,
+            through: minimumOverlapGraphemes,
+            by: -1
+        ) {
+            let oldStart = oldGraphemes.count - count
+            let matches = (0..<count).allSatisfy { offset in
+                oldGraphemes[oldStart + offset].key == newGraphemes[offset].key
+            }
+            let overlapsUnsegmentedScript = (0..<count).contains { offset in
+                oldGraphemes[oldStart + offset].isUnsegmentedScript
+            }
+            if matches && overlapsUnsegmentedScript {
+                let prefixEnd = oldGraphemes[oldStart].startIndex
+                return Transcript.normalizedText(previous[..<prefixEnd] + incoming)
+            }
+        }
+        return nil
+    }
+
+    private struct SemanticGrapheme {
+        let key: String
+        let startIndex: String.Index
+        let isUnsegmentedScript: Bool
+    }
+
+    /// Ignore punctuation and spacing while matching, but retain each
+    /// grapheme's original index so the stitched output preserves the newest
+    /// window verbatim from the overlap onward.
+    private static func semanticGraphemes(in text: String) -> [SemanticGrapheme] {
+        text.indices.compactMap { index in
+            let key = wordKey(String(text[index]))
+            guard !key.isEmpty else { return nil }
+            return SemanticGrapheme(
+                key: key,
+                startIndex: index,
+                isUnsegmentedScript: isUnsegmentedScript(text[index]))
+        }
+    }
+
+    private static func containsUnsegmentedScript(in text: String) -> Bool {
+        text.contains(where: isUnsegmentedScript)
+    }
+
+    /// Scripts whose orthography commonly omits spaces between words. Keep
+    /// this deliberately narrower than "non-Latin" because Arabic, Cyrillic,
+    /// Devanagari, and many other scripts still use word separators.
+    private static func isUnsegmentedScript(_ character: Character) -> Bool {
+        character.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x0E00...0x0EFF, // Thai and Lao
+                 0x1000...0x109F, // Myanmar
+                 0x1780...0x17FF, // Khmer
+                 0x3040...0x30FF, // Hiragana and Katakana
+                 0x31F0...0x31FF, // Katakana phonetic extensions
+                 0x3400...0x4DBF, // CJK extension A
+                 0x4E00...0x9FFF, // CJK unified ideographs
+                 0xA9E0...0xA9FF, // Myanmar extended-B
+                 0xAA60...0xAA7F, // Myanmar extended-A
+                 0xF900...0xFAFF, // CJK compatibility ideographs
+                 0xFF66...0xFF9F, // Halfwidth Katakana
+                 0x20000...0x2FA1F, // CJK extensions and compatibility supplement
+                 0x30000...0x323AF: // CJK extensions G through I
+                true
+            default:
+                false
+            }
+        }
     }
 
     private static func wordKey(_ word: String) -> String {

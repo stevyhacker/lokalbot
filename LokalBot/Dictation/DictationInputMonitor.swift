@@ -15,6 +15,8 @@ final class DictationInputMonitor {
     private var source: CFRunLoopSource?
     private(set) var isRunning = false
     private var shortcutIsDown = false
+    private var activeTriggerMode: DictationTriggerMode?
+    private var activeShortcut: DictationShortcut?
 
     @discardableResult
     func start() -> Bool {
@@ -40,7 +42,10 @@ final class DictationInputMonitor {
         return true
     }
 
-    func stop() {
+    func stop(releasingHeldShortcut: Bool = false) {
+        let shouldStop = releasingHeldShortcut
+            && shortcutIsDown
+            && activeTriggerMode == .pushToTalk
         if let source {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
         }
@@ -51,17 +56,22 @@ final class DictationInputMonitor {
         tap = nil
         source = nil
         shortcutIsDown = false
+        activeTriggerMode = nil
+        activeShortcut = nil
         isRunning = false
+        if shouldStop { onStop?() }
     }
 
     /// Returns true when the original event should be swallowed.
-    fileprivate func handle(type: CGEventType, event: CGEvent) -> Bool {
+    func handle(type: CGEventType, event: CGEvent) -> Bool {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             // A disabled event tap can swallow the physical key-up. Treat the
             // disable notification as a fail-safe release before re-enabling,
             // otherwise push-to-talk may record indefinitely.
-            let shouldStop = shortcutIsDown && triggerModeProvider() == .pushToTalk
+            let shouldStop = shortcutIsDown && activeTriggerMode == .pushToTalk
             shortcutIsDown = false
+            activeTriggerMode = nil
+            activeShortcut = nil
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             if shouldStop { onStop?() }
             return false
@@ -70,20 +80,29 @@ final class DictationInputMonitor {
 
         let shortcut = shortcutProvider()
         let isMatchingShortcut = shortcut.matches(event)
-        let isHeldShortcutRelease = shortcutIsDown && type == .keyUp && shortcut.matchesKeyCode(event)
+        let isHeldShortcutRelease = shortcutIsDown
+            && type == .keyUp
+            && (activeShortcut ?? shortcut).matchesKeyCode(event)
         guard isMatchingShortcut || isHeldShortcutRelease else { return false }
 
-        switch triggerModeProvider() {
+        let triggerMode = type == .keyUp
+            ? (activeTriggerMode ?? triggerModeProvider())
+            : triggerModeProvider()
+        switch triggerMode {
         case .pushToTalk:
             if type == .keyDown {
                 let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
                 if !shortcutIsDown && !isRepeat {
                     shortcutIsDown = true
+                    activeTriggerMode = .pushToTalk
+                    activeShortcut = shortcut
                     onStart?()
                 }
             } else {
                 if shortcutIsDown {
                     shortcutIsDown = false
+                    activeTriggerMode = nil
+                    activeShortcut = nil
                     onStop?()
                 }
             }
@@ -92,10 +111,14 @@ final class DictationInputMonitor {
                 let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
                 if !shortcutIsDown && !isRepeat {
                     shortcutIsDown = true
+                    activeTriggerMode = .toggle
+                    activeShortcut = shortcut
                     onToggle?()
                 }
             } else {
                 shortcutIsDown = false
+                activeTriggerMode = nil
+                activeShortcut = nil
             }
         }
         return true

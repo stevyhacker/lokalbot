@@ -6,6 +6,7 @@ import AppKit
 /// — no window required. Idle, it's just the app glyph.
 struct MenuBarLabel: View {
     @ObservedObject var app: AppState
+    @ObservedObject var dictation: DictationCoordinator
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -129,6 +130,7 @@ struct TrackingPauseButton: View {
 /// the record/stop control, recent meetings, and app actions (Settings, Quit).
 struct MenuBarView: View {
     @EnvironmentObject var app: AppState
+    @ObservedObject var dictation: DictationCoordinator
     @Environment(\.openWindow) private var openWindow
     @ObservedObject private var permissions = PermissionManager.shared
 
@@ -211,7 +213,7 @@ struct MenuBarView: View {
                 Button {
                     if app.isRecording {
                         app.stopRecording()
-                    } else if app.dictation.state.isWorking {
+                    } else if app.dictation.isStarting || app.dictation.state.isWorking {
                         app.dictation.toggle(source: "menubar")
                     } else {
                         app.startRecording(context: app.recordingContext(for: app.detector.activeApp), source: "menubar")
@@ -251,6 +253,7 @@ struct MenuBarView: View {
 
     private var statusTitle: String {
         if app.isRecording { return "Recording" }
+        if app.dictation.isStarting { return "Starting dictation" }
         switch app.dictation.state {
         case .idle: return "Not recording"
         case .recording: return "Dictating"
@@ -260,6 +263,7 @@ struct MenuBarView: View {
     }
 
     private var statusSubtitle: String {
+        if app.dictation.isStarting { return "Connecting to the microphone" }
         switch app.dictation.state {
         case .recording:
             return "Release \(DictationShortcut.label) to compose"
@@ -297,6 +301,7 @@ struct MenuBarView: View {
 
     private var primaryActionTitle: String {
         if app.isRecording { return "Stop recording" }
+        if app.dictation.isStarting { return "Cancel dictation" }
         switch app.dictation.state {
         case .idle: return "Record now"
         case .recording: return "Stop & compose"
@@ -306,6 +311,7 @@ struct MenuBarView: View {
 
     private var primaryActionIcon: String {
         if app.isRecording { return "stop.fill" }
+        if app.dictation.isStarting { return "xmark.circle" }
         switch app.dictation.state {
         case .idle: return "record.circle"
         case .recording: return "stop.fill"
@@ -499,8 +505,11 @@ struct MenuBarView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
-            .tint(app.dictation.state.isRecording ? .red : nil)
-            .disabled(app.isRecording && !app.dictation.state.isWorking)
+            .tint(app.dictation.state.isRecording || app.dictation.isStarting ? .red : nil)
+            .disabled(
+                (app.isRecording || app.recording.isStarting)
+                    && !app.dictation.state.isWorking
+            )
             .help("\(dictationButtonTitle) dictation")
             .accessibilityLabel("\(dictationButtonTitle) dictation")
         }
@@ -508,7 +517,8 @@ struct MenuBarView: View {
     }
 
     private var dictationButtonTitle: String {
-        switch app.dictation.state {
+        if app.dictation.isStarting { return "Cancel" }
+        return switch app.dictation.state {
         case .idle: "Start"
         case .recording: "Stop"
         case .transcribing, .composing: "Cancel"
@@ -516,7 +526,8 @@ struct MenuBarView: View {
     }
 
     private var dictationButtonIcon: String {
-        switch app.dictation.state {
+        if app.dictation.isStarting { return "xmark" }
+        return switch app.dictation.state {
         case .idle: "mic.fill"
         case .recording: "stop.fill"
         case .transcribing, .composing: "xmark"

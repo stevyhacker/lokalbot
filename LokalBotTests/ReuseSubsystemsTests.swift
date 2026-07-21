@@ -1,3 +1,4 @@
+import CoreGraphics
 import XCTest
 @testable import LokalBot
 
@@ -18,6 +19,41 @@ final class ReuseSubsystemsTests: XCTestCase {
         var wasOnMainThread: Bool {
             lock.withLock { resolverWasOnMainThread }
         }
+    }
+
+    @MainActor
+    func testDictationShortcutReleaseUsesLatchedModeAndKey() throws {
+        let monitor = DictationInputMonitor()
+        var mode = DictationTriggerMode.pushToTalk
+        var shortcut = DictationShortcut.handyDefault
+        var starts = 0
+        var stops = 0
+        var toggles = 0
+        monitor.triggerModeProvider = { mode }
+        monitor.shortcutProvider = { shortcut }
+        monitor.onStart = { starts += 1 }
+        monitor.onStop = { stops += 1 }
+        monitor.onToggle = { toggles += 1 }
+
+        let down = try XCTUnwrap(CGEvent(
+            keyboardEventSource: nil,
+            virtualKey: DictationShortcut.handyDefault.keyCode,
+            keyDown: true))
+        down.flags = .maskAlternate
+        XCTAssertTrue(monitor.handle(type: .keyDown, event: down))
+
+        mode = .toggle
+        shortcut = DictationShortcut(keyCode: 36, modifiers: .maskCommand)
+        let up = try XCTUnwrap(CGEvent(
+            keyboardEventSource: nil,
+            virtualKey: DictationShortcut.handyDefault.keyCode,
+            keyDown: false))
+        up.flags = .maskAlternate
+        XCTAssertTrue(monitor.handle(type: .keyUp, event: up))
+
+        XCTAssertEqual(starts, 1)
+        XCTAssertEqual(stops, 1)
+        XCTAssertEqual(toggles, 0)
     }
 
     func testMicrophoneReconfigurationRetryPolicyIsFinite() {
@@ -126,6 +162,25 @@ final class ReuseSubsystemsTests: XCTestCase {
         XCTAssertEqual(preview.tentative, "Next we should verify the install")
     }
 
+    func testDictationLiveTranscriptCommitsUnicodeSentenceBoundaries() {
+        let cjk = DictationLiveTranscript.preview(
+            from: "我们已经发布。接下来验证安装")
+        XCTAssertEqual(cjk.committed, "我们已经发布。")
+        XCTAssertEqual(cjk.tentative, "接下来验证安装")
+
+        let arabic = DictationLiveTranscript.preview(
+            from: "تم الإصدار؟ نتحقق الآن")
+        XCTAssertEqual(arabic.committed, "تم الإصدار؟")
+        XCTAssertEqual(arabic.tentative, "نتحقق الآن")
+    }
+
+    func testDictationLiveTranscriptCommitsCompletedCJKSentence() {
+        let preview = DictationLiveTranscript.preview(from: "今天完成了！")
+
+        XCTAssertEqual(preview.committed, "今天完成了！")
+        XCTAssertTrue(preview.tentative.isEmpty)
+    }
+
     func testDictationPreviewWindowKeepsConservativeOverlap() {
         XCTAssertEqual(
             DictationPreviewWindowPlanner.range(
@@ -139,6 +194,20 @@ final class ReuseSubsystemsTests: XCTestCase {
                 currentEnd: 3,
                 overlapSeconds: 2.5),
             .init(start: 0, end: 3))
+        XCTAssertEqual(
+            DictationPreviewWindowPlanner.range(
+                previousEnd: 10,
+                currentEnd: 30,
+                overlapSeconds: 2.5),
+            .init(start: 7.5, end: 16),
+            "a slow decoder must catch up in bounded windows without skipping audio")
+        XCTAssertEqual(
+            DictationPreviewWindowPlanner.frameBounds(
+                for: .init(start: 7.5, end: 16),
+                sampleRate: 100,
+                totalFrameCount: 3_000),
+            750..<1_600,
+            "the materialized audio must stop at the bounded planner cursor")
         XCTAssertNil(DictationPreviewWindowPlanner.range(
             previousEnd: 4,
             currentEnd: 4,
@@ -175,6 +244,36 @@ final class ReuseSubsystemsTests: XCTestCase {
                 previous: "We should ship the fix today",
                 incoming: "the fix today"),
             "We should ship the fix today")
+    }
+
+    func testDictationPreviewStitcherUsesGraphemeOverlapForUnspacedText() {
+        XCTAssertEqual(
+            DictationPreviewTextStitcher.stitch(
+                previous: "今天我们讨论发布计划",
+                incoming: "讨论发布计划然后测试"),
+            "今天我们讨论发布计划然后测试")
+    }
+
+    func testDictationPreviewGraphemeStitcherKeepsIncomingPunctuation() {
+        XCTAssertEqual(
+            DictationPreviewTextStitcher.stitch(
+                previous: "今天讨论发布计划。",
+                incoming: "发布计划，然后测试"),
+            "今天讨论发布计划，然后测试")
+    }
+
+    func testDictationPreviewDoesNotUseGraphemeOverlapForSegmentedText() {
+        XCTAssertEqual(
+            DictationPreviewTextStitcher.stitch(
+                previous: "We finished testing",
+                incoming: "stingray observations follow"),
+            "We finished testing stingray observations follow")
+
+        XCTAssertEqual(
+            DictationPreviewTextStitcher.stitch(
+                previous: "broadcast",
+                incoming: "cast iron"),
+            "broadcast cast iron")
     }
 
     func testDictationDeliveryTargetRejectsAnotherAppOrField() {
