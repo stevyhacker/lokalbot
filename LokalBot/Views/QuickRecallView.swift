@@ -172,10 +172,10 @@ private struct QuickRecallContent: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 5) {
+                LazyVStack(alignment: .leading, spacing: 6) {
                     if let askRow {
                         displayedRow(askRow)
-                            .padding(.bottom, 3)
+                            .padding(.bottom, 4)
                     }
 
                     if isSearching {
@@ -197,14 +197,15 @@ private struct QuickRecallContent: View {
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 12)
-                            .padding(.top, 6)
+                            .padding(.top, 10)
                             .accessibilityAddTraits(.isHeader)
                         ForEach(section.rows) { row in
                             displayedRow(row)
                         }
                     }
                 }
-                .padding(8)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 10)
             }
         }
     }
@@ -234,12 +235,13 @@ private struct QuickRecallContent: View {
 
         let savedIDs = Set(saved.compactMap(\.snapshotID))
         let screens = screenHits.filter { !savedIDs.contains($0.snapshotID) }.map { hit in
-            QuickRecallRowModel.screen(
+            let title = hit.windowTitle.isEmpty ? hit.app : hit.windowTitle
+            return QuickRecallRowModel.screen(
                 snapshotID: hit.snapshotID,
                 appName: hit.app,
-                title: hit.windowTitle.isEmpty ? hit.app : hit.windowTitle,
+                title: title,
                 subtitle: hit.app,
-                snippet: hit.snippet,
+                snippet: SnippetCleaner.withoutTitleEcho(hit.snippet, title: title),
                 timestamp: hit.ts,
                 captureCount: hit.captureCount)
         }
@@ -434,12 +436,12 @@ private struct QuickRecallRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
-            if selected {
-                Image(systemName: "return")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
-            }
+            Image(systemName: "return")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .opacity(selected ? 1 : 0)
+                .frame(width: 14, alignment: .trailing)
+                .accessibilityHidden(true)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -461,21 +463,22 @@ private struct QuickRecallRow: View {
                         .font(.callout.weight(.medium))
                         .lineLimit(1)
                         .truncationMode(.middle)
-                        .layoutPriority(1)
-                    Spacer(minLength: 4)
+                    Spacer(minLength: 8)
                     if let timestamp = row.timestamp {
+                        // The timestamp never compresses; the title truncates.
                         Text(QuickRecallDateLabel.string(for: timestamp))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
-                            .lineLimit(1)
+                            .fixedSize()
                     }
-                    if selected {
-                        Image(systemName: "return")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .accessibilityHidden(true)
-                    }
+                    // Slot is always reserved so selection doesn't reflow the line.
+                    Image(systemName: "return")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .opacity(selected ? 1 : 0)
+                        .frame(width: 14, alignment: .trailing)
+                        .accessibilityHidden(true)
                 }
                 HStack(spacing: 5) {
                     if let appName = row.appName {
@@ -499,7 +502,7 @@ private struct QuickRecallRow: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 10)
         .background(
             selected ? Brand.teal.opacity(0.14) : .clear,
             in: RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous))
@@ -510,6 +513,10 @@ private struct QuickRecallRow: View {
             ZStack(alignment: .bottomTrailing) {
                 ScreenThumbnailView(snapshotID: snapshotID, height: 56)
                     .frame(width: 90)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous)
+                            .strokeBorder(.quaternary)
+                    }
                 if row.isSaved {
                     Image(systemName: "bookmark.fill")
                         .font(.caption2)

@@ -88,6 +88,29 @@ struct ScreenThumbnailView: View {
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(.quaternary.opacity(0.45))
+            if image == nil {
+                if finishedLoading {
+                    VStack(spacing: 5) {
+                        Image(systemName: hasPixels ? "rectangle.slash" : "text.viewfinder")
+                            .font(.title3)
+                        if !hasPixels, height >= 70 {
+                            Text("Text context")
+                                .font(.caption2.weight(.medium))
+                        }
+                    }
+                    .foregroundStyle(.tertiary)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
+        // The pixels render in an overlay: a `.fill` crop wider than the
+        // proposed width must never inflate this view's layout size, or the
+        // centered overflow paints over horizontal neighbors. Out-of-bounds
+        // paint ends at the clip shape instead.
+        .overlay {
             if let image {
                 Image(
                     image,
@@ -96,22 +119,8 @@ struct ScreenThumbnailView: View {
                     label: Text(hasPixels ? "Captured screen" : "Captured text context"))
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
-            } else if finishedLoading {
-                VStack(spacing: 5) {
-                    Image(systemName: hasPixels ? "rectangle.slash" : "text.viewfinder")
-                        .font(.title3)
-                    if !hasPixels, height >= 70 {
-                        Text("Text context")
-                            .font(.caption2.weight(.medium))
-                    }
-                }
-                .foregroundStyle(.tertiary)
-            } else {
-                ProgressView().controlSize(.small)
             }
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: height)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(hasPixels ? "Captured screen" : "Captured text context")

@@ -33,6 +33,43 @@ enum SnippetHighlighter {
     }
 }
 
+/// Screen OCR usually re-captures the window chrome, so an FTS snippet's
+/// leading line often just repeats the row title shown directly above it.
+/// Drops those echo lines and collapses whitespace; «» markers survive so
+/// `SnippetHighlighter` still finds the matches. Pure; unit-tested.
+enum SnippetCleaner {
+    static func withoutTitleEcho(_ snippet: String, title: String) -> String? {
+        let normalizedTitle = normalize(title)
+        var lines = snippet.split(separator: "\n", omittingEmptySubsequences: true)
+        if !normalizedTitle.isEmpty {
+            while let first = lines.first, echoes(normalize(String(first)), normalizedTitle) {
+                lines.removeFirst()
+            }
+        }
+        let joined = lines.joined(separator: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return joined.isEmpty ? nil : joined
+    }
+
+    /// Containment counts as an echo only above a length floor; short lines
+    /// like an app name must match the title exactly before they're dropped.
+    private static func echoes(_ line: String, _ title: String) -> Bool {
+        if line.isEmpty || line == title { return true }
+        guard min(line.count, title.count) >= 12 else { return false }
+        return title.contains(line) || line.contains(title)
+    }
+
+    private static func normalize(_ text: String) -> String {
+        text.replacingOccurrences(of: "«", with: "")
+            .replacingOccurrences(of: "»", with: "")
+            .replacingOccurrences(of: "…", with: "")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+}
+
 /// Unified Ask result row (spec §3.2): title · kind chip · highlighted
 /// snippet · timestamp — one anatomy for FTS, semantic, and screen hits.
 struct ResultRow: View {
