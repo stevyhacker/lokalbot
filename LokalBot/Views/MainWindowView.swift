@@ -48,8 +48,8 @@ struct MainWindowView: View {
         // explicit `sidebarVisible` binding when this view swaps between its
         // two- and three-column topologies. Own the command so the toolbar,
         // keyboard shortcut, and split-view state always use one source of
-        // truth.
-        .toolbar(removing: .sidebarToggle)
+        // truth. (The generated item itself is removed inside `sidebar` —
+        // the only attachment point where SwiftUI honors the removal.)
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button {
@@ -247,6 +247,11 @@ struct MainWindowView: View {
             SidebarBrandHeader()
         }
         .navigationSplitViewColumnWidth(min: 180, ideal: 204, max: 230)
+        // The system toggle is only removable from the sidebar column's own
+        // content — applied outside the NavigationSplitView the removal is a
+        // no-op and the generated toggle duplicates the owned one in the
+        // window toolbar.
+        .toolbar(removing: .sidebarToggle)
     }
 
     /// `cacheDisplay` does not flatten the sidebar's vibrancy text correctly:

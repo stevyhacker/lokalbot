@@ -36,13 +36,26 @@ final class MainWindowUITests: XCTestCase {
     // MARK: - Library
 
     /// LokalBot owns one split-view sidebar toggle so every navigation topology
-    /// shares the same explicit visibility state.
+    /// shares the same explicit visibility state. Count every sidebar control,
+    /// not just the app-owned identifier — NavigationSplitView's generated
+    /// toggle carries its own identity and must not ride along, in either
+    /// sidebar state.
     func testToolbarShowsOneSidebarToggle() {
-        let sidebarToggles = toolbarSidebarButtons
-        XCTAssertTrue(sidebarToggles.firstMatch.waitForExistence(timeout: 4),
-                      "native sidebar toolbar control missing")
-        XCTAssertEqual(sidebarToggles.count, 1,
-                       "toolbar should contain exactly one sidebar control")
+        XCTAssertTrue(toolbarSidebarButtons.firstMatch.waitForExistence(timeout: 4),
+                      "app-owned sidebar toolbar control missing")
+        XCTAssertEqual(anySidebarToggleButtons.count, 1,
+                       "toolbar should contain exactly one sidebar control while the sidebar is visible")
+
+        toolbarSidebarButtons.firstMatch.click()
+        XCTAssertTrue(UITestHarness.waitUntil {
+            !self.app.descendants(matching: .any)["sidebar.settings"].exists
+        }, "sidebar remained exposed after hiding it")
+        XCTAssertEqual(anySidebarToggleButtons.count, 1,
+                       "toolbar should contain exactly one sidebar control while the sidebar is hidden")
+
+        toolbarSidebarButtons.firstMatch.click()
+        XCTAssertTrue(app.descendants(matching: .any)["sidebar.settings"]
+            .waitForExistence(timeout: 5), "sidebar did not return")
     }
 
     /// The native toolbar item must do real work in both directions. This
@@ -68,6 +81,14 @@ final class MainWindowUITests: XCTestCase {
     private var toolbarSidebarButtons: XCUIElementQuery {
         app.toolbars.firstMatch.children(matching: .button).matching(NSPredicate(
             format: "identifier == 'toolbar.sidebarToggle'"))
+    }
+
+    /// Any sidebar toggle among direct toolbar children, app-owned or
+    /// system-generated (the generated item has no app identifier, only a
+    /// "Hide/Show Sidebar" label).
+    private var anySidebarToggleButtons: XCUIElementQuery {
+        app.toolbars.firstMatch.children(matching: .button).matching(NSPredicate(
+            format: "identifier == 'toolbar.sidebarToggle' OR label CONTAINS[c] 'sidebar'"))
     }
 
     /// Every planted fixture surfaces in the sidebar, grouped by day with
