@@ -45,9 +45,10 @@ final class QuickRecallUITests: XCTestCase {
         XCTAssertTrue(meetingTitle.waitForExistence(timeout: 8),
             "Quick Recall did not surface the matching meeting")
 
+        let meetingSubtitleText = "\(fixture.designReview.appName) · Transcript"
         let meetingSubtitle = app.staticTexts.matching(NSPredicate(
-            format: "identifier BEGINSWITH %@ AND (label == 'Meeting transcript' OR value == 'Meeting transcript')",
-            meetingPrefix)).firstMatch
+            format: "identifier BEGINSWITH %@ AND (label == %@ OR value == %@)",
+            meetingPrefix, meetingSubtitleText, meetingSubtitleText)).firstMatch
         XCTAssertTrue(meetingSubtitle.waitForExistence(timeout: 3),
                       "Quick Recall did not identify the local evidence type")
 
@@ -73,7 +74,11 @@ final class QuickRecallUITests: XCTestCase {
                       "inline assistant action missing for an unmatched query")
         XCTAssertTrue(text(containing: "No local matches").waitForExistence(timeout: 4),
                       "Quick Recall did not distinguish a completed empty search")
-        XCTAssertTrue(app.buttons["quickRecall.askInstead"].exists,
+        // SwiftUI propagates the enclosing no-match state's accessibility ID
+        // to descendants on macOS, so select this button by visible content.
+        let askInstead = app.buttons.matching(NSPredicate(
+            format: "label == 'Ask instead' OR value == 'Ask instead'")).firstMatch
+        XCTAssertTrue(askInstead.waitForExistence(timeout: 3),
                       "Quick Recall did not offer an explicit Ask fallback")
         clear.click()
 
