@@ -28,6 +28,8 @@ private struct QuickRecallContent: View {
     @State private var savedMoments: [ActivityStore.SavedMoment] = []
     @State private var selection = 0
     @State private var showingConversation = false
+    @State private var recalledQuery = ""
+    @State private var isSearching = false
     @State private var searchTask: Task<Void, Never>?
     @FocusState private var inputFocused: Bool
 
@@ -137,7 +139,7 @@ private struct QuickRecallContent: View {
     }
 
     @ViewBuilder private var resultList: some View {
-        if rows.isEmpty {
+        if trimmedQuery.isEmpty, sections.isEmpty {
             ContentUnavailableView {
                 Label("Ask anything", systemImage: "sparkle.magnifyingglass")
             } description: {
@@ -170,12 +172,36 @@ private struct QuickRecallContent: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                        QuickRecallRow(row: row, selected: selection == index)
-                            .contentShape(Rectangle())
-                            .onTapGesture { run(row) }
-                            .accessibilityIdentifier("quickRecall.row.\(row.id)")
+                LazyVStack(alignment: .leading, spacing: 5) {
+                    if let askRow {
+                        displayedRow(askRow)
+                            .padding(.bottom, 3)
+                    }
+
+                    if isSearching {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Searching your local memory…")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .accessibilityIdentifier("quickRecall.searching")
+                    } else if !trimmedQuery.isEmpty, sections.isEmpty {
+                        noMatchesState
+                    }
+
+                    ForEach(sections) { section in
+                        Text(section.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 12)
+                            .padding(.top, 6)
+                            .accessibilityAddTraits(.isHeader)
+                        ForEach(section.rows) { row in
+                            displayedRow(row)
+                        }
                     }
                 }
                 .padding(8)
@@ -183,63 +209,128 @@ private struct QuickRecallContent: View {
         }
     }
 
-    private var rows: [QuickRecallRowModel] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            return savedMoments.prefix(12).map { moment in
-                .screen(
-                    snapshotID: moment.snapshotID,
-                    title: moment.note.isEmpty ? (moment.windowTitle.isEmpty ? moment.app : moment.windowTitle) : moment.note,
-                    subtitle: "Saved moment · \(moment.app) · \(moment.ts.formatted(date: .abbreviated, time: .shortened))",
-                    snippet: nil)
-            }
+    private var trimmedQuery: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var askRow: QuickRecallRowModel? {
+        guard !trimmedQuery.isEmpty else { return nil }
+        return .ask(
+            query: trimmedQuery,
+            title: "Ask about “\(trimmedQuery)”",
+            subtitle: "Answer from your meetings and screen")
+    }
+
+    private var sections: [QuickRecallSection] {
+        let saved: [QuickRecallRowModel]
+        if trimmedQuery.isEmpty {
+            saved = savedMoments.prefix(12).map(savedRow)
+        } else {
+            saved = savedMoments.filter { moment in
+                [moment.note, moment.app, moment.windowTitle]
+                    .contains { $0.localizedCaseInsensitiveContains(trimmedQuery) }
+            }.map(savedRow)
         }
-        let matchingSaved = savedMoments.filter { moment in
-            [moment.note, moment.app, moment.windowTitle]
-                .contains { $0.localizedCaseInsensitiveContains(trimmed) }
-        }
-        let savedIDs = Set(matchingSaved.map(\.snapshotID))
-        let saved = matchingSaved.map { moment in
-            QuickRecallRowModel.screen(
-                snapshotID: moment.snapshotID,
-                title: moment.note.isEmpty
-                    ? (moment.windowTitle.isEmpty ? moment.app : moment.windowTitle)
-                    : moment.note,
-                subtitle: "Saved moment · \(moment.app) · \(moment.ts.formatted(date: .abbreviated, time: .shortened))",
-                snippet: nil)
-        }
+
+        let savedIDs = Set(saved.compactMap(\.snapshotID))
         let screens = screenHits.filter { !savedIDs.contains($0.snapshotID) }.map { hit in
             QuickRecallRowModel.screen(
                 snapshotID: hit.snapshotID,
+                appName: hit.app,
                 title: hit.windowTitle.isEmpty ? hit.app : hit.windowTitle,
-                subtitle: "Moment · \(hit.app) · \(hit.ts.formatted(date: .abbreviated, time: .shortened))",
-                snippet: hit.snippet)
+                subtitle: hit.app,
+                snippet: hit.snippet,
+                timestamp: hit.ts,
+                captureCount: hit.captureCount)
         }
         let meetings = meetingHits.map { hit in
-            QuickRecallRowModel.meeting(
+            let meeting = app.meetings.first(where: { $0.id == hit.meetingID })
+            let kind = hit.kind == .segment ? "Transcript" : hit.kind.rawValue.capitalized
+            let appName = meeting?.appName ?? "Meeting"
+            return QuickRecallRowModel.meeting(
                 hit: hit,
-                title: app.meetings.first(where: { $0.id == hit.meetingID })?.title ?? "Meeting",
-                subtitle: hit.kind == .segment ? "Meeting transcript" : "Meeting \(hit.kind.rawValue)",
-                snippet: hit.snippet)
+                appName: appName,
+                title: meeting?.title ?? "Meeting",
+                subtitle: "\(appName) · \(kind)",
+                snippet: hit.snippet,
+                timestamp: meeting?.startedAt)
         }
+
         return [
-            .ask(query: trimmed, title: "Ask about “\(trimmed)”", subtitle: "Answer here", snippet: nil),
-        ] + saved + screens + meetings
+            QuickRecallSection(id: "saved", title: "Saved", rows: saved),
+            QuickRecallSection(id: "screen", title: "Screen", rows: screens),
+            QuickRecallSection(id: "meetings", title: "Meetings", rows: meetings),
+        ].filter { !$0.rows.isEmpty }
+    }
+
+    private func savedRow(_ moment: ActivityStore.SavedMoment) -> QuickRecallRowModel {
+        .screen(
+            snapshotID: moment.snapshotID,
+            appName: moment.app,
+            title: moment.note.isEmpty
+                ? (moment.windowTitle.isEmpty ? moment.app : moment.windowTitle)
+                : moment.note,
+            subtitle: moment.app,
+            snippet: nil,
+            timestamp: moment.ts,
+            isSaved: true)
+    }
+
+    private var rows: [QuickRecallRowModel] {
+        [askRow].compactMap { $0 } + sections.flatMap(\.rows)
+    }
+
+    private func displayedRow(_ row: QuickRecallRowModel) -> some View {
+        let index = rows.firstIndex(where: { $0.id == row.id }) ?? 0
+        return QuickRecallRow(row: row, selected: selection == index)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                if hovering { selection = index }
+            }
+            .onTapGesture { run(row) }
+            .accessibilityIdentifier("quickRecall.row.\(row.id)")
+    }
+
+    private var noMatchesState: some View {
+        VStack(spacing: 8) {
+            Label("No local matches", systemImage: "magnifyingglass")
+                .font(.headline)
+            Text("Nothing in saved moments, captured screens, or meetings matches this search.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button { ask(trimmedQuery) } label: {
+                Label("Ask instead", systemImage: "return")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .accessibilityIdentifier("quickRecall.askInstead")
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+        .padding(.horizontal, 20)
+        .accessibilityIdentifier("quickRecall.noMatches")
     }
 
     private func search() {
         searchTask?.cancel()
-        let currentQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let currentQuery = trimmedQuery
         guard !showingConversation, !currentQuery.isEmpty else {
             meetingHits = []
             screenHits = []
+            isSearching = false
             return
         }
+        meetingHits = []
+        screenHits = []
+        isSearching = true
         searchTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(120))
-            guard !Task.isCancelled, currentQuery == query.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+            guard !Task.isCancelled, currentQuery == trimmedQuery else { return }
             screenHits = app.activityStore.searchOCR(currentQuery, limit: 12)
             meetingHits = app.searchIndex.search(currentQuery, limit: 10)
+            guard !Task.isCancelled, currentQuery == trimmedQuery else { return }
+            isSearching = false
         }
     }
 
@@ -258,7 +349,7 @@ private struct QuickRecallContent: View {
             run(rows[selection])
         } else {
             guard !value.isEmpty else { return }
-            run(.ask(query: value, title: value, subtitle: "", snippet: nil))
+            run(.ask(query: value, title: value, subtitle: ""))
         }
     }
 
@@ -280,6 +371,10 @@ private struct QuickRecallContent: View {
         let value = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, !model.isResponding else { return }
         searchTask?.cancel()
+        if !showingConversation {
+            recalledQuery = query
+        }
+        isSearching = false
         showingConversation = true
         query = ""
         selection = 0
@@ -288,10 +383,11 @@ private struct QuickRecallContent: View {
     }
 
     private func showRecall() {
-        query = ""
-        selection = 0
         showingConversation = false
+        query = recalledQuery
+        selection = 0
         savedMoments = app.activityStore.savedMoments(limit: 200)
+        search()
         inputFocused = true
     }
 
@@ -302,39 +398,225 @@ private struct QuickRecallContent: View {
     }
 }
 
+private struct QuickRecallSection: Identifiable {
+    let id: String
+    let title: String
+    let rows: [QuickRecallRowModel]
+}
+
 private struct QuickRecallRow: View {
     let row: QuickRecallRowModel
     let selected: Bool
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if row.isAsk {
+            askRow
+        } else {
+            evidenceRow
+        }
+    }
+
+    private var askRow: some View {
         HStack(spacing: 12) {
-            Image(systemName: row.icon)
-                .font(.title3)
+            Image(systemName: "sparkles")
+                .font(.callout.weight(.semibold))
                 .foregroundStyle(.tint)
-                .frame(width: 26)
+                .frame(width: 32, height: 32)
+                .background(Brand.teal.opacity(0.16), in: Circle())
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.title)
-                    .font(.callout.weight(.medium))
+                    .font(.callout.weight(.semibold))
                     .lineLimit(1)
+                    .truncationMode(.middle)
                 Text(row.subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                if let snippet = row.snippet, !snippet.isEmpty {
-                    Text(snippet).font(.caption).foregroundStyle(.tertiary).lineLimit(2)
-                }
             }
             Spacer(minLength: 8)
             if selected {
                 Image(systemName: "return")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(selected ? Brand.teal.opacity(0.14) : .clear,
-                    in: RoundedRectangle(cornerRadius: 9))
+        .padding(.vertical, 10)
+        .background(
+            Brand.teal.opacity(selected ? 0.19 : 0.08),
+            in: RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous)
+                .strokeBorder(Brand.teal.opacity(selected ? 0.34 : 0.18))
+        }
+    }
+
+    private var evidenceRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            leadingVisual
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(row.title)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .layoutPriority(1)
+                    Spacer(minLength: 4)
+                    if let timestamp = row.timestamp {
+                        Text(QuickRecallDateLabel.string(for: timestamp))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                    }
+                    if selected {
+                        Image(systemName: "return")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .accessibilityHidden(true)
+                    }
+                }
+                HStack(spacing: 5) {
+                    if let appName = row.appName {
+                        QuickRecallApplicationIcon(appName: appName, size: 14)
+                    }
+                    Text(row.subtitle)
+                        .lineLimit(1)
+                    if row.captureCount > 1 {
+                        Text("· \(row.captureCount) captures")
+                            .lineLimit(1)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                if let snippet = row.snippet, !snippet.isEmpty {
+                    highlighted(snippet)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            selected ? Brand.teal.opacity(0.14) : .clear,
+            in: RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous))
+    }
+
+    @ViewBuilder private var leadingVisual: some View {
+        if let snapshotID = row.snapshotID {
+            ZStack(alignment: .bottomTrailing) {
+                ScreenThumbnailView(snapshotID: snapshotID, height: 56)
+                    .frame(width: 90)
+                if row.isSaved {
+                    Image(systemName: "bookmark.fill")
+                        .font(.caption2)
+                        .foregroundStyle(Brand.amber)
+                        .padding(4)
+                        .background(.regularMaterial, in: Circle())
+                        .padding(3)
+                }
+            }
+        } else {
+            Image(systemName: row.icon)
+                .font(.title3)
+                .foregroundStyle(.tint)
+                .frame(width: 34, height: 34)
+                .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    private func highlighted(_ snippet: String) -> Text {
+        SnippetHighlighter.segments(snippet).reduce(Text("")) { text, segment in
+            text + (segment.isMatch
+                ? Text(segment.text).bold().foregroundStyle(.primary)
+                : Text(segment.text))
+        }
+    }
+}
+
+@MainActor
+private enum QuickRecallApplicationIconResolver {
+    private static let cache = NSCache<NSString, NSImage>()
+    private static var missing: Set<String> = []
+
+    static func icon(for appName: String) -> NSImage? {
+        let key = appName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return nil }
+        if let cached = cache.object(forKey: key as NSString) { return cached }
+        guard !missing.contains(key) else { return nil }
+
+        if let icon = NSWorkspace.shared.runningApplications.first(where: {
+            $0.localizedName?.localizedCaseInsensitiveCompare(key) == .orderedSame
+        })?.icon {
+            cache.setObject(icon, forKey: key as NSString)
+            return icon
+        }
+
+        let name = key.hasSuffix(".app") ? String(key.dropLast(4)) : key
+        let roots = [
+            URL(fileURLWithPath: "/Applications", isDirectory: true),
+            URL(fileURLWithPath: "/System/Applications", isDirectory: true),
+            URL(fileURLWithPath: "/System/Applications/Utilities", isDirectory: true),
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Applications", isDirectory: true),
+        ]
+        for root in roots {
+            let applicationURL = root.appendingPathComponent(name).appendingPathExtension("app")
+            guard FileManager.default.fileExists(atPath: applicationURL.path) else { continue }
+            let icon = NSWorkspace.shared.icon(forFile: applicationURL.path)
+            cache.setObject(icon, forKey: key as NSString)
+            return icon
+        }
+        missing.insert(key)
+        return nil
+    }
+}
+
+private struct QuickRecallApplicationIcon: View {
+    let appName: String
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let icon = QuickRecallApplicationIconResolver.icon(for: appName) {
+                Image(nsImage: icon)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            } else {
+                Image(systemName: "app.fill")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.tertiary)
+                    .padding(1)
+            }
+        }
+        .frame(width: size, height: size)
+        .help(appName)
+        .accessibilityHidden(true)
+    }
+}
+
+private enum QuickRecallDateLabel {
+    static func string(for date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        let time = date.formatted(date: .omitted, time: .shortened)
+        let dateDay = calendar.startOfDay(for: date)
+        let today = calendar.startOfDay(for: now)
+        let distance = calendar.dateComponents([.day], from: dateDay, to: today).day ?? .max
+        let day: String
+        switch distance {
+        case 0:
+            day = "Today"
+        case 1:
+            day = "Yesterday"
+        case 2...6:
+            day = date.formatted(.dateTime.weekday(.abbreviated))
+        default:
+            day = date.formatted(.dateTime.day().month(.abbreviated))
+        }
+        return "\(day) · \(time)"
     }
 }
 
@@ -347,28 +629,80 @@ private struct QuickRecallRowModel: Identifiable {
 
     let id: String
     let icon: String
+    let appName: String?
     let title: String
     let subtitle: String
     let snippet: String?
+    let timestamp: Date?
+    let captureCount: Int
+    let isSaved: Bool
     let destination: Destination
 
-    static func screen(snapshotID: Int64, title: String, subtitle: String,
-                       snippet: String?) -> Self {
-        .init(id: "screen.\(snapshotID)", icon: "rectangle.on.rectangle",
-              title: title, subtitle: subtitle, snippet: snippet,
-              destination: .screen(snapshotID))
+    var snapshotID: Int64? {
+        guard case .screen(let snapshotID) = destination else { return nil }
+        return snapshotID
     }
 
-    static func meeting(hit: SearchIndex.Hit, title: String, subtitle: String,
-                        snippet: String?) -> Self {
-        .init(id: "meeting.\(hit.meetingID).\(hit.kind.rawValue).\(hit.start)",
-              icon: "waveform", title: title, subtitle: subtitle,
-              snippet: snippet, destination: .meeting(hit))
+    var isAsk: Bool {
+        guard case .ask = destination else { return false }
+        return true
     }
 
-    static func ask(query: String, title: String, subtitle: String,
-                    snippet: String?) -> Self {
-        .init(id: "ask.\(query)", icon: "sparkles", title: title,
-              subtitle: subtitle, snippet: snippet, destination: .ask(query))
+    static func screen(
+        snapshotID: Int64,
+        appName: String,
+        title: String,
+        subtitle: String,
+        snippet: String?,
+        timestamp: Date,
+        captureCount: Int = 1,
+        isSaved: Bool = false
+    ) -> Self {
+        .init(
+            id: "screen.\(snapshotID)",
+            icon: "rectangle.on.rectangle",
+            appName: appName,
+            title: title,
+            subtitle: subtitle,
+            snippet: snippet,
+            timestamp: timestamp,
+            captureCount: max(1, captureCount),
+            isSaved: isSaved,
+            destination: .screen(snapshotID))
+    }
+
+    static func meeting(
+        hit: SearchIndex.Hit,
+        appName: String,
+        title: String,
+        subtitle: String,
+        snippet: String?,
+        timestamp: Date?
+    ) -> Self {
+        .init(
+            id: "meeting.\(hit.meetingID).\(hit.kind.rawValue).\(hit.start)",
+            icon: "waveform",
+            appName: appName,
+            title: title,
+            subtitle: subtitle,
+            snippet: snippet,
+            timestamp: timestamp,
+            captureCount: 1,
+            isSaved: false,
+            destination: .meeting(hit))
+    }
+
+    static func ask(query: String, title: String, subtitle: String) -> Self {
+        .init(
+            id: "ask.\(query)",
+            icon: "sparkles",
+            appName: nil,
+            title: title,
+            subtitle: subtitle,
+            snippet: nil,
+            timestamp: nil,
+            captureCount: 1,
+            isSaved: false,
+            destination: .ask(query))
     }
 }

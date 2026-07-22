@@ -202,6 +202,86 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(store.screenshot(id: thirdID)?.similarityGroupID, thirdID)
     }
 
+    func testSearchOCRCollapsesSimilarCapturesUsingBestEvidenceAndLatestMoment() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ActivityStore(databaseURL: url)
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let firstHash: UInt64 = 0x00FF_00FF_00FF_00FF
+        let firstID = try store.insertScreenshot(
+            ts: base,
+            path: "/tmp/first.heic.enc",
+            app: "Safari",
+            windowTitle: "Pull request #42",
+            ocr: "failover failover failover exact recovery steps",
+            perceptualHash: firstHash)
+        let latestID = try store.insertScreenshot(
+            ts: base.addingTimeInterval(90),
+            path: "/tmp/latest.heic.enc",
+            app: "Safari",
+            windowTitle: "Pull request #42",
+            ocr: "a long status page with one failover reference among many unrelated words",
+            perceptualHash: firstHash ^ 0b101)
+
+        let hit = try XCTUnwrap(store.searchOCR("failover").first)
+
+        XCTAssertEqual(hit.snapshotID, latestID, "opening a group should use its latest capture")
+        XCTAssertEqual(hit.ts, base.addingTimeInterval(90))
+        XCTAssertEqual(hit.similarityGroupID, firstID)
+        XCTAssertEqual(hit.captureCount, 2)
+        XCTAssertTrue(hit.snippet.contains("exact recovery steps"),
+                      "the group should retain its strongest-ranked evidence snippet")
+    }
+
+    func testSearchOCRFallsBackToAppWindowAndDayForUngroupedCaptures() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ActivityStore(databaseURL: url)
+        let first = Calendar.current.startOfDay(for: Date()).addingTimeInterval(60 * 60)
+        _ = try store.insertScreenshot(
+            ts: first, path: "/tmp/first.heic.enc", app: "Notes",
+            windowTitle: "Launch plan", ocr: "private beta checklist")
+        let latestID = try store.insertScreenshot(
+            ts: first.addingTimeInterval(60), path: "/tmp/latest.heic.enc", app: "Notes",
+            windowTitle: "Launch plan", ocr: "private beta owners")
+
+        let hits = store.searchOCR("private beta")
+
+        XCTAssertEqual(hits.count, 1)
+        XCTAssertEqual(hits.first?.snapshotID, latestID)
+        XCTAssertEqual(hits.first?.captureCount, 2)
+        XCTAssertNil(hits.first?.similarityGroupID)
+    }
+
+    func testSearchOCRAppliesResultLimitAfterCollapsingDuplicateScenes() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ActivityStore(databaseURL: url)
+        let first = Calendar.current.startOfDay(for: Date()).addingTimeInterval(60 * 60)
+        for minute in 0..<5 {
+            _ = try store.insertScreenshot(
+                ts: first.addingTimeInterval(Double(minute * 60)),
+                path: "/tmp/duplicate-\(minute).heic.enc",
+                app: "Safari",
+                windowTitle: "Pull request #42",
+                ocr: "release checklist status")
+        }
+        _ = try store.insertScreenshot(
+            ts: first.addingTimeInterval(6 * 60),
+            path: "/tmp/other.heic.enc",
+            app: "Xcode",
+            windowTitle: "Release.swift",
+            ocr: "release checklist implementation")
+
+        let hits = store.searchOCR("release checklist", limit: 2)
+
+        XCTAssertEqual(hits.count, 2)
+        XCTAssertEqual(hits.map(\.captureCount).sorted(), [1, 5])
+    }
+
     func testDeleteScreenshotRemovesOCRBookmarkAndSemanticVector() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")

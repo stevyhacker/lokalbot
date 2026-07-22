@@ -264,6 +264,19 @@ final class ActivityStore {
         var app: String
         var windowTitle: String = ""
         var snippet: String
+        var similarityGroupID: Int64?
+        var captureCount: Int
+
+        init(snapshotID: Int64, ts: Date, app: String, windowTitle: String = "",
+             snippet: String, similarityGroupID: Int64? = nil, captureCount: Int = 1) {
+            self.snapshotID = snapshotID
+            self.ts = ts
+            self.app = app
+            self.windowTitle = windowTitle
+            self.snippet = snippet
+            self.similarityGroupID = similarityGroupID
+            self.captureCount = max(1, captureCount)
+        }
     }
 
     struct SavedMoment: Identifiable, Equatable, Sendable {
@@ -421,24 +434,86 @@ final class ActivityStore {
         guard limit > 0 else { return [] }
         guard let match = SearchIndex.ftsQuery(from: query, matchAll: matchAll,
                                                dropStopWords: dropStopWords) else { return [] }
-        var conditions = ["ocr_fts MATCH ?1", "CAST(snapshot_id AS INTEGER) > 0"]
+        var conditions = [
+            "ocr_fts MATCH ?1",
+            "CAST(ocr_fts.snapshot_id AS INTEGER) > 0",
+        ]
         var bindings: [Any] = [match]
-        Self.appendFilter(filter, timestampColumn: "CAST(ts AS REAL)", appColumn: "app",
-                          conditions: &conditions, bindings: &bindings)
+        Self.appendFilter(
+            filter,
+            timestampColumn: "CAST(ocr_fts.ts AS REAL)",
+            appColumn: "ocr_fts.app",
+            conditions: &conditions,
+            bindings: &bindings)
         do {
             return try requiredDatabase().queryChecked("""
-                SELECT CAST(snapshot_id AS INTEGER), CAST(ts AS REAL), app, window_title,
-                       snippet(ocr_fts, 0, '«', '»', '…', 14)
-                FROM ocr_fts
-                WHERE \(conditions.joined(separator: " AND "))
-                ORDER BY rank, CAST(ts AS REAL) DESC, CAST(snapshot_id AS INTEGER)
+                WITH candidates AS (
+                    SELECT CAST(ocr_fts.snapshot_id AS INTEGER) AS snapshot_id,
+                           CAST(ocr_fts.ts AS REAL) AS captured_at,
+                           ocr_fts.app AS app,
+                           ocr_fts.window_title AS window_title,
+                           snippet(ocr_fts, 0, '«', '»', '…', 14) AS snippet_text,
+                           ocr_fts.rank AS match_rank,
+                           shot.similarity_group AS similarity_group_id,
+                           CASE
+                               WHEN shot.similarity_group > 0
+                                   THEN 'group:' || CAST(shot.similarity_group AS TEXT)
+                               ELSE 'fallback:'
+                                   || lower(CAST(ocr_fts.app AS TEXT)) || char(31)
+                                   || lower(CAST(ocr_fts.window_title AS TEXT)) || char(31)
+                                   || strftime(
+                                       '%Y-%m-%d', CAST(ocr_fts.ts AS REAL),
+                                       'unixepoch', 'localtime')
+                           END AS deduplication_key
+                    FROM ocr_fts
+                    JOIN screenshots AS shot
+                      ON shot.id = CAST(ocr_fts.snapshot_id AS INTEGER)
+                    WHERE \(conditions.joined(separator: " AND "))
+                ), grouped AS (
+                    SELECT *,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY deduplication_key
+                               ORDER BY match_rank, captured_at DESC, snapshot_id
+                           ) AS evidence_rank,
+                           FIRST_VALUE(snapshot_id) OVER (
+                               PARTITION BY deduplication_key
+                               ORDER BY captured_at DESC, snapshot_id DESC
+                           ) AS latest_snapshot_id,
+                           FIRST_VALUE(captured_at) OVER (
+                               PARTITION BY deduplication_key
+                               ORDER BY captured_at DESC, snapshot_id DESC
+                           ) AS latest_captured_at,
+                           FIRST_VALUE(app) OVER (
+                               PARTITION BY deduplication_key
+                               ORDER BY captured_at DESC, snapshot_id DESC
+                           ) AS latest_app,
+                           FIRST_VALUE(window_title) OVER (
+                               PARTITION BY deduplication_key
+                               ORDER BY captured_at DESC, snapshot_id DESC
+                           ) AS latest_window_title,
+                           COUNT(*) OVER (
+                               PARTITION BY deduplication_key
+                           ) AS capture_count
+                    FROM candidates
+                )
+                SELECT latest_snapshot_id, latest_captured_at, latest_app,
+                       latest_window_title, snippet_text, similarity_group_id,
+                       capture_count
+                FROM grouped
+                WHERE evidence_rank = 1
+                ORDER BY match_rank, latest_captured_at DESC, latest_snapshot_id
                 LIMIT \(limit)
                 """, bind: bindings) { statement in
                 OCRHit(snapshotID: sqlite3_column_int64(statement, 0),
                        ts: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
                        app: String(cString: sqlite3_column_text(statement, 2)),
                        windowTitle: String(cString: sqlite3_column_text(statement, 3)),
-                       snippet: String(cString: sqlite3_column_text(statement, 4)))
+                       snippet: String(cString: sqlite3_column_text(statement, 4)),
+                       similarityGroupID: {
+                           let groupID = sqlite3_column_int64(statement, 5)
+                           return groupID > 0 ? groupID : nil
+                       }(),
+                       captureCount: Int(sqlite3_column_int64(statement, 6)))
             }
         } catch {
             lokalbotLog("OCR search failed: \(error.localizedDescription)")

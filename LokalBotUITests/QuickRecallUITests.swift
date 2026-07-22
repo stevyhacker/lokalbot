@@ -11,9 +11,10 @@ final class QuickRecallUITests: XCTestCase {
         continueAfterFailure = false
         fixture = try SyntheticFixture.plant()
         var environment = ["LOKALBOT_UI_TEST_WINDOW": "quick-recall"]
-        if name.contains("testSearchShowsLocalMeetingEvidenceAndInlineAsk") {
+        if name.contains("testSearchShowsLocalMeetingEvidenceAndInlineAsk")
+            || name.contains("testBackFromInlineAnswerRestoresRecallQuery") {
             // Seed the complete query before SwiftUI mounts. The clear test
-            // below still drives real typing, while this result test avoids a
+            // below still drives real typing; the result/restore tests avoid a
             // race among eight per-character debounce tasks on hosted Macs.
             environment["LOKALBOT_QUICK_RECALL_QUERY"] = "failover"
         }
@@ -51,7 +52,7 @@ final class QuickRecallUITests: XCTestCase {
                       "Quick Recall did not identify the local evidence type")
 
         let askSubtitle = app.staticTexts.matching(NSPredicate(
-            format: "identifier == 'quickRecall.row.ask.failover' AND (label == 'Answer here' OR value == 'Answer here')"))
+            format: "identifier == 'quickRecall.row.ask.failover' AND (label == 'Answer from your meetings and screen' OR value == 'Answer from your meetings and screen')"))
             .firstMatch
         XCTAssertTrue(askSubtitle.waitForExistence(timeout: 3),
                       "Quick Recall did not include the inline assistant action")
@@ -67,13 +68,34 @@ final class QuickRecallUITests: XCTestCase {
 
         let clear = app.buttons["Clear"]
         XCTAssertTrue(clear.waitForExistence(timeout: 4), "Quick Recall clear control missing")
-        XCTAssertTrue(text(containing: "Answer here").waitForExistence(timeout: 4),
+        XCTAssertTrue(text(containing: "Answer from your meetings and screen")
+            .waitForExistence(timeout: 4),
                       "inline assistant action missing for an unmatched query")
+        XCTAssertTrue(text(containing: "No local matches").waitForExistence(timeout: 4),
+                      "Quick Recall did not distinguish a completed empty search")
+        XCTAssertTrue(app.buttons["quickRecall.askInstead"].exists,
+                      "Quick Recall did not offer an explicit Ask fallback")
         clear.click()
 
         XCTAssertTrue(text(containing: "Ask anything")
             .waitForExistence(timeout: 5), "clearing did not restore the Ask state")
         XCTAssertFalse(clear.exists, "clear control remained visible for an empty query")
+    }
+
+    func testBackFromInlineAnswerRestoresRecallQuery() {
+        XCTAssertEqual(input.value as? String, "failover",
+                       "seeded Quick Recall query did not render")
+
+        input.typeText("\r")
+
+        let back = app.buttons["Back to recall"]
+        XCTAssertTrue(back.waitForExistence(timeout: 6),
+                      "inline answer did not expose the recall back control")
+        back.click()
+
+        XCTAssertTrue(UITestHarness.waitUntil(timeout: 5) {
+            self.input.value as? String == "failover"
+        }, "returning from an inline answer discarded the recall query")
     }
 
     private var input: XCUIElement {
