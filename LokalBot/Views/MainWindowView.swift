@@ -1084,6 +1084,105 @@ private struct SpeakerRenameSheet: View {
     }
 }
 
+/// A digest-specific Markdown renderer backed by one SwiftUI `Text`. Keeping
+/// the whole document in one attributed string gives macOS one continuous
+/// selection range, so users can drag across lines and copy only the portion
+/// they need. The general-purpose `MarkdownText` below keeps its richer
+/// per-line layout for meeting summaries and chat.
+struct SelectableDigestText: View {
+    let text: String
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(Self.attributedText(from: text))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
+            .help("Select any part and press ⌘C to copy")
+    }
+
+    static func attributedText(from markdown: String) -> AttributedString {
+        let lines = markdown.components(separatedBy: "\n")
+        var document = AttributedString()
+        for (index, line) in lines.enumerated() {
+            document.append(attributedLine(line))
+            if index < lines.count - 1 {
+                document.append(AttributedString("\n"))
+            }
+        }
+        return document
+    }
+
+    private static func attributedLine(_ line: String) -> AttributedString {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return AttributedString() }
+        if trimmed == "---" || trimmed == "***" || trimmed == "___" {
+            return styled("────────────────────", font: .body,
+                          foreground: .secondary)
+        }
+        if trimmed.hasPrefix("### ") {
+            return styledInline(String(trimmed.dropFirst(4)), font: .headline)
+        }
+        if trimmed.hasPrefix("## ") {
+            return styledInline(String(trimmed.dropFirst(3)), font: .title3.bold())
+        }
+        if trimmed.hasPrefix("# ") {
+            return styledInline(String(trimmed.dropFirst(2)), font: .title2.bold())
+        }
+        if trimmed.hasPrefix("- [ ] ") || trimmed.hasPrefix("- [x] ") {
+            return prefixed(trimmed.hasPrefix("- [x] ") ? "☑ " : "☐ ",
+                            content: String(trimmed.dropFirst(6)))
+        }
+        if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
+            return prefixed("• ", content: String(trimmed.dropFirst(2)))
+        }
+        if let ordered = orderedListItem(trimmed) {
+            return prefixed("\(ordered.number). ", content: ordered.rest)
+        }
+        if trimmed.hasPrefix("> ") {
+            return prefixed("▎ ", content: String(trimmed.dropFirst(2)),
+                            font: .body.italic(), foreground: .secondary)
+        }
+        return styledInline(trimmed, font: .body)
+    }
+
+    private static func prefixed(_ prefix: String, content: String,
+                                 font: Font = .body,
+                                 foreground: Color? = nil) -> AttributedString {
+        var result = styled(prefix, font: font, foreground: foreground)
+        result.append(styledInline(content, font: font, foreground: foreground))
+        return result
+    }
+
+    private static func styledInline(_ source: String, font: Font,
+                                     foreground: Color? = nil) -> AttributedString {
+        var result = (try? AttributedString(
+            markdown: source,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(source)
+        result.font = font
+        if let foreground { result.foregroundColor = foreground }
+        return result
+    }
+
+    private static func styled(_ source: String, font: Font,
+                               foreground: Color? = nil) -> AttributedString {
+        var result = AttributedString(source)
+        result.font = font
+        if let foreground { result.foregroundColor = foreground }
+        return result
+    }
+
+    private static func orderedListItem(_ trimmed: String) -> (number: Int, rest: String)? {
+        guard let dot = trimmed.firstIndex(of: "."),
+              trimmed[..<dot].allSatisfy(\.isNumber),
+              let number = Int(trimmed[..<dot]),
+              trimmed.index(after: dot) < trimmed.endIndex,
+              trimmed[trimmed.index(after: dot)] == " " else { return nil }
+        return (number, String(trimmed[trimmed.index(dot, offsetBy: 2)...]))
+    }
+}
+
 /// Minimal line-based Markdown renderer — headings, bullets, checkboxes,
 /// ordered lists, blockquotes, and horizontal rules, with inline
 /// bold/italic/code via AttributedString. Enough for summary.md.

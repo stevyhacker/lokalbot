@@ -1309,7 +1309,7 @@ final class AppState: ObservableObject {
                 enabled: snapshot.dayDigestAutoEnabled,
                 hour: snapshot.dayDigestHour),
             digestModifiedAt: { day in
-                let name = day.formatted(.iso8601.year().month().day())
+                let name = DreamDay.key(for: day)
                 let url = storageRoot.appendingPathComponent("journal/\(name).md")
                 let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
                 return attributes?[.modificationDate] as? Date

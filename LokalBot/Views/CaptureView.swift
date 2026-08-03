@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 /// selection-driven.
 @MainActor
 final class CaptureModel: ObservableObject {
-    @Published var day = Date()
+    @Published private(set) var day = Date()
     @Published var blocks: [ActivityBlock] = []
     @Published var shots: [ActivityStore.Screenshot] = []
     @Published private(set) var rewindFrames: [ScreenRewindFrame] = []
@@ -18,16 +18,28 @@ final class CaptureModel: ObservableObject {
     @Published var digest: String?
     @Published var generating = false
     @Published var digestError: String?
+    private var digestGeneration = 0
 
     var selectedBlock: ActivityBlock? {
         guard let selection else { return nil }
         return blocks.first { $0.id == selection }
     }
 
-    func moveDay(by value: Int) {
+    /// Change the selected day and synchronously replace every day-scoped
+    /// cache. Keeping this as one action prevents split-view columns from
+    /// observing a new date alongside the previous date's overview data.
+    func selectDay(_ value: Date, app: AppState) {
+        digestGeneration &+= 1
+        generating = false
         selectedSnapshotID = nil
-        day = Calendar.current.date(byAdding: .day, value: value, to: day)
+        day = value
+        reload(app: app)
+    }
+
+    func moveDay(by value: Int, app: AppState) {
+        let target = Calendar.current.date(byAdding: .day, value: value, to: day)
             ?? day.addingTimeInterval(TimeInterval(value) * 86_400)
+        selectDay(target, app: app)
     }
 
     func reload(app: AppState) {
@@ -54,27 +66,38 @@ final class CaptureModel: ObservableObject {
     }
 
     private func journalURL(app: AppState) -> URL {
-        let name = day.formatted(.iso8601.year().month().day())
+        let name = DreamDay.key(for: day)
         return app.storage.rootURL.appendingPathComponent("journal/\(name).md")
     }
 
     func generateDigest(app: AppState) async {
+        guard !generating else { return }
+        digestGeneration &+= 1
+        let generation = digestGeneration
+        let requestedDay = day
         generating = true
-        defer { generating = false }
+        defer {
+            if digestGeneration == generation { generating = false }
+        }
         let todays = meetings(in: app).filter { $0.endedAt != nil }
         let ocr = app.activityStore.ocrText(on: day)
         do {
             let (text, _) = try await app.pipeline.generateDayDigest(
-                for: day, blocks: blocks, meetings: todays, ocr: ocr, config: app.settings)
+                for: requestedDay, blocks: blocks, meetings: todays,
+                ocr: ocr, config: app.settings)
+            guard digestGeneration == generation,
+                  Calendar.current.isDate(day, inSameDayAs: requestedDay) else { return }
             digest = text
+            digestError = nil
         } catch {
+            guard digestGeneration == generation else { return }
             digestError = error.localizedDescription
         }
     }
 
-    /// Copy the raw digest Markdown to the clipboard. The rendered text is
-    /// selectable too, but one click grabs the whole document without a
-    /// fiddly multi-line drag across the per-line Markdown layout.
+    /// Copy the raw digest Markdown to the clipboard. The rendered document
+    /// supports partial selection too; this one-click action remains the fast
+    /// path when the user wants the whole source document.
     func copyDigest(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
@@ -86,7 +109,7 @@ final class CaptureModel: ObservableObject {
     func exportDigest(_ text: String) {
         let panel = NSSavePanel()
         panel.title = "Export Day Digest"
-        panel.nameFieldStringValue = "\(day.formatted(.iso8601.year().month().day())).md"
+        panel.nameFieldStringValue = "\(DreamDay.key(for: day)).md"
         panel.canCreateDirectories = true
         if let md = UTType(filenameExtension: "md") { panel.allowedContentTypes = [md] }
         guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -147,7 +170,7 @@ struct TimelineContentView: View {
     var body: some View {
         CaptureDayView(model: model)
             .navigationTitle("Timeline")
-            .task(id: model.day.formatted(date: .numeric, time: .omitted)) {
+            .task {
                 model.reload(app: app)
             }
             .onAppear(perform: consumePendingScreenMoment)
@@ -171,8 +194,7 @@ struct TimelineContentView: View {
             app.lastError = "That captured screen is no longer available."
             return
         }
-        model.day = screenshot.ts
-        model.reload(app: app)
+        model.selectDay(screenshot.ts, app: app)
         model.selectedSnapshotID = snapshotID
         model.selection = nil
         app.selectedMeetingIDs = []
@@ -253,19 +275,34 @@ struct CaptureDayView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Button { model.moveDay(by: -1) } label: {
+            Button { changeDay(by: -1) } label: {
                 Image(systemName: "chevron.left")
             }
             .accessibilityLabel("Previous day")
-            DatePicker("", selection: $model.day, displayedComponents: .date)
+            DatePicker("", selection: daySelection, displayedComponents: .date)
                 .labelsHidden().fixedSize()
-            Button { model.moveDay(by: 1) } label: {
+            Button { changeDay(by: 1) } label: {
                 Image(systemName: "chevron.right")
             }
             .accessibilityLabel("Next day")
             .disabled(Calendar.current.isDateInToday(model.day))
             Spacer()
         }
+    }
+
+    private var daySelection: Binding<Date> {
+        Binding(get: { model.day }, set: { changeDay(to: $0) })
+    }
+
+    private func changeDay(by offset: Int) {
+        app.selectedMeetingIDs = []
+        model.moveDay(by: offset, app: app)
+    }
+
+    private func changeDay(to day: Date) {
+        guard !Calendar.current.isDate(day, inSameDayAs: model.day) else { return }
+        app.selectedMeetingIDs = []
+        model.selectDay(day, app: app)
     }
 
     private func summaryRail(meetings: [Meeting]) -> some View {

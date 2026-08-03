@@ -591,7 +591,7 @@ final class ProcessingPipeline: ObservableObject {
             system: PromptTemplates.dayDigestSystem(custom: config.dayDigestCustomPrompt),
             prompt: material.isEmpty ? "No activity was recorded this day." : material,
             context: context)
-        let name = day.formatted(.iso8601.year().month().day())
+        let name = DreamDay.key(for: day)
         let url = storage.rootURL.appendingPathComponent("journal/\(name).md")
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

@@ -192,6 +192,37 @@ final class MainWindowUITests: XCTestCase {
                        "legacy inspector segmented control should be removed")
     }
 
+    /// A date change is one state transition for both split-view columns: it
+    /// clears an old meeting inspector and swaps the cached track, overview,
+    /// and persisted digest to the newly selected local calendar day.
+    func testTimelineDateChangeRefreshesOverviewAndDigest() {
+        openLibrary()
+        selectMeeting(fixture.designReview)
+        XCTAssertTrue(app.staticTexts["detail.title"].waitForExistence(timeout: 4),
+                      "meeting detail did not open before changing the day")
+
+        clickSidebar("sidebar.timeline")
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
+            .waitForExistence(timeout: 6), "Timeline did not render")
+        XCTAssertTrue(app.staticTexts["detail.title"].exists,
+                      "precondition failed: selected meeting did not carry into Timeline")
+
+        let previousDay = app.buttons["Previous day"]
+        XCTAssertTrue(previousDay.waitForExistence(timeout: 4),
+                      "previous-day control is missing")
+        previousDay.click()
+
+        XCTAssertTrue(app.descendants(matching: .any)["capture.dayOverview"]
+            .waitForExistence(timeout: 6),
+                      "old meeting selection kept the new day's overview hidden")
+        XCTAssertTrue(textWithContent(SyntheticFixture.previousDayDigestMarker).firstMatch
+            .waitForExistence(timeout: 4), "previous day's digest did not replace today's")
+        XCTAssertFalse(textWithContent(SyntheticFixture.todayDigestMarker).firstMatch.exists,
+                       "today's digest remained visible after changing the date")
+        XCTAssertFalse(textWithContent("Time by app").firstMatch.exists,
+                       "today's activity totals remained in the previous-day overview")
+    }
+
     /// The sidebar swaps the content column between Timeline (hour track)
     /// and Meetings (grouped meeting list) both ways.
     func testSidebarTogglesBetweenTimelineAndMeetings() {

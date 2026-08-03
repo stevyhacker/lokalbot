@@ -60,8 +60,7 @@ struct TodayView: View {
     /// The overnight brief covers yesterday relative to the page's day; an
     /// older leftover report is not shown as if it were fresh.
     private func reloadCurrentDay(at date: Date) {
-        model.day = date
-        model.reload(app: app)
+        model.selectDay(date, app: app)
         dream = TodayDreamSelection.report(
             referenceDate: date,
             latest: app.latestDreamReport,
@@ -202,9 +201,8 @@ struct TodayView: View {
 
     @ViewBuilder private var digestBlock: some View {
         if let digest = model.digest {
-            MarkdownText(digest)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
+            SelectableDigestText(digest)
+                .accessibilityIdentifier("today.dayDigest.text")
         } else {
             HStack(spacing: 8) {
                 Button("Write day digest") {

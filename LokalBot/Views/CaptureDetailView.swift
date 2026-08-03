@@ -105,7 +105,9 @@ struct CaptureDetailView: View {
             .sorted { $0.value > $1.value }
         return ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Day overview").font(.title3.bold())
+                Text("Day overview")
+                    .font(.title3.bold())
+                    .accessibilityIdentifier("capture.dayOverview")
                 DayStatRow(
                     trackedSeconds: perApp.reduce(0) { $0 + $1.value },
                     appCount: perApp.count,
@@ -175,6 +177,8 @@ struct CaptureDetailView: View {
                 if let digest = model.digest {
                     Button { model.copyDigest(digest) } label: { Image(systemName: "doc.on.doc") }
                         .help("Copy the digest to the clipboard")
+                        .accessibilityLabel("Copy entire day digest")
+                        .accessibilityIdentifier("capture.dayDigest.copyAll")
                     Button { model.exportDigest(digest) } label: { Image(systemName: "square.and.arrow.up") }
                         .help("Save the digest as a Markdown file")
                 }
@@ -188,9 +192,8 @@ struct CaptureDetailView: View {
                     .font(.callout).foregroundStyle(.orange)
             }
             if let digest = model.digest {
-                MarkdownText(digest)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
+                SelectableDigestText(digest)
+                    .accessibilityIdentifier("capture.dayDigest.text")
             }
         }
     }

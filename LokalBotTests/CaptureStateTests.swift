@@ -45,4 +45,35 @@ final class CaptureStateTests: XCTestCase {
                                           allowsBlockSelection: true),
             .overview)
     }
+
+    // MARK: Day digest presentation and local-day identity
+
+    func testSelectableDigestBuildsOneContinuousVisibleString() {
+        let rendered = SelectableDigestText.attributedText(from: """
+        ## Daily focus
+
+        - Ship the **date refresh**
+        - [x] Keep inline `code`
+        1. Verify yesterday
+        > Local-only context
+        """)
+
+        XCTAssertEqual(String(rendered.characters), """
+        Daily focus
+
+        • Ship the date refresh
+        ☑ Keep inline code
+        1. Verify yesterday
+        ▎ Local-only context
+        """)
+    }
+
+    func testDayKeyUsesTheSelectedLocalCalendarDay() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "Europe/Podgorica"))
+        let instant = try XCTUnwrap(
+            ISO8601DateFormatter().date(from: "2026-08-02T22:30:00Z"))
+
+        XCTAssertEqual(DreamDay.key(for: instant, calendar: calendar), "2026-08-03")
+    }
 }

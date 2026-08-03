@@ -11,6 +11,9 @@ import SQLite3
 /// to `now` so the grouping headers always read "TODAY" / "YESTERDAY".
 enum SyntheticFixture {
 
+    static let todayDigestMarker = "Current-day digest marker"
+    static let previousDayDigestMarker = "Previous-day digest marker"
+
     /// Static handle on one planted fixture: the tmp `root` to point
     /// `LOKALBOT_STORAGE_ROOT` at, plus the three meetings the tests assert on.
     struct Library {
@@ -147,6 +150,7 @@ enum SyntheticFixture {
         for meeting in [designReview, standup, planning] {
             try write(meeting, under: root)
         }
+        try seedDayDigests(under: root, today: now, previousDay: yesterday)
         if includeActivity {
             seedActivity(under: root)
         }
@@ -191,6 +195,30 @@ enum SyntheticFixture {
             sqlite3_step(stmt)
             sqlite3_finalize(stmt)
         }
+    }
+
+    /// Give adjacent Timeline days unmistakably different persisted digests.
+    /// The date-change UI test can then prove that the detail column refreshed
+    /// the journal document, not merely the track or its date picker.
+    private static func seedDayDigests(under root: URL, today: Date,
+                                       previousDay: Date) throws {
+        let journal = root.appendingPathComponent("journal", isDirectory: true)
+        try FileManager.default.createDirectory(at: journal,
+                                                withIntermediateDirectories: true)
+        for (day, marker) in [(today, todayDigestMarker),
+                              (previousDay, previousDayDigestMarker)] {
+            let digest = "## \(marker)\n\n- Fixture evidence for this local day."
+            try digest.write(
+                to: journal.appendingPathComponent("\(dayKey(for: day)).md"),
+                atomically: true,
+                encoding: .utf8)
+        }
+    }
+
+    private static func dayKey(for date: Date, calendar: Calendar = .current) -> String {
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d",
+                      parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
     }
 
     // MARK: - Helpers
