@@ -31,4 +31,22 @@ final class ProportionBarMathTests: XCTestCase {
         let segments = ProportionBarMath.segments(perApp: [("Xcode", 600), ("Idle", 0)])
         XCTAssertEqual(segments.map(\.label), ["Xcode"])
     }
+
+    func testHumanFacingRowsFoldSubMinuteAndLongTailAppsIntoOther() {
+        let rows = AppTimePresentation.rows(perApp: [
+            ("Chrome", 3_600),
+            ("Xcode", 1_800),
+            ("ChatGPT", 1_200),
+            ("Slack", 600),
+            ("Terminal", 300),
+            ("Finder", 120),
+            ("Helper", 20),
+        ])
+
+        XCTAssertEqual(rows.map(\.label),
+                       ["Chrome", "Xcode", "ChatGPT", "Slack", "Terminal", "Other"])
+        XCTAssertEqual(rows.last?.seconds, 140)
+        XCTAssertEqual(rows.last?.appCount, 2)
+        XCTAssertTrue(rows.last?.isOther == true)
+    }
 }

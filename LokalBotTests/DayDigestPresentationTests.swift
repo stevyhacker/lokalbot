@@ -11,7 +11,7 @@ final class DayDigestPresentationTests: XCTestCase {
             - Verified the release build.
 
             ### Focus blocks
-            - **09:00–10:15 · Digest redesign** — Implemented the parser [screen:11].
+            - **09:00–10:15 · Digest redesign** — User implemented the parser [screen:11].
             - **13:05–14:20 · Verification** — Ran focused tests [screen:22] [screen:23].
 
             ### Decisions and next steps
@@ -43,7 +43,12 @@ final class DayDigestPresentationTests: XCTestCase {
 
         XCTAssertTrue(presentation.atAGlanceMarkdown.contains("clearer digest"))
         XCTAssertEqual(presentation.focusBlocks.count, 2)
-        XCTAssertEqual(presentation.focusBlocks.map(\.sourceCount), [1, 2])
+        XCTAssertEqual(presentation.focusBlocks.map(\.sourceIDs), [[11], [22, 23]])
+        XCTAssertEqual(presentation.focusBlocks.map(\.timeRange), ["09:00–10:15", "13:05–14:20"])
+        XCTAssertEqual(presentation.focusBlocks.map(\.title), ["Digest redesign", "Verification"])
+        XCTAssertEqual(presentation.focusBlocks.first?.summaryMarkdown,
+                       "Implemented the parser.")
+        XCTAssertFalse(presentation.focusBlocks.first?.summaryMarkdown.contains("screen:") == true)
         XCTAssertTrue(presentation.decisionsMarkdown?.contains("Reinstall") == true)
         XCTAssertTrue(presentation.meetingsMarkdown?.contains("Product sync") == true)
         XCTAssertEqual(presentation.timeAllocations.map(\.app), ["Xcode", "Safari"])
@@ -84,12 +89,44 @@ final class DayDigestPresentationTests: XCTestCase {
         let presentation = DayDigestPresentation(markdown: markdown)
 
         XCTAssertEqual(presentation.atAGlanceMarkdown, "A concise legacy overview.")
-        XCTAssertEqual(presentation.focusBlocks.count, 8)
-        XCTAssertEqual(presentation.additionalFocusBlocks.count, 2)
+        XCTAssertEqual(presentation.focusBlocks.count, 10)
+        XCTAssertEqual(presentation.focusBlocks.prefix(3).count, 3)
         XCTAssertNil(presentation.decisionsMarkdown)
         XCTAssertNil(presentation.meetingsMarkdown)
         XCTAssertTrue(presentation.timeAllocations.isEmpty)
         XCTAssertEqual(presentation.activityGroups.first?.label, "17:00–17:59")
+    }
+
+    func testOverviewShowsOnlyTheFirstThreeGeneratedHighlights() {
+        let markdown = """
+            ## Day summary
+
+            ### At a glance
+            - First outcome.
+            - Second outcome.
+            - Third outcome.
+            - Fourth lower-priority detail.
+            """
+
+        let presentation = DayDigestPresentation(markdown: markdown)
+
+        XCTAssertTrue(presentation.atAGlanceMarkdown.contains("First outcome"))
+        XCTAssertTrue(presentation.atAGlanceMarkdown.contains("Third outcome"))
+        XCTAssertFalse(presentation.atAGlanceMarkdown.contains("Fourth"))
+    }
+
+    func testEmbeddedModesDoNotRepeatHostOwnedSections() {
+        XCTAssertFalse(DayDigestView.Mode.timeline.showsTimeAllocation)
+        XCTAssertTrue(DayDigestView.Mode.timeline.showsMeetings)
+        XCTAssertTrue(DayDigestView.Mode.timeline.showsFullActivityLog)
+
+        XCTAssertFalse(DayDigestView.Mode.today.showsTimeAllocation)
+        XCTAssertFalse(DayDigestView.Mode.today.showsMeetings)
+        XCTAssertFalse(DayDigestView.Mode.today.showsFullActivityLog)
+
+        XCTAssertTrue(DayDigestView.Mode.standalone.showsTimeAllocation)
+        XCTAssertTrue(DayDigestView.Mode.standalone.showsMeetings)
+        XCTAssertTrue(DayDigestView.Mode.standalone.showsFullActivityLog)
     }
 
     func testLegacyUnheadedOverviewAndUnicodeHyphenDecisionSentinel() {
@@ -146,10 +183,11 @@ final class DayDigestPresentationTests: XCTestCase {
 
     func testGenerationPromptEnforcesConciseProgressiveStructure() {
         XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("at_a_glance"))
-        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("80-130 words"))
+        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("35-75 words"))
         XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("Browser toolbars"))
         XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("empty array"))
         XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("exactly one required segment"))
         XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("source_ids"))
+        XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("Never begin with \"User\""))
     }
 }

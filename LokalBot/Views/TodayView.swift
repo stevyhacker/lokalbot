@@ -23,9 +23,9 @@ struct TodayView: View {
                 meetingsSection
                 askSection
             }
-            .padding(20)
-            .frame(maxWidth: 760, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(24)
+            .frame(maxWidth: 900, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .top)
         }
         .navigationTitle("Today")
         .task(id: app.navSection) {
@@ -56,6 +56,7 @@ struct TodayView: View {
     // MARK: Dream (morning brief)
 
     @State private var dream: DreamReport?
+    @State private var showingDreamInfo = false
 
     /// The overnight brief covers yesterday relative to the page's day; an
     /// older leftover report is not shown as if it were fresh.
@@ -67,56 +68,116 @@ struct TodayView: View {
             store: app.dreamStore)
     }
 
-    /// A brief surfaced from an earlier day (empty days in between were
-    /// skipped) is labeled with the day it covers instead of "Dreamed …".
-    private func dreamCaption(_ dream: DreamReport) -> String {
-        if TodayDreamSelection.isCurrent(dream, referenceDate: model.day) {
-            return "Dreamed " + dream.generatedAt.formatted(.relative(presentation: .named))
-        }
-        let day = DreamDay.date(fromKey: dream.day)
-            .map { $0.formatted(date: .abbreviated, time: .omitted) } ?? dream.day
-        return "Your last working day — \(day)"
-    }
-
     @ViewBuilder private var dreamCard: some View {
         if let dream {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     Image(systemName: "moon.zzz.fill")
                         .foregroundStyle(Brand.teal)
-                    Text("While you were away")
+                    Text(dreamDayLabel(dream))
                         .font(.title3.bold())
                         .accessibilityIdentifier("today.dream")
                     Spacer()
-                    Text(dreamCaption(dream))
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                if !dream.narrative.isEmpty {
-                    Text(dream.narrative)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
+                    Text("Morning brief")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Button {
+                        showingDreamInfo = true
+                    } label: {
+                        Image(systemName: "info.circle")
+                    }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("About this morning brief")
+                        .accessibilityLabel("About this morning brief")
+                        .popover(isPresented: $showingDreamInfo) {
+                            Text(dream.provenanceDescription)
+                                .font(.callout)
+                                .padding(14)
+                                .frame(width: 300, alignment: .leading)
+                        }
                 }
                 if !dream.topActions.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Top actions today").font(.headline)
+                        Text("Priorities for today").font(.headline)
                         ForEach(Array(dream.topActions.enumerated()), id: \.offset) { index, action in
                             Text("\(index + 1). \(action)")
                                 .textSelection(.enabled)
                         }
                     }
                 }
-                DisclosureGroup("Full retrospective") {
-                    MarkdownText(dream.markdown())
+                if !dream.narrative.isEmpty {
+                    Text(displayedNarrative(dream))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                if let retrospective = retrospectiveMarkdown(dream) {
+                    DisclosureGroup("More from yesterday") {
+                        MarkdownText(retrospective)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
                         .padding(.top, 6)
+                    }
                 }
-                Text(dream.provenanceDescription
-                     + (dream.isFallback ? " Dream again from Settings → Recording." : ""))
-                    .font(.caption).foregroundStyle(.secondary)
+                dreamInferenceNotice(dream)
             }
             .padding(14)
             .background(RoundedRectangle(cornerRadius: 12).fill(.quaternary.opacity(0.4)))
+        }
+    }
+
+    private func displayedNarrative(_ dream: DreamReport) -> String {
+        let dateReference: String
+        if TodayDreamSelection.isCurrent(dream, referenceDate: model.day) {
+            dateReference = "yesterday"
+        } else {
+            dateReference = DreamDay.date(fromKey: dream.day)
+                .map { "on " + $0.formatted(date: .abbreviated, time: .omitted) }
+                ?? "on a previous workday"
+        }
+        return dream.narrative
+            .replacingOccurrences(of: "on \(dream.day)", with: dateReference)
+            .replacingOccurrences(of: ", and no work goals were recorded", with: "")
+    }
+
+    private func dreamDayLabel(_ dream: DreamReport) -> String {
+        if TodayDreamSelection.isCurrent(dream, referenceDate: model.day) {
+            return "Yesterday"
+        }
+        return DreamDay.date(fromKey: dream.day)
+            .map { $0.formatted(date: .abbreviated, time: .omitted) }
+            ?? "Previous workday"
+    }
+
+    private func retrospectiveMarkdown(_ dream: DreamReport) -> String? {
+        let groups: [(String, [String])] = [
+            ("Needs attention", dream.attention),
+            ("Repeated work worth automating", dream.repeatedWork),
+            ("Suggested recurring checks", dream.suggestedChecks),
+            ("Friction to smooth out", dream.frictions),
+        ]
+        let sections = groups.compactMap { title, items -> String? in
+            guard !items.isEmpty else { return nil }
+            return "### \(title)\n" + items.map { "- \($0)" }.joined(separator: "\n")
+        }
+        guard !sections.isEmpty else { return nil }
+        return sections.joined(separator: "\n\n")
+    }
+
+    @ViewBuilder private func dreamInferenceNotice(_ dream: DreamReport) -> some View {
+        if dream.isFallback {
+            Label(
+                dream.provenanceDescription + " Dream again from Settings → Recording.",
+                systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        } else if dream.inferenceProvenance?.location == .remote {
+            Label("Generated using approved remote inference", systemImage: "network")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help(dream.provenanceDescription)
         }
     }
 
@@ -201,7 +262,7 @@ struct TodayView: View {
 
     @ViewBuilder private var digestBlock: some View {
         if let digest = model.digest {
-            DayDigestView(digest)
+            DayDigestView(digest, mode: .today)
                 .accessibilityIdentifier("today.dayDigest.text")
         } else {
             HStack(spacing: 8) {

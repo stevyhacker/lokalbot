@@ -207,7 +207,31 @@ enum SyntheticFixture {
                                                 withIntermediateDirectories: true)
         for (day, marker) in [(today, todayDigestMarker),
                               (previousDay, previousDayDigestMarker)] {
-            let digest = "## \(marker)\n\n- Fixture evidence for this local day."
+            let digest = """
+                ## Day summary
+
+                ### At a glance
+                - \(marker)
+                - Verified the synthetic Timeline state.
+
+                ### Focus blocks
+                - **09:00–10:30 · Fixture implementation** — User updated the Timeline UI. [screen:4242]
+
+                ## Meetings
+
+                _None._
+
+                ## Time allocation
+
+                | App | Tracked time |
+                | --- | ---: |
+                | Xcode | 1h 30m |
+
+                ## Full activity log
+
+                - **09:00–10:30** — **Xcode** — TimelineView.swift
+                  - [screen:4242], 09:30: Updated the Timeline UI.
+                """
             try digest.write(
                 to: journal.appendingPathComponent("\(dayKey(for: day)).md"),
                 atomically: true,

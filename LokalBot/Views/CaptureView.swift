@@ -156,6 +156,7 @@ enum CaptureStyle {
     }
 
     static func hm(_ seconds: TimeInterval) -> String {
+        if seconds > 0, seconds < 60 { return "<1m" }
         let minutes = Int(seconds) / 60
         return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
     }

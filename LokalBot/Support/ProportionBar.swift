@@ -1,5 +1,49 @@
 import SwiftUI
 
+/// Human-facing rows for the app-time list. The complete totals remain in the
+/// journal, while the overview promotes only meaningful apps and folds short
+/// or long-tail activity into one honest `Other` row.
+enum AppTimePresentation {
+    struct Row: Equatable {
+        let label: String
+        let seconds: TimeInterval
+        let appCount: Int
+        let isOther: Bool
+    }
+
+    static func rows(
+        perApp: [(label: String, seconds: TimeInterval)],
+        cap: Int = 5,
+        minimumVisibleSeconds: TimeInterval = 60
+    ) -> [Row] {
+        let sorted = perApp.filter { $0.seconds > 0 }
+            .sorted { $0.seconds > $1.seconds }
+        var visible: [Row] = []
+        var otherSeconds: TimeInterval = 0
+        var otherCount = 0
+        for item in sorted {
+            if item.seconds >= minimumVisibleSeconds && visible.count < max(0, cap) {
+                visible.append(Row(
+                    label: item.label,
+                    seconds: item.seconds,
+                    appCount: 1,
+                    isOther: false))
+            } else {
+                otherSeconds += item.seconds
+                otherCount += 1
+            }
+        }
+        if otherCount > 0 {
+            visible.append(Row(
+                label: "Other",
+                seconds: otherSeconds,
+                appCount: otherCount,
+                isOther: true))
+        }
+        return visible
+    }
+}
+
 /// Math behind the per-app proportion bar, separated from the view for unit
 /// tests (same pattern as `LiveWaveformMath`).
 enum ProportionBarMath {
@@ -12,7 +56,7 @@ enum ProportionBarMath {
     /// past `cap` apps into an "Other" segment. Zero totals produce an empty
     /// bar rather than NaN fractions.
     static func segments(perApp: [(label: String, seconds: TimeInterval)],
-                         cap: Int = 6) -> [Segment] {
+                         cap: Int = 5) -> [Segment] {
         let positive = perApp.filter { $0.seconds > 0 }
         let total = positive.reduce(0) { $0 + $1.seconds }
         guard total > 0 else { return [] }
@@ -46,5 +90,10 @@ struct ProportionBar: View {
         .frame(height: height)
         .background(.quaternary.opacity(0.4))
         .clipShape(Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Time by app")
+        .accessibilityValue(segments.map {
+            "\($0.segment.label) \(Int(($0.segment.fraction * 100).rounded())) percent"
+        }.joined(separator: ", "))
     }
 }

@@ -4,42 +4,51 @@ import SwiftUI
 /// focus stay visible; the forensic activity/evidence trail is available on
 /// demand without making every captured moment compete for attention.
 struct DayDigestView: View {
+    enum Mode: Equatable {
+        case standalone
+        case timeline
+        case today
+
+        var showsMeetings: Bool { self != .today }
+        var showsTimeAllocation: Bool { self == .standalone }
+        var showsFullActivityLog: Bool { self != .today }
+    }
+
     let presentation: DayDigestPresentation
+    let mode: Mode
 
     @State private var fullActivityExpanded = false
     @State private var extraFocusExpanded = false
 
-    init(_ markdown: String) {
+    init(_ markdown: String, mode: Mode = .standalone) {
         presentation = DayDigestPresentation(markdown: markdown)
+        self.mode = mode
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 20) {
             if !presentation.atAGlanceMarkdown.isEmpty {
-                digestSection("At a glance", icon: "sparkles") {
+                digestSection("Highlights", icon: "sparkles") {
                     SelectableDigestText(presentation.atAGlanceMarkdown)
                 }
             }
 
             if !presentation.focusBlocks.isEmpty {
-                digestSection("Focus blocks", icon: "scope") {
+                digestSection("Work sessions", icon: "scope") {
                     VStack(alignment: .leading, spacing: 8) {
-                        ForEach(presentation.focusBlocks) { block in
-                            focusBlock(block)
-                        }
-                        if !presentation.additionalFocusBlocks.isEmpty {
+                        sessionList(Array(presentation.focusBlocks.prefix(3)))
+                        let additional = Array(presentation.focusBlocks.dropFirst(3))
+                        if !additional.isEmpty {
                             DisclosureGroup(
                                 isExpanded: $extraFocusExpanded,
                                 content: {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        ForEach(presentation.additionalFocusBlocks) { block in
-                                            focusBlock(block)
-                                        }
-                                    }
+                                    sessionList(additional)
                                     .padding(.top, 8)
                                 },
                                 label: {
-                                    Text("More summary details · \(presentation.additionalFocusBlocks.count)")
+                                    Text(extraFocusExpanded
+                                         ? "Hide additional sessions"
+                                         : "Show \(additional.count) more session\(additional.count == 1 ? "" : "s")")
                                         .font(.callout.weight(.medium))
                                 })
                             .accessibilityIdentifier("dayDigest.moreSummaryDetails")
@@ -54,17 +63,17 @@ struct DayDigestView: View {
                 }
             }
 
-            if let meetings = presentation.meetingsMarkdown {
+            if mode.showsMeetings, let meetings = presentation.meetingsMarkdown {
                 digestSection("Meetings", icon: "person.2") {
                     SelectableDigestText(meetings)
                 }
             }
 
-            if !presentation.timeAllocations.isEmpty {
+            if mode.showsTimeAllocation, !presentation.timeAllocations.isEmpty {
                 timeAllocationSection
             }
 
-            if presentation.activityCount > 0 {
+            if mode.showsFullActivityLog, presentation.activityCount > 0 {
                 DisclosureGroup(isExpanded: $fullActivityExpanded) {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(presentation.activityGroups) { group in
@@ -75,7 +84,7 @@ struct DayDigestView: View {
                 } label: {
                     HStack(spacing: 8) {
                         Label("Full activity log", systemImage: "clock.arrow.circlepath")
-                            .font(.headline)
+                            .font(.subheadline.weight(.semibold))
                         Spacer()
                         Text("\(presentation.activityCount) events")
                             .font(.caption.monospacedDigit())
@@ -96,25 +105,49 @@ struct DayDigestView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(title, systemImage: icon)
-                .font(.headline)
+                .font(.subheadline.weight(.semibold))
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private func sessionList(_ blocks: [DayDigestPresentation.FocusBlock]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(blocks) { block in
+                focusBlock(block)
+                    .padding(.vertical, 10)
+                if block.id != blocks.last?.id {
+                    Divider()
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .background(.quaternary.opacity(0.24),
+                    in: RoundedRectangle(cornerRadius: Brand.Radius.control))
+    }
+
     private func focusBlock(_ block: DayDigestPresentation.FocusBlock) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            SelectableDigestText(block.markdown)
-            if block.sourceCount > 0 {
-                Label(
-                    "\(block.sourceCount) captured source\(block.sourceCount == 1 ? "" : "s")",
-                    systemImage: "rectangle.and.text.magnifyingglass")
-                    .font(.caption)
+        VStack(alignment: .leading, spacing: 5) {
+            if block.timeRange != nil || block.title != nil {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    if let timeRange = block.timeRange {
+                        Text(timeRange)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    if let title = block.title {
+                        Text(title)
+                            .font(.body.weight(.semibold))
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            if !block.summaryMarkdown.isEmpty {
+                SelectableDigestText(block.summaryMarkdown)
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(10)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 9))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var timeAllocationSection: some View {

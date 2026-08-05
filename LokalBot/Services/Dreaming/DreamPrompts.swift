@@ -62,8 +62,10 @@ enum DreamPrompts {
     - Distinguish verified facts from inference: prefix inferred items with "Likely:".
     - Cite meeting IDs in backticks exactly as given in the evidence. Never invent \
     activity, names, numbers, or meetings.
-    - narrative: 2-4 sentences on how the day actually went. If evidence is sparse, \
-    say so plainly instead of padding.
+    - narrative: 1-2 natural sentences on how yesterday actually went. Use \
+    "yesterday", never a raw ISO date. Write directly; never say "the user" or use \
+    the person's name as the subject. Do not mention whether goals, evidence, or \
+    metadata were recorded. If little happened, keep the narrative short.
     - attention: critical issues or regressions deserving attention first, most \
     severe first, each with its evidence.
     - repeated_work: manual work that recurred and could be automated further.
@@ -72,7 +74,8 @@ enum DreamPrompts {
     - frictions: quality or UX improvements suggested by rework, confusion, weak \
     validation, or friction in the day's work.
     - top_actions: the top three actions to consider today, ranked by expected \
-    leverage. At most three.
+    leverage. At most three. Every action must follow from explicit unresolved work, \
+    a blocker, or a concrete friction in the evidence; never invent generic productivity advice.
     - active_projects, work_goals, recurring_patterns: return the FULL updated \
     memory. Update statuses from the day's evidence, add new entries only with \
     clear evidence, keep entries you still believe active even if untouched \

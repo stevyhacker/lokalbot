@@ -723,7 +723,7 @@ enum DayDigestOverviewGenerator {
                     "type": "array",
                     "items": ["type": "string"],
                     "minItems": 1,
-                    "maxItems": 5,
+                    "maxItems": 3,
                 ],
                 "decisions_and_next_steps": [
                     "type": "array",
@@ -823,7 +823,7 @@ enum DayDigestOverviewGenerator {
         for raw in draft?.atAGlance ?? [] {
             let clean = cleanBullet(raw, maxWords: 38)
             if !clean.isEmpty && !bullets.contains(clean) { bullets.append(clean) }
-            if bullets.count == 5 { break }
+            if bullets.count == 3 { break }
         }
         let minimum = min(3, blocks.count)
         for block in blocks where bullets.count < minimum {
@@ -838,7 +838,7 @@ enum DayDigestOverviewGenerator {
             if !clean.isEmpty && !decisions.contains(clean) { decisions.append(clean) }
             if decisions.count == 4 { break }
         }
-        return (Array(bullets.prefix(5)), decisions)
+        return (Array(bullets.prefix(3)), decisions)
     }
 
     private static func focusMaterial(
@@ -863,6 +863,14 @@ enum DayDigestOverviewGenerator {
         while clean.hasPrefix("-") || clean.hasPrefix("•") {
             clean.removeFirst()
             clean = clean.trimmingCharacters(in: .whitespaces)
+        }
+        for prefix in ["The user ", "the user ", "User ", "user "] where clean.hasPrefix(prefix) {
+            clean.removeFirst(prefix.count)
+            if let first = clean.first {
+                clean.replaceSubrange(clean.startIndex...clean.startIndex,
+                                      with: String(first).uppercased())
+            }
+            break
         }
         let words = clean.split(whereSeparator: \Character.isWhitespace)
         guard words.count > maxWords else { return clean }

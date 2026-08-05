@@ -33,6 +33,29 @@ final class MainWindowUITests: XCTestCase {
         UITestHarness.cleanUp(defaultsSuiteName: defaultsSuiteName)
     }
 
+    // MARK: - Today
+
+    /// Today keeps the useful digest hierarchy without repeating the host
+    /// page's time chart or exposing capture/evidence bookkeeping.
+    func testTodayUsesCompactDigestHierarchy() {
+        XCTAssertTrue(textWithContent(SyntheticFixture.todayDigestMarker).firstMatch
+            .waitForExistence(timeout: 6), "today's persisted digest did not render")
+        XCTAssertTrue(textWithContent("Highlights").firstMatch.exists,
+                      "digest highlights hierarchy is missing")
+        XCTAssertTrue(textWithContent("Work sessions").firstMatch.exists,
+                      "digest work-session hierarchy is missing")
+        XCTAssertTrue(textWithContent("Updated the Timeline UI").firstMatch.exists,
+                      "human-facing focus summary is missing")
+        XCTAssertFalse(textWithContent("User updated the Timeline UI").firstMatch.exists,
+                       "model bookkeeping subject leaked into the focus summary")
+        XCTAssertFalse(textWithContent("screen:4242").firstMatch.exists,
+                       "private evidence identifier leaked into Today")
+        XCTAssertFalse(textWithContent("Time allocation").firstMatch.exists,
+                       "Today repeated its app-time chart inside the digest")
+        XCTAssertFalse(app.descendants(matching: .any)["dayDigest.fullActivityLog"].exists,
+                       "Today exposed the forensic activity log")
+    }
+
     // MARK: - Library
 
     /// LokalBot owns one split-view sidebar toggle so every navigation topology
@@ -172,10 +195,20 @@ final class MainWindowUITests: XCTestCase {
     /// four-tab control is gone (spec §2.2).
     func testTimelineRendersTrackAndOverview() {
         clickSidebar("sidebar.timeline")
-        XCTAssertTrue(textWithContent("Time by app").firstMatch.waitForExistence(timeout: 6),
+        XCTAssertTrue(textWithContent("Where time went").firstMatch.waitForExistence(timeout: 6),
                       "day-overview totals headline missing — seeded activity did not load")
         XCTAssertTrue(textWithContent("Xcode").firstMatch.exists,
                       "seeded activity app 'Xcode' missing from Timeline")
+        XCTAssertTrue(textWithContent("Work sessions").firstMatch.exists,
+                      "digest work-session hierarchy is missing")
+        XCTAssertTrue(textWithContent("Updated the Timeline UI").firstMatch.exists,
+                      "human-facing focus summary is missing")
+        XCTAssertFalse(textWithContent("User updated the Timeline UI").firstMatch.exists,
+                       "model bookkeeping subject leaked into the focus summary")
+        XCTAssertFalse(textWithContent("screen:4242").firstMatch.exists,
+                       "private evidence identifier leaked into the collapsed overview")
+        XCTAssertFalse(textWithContent("Time allocation").firstMatch.exists,
+                       "embedded digest repeated the host page's app-time chart")
         XCTAssertFalse(textWithContent("No activity recorded").firstMatch.exists,
                        "empty state shown despite seeded activity blocks")
         XCTAssertTrue(app.descendants(matching: .any)["timeline.track"].exists,
@@ -219,7 +252,7 @@ final class MainWindowUITests: XCTestCase {
             .waitForExistence(timeout: 4), "previous day's digest did not replace today's")
         XCTAssertFalse(textWithContent(SyntheticFixture.todayDigestMarker).firstMatch.exists,
                        "today's digest remained visible after changing the date")
-        XCTAssertFalse(textWithContent("Time by app").firstMatch.exists,
+        XCTAssertFalse(textWithContent("Where time went").firstMatch.exists,
                        "today's activity totals remained in the previous-day overview")
     }
 

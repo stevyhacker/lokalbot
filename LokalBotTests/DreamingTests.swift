@@ -481,6 +481,12 @@ final class DreamingTests: XCTestCase {
 
     // MARK: - Prompts / parsing
 
+    func testDreamPromptRequestsHumanMorningBriefCopy() {
+        XCTAssertTrue(DreamPrompts.system.contains("Use \"yesterday\", never a raw ISO date"))
+        XCTAssertTrue(DreamPrompts.system.contains("never say \"the user\""))
+        XCTAssertTrue(DreamPrompts.system.contains("never invent generic productivity advice"))
+    }
+
     func testParseToleratesFencedJSONAndAppliesCaps() throws {
         let output = """
         Sure! Here is the retrospective:

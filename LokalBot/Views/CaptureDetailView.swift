@@ -124,6 +124,7 @@ struct CaptureDetailView: View {
                 .accessibilityIdentifier("capture.askDay")
                 Divider()
                 digestSection
+                    .frame(maxWidth: 860, alignment: .leading)
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -134,25 +135,34 @@ struct CaptureDetailView: View {
         let total = perApp.reduce(0) { $0 + $1.value }
         let segments = ProportionBarMath.segments(
             perApp: perApp.map { (label: $0.key, seconds: $0.value) })
-        let top = perApp.prefix(12)
-        let rest = perApp.dropFirst(12)
-        let restSeconds = rest.reduce(0) { $0 + $1.value }
+        let rows = AppTimePresentation.rows(
+            perApp: perApp.map { (label: $0.key, seconds: $0.value) })
         return VStack(alignment: .leading, spacing: 6) {
-            Text("Time by app — \(CaptureStyle.hm(total)) tracked").font(.headline)
+            HStack {
+                Text("Where time went").font(.headline)
+                Spacer()
+                Text("\(CaptureStyle.hm(total)) tracked")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
             ProportionBar(segments: segments.map {
                 ($0, $0.label == "Other" ? Color(nsColor: .tertiaryLabelColor)
                                          : CaptureStyle.color(for: $0.label))
             })
             .padding(.vertical, 2)
-            ForEach(top, id: \.key) { appName, seconds in
-                totalsRow(CaptureStyle.color(for: appName), appName, seconds, of: total)
-            }
-            if !rest.isEmpty {
-                totalsRow(Color(nsColor: .tertiaryLabelColor),
-                          "Other (\(rest.count) app\(rest.count == 1 ? "" : "s"))",
-                          restSeconds, of: total)
+            ForEach(rows, id: \.label) { row in
+                let label = row.isOther
+                    ? "Other (\(row.appCount) app\(row.appCount == 1 ? "" : "s"))"
+                    : row.label
+                totalsRow(
+                    row.isOther ? Color(nsColor: .tertiaryLabelColor)
+                                : CaptureStyle.color(for: row.label),
+                    label,
+                    row.seconds,
+                    of: total)
             }
         }
+        .frame(maxWidth: 680, alignment: .leading)
     }
 
     private func totalsRow(_ swatch: Color, _ label: String, _ seconds: TimeInterval,
@@ -171,22 +181,38 @@ struct CaptureDetailView: View {
     private var digestSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Day digest").font(.headline)
+                Text("Day digest").font(.title3.bold())
                 if model.generating { ProgressView().controlSize(.small) }
                 Spacer()
                 if let digest = model.digest {
-                    Button { model.copyDigest(digest) } label: { Image(systemName: "doc.on.doc") }
-                        .help("Copy the digest to the clipboard")
-                        .accessibilityLabel("Copy entire day digest")
+                    Menu {
+                        Button {
+                            Task { await model.generateDigest(app: app) }
+                        } label: {
+                            Label("Regenerate", systemImage: "arrow.clockwise")
+                        }
+                        .disabled(model.generating)
+                        Divider()
+                        Button { model.copyDigest(digest) } label: {
+                            Label("Copy digest", systemImage: "doc.on.doc")
+                        }
                         .accessibilityIdentifier("capture.dayDigest.copyAll")
-                    Button { model.exportDigest(digest) } label: { Image(systemName: "square.and.arrow.up") }
-                        .help("Save the digest as a Markdown file")
+                        Button { model.exportDigest(digest) } label: {
+                            Label("Export Markdown", systemImage: "square.and.arrow.up")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help(digestUpdatedHelp)
+                    .accessibilityLabel("Day digest actions")
+                } else {
+                    Button("Generate digest") {
+                        Task { await model.generateDigest(app: app) }
+                    }
+                    .disabled(model.generating)
                 }
-            }
-            if let updatedAt = model.digestUpdatedAt {
-                Text("Updated \(updatedAt.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
             if model.digestIsStale {
                 Label("Newer activity is available — regenerate to include it.",
@@ -195,19 +221,20 @@ struct CaptureDetailView: View {
                     .foregroundStyle(.orange)
                     .accessibilityIdentifier("capture.dayDigest.stale")
             }
-            Button(model.digest == nil ? "Generate digest" : "Regenerate") {
-                Task { await model.generateDigest(app: app) }
-            }
-            .disabled(model.generating)
             if let digestError = model.digestError {
                 Label(digestError, systemImage: "exclamationmark.triangle")
                     .font(.callout).foregroundStyle(.orange)
             }
             if let digest = model.digest {
-                DayDigestView(digest)
+                DayDigestView(digest, mode: .timeline)
                     .accessibilityIdentifier("capture.dayDigest.text")
             }
         }
+    }
+
+    private var digestUpdatedHelp: String {
+        guard let updatedAt = model.digestUpdatedAt else { return "Day digest actions" }
+        return "Updated \(updatedAt.formatted(date: .abbreviated, time: .shortened))"
     }
 
     // MARK: - Activity block detail (card + per-app context + captured moments)

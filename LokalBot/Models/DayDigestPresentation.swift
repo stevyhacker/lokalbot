@@ -6,8 +6,10 @@ import Foundation
 struct DayDigestPresentation: Equatable {
     struct FocusBlock: Equatable, Identifiable {
         let id: Int
-        let markdown: String
-        let sourceCount: Int
+        let timeRange: String?
+        let title: String?
+        let summaryMarkdown: String
+        let sourceIDs: [Int64]
     }
 
     struct ActivityEntry: Equatable, Identifiable {
@@ -36,7 +38,6 @@ struct DayDigestPresentation: Equatable {
 
     let atAGlanceMarkdown: String
     let focusBlocks: [FocusBlock]
-    let additionalFocusBlocks: [FocusBlock]
     let decisionsMarkdown: String?
     let meetingsMarkdown: String?
     let timeAllocations: [TimeAllocation]
@@ -82,12 +83,10 @@ struct DayDigestPresentation: Equatable {
                      "decisions, follow-ups, and blockers"].contains(title)
         }.map { "### \($0.title)\n\n\($0.body)" }
 
-        atAGlanceMarkdown = Self.joinNonempty(
-            [overview, summaryPreamble] + unknownSummary)
+        atAGlanceMarkdown = Self.conciseOverview(Self.joinNonempty(
+            [overview, summaryPreamble] + unknownSummary))
 
-        let parsedFocus = Self.focusBlocks(from: focus ?? "")
-        focusBlocks = Array(parsedFocus.prefix(8))
-        additionalFocusBlocks = Array(parsedFocus.dropFirst(8))
+        focusBlocks = Self.focusBlocks(from: focus ?? "")
         decisionsMarkdown = Self.meaningful(decisions)
 
         let meetings = document.first(where: {
@@ -188,17 +187,106 @@ struct DayDigestPresentation: Equatable {
         values.compactMap(meaningful).joined(separator: "\n\n")
     }
 
+    /// The journal can retain a longer overview for export, but the default UI
+    /// should answer "what mattered?" in one glance. Paragraph-style legacy
+    /// summaries are kept intact; generated bullet lists show at most three.
+    private static func conciseOverview(_ markdown: String) -> String {
+        let items = topLevelItems(in: markdown)
+        guard !items.isEmpty else { return markdown }
+        return items.prefix(3).joined(separator: "\n")
+    }
+
     private static func focusBlocks(from markdown: String) -> [FocusBlock] {
         let clean = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return [] }
         let items = topLevelItems(in: clean)
         let blocks = items.isEmpty ? [clean] : items
-        return blocks.enumerated().map { index, block in
-            FocusBlock(
-                id: index,
-                markdown: block,
-                sourceCount: occurrences(of: "[screen:", in: block))
+        return blocks.enumerated().map { focusBlock(id: $0.offset, markdown: $0.element) }
+    }
+
+    /// New journals store focus blocks as
+    /// `**time · topic** — summary [screen:id]`. Split those fields for the UI
+    /// instead of exposing Markdown syntax and private evidence identifiers.
+    /// Legacy bullets fall back to a plain summary row.
+    private static func focusBlock(id: Int, markdown: String) -> FocusBlock {
+        let raw = strippingListMarker(markdown)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceIDs = screenIDs(in: raw)
+        let visible = raw.replacingOccurrences(
+            of: #"\s*\[screen:\d+\]"#,
+            with: "",
+            options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard visible.hasPrefix("**") else {
+            return FocusBlock(
+                id: id,
+                timeRange: nil,
+                title: nil,
+                summaryMarkdown: directVoice(visible),
+                sourceIDs: sourceIDs)
         }
+        let headingStart = visible.index(visible.startIndex, offsetBy: 2)
+        guard let headingEnd = visible.range(
+            of: "**", range: headingStart..<visible.endIndex) else {
+            return FocusBlock(
+                id: id,
+                timeRange: nil,
+                title: nil,
+                summaryMarkdown: directVoice(visible),
+                sourceIDs: sourceIDs)
+        }
+
+        let heading = String(visible[headingStart..<headingEnd.lowerBound])
+        let remainder = String(visible[headingEnd.upperBound...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let summary = remainder.hasPrefix("—")
+            ? String(remainder.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+            : remainder
+        if let separator = heading.range(of: " · ") {
+            return FocusBlock(
+                id: id,
+                timeRange: String(heading[..<separator.lowerBound]),
+                title: directVoice(String(heading[separator.upperBound...])),
+                summaryMarkdown: directVoice(summary),
+                sourceIDs: sourceIDs)
+        }
+        return FocusBlock(
+            id: id,
+            timeRange: nil,
+            title: directVoice(heading),
+            summaryMarkdown: directVoice(summary),
+            sourceIDs: sourceIDs)
+    }
+
+    private static func screenIDs(in value: String) -> [Int64] {
+        guard let expression = try? NSRegularExpression(pattern: #"\[screen:(\d+)\]"#) else {
+            return []
+        }
+        let range = NSRange(value.startIndex..., in: value)
+        var result: [Int64] = []
+        for match in expression.matches(in: value, range: range) {
+            guard let idRange = Range(match.range(at: 1), in: value),
+                  let id = Int64(value[idRange]), !result.contains(id) else { continue }
+            result.append(id)
+        }
+        return result
+    }
+
+    private static func directVoice(_ value: String) -> String {
+        var clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let firstName = NSFullUserName().split(whereSeparator: \Character.isWhitespace)
+            .first.map(String.init)
+        let prefixes = ["The user ", "the user ", "User ", "user "]
+            + (firstName.map { ["\($0) "] } ?? [])
+        for prefix in prefixes where clean.hasPrefix(prefix) {
+            clean.removeFirst(prefix.count)
+            guard let first = clean.first else { return clean }
+            clean.replaceSubrange(clean.startIndex...clean.startIndex,
+                                  with: String(first).uppercased())
+            break
+        }
+        return clean
     }
 
     private static func topLevelItems(in markdown: String) -> [String] {
@@ -306,8 +394,4 @@ struct DayDigestPresentation: Equatable {
             .replacingOccurrences(of: "\\\\", with: "\\")
     }
 
-    private static func occurrences(of needle: String, in haystack: String) -> Int {
-        guard !needle.isEmpty else { return 0 }
-        return haystack.components(separatedBy: needle).count - 1
-    }
 }
