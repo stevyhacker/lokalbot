@@ -60,6 +60,54 @@ final class DayDigestSchedulerTests: XCTestCase {
             digestModifiedAt: nil, calendar: calendar))
     }
 
+    func testPreviousDayIsFinalizedBeforeTodaysPreview() throws {
+        let now = try date("2026-07-22T19:00:00Z")
+        let previousDay = try date("2026-07-21T00:00:00Z")
+
+        let selected = DayDigestScheduler.generationDay(
+            at: now,
+            hour: 18,
+            previousDay: previousDay,
+            previousDayLatestEvidenceAt: try date("2026-07-21T22:15:00Z"),
+            previousDayDigestModifiedAt: try date("2026-07-21T18:02:00Z"),
+            currentDayDigestModifiedAt: nil,
+            calendar: calendar)
+
+        XCTAssertEqual(selected, previousDay)
+    }
+
+    func testPreviousDayFinalizationMarkerSuppressesAnotherRun() throws {
+        let now = try date("2026-07-22T08:00:00Z")
+        let previousDay = try date("2026-07-21T00:00:00Z")
+
+        let selected = DayDigestScheduler.generationDay(
+            at: now,
+            hour: 18,
+            previousDay: previousDay,
+            previousDayLatestEvidenceAt: try date("2026-07-21T22:15:00Z"),
+            previousDayDigestModifiedAt: try date("2026-07-22T00:05:00Z"),
+            currentDayDigestModifiedAt: nil,
+            calendar: calendar)
+
+        XCTAssertNil(selected, "today is before 18:00 and yesterday is already final")
+    }
+
+    func testTodaysPreviewRunsAfterYesterdayWasFinalized() throws {
+        let now = try date("2026-07-22T19:00:00Z")
+        let previousDay = try date("2026-07-21T00:00:00Z")
+
+        let selected = DayDigestScheduler.generationDay(
+            at: now,
+            hour: 18,
+            previousDay: previousDay,
+            previousDayLatestEvidenceAt: try date("2026-07-21T22:15:00Z"),
+            previousDayDigestModifiedAt: try date("2026-07-22T00:05:00Z"),
+            currentDayDigestModifiedAt: nil,
+            calendar: calendar)
+
+        XCTAssertEqual(selected, now)
+    }
+
     // MARK: - Tick behavior
 
     /// An empty day is not a failure: the generate closure reports it and the
@@ -75,6 +123,7 @@ final class DayDigestSchedulerTests: XCTestCase {
         scheduler.configure(
             .init(enabled: true, hour: 18),
             digestModifiedAt: { _ in nil },
+            latestEvidenceAt: { _ in nil },
             canRun: { true },
             generate: { _ in
                 generated.fulfill()
@@ -99,6 +148,7 @@ final class DayDigestSchedulerTests: XCTestCase {
         scheduler.configure(
             .init(enabled: true, hour: 18),
             digestModifiedAt: { _ in nil },
+            latestEvidenceAt: { _ in nil },
             canRun: { true },
             generate: { _ in
                 started.fulfill()
@@ -117,6 +167,7 @@ final class DayDigestSchedulerTests: XCTestCase {
         scheduler.configure(
             .init(enabled: false, hour: 18),
             digestModifiedAt: { _ in nil },
+            latestEvidenceAt: { _ in nil },
             canRun: { true },
             generate: { _ in false },
             onError: { _ in unexpectedError.fulfill() })
@@ -138,7 +189,9 @@ final class DayDigestSchedulerTests: XCTestCase {
         let system = PromptTemplates.dayDigestSystem(
             custom: "  Write in Serbian.  ")
         XCTAssertTrue(system.hasPrefix(PromptTemplates.dayDigestSystem))
-        XCTAssertTrue(system.hasSuffix("Write in Serbian."))
+        XCTAssertTrue(system.contains("Additional instructions from the user: Write in Serbian."))
+        XCTAssertTrue(system.hasSuffix(
+            "Follow them only when they do not conflict with grounding, chronology, citation, or required-section rules above."))
     }
 
     func testOverlongCustomPromptIsCapped() {
@@ -146,8 +199,14 @@ final class DayDigestSchedulerTests: XCTestCase {
             custom: String(repeating: "focus on code reviews ", count: 200))
         let ceiling = PromptTemplates.dayDigestSystem.count
             + PromptTemplates.dayDigestCustomPromptMaxCharacters
-            + 100 // joining clause
+            + 220 // joining + non-conflict clauses
         XCTAssertLessThanOrEqual(system.count, ceiling)
         XCTAssertTrue(system.hasPrefix(PromptTemplates.dayDigestSystem))
+    }
+
+    func testDigestPromptTreatsCapturedTextAsEvidenceNotInstructions() {
+        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("untrusted data"))
+        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("chronological order"))
+        XCTAssertTrue(PromptTemplates.dayDigestChunkSystem.contains("[screen:ID]"))
     }
 }

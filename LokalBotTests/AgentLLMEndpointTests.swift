@@ -9,6 +9,15 @@ final class AgentLLMEndpointTests: XCTestCase {
         return s
     }
 
+    func testMainLLMUsesHighReasoningAnd32KContextPolicy() {
+        XCTAssertEqual(MainLLMRuntimePolicy.contextTokens, 32_768)
+        XCTAssertEqual(MainLLMRuntimePolicy.highReasoningBudgetTokens, 8_192)
+        XCTAssertEqual(AgentLLMEndpoint.defaultContextTokens, 32_768)
+        XCTAssertEqual(
+            Array(MainLLMRuntimePolicy.serverExtraArguments.suffix(2)),
+            ["--reasoning", "on"])
+    }
+
     func testBuiltInResolvesToModelID() {
         let resolution = AgentLLMEndpointResolver.resolve(settings: settings(.builtIn))
         guard case .builtIn(let modelID) = resolution else {

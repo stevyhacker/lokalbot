@@ -201,7 +201,7 @@ struct TodayView: View {
 
     @ViewBuilder private var digestBlock: some View {
         if let digest = model.digest {
-            SelectableDigestText(digest)
+            DayDigestView(digest)
                 .accessibilityIdentifier("today.dayDigest.text")
         } else {
             HStack(spacing: 8) {

@@ -4,11 +4,14 @@ import Foundation
 /// as `DailyMemoryExportScheduler` (correct across sleep/wake and DST), with
 /// two digest-specific twists:
 ///
-/// - the durable once-per-day marker is the journal file's modification time:
+/// - the durable marker is the journal file's modification time:
 ///   written at/after today's scheduled hour means done (survives relaunch,
 ///   and a manual regenerate after the hour counts too), while a digest the
 ///   user generated in the morning is refreshed at the scheduled hour with
 ///   the fuller day;
+/// - yesterday is finalized once after the local date changes. Rewriting its
+///   journal today makes the mtime a durable finalization marker, so late work
+///   after the evening preview is included without an extra database flag;
 /// - a day with nothing to digest yet is not a failure — the generate closure
 ///   reports it and the scheduler simply retries on a later tick, so a
 ///   meeting that ends at 19:00 still gets digested the same evening.
@@ -32,6 +35,7 @@ final class DayDigestScheduler {
     private let now: () -> Date
     private var configuration: Configuration?
     private var digestModifiedAt: ((Date) -> Date?)?
+    private var latestEvidenceAt: ((Date) -> Date?)?
     private var canRun: () -> Bool = { true }
     private var generate: Generate?
     private var errorHandler: ((String) -> Void)?
@@ -48,6 +52,7 @@ final class DayDigestScheduler {
     func configure(
         _ configuration: Configuration,
         digestModifiedAt: @escaping (Date) -> Date?,
+        latestEvidenceAt: @escaping (Date) -> Date?,
         canRun: @escaping () -> Bool,
         generate: @escaping Generate,
         onError: @escaping (String) -> Void
@@ -55,6 +60,7 @@ final class DayDigestScheduler {
         let changed = self.configuration != configuration
         self.configuration = configuration
         self.digestModifiedAt = digestModifiedAt
+        self.latestEvidenceAt = latestEvidenceAt
         self.canRun = canRun
         self.generate = generate
         errorHandler = onError
@@ -88,12 +94,19 @@ final class DayDigestScheduler {
               let configuration,
               configuration.enabled,
               let digestModifiedAt,
+              let latestEvidenceAt,
               let generate else { return }
         let current = now()
-        guard Self.shouldRun(
+        let todayStart = calendar.startOfDay(for: current)
+        let previousDay = calendar.date(byAdding: .day, value: -1, to: todayStart)
+            ?? todayStart.addingTimeInterval(-86_400)
+        guard let day = Self.generationDay(
             at: current,
             hour: configuration.normalizedHour,
-            digestModifiedAt: digestModifiedAt(current),
+            previousDay: previousDay,
+            previousDayLatestEvidenceAt: latestEvidenceAt(previousDay),
+            previousDayDigestModifiedAt: digestModifiedAt(previousDay),
+            currentDayDigestModifiedAt: digestModifiedAt(current),
             calendar: calendar) else { return }
         // A failed generation (model unreachable, disk error) should be
         // visible but not retried every minute; generation itself can take a
@@ -109,7 +122,7 @@ final class DayDigestScheduler {
                 // `false` means the day is still empty: the journal file is
                 // not written, so the marker stays absent and a later tick
                 // retries once the day has content.
-                _ = try await generate(current)
+                _ = try await generate(day)
                 if generation == runGeneration { lastFailure = nil }
             } catch is CancellationError {
             } catch {
@@ -138,5 +151,29 @@ final class DayDigestScheduler {
         guard date >= target else { return false }
         if let digestModifiedAt, digestModifiedAt >= target { return false }
         return true
+    }
+
+    /// Yesterday takes priority until it has been rewritten after today's
+    /// midnight. Afterwards the normal scheduled preview policy applies to
+    /// today. Pure so DST and durable-marker behavior stay regression-tested.
+    nonisolated static func generationDay(
+        at date: Date,
+        hour: Int,
+        previousDay: Date,
+        previousDayLatestEvidenceAt: Date?,
+        previousDayDigestModifiedAt: Date?,
+        currentDayDigestModifiedAt: Date?,
+        calendar: Calendar
+    ) -> Date? {
+        let todayStart = calendar.startOfDay(for: date)
+        if previousDayLatestEvidenceAt != nil {
+            let wasFinalized = previousDayDigestModifiedAt.map { $0 >= todayStart } ?? false
+            if !wasFinalized { return previousDay }
+        }
+        return shouldRun(
+            at: date,
+            hour: hour,
+            digestModifiedAt: currentDayDigestModifiedAt,
+            calendar: calendar) ? date : nil
     }
 }

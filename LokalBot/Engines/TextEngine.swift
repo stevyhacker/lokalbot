@@ -7,6 +7,8 @@ import Foundation
 protocol TextEngine {
     var displayName: String { get }
     func generate(system: String, prompt: String, context: [String]) async throws -> String
+    func generate(system: String, prompt: String, context: [String],
+                  options: TextGenerationOptions) async throws -> String
 
     /// JSON-schema-constrained generation. Backends with decode-time
     /// constraints guarantee the reply parses against `schema` (llama-server
@@ -15,6 +17,9 @@ protocol TextEngine {
     /// fallback for backends that can't constrain (Apple Intelligence).
     func generate(system: String, prompt: String, context: [String],
                   schema: [String: Any]) async throws -> String
+    func generate(system: String, prompt: String, context: [String],
+                  schema: [String: Any],
+                  options: TextGenerationOptions) async throws -> String
 
     /// Low-latency raw text continuation for cotyping (inline autocomplete).
     /// The default delegates to `generate` with an autocomplete instruction so
@@ -28,6 +33,21 @@ protocol TextEngine {
     /// non-streaming; `OpenAICompatibleEngine` overrides it with SSE.
     func completeStreaming(_ request: CompletionRequest,
                            onPartial: @escaping @Sendable (String) -> Void) async throws -> String
+}
+
+/// Per-request generation controls shared by the local chat backends. A nil
+/// reasoning budget inherits the engine's default.
+struct TextGenerationOptions: Equatable, Sendable {
+    var maxTokens: Int?
+    var reasoningBudgetTokens: Int?
+    var temperature: Double?
+
+    init(maxTokens: Int? = nil, reasoningBudgetTokens: Int? = nil,
+         temperature: Double? = nil) {
+        self.maxTokens = maxTokens
+        self.reasoningBudgetTokens = reasoningBudgetTokens
+        self.temperature = temperature
+    }
 }
 
 enum TextEngineError: LocalizedError {
@@ -122,10 +142,26 @@ func cotypingParseSSEDelta(_ line: String) -> String? {
 }
 
 extension TextEngine {
+    /// Backends without an output-budget control keep their existing behavior.
+    func generate(system: String, prompt: String, context: [String],
+                  options: TextGenerationOptions) async throws -> String {
+        try await generate(system: system, prompt: prompt, context: context)
+    }
+
     /// Unconstrained fallback for backends without decode-time grammar support.
     func generate(system: String, prompt: String, context: [String],
                   schema: [String: Any]) async throws -> String {
         try await generate(system: system, prompt: prompt, context: context)
+    }
+
+    /// Backends that cannot combine grammar constraints with request controls
+    /// still preserve the schema. Built-in llama-server and Ollama override
+    /// this path so digest extraction also gets its explicit sampling policy.
+    func generate(system: String, prompt: String, context: [String],
+                  schema: [String: Any],
+                  options: TextGenerationOptions) async throws -> String {
+        try await generate(system: system, prompt: prompt, context: context,
+                           schema: schema)
     }
 
     /// Chat-backend fallback: ask the model to continue the text and emit only
@@ -154,17 +190,32 @@ struct OllamaEngine: TextEngine {
     var displayName: String { "Ollama — \(model)" }
 
     func generate(system: String, prompt: String, context: [String]) async throws -> String {
-        try await chat(system: system, prompt: prompt, context: context, schema: nil)
+        try await chat(system: system, prompt: prompt, context: context, schema: nil, options: nil)
+    }
+
+    func generate(system: String, prompt: String, context: [String],
+                  options: TextGenerationOptions) async throws -> String {
+        try await chat(system: system, prompt: prompt, context: context,
+                       schema: nil, options: options)
     }
 
     /// Ollama enforces JSON schemas natively via the `format` field.
     func generate(system: String, prompt: String, context: [String],
                   schema: [String: Any]) async throws -> String {
-        try await chat(system: system, prompt: prompt, context: context, schema: schema)
+        try await chat(system: system, prompt: prompt, context: context,
+                       schema: schema, options: nil)
+    }
+
+    func generate(system: String, prompt: String, context: [String],
+                  schema: [String: Any],
+                  options: TextGenerationOptions) async throws -> String {
+        try await chat(system: system, prompt: prompt, context: context,
+                       schema: schema, options: options)
     }
 
     private func chat(system: String, prompt: String, context: [String],
-                      schema: [String: Any]?) async throws -> String {
+                      schema: [String: Any]?,
+                      options: TextGenerationOptions?) async throws -> String {
         guard !model.isEmpty else { throw TextEngineError.noModel }
         var request = URLRequest(url: baseURL.appendingPathComponent("api/chat"))
         request.httpMethod = "POST"
@@ -180,6 +231,14 @@ struct OllamaEngine: TextEngine {
             ],
         ]
         if let schema { body["format"] = schema }
+        var generationOptions: [String: Any] = [:]
+        if let maxTokens = options?.maxTokens {
+            generationOptions["num_predict"] = max(1, maxTokens)
+        }
+        if let temperature = options?.temperature {
+            generationOptions["temperature"] = max(0, temperature)
+        }
+        if !generationOptions.isEmpty { body["options"] = generationOptions }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await send(request, base: baseURL)
@@ -211,15 +270,23 @@ struct OpenAICompatibleEngine: TextEngine {
     var baseURL: URL        // e.g. http://localhost:1234/v1
     var model: String
     var apiKey: String?
-    /// Extra top-level request fields (e.g. llama-server's
-    /// chat_template_kwargs to disable Qwen3 thinking).
+    /// Extra top-level request fields for server-specific compatibility.
     var extraBody: [String: Any] = [:]
+    /// llama-server's request-level thinking ceiling. Kept nil for generic
+    /// external endpoints that may not understand this extension.
+    var defaultThinkingBudgetTokens: Int?
     var displayNameOverride: String?
 
     var displayName: String { displayNameOverride ?? "OpenAI-compatible — \(model)" }
 
     func generate(system: String, prompt: String, context: [String]) async throws -> String {
-        try await chat(system: system, prompt: prompt, context: context, schema: nil)
+        try await chat(system: system, prompt: prompt, context: context, schema: nil, options: nil)
+    }
+
+    func generate(system: String, prompt: String, context: [String],
+                  options: TextGenerationOptions) async throws -> String {
+        try await chat(system: system, prompt: prompt, context: context,
+                       schema: nil, options: options)
     }
 
     /// OpenAI-standard structured output: llama-server compiles the schema to
@@ -227,11 +294,20 @@ struct OpenAICompatibleEngine: TextEngine {
     /// same `response_format` shape.
     func generate(system: String, prompt: String, context: [String],
                   schema: [String: Any]) async throws -> String {
-        try await chat(system: system, prompt: prompt, context: context, schema: schema)
+        try await chat(system: system, prompt: prompt, context: context,
+                       schema: schema, options: nil)
+    }
+
+    func generate(system: String, prompt: String, context: [String],
+                  schema: [String: Any],
+                  options: TextGenerationOptions) async throws -> String {
+        try await chat(system: system, prompt: prompt, context: context,
+                       schema: schema, options: options)
     }
 
     private func chat(system: String, prompt: String, context: [String],
-                      schema: [String: Any]?) async throws -> String {
+                      schema: [String: Any]?,
+                      options: TextGenerationOptions?) async throws -> String {
         guard !model.isEmpty else { throw TextEngineError.noModel }
         var request = URLRequest(url: baseURL.appendingPathComponent("chat/completions"))
         request.httpMethod = "POST"
@@ -254,6 +330,10 @@ struct OpenAICompatibleEngine: TextEngine {
                 "json_schema": ["name": "response", "strict": true, "schema": schema],
             ]
         }
+        Self.applyGenerationOptions(
+            to: &body,
+            options: options,
+            defaultThinkingBudgetTokens: defaultThinkingBudgetTokens)
         body.merge(extraBody) { _, new in new }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -268,6 +348,27 @@ struct OpenAICompatibleEngine: TextEngine {
             throw TextEngineError.badResponse("unexpected /chat/completions payload")
         }
         return strippingReasoning(content)
+    }
+
+    /// llama-server counts hidden reasoning and visible content inside the
+    /// same completion limit. Cap thinking at half of any explicit output
+    /// budget so "high reasoning" cannot consume the entire answer.
+    nonisolated static func applyGenerationOptions(
+        to body: inout [String: Any],
+        options: TextGenerationOptions?,
+        defaultThinkingBudgetTokens: Int?
+    ) {
+        let maxTokens = options?.maxTokens.map { max(1, $0) }
+        if let maxTokens { body["max_tokens"] = maxTokens }
+        if let temperature = options?.temperature {
+            body["temperature"] = max(0, temperature)
+        }
+
+        guard let requested = options?.reasoningBudgetTokens
+                ?? defaultThinkingBudgetTokens else { return }
+        let nonnegative = max(0, requested)
+        let effective = maxTokens.map { min(nonnegative, $0 / 2) } ?? nonnegative
+        body["thinking_budget_tokens"] = effective
     }
 
     /// Raw `/v1/completions`: the model continues `request.prompt` directly with

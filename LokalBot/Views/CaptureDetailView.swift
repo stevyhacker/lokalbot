@@ -183,6 +183,18 @@ struct CaptureDetailView: View {
                         .help("Save the digest as a Markdown file")
                 }
             }
+            if let updatedAt = model.digestUpdatedAt {
+                Text("Updated \(updatedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if model.digestIsStale {
+                Label("Newer activity is available — regenerate to include it.",
+                      systemImage: "clock.arrow.circlepath")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("capture.dayDigest.stale")
+            }
             Button(model.digest == nil ? "Generate digest" : "Regenerate") {
                 Task { await model.generateDigest(app: app) }
             }
@@ -192,7 +204,7 @@ struct CaptureDetailView: View {
                     .font(.callout).foregroundStyle(.orange)
             }
             if let digest = model.digest {
-                SelectableDigestText(digest)
+                DayDigestView(digest)
                     .accessibilityIdentifier("capture.dayDigest.text")
             }
         }

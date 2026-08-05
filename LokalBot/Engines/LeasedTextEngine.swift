@@ -20,10 +20,27 @@ struct LeasedTextEngine: TextEngine {
     }
 
     func generate(system: String, prompt: String, context: [String],
+                  options: TextGenerationOptions) async throws -> String {
+        try await broker.withLease(role, model: modelURL, priority: priority, purpose: purpose) {
+            try await base.generate(system: system, prompt: prompt, context: context,
+                                    options: options)
+        }
+    }
+
+    func generate(system: String, prompt: String, context: [String],
                   schema: [String: Any]) async throws -> String {
         try await broker.withLease(role, model: modelURL, priority: priority, purpose: purpose) {
             try await base.generate(system: system, prompt: prompt, context: context,
                                     schema: schema)
+        }
+    }
+
+    func generate(system: String, prompt: String, context: [String],
+                  schema: [String: Any],
+                  options: TextGenerationOptions) async throws -> String {
+        try await broker.withLease(role, model: modelURL, priority: priority, purpose: purpose) {
+            try await base.generate(system: system, prompt: prompt, context: context,
+                                    schema: schema, options: options)
         }
     }
 

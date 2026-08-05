@@ -19,7 +19,9 @@ struct ModelCatalog {
         let sizeBytes: Int64?
         let sizeGB: Double
         let blurb: String
-        /// Qwen3 (non-2507) thinks by default; we turn that off for summaries.
+        /// Legacy persisted hint from the pre-high-reasoning runtime. Retained
+        /// so existing custom-model settings keep decoding; the Main LLM now
+        /// applies one explicit reasoning policy at the server/request layer.
         let disablesThinking: Bool
 
         init(id: String, displayName: String, fileName: String, url: String,
@@ -80,10 +82,17 @@ struct ModelCatalog {
     /// LLM, where they belong).
     static let keystrokeScaleMaxGB = 7.0
 
-    /// Superseded cotyping options hidden from new picks. A deny-set rather
-    /// than an `Entry` field: `Entry` is Codable and persisted in
+    /// Models hidden from new cotyping picks. A deny-set rather than an
+    /// `Entry` field: `Entry` is Codable and persisted in
     /// `AppSettings.customBuiltInModels`, so its stored shape must not churn.
-    private static let legacyCotypingIDs: Set<String> = ["gemma4-e4b"]
+    /// The 2.6B LFM is an always-reasoning Main LLM candidate, not a
+    /// keystroke-latency completion model.
+    private static let excludedCotypingIDs: Set<String> = [
+        "gemma4-e4b",
+        "granite-4.1-3b",
+        "lfm2.5-2.6b",
+        "ministral-3-3b-instruct-2512",
+    ]
 
     /// Local GGUF catalog, roughly ordered from tiny fallbacks to higher-quality
     /// meeting-summary and cotyping options.
@@ -116,6 +125,28 @@ struct ModelCatalog {
               sizeBytes: 2_740_937_888,
               sizeGB: 2.8, blurb: "Default Main LLM with balanced local summaries and long context. 16 GB Macs.",
               disablesThinking: true),
+        Entry(id: "lfm2.5-2.6b", displayName: "LFM2.5 2.6B Reasoning",
+              fileName: "LFM2.5-2.6B-Q4_K_M.gguf",
+              url: "https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF/resolve/b22e29ebf6249a8c9fcdda36914743e9980595c4/LFM2.5-2.6B-Q4_K_M.gguf",
+              sha256: "79fdf00351b46cf26f020aead28d01889886be87c55fa0eb907e6f9b00bfee14",
+              sizeBytes: 1_674_454_848,
+              sizeGB: 1.67, blurb: "Experimental compact reasoning model for summaries and extraction. 16 GB Macs.",
+              disablesThinking: false),
+        Entry(id: "granite-4.1-3b", displayName: "Granite 4.1 3B (Experimental)",
+              fileName: "granite-4.1-3b-Q4_K_M.gguf",
+              url: "https://huggingface.co/ibm-granite/granite-4.1-3b-GGUF/resolve/ab4701481089b58a082ef63cc1cee738887293ff/granite-4.1-3b-Q4_K_M.gguf",
+              sha256: "662b0626cd58f443baea23559b469df6576a81d349649c59413b36a9fb32eb29",
+              sizeBytes: 2_099_501_664,
+              sizeGB: 2.10, blurb: "Experimental 3B Main LLM for summaries, extraction, and JSON. 16 GB Macs.",
+              disablesThinking: false),
+        Entry(id: "ministral-3-3b-instruct-2512",
+              displayName: "Ministral 3 3B Instruct (Experimental)",
+              fileName: "Ministral-3-3B-Instruct-2512-Q4_K_M.gguf",
+              url: "https://huggingface.co/mistralai/Ministral-3-3B-Instruct-2512-GGUF/resolve/eb599d408350ea2bb60452cb86be7c7b2fc28227/Ministral-3-3B-Instruct-2512-Q4_K_M.gguf",
+              sha256: "9ed150d4367e68df0ac8e1540f6ddc65b42d0ee26378329d1ecbca60f93fc5f8",
+              sizeBytes: 2_147_023_008,
+              sizeGB: 2.15, blurb: "Experimental 3B Main LLM with native JSON and long context. 16 GB Macs.",
+              disablesThinking: false),
         Entry(id: "gemma4-e4b", displayName: "Gemma 4 E4B (Legacy)",
               fileName: "gemma-4-E4B-it-Q4_K_M.gguf",
               url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/0720adb23527c2cd5ea01d1db067cd960327fdac/gemma-4-E4B-it-Q4_K_M.gguf",
@@ -178,7 +209,7 @@ struct ModelCatalog {
             if entry.id == selectedID { return true }
             if customIDs.contains(entry.id) { return true }
             return entry.sizeGB < keystrokeScaleMaxGB
-                && !legacyCotypingIDs.contains(entry.id)
+                && !excludedCotypingIDs.contains(entry.id)
         }
     }
 

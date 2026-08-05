@@ -1314,6 +1314,16 @@ final class AppState: ObservableObject {
                 let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
                 return attributes?[.modificationDate] as? Date
             },
+            latestEvidenceAt: { [weak self] day in
+                guard let self else { return nil }
+                let meetingEnd = self.meetings
+                    .filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }
+                    .compactMap(\.endedAt)
+                    .max()
+                return [self.activityStore.latestEvidenceAt(on: day), meetingEnd]
+                    .compactMap { $0 }
+                    .max()
+            },
             canRun: { [weak self] in
                 guard let self, self.libraryReady else { return false }
                 let cotypingGenerating: Bool
@@ -1338,11 +1348,17 @@ final class AppState: ObservableObject {
                     Calendar.current.isDate($0.startedAt, inSameDayAs: day)
                         && $0.endedAt != nil
                 }
-                guard !blocks.isEmpty || !finished.isEmpty else { return false }
-                _ = try await self.pipeline.generateDayDigest(
+                let screenContexts = self.activityStore.screenContexts(on: day)
+                guard !blocks.isEmpty || !finished.isEmpty || !screenContexts.isEmpty else {
+                    return false
+                }
+                let result = try await self.pipeline.generateDayDigest(
                     for: day, blocks: blocks, meetings: finished,
-                    ocr: self.activityStore.ocrText(on: day),
+                    screenContexts: screenContexts,
                     config: self.settings)
+                if let warning = result.summaryWarning {
+                    self.lastError = warning
+                }
                 return true
             },
             onError: { [weak self] message in

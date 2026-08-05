@@ -1025,6 +1025,15 @@ final class DreamingTests: XCTestCase {
                        .dream(dayKey: nil))
     }
 
+    func testHeadlessDigestFlagParsesOptionalDay() {
+        XCTAssertEqual(HeadlessCommand.parse(["LokalBot", "--digest"]),
+                       .digest(dayKey: nil))
+        XCTAssertEqual(HeadlessCommand.parse(["LokalBot", "--digest", "2026-08-04"]),
+                       .digest(dayKey: "2026-08-04"))
+        XCTAssertEqual(HeadlessCommand.parse(["LokalBot", "--digest", "--verbose"]),
+                       .digest(dayKey: nil))
+    }
+
     func testHeadlessDreamTargetDefaultsToYesterdayAndAcceptsOlderDays() throws {
         let now = try date("2026-07-20T12:00:00Z")
         let defaultTarget = try HeadlessCommand.validatedDreamTarget(

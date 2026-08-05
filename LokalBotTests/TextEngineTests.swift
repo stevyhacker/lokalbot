@@ -17,6 +17,56 @@ final class TextEngineTests: XCTestCase {
         XCTAssertEqual(strippingReasoning(text), "First\nSecond")
     }
 
+    func testBuiltInHighReasoningBudgetReservesHalfOfBoundedOutput() {
+        var body: [String: Any] = [:]
+
+        OpenAICompatibleEngine.applyGenerationOptions(
+            to: &body,
+            options: TextGenerationOptions(maxTokens: 8_192),
+            defaultThinkingBudgetTokens: MainLLMRuntimePolicy.highReasoningBudgetTokens)
+
+        XCTAssertEqual(body["max_tokens"] as? Int, 8_192)
+        XCTAssertEqual(body["thinking_budget_tokens"] as? Int, 4_096)
+    }
+
+    func testBuiltInHighReasoningUsesFullCeilingWithoutOutputLimit() {
+        var body: [String: Any] = [:]
+
+        OpenAICompatibleEngine.applyGenerationOptions(
+            to: &body,
+            options: nil,
+            defaultThinkingBudgetTokens: MainLLMRuntimePolicy.highReasoningBudgetTokens)
+
+        XCTAssertNil(body["max_tokens"])
+        XCTAssertEqual(body["thinking_budget_tokens"] as? Int, 8_192)
+    }
+
+    func testExplicitReasoningBudgetCanDisableThinkingForOneRequest() {
+        var body: [String: Any] = [:]
+
+        OpenAICompatibleEngine.applyGenerationOptions(
+            to: &body,
+            options: TextGenerationOptions(
+                maxTokens: 512,
+                reasoningBudgetTokens: 0,
+                temperature: 0.2),
+            defaultThinkingBudgetTokens: MainLLMRuntimePolicy.highReasoningBudgetTokens)
+
+        XCTAssertEqual(body["thinking_budget_tokens"] as? Int, 0)
+        XCTAssertEqual(body["temperature"] as? Double, 0.2)
+    }
+
+    func testGenericExternalEngineLeavesReasoningAtServerDefault() {
+        var body: [String: Any] = [:]
+
+        OpenAICompatibleEngine.applyGenerationOptions(
+            to: &body,
+            options: nil,
+            defaultThinkingBudgetTokens: nil)
+
+        XCTAssertNil(body["thinking_budget_tokens"])
+    }
+
     /// Pressing Stop cancels the Task mid-request; `send` must surface that as
     /// cancellation, not a `serverUnreachable` error the chat UI renders red.
     func testGenerateMapsTaskCancellationToCancellationError() async {

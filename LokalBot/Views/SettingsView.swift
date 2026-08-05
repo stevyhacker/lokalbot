@@ -439,7 +439,7 @@ struct SettingsView: View {
                               text: $app.settings.dayDigestCustomPrompt,
                               axis: .vertical)
                         .lineLimit(1...3)
-                    Text("Writes the Timeline's Day digest to your local journal once the day has activity or finished meetings; a digest you generated earlier is refreshed with the full day. Instructions shape scheduled and manual generation alike.")
+                    Text("Writes a detailed Timeline digest to your local journal at the chosen hour, then finalizes yesterday once after the date changes so late activity is included. Instructions shape scheduled and manual generation alike.")
                         .font(.caption).foregroundStyle(.secondary)
                     Divider()
                     Toggle("Export a daily memory note", isOn: Binding(

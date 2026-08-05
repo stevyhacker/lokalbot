@@ -33,9 +33,22 @@ final class LeasedTextEngineTests: XCTestCase {
         }
 
         func generate(system: String, prompt: String, context: [String],
+                      options: TextGenerationOptions) async throws -> String {
+            await recorder.record("generate-options:\(options.maxTokens ?? -1)")
+            return "options:\(prompt)"
+        }
+
+        func generate(system: String, prompt: String, context: [String],
                       schema: [String: Any]) async throws -> String {
             await recorder.record("generate-schema")
             return "schema:\(prompt)"
+        }
+
+        func generate(system: String, prompt: String, context: [String],
+                      schema: [String: Any],
+                      options: TextGenerationOptions) async throws -> String {
+            await recorder.record("generate-schema-options:\(options.maxTokens ?? -1)")
+            return "schema-options:\(prompt)"
         }
 
         func complete(_ request: CompletionRequest) async throws -> String {
@@ -100,14 +113,25 @@ final class LeasedTextEngineTests: XCTestCase {
         XCTAssertEqual(active, 0)
     }
 
-    func testAllFourProtocolMethodsForwardToBase() async throws {
+    func testAllProtocolMethodsForwardToBase() async throws {
         let recorder = CallRecorder()
         let broker = makeBroker(recorder: recorder)
         let engine = makeEngine(recorder: recorder, broker: broker)
 
+        let options = try await engine.generate(
+            system: "s", prompt: "budgeted", context: [],
+            options: TextGenerationOptions(maxTokens: 4_096))
+        XCTAssertEqual(options, "options:budgeted")
+
         let schema = try await engine.generate(system: "s", prompt: "p", context: [],
                                                schema: ["type": "object"])
         XCTAssertEqual(schema, "schema:p")
+
+        let constrained = try await engine.generate(
+            system: "s", prompt: "bounded", context: [],
+            schema: ["type": "object"],
+            options: TextGenerationOptions(maxTokens: 768, reasoningBudgetTokens: 256))
+        XCTAssertEqual(constrained, "schema-options:bounded")
 
         let completion = try await engine.complete(completionRequest)
         XCTAssertEqual(completion, "complete:the-prompt")
@@ -118,10 +142,13 @@ final class LeasedTextEngineTests: XCTestCase {
         XCTAssertEqual(partials.values, ["partial-chunk"])
 
         let ensures = await recorder.count(of: "ensure:mainLLM")
-        XCTAssertEqual(ensures, 3)
+        XCTAssertEqual(ensures, 5)
         let events = await recorder.events
         let baseCalls = events.filter { !$0.hasPrefix("ensure:") && !$0.hasPrefix("stop:") }
-        XCTAssertEqual(baseCalls, ["generate-schema", "complete", "stream"])
+        XCTAssertEqual(baseCalls, [
+            "generate-options:4096", "generate-schema", "generate-schema-options:768",
+            "complete", "stream",
+        ])
     }
 
     func testDisplayNameForwardsWithoutLeasing() async {

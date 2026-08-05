@@ -7,7 +7,7 @@ import ApplicationServices
 /// window title + idle state, collapse contiguous samples into activity
 /// blocks, persist them to the shared SQLite database.
 
-struct ActivityBlock: Identifiable {
+struct ActivityBlock: Identifiable, Equatable, Sendable {
     var id: Int64 = 0
     var app: String
     var title: String
@@ -641,6 +641,39 @@ final class ActivityStore {
         return ocrText(from: interval.start, to: interval.end, maxChars: maxChars, includeAppNames: true)
     }
 
+    /// Every retained screen-text record for one local day, oldest first.
+    /// Unlike `ocrText(on:)`, this has no whole-day character ceiling: callers
+    /// can chunk the complete evidence without a busy morning crowding out the
+    /// afternoon. Individual captures stay bounded to keep one pathological
+    /// Accessibility tree from dominating a chunk.
+    func screenContexts(on day: Date, maxCharactersPerCapture: Int = 2_000) -> [DayScreenContext] {
+        guard maxCharactersPerCapture > 0 else { return [] }
+        let interval = Self.dayInterval(containing: day)
+        do {
+            return try requiredDatabase().queryChecked("""
+                SELECT CAST(snapshot_id AS INTEGER), CAST(ts AS REAL), app,
+                       window_title, text
+                FROM ocr_fts
+                WHERE CAST(ts AS REAL) >= ?1 AND CAST(ts AS REAL) < ?2
+                ORDER BY CAST(ts AS REAL), CAST(snapshot_id AS INTEGER), rowid
+                """, bind: [interval.start.timeIntervalSince1970,
+                             interval.end.timeIntervalSince1970]) { statement in
+                DayScreenContext(
+                    snapshotID: sqlite3_column_int64(statement, 0),
+                    capturedAt: Date(
+                        timeIntervalSince1970: sqlite3_column_double(statement, 1)),
+                    app: sqlite3_column_text(statement, 2).map(String.init(cString:)) ?? "",
+                    windowTitle: sqlite3_column_text(statement, 3)
+                        .map(String.init(cString:)) ?? "",
+                    text: String((sqlite3_column_text(statement, 4)
+                        .map(String.init(cString:)) ?? "").prefix(maxCharactersPerCapture)))
+            }
+        } catch {
+            lokalbotLog("day screen-context query failed: \(error.localizedDescription)")
+            return []
+        }
+    }
+
     /// OCR text for a precise interval. Used for meeting-local participant
     /// hints, where the current day's whole screen history would be too broad.
     func ocrText(from start: Date, to end: Date, maxChars: Int = 9_000,
@@ -756,6 +789,31 @@ final class ActivityStore {
             }.first ?? nil
         } catch {
             lokalbotLog("latest activity lookup failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Latest activity or screen-text timestamp inside one local day. Used to
+    /// tell whether a saved digest predates evidence that arrived afterwards.
+    func latestEvidenceAt(on day: Date) -> Date? {
+        let interval = Self.dayInterval(containing: day)
+        do {
+            let timestamps: [Date?] = try requiredDatabase().queryChecked("""
+                SELECT MAX(value) FROM (
+                    SELECT MIN(end, ?2) AS value FROM activity_blocks
+                    WHERE end > ?1 AND start < ?2
+                    UNION ALL
+                    SELECT CAST(ts AS REAL) AS value FROM ocr_fts
+                    WHERE CAST(ts AS REAL) >= ?1 AND CAST(ts AS REAL) < ?2
+                )
+                """, bind: [interval.start.timeIntervalSince1970,
+                             interval.end.timeIntervalSince1970]) { statement in
+                guard sqlite3_column_type(statement, 0) != SQLITE_NULL else { return nil }
+                return Date(timeIntervalSince1970: sqlite3_column_double(statement, 0))
+            }
+            return timestamps.first ?? nil
+        } catch {
+            lokalbotLog("day latest-evidence lookup failed: \(error.localizedDescription)")
             return nil
         }
     }

@@ -7,9 +7,10 @@ struct AgentLLMEndpoint: Equatable {
     let contextTokens: Int
     let apiKey: String?
 
-    /// Matches LlamaServer.shared's context size; also a sane compaction
-    /// threshold for external endpoints whose true window we can't know.
-    static let defaultContextTokens = 16_384
+    /// Matches the built-in Main LLM and gives Agent Mode the same compaction
+    /// boundary. External endpoints use it as a conservative declared window
+    /// when their true model metadata is unavailable.
+    static let defaultContextTokens = MainLLMRuntimePolicy.contextTokens
 }
 
 enum AgentLLMResolution: Equatable {

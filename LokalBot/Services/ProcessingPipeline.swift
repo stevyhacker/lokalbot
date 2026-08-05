@@ -573,44 +573,108 @@ final class ProcessingPipeline: ObservableObject {
         await task.value
     }
 
-    /// Day digest (M4/M6) — shared by the Timeline UI and `--digest`. `ocr` is
-    /// the day's OCR'd screen text from periodic screenshots; it carries the
-    /// on-screen detail window titles alone can't (what was actually read,
-    /// written, or discussed), so the summary isn't limited to app/title names.
-    func generateDayDigest(for day: Date, blocks: [ActivityBlock], meetings: [Meeting],
-                           ocr: String, config: AppSettings) async throws -> (String, URL) {
-        let lines = blocks.map {
-            "\($0.start.formatted(date: .omitted, time: .shortened))–\($0.end.formatted(date: .omitted, time: .shortened)) \($0.app)\($0.title.isEmpty ? "" : ": \($0.title)") (\(Int($0.duration / 60))m)"
+    /// Day digest (M4/M6) — shared by the Timeline UI, scheduler, and
+    /// `--digest`. The local model writes only the overview. LokalBot renders
+    /// the full chronological activity/meeting log and time table directly, so
+    /// a terse model response can no longer erase the rest of the workday.
+    func generateDayDigest(
+        for day: Date,
+        blocks: [ActivityBlock],
+        meetings: [Meeting],
+        screenContexts: [DayScreenContext],
+        config: AppSettings
+    ) async throws -> DayDigestGenerationResult {
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: blocks,
+            screenContexts: screenContexts,
+            meetings: dayMeetingEvidence(meetings))
+
+        var warning: String?
+        let summary: String
+        if evidence.isEmpty {
+            summary = DayDigestOverviewGenerator.fallback(evidence)
+        } else {
+            do {
+                try Task.checkCancellation()
+                let engine = try await makeTextEngine(config, purpose: "day digest")
+                summary = try await generateDayOverview(
+                    evidence: evidence,
+                    engine: engine,
+                    customPrompt: config.dayDigestCustomPrompt)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                warning = "The detailed overview could not be generated: "
+                    + error.localizedDescription
+                    + " The complete chronological log was still saved."
+                summary = DayDigestOverviewGenerator.fallback(evidence)
+            }
         }
-        let meetingLines = meetings.map { "Meeting: \($0.title) (\($0.durationLabel))" }
-        let engine = try await makeTextEngine(config, purpose: "day digest")
-        let material = PromptContextSanitizer.sanitize(
-            (meetingLines + lines).joined(separator: "\n"), maxCharacters: 24_000)
-        let context = Self.digestContext(date: day, ocr: ocr)
-        let text = try await engine.generate(
-            system: PromptTemplates.dayDigestSystem(custom: config.dayDigestCustomPrompt),
-            prompt: material.isEmpty ? "No activity was recorded this day." : material,
-            context: context)
+
+        try Task.checkCancellation()
+        let text = evidence.renderDocument(summary: summary)
         let name = DreamDay.key(for: day)
         let url = storage.rootURL.appendingPathComponent("journal/\(name).md")
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try text.data(using: .utf8)?.write(to: url, options: .atomic)
-        return (text, url)
+        try text.write(to: url, atomically: true, encoding: .utf8)
+        return DayDigestGenerationResult(text: text, url: url, summaryWarning: warning)
     }
 
-    /// LLM context blocks for a day digest: the date plus — when present — the
-    /// OCR'd screen text from the day's screenshots. The OCR block is what lets
-    /// the digest reflect actual on-screen content, not just window titles.
-    /// Pure + `nonisolated static` so the screenshot→digest wiring is unit-
-    /// testable without a model, mirroring `AppleIntelligenceEngine.composePrompt`.
-    nonisolated static func digestContext(date: Date, ocr: String) -> [String] {
-        var context = ["Date: \(date.formatted(date: .complete, time: .omitted))"]
-        let screenText = PromptContextSanitizer.sanitize(ocr, maxCharacters: 12_000)
-        if !screenText.isEmpty {
-            context.append("Screen text OCR'd from periodic screenshots:\n" + screenText)
+    /// Code owns chronological coverage; the model only supplies grounded
+    /// wording for each required evidence segment and the compact highlights.
+    private func generateDayOverview(
+        evidence: DayDigestEvidence,
+        engine: TextEngine,
+        customPrompt: String
+    ) async throws -> String {
+        try await DayDigestOverviewGenerator.generate(
+            evidence: evidence,
+            engine: engine,
+            customPrompt: customPrompt)
+    }
+
+    private func dayMeetingEvidence(_ meetings: [Meeting]) -> [DayDigestMeetingEvidence] {
+        meetings.compactMap { meeting in
+            guard let endedAt = meeting.endedAt else { return nil }
+            let folder = meeting.folderURL(in: storage)
+            let sourceSummary = (try? String(
+                contentsOf: folder.appendingPathComponent("summary.md"),
+                encoding: .utf8)) ?? ""
+            let outcomes = MeetingOutcomes.load(from: folder).map(Self.renderOutcomes) ?? ""
+            return DayDigestMeetingEvidence(
+                id: meeting.id,
+                title: meeting.title,
+                app: meeting.appName,
+                startedAt: meeting.startedAt,
+                endedAt: endedAt,
+                sourceSummary: sourceSummary,
+                outcomes: outcomes)
         }
-        return context
+    }
+
+    private nonisolated static func renderOutcomes(_ outcomes: MeetingOutcomes) -> String {
+        var lines: [String] = []
+        if !outcomes.actionItems.isEmpty {
+            lines.append("Action items:")
+            for item in outcomes.actionItems {
+                var details: [String] = []
+                if let owner = item.owner, !owner.isEmpty { details.append("owner: \(owner)") }
+                if let due = item.due, !due.isEmpty { details.append("due: \(due)") }
+                lines.append("- " + item.text
+                    + (details.isEmpty ? "" : " (\(details.joined(separator: ", ")))"))
+            }
+        }
+        if !outcomes.decisions.isEmpty {
+            lines.append("Decisions:")
+            lines += outcomes.decisions.map { "- \($0)" }
+        }
+        if !outcomes.openQuestions.isEmpty {
+            lines.append("Open questions:")
+            lines += outcomes.openQuestions.map { "- \($0)" }
+        }
+        return lines.joined(separator: "\n")
     }
 
     func makeTextEngine(_ config: AppSettings, server: LlamaServer = .shared,
@@ -630,8 +694,9 @@ final class ProcessingPipeline: ObservableObject {
                 baseURL: server.baseURL,
                 model: entry.id,
                 apiKey: authenticationToken,
-                extraBody: entry.disablesThinking
-                    ? ["chat_template_kwargs": ["enable_thinking": false]] : [:],
+                extraBody: MainLLMRuntimePolicy.requestOverrides(for: entry.id),
+                defaultThinkingBudgetTokens:
+                    MainLLMRuntimePolicy.highReasoningBudgetTokens,
                 displayNameOverride: "Built-in — \(entry.displayName)")
             guard let role = InferenceRole(serverPort: server.port) else {
                 // A LlamaServer outside the broker's three roles (never true

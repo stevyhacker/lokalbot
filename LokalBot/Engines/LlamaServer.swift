@@ -1,6 +1,43 @@
 import Foundation
 import Darwin
 
+/// Shared quality policy for the Main LLM. The bundled models expose much
+/// larger native windows, but 32K gives summaries and Agent Mode useful
+/// headroom without paying the latency and linear KV-cache cost of 128K.
+///
+/// "High" forces model-native thinking. App-authored requests use an 8K
+/// ceiling; requests that set a smaller total output budget reserve at least
+/// half of it for the visible answer (see
+/// `OpenAICompatibleEngine.applyGenerationOptions`). Agent Mode uses the same
+/// reasoning-enabled server with its model-native budget.
+enum MainLLMRuntimePolicy {
+    static let contextTokens = 32_768
+    static let highReasoningBudgetTokens = 8_192
+    static let serverExtraArguments = [
+        "--cache-ram", "2048",
+        "--reasoning", "on",
+    ]
+
+    /// Keep vendor-specific sampling guidance scoped to the built-in model
+    /// that requires it. `extraBody` is merged after per-request options, so
+    /// these values consistently replace the generic digest temperature.
+    static func requestOverrides(for modelID: String) -> [String: Any] {
+        switch modelID {
+        case "lfm2.5-2.6b":
+            return [
+                "temperature": 0.1,
+                "top_k": 50,
+                "repeat_penalty": 1.1,
+            ]
+        case "ministral-3-3b-instruct-2512":
+            // Mistral recommends temperature below 0.1 for this checkpoint.
+            return ["temperature": 0.05]
+        default:
+            return [:]
+        }
+    }
+}
+
 /// Built-in LLM backend, part 3 of 3: the bundled llama-server subprocess
 /// lifecycle. One model loaded at a time; switching models restarts the server.
 /// Stopped when the app quits.
@@ -8,8 +45,8 @@ actor LlamaServer {
 
     /// Chat/completions instance (summaries, digests, Q&A).
     static let shared = LlamaServer(
-        port: 17872, contextTokens: 16_384,
-        extraArgs: ["--cache-ram", "2048"],
+        port: 17872, contextTokens: MainLLMRuntimePolicy.contextTokens,
+        extraArgs: MainLLMRuntimePolicy.serverExtraArguments,
         runtimeAllowanceBytes: 3 * 1_073_741_824)
     /// Embeddings instance (semantic search) — small model, second port.
     static let embedder = LlamaServer(port: 17873, contextTokens: 2_048,

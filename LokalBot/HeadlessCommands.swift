@@ -14,7 +14,7 @@ enum HeadlessCommand: Equatable {
     case search(query: String)
     case record(seconds: Int)
     case shotTest
-    case digest
+    case digest(dayKey: String?)
     case dream(dayKey: String?)
     case chat(question: String)
     case agent(prompt: String)
@@ -36,7 +36,10 @@ enum HeadlessCommand: Equatable {
             return .record(seconds: seconds)
         }
         if args.contains("--shot-test") { return .shotTest }
-        if args.contains("--digest") { return .digest }
+        if let flag = args.firstIndex(of: "--digest") {
+            let next = args.count > flag + 1 ? args[flag + 1] : nil
+            return .digest(dayKey: next.flatMap { $0.hasPrefix("--") ? nil : $0 })
+        }
         if let flag = args.firstIndex(of: "--dream") {
             let next = args.count > flag + 1 ? args[flag + 1] : nil
             return .dream(dayKey: next.flatMap { $0.hasPrefix("--") ? nil : $0 })
@@ -107,7 +110,7 @@ struct HeadlessCommandRunner {
         case .search(let query): runSearch(query: query)
         case .record(let seconds): runRecord(seconds: seconds)
         case .shotTest: runShotTest()
-        case .digest: runDigest()
+        case .digest(let dayKey): runDigest(dayKey: dayKey)
         case .dream(let dayKey): runDream(dayKey: dayKey)
         case .chat(let question): runChat(question: question)
         case .agent(let prompt): runAgent(prompt: prompt)
@@ -185,16 +188,45 @@ struct HeadlessCommandRunner {
         }
     }
 
-    /// `LokalBot --digest today`: generate today's journal digest and exit.
-    private func runDigest() {
+    /// `LokalBot --digest [yyyy-MM-dd]`: generate a journal digest and exit.
+    /// `LOKALBOT_DIGEST_MODEL_ID` is a headless-only evaluation override; it
+    /// never changes the persisted model selection.
+    private func runDigest(dayKey: String?) {
         Task { @MainActor in
             do {
-                let day = Date()
-                let todays = app.meetings.filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }
-                let (text, url) = try await app.pipeline.generateDayDigest(
+                let day: Date
+                if let dayKey {
+                    guard let parsed = DreamDay.date(fromKey: dayKey),
+                          DreamDay.key(for: parsed) == dayKey else {
+                        print("LokalBot --digest: invalid day \(dayKey) (expected yyyy-MM-dd)")
+                        exit(2)
+                    }
+                    day = parsed
+                } else {
+                    day = Date()
+                }
+                var config = app.settings
+                if let modelID = ProcessInfo.processInfo.environment["LOKALBOT_DIGEST_MODEL_ID"],
+                   ModelCatalog.entry(id: modelID, custom: config.customBuiltInModels) != nil {
+                    config.summarizerBackend = .builtIn
+                    config.builtInModelID = modelID
+                    config.dayDigestCustomPrompt = ""
+                }
+                let todays = app.meetings.filter {
+                    Calendar.current.isDate($0.startedAt, inSameDayAs: day)
+                        && $0.endedAt != nil
+                }
+                let result = try await app.pipeline.generateDayDigest(
                     for: day, blocks: app.activityStore.blocks(on: day),
-                    meetings: todays, ocr: app.activityStore.ocrText(on: day), config: app.settings)
-                print("LokalBot --digest: \(url.path) (\(text.count) chars)")
+                    meetings: todays,
+                    screenContexts: app.activityStore.screenContexts(on: day),
+                    config: config)
+                print("LokalBot --digest: model=\(config.builtInModelID) "
+                      + "day=\(DreamDay.key(for: day)) \(result.url.path) "
+                      + "(\(result.text.count) chars)")
+                if let warning = result.summaryWarning {
+                    print("LokalBot --digest: WARNING — \(warning)")
+                }
                 await LlamaServer.shared.stop()
                 exit(0)
             } catch {

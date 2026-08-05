@@ -38,7 +38,56 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertNotNil(ModelCatalog.entry(id: "qwen3.6-27b"))
         XCTAssertNotNil(ModelCatalog.entry(id: "gemma4-12b"))
         XCTAssertNotNil(ModelCatalog.entry(id: "qwen3.5-4b"))
+        XCTAssertNotNil(ModelCatalog.entry(id: "lfm2.5-2.6b"))
         XCTAssertNotNil(ModelCatalog.entry(id: "lfm2.5-1.2b-instruct"))
+        XCTAssertNotNil(ModelCatalog.entry(id: "granite-4.1-3b"))
+        XCTAssertNotNil(ModelCatalog.entry(id: "ministral-3-3b-instruct-2512"))
+    }
+
+    func testExperimentalLFM26BArtifactIsIntegrityPinned() throws {
+        let entry = try XCTUnwrap(ModelCatalog.entry(id: "lfm2.5-2.6b"))
+        XCTAssertEqual(entry.fileName, "LFM2.5-2.6B-Q4_K_M.gguf")
+        XCTAssertEqual(entry.sizeBytes, 1_674_454_848)
+        XCTAssertEqual(
+            entry.sha256,
+            "79fdf00351b46cf26f020aead28d01889886be87c55fa0eb907e6f9b00bfee14")
+        XCTAssertTrue(entry.url.contains("/resolve/b22e29ebf6249a8c9fcdda36914743e9980595c4/"))
+    }
+
+    func testExperimentalLFM26BUsesVendorSamplingProfile() throws {
+        let overrides = MainLLMRuntimePolicy.requestOverrides(for: "lfm2.5-2.6b")
+        XCTAssertEqual(overrides["temperature"] as? Double, 0.1)
+        XCTAssertEqual(overrides["top_k"] as? Int, 50)
+        XCTAssertEqual(overrides["repeat_penalty"] as? Double, 1.1)
+        XCTAssertTrue(MainLLMRuntimePolicy.requestOverrides(for: "qwen3.5-4b").isEmpty)
+    }
+
+    func testExperimentalSmallMainLLMArtifactsAreIntegrityPinned() throws {
+        let granite = try XCTUnwrap(ModelCatalog.entry(id: "granite-4.1-3b"))
+        XCTAssertEqual(granite.fileName, "granite-4.1-3b-Q4_K_M.gguf")
+        XCTAssertEqual(granite.sizeBytes, 2_099_501_664)
+        XCTAssertEqual(
+            granite.sha256,
+            "662b0626cd58f443baea23559b469df6576a81d349649c59413b36a9fb32eb29")
+        XCTAssertTrue(granite.url.contains("/resolve/ab4701481089b58a082ef63cc1cee738887293ff/"))
+
+        let ministral = try XCTUnwrap(
+            ModelCatalog.entry(id: "ministral-3-3b-instruct-2512"))
+        XCTAssertEqual(
+            ministral.fileName,
+            "Ministral-3-3B-Instruct-2512-Q4_K_M.gguf")
+        XCTAssertEqual(ministral.sizeBytes, 2_147_023_008)
+        XCTAssertEqual(
+            ministral.sha256,
+            "9ed150d4367e68df0ac8e1540f6ddc65b42d0ee26378329d1ecbca60f93fc5f8")
+        XCTAssertTrue(ministral.url.contains("/resolve/eb599d408350ea2bb60452cb86be7c7b2fc28227/"))
+    }
+
+    func testMinistralUsesVendorLowTemperatureProfile() {
+        let overrides = MainLLMRuntimePolicy.requestOverrides(
+            for: "ministral-3-3b-instruct-2512")
+        XCTAssertEqual(overrides["temperature"] as? Double, 0.05)
+        XCTAssertEqual(overrides.count, 1)
     }
 
     func testFreshSettingsDefaultToQwen35FourBOnEveryMac() {
@@ -126,6 +175,10 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertFalse(ids.contains("qwen3.6-27b"))
         XCTAssertFalse(ids.contains("gemma4-12b"))
         XCTAssertFalse(ids.contains("gemma4-e4b"), "the legacy Gemma quant is superseded")
+        XCTAssertFalse(ids.contains("lfm2.5-2.6b"), "always-reasoning models are not for cotyping")
+        XCTAssertFalse(ids.contains("granite-4.1-3b"), "Main LLM experiments are not for cotyping")
+        XCTAssertFalse(ids.contains("ministral-3-3b-instruct-2512"),
+                       "Main LLM experiments are not for cotyping")
         XCTAssertTrue(ids.contains(ModelCatalog.recommendedCotypingID))
         XCTAssertTrue(ids.contains("qwen3.5-2b"))
         XCTAssertTrue(ids.contains("lfm2.5-1.2b-instruct"))

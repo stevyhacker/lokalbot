@@ -52,6 +52,57 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(store.searchOCR("quarterly").count, 1)
     }
 
+    func testDayScreenContextsReturnTheWholeDayInOrderWithPerCaptureCap() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ActivityStore(databaseURL: url)
+        let interval = ActivityStore.dayInterval(containing: Date())
+        _ = try store.insertScreenshot(
+            ts: interval.start.addingTimeInterval(-1),
+            path: "", app: "Before", ocr: "outside previous day")
+        let firstID = try store.insertScreenshot(
+            ts: interval.start.addingTimeInterval(60),
+            path: "", app: "Xcode", windowTitle: "Editor",
+            ocr: "first evidence is intentionally long")
+        let secondID = try store.insertScreenshot(
+            ts: interval.start.addingTimeInterval(20 * 60 * 60),
+            path: "", app: "Safari", windowTitle: "Documentation",
+            ocr: "late evidence is intentionally long")
+        _ = try store.insertScreenshot(
+            ts: interval.end,
+            path: "", app: "After", ocr: "outside next day")
+
+        let contexts = store.screenContexts(on: interval.start, maxCharactersPerCapture: 14)
+
+        XCTAssertEqual(contexts.map(\.snapshotID), [firstID, secondID])
+        XCTAssertEqual(contexts.map(\.app), ["Xcode", "Safari"])
+        XCTAssertEqual(contexts.map(\.windowTitle), ["Editor", "Documentation"])
+        XCTAssertTrue(contexts.allSatisfy { $0.text.count <= 14 })
+        XCTAssertEqual(contexts.last?.capturedAt, interval.start.addingTimeInterval(20 * 60 * 60))
+    }
+
+    func testLatestDayEvidenceIncludesActivityAndScreenContext() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ActivityStore(databaseURL: url)
+        let interval = ActivityStore.dayInterval(containing: Date())
+        let screenTime = interval.start.addingTimeInterval(2 * 60 * 60)
+        _ = try store.insertScreenshot(
+            ts: screenTime, path: "", app: "Notes", ocr: "planning")
+        XCTAssertEqual(store.latestEvidenceAt(on: interval.start), screenTime)
+
+        let blockEnd = interval.start.addingTimeInterval(4 * 60 * 60)
+        XCTAssertTrue(store.insert(ActivityBlock(
+            app: "Xcode",
+            title: "Implementation",
+            start: interval.start.addingTimeInterval(3 * 60 * 60),
+            end: blockEnd)))
+
+        XCTAssertEqual(store.latestEvidenceAt(on: interval.start), blockEnd)
+    }
+
     func testTextOnlyContextPersistsSanitizedProvenanceWithoutPretendingPixelsExist() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ActivityStoreTests-\(UUID().uuidString).sqlite")
