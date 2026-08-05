@@ -455,13 +455,22 @@ struct DayDigestEvidence: Equatable, Sendable {
     }
 
     private func timeAllocationSection() -> String {
-        let totals = Dictionary(grouping: activities, by: \Activity.app)
-            .mapValues { values in
-                values.reduce(0) { $0 + $1.end.timeIntervalSince($1.start) }
+        let activitiesByApp: [String: [Activity]] = Dictionary(
+            grouping: activities,
+            by: { activity in activity.app }
+        )
+        var totals: [(app: String, seconds: TimeInterval)] = []
+        totals.reserveCapacity(activitiesByApp.count)
+        for (app, appActivities) in activitiesByApp {
+            var seconds: TimeInterval = 0
+            for activity in appActivities {
+                seconds += activity.end.timeIntervalSince(activity.start)
             }
-            .sorted { lhs, rhs in
-                lhs.value == rhs.value ? lhs.key < rhs.key : lhs.value > rhs.value
-            }
+            totals.append((app: app, seconds: seconds))
+        }
+        totals.sort { lhs, rhs in
+            lhs.seconds == rhs.seconds ? lhs.app < rhs.app : lhs.seconds > rhs.seconds
+        }
         guard !totals.isEmpty else { return "_No tracked app time._" }
         var lines = ["| App | Tracked time |", "| --- | ---: |"]
         lines += totals.map { app, seconds in

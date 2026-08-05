@@ -59,7 +59,10 @@ jobs:
     # Move to a self-hosted Mac (runs-on: [self-hosted, macOS]) once one
     # exists — see the TCC note at the top of this file.
     runs-on: macos-15
-    timeout-minutes: 60
+    # A cold checksum-pinned llama.cpp build currently takes close to an hour
+    # on GitHub's hosted Macs. Match the unit-test budget so the UI suite still
+    # gets time to execute before the Vendor cache has been populated.
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
