@@ -257,7 +257,7 @@ Set your team under **Signing & Capabilities**, pick a scheme, and Run:
 | **LokalBot** | `me.dotenv.LokalBot` | production; Sparkle auto-update compiled in |
 | **LokalBot Dev** | `me.dotenv.LokalBot.dev` | Sparkle compiled out; a distinct bundle id keeps its own permission grants, so running from Xcode never disturbs the released app |
 
-The first build vendors pinned llama.cpp (`b9844`) via a pre-build phase; models download on first use, and macOS prompts for Microphone and System Audio on your first recording.
+The first build vendors pinned llama.cpp (`b10173`) via a pre-build phase; models download on first use, and macOS prompts for Microphone and System Audio on your first recording.
 
 ## Contributing & security
 

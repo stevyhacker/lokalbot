@@ -35,7 +35,7 @@ Scripts/install-app.sh && Scripts/e2e.sh
 - Running tests regenerates `default.profraw`; it's gitignored (`*.profraw`) — never commit one.
 - UI tests need the controlling terminal to hold **Automation → Xcode** and **Accessibility** TCC grants; "Timed out while enabling automation mode" means the grant is missing, not a bug.
 - For local development build/run, use the **LokalBot Dev** scheme (see Targets below).
-- The first build runs `Scripts/fetch-llama.sh` / `fetch-sherpa.sh` pre-build phases, vendoring pinned native runtimes into `Vendor/` (llama.cpp pinned to `b9844`).
+- The first build runs `Scripts/fetch-llama.sh` / `fetch-sherpa.sh` pre-build phases, vendoring pinned native runtimes into `Vendor/` (llama.cpp pinned to `b10173`).
 - Releases: `Scripts/build_release_dmg.py` + `generate_appcast.py`, documented in `RELEASING.md`. The Sparkle ed25519 **private** key must never enter the repo; `SUPublicEDKey` lives in `project.yml` and `AppUpdateManager` refuses to start Sparkle on placeholder values.
 
 ## Targets (project.yml)
@@ -46,7 +46,7 @@ Scripts/install-app.sh && Scripts/e2e.sh
 
 App Sandbox is **intentionally off** — Core Audio process taps don't work sandboxed. Distribution is Developer ID + notarization, not the App Store. Unit tests run hosted inside the prod app binary and link `libllama` themselves (`-bundle_loader` only resolves host-defined symbols; see the comment in `project.yml`).
 
-Dependency versions are pinned deliberately (FluidAudio exact — 0.x breaks API between minors; Sparkle exact — known-good signed release; llama.cpp `b9844`). Don't bump them casually.
+Dependency versions are pinned deliberately (FluidAudio exact — 0.x breaks API between minors; Sparkle exact — known-good signed release; llama.cpp `b10173`). Don't bump them casually.
 
 ## Architecture
 

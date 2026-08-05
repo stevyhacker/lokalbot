@@ -124,7 +124,7 @@ The two biggest veins of untapped potential:
 
 **User impact: trust in every answer Ask gives. Effort: M.**
 
-**Grounding.** `Services/Chat/ChatAgent.swift` extracts tool calls by regex and maintains a strip-list of ~a dozen vendor token formats (`ChatAgent.swift:272-287`) — a tax paid because small local models emit sloppy JSON. The bundled llama.cpp server (`Engines/LlamaServer.swift`, pinned `b9844`) supports GBNF grammars / `json_schema` on its completion endpoints. Tools already return meeting ids + timestamps, and search hits already deep-link (`app.openSearchHit`), but chat answers are plain text with no receipts.
+**Grounding.** `Services/Chat/ChatAgent.swift` extracts tool calls by regex and maintains a strip-list of ~a dozen vendor token formats (`ChatAgent.swift:272-287`) — a tax paid because small local models emit sloppy JSON. The bundled llama.cpp server (`Engines/LlamaServer.swift`, pinned `b10173`) supports GBNF grammars / `json_schema` on its completion endpoints. Tools already return meeting ids + timestamps, and search hits already deep-link (`app.openSearchHit`), but chat answers are plain text with no receipts.
 
 **Path forward:**
 1. When the agent loop expects a tool step, send a grammar/`json_schema` constraint so the tool-call JSON is enforced **at decode time**. Leave the final-answer turn unconstrained (grammar-forcing prose degrades it). This deletes most of the strip-list and the "pythonic call" fallback parsing.
@@ -213,7 +213,7 @@ The two biggest veins of untapped potential:
 - **The on-device invariant.** No telemetry, no cloud calls, localhost only. Every item above is implementable without a new network surface.
 - **File-based markdown storage** (`meetings/`, `journal/`). It *is* the portability/export story; new data (outcomes, attendees) goes into the meeting folder first, SQLite second.
 - **The headless/e2e harness** (`HeadlessCommands.swift`, `Scripts/e2e.sh`) — extend it for every pipeline change; it's why the pipeline is trustworthy.
-- **Pinned dependencies** (FluidAudio exact, Sparkle exact, llama.cpp `b9844`) — bump only deliberately, per `CLAUDE.md`.
+- **Pinned dependencies** (FluidAudio exact, Sparkle exact, llama.cpp `b10173`) — bump only deliberately, per `CLAUDE.md`.
 
 ## Sequencing
 

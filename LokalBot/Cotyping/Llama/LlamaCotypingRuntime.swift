@@ -61,7 +61,7 @@ private func llamaCotypingAbortCallback(_ rawState: UnsafeMutableRawPointer?) ->
 /// surfaces the diverged-suffix length as the meaningful reuse signal either
 /// way. The capability is cached once at load (`supportsPartialReuse`).
 ///
-/// Pinned to llama.cpp `b9844`; symbols verified against the vendored dylib.
+/// Pinned to llama.cpp `b10173`; symbols verified against the vendored dylib.
 actor LlamaCotypingRuntime {
     typealias PostLoadAdmissionHook = @Sendable () async -> Void
 
