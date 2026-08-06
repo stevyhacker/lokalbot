@@ -416,17 +416,20 @@ final class ChatAgentTests: XCTestCase {
         let sqlite = storage.rootURL.appendingPathComponent("lokalbotv3.sqlite")
         try FileManager.default.createDirectory(at: storage.rootURL, withIntermediateDirectories: true)
         let activityStore = ActivityStore(databaseURL: sqlite)
+        let fixtureTime = try XCTUnwrap(Calendar.current.date(from: DateComponents(
+            year: 2026, month: 7, day: 1, hour: 12
+        )))
 
         try activityStore.insertScreenshot(
-            ts: Date(), path: "/tmp/x.heic.enc", app: "Safari",
+            ts: fixtureTime, path: "/tmp/x.heic.enc", app: "Safari",
             windowTitle: "Stripe invoicing docs", trigger: "app_switch",
             ocr: "How to issue a refund for an invoice in the Stripe dashboard")
         activityStore.insert(ActivityBlock(app: "Xcode", title: "LokalBot.xcodeproj",
-                                           start: Date().addingTimeInterval(-7_200),
-                                           end: Date().addingTimeInterval(-3_600)))
+                                           start: fixtureTime.addingTimeInterval(-7_200),
+                                           end: fixtureTime.addingTimeInterval(-3_600)))
         activityStore.insert(ActivityBlock(app: "Safari", title: "Stripe invoicing docs",
-                                           start: Date().addingTimeInterval(-3_600),
-                                           end: Date().addingTimeInterval(-3_000)))
+                                           start: fixtureTime.addingTimeInterval(-3_600),
+                                           end: fixtureTime.addingTimeInterval(-3_000)))
 
         var settings = AppSettings()
         settings.semanticSearchEnabled = false
@@ -452,7 +455,10 @@ final class ChatAgentTests: XCTestCase {
                                                 arguments: ["query": "kubernetes"]))
         XCTAssertTrue(miss.text.contains("No screen-text matches"), "miss: \(miss.text)")
 
-        let summary = await tools.run(ChatToolCall(name: "activity_summary", arguments: [:]))
+        let summary = await tools.run(ChatToolCall(
+            name: "activity_summary",
+            arguments: ["day": "2026-07-01"]
+        ))
         XCTAssertTrue(summary.text.contains("Xcode: 1h 00m"), "summary: \(summary.text)")
         XCTAssertTrue(summary.text.contains("Safari: 10m"), "summary: \(summary.text)")
         XCTAssertTrue(summary.text.contains("LokalBot.xcodeproj"), "summary: \(summary.text)")
