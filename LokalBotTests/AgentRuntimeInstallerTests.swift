@@ -5,11 +5,16 @@ import XCTest
 final class AgentRuntimeInstallerTests: XCTestCase {
 
     private actor VerificationProbe {
+        let result: Bool
         private(set) var calls = 0
+
+        init(result: Bool = false) {
+            self.result = result
+        }
 
         func verify() -> Bool {
             calls += 1
-            return false
+            return result
         }
     }
 
@@ -93,6 +98,7 @@ final class AgentRuntimeInstallerTests: XCTestCase {
         await installer.installIfNeeded(manifest: testManifest)
         XCTAssertEqual(installer.phase, .installed)
         XCTAssertTrue(AgentRuntimeLayout.isInstalled(under: root, manifest: testManifest))
+        XCTAssertTrue(AgentRuntimeLayout.isIntegrityValid(under: root, manifest: testManifest))
         XCTAssertTrue(FileManager.default.isExecutableFile(
             atPath: AgentRuntimeLayout.bunBinary(under: root).path))
         let markerData = try Data(contentsOf: AgentRuntimeLayout.versionMarker(under: root))
@@ -108,22 +114,27 @@ final class AgentRuntimeInstallerTests: XCTestCase {
         XCTAssertEqual(attributes[.posixPermissions] as? NSNumber, NSNumber(value: 0o600))
     }
 
-    func testInitializationDefersRuntimeVerificationUntilRefresh() async throws {
+    func testInitializationUsesFastReceiptWithoutDeepVerification() async throws {
         let probe = VerificationProbe()
         let installer = AgentRuntimeInstaller(
             root: sandbox.appendingPathComponent("agent-runtime", isDirectory: true),
             runtimeTemplate: try makeRuntimeTemplate(),
             packageInstaller: fakePackageInstaller,
+            installationChecker: { _, _ in true },
             runtimeVerifier: { _, _ in await probe.verify() })
 
-        XCTAssertEqual(installer.phase, .checking)
+        XCTAssertEqual(installer.phase, .installed)
         var calls = await probe.calls
         XCTAssertEqual(calls, 0)
 
-        await installer.refreshInstalledState()
+        let valid = await installer.verifyInstalledState()
+        XCTAssertFalse(valid)
         calls = await probe.calls
         XCTAssertEqual(calls, 1)
-        XCTAssertEqual(installer.phase, .idle)
+        guard case .failed(let message) = installer.phase else {
+            return XCTFail("expected integrity failure, got \(installer.phase)")
+        }
+        XCTAssertTrue(message.contains("integrity"), message)
     }
 
     func testChecksumMismatchFailsAndInstallsNothing() async throws {
@@ -176,6 +187,7 @@ final class AgentRuntimeInstallerTests: XCTestCase {
 
         XCTAssertEqual(installer.phase, .installed)
         XCTAssertTrue(AgentRuntimeLayout.isInstalled(under: root, manifest: testManifest))
+        XCTAssertTrue(AgentRuntimeLayout.isIntegrityValid(under: root, manifest: testManifest))
     }
 
     func testFrozenPackageInstallerCopiesManifestAndRunsExpectedCommand() async throws {
@@ -221,5 +233,25 @@ final class AgentRuntimeInstallerTests: XCTestCase {
         try FileManager.default.removeItem(at: testManifest.bun.url)
         await installer.installIfNeeded(manifest: testManifest)
         XCTAssertEqual(installer.phase, .installed)
+    }
+
+    func testRepairForcesAtomicReinstallDespiteCurrentReceipt() async throws {
+        let root = sandbox.appendingPathComponent("agent-runtime", isDirectory: true)
+        let installer = AgentRuntimeInstaller(
+            root: root,
+            runtimeTemplate: try makeRuntimeTemplate(),
+            packageInstaller: fakePackageInstaller,
+            installationChecker: { _, _ in true })
+        let testManifest = try manifest(bunZip: makeBunFixture())
+
+        XCTAssertEqual(installer.phase, .installed)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+
+        await installer.repair(manifest: testManifest)
+
+        XCTAssertEqual(installer.phase, .installed)
+        XCTAssertTrue(FileManager.default.isExecutableFile(
+            atPath: AgentRuntimeLayout.bunBinary(under: root).path))
+        XCTAssertTrue(AgentRuntimeLayout.isIntegrityValid(under: root, manifest: testManifest))
     }
 }

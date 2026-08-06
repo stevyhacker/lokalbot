@@ -15,14 +15,11 @@ struct AgentView: View {
             }
         }
         .navigationTitle("Agent")
-        .task {
-            await installer.refreshInstalledState()
-        }
     }
 
     private var sessionTabs: some View {
         VStack(spacing: 0) {
-            AgentSessionTabBar(sessions: sessions)
+            AgentSessionTabBar(sessions: sessions, verifyRuntime: verifyRuntime)
             Divider()
             ZStack {
                 // Keep every tab mounted so its draft, scroll position, task,
@@ -40,6 +37,15 @@ struct AgentView: View {
         }
     }
 
+    private func verifyRuntime() {
+        Task {
+            let installed = await installer.verifyInstalledState()
+            guard !installed else { return }
+            await sessions.shutdownAll()
+            _ = sessions.ensureSelectedController()
+        }
+    }
+
     // MARK: - Install card
 
     private var installCard: some View {
@@ -54,7 +60,7 @@ struct AgentView: View {
             switch installer.phase {
             case .checking:
                 ProgressView().controlSize(.small)
-                Text("Checking Agent runtime…").font(.caption).foregroundStyle(.secondary)
+                Text("Verifying Agent runtime…").font(.caption).foregroundStyle(.secondary)
             case .idle:
                 Button("Download & Enable Agent Mode") {
                     Task { await installer.installIfNeeded() }
@@ -71,7 +77,7 @@ struct AgentView: View {
             case .failed(let message):
                 Text(message).font(.caption).foregroundStyle(.red)
                     .frame(maxWidth: 420)
-                Button("Try Again") { Task { await installer.installIfNeeded() } }
+                Button("Repair Agent Mode") { Task { await installer.repair() } }
                     .accessibilityIdentifier("agent.installRetry")
             case .installed:
                 EmptyView()
@@ -83,6 +89,7 @@ struct AgentView: View {
 
 private struct AgentSessionTabBar: View {
     @ObservedObject var sessions: AgentSessionTabs
+    let verifyRuntime: () -> Void
     @State private var pendingClose: UUID?
     @State private var confirmingHistoryClear = false
     @State private var historyClearError: String?
@@ -116,6 +123,10 @@ private struct AgentSessionTabBar: View {
             .accessibilityIdentifier("agent.newSession")
 
             Menu {
+                Button("Verify Agent Runtime…", action: verifyRuntime)
+                    .disabled(sessions.tabs.contains { $0.controller.state == .running })
+                    .accessibilityIdentifier("agent.verifyRuntime")
+                Divider()
                 Button("Clear Saved Agent History…", role: .destructive) {
                     confirmingHistoryClear = true
                 }

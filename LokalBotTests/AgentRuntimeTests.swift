@@ -25,7 +25,7 @@ final class AgentRuntimeTests: XCTestCase {
                        AppDirectories.applicationSupport.appendingPathComponent("agent-runtime", isDirectory: true))
     }
 
-    func testIsInstalledRequiresExecutableBunAndCLI() throws {
+    func testInstalledReceiptIsFastAndDeepAuditDetectsRuntimeTampering() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("runtime-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -44,29 +44,57 @@ final class AgentRuntimeTests: XCTestCase {
         try Data("lock".utf8).write(to: root.appendingPathComponent("pi/bun.lock"))
         let importedModule = cli.deletingLastPathComponent().appendingPathComponent("main.js")
         try Data("// imported runtime code".utf8).write(to: importedModule)
-        let manifest = AgentRuntimeManifest(bun: AgentRuntimeArtifact(
-            name: "test", url: URL(fileURLWithPath: "/test.zip"),
-            sha256: String(repeating: "a", count: 64), archiveKind: .zip))
+        let packageJSON = root.appendingPathComponent("pi/package.json")
+        let lockfile = root.appendingPathComponent("pi/bun.lock")
+        let bunDigest = try SHA256Verifier.hexDigest(of: bun)
+        let cliDigest = try SHA256Verifier.hexDigest(of: cli)
+        let packageDigest = try SHA256Verifier.hexDigest(of: packageJSON)
+        let lockDigest = try SHA256Verifier.hexDigest(of: lockfile)
+        let treeDigest = try SHA256Verifier.treeHexDigest(
+            of: root.appendingPathComponent("pi", isDirectory: true))
+        let manifest = AgentRuntimeManifest(
+            bun: AgentRuntimeArtifact(
+                name: "test", url: URL(fileURLWithPath: "/test.zip"),
+                sha256: String(repeating: "a", count: 64), archiveKind: .zip),
+            bunBinarySHA256: bunDigest,
+            piCLISHA256: cliDigest,
+            packageJSONSHA256: packageDigest,
+            lockfileSHA256: lockDigest,
+            piRuntimeTreeSHA256: treeDigest)
         let marker = AgentRuntimeVersionMarker(
             bunVersion: AgentRuntimeManifest.bunVersion,
             piVersion: AgentRuntimeManifest.piVersion,
             bunArchiveSHA256: manifest.bun.sha256,
-            bunBinarySHA256: try SHA256Verifier.hexDigest(of: bun),
-            piCLISHA256: try SHA256Verifier.hexDigest(of: cli),
-            packageJSONSHA256: try SHA256Verifier.hexDigest(
-                of: root.appendingPathComponent("pi/package.json")),
-            lockfileSHA256: try SHA256Verifier.hexDigest(
-                of: root.appendingPathComponent("pi/bun.lock")),
-            piRuntimeTreeSHA256: try SHA256Verifier.treeHexDigest(
-                of: root.appendingPathComponent("pi", isDirectory: true)))
+            bunBinarySHA256: bunDigest,
+            piCLISHA256: cliDigest,
+            packageJSONSHA256: packageDigest,
+            lockfileSHA256: lockDigest,
+            piRuntimeTreeSHA256: treeDigest)
         try JSONEncoder().encode(marker).write(
             to: AgentRuntimeLayout.versionMarker(under: root))
         XCTAssertTrue(AgentRuntimeLayout.isInstalled(under: root, manifest: manifest))
+        XCTAssertTrue(AgentRuntimeLayout.isIntegrityValid(under: root, manifest: manifest))
 
-        // cli.js is unchanged: imported/runtime dependency code must be covered
-        // by the whole-tree digest too.
-        try Data("// tampered imported code".utf8).write(to: importedModule)
+        let staleMarker = AgentRuntimeVersionMarker(
+            bunVersion: marker.bunVersion,
+            piVersion: marker.piVersion,
+            bunArchiveSHA256: marker.bunArchiveSHA256,
+            bunBinarySHA256: marker.bunBinarySHA256,
+            piCLISHA256: marker.piCLISHA256,
+            packageJSONSHA256: marker.packageJSONSHA256,
+            lockfileSHA256: marker.lockfileSHA256,
+            piRuntimeTreeSHA256: String(repeating: "0", count: 64))
+        try JSONEncoder().encode(staleMarker).write(
+            to: AgentRuntimeLayout.versionMarker(under: root))
         XCTAssertFalse(AgentRuntimeLayout.isInstalled(under: root, manifest: manifest))
+        try JSONEncoder().encode(marker).write(
+            to: AgentRuntimeLayout.versionMarker(under: root))
+
+        // The cheap receipt intentionally avoids walking node_modules. An
+        // explicit deep audit still covers imported/runtime dependency code.
+        try Data("// tampered imported code".utf8).write(to: importedModule)
+        XCTAssertTrue(AgentRuntimeLayout.isInstalled(under: root, manifest: manifest))
+        XCTAssertFalse(AgentRuntimeLayout.isIntegrityValid(under: root, manifest: manifest))
     }
 
     func testTreeDigestIsDeterministicAndCoversSymlinksAndHiddenFiles() throws {

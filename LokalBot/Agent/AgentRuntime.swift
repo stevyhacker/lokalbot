@@ -81,40 +81,70 @@ enum AgentRuntimeLayout {
         root.appendingPathComponent("pi/node_modules/@earendil-works/pi-coding-agent/dist/cli.js")
     }
 
+    /// Cheap receipt check for the normal launch path. Installation already
+    /// verifies every staged byte before the atomic swap, so routine Agent Mode
+    /// entry only needs to prove that the expected entry points and matching
+    /// version receipt are present. Use `isIntegrityValid` for an explicit deep
+    /// audit of the mutable runtime tree.
     static func isInstalled(under root: URL = defaultRoot,
                             manifest: AgentRuntimeManifest = .current) -> Bool {
         let bun = bunBinary(under: root)
         let cli = piCLI(under: root)
+        let packageJSON = root.appendingPathComponent("pi/package.json")
+        let lockfile = root.appendingPathComponent("pi/bun.lock")
         guard FileManager.default.isExecutableFile(atPath: bun.path),
               FileManager.default.fileExists(atPath: cli.path),
+              FileManager.default.fileExists(atPath: packageJSON.path),
+              FileManager.default.fileExists(atPath: lockfile.path),
               let data = try? Data(contentsOf: versionMarker(under: root)),
               let marker = try? JSONDecoder().decode(AgentRuntimeVersionMarker.self, from: data),
               marker.bunVersion == AgentRuntimeManifest.bunVersion,
               marker.piVersion == AgentRuntimeManifest.piVersion,
               marker.bunArchiveSHA256 == manifest.bun.sha256.lowercased(),
-              let bunDigest = try? SHA256Verifier.hexDigest(of: bun),
-              let cliDigest = try? SHA256Verifier.hexDigest(of: cli),
-              bunDigest == marker.bunBinarySHA256,
-              cliDigest == marker.piCLISHA256,
-              manifest.bunBinarySHA256.map({ $0.lowercased() == bunDigest }) ?? true,
-              manifest.piCLISHA256.map({ $0.lowercased() == cliDigest }) ?? true else {
-            return false
-        }
-        let packageJSON = root.appendingPathComponent("pi/package.json")
-        let lockfile = root.appendingPathComponent("pi/bun.lock")
-        let piRuntime = root.appendingPathComponent("pi", isDirectory: true)
-        guard let packageDigest = try? SHA256Verifier.hexDigest(of: packageJSON),
-              let lockDigest = try? SHA256Verifier.hexDigest(of: lockfile),
-              let treeDigest = try? SHA256Verifier.treeHexDigest(of: piRuntime),
-              packageDigest == marker.packageJSONSHA256,
-              lockDigest == marker.lockfileSHA256,
-              treeDigest == marker.piRuntimeTreeSHA256,
-              manifest.packageJSONSHA256.map({ $0.lowercased() == packageDigest }) ?? true,
-              manifest.lockfileSHA256.map({ $0.lowercased() == lockDigest }) ?? true,
-              manifest.piRuntimeTreeSHA256.map({ $0.lowercased() == treeDigest }) ?? true else {
+              digestReceipt(marker.bunBinarySHA256, matches: manifest.bunBinarySHA256),
+              digestReceipt(marker.piCLISHA256, matches: manifest.piCLISHA256),
+              digestReceipt(marker.packageJSONSHA256, matches: manifest.packageJSONSHA256),
+              digestReceipt(marker.lockfileSHA256, matches: manifest.lockfileSHA256),
+              digestReceipt(marker.piRuntimeTreeSHA256, matches: manifest.piRuntimeTreeSHA256) else {
             return false
         }
         return true
+    }
+
+    /// Explicit, recursive integrity audit. This intentionally opens every pi
+    /// runtime file and is therefore reserved for installation, repair, tests,
+    /// and user-requested verification rather than ordinary pane navigation.
+    static func isIntegrityValid(under root: URL = defaultRoot,
+                                 manifest: AgentRuntimeManifest = .current) -> Bool {
+        guard isInstalled(under: root, manifest: manifest),
+              let data = try? Data(contentsOf: versionMarker(under: root)),
+              let marker = try? JSONDecoder().decode(AgentRuntimeVersionMarker.self, from: data)
+        else { return false }
+
+        let bun = bunBinary(under: root)
+        let cli = piCLI(under: root)
+        let packageJSON = root.appendingPathComponent("pi/package.json")
+        let lockfile = root.appendingPathComponent("pi/bun.lock")
+        let piRuntime = root.appendingPathComponent("pi", isDirectory: true)
+        guard let bunDigest = try? SHA256Verifier.hexDigest(of: bun),
+              let cliDigest = try? SHA256Verifier.hexDigest(of: cli),
+              let packageDigest = try? SHA256Verifier.hexDigest(of: packageJSON),
+              let lockDigest = try? SHA256Verifier.hexDigest(of: lockfile),
+              let treeDigest = try? SHA256Verifier.treeHexDigest(of: piRuntime),
+              bunDigest == marker.bunBinarySHA256,
+              cliDigest == marker.piCLISHA256,
+              packageDigest == marker.packageJSONSHA256,
+              lockDigest == marker.lockfileSHA256,
+              treeDigest == marker.piRuntimeTreeSHA256 else {
+            return false
+        }
+        return true
+    }
+
+    private static func digestReceipt(_ receipt: String, matches expected: String?) -> Bool {
+        guard receipt.count == 64,
+              receipt.allSatisfy({ $0.isHexDigit }) else { return false }
+        return expected.map { receipt == $0.lowercased() } ?? true
     }
 
     /// Written at install time with versions and verified artifact digests.

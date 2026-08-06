@@ -8,6 +8,7 @@ import Foundation
 final class AgentRuntimeInstaller: ObservableObject {
 
     typealias PackageInstaller = (_ bun: URL, _ template: URL, _ destination: URL) async throws -> Void
+    typealias InstallationChecker = (_ root: URL, _ manifest: AgentRuntimeManifest) -> Bool
     typealias RuntimeVerifier = @Sendable (URL, AgentRuntimeManifest) async -> Bool
 
     enum Phase: Equatable {
@@ -25,6 +26,7 @@ final class AgentRuntimeInstaller: ObservableObject {
     private let session: URLSession
     private let runtimeTemplate: URL
     private let packageInstaller: PackageInstaller
+    private let installationChecker: InstallationChecker
     private let runtimeVerifier: RuntimeVerifier
     private var operationInProgress = false
 
@@ -32,6 +34,9 @@ final class AgentRuntimeInstaller: ObservableObject {
          session: URLSession = .shared,
          runtimeTemplate: URL? = nil,
          packageInstaller: @escaping PackageInstaller = AgentRuntimeInstaller.installPackages,
+         installationChecker: @escaping InstallationChecker = { root, manifest in
+             AgentRuntimeLayout.isInstalled(under: root, manifest: manifest)
+         },
          runtimeVerifier: @escaping RuntimeVerifier = { root, manifest in
              await AgentRuntimeInstaller.verifyInstalledRuntime(root: root, manifest: manifest)
          }) {
@@ -41,38 +46,54 @@ final class AgentRuntimeInstaller: ObservableObject {
             ?? Bundle.main.resourceURL?.appendingPathComponent("pi/runtime", isDirectory: true)
             ?? URL(fileURLWithPath: "pi/runtime", isDirectory: true)
         self.packageInstaller = packageInstaller
+        self.installationChecker = installationChecker
         self.runtimeVerifier = runtimeVerifier
-        phase = .checking
-    }
-
-    /// Called when Agent Mode first appears. Runtime hashing can cover Bun,
-    /// pi, and the lockfile, so verification runs on a utility executor rather
-    /// than blocking AppState construction and the first SwiftUI frame.
-    func refreshInstalledState(manifest: AgentRuntimeManifest = .current) async {
 #if LOKALBOT_UI_TEST_HOST
-        // XCUITests exercise the native tab/session surface without reading a
-        // developer's real Application Support cache or downloading Pi. This
-        // branch is absent from production and requires an explicit opt-in so
-        // capture scripts still render the real installer state by default.
         if ProcessInfo.processInfo.environment["LOKALBOT_AGENT_UI_TEST_READY"] == "1" {
             phase = .installed
-            return
+        } else {
+            phase = installationChecker(root, .current) ? .installed : .idle
+        }
+#else
+        phase = installationChecker(root, .current) ? .installed : .idle
+#endif
+    }
+
+    /// User-requested recursive audit. Normal pane entry relies on the cheap
+    /// install receipt checked during initialization; this slower operation
+    /// opens and hashes the full runtime tree on a utility executor.
+    @discardableResult
+    func verifyInstalledState(manifest: AgentRuntimeManifest = .current) async -> Bool {
+#if LOKALBOT_UI_TEST_HOST
+        if ProcessInfo.processInfo.environment["LOKALBOT_AGENT_UI_TEST_READY"] == "1" {
+            phase = .installed
+            return true
         }
 #endif
-        guard phase == .checking, !operationInProgress else { return }
+        guard !operationInProgress else { return phase == .installed }
         operationInProgress = true
+        phase = .checking
         let installed = await runtimeVerifier(root, manifest)
         operationInProgress = false
-        guard phase == .checking else { return }
-        phase = installed ? .installed : .idle
+        phase = installed
+            ? .installed
+            : .failed("The installed Agent runtime failed its integrity check. Repair it before starting another session.")
+        return installed
     }
 
     func installIfNeeded(manifest: AgentRuntimeManifest = .current) async {
+        await install(manifest: manifest, force: false)
+    }
+
+    func repair(manifest: AgentRuntimeManifest = .current) async {
+        await install(manifest: manifest, force: true)
+    }
+
+    private func install(manifest: AgentRuntimeManifest, force: Bool) async {
         guard !operationInProgress else { return }
         operationInProgress = true
         defer { operationInProgress = false }
-        phase = .checking
-        guard !(await runtimeVerifier(root, manifest)) else {
+        if !force, installationChecker(root, manifest) {
             phase = .installed
             return
         }
@@ -162,7 +183,7 @@ final class AgentRuntimeInstaller: ObservableObject {
         manifest: AgentRuntimeManifest
     ) async -> Bool {
         await Task.detached(priority: .utility) {
-            AgentRuntimeLayout.isInstalled(under: root, manifest: manifest)
+            AgentRuntimeLayout.isIntegrityValid(under: root, manifest: manifest)
         }.value
     }
 

@@ -21,7 +21,7 @@ final class AgentModeUITests: XCTestCase {
 
         XCTAssertTrue(app.descendants(matching: .any)["today.header"]
             .waitForExistence(timeout: 10), "main window never rendered its Today landing")
-        UITestHarness.clickSidebar("sidebar.agent", in: app)
+        clickSidebarItem("sidebar.agent")
         XCTAssertTrue(app.descendants(matching: .any)["agent.tabs"]
             .waitForExistence(timeout: 8), "Agent session tabs did not render")
         XCTAssertTrue(app.textFields["agent.composer"].waitForExistence(timeout: 6),
@@ -92,6 +92,25 @@ final class AgentModeUITests: XCTestCase {
                        "closed Agent session remained in the tab strip")
     }
 
+    func testReturningToAgentKeepsDraftWithoutRuntimeLoadingGate() {
+        let composer = app.textFields["agent.composer"]
+        composer.click()
+        composer.typeText("Keep this draft while I check Today")
+
+        clickSidebarItem("sidebar.today")
+        XCTAssertTrue(app.descendants(matching: .any)["today.header"]
+            .waitForExistence(timeout: 5), "Today did not render after leaving Agent Mode")
+
+        clickSidebarItem("sidebar.agent")
+        XCTAssertTrue(app.descendants(matching: .any)["agent.tabs"]
+            .waitForExistence(timeout: 2), "Agent tabs did not return immediately")
+        XCTAssertFalse(app.staticTexts["Checking Agent runtime…"].exists)
+        XCTAssertFalse(app.staticTexts["Verifying Agent runtime…"].exists)
+        XCTAssertTrue(composer.waitForExistence(timeout: 2), "Agent composer did not return")
+        XCTAssertEqual(composer.value as? String, "Keep this draft while I check Today",
+                       "Agent navigation discarded the session draft")
+    }
+
     private var openTabButtons: XCUIElementQuery {
         app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'agent.tab.' AND NOT identifier CONTAINS '.close.'"))
@@ -105,5 +124,14 @@ final class AgentModeUITests: XCTestCase {
     private func openTab(named title: String) -> XCUIElement {
         openTabButtons.matching(NSPredicate(
             format: "label CONTAINS[c] %@", title)).firstMatch
+    }
+
+    /// SwiftUI propagates the row identifier to both its icon and label on
+    /// current macOS, while the actual List row remains the hit target. Clicking
+    /// the unique label coordinate reliably delivers the event to that row.
+    private func clickSidebarItem(_ identifier: String) {
+        let label = app.staticTexts[identifier]
+        XCTAssertTrue(label.waitForExistence(timeout: 4), "Missing sidebar item \(identifier)")
+        label.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
     }
 }

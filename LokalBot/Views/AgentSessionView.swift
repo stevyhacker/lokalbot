@@ -127,18 +127,12 @@ struct AgentSessionView: View {
             recoveryCard(message: message)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, controller.items.isEmpty ? 52 : 4)
-        case .ready where controller.items.isEmpty:
+        case .idle where controller.items.isEmpty,
+             .starting where controller.items.isEmpty,
+             .ready where controller.items.isEmpty:
             emptyState
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 52)
-        case .idle where controller.items.isEmpty,
-             .starting where controller.items.isEmpty:
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Starting your local agent…").foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 72)
         default:
             EmptyView()
         }
@@ -152,7 +146,7 @@ struct AgentSessionView: View {
             VStack(spacing: 5) {
                 Text("What should the agent help with?")
                     .font(.title3.weight(.semibold))
-                Text("It can read your Meeting Library now. File changes and commands ask first. Session history stays on this Mac.")
+                Text(emptyStateDetail)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
@@ -163,6 +157,7 @@ struct AgentSessionView: View {
                     Label("Resume Most Recent Session", systemImage: "clock.arrow.circlepath")
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(controller.state != .ready)
                 .accessibilityIdentifier("agent.resumePrevious")
             }
             VStack(spacing: 7) {
@@ -177,10 +172,17 @@ struct AgentSessionView: View {
     private func starterButton(_ prompt: String) -> some View {
         Button(prompt) {
             controller.draft = prompt
-            submit()
+            if canSend { submit() }
         }
         .buttonStyle(.bordered)
         .frame(maxWidth: .infinity)
+    }
+
+    private var emptyStateDetail: String {
+        if controller.state == .idle || controller.state == .starting {
+            return "Your local agent is starting. You can prepare a prompt while the Main LLM gets ready."
+        }
+        return "It can read your Meeting Library now. File changes and commands ask first. Session history stays on this Mac."
     }
 
     private func recoveryCard(message: String) -> some View {
@@ -384,7 +386,7 @@ struct AgentSessionView: View {
             Button("Send", action: submit)
                 .buttonStyle(.borderedProminent)
                 .disabled(controller.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                          || !(controller.state == .ready || controller.state == .running))
+                          || !canSend)
                 .accessibilityIdentifier("agent.send")
         }
         .padding(12)
@@ -392,9 +394,13 @@ struct AgentSessionView: View {
 
     private func submit() {
         let text = controller.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty, canSend else { return }
         controller.draft = ""
         Task { await controller.send(prompt: text) }
+    }
+
+    private var canSend: Bool {
+        controller.state == .ready || controller.state == .running
     }
 
     private func focusComposerWhenReady() {
