@@ -7,8 +7,8 @@ import SQLite3
 /// without `@testable`-importing the app — the UI test bundle runs out-of-process,
 /// so it stays decoupled and only the file shape matters.
 ///
-/// Every meeting is deterministic: stable UUIDs, stable text, dates anchored
-/// to `now` so the grouping headers always read "TODAY" / "YESTERDAY".
+/// Every meeting is deterministic: stable UUIDs, stable text, and dates anchored
+/// to local midday so the grouping headers always read "TODAY" / "YESTERDAY".
 enum SyntheticFixture {
 
     static let todayDigestMarker = "Current-day digest marker"
@@ -68,16 +68,20 @@ enum SyntheticFixture {
         try FileManager.default.createDirectory(
             at: root.appendingPathComponent("meetings"), withIntermediateDirectories: true)
 
-        let now = Date()
-        let yesterday = now.addingTimeInterval(-24 * 3_600)
+        let calendar = Calendar.current
+        let dayStart = calendar.startOfDay(for: Date())
+        let todayAnchor = calendar.date(byAdding: .hour, value: 12, to: dayStart)
+            ?? dayStart.addingTimeInterval(12 * 3_600)
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: todayAnchor)
+            ?? todayAnchor.addingTimeInterval(-24 * 3_600)
 
         let designReview = Meeting(
             id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!,
             title: "Design review meeting",
             appName: "Zoom",
-            startedAt: now.addingTimeInterval(-3_600),          // an hour ago
-            endedAt: now.addingTimeInterval(-3_600 + 25 * 60),  // 25-min meeting
-            relativePath: relativePath(for: now.addingTimeInterval(-3_600),
+            startedAt: todayAnchor.addingTimeInterval(-3_600),          // 11:00 local
+            endedAt: todayAnchor.addingTimeInterval(-3_600 + 25 * 60),  // 25-min meeting
+            relativePath: relativePath(for: todayAnchor.addingTimeInterval(-3_600),
                                        slug: "design-review-meeting"),
             hasSystemTrack: true,
             transcript: [
@@ -106,9 +110,9 @@ enum SyntheticFixture {
             id: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!,
             title: "Engineering standup",
             appName: "Slack",
-            startedAt: now.addingTimeInterval(-7_200),          // 2h ago
-            endedAt: now.addingTimeInterval(-7_200 + 15 * 60),  // 15-min standup
-            relativePath: relativePath(for: now.addingTimeInterval(-7_200),
+            startedAt: todayAnchor.addingTimeInterval(-7_200),          // 10:00 local
+            endedAt: todayAnchor.addingTimeInterval(-7_200 + 15 * 60),  // 15-min standup
+            relativePath: relativePath(for: todayAnchor.addingTimeInterval(-7_200),
                                        slug: "engineering-standup"),
             hasSystemTrack: false,
             transcript: [
@@ -150,9 +154,9 @@ enum SyntheticFixture {
         for meeting in [designReview, standup, planning] {
             try write(meeting, under: root)
         }
-        try seedDayDigests(under: root, today: now, previousDay: yesterday)
+        try seedDayDigests(under: root, today: todayAnchor, previousDay: yesterday)
         if includeActivity {
-            seedActivity(under: root)
+            seedActivity(under: root, today: todayAnchor)
         }
         return Library(root: root, designReview: designReview,
                        standup: standup, planning: planning)
@@ -164,7 +168,7 @@ enum SyntheticFixture {
     /// compatible. Uses the SQLite C API directly — the bundle stays
     /// decoupled from the app target, mirroring how the rest of the fixture
     /// writes raw on-disk shape.
-    private static func seedActivity(under root: URL) {
+    private static func seedActivity(under root: URL, today: Date) {
         let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
         let dbPath = root.appendingPathComponent("lokalbotv3.sqlite").path
         var db: OpaquePointer?
@@ -176,7 +180,7 @@ enum SyntheticFixture {
                 app TEXT NOT NULL, title TEXT NOT NULL,
                 start REAL NOT NULL, end REAL NOT NULL);
             """, nil, nil, nil)
-        let dayStart = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
+        let dayStart = Calendar.current.startOfDay(for: today).timeIntervalSince1970
         // (app, title, startMinuteOfDay, endMinuteOfDay) — anchored to today.
         let rows: [(String, String, Double, Double)] = [
             ("Xcode", "TimelineView.swift", 9 * 60, 10 * 60 + 30),
