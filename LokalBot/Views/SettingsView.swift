@@ -805,7 +805,16 @@ struct SettingsView: View {
             Label("Granted", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
         case .notDetermined:
-            Button("Grant Calendar Access…") { app.calendar.requestAccess { _ in } }
+            VStack(alignment: .trailing, spacing: 4) {
+                Button("Grant Calendar Access…") { app.calendar.requestAccess { _ in } }
+                if let error = app.calendar.accessRequestError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.trailing)
+                        .frame(maxWidth: 320, alignment: .trailing)
+                }
+            }
         default:
             Button("Open System Settings…") {
                 if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {

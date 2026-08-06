@@ -15,6 +15,9 @@ enum CalendarAuthorizationStatus: Equatable {
 /// production wires up ``EventKitCalendarEventProvider``.
 protocol CalendarEventProviding: AnyObject {
     var authorizationStatus: CalendarAuthorizationStatus { get }
+    /// User-facing reason the latest access request failed before macOS could
+    /// grant or deny it. Nil for a normal grant/denial flow.
+    var accessRequestError: String? { get }
     /// Requests full read access; completion delivered on the main thread.
     func requestAccess(_ completion: @escaping (Bool) -> Void)
     /// Recordable meetings overlapping the look-around window, sorted by start.
@@ -23,6 +26,7 @@ protocol CalendarEventProviding: AnyObject {
 }
 
 extension CalendarEventProviding {
+    var accessRequestError: String? { nil }
     var hasAccess: Bool { authorizationStatus == .fullAccess }
 
     /// The active meeting at `now`, or nil when access is missing or nothing is

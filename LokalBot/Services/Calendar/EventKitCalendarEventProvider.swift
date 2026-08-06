@@ -18,6 +18,7 @@ final class EventKitCalendarEventProvider: ObservableObject, CalendarEventProvid
     static let cacheTTL: TimeInterval = 30
 
     @Published private(set) var authorizationStatus: CalendarAuthorizationStatus
+    @Published private(set) var accessRequestError: String?
     private let store: EKEventStore
     private var detectionCache: (fetchedAt: Date, candidates: [CalendarMeetingCandidate])?
     private var dayCache: (
@@ -32,11 +33,18 @@ final class EventKitCalendarEventProvider: ObservableObject, CalendarEventProvid
     }
 
     func requestAccess(_ completion: @escaping (Bool) -> Void) {
-        store.requestFullAccessToEvents { [weak self] granted, _ in
+        accessRequestError = nil
+        store.requestFullAccessToEvents { [weak self] granted, error in
+            let errorMessage = error.map(Self.accessRequestMessage)
+            let errorDescription = error?.localizedDescription
             DispatchQueue.main.async {
                 self?.detectionCache = nil
                 self?.dayCache = nil
+                self?.accessRequestError = errorMessage
                 self?.refreshAuthorizationStatus()
+                if let errorDescription {
+                    lokalbotLog("calendar access request failed error=\(errorDescription)")
+                }
                 completion(granted)
             }
         }
@@ -162,5 +170,11 @@ final class EventKitCalendarEventProvider: ObservableObject, CalendarEventProvid
         case .writeOnly: return .writeOnly
         @unknown default: return .denied
         }
+    }
+
+    private static func accessRequestMessage(_ error: Error) -> String {
+        let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !detail.isEmpty else { return "Calendar access couldn’t be requested." }
+        return "Calendar access couldn’t be requested. \(detail)"
     }
 }

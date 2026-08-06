@@ -25,6 +25,7 @@ struct UpcomingMeetingSection: View {
                 title: "Connect your Mac calendar",
                 detail: "LokalBot reads upcoming events from accounts already synced to Apple Calendar.",
                 actionTitle: "Allow Calendar Access",
+                error: app.calendar.accessRequestError,
                 action: requestCalendarAccess)
         case .permissionDenied:
             setupCard(
@@ -40,19 +41,28 @@ struct UpcomingMeetingSection: View {
     }
 
     private func setupCard(icon: String, title: String, detail: String,
-                           actionTitle: String, action: @escaping () -> Void) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            IconTile(systemImage: icon, tint: Brand.teal, size: 38)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.headline)
-                Text(detail)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                           actionTitle: String, error: String? = nil,
+                           action: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
+                IconTile(systemImage: icon, tint: Brand.teal, size: 38)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.headline)
+                    Text(detail)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Button(actionTitle, action: action)
+                    .buttonStyle(.bordered)
+            }
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 12)
-            Button(actionTitle, action: action)
-                .buttonStyle(.bordered)
         }
         .padding(14)
         .background(

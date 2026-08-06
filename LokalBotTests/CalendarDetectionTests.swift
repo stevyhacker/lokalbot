@@ -1,3 +1,4 @@
+import Security
 import XCTest
 @testable import LokalBot
 
@@ -6,6 +7,16 @@ import XCTest
 /// Meet reliability fix), repeat-suppression cooldown, titling, and `Meeting`
 /// metadata round-tripping. All pure — no EventKit, no real calendar.
 final class CalendarDetectionTests: XCTestCase {
+
+    func testCalendarCapabilityIsConfiguredForGeneratedBuilds() throws {
+        let entitlementKey = "com.apple.security.personal-information.calendars"
+        let task = try XCTUnwrap(SecTaskCreateFromSelf(nil))
+        let value = SecTaskCopyValueForEntitlement(
+            task,
+            entitlementKey as CFString,
+            nil)
+        XCTAssertEqual(value as? Bool, true)
+    }
 
     // MARK: - ConferenceURLDetector
 
