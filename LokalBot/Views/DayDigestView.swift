@@ -19,6 +19,7 @@ struct DayDigestView: View {
 
     @State private var fullActivityExpanded = false
     @State private var extraFocusExpanded = false
+    @State private var otherActivityExpanded = false
 
     init(_ markdown: String, mode: Mode = .standalone) {
         presentation = DayDigestPresentation(markdown: markdown)
@@ -55,6 +56,24 @@ struct DayDigestView: View {
                         }
                     }
                 }
+            }
+
+            if !presentation.otherActivityBlocks.isEmpty {
+                DisclosureGroup(isExpanded: $otherActivityExpanded) {
+                    sessionList(presentation.otherActivityBlocks)
+                        .padding(.top, 8)
+                } label: {
+                    HStack(spacing: 8) {
+                        Label("Other activity", systemImage: "ellipsis.circle")
+                            .font(.subheadline.weight(.medium))
+                        Spacer()
+                        Text("\(presentation.otherActivityBlocks.count) item\(presentation.otherActivityBlocks.count == 1 ? "" : "s")")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityIdentifier("dayDigest.otherActivity")
+                .accessibilityHint("Shorter activities that used a smaller share of the recorded day")
             }
 
             if let decisions = presentation.decisionsMarkdown {

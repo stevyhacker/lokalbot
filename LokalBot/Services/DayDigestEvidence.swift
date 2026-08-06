@@ -30,6 +30,9 @@ struct DayDigestMeetingEvidence: Equatable, Sendable {
 struct DayDigestSummarySegment: Equatable, Sendable {
     var start: Date
     var end: Date
+    var activeDuration: TimeInterval
+    var shareOfRecordedTime: Double
+    var isPrimary: Bool
     var evidence: String
     var eventCount: Int
     var sourceIDs: [Int64]
@@ -112,9 +115,9 @@ struct DayDigestEvidence: Equatable, Sendable {
 
     /// Full-day evidence for LLM summarization. Every summary-worthy activity
     /// and meeting appears in exactly one segment, and each long block contributes
-    /// first/middle/last screen context rather than letting the morning exhaust
-    /// a global cap. An idle gap creates a hard boundary so a short morning
-    /// session can never be folded into (and then obscured by) afternoon work.
+    /// evenly spaced context in proportion to its duration rather than letting
+    /// the morning exhaust a global cap. An idle gap creates a hard boundary,
+    /// so short morning work cannot be obscured by an afternoon session.
     func summarySegments(
         maxCharacters: Int = 12_000,
         inactivityGap: TimeInterval = 10 * 60,
@@ -134,17 +137,20 @@ struct DayDigestEvidence: Equatable, Sendable {
             }
         }
 
-        // More than eight isolated sessions are rare, but merging the smallest
-        // adjacent pair preserves every event without creating an unbounded UI.
+        // More than eight isolated sessions are rare, but merging the shortest
+        // adjacent pair preserves every event without letting a few brief
+        // interruptions consume most of the bounded UI.
         while sessions.count > maxSegments {
             var smallestIndex = 0
-            var smallestCount = sessions[0].count + sessions[1].count
+            var smallestDuration = coveredDuration(
+                of: sessions[0] + sessions[1])
             if sessions.count > 2 {
                 for index in 1..<(sessions.count - 1) {
-                    let combinedCount = sessions[index].count + sessions[index + 1].count
-                    if combinedCount < smallestCount {
+                    let combinedDuration = coveredDuration(
+                        of: sessions[index] + sessions[index + 1])
+                    if combinedDuration < smallestDuration {
                         smallestIndex = index
-                        smallestCount = combinedCount
+                        smallestDuration = combinedDuration
                     }
                 }
             }
@@ -158,8 +164,8 @@ struct DayDigestEvidence: Equatable, Sendable {
                 allocations[$0] < sessions[$0].count
             }
             guard let index = candidates.max(by: { lhs, rhs in
-                Double(sessions[lhs].count) / Double(allocations[lhs])
-                    < Double(sessions[rhs].count) / Double(allocations[rhs])
+                sessionWeight(sessions[lhs]) / Double(allocations[lhs])
+                    < sessionWeight(sessions[rhs]) / Double(allocations[rhs])
             }) else { break }
             allocations[index] += 1
         }
@@ -174,9 +180,10 @@ struct DayDigestEvidence: Equatable, Sendable {
                 if lower < upper { groups.append(Array(session[lower..<upper])) }
             }
         }
-        return groups.map {
+        let segments = groups.map {
             makeSummarySegment(events: $0, maxCharacters: maxCharacters)
         }
+        return applyingProminence(to: segments)
     }
 
     /// Compatibility view used by existing callers and tests.
@@ -217,9 +224,27 @@ struct DayDigestEvidence: Equatable, Sendable {
         return result
     }
 
-    private func representativeContexts(_ contexts: [DayScreenContext]) -> [DayScreenContext] {
-        guard contexts.count > 3 else { return contexts }
-        return [contexts[0], contexts[contexts.count / 2], contexts[contexts.count - 1]]
+    private func representativeContexts(
+        _ contexts: [DayScreenContext],
+        limit: Int = 3
+    ) -> [DayScreenContext] {
+        guard limit > 0 else { return [] }
+        guard contexts.count > limit else { return contexts }
+        return evenlySpacedIndices(count: contexts.count, limit: limit).map {
+            contexts[$0]
+        }
+    }
+
+    /// A long uninterrupted app/window block used to expose only three screen
+    /// samples—the same evidence depth as a five-minute task. Increase breadth
+    /// with active duration while keeping excerpts inside a fixed character
+    /// budget, so hours of work are represented across their full span.
+    private func summaryContexts(for activity: Activity) -> [DayScreenContext] {
+        let duration = max(0, activity.end.timeIntervalSince(activity.start))
+        let proportionalLimit = Int(ceil(duration / (30 * 60))) + 1
+        return representativeContexts(
+            activity.contexts,
+            limit: min(12, max(2, proportionalLimit)))
     }
 
     private struct SummaryEvent {
@@ -232,18 +257,103 @@ struct DayDigestEvidence: Equatable, Sendable {
         var title: String
     }
 
+    private func sessionWeight(_ events: [SummaryEvent]) -> Double {
+        let duration = coveredDuration(of: events)
+        return duration > 0 ? duration : Double(events.count)
+    }
+
+    /// Union the recorded intervals so overlapping meeting and app evidence is
+    /// not double-counted when deciding how much narrative space a segment gets.
+    private func coveredDuration(of events: [SummaryEvent]) -> TimeInterval {
+        let intervals = events.compactMap { event -> DateInterval? in
+            guard event.end > event.start else { return nil }
+            return DateInterval(start: event.start, end: event.end)
+        }.sorted { $0.start < $1.start }
+        guard var current = intervals.first else { return 0 }
+        var total: TimeInterval = 0
+        for interval in intervals.dropFirst() {
+            if interval.start <= current.end {
+                current = DateInterval(
+                    start: current.start,
+                    end: max(current.end, interval.end))
+            } else {
+                total += current.duration
+                current = interval
+            }
+        }
+        return total + current.duration
+    }
+
+    /// Main sessions must account for at least half of the recorded day. A segment is
+    /// initially prominent when it represents at least 30 minutes or 10% of
+    /// tracked time; the longest remaining segments are promoted until the
+    /// main set covers at least 50%. Everything else remains available as
+    /// lower-hierarchy activity instead of competing equally for attention.
+    private func applyingProminence(
+        to input: [DayDigestSummarySegment]
+    ) -> [DayDigestSummarySegment] {
+        guard !input.isEmpty else { return [] }
+        var segments = input
+        let total = segments.reduce(0) { $0 + $1.activeDuration }
+        guard total > 0 else {
+            let equalShare = 1 / Double(segments.count)
+            for index in segments.indices {
+                segments[index].shareOfRecordedTime = equalShare
+                segments[index].isPrimary = true
+            }
+            return segments
+        }
+
+        for index in segments.indices {
+            let share = segments[index].activeDuration / total
+            segments[index].shareOfRecordedTime = share
+            segments[index].isPrimary = segments[index].activeDuration >= 30 * 60
+                || share >= 0.10
+        }
+
+        var primaryDuration = segments.reduce(0) {
+            $0 + ($1.isPrimary ? $1.activeDuration : 0)
+        }
+        let targetDuration = total * 0.50
+        let remaining = segments.indices
+            .filter { !segments[$0].isPrimary }
+            .sorted {
+                if segments[$0].activeDuration == segments[$1].activeDuration {
+                    return segments[$0].start < segments[$1].start
+                }
+                return segments[$0].activeDuration > segments[$1].activeDuration
+            }
+        for index in remaining where primaryDuration < targetDuration {
+            segments[index].isPrimary = true
+            primaryDuration += segments[index].activeDuration
+        }
+        if !segments.contains(where: \.isPrimary),
+           let longest = segments.indices.max(by: {
+               segments[$0].activeDuration < segments[$1].activeDuration
+           }) {
+            segments[longest].isPrimary = true
+        }
+        return segments
+    }
+
     private func summaryEvents() -> [SummaryEvent] {
         var events: [SummaryEvent] = []
         for activity in activities where !isSystemOnlySummaryActivity(app: activity.app) {
+            let contexts = summaryContexts(for: activity)
+            let perContextBudget = contexts.isEmpty
+                ? 0
+                : max(360, min(1_200, 8_400 / contexts.count))
             var lines = [
                 "[\(time(activity.start))–\(time(activity.end))] ACTIVITY",
                 "App: \(activity.app)",
                 "Window: \(activity.title.isEmpty ? "Unknown" : activity.title)",
                 "Duration: \(duration(activity.end.timeIntervalSince(activity.start)))",
             ]
-            for context in representativeContexts(activity.contexts) {
+            for context in contexts {
                 let source = context.snapshotID > 0 ? "[screen:\(context.snapshotID)]" : "[screen]"
-                let text = summaryExcerpt(context.text, maxCharacters: 1_200)
+                let text = summaryExcerpt(
+                    context.text,
+                    maxCharacters: perContextBudget)
                 if !text.isEmpty {
                     lines.append("Screen context \(source) at \(time(context.capturedAt)):\n\(text)")
                 }
@@ -253,7 +363,7 @@ struct DayDigestEvidence: Equatable, Sendable {
                 end: activity.end,
                 order: 1,
                 text: lines.joined(separator: "\n"),
-                sourceIDs: activity.contexts.map(\.snapshotID).filter { $0 > 0 },
+                sourceIDs: contexts.map(\.snapshotID).filter { $0 > 0 },
                 app: activity.app,
                 title: activity.title))
         }
@@ -352,6 +462,9 @@ struct DayDigestEvidence: Equatable, Sendable {
         return DayDigestSummarySegment(
             start: events.first?.start ?? day,
             end: events.map(\.end).max() ?? events.first?.start ?? day,
+            activeDuration: coveredDuration(of: events),
+            shareOfRecordedTime: 0,
+            isPrimary: false,
             evidence: evidence,
             eventCount: events.count,
             sourceIDs: sourceIDs,
@@ -538,6 +651,9 @@ struct DayDigestEvidence: Equatable, Sendable {
 struct DayDigestGeneratedFocusBlock: Equatable, Sendable {
     var start: Date
     var end: Date
+    var activeDuration: TimeInterval
+    var shareOfRecordedTime: Double
+    var isPrimary: Bool
     var topic: String
     var summary: String
     var sourceIDs: [Int64]
@@ -561,7 +677,17 @@ enum DayDigestOverviewGenerator {
     }
 
     private struct HighlightsDraft: Decodable {
-        var atAGlance: [String]
+        struct Highlight: Decodable {
+            var blockIndex: Int
+            var text: String
+
+            enum CodingKeys: String, CodingKey {
+                case blockIndex = "block_index"
+                case text
+            }
+        }
+
+        var atAGlance: [Highlight]
         var decisionsAndNextSteps: [String]
 
         enum CodingKeys: String, CodingKey {
@@ -597,6 +723,10 @@ enum DayDigestOverviewGenerator {
             let focusPrompt = """
                 Summarize required coverage segment \(index + 1) of \(segments.count).
                 Exact time range: \(time(segment.start, calendar: calendar))–\(time(segment.end, calendar: calendar))
+                Active recorded time: \(compactDuration(segment.activeDuration))
+                Share of recorded day: \(Int((segment.shareOfRecordedTime * 100).rounded()))%
+                Narrative prominence: \(segment.isPrimary ? "primary work" : "secondary activity")
+                Summary limit: \(segment.isPrimary ? 36 : 14) words
                 Recorded events: \(segment.eventCount)
                 Allowed screen source IDs: \(segment.sourceIDs)
 
@@ -663,14 +793,27 @@ enum DayDigestOverviewGenerator {
         let highlights: HighlightsDraft?
         let highlightStartedAt = Date()
         do {
+            let primaryMaterial = blocks.enumerated()
+                .filter { $0.element.isPrimary }
+                .map { focusMaterial($0.element, index: $0.offset, calendar: calendar) }
+                .joined(separator: "\n")
+            let secondaryMaterial = blocks.enumerated()
+                .filter { !$0.element.isPrimary }
+                .map { focusMaterial($0.element, index: $0.offset, calendar: calendar) }
+                .joined(separator: "\n")
             let output = try await engine.generate(
                 system: PromptTemplates.dayDigestSystem(custom: customPrompt),
                 prompt: """
-                    Select the highest-signal highlights from every chronological focus block below.
-                    The focus blocks are already coverage-complete; do not rewrite or omit them.
+                    Select the highest-signal highlights in proportion to recorded time.
+                    Only PRIMARY blocks are eligible for at_a_glance. Return each highlight with
+                    that block's exact index. SECONDARY blocks may inform explicit decisions or
+                    next steps, but must not become at_a_glance highlights.
 
-                    \(blocks.map { focusMaterial($0, calendar: calendar) }
-                        .joined(separator: "\n"))
+                    PRIMARY BLOCKS:
+                    \(primaryMaterial.isEmpty ? "- None" : primaryMaterial)
+
+                    SECONDARY BLOCKS:
+                    \(secondaryMaterial.isEmpty ? "- None" : secondaryMaterial)
                     """,
                 context: dateContext,
                 schema: highlightsSchema,
@@ -730,7 +873,15 @@ enum DayDigestOverviewGenerator {
             "properties": [
                 "at_a_glance": [
                     "type": "array",
-                    "items": ["type": "string"],
+                    "items": [
+                        "type": "object",
+                        "properties": [
+                            "block_index": ["type": "integer"],
+                            "text": ["type": "string"],
+                        ],
+                        "required": ["block_index", "text"],
+                        "additionalProperties": false,
+                    ],
                     "minItems": 1,
                     "maxItems": 3,
                 ],
@@ -755,7 +906,9 @@ enum DayDigestOverviewGenerator {
             return nil
         }
         let topic = cleanInline(draft.topic, maxCharacters: 72)
-        let summary = cleanSummary(draft.summary, maxWords: 42)
+        let summary = cleanSummary(
+            draft.summary,
+            maxWords: segment.isPrimary ? 36 : 14)
         guard !topic.isEmpty, !summary.isEmpty else { return nil }
         let allowed = Set(segment.sourceIDs)
         var sourceIDs: [Int64] = []
@@ -766,6 +919,9 @@ enum DayDigestOverviewGenerator {
         return DayDigestGeneratedFocusBlock(
             start: segment.start,
             end: segment.end,
+            activeDuration: segment.activeDuration,
+            shareOfRecordedTime: segment.shareOfRecordedTime,
+            isPrimary: segment.isPrimary,
             topic: topic,
             summary: summary,
             sourceIDs: sourceIDs)
@@ -795,6 +951,9 @@ enum DayDigestOverviewGenerator {
         return DayDigestGeneratedFocusBlock(
             start: segment.start,
             end: segment.end,
+            activeDuration: segment.activeDuration,
+            shareOfRecordedTime: segment.shareOfRecordedTime,
+            isPrimary: segment.isPrimary,
             topic: topic.isEmpty ? "Recorded work" : topic,
             summary: summary,
             sourceIDs: Array(segment.sourceIDs.prefix(1)))
@@ -806,16 +965,20 @@ enum DayDigestOverviewGenerator {
         calendar: Calendar
     ) -> String {
         let normalized = normalizedHighlights(highlights, blocks: blocks)
+        let primaryBlocks = blocks.filter(\.isPrimary)
+        let secondaryBlocks = blocks.filter { !$0.isPrimary }
         var sections = [
             "### At a glance\n" + normalized.bullets.map { "- \($0)" }.joined(separator: "\n"),
-            "### Focus blocks\n" + blocks.map { block in
-                let citations = block.sourceIDs.map { "[screen:\($0)]" }.joined(separator: " ")
-                let suffix = citations.isEmpty ? "" : " \(citations)"
-                return "- **\(time(block.start, calendar: calendar))–"
-                    + "\(time(block.end, calendar: calendar)) · \(block.topic)** — "
-                    + block.summary + suffix
+            "### Focus blocks\n" + primaryBlocks.map {
+                renderedBlock($0, calendar: calendar)
             }.joined(separator: "\n"),
         ]
+        if !secondaryBlocks.isEmpty {
+            sections.append(
+                "### Other activity\n" + secondaryBlocks.map {
+                    renderedBlock($0, calendar: calendar)
+                }.joined(separator: "\n"))
+        }
         if !normalized.decisions.isEmpty {
             sections.append(
                 "### Decisions and next steps\n"
@@ -828,16 +991,22 @@ enum DayDigestOverviewGenerator {
         _ draft: HighlightsDraft?,
         blocks: [DayDigestGeneratedFocusBlock]
     ) -> (bullets: [String], decisions: [String]) {
+        let primaryIndices = Set(blocks.indices.filter { blocks[$0].isPrimary })
         var bullets: [String] = []
-        for raw in draft?.atAGlance ?? [] {
-            let clean = cleanBullet(raw, maxWords: 38)
+        for highlight in draft?.atAGlance ?? [] where primaryIndices.contains(highlight.blockIndex) {
+            let clean = cleanBullet(highlight.text, maxWords: 38)
             if !clean.isEmpty && !bullets.contains(clean) { bullets.append(clean) }
             if bullets.count == 3 { break }
         }
-        let minimum = min(3, blocks.count)
-        for block in blocks where bullets.count < minimum {
+        if bullets.isEmpty,
+           let block = blocks.filter(\.isPrimary).max(by: {
+               if $0.activeDuration == $1.activeDuration {
+                   return $0.start > $1.start
+               }
+               return $0.activeDuration < $1.activeDuration
+           }) {
             let fallback = cleanBullet("\(block.topic): \(block.summary)", maxWords: 38)
-            if !fallback.isEmpty && !bullets.contains(fallback) { bullets.append(fallback) }
+            if !fallback.isEmpty { bullets = [fallback] }
         }
         if bullets.isEmpty { bullets = ["No high-signal activity summary was available."] }
 
@@ -852,11 +1021,35 @@ enum DayDigestOverviewGenerator {
 
     private static func focusMaterial(
         _ block: DayDigestGeneratedFocusBlock,
+        index: Int,
         calendar: Calendar
     ) -> String {
-        "- [\(time(block.start, calendar: calendar))–"
+        "- [index \(index)] [\(time(block.start, calendar: calendar))–"
             + "\(time(block.end, calendar: calendar))] "
+            + "[\(compactDuration(block.activeDuration)), "
+            + "\(Int((block.shareOfRecordedTime * 100).rounded()))%] "
             + "\(block.topic): \(block.summary)"
+    }
+
+    private static func renderedBlock(
+        _ block: DayDigestGeneratedFocusBlock,
+        calendar: Calendar
+    ) -> String {
+        let citations = block.sourceIDs.map { "[screen:\($0)]" }.joined(separator: " ")
+        let suffix = citations.isEmpty ? "" : " \(citations)"
+        return "- **\(time(block.start, calendar: calendar))–"
+            + "\(time(block.end, calendar: calendar)) · \(block.topic)** — "
+            + block.summary + suffix
+    }
+
+    private static func compactDuration(_ seconds: TimeInterval) -> String {
+        let roundedMinutes = max(0, Int((seconds / 60).rounded()))
+        if roundedMinutes >= 60 {
+            let hours = roundedMinutes / 60
+            let minutes = roundedMinutes % 60
+            return minutes == 0 ? "\(hours)h" : "\(hours)h \(minutes)m"
+        }
+        return "\(roundedMinutes)m"
     }
 
     private static func cleanSummary(_ value: String, maxWords: Int) -> String {

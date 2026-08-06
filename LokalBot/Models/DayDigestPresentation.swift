@@ -38,6 +38,7 @@ struct DayDigestPresentation: Equatable {
 
     let atAGlanceMarkdown: String
     let focusBlocks: [FocusBlock]
+    let otherActivityBlocks: [FocusBlock]
     let decisionsMarkdown: String?
     let meetingsMarkdown: String?
     let timeAllocations: [TimeAllocation]
@@ -72,6 +73,9 @@ struct DayDigestPresentation: Equatable {
         let focus = Self.body(
             named: ["focus blocks", "work completed and in progress"],
             in: summaryParts) ?? legacyWork
+        let otherActivity = Self.body(
+            named: ["other activity", "brief activity"],
+            in: summaryParts)
         let decisions = Self.body(
             named: ["decisions and next steps", "decisions, follow-ups, and blockers"],
             in: summaryParts)
@@ -79,7 +83,8 @@ struct DayDigestPresentation: Equatable {
         let unknownSummary = summaryParts.filter {
             let title = Self.normalized($0.title)
             return !["at a glance", "overview", "focus blocks",
-                     "work completed and in progress", "decisions and next steps",
+                     "work completed and in progress", "other activity",
+                     "brief activity", "decisions and next steps",
                      "decisions, follow-ups, and blockers"].contains(title)
         }.map { "### \($0.title)\n\n\($0.body)" }
 
@@ -87,6 +92,7 @@ struct DayDigestPresentation: Equatable {
             [overview, summaryPreamble] + unknownSummary))
 
         focusBlocks = Self.focusBlocks(from: focus ?? "")
+        otherActivityBlocks = Self.focusBlocks(from: otherActivity ?? "")
         decisionsMarkdown = Self.meaningful(decisions)
 
         let meetings = document.first(where: {

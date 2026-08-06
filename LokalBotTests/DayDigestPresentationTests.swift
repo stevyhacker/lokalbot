@@ -14,6 +14,9 @@ final class DayDigestPresentationTests: XCTestCase {
             - **09:00–10:15 · Digest redesign** — User implemented the parser [screen:11].
             - **13:05–14:20 · Verification** — Ran focused tests [screen:22] [screen:23].
 
+            ### Other activity
+            - **16:00–16:05 · Invoice payment** — Paid one invoice [screen:24].
+
             ### Decisions and next steps
             - Reinstall the signed app.
 
@@ -49,6 +52,10 @@ final class DayDigestPresentationTests: XCTestCase {
         XCTAssertEqual(presentation.focusBlocks.first?.summaryMarkdown,
                        "Implemented the parser.")
         XCTAssertFalse(presentation.focusBlocks.first?.summaryMarkdown.contains("screen:") == true)
+        XCTAssertEqual(presentation.otherActivityBlocks.count, 1)
+        XCTAssertEqual(presentation.otherActivityBlocks.first?.timeRange, "16:00–16:05")
+        XCTAssertEqual(presentation.otherActivityBlocks.first?.title, "Invoice payment")
+        XCTAssertEqual(presentation.otherActivityBlocks.first?.sourceIDs, [24])
         XCTAssertTrue(presentation.decisionsMarkdown?.contains("Reinstall") == true)
         XCTAssertTrue(presentation.meetingsMarkdown?.contains("Product sync") == true)
         XCTAssertEqual(presentation.timeAllocations.map(\.app), ["Xcode", "Safari"])
@@ -184,10 +191,14 @@ final class DayDigestPresentationTests: XCTestCase {
     func testGenerationPromptEnforcesConciseProgressiveStructure() {
         XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("at_a_glance"))
         XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("35-75 words"))
+        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("PRIMARY"))
+        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("SECONDARY"))
+        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("block_index"))
         XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("Browser toolbars"))
         XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("empty array"))
         XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("exactly one required segment"))
         XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("source_ids"))
+        XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("per-segment summary word limit"))
         XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("Never begin with \"User\""))
     }
 }

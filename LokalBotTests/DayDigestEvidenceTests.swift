@@ -43,7 +43,7 @@ final class DayDigestEvidenceTests: XCTestCase {
                     """
             }
             return """
-                {"at_a_glance":["Morning implementation was recorded.","Midday investigation was recorded.","Evening verification was recorded."],"decisions_and_next_steps":[]}
+                {"at_a_glance":[{"block_index":0,"text":"Morning implementation was recorded."},{"block_index":1,"text":"The brief invoice payment was recorded."},{"block_index":2,"text":"Evening verification was recorded."}],"decisions_and_next_steps":[]}
                 """
         }
     }
@@ -71,6 +71,23 @@ final class DayDigestEvidenceTests: XCTestCase {
             title: title,
             start: time(hour),
             end: time(hour, 45))
+    }
+
+    private func block(
+        _ id: Int64,
+        startHour: Int,
+        startMinute: Int = 0,
+        endHour: Int,
+        endMinute: Int = 0,
+        title: String,
+        app: String
+    ) -> ActivityBlock {
+        ActivityBlock(
+            id: id,
+            app: app,
+            title: title,
+            start: time(startHour, startMinute),
+            end: time(endHour, endMinute))
     }
 
     private func context(_ id: Int64, _ hour: Int, _ minute: Int,
@@ -185,6 +202,136 @@ final class DayDigestEvidenceTests: XCTestCase {
         XCTAssertTrue(segments[0].evidence.contains("Morning implementation"))
         XCTAssertTrue(segments[1].evidence.contains("Midday investigation"))
         XCTAssertTrue(segments[2].evidence.contains("Evening verification"))
+    }
+
+    func testSummaryProminenceIsProportionalToRecordedDuration() async throws {
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [
+                block(
+                    1,
+                    startHour: 9,
+                    endHour: 14,
+                    title: "Main project work",
+                    app: "Xcode"),
+                block(
+                    2,
+                    startHour: 16,
+                    endHour: 16,
+                    endMinute: 5,
+                    title: "Invoice payment",
+                    app: "Safari"),
+            ],
+            screenContexts: [],
+            meetings: [],
+            calendar: calendar)
+
+        let segments = evidence.summarySegments()
+
+        XCTAssertEqual(segments.count, 2)
+        XCTAssertEqual(segments.map(\.activeDuration), [5 * 60 * 60, 5 * 60])
+        XCTAssertEqual(segments[0].shareOfRecordedTime, 300.0 / 305.0, accuracy: 0.001)
+        XCTAssertEqual(segments[1].shareOfRecordedTime, 5.0 / 305.0, accuracy: 0.001)
+        XCTAssertEqual(segments.map(\.isPrimary), [true, false])
+
+        let recorder = GenerationRecorder()
+        let overview = try await DayDigestOverviewGenerator.generate(
+            evidence: evidence,
+            engine: StructuredDigestEngine(recorder: recorder),
+            customPrompt: "",
+            calendar: calendar)
+        let document = evidence.renderDocument(summary: overview, calendar: calendar)
+        let presentation = DayDigestPresentation(markdown: document)
+
+        XCTAssertEqual(presentation.focusBlocks.map(\.title), ["Segment 1"])
+        XCTAssertEqual(presentation.otherActivityBlocks.map(\.title), ["Segment 2"])
+        XCTAssertTrue(presentation.atAGlanceMarkdown.contains("Morning implementation"))
+        XCTAssertFalse(presentation.atAGlanceMarkdown.contains("invoice"))
+        XCTAssertTrue(document.contains("Invoice payment"))
+    }
+
+    func testPrimarySegmentsNeedToCoverOnlyHalfOfRecordedTime() {
+        let briefBlocks = (0..<7).map { index in
+            block(
+                Int64(index + 2),
+                startHour: 10 + index,
+                endHour: 10 + index,
+                endMinute: 5,
+                title: "Brief task \(index + 1)",
+                app: "Safari")
+        }
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [
+                block(
+                    1,
+                    startHour: 8,
+                    endHour: 8,
+                    endMinute: 40,
+                    title: "Main project work",
+                    app: "Xcode"),
+            ] + briefBlocks,
+            screenContexts: [],
+            meetings: [],
+            calendar: calendar)
+
+        let segments = evidence.summarySegments()
+
+        XCTAssertEqual(segments.count, 8)
+        XCTAssertEqual(segments.filter(\.isPrimary).count, 1)
+        XCTAssertEqual(segments.first?.activeDuration, 40 * 60)
+        XCTAssertEqual(segments.first?.shareOfRecordedTime ?? 0, 40.0 / 75.0,
+                       accuracy: 0.001)
+    }
+
+    func testLongActivityReceivesBroaderScreenCoverageThanBriefActivity() {
+        let longContexts = (0..<10).map { index in
+            context(
+                Int64(100 + index),
+                9 + index / 2,
+                (index % 2) * 30,
+                "main project evidence \(index)")
+        }
+        let briefContexts = (0..<5).map { index in
+            context(
+                Int64(200 + index),
+                16,
+                index,
+                "invoice evidence \(index)",
+                app: "Safari")
+        }
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [
+                block(
+                    1,
+                    startHour: 9,
+                    endHour: 14,
+                    title: "Main project work",
+                    app: "Xcode"),
+                block(
+                    2,
+                    startHour: 16,
+                    endHour: 16,
+                    endMinute: 5,
+                    title: "Invoice payment",
+                    app: "Safari"),
+            ],
+            screenContexts: longContexts + briefContexts,
+            meetings: [],
+            calendar: calendar)
+
+        let segments = evidence.summarySegments()
+
+        XCTAssertEqual(segments.count, 2)
+        XCTAssertEqual(segments[0].sourceIDs.count, 10)
+        XCTAssertEqual(segments[1].sourceIDs.count, 2)
+        XCTAssertEqual(occurrences(of: "Screen context [screen:", in: segments[0].evidence), 10)
+        XCTAssertEqual(occurrences(of: "Screen context [screen:", in: segments[1].evidence), 2)
+        XCTAssertTrue(segments[0].evidence.contains("main project evidence 0"))
+        XCTAssertTrue(segments[0].evidence.contains("main project evidence 9"))
+        XCTAssertTrue(segments[1].evidence.contains("invoice evidence 0"))
+        XCTAssertTrue(segments[1].evidence.contains("invoice evidence 4"))
     }
 
     func testOverviewGeneratorPreservesEverySegmentAndUsesTaskSpecificReasoning() async throws {
