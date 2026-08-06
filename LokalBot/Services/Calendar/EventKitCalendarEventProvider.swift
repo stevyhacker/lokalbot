@@ -19,7 +19,12 @@ final class EventKitCalendarEventProvider: ObservableObject, CalendarEventProvid
 
     @Published private(set) var authorizationStatus: CalendarAuthorizationStatus
     private let store: EKEventStore
-    private var cache: (fetchedAt: Date, candidates: [CalendarMeetingCandidate])?
+    private var detectionCache: (fetchedAt: Date, candidates: [CalendarMeetingCandidate])?
+    private var dayCache: (
+        interval: DateInterval,
+        fetchedAt: Date,
+        candidates: [CalendarMeetingCandidate]
+    )?
 
     init(store: EKEventStore = EKEventStore()) {
         self.store = store
@@ -29,7 +34,8 @@ final class EventKitCalendarEventProvider: ObservableObject, CalendarEventProvid
     func requestAccess(_ completion: @escaping (Bool) -> Void) {
         store.requestFullAccessToEvents { [weak self] granted, _ in
             DispatchQueue.main.async {
-                self?.cache = nil
+                self?.detectionCache = nil
+                self?.dayCache = nil
                 self?.refreshAuthorizationStatus()
                 completion(granted)
             }
@@ -40,23 +46,57 @@ final class EventKitCalendarEventProvider: ObservableObject, CalendarEventProvid
     /// notification) and republishes only on a real change.
     func refreshAuthorizationStatus() {
         let latest = Self.map(EKEventStore.authorizationStatus(for: .event))
-        if latest != authorizationStatus { authorizationStatus = latest }
+        if latest != authorizationStatus {
+            detectionCache = nil
+            dayCache = nil
+            authorizationStatus = latest
+        }
     }
 
+    /// The detector intentionally keeps its narrow look-around window. Today
+    /// uses ``meetingCandidates(on:calendar:)`` instead so a distant afternoon
+    /// meeting cannot disappear from the day's schedule.
     func meetingCandidates(now: Date) -> [CalendarMeetingCandidate] {
         guard authorizationStatus == .fullAccess else { return [] }
-        if let cache, now >= cache.fetchedAt, now.timeIntervalSince(cache.fetchedAt) < Self.cacheTTL {
-            return cache.candidates
+        if let detectionCache,
+           now >= detectionCache.fetchedAt,
+           now.timeIntervalSince(detectionCache.fetchedAt) < Self.cacheTTL {
+            return detectionCache.candidates
         }
+        let candidates = fetchCandidates(
+            from: now.addingTimeInterval(-Self.lookBehind),
+            to: now.addingTimeInterval(Self.lookAhead))
+        detectionCache = (now, candidates)
+        return candidates
+    }
+
+    /// Every recordable meeting overlapping the supplied local calendar day.
+    /// This cache is independent from detector polling so widening Today does
+    /// not widen automatic recording's confidence window.
+    func meetingCandidates(on date: Date,
+                           calendar: Calendar = .current) -> [CalendarMeetingCandidate] {
+        guard authorizationStatus == .fullAccess,
+              let interval = calendar.dateInterval(of: .day, for: date) else { return [] }
+        let fetchedAt = Date()
+        if let dayCache,
+           dayCache.interval == interval,
+           fetchedAt >= dayCache.fetchedAt,
+           fetchedAt.timeIntervalSince(dayCache.fetchedAt) < Self.cacheTTL {
+            return dayCache.candidates
+        }
+        let candidates = fetchCandidates(from: interval.start, to: interval.end)
+        dayCache = (interval, fetchedAt, candidates)
+        return candidates
+    }
+
+    private func fetchCandidates(from start: Date, to end: Date) -> [CalendarMeetingCandidate] {
         let predicate = store.predicateForEvents(
-            withStart: now.addingTimeInterval(-Self.lookBehind),
-            end: now.addingTimeInterval(Self.lookAhead),
+            withStart: start,
+            end: end,
             calendars: nil)
-        let candidates = store.events(matching: predicate)
+        return store.events(matching: predicate)
             .compactMap(Self.candidate(from:))
             .sorted { $0.startDate < $1.startDate }
-        cache = (now, candidates)
-        return candidates
     }
 
     // MARK: - Mapping

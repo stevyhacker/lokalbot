@@ -3,7 +3,7 @@ import Foundation
 /// A calendar event that could line up with a recording: already filtered down
 /// to a real, recordable meeting (see ``CalendarEventFilter``) and stripped of
 /// EventKit so the matching layer and its tests never import `EventKit`.
-struct CalendarMeetingCandidate: Equatable {
+struct CalendarMeetingCandidate: Equatable, Sendable {
     /// Source provider tag, e.g. "eventkit". Persisted on the `Meeting`.
     let provider: String
     /// Stable per-occurrence identifier (event id + occurrence start) so the

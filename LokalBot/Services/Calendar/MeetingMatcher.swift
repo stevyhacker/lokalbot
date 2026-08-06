@@ -2,8 +2,8 @@ import Foundation
 
 /// What the detector concluded about the current moment: the app/browser that
 /// will be captured, the calendar event it lines up with (if any), how sure we
-/// are, and why. A calendar event *alone* never produces a recordable context —
-/// only an app/audio signal does — so this is always backed by something to record.
+/// are, and why. Automatic detection always requires an app/audio signal; an
+/// explicit user action may carry a calendar event and start mic-only.
 struct MeetingDetectionContext: Equatable {
     enum Confidence: Int, Comparable {
         case low, medium, high

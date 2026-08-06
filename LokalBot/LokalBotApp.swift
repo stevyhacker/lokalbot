@@ -1161,6 +1161,22 @@ final class AppState: ObservableObject {
             reason: "user")
     }
 
+    /// A user can explicitly start the scheduled event from Today's upcoming
+    /// meeting card before automatic detection fires. Attach the calendar
+    /// metadata immediately; capture system audio too when a matching meeting
+    /// app is already visible, otherwise RecordingController safely records
+    /// the microphone when no meeting app is visible yet.
+    func recordingContext(for calendarEvent: CalendarMeetingCandidate) -> MeetingDetectionContext {
+        let detectedApp = detector.activeApp ?? MeetingDetector.visibleBrowserMeeting()
+        return MeetingDetectionContext(
+            detectedApp: detectedApp,
+            calendarEvent: calendarEvent,
+            confidence: MeetingMatcher.confidence(
+                hasApp: detectedApp != nil,
+                hasCalendar: true),
+            reason: "today-upcoming")
+    }
+
     /// `AudioSourceMonitor` saw an app newly start producing output. Auto-record
     /// in automatic mode only for high-confidence native meeting output or a
     /// calendar-backed native app; leave broader chat apps as banner/detector

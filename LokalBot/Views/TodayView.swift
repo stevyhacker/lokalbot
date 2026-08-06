@@ -7,6 +7,7 @@ import SwiftUI
 struct TodayView: View {
     @EnvironmentObject var app: AppState
     @StateObject private var model = CaptureModel()
+    @StateObject private var upcomingMeeting = UpcomingMeetingPreparationModel()
     @AppStorage("lokalbotv3.gettingStartedDismissed")
     private var gettingStartedDismissed = false
 
@@ -19,6 +20,7 @@ struct TodayView: View {
                 }
                 dreamCard
                 nowCard
+                UpcomingMeetingSection(model: upcomingMeeting)
                 daySoFar
                 meetingsSection
                 askSection
@@ -31,6 +33,14 @@ struct TodayView: View {
         .task(id: app.navSection) {
             guard app.navSection == .today else { return }
             reloadCurrentDay(at: Date())
+            while !Task.isCancelled {
+                await upcomingMeeting.refresh(app: app)
+                do {
+                    try await Task.sleep(for: .seconds(30))
+                } catch {
+                    return
+                }
+            }
         }
         .onChange(of: app.latestDreamReport) { _, _ in
             guard app.navSection == .today else { return }
@@ -38,6 +48,22 @@ struct TodayView: View {
             // have remained mounted since yesterday. Re-anchor every section,
             // not just the dream card, before selecting the new report.
             reloadCurrentDay(at: Date())
+        }
+        .onChange(of: app.libraryReady) { _, ready in
+            guard ready, app.navSection == .today else { return }
+            Task { await upcomingMeeting.refresh(app: app) }
+        }
+        .onChange(of: app.settings.calendarDetectionEnabled) { _, _ in
+            guard app.navSection == .today else { return }
+            Task { await upcomingMeeting.refresh(app: app) }
+        }
+        .onChange(of: app.calendar.authorizationStatus) { _, _ in
+            guard app.navSection == .today else { return }
+            Task { await upcomingMeeting.refresh(app: app) }
+        }
+        .onChange(of: app.currentMeeting?.calendarEventID) { _, _ in
+            guard app.navSection == .today else { return }
+            Task { await upcomingMeeting.refresh(app: app) }
         }
     }
 
