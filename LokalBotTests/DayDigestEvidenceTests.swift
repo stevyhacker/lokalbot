@@ -227,9 +227,10 @@ final class DayDigestEvidenceTests: XCTestCase {
             calendar: calendar)
 
         let segments = evidence.summarySegments()
+        let expectedDurations: [TimeInterval] = [5 * 60 * 60, 5 * 60]
 
         XCTAssertEqual(segments.count, 2)
-        XCTAssertEqual(segments.map(\.activeDuration), [5 * 60 * 60, 5 * 60])
+        XCTAssertEqual(segments.map(\.activeDuration), expectedDurations)
         XCTAssertEqual(segments[0].shareOfRecordedTime, 300.0 / 305.0, accuracy: 0.001)
         XCTAssertEqual(segments[1].shareOfRecordedTime, 5.0 / 305.0, accuracy: 0.001)
         XCTAssertEqual(segments.map(\.isPrimary), [true, false])
@@ -251,14 +252,15 @@ final class DayDigestEvidenceTests: XCTestCase {
     }
 
     func testPrimarySegmentsNeedToCoverOnlyHalfOfRecordedTime() {
-        let briefBlocks = (0..<7).map { index in
-            block(
+        var briefBlocks: [ActivityBlock] = []
+        for index in 0..<7 {
+            briefBlocks.append(block(
                 Int64(index + 2),
                 startHour: 10 + index,
                 endHour: 10 + index,
                 endMinute: 5,
                 title: "Brief task \(index + 1)",
-                app: "Safari")
+                app: "Safari"))
         }
         let evidence = DayDigestEvidence.build(
             day: day,
@@ -285,20 +287,22 @@ final class DayDigestEvidenceTests: XCTestCase {
     }
 
     func testLongActivityReceivesBroaderScreenCoverageThanBriefActivity() {
-        let longContexts = (0..<10).map { index in
-            context(
+        var longContexts: [DayScreenContext] = []
+        for index in 0..<10 {
+            longContexts.append(context(
                 Int64(100 + index),
                 9 + index / 2,
                 (index % 2) * 30,
-                "main project evidence \(index)")
+                "main project evidence \(index)"))
         }
-        let briefContexts = (0..<5).map { index in
-            context(
+        var briefContexts: [DayScreenContext] = []
+        for index in 0..<5 {
+            briefContexts.append(context(
                 Int64(200 + index),
                 16,
                 index,
                 "invoice evidence \(index)",
-                app: "Safari")
+                app: "Safari"))
         }
         let evidence = DayDigestEvidence.build(
             day: day,
