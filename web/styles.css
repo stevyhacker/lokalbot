@@ -16,7 +16,10 @@
 
   --text: #ecf3f7;
   --text-dim: #a2b4c2;
-  --text-faint: #6f8696;
+  /* the faint tier carries captions, metadata and requirements lines, so it
+     has to stay readable rather than merely decorative: this clears 7:1 on the
+     page field and 6.1:1 on the lightest glass panel. */
+  --text-faint: #8ba2b0;
 
   --teal: #23c4ae;
   --teal-bright: #6ef2dc;
@@ -393,9 +396,9 @@ kbd {
 .section {
   max-width: var(--maxw);
   margin: 0 auto;
-  padding: 104px 24px;
+  padding: 88px 24px;
 }
-.section__head { max-width: 760px; margin-bottom: 52px; }
+.section__head { max-width: 760px; margin-bottom: 46px; }
 .section__title { font-size: clamp(1.9rem, 3.8vw, 3rem); letter-spacing: -0.04em; }
 .section__lead { color: var(--text-dim); font-size: 1.08rem; max-width: 56ch; margin-top: 18px; }
 
@@ -822,8 +825,32 @@ kbd {
 /* let columns shrink below content width so wide children (the proof terminal) scroll inside */
 .spotlight > * { min-width: 0; }
 
-/* day-timeline mock image */
-.daytrack { display: block; width: 100%; height: auto; border-radius: var(--radius); box-shadow: var(--glass-shadow); }
+/* flipped spotlight — demo on the right, so consecutive spotlights alternate
+   instead of repeating the same demo-left silhouette down the page */
+.spotlight--flip .spotlight__demo { order: 2; }
+
+/* two spotlight rows sharing a single section header (Write) */
+.write .section__head { margin-bottom: 46px; }
+.spotlight--pair + .spotlight--pair { margin-top: clamp(52px, 7vw, 88px); }
+.spotlight__title { font-size: clamp(1.45rem, 2.7vw, 2.05rem); letter-spacing: -0.032em; }
+.spotlight__lead { color: var(--text-dim); font-size: 1.05rem; max-width: 52ch; margin-top: 16px; }
+.spotlight__try { margin-top: 22px; color: var(--text-faint); font-size: 0.9rem; }
+
+/* real app screenshots — one framed treatment so every capture reads as a set.
+   Deliberately not a glass surface: it frames an opaque image, so there is
+   nothing to blur behind it and no reduced-transparency fallback to keep. */
+.shot { margin: 0; }
+.shot__img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+.shot__cap { margin-top: 14px; color: var(--text-faint); font-size: 0.86rem; }
+.shot--wide { max-width: 1040px; margin: 44px auto 6px; }
+.shot--wide .shot__cap { text-align: center; }
 
 /* recommended models */
 .models__grid { display: grid; grid-template-columns: 1fr; gap: 16px; margin-top: 8px; }
@@ -1154,7 +1181,11 @@ kbd {
   .hero__title, .hero__sub { max-width: none; }
   .hero__cta { justify-content: center; }
   .hero__stage { order: 0; margin-top: 8px; }
+  /* stacked: lead with the heading, then the visual — for every spotlight,
+     flipped or not, so the reading order is consistent on narrow screens */
   .spotlight { grid-template-columns: 1fr; gap: 36px; }
+  .spotlight__copy { order: 1; }
+  .spotlight--flip .spotlight__demo, .spotlight__demo { order: 2; }
 }
 
 @media (max-width: 760px) {

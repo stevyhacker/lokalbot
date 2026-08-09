@@ -173,9 +173,15 @@
     <!-- ───────────────────────── PROOF: VERIFY IT ───────────────────────── -->
     <section class="section spotlight" id="proof">
       <div class="spotlight__demo reveal">
-        <pre class="code" aria-label="Terminal session: checking LokalBot's network connections after a full meeting"><span class="c-prompt">$</span> <span class="c-op"># built-in mode, after model setup:</span>
-<span class="c-prompt">$</span> sudo lsof -i -nP <span class="c-op">|</span> grep LokalBot
-<span class="c-prompt">$</span> <span class="c-op"># localhost inference only; no LokalBot backend.</span></pre>
+        <pre class="code" aria-label="Terminal session: listing LokalBot's open network sockets after recording, transcribing and summarizing a meeting with the built-in backend. Only loopback llama.cpp servers are listening; there are no outbound connections."><span class="c-op"># after a full meeting — recorded, transcribed, summarized</span>
+<span class="c-op"># built-in backend, models already downloaded</span>
+
+<span class="c-prompt">$</span> sudo lsof -i -nP <span class="c-op">|</span> grep -i lokalbot
+LokalBot  4821 you  <span class="c-flag">23u</span>  IPv4  TCP <span class="c-str">127.0.0.1:17872</span> (LISTEN)
+LokalBot  4821 you  <span class="c-flag">24u</span>  IPv4  TCP <span class="c-str">127.0.0.1:17873</span> (LISTEN)
+
+<span class="c-prompt">$</span> <span class="c-op"># the main and embedding llama.cpp servers,</span>
+<span class="c-prompt">$</span> <span class="c-op"># both bound to loopback. nothing outbound.</span></pre>
       </div>
       <div class="spotlight__copy reveal">
         <p class="eyebrow">Prove it</p>
@@ -287,6 +293,11 @@
         </article>
       </div>
 
+      <figure class="shot shot--wide reveal">
+        <img class="shot__img" src="assets/screens/search.jpg" width="2080" height="1028" alt="Searching the local library for &quot;Redis&quot; with semantic search on: matches from Engineering standup, Design review, Sprint planning and a search outage postmortem, each showing the sentence that matched, whether it was said by Me or Them, and a timestamp that plays back that moment." loading="lazy" decoding="async" />
+        <figcaption class="shot__cap">Recall — one query, every matching moment, each with its speaker, source and timestamp</figcaption>
+      </figure>
+
       <p class="memory__boundary reveal"><i class="ph ph-lock-key" aria-hidden="true"></i><span><strong>Private by construction.</strong> Built-in processing stays local. Optional remote inference and network-capable Agent Mode commands require your explicit approval.</span></p>
     </section>
 
@@ -320,68 +331,77 @@
       </ol>
     </section>
 
-    <!-- ───────────────────────── COTYPING SPOTLIGHT ───────────────────────── -->
-    <section class="section spotlight">
-      <div class="spotlight__demo reveal">
-        <div class="cotype">
-          <div class="cotype__bar" aria-hidden="true">
-            <span class="cotype__chrome"></span><span class="cotype__chrome"></span><span class="cotype__chrome"></span>
-            <span class="cotype__app">Messages</span>
-          </div>
-          <label class="cotype__label" for="ctInput">New message</label>
-          <div class="cotype__field" id="cotypeField">
-            <span class="ct-typed" id="ctTyped">Following up on</span><span class="ct-caret" aria-hidden="true"></span><span class="ct-ghost" id="ctGhost"> our sync, the on-device build is ready to ship.</span>
-          </div>
-          <input id="ctInput" class="ct-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Cotyping demo. Type, then press Tab to accept the suggestion." />
-          <div class="cotype__hint"><kbd>Tab</kbd> to accept &middot; <kbd>Esc</kbd> to dismiss</div>
-        </div>
-      </div>
-      <div class="spotlight__copy reveal">
-        <p class="eyebrow">Write · Cotyping</p>
-        <h2 class="section__title">Finish the thought where you're already working.</h2>
-        <p class="section__lead">Ghost text appears as you type in almost any app. Press Tab to accept a word or the whole line. With the built-in backend, the same local model that writes summaries completes your text on the Mac.</p>
-        <ul class="checklist">
-          <li><i class="ph ph-check" aria-hidden="true"></i> Works system-wide, opt-in per app</li>
-          <li><i class="ph ph-check" aria-hidden="true"></i> Skips password and secure fields</li>
-          <li><i class="ph ph-check" aria-hidden="true"></i> Same backend as your summaries</li>
-        </ul>
-      </div>
-    </section>
+    <!-- ───────────────────────── WRITE — COTYPING + DICTATION ───────────────────────── -->
+    <section class="section write" id="write">
+      <header class="section__head reveal">
+        <p class="eyebrow">Write</p>
+        <h2 class="section__title">Put the memory back into any app.</h2>
+        <p class="section__lead">Two ways to get words out of your head and into the window you're already in — both running on the same on-device model that writes your summaries.</p>
+      </header>
 
-    <!-- ───────────────────────── DICTATION SPOTLIGHT ───────────────────────── -->
-    <section class="section spotlight">
-      <div class="spotlight__demo reveal">
-        <div class="cotype">
-          <div class="cotype__bar" aria-hidden="true">
-            <span class="cotype__chrome"></span><span class="cotype__chrome"></span><span class="cotype__chrome"></span>
-            <span class="cotype__app">Notes</span>
-          </div>
-          <div class="cotype__label" aria-hidden="true">Meeting follow-up</div>
-          <div class="cotype__field" aria-hidden="true">
-            <span class="ct-typed">Draft the release notes and send the beta invite to the team tomorrow morning.</span><span class="ct-caret"></span>
-          </div>
-          <div class="dictate__pill" role="img" aria-label="Floating dictation pill: listening while the Option-Space shortcut is held">
-            <span class="dictate__dot" aria-hidden="true"></span>
-            Listening&hellip;&nbsp;<kbd>⌥ Space</kbd>
+      <div class="spotlight spotlight--pair">
+        <div class="spotlight__demo reveal">
+          <div class="cotype">
+            <div class="cotype__bar" aria-hidden="true">
+              <span class="cotype__chrome"></span><span class="cotype__chrome"></span><span class="cotype__chrome"></span>
+              <span class="cotype__app">Messages</span>
+            </div>
+            <label class="cotype__label" for="ctInput">New message</label>
+            <div class="cotype__field" id="cotypeField">
+              <span class="ct-typed" id="ctTyped">Following up on</span><span class="ct-caret" aria-hidden="true"></span><span class="ct-ghost" id="ctGhost"> our sync, the on-device build is ready to ship.</span>
+            </div>
+            <input id="ctInput" class="ct-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Cotyping demo. Type, then press Tab to accept the suggestion." />
+            <div class="cotype__hint"><kbd>Tab</kbd> to accept &middot; <kbd>Esc</kbd> to dismiss</div>
           </div>
         </div>
+        <div class="spotlight__copy reveal">
+          <h3 class="spotlight__title">Cotyping finishes the thought inline.</h3>
+          <p class="spotlight__lead">Ghost text appears as you type in almost any app. Press Tab to accept a word or the whole line. With the built-in backend, the same local model that writes summaries completes your text on the Mac.</p>
+          <ul class="checklist">
+            <li><i class="ph ph-check" aria-hidden="true"></i> Works system-wide, opt-in per app</li>
+            <li><i class="ph ph-check" aria-hidden="true"></i> Skips password and secure fields</li>
+            <li><i class="ph ph-check" aria-hidden="true"></i> Same backend as your summaries</li>
+          </ul>
+          <p class="spotlight__try">Try it — type in the panel, then press <kbd>Tab</kbd>.</p>
+        </div>
       </div>
-      <div class="spotlight__copy reveal">
-        <p class="eyebrow">Write · Dictation</p>
-        <h2 class="section__title">Hold a key, speak, it types.</h2>
-        <p class="section__lead">Hold <kbd>⌥ Space</kbd> in any app and talk. LokalBot pauses your music, shows a live transcript in a floating pill, and pastes the words at your cursor — transcribed by the same on-device model as your meetings.</p>
-        <ul class="checklist">
-          <li><i class="ph ph-check" aria-hidden="true"></i> Works in any app — paste or clipboard</li>
-          <li><i class="ph ph-check" aria-hidden="true"></i> Live transcript while you speak</li>
-          <li><i class="ph ph-check" aria-hidden="true"></i> Audio transcribed on-device, then deleted</li>
-        </ul>
+
+      <div class="spotlight spotlight--pair spotlight--flip">
+        <div class="spotlight__demo reveal">
+          <div class="cotype">
+            <div class="cotype__bar" aria-hidden="true">
+              <span class="cotype__chrome"></span><span class="cotype__chrome"></span><span class="cotype__chrome"></span>
+              <span class="cotype__app">Notes</span>
+            </div>
+            <div class="cotype__label" aria-hidden="true">Meeting follow-up</div>
+            <div class="cotype__field" aria-hidden="true">
+              <span class="ct-typed">Draft the release notes and send the beta invite to the team tomorrow morning.</span><span class="ct-caret"></span>
+            </div>
+            <div class="dictate__pill" role="img" aria-label="Floating dictation pill: listening while the Option-Space shortcut is held">
+              <span class="dictate__dot" aria-hidden="true"></span>
+              Listening&hellip;&nbsp;<kbd>⌥ Space</kbd>
+            </div>
+          </div>
+        </div>
+        <div class="spotlight__copy reveal">
+          <h3 class="spotlight__title">Dictation types what you say.</h3>
+          <p class="spotlight__lead">Hold <kbd>⌥ Space</kbd> in any app and talk. LokalBot pauses your music, shows a live transcript in a floating pill, and pastes the words at your cursor — transcribed by the same on-device model as your meetings.</p>
+          <ul class="checklist">
+            <li><i class="ph ph-check" aria-hidden="true"></i> Works in any app — paste or clipboard</li>
+            <li><i class="ph ph-check" aria-hidden="true"></i> Live transcript while you speak</li>
+            <li><i class="ph ph-check" aria-hidden="true"></i> Audio transcribed on-device, then deleted</li>
+          </ul>
+        </div>
       </div>
     </section>
 
     <!-- ───────────────────────── DAY TIMELINE SPOTLIGHT ───────────────────────── -->
-    <section class="section spotlight">
+    <section class="section spotlight spotlight--flip">
       <div class="spotlight__demo reveal">
-        <img class="daytrack" src="assets/day-timeline.svg" width="560" height="480" alt="A private day timeline: a colour-coded bar of which app was in front through the day, a time-by-app breakdown (Xcode 3h 40m, Meetings 1h 15m, Chrome 55m, Slack 30m), a generated daily digest, and an ask-your-day box — all from on-device activity." loading="lazy" decoding="async" />
+        <figure class="shot">
+          <img class="shot__img" src="assets/screens/timeline.jpg" width="1200" height="944" alt="LokalBot's day overview: 5h 5m tracked across 6 apps, 5 moments and 2 meetings; a colour-coded time-by-app bar reading Xcode 1h 30m at 30%, Notion 1h 20m at 26%, Safari 45m, Terminal 40m, Zoom 25m and Slack 25m; an ask-about-this-day button; and a generated day digest summarising the day with three follow-up items." loading="lazy" decoding="async" />
+          <figcaption class="shot__cap">Timeline — time by app, day digest, and ask-your-day, all local</figcaption>
+        </figure>
       </div>
       <div class="spotlight__copy reveal">
         <p class="eyebrow">Remember · Day timeline</p>
