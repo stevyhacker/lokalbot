@@ -64,7 +64,7 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         let segments = try await SpanTranscription.segments(in: url, spans: regions) { samples, index in
             let wav = work.appendingPathComponent("\(index).wav")
             try OnnxTranscriptionEngine.writeWav(samples, to: wav)
-            return try await self.transcribeWav(wav)
+            return try await self.transcribeWav(wav, language: language)
         }
 
         let elapsed = Date().timeIntervalSince(started)
@@ -222,7 +222,7 @@ actor GraniteSpeechEngine: TranscriptionEngine {
 
     // MARK: - llama-server request
 
-    private func transcribeWav(_ wav: URL) async throws -> String {
+    private func transcribeWav(_ wav: URL, language: String?) async throws -> String {
         guard let server else { throw EngineError.serverUnavailable }
         let boundary = "lokalbot-\(UUID().uuidString)"
         let authenticationToken = await server.authenticationToken()
@@ -230,7 +230,8 @@ actor GraniteSpeechEngine: TranscriptionEngine {
             serverBaseURL: server.baseURL,
             authenticationToken: authenticationToken,
             boundary: boundary,
-            wav: wav)
+            wav: wav,
+            language: language)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw EngineError.transcriptionFailed("no response") }
@@ -249,7 +250,8 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         serverBaseURL: URL,
         authenticationToken: String,
         boundary: String,
-        wav: URL
+        wav: URL,
+        language: String?
     ) throws -> URLRequest {
         var request = URLRequest(
             url: serverBaseURL.appendingPathComponent("audio/transcriptions"))
@@ -257,12 +259,18 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         request.timeoutInterval = 600
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         LocalLlamaServerAuthentication.apply(to: &request, token: authenticationToken)
+        var fields = [
+            "model": Self.modelFileName,
+            "prompt": Self.prompt,
+        ]
+        if let language, !language.isEmpty {
+            // llama.cpp's transcription endpoint appends this ISO language
+            // hint to the ASR prompt. Omitting it preserves real auto-detect.
+            fields["language"] = language
+        }
         request.httpBody = try Self.multipartBody(
             boundary: boundary,
-            fields: [
-                "model": Self.modelFileName,
-                "prompt": Self.prompt,
-            ],
+            fields: fields,
             fileURL: wav)
         return request
     }

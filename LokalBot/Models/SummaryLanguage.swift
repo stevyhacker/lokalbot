@@ -71,32 +71,100 @@ enum SummaryLanguage: Equatable, Hashable, Sendable {
 
     static func resolvedForTranscript(_ language: SummaryLanguage, transcript: Transcript) -> SummaryLanguage {
         guard language == .matchTranscript else { return language }
-        return detectTranscriptLanguage(transcript.languageDetectionText)
+        return detectTranscriptLanguage(transcript.segments.map(\.displayText))
     }
 
     static func detectTranscriptLanguage(_ text: String) -> SummaryLanguage {
-        let sample = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4_000))
-        guard !sample.isEmpty else { return .en }
+        detectTranscriptLanguage(detectionWindows(in: text))
+    }
 
-        if let chinese = chineseScriptLanguage(in: sample) {
-            return chinese
+    /// Detect each bounded passage independently, then choose the language
+    /// with the most material support. `NLLanguageRecognizer` can lock onto a
+    /// foreign-language opening even when the rest of a long string is in a
+    /// different language, so a single prefix must never decide a meeting.
+    private static func detectTranscriptLanguage(_ passages: [String]) -> SummaryLanguage {
+        let samples = distributedSamples(
+            passages.flatMap(detectionWindows(in:)),
+            limit: maximumDetectionSamples)
+        guard !samples.isEmpty else { return .en }
+
+        struct Evidence {
+            var material = 0.0
+            var confidence = 0.0
+        }
+        var evidence: [SummaryLanguage: Evidence] = [:]
+        for sample in samples {
+            guard let (language, confidence) = recognizedLanguage(in: sample) else { continue }
+            let letters = sample.unicodeScalars.reduce(into: 0) { count, scalar in
+                if CharacterSet.letters.contains(scalar) { count += 1 }
+            }
+            let material = min(1, Double(letters) / minimumFullVoteLetters)
+            evidence[language, default: Evidence()].material += material
+            evidence[language, default: Evidence()].confidence += confidence * material
         }
 
+        return evidence.sorted { lhs, rhs in
+            if lhs.value.material != rhs.value.material {
+                return lhs.value.material > rhs.value.material
+            }
+            if lhs.value.confidence != rhs.value.confidence {
+                return lhs.value.confidence > rhs.value.confidence
+            }
+            if lhs.key == .en { return true }
+            if rhs.key == .en { return false }
+            return lhs.key.displayName < rhs.key.displayName
+        }.first?.key ?? .en
+    }
+
+    private static func recognizedLanguage(in sample: String) -> (SummaryLanguage, Double)? {
+        if let chinese = chineseScriptLanguage(in: sample) {
+            return (chinese, 1)
+        }
         let recognizer = NLLanguageRecognizer()
         recognizer.processString(sample)
 
         for (language, confidence) in recognizer.languageHypotheses(withMaximum: 5)
             .sorted(by: { $0.value > $1.value }) where confidence >= 0.15 {
             if let mapped = fromLanguageCode(language.rawValue, sample: sample) {
-                return mapped
+                return (mapped, confidence)
             }
         }
         if let dominant = recognizer.dominantLanguage,
            let mapped = fromLanguageCode(dominant.rawValue, sample: sample) {
-            return mapped
+            return (mapped, 0.1)
         }
-        return .en
+        return nil
     }
+
+    private static func detectionWindows(in text: String) -> [String] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        let characters = Array(trimmed)
+        guard characters.count > detectionWindowCharacters else { return [trimmed] }
+
+        return stride(from: 0, to: characters.count, by: detectionWindowCharacters).map { start in
+            let end = min(start + detectionWindowCharacters, characters.count)
+            return String(characters[start..<end])
+        }
+    }
+
+    private static func distributedSamples(_ samples: [String], limit: Int) -> [String] {
+        let material = samples.filter { sample in
+            sample.unicodeScalars.reduce(into: 0) { count, scalar in
+                if CharacterSet.letters.contains(scalar) { count += 1 }
+            } >= minimumDetectionLetters
+        }
+        guard material.count > limit else { return material }
+        return (0..<limit).map { slot in
+            let position = Double(slot) * Double(material.count - 1) / Double(limit - 1)
+            return material[Int(position.rounded())]
+        }
+    }
+
+    private static let detectionWindowCharacters = 400
+    private static let maximumDetectionSamples = 32
+    private static let minimumDetectionLetters = 12
+    private static let minimumFullVoteLetters = 80.0
 
     static func fromLanguageCode(_ code: String?, sample: String = "") -> SummaryLanguage? {
         guard let code else { return nil }

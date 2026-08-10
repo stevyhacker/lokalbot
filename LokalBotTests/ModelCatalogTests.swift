@@ -126,13 +126,33 @@ final class ModelCatalogTests: XCTestCase {
             serverBaseURL: URL(string: "http://127.0.0.1:17875/v1")!,
             authenticationToken: "granite-secret",
             boundary: "granite-test-boundary",
-            wav: wav)
+            wav: wav,
+            language: "en")
 
         XCTAssertEqual(request.url?.absoluteString,
                        "http://127.0.0.1:17875/v1/audio/transcriptions")
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"),
                        "Bearer granite-secret")
+        let body = String(decoding: try XCTUnwrap(request.httpBody), as: UTF8.self)
+        XCTAssertTrue(body.contains("name=\"language\"\r\n\r\nen\r\n"), body)
+    }
+
+    func testGraniteSpeechRequestOmitsLanguageHintInAutoMode() throws {
+        let wav = FileManager.default.temporaryDirectory
+            .appendingPathComponent("granite-auto-\(UUID().uuidString).wav")
+        try Data([0x52, 0x49, 0x46, 0x46]).write(to: wav)
+        defer { try? FileManager.default.removeItem(at: wav) }
+
+        let request = try GraniteSpeechEngine.makeTranscriptionRequest(
+            serverBaseURL: URL(string: "http://127.0.0.1:17875/v1")!,
+            authenticationToken: "granite-secret",
+            boundary: "granite-test-boundary",
+            wav: wav,
+            language: nil)
+
+        let body = String(decoding: try XCTUnwrap(request.httpBody), as: UTF8.self)
+        XCTAssertFalse(body.contains("name=\"language\""), body)
     }
 
     func testLlamaServerParsesServedModelNames() {
