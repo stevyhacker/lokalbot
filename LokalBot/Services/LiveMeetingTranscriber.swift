@@ -341,7 +341,7 @@ final class LiveMeetingTranscriber: ObservableObject {
             statusMessage = "Preparing the transcription model…"
         }
         let config = settings()
-        let transcript = try await config.transcriptionModel.engine.transcribe(
+        let transcript = try await config.transcriptionEngine().transcribe(
             audio: prepared.url,
             language: config.transcriptionLanguage.code)
         try Task.checkCancellation()

@@ -27,14 +27,21 @@ struct TranscriptionModelStore {
         }
     }
 
-    static func downloadedChoices(environment: Environment = .live) -> Set<String> {
+    static func downloadedChoices(
+        environment: Environment = .live,
+        graniteConfiguration: GraniteSpeechModelConfiguration = .defaultModel
+    ) -> Set<String> {
         Set(TranscriptionModelChoice.allCases.filter {
-            isDownloaded($0, environment: environment)
+            isDownloaded(
+                $0,
+                environment: environment,
+                graniteConfiguration: graniteConfiguration)
         }.map(\.id))
     }
 
     static func isDownloaded(_ choice: TranscriptionModelChoice,
-                             environment: Environment = .live) -> Bool {
+                             environment: Environment = .live,
+                             graniteConfiguration: GraniteSpeechModelConfiguration = .defaultModel) -> Bool {
         switch choice {
         case .parakeetV3:
             return AsrModels.modelsExist(
@@ -51,8 +58,12 @@ struct TranscriptionModelStore {
             return qwenModelExists(modelID: "aufklarer/Qwen3-ASR-0.6B-MLX-4bit",
                                    environment: environment)
         case .graniteSpeech:
-            return ModelFileValidator.looksLikeGGUF(GraniteSpeechEngine.modelURL(appSupport: environment.appSupport))
-                && ModelFileValidator.looksLikeGGUF(GraniteSpeechEngine.projectorURL(appSupport: environment.appSupport))
+            return ModelFileValidator.looksLikeGGUF(GraniteSpeechEngine.modelURL(
+                configuration: graniteConfiguration,
+                appSupport: environment.appSupport))
+                && ModelFileValidator.looksLikeGGUF(GraniteSpeechEngine.projectorURL(
+                    configuration: graniteConfiguration,
+                    appSupport: environment.appSupport))
         case .whisperLarge:
             return whisperModelDirectories(environment: environment).contains { directory in
                 requiredFilesPresent(
@@ -73,9 +84,13 @@ struct TranscriptionModelStore {
     }
 
     static func delete(_ choice: TranscriptionModelChoice,
-                       environment: Environment = .live) throws {
+                       environment: Environment = .live,
+                       graniteConfiguration: GraniteSpeechModelConfiguration = .defaultModel) throws {
         let fileManager = FileManager.default
-        for directory in cacheDirectories(for: choice, environment: environment) {
+        for directory in cacheDirectories(
+            for: choice,
+            environment: environment,
+            graniteConfiguration: graniteConfiguration) {
             if fileManager.fileExists(atPath: directory.path) {
                 try fileManager.removeItem(at: directory)
             }
@@ -83,7 +98,8 @@ struct TranscriptionModelStore {
     }
 
     private static func cacheDirectories(for choice: TranscriptionModelChoice,
-                                         environment: Environment) -> [URL] {
+                                         environment: Environment,
+                                         graniteConfiguration: GraniteSpeechModelConfiguration) -> [URL] {
         switch choice {
         case .parakeetV3:
             [parakeetDirectory(.parakeetV3, environment: environment)]
@@ -96,7 +112,9 @@ struct TranscriptionModelStore {
             [qwenDirectory(modelID: "aufklarer/Qwen3-ASR-0.6B-MLX-4bit",
                            environment: environment)]
         case .graniteSpeech:
-            [GraniteSpeechEngine.modelRoot(appSupport: environment.appSupport)]
+            [GraniteSpeechEngine.modelRoot(
+                configuration: graniteConfiguration,
+                appSupport: environment.appSupport)]
         case .whisperLarge:
             whisperModelDirectories(environment: environment)
         case .cohere:

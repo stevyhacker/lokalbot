@@ -41,6 +41,57 @@ final class TranscriptionModelStoreTests: XCTestCase {
         XCTAssertTrue(TranscriptionModelStore.isDownloaded(.qwenASR17B, environment: environment))
     }
 
+    func testCustomGraniteQuantizationUsesItsConfiguredFiles() throws {
+        let (root, environment) = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configuration = try makeGraniteQ8Configuration()
+
+        try writeGGUF(GraniteSpeechEngine.modelURL(
+            configuration: configuration,
+            appSupport: environment.appSupport))
+        try writeGGUF(GraniteSpeechEngine.projectorURL(
+            configuration: configuration,
+            appSupport: environment.appSupport))
+
+        XCTAssertTrue(TranscriptionModelStore.isDownloaded(
+            .graniteSpeech,
+            environment: environment,
+            graniteConfiguration: configuration))
+        XCTAssertFalse(TranscriptionModelStore.isDownloaded(
+            .graniteSpeech,
+            environment: environment,
+            graniteConfiguration: .defaultModel))
+    }
+
+    func testDeletingCustomGraniteLeavesBuiltInGraniteCacheAlone() throws {
+        let (root, environment) = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configuration = try makeGraniteQ8Configuration(
+            repository: "example/granite-speech-custom-GGUF")
+
+        try writeGraniteModel(in: environment)
+        try writeGGUF(GraniteSpeechEngine.modelURL(
+            configuration: configuration,
+            appSupport: environment.appSupport))
+        try writeGGUF(GraniteSpeechEngine.projectorURL(
+            configuration: configuration,
+            appSupport: environment.appSupport))
+
+        try TranscriptionModelStore.delete(
+            .graniteSpeech,
+            environment: environment,
+            graniteConfiguration: configuration)
+
+        XCTAssertTrue(TranscriptionModelStore.isDownloaded(
+            .graniteSpeech,
+            environment: environment,
+            graniteConfiguration: .defaultModel))
+        XCTAssertFalse(TranscriptionModelStore.isDownloaded(
+            .graniteSpeech,
+            environment: environment,
+            graniteConfiguration: configuration))
+    }
+
     private func makeEnvironment() throws -> (URL, TranscriptionModelStore.Environment) {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("transcription-model-store-\(UUID().uuidString)", isDirectory: true)
@@ -77,6 +128,22 @@ final class TranscriptionModelStoreTests: XCTestCase {
     private func writeGraniteModel(in environment: TranscriptionModelStore.Environment) throws {
         try writeGGUF(GraniteSpeechEngine.modelURL(appSupport: environment.appSupport))
         try writeGGUF(GraniteSpeechEngine.projectorURL(appSupport: environment.appSupport))
+    }
+
+    private func makeGraniteQ8Configuration(
+        repository: String = GraniteSpeechModelConfiguration.defaultModel.repository
+    ) throws -> GraniteSpeechModelConfiguration {
+        try GraniteSpeechModelConfiguration(
+            repository: repository,
+            revision: GraniteSpeechModelConfiguration.defaultModel.revision,
+            model: .init(
+                path: "granite-speech-4.1-2b-Q8_0.gguf",
+                sizeBytes: 1_960_000_000,
+                sha256: String(repeating: "a", count: 64)),
+            projector: .init(
+                path: "mmproj-model-f16.gguf",
+                sizeBytes: 1_159_354_752,
+                sha256: String(repeating: "b", count: 64)))
     }
 
     private func writeWhisperModel(in environment: TranscriptionModelStore.Environment) throws {

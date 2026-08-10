@@ -26,6 +26,7 @@ struct ModelsView: View {
     @State private var speechModelProgress: Double?
     @StateObject private var hfSearch = HuggingFaceSearchService()
     @State private var showingHFBrowse = false
+    @State private var showingGraniteModelPicker = false
     @State private var hfSelectedModel: String?
     @State private var hfFiles: [HFFile] = []
     @State private var openAIAPIKeyDraft = ""
@@ -68,6 +69,9 @@ struct ModelsView: View {
             }
         }
         .sheet(isPresented: $showingHFBrowse) { huggingFaceBrowser }
+        .sheet(isPresented: $showingGraniteModelPicker) {
+            GraniteSpeechModelPicker(selection: graniteSpeechModelBinding)
+        }
     }
 
     // MARK: - Cards
@@ -111,7 +115,7 @@ struct ModelsView: View {
         ModelCard(icon: "square.stack.3d.up", title: "Your stack",
                   subtitle: "The three models doing today's work") {
             stackRow(.transcribe, name: "Transcribe",
-                     model: app.settings.transcriptionModel.displayName,
+                     model: app.settings.transcriptionModelDisplayName,
                      detail: "Turns meeting audio into transcripts")
             Divider()
             stackRow(.think, name: "Think", model: thinkModelName,
@@ -163,10 +167,13 @@ struct ModelsView: View {
 
     private var transcriptionCard: some View {
         ModelCard(icon: "waveform", title: "Transcription",
-                  subtitle: "Speech → text for meeting audio") {
+                  subtitle: "Speech → text for meeting audio",
+                  cardIdentifier: "models.transcription") {
             ForEach(visibleTranscriptionChoices) { choice in
                 TranscriptionModelRow(
                     choice: choice,
+                    displayName: transcriptionDisplayName(for: choice),
+                    blurb: transcriptionBlurb(for: choice),
                     preparing: preparingTranscriptionModelID == choice.id,
                     prepareDisabled: preparingTranscriptionModelID != nil,
                     downloaded: downloadedTranscriptionModelIDs.contains(choice.id),
@@ -178,6 +185,8 @@ struct ModelsView: View {
                     Task { await prepareTranscriptionModel(choice) }
                 } delete: {
                     deleteTranscriptionModel(choice)
+                } configure: {
+                    showingGraniteModelPicker = true
                 }
             }
             Divider()
@@ -187,21 +196,49 @@ struct ModelsView: View {
                 }
             }
             .frame(maxWidth: 320)
-            Text("Runs fully on-device (CoreML / Neural Engine). Models fetch from Hugging Face on first use — or use Download to cache and warm one up.")
+            Text("Runs fully on-device with Core ML, MLX, ONNX, or llama.cpp. Models fetch from Hugging Face on first use — or use Download to cache and warm one up.")
                 .font(.caption).foregroundStyle(.secondary)
         }
-        .accessibilityIdentifier("models.transcription")
     }
 
     /// Legacy choices are hidden unless this install already uses them
     /// (selected or downloaded) — existing users keep their model and the
     /// Delete button; new users never see the superseded option.
     private var visibleTranscriptionChoices: [TranscriptionModelChoice] {
-        TranscriptionModelChoice.allCases.filter { choice in
+        let visible = TranscriptionModelChoice.allCases.filter { choice in
             !choice.isLegacy
                 || choice == app.settings.transcriptionModel
                 || downloadedTranscriptionModelIDs.contains(choice.id)
         }
+        // The recommended engine is the most common thing to change and owns
+        // the custom Hugging Face action, so keep it above the alternatives.
+        return [TranscriptionModelChoice.recommended]
+            + visible.filter { $0 != TranscriptionModelChoice.recommended }
+    }
+
+    private var graniteSpeechModelBinding: Binding<GraniteSpeechModelConfiguration> {
+        Binding(
+            get: { app.settings.graniteSpeechModel },
+            set: { configuration in
+                app.settings.graniteSpeechModel = configuration
+                app.settings.transcriptionModel = .graniteSpeech
+                transcriptionModelErrors[TranscriptionModelChoice.graniteSpeech.id] = nil
+                readyTranscriptionModelIDs.remove(TranscriptionModelChoice.graniteSpeech.id)
+                refreshTranscriptionDownloads()
+            })
+    }
+
+    private func transcriptionDisplayName(for choice: TranscriptionModelChoice) -> String {
+        choice == .graniteSpeech
+            ? app.settings.graniteSpeechModel.displayName
+            : choice.displayName
+    }
+
+    private func transcriptionBlurb(for choice: TranscriptionModelChoice) -> String {
+        choice == .graniteSpeech
+            ? app.settings.graniteSpeechModel.downloadDescription
+                + " · recommended local speech recognition"
+            : choice.blurb
     }
 
     private var summarizationCard: some View {
@@ -484,9 +521,20 @@ struct ModelsView: View {
         let icon: String
         let title: String
         let subtitle: String
+        let cardIdentifier: String?
         @ViewBuilder var content: () -> Content
         @Environment(\.colorScheme) private var scheme
         @Environment(\.colorSchemeContrast) private var contrast
+
+        init(icon: String, title: String, subtitle: String,
+             cardIdentifier: String? = nil,
+             @ViewBuilder content: @escaping () -> Content) {
+            self.icon = icon
+            self.title = title
+            self.subtitle = subtitle
+            self.cardIdentifier = cardIdentifier
+            self.content = content
+        }
 
         var body: some View {
             VStack(alignment: .leading, spacing: 12) {
@@ -496,7 +544,9 @@ struct ModelsView: View {
                         .foregroundStyle(.tint)
                         .frame(width: 26)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(title).font(.headline)
+                        Text(title)
+                            .font(.headline)
+                            .accessibilityIdentifier(cardIdentifier ?? "")
                         Text(subtitle).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -676,6 +726,8 @@ struct ModelsView: View {
     private struct TranscriptionModelRow: View {
         @EnvironmentObject var app: AppState
         let choice: TranscriptionModelChoice
+        let displayName: String
+        let blurb: String
         let preparing: Bool
         let prepareDisabled: Bool
         let downloaded: Bool
@@ -685,6 +737,7 @@ struct ModelsView: View {
         let status: String?
         let prepare: () -> Void
         let delete: () -> Void
+        let configure: () -> Void
 
         var body: some View {
             let selected = app.settings.transcriptionModel == choice
@@ -694,7 +747,7 @@ struct ModelsView: View {
                     .onTapGesture { app.settings.transcriptionModel = choice }
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
-                        Text(choice.displayName).font(.system(size: 12.5, weight: .medium))
+                        Text(displayName).font(.system(size: 12.5, weight: .medium))
                         if choice == TranscriptionModelChoice.recommended {
                             Text("RECOMMENDED").font(.system(size: 8.5, weight: .bold))
                                 .padding(.horizontal, 4).padding(.vertical, 1)
@@ -711,12 +764,18 @@ struct ModelsView: View {
                                 .background(.green.opacity(0.2), in: Capsule())
                         }
                     }
-                    Text(choice.blurb).font(.caption2).foregroundStyle(.secondary)
+                    Text(blurb).font(.caption2).foregroundStyle(.secondary)
                     if let error {
                         Text(error).font(.caption2).foregroundStyle(.orange)
                     }
                 }
                 Spacer()
+                if choice == .graniteSpeech {
+                    Button("Model…", action: configure)
+                        .controlSize(.small)
+                        .help("Choose a Granite Speech GGUF from Hugging Face")
+                        .accessibilityIdentifier("models.granite.customize")
+                }
                 if preparing {
                     VStack(alignment: .trailing, spacing: 2) {
                         if let progress {
@@ -743,7 +802,8 @@ struct ModelsView: View {
     }
 
     private func refreshTranscriptionDownloads() {
-        downloadedTranscriptionModelIDs = TranscriptionModelStore.downloadedChoices()
+        downloadedTranscriptionModelIDs = TranscriptionModelStore.downloadedChoices(
+            graniteConfiguration: app.settings.graniteSpeechModel)
     }
 
     private func refreshSpeechModel() {
@@ -768,7 +828,8 @@ struct ModelsView: View {
             transcriptionModelStatus[id] = update.status
         }
         do {
-            try await choice.engine.prepare(progress: progressHandler)
+            try await app.settings.transcriptionEngine(for: choice)
+                .prepare(progress: progressHandler)
             downloadedTranscriptionModelIDs.insert(choice.id)
             readyTranscriptionModelIDs.insert(choice.id)
         } catch {
@@ -778,7 +839,9 @@ struct ModelsView: View {
 
     private func deleteTranscriptionModel(_ choice: TranscriptionModelChoice) {
         do {
-            try TranscriptionModelStore.delete(choice)
+            try TranscriptionModelStore.delete(
+                choice,
+                graniteConfiguration: app.settings.graniteSpeechModel)
             downloadedTranscriptionModelIDs.remove(choice.id)
             readyTranscriptionModelIDs.remove(choice.id)
             transcriptionModelProgress[choice.id] = nil

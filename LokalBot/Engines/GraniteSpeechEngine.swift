@@ -11,32 +11,48 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     nonisolated let displayName = "Granite Speech 4.1 2B"
     nonisolated let supportsStreaming = false
 
-    private static let repo = "ibm-granite/granite-speech-4.1-2b-GGUF"
-    private static let revision = "8267dad2adc84209b0efd2702ec68a98356125eb"
-    nonisolated static let modelFileName = "granite-speech-4.1-2b-Q4_K_M.gguf"
-    nonisolated static let projectorFileName = "mmproj-model-f16.gguf"
-    private static let modelBytes: Int64 = 1_139_247_200
-    private static let modelSHA256 = "d18e3e79826c4f0fa6734eb05d2db3f06baccbcd5791a83653f946b3178b35d8"
-    private static let projectorBytes: Int64 = 1_159_354_752
-    private static let projectorSHA256 = "0d3615076cbe1d35c3f60c43a60a4047b3e2eeee1b2c233580be60186faab5c5"
+    nonisolated static let modelFileName =
+        GraniteSpeechModelConfiguration.defaultModel.localModelFileName
+    nonisolated static let projectorFileName =
+        GraniteSpeechModelConfiguration.defaultModel.localProjectorFileName
     private static let prompt = "transcribe the speech with proper punctuation and capitalization."
     private static let maxSegmentSeconds = 30.0
     private static let serverPort = 17_875
 
     private var server: LlamaServer?
     private let preparation = AsyncSingleFlight()
-    private var activeUses = 0
+    private var activeConfiguration = GraniteSpeechModelConfiguration.defaultModel
+    private var configurationUses = 0
+    private var isSwitchingConfiguration = false
+    private var configurationWaiters: [CheckedContinuation<Void, Never>] = []
     private lazy var idle = IdleTimer(seconds: 120) { [weak self] in await self?.stop() }
 
     func prepare(progress: ModelPreparationProgressHandler? = nil) async throws {
+        try await prepare(
+            configuration: .defaultModel,
+            progress: progress)
+    }
+
+    func prepare(configuration: GraniteSpeechModelConfiguration,
+                 progress: ModelPreparationProgressHandler? = nil) async throws {
+        await acquire(configuration)
+        defer { releaseConfigurationUse() }
+        try await prepareCurrentConfiguration(
+            configuration,
+            progress: progress)
+    }
+
+    private func prepareCurrentConfiguration(
+        _ configuration: GraniteSpeechModelConfiguration,
+        progress: ModelPreparationProgressHandler?
+    ) async throws {
         report(.init(fractionCompleted: nil, status: "Checking..."), to: progress)
         try await preparation.run { [weak self] in
             guard let self else { return }
-            try await self.performPreparation(progress: progress)
+            try await self.performPreparation(
+                configuration: configuration,
+                progress: progress)
         }
-        // Recording-time prewarm must not pin the ~2.7 GB model for an entire
-        // meeting. Actual transcription bumps the same timer after each use.
-        await idle.bump()
         report(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
@@ -45,16 +61,29 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         server = nil
     }
 
-    private func performPreparation(progress: ModelPreparationProgressHandler?) async throws {
-        let paths = try await preparedPaths(progress: progress)
+    private func performPreparation(
+        configuration: GraniteSpeechModelConfiguration,
+        progress: ModelPreparationProgressHandler?
+    ) async throws {
+        let paths = try await preparedPaths(
+            configuration: configuration,
+            progress: progress)
         report(.init(fractionCompleted: nil, status: "Starting local server..."), to: progress)
         try await server(for: paths).ensureRunning(modelAt: paths.model)
     }
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
-        activeUses += 1
-        defer { finishUse() }
-        try await prepare()
+        try await transcribe(
+            configuration: .defaultModel,
+            audio: url,
+            language: language)
+    }
+
+    func transcribe(configuration: GraniteSpeechModelConfiguration,
+                    audio url: URL, language: String?) async throws -> Transcript {
+        await acquire(configuration)
+        defer { releaseConfigurationUse() }
+        try await prepareCurrentConfiguration(configuration, progress: nil)
         let started = Date()
         let regions = try await SpeechActivity.shared.spans(
             in: url, maxSegmentSeconds: Self.maxSegmentSeconds)
@@ -64,14 +93,19 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         let segments = try await SpanTranscription.segments(in: url, spans: regions) { samples, index in
             let wav = work.appendingPathComponent("\(index).wav")
             try OnnxTranscriptionEngine.writeWav(samples, to: wav)
-            return try await self.transcribeWav(wav, language: language)
+            return try await self.transcribeWav(
+                wav,
+                modelFileName: configuration.localModelFileName,
+                language: language)
         }
 
         let elapsed = Date().timeIntervalSince(started)
         let duration = regions.last?.end ?? 0
         lokalbotLog(
             "granite-asr profile regions=\(regions.count) elapsed=\(String(format: "%.2fs", elapsed)) rtfx=\(String(format: "%.1fx", elapsed > 0 ? duration / elapsed : 0))")
-        return Transcript(segments: segments, engine: "\(Self.repo):\(Self.modelFileName) (llama.cpp)")
+        return Transcript(
+            segments: segments,
+            engine: "\(configuration.repository):\(configuration.model.path) (llama.cpp)")
     }
 
     private func server(for paths: PreparedPaths) -> LlamaServer {
@@ -87,14 +121,42 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     }
 
     private func stop() async {
-        guard activeUses == 0, !(await preparation.isRunning) else { return }
+        guard configurationUses == 0, !(await preparation.isRunning) else { return }
         await shutdown()
     }
 
-    private func finishUse() {
-        activeUses -= 1
-        guard activeUses == 0 else { return }
+    private func acquire(_ requested: GraniteSpeechModelConfiguration) async {
+        while isSwitchingConfiguration
+                || (configurationUses > 0 && activeConfiguration != requested) {
+            await withCheckedContinuation { continuation in
+                configurationWaiters.append(continuation)
+            }
+        }
+
+        if activeConfiguration != requested {
+            isSwitchingConfiguration = true
+            let previousServer = server
+            server = nil
+            await previousServer?.stop()
+            activeConfiguration = requested
+            isSwitchingConfiguration = false
+            resumeConfigurationWaiters()
+        }
+        configurationUses += 1
+    }
+
+    private func releaseConfigurationUse() {
+        configurationUses = max(0, configurationUses - 1)
+        if configurationUses == 0 { resumeConfigurationWaiters() }
+        // Recording-time prewarm must not pin Granite for an entire meeting.
+        // Actual transcription refreshes the same two-minute idle window.
         Task { await idle.bump() }
+    }
+
+    private func resumeConfigurationWaiters() {
+        let waiters = configurationWaiters
+        configurationWaiters.removeAll()
+        waiters.forEach { $0.resume() }
     }
 
     private nonisolated func report(_ update: ModelPreparationUpdate,
@@ -117,9 +179,22 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     }
 
     nonisolated static func modelRoot(appSupport: URL) -> URL {
-        appSupport
-            .appendingPathComponent("granite-speech", isDirectory: true)
-            .appendingPathComponent("4.1-2b", isDirectory: true)
+        modelRoot(
+            configuration: .defaultModel,
+            appSupport: appSupport)
+    }
+
+    nonisolated static func modelRoot(
+        configuration: GraniteSpeechModelConfiguration,
+        appSupport: URL
+    ) -> URL {
+        let base = appSupport.appendingPathComponent("granite-speech", isDirectory: true)
+        if let cacheDirectoryName = configuration.cacheDirectoryName {
+            return base
+                .appendingPathComponent("custom", isDirectory: true)
+                .appendingPathComponent(cacheDirectoryName, isDirectory: true)
+        }
+        return base.appendingPathComponent("4.1-2b", isDirectory: true)
     }
 
     nonisolated static func modelURL() -> URL {
@@ -127,7 +202,17 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     }
 
     nonisolated static func modelURL(appSupport: URL) -> URL {
-        modelRoot(appSupport: appSupport).appendingPathComponent(modelFileName)
+        modelURL(
+            configuration: .defaultModel,
+            appSupport: appSupport)
+    }
+
+    nonisolated static func modelURL(
+        configuration: GraniteSpeechModelConfiguration,
+        appSupport: URL
+    ) -> URL {
+        modelRoot(configuration: configuration, appSupport: appSupport)
+            .appendingPathComponent(configuration.localModelFileName)
     }
 
     nonisolated static func projectorURL() -> URL {
@@ -135,28 +220,54 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     }
 
     nonisolated static func projectorURL(appSupport: URL) -> URL {
-        modelRoot(appSupport: appSupport).appendingPathComponent(projectorFileName)
+        projectorURL(
+            configuration: .defaultModel,
+            appSupport: appSupport)
     }
 
-    private nonisolated func preparedPaths(progress: ModelPreparationProgressHandler?) async throws -> PreparedPaths {
-        let root = Self.modelRoot()
+    nonisolated static func projectorURL(
+        configuration: GraniteSpeechModelConfiguration,
+        appSupport: URL
+    ) -> URL {
+        modelRoot(configuration: configuration, appSupport: appSupport)
+            .appendingPathComponent(configuration.localProjectorFileName)
+    }
+
+    private nonisolated func preparedPaths(
+        configuration: GraniteSpeechModelConfiguration,
+        progress: ModelPreparationProgressHandler?
+    ) async throws -> PreparedPaths {
+        let root = Self.modelRoot(
+            configuration: configuration,
+            appSupport: Self.appSupport)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-        let model = Self.modelURL()
+        let model = Self.modelURL(
+            configuration: configuration,
+            appSupport: Self.appSupport)
+        guard let modelDownloadURL = configuration.downloadURL(for: configuration.model) else {
+            throw EngineError.modelUnavailable
+        }
         try await Self.downloadIfNeeded(
-            fileName: Self.modelFileName,
+            source: modelDownloadURL,
             destination: model,
-            expectedBytes: Self.modelBytes,
-            expectedSHA256: Self.modelSHA256,
-            status: "Downloading Granite model...",
+            expectedBytes: configuration.model.sizeBytes,
+            expectedSHA256: configuration.model.sha256,
+            status: "Downloading Granite \(configuration.quantization) model...",
             progress: progress)
 
-        let projector = Self.projectorURL()
+        let projector = Self.projectorURL(
+            configuration: configuration,
+            appSupport: Self.appSupport)
+        guard let projectorDownloadURL = configuration.downloadURL(
+            for: configuration.projector) else {
+            throw EngineError.modelUnavailable
+        }
         try await Self.downloadIfNeeded(
-            fileName: Self.projectorFileName,
+            source: projectorDownloadURL,
             destination: projector,
-            expectedBytes: Self.projectorBytes,
-            expectedSHA256: Self.projectorSHA256,
+            expectedBytes: configuration.projector.sizeBytes,
+            expectedSHA256: configuration.projector.sha256,
             status: "Downloading Granite projector...",
             progress: progress)
 
@@ -171,7 +282,7 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     /// supports it, with real progress either way), validates, and installs it
     /// atomically.
     private nonisolated static func downloadIfNeeded(
-        fileName: String,
+        source: URL,
         destination: URL,
         expectedBytes: Int64,
         expectedSHA256: String,
@@ -187,8 +298,7 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         DownloadIntegrity.removeFileAndMarker(at: destination)
         report(.init(fractionCompleted: 0, status: status), to: progress)
 
-        let url = URL(string: "https://huggingface.co/\(repo)/resolve/\(revision)/\(fileName)")!
-        let stashed = try await ParallelRangeDownloader.download(from: url, session: .shared) { update in
+        let stashed = try await ParallelRangeDownloader.download(from: source, session: .shared) { update in
             report(.init(fractionCompleted: update.fractionCompleted, status: status), to: progress)
         }
         do {
@@ -222,7 +332,8 @@ actor GraniteSpeechEngine: TranscriptionEngine {
 
     // MARK: - llama-server request
 
-    private func transcribeWav(_ wav: URL, language: String?) async throws -> String {
+    private func transcribeWav(_ wav: URL, modelFileName: String,
+                               language: String?) async throws -> String {
         guard let server else { throw EngineError.serverUnavailable }
         let boundary = "lokalbot-\(UUID().uuidString)"
         let authenticationToken = await server.authenticationToken()
@@ -231,7 +342,8 @@ actor GraniteSpeechEngine: TranscriptionEngine {
             authenticationToken: authenticationToken,
             boundary: boundary,
             wav: wav,
-            language: language)
+            language: language,
+            modelFileName: modelFileName)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw EngineError.transcriptionFailed("no response") }
@@ -253,6 +365,23 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         wav: URL,
         language: String?
     ) throws -> URLRequest {
+        try makeTranscriptionRequest(
+            serverBaseURL: serverBaseURL,
+            authenticationToken: authenticationToken,
+            boundary: boundary,
+            wav: wav,
+            language: language,
+            modelFileName: Self.modelFileName)
+    }
+
+    nonisolated static func makeTranscriptionRequest(
+        serverBaseURL: URL,
+        authenticationToken: String,
+        boundary: String,
+        wav: URL,
+        language: String?,
+        modelFileName: String
+    ) throws -> URLRequest {
         var request = URLRequest(
             url: serverBaseURL.appendingPathComponent("audio/transcriptions"))
         request.httpMethod = "POST"
@@ -260,7 +389,7 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         LocalLlamaServerAuthentication.apply(to: &request, token: authenticationToken)
         var fields = [
-            "model": Self.modelFileName,
+            "model": modelFileName,
             "prompt": Self.prompt,
         ]
         if let language, !language.isEmpty {
@@ -314,5 +443,36 @@ actor GraniteSpeechEngine: TranscriptionEngine {
                 "Granite Speech transcription failed: \(detail)"
             }
         }
+    }
+}
+
+/// Immutable façade captured with one settings snapshot. The shared actor
+/// serializes switches between different Granite configurations while still
+/// allowing concurrent tracks to use the same loaded model.
+private struct ConfiguredGraniteSpeechEngine: TranscriptionEngine {
+    let configuration: GraniteSpeechModelConfiguration
+
+    var displayName: String { configuration.displayName }
+    let supportsStreaming = false
+
+    func prepare(progress: ModelPreparationProgressHandler?) async throws {
+        try await GraniteSpeechEngine.shared.prepare(
+            configuration: configuration,
+            progress: progress)
+    }
+
+    func transcribe(audio: URL, language: String?) async throws -> Transcript {
+        try await GraniteSpeechEngine.shared.transcribe(
+            configuration: configuration,
+            audio: audio,
+            language: language)
+    }
+}
+
+extension GraniteSpeechEngine {
+    nonisolated static func configured(
+        _ configuration: GraniteSpeechModelConfiguration
+    ) -> any TranscriptionEngine {
+        ConfiguredGraniteSpeechEngine(configuration: configuration)
     }
 }

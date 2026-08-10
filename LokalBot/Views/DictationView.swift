@@ -99,7 +99,7 @@ struct DictationView: View {
     private var modelSection: some View {
         Section("Model") {
             LabeledContent("Transcription") {
-                Text(app.settings.transcriptionModel.displayName)
+                Text(app.settings.transcriptionModelDisplayName)
                     .foregroundStyle(.secondary)
             }
             LabeledContent("Language") {

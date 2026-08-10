@@ -400,12 +400,14 @@ final class RecordingController: ObservableObject {
     private func prewarmSelectedTranscriptionModel(reason: String) {
         guard settings.autoTranscribe else { return }
         guard transcriptionPrewarmTask == nil else { return }
-        let choice = settings.transcriptionModel
-        transcriptionPrewarmTask = Task { [weak self, choice, reason] in
+        let config = settings
+        let choice = config.transcriptionModel
+        let engine = config.transcriptionEngine()
+        transcriptionPrewarmTask = Task { [weak self, choice, engine, reason] in
             let started = Date()
             lokalbotLog("transcription prewarm start model=\(choice.rawValue) reason=\(reason)")
             do {
-                try await choice.engine.prepare()
+                try await engine.prepare()
                 let elapsed = Date().timeIntervalSince(started)
                 lokalbotLog("transcription prewarm ready model=\(choice.rawValue) elapsed=\(String(format: "%.2fs", elapsed))")
             } catch {

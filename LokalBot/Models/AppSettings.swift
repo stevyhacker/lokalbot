@@ -109,11 +109,31 @@ struct AppSettings: Codable, Equatable {
     // MARK: Models (M2)
 
     var transcriptionModel: TranscriptionModelChoice = TranscriptionModelChoice.recommended
+    /// The GGUF/projector pair used when Granite Speech is selected. Older
+    /// settings decode to the pinned Q4 default; custom Hugging Face choices
+    /// retain immutable revision and checksum metadata.
+    var graniteSpeechModel = GraniteSpeechModelConfiguration.defaultModel
     var transcriptionLanguage: TranscriptionLanguage = .auto
     var autoTranscribe: Bool = true
     var autoSummarize: Bool = true
     var speechVoice: KokoroVoice = .heart
     var speechSpeed: Double = 1.0
+
+    var transcriptionModelDisplayName: String {
+        transcriptionModel == .graniteSpeech
+            ? graniteSpeechModel.displayName
+            : transcriptionModel.displayName
+    }
+
+    func transcriptionEngine(
+        for choice: TranscriptionModelChoice? = nil
+    ) -> any TranscriptionEngine {
+        let choice = choice ?? transcriptionModel
+        if choice == .graniteSpeech {
+            return GraniteSpeechEngine.configured(graniteSpeechModel)
+        }
+        return choice.engine
+    }
 
     // MARK: - Dictation
 
@@ -510,6 +530,7 @@ struct AppSettings: Codable, Equatable {
         case requireCalendarForBrowser
         case menuBarOnly
         case transcriptionModel
+        case graniteSpeechModel
         case transcriptionLanguage
         case languageHint // legacy key used by builds before typed language selection
         case autoTranscribe
@@ -639,6 +660,7 @@ struct AppSettings: Codable, Equatable {
         try c.encode(requireCalendarForBrowser, forKey: .requireCalendarForBrowser)
         try c.encode(menuBarOnly, forKey: .menuBarOnly)
         try c.encode(transcriptionModel, forKey: .transcriptionModel)
+        try c.encode(graniteSpeechModel, forKey: .graniteSpeechModel)
         try c.encode(transcriptionLanguage, forKey: .transcriptionLanguage)
         try c.encode(autoTranscribe, forKey: .autoTranscribe)
         try c.encode(autoSummarize, forKey: .autoSummarize)
@@ -743,6 +765,9 @@ struct AppSettings: Codable, Equatable {
         requireCalendarForBrowser = (try? c.decode(Bool.self, forKey: .requireCalendarForBrowser)) ?? defaults.requireCalendarForBrowser
         menuBarOnly = (try? c.decode(Bool.self, forKey: .menuBarOnly)) ?? defaults.menuBarOnly
         transcriptionModel = (try? c.decode(TranscriptionModelChoice.self, forKey: .transcriptionModel)) ?? defaults.transcriptionModel
+        graniteSpeechModel = (try? c.decode(
+            GraniteSpeechModelConfiguration.self,
+            forKey: .graniteSpeechModel)) ?? defaults.graniteSpeechModel
         if let language = try? c.decode(TranscriptionLanguage.self, forKey: .transcriptionLanguage) {
             transcriptionLanguage = language
         } else if let legacyHint = try? c.decode(String.self, forKey: .languageHint) {

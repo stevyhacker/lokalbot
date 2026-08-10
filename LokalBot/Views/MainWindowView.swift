@@ -460,7 +460,34 @@ struct MeetingDetailView: View {
             stopSpokenSummary(clearError: false)
         }
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    app.reprocess(meeting, transcribe: true, summarize: true)
+                } label: {
+                    Label("Transcribe & Summarize", systemImage: "wand.and.stars")
+                        .labelStyle(.titleAndIcon)
+                }
+                .help("Transcribe & summarize")
+                .accessibilityIdentifier("toolbar.transcribeAndSummarize")
+
+                Button {
+                    app.reprocess(meeting, transcribe: true, summarize: false)
+                } label: {
+                    Label("Transcribe", systemImage: "waveform")
+                        .labelStyle(.titleAndIcon)
+                }
+                .help("Transcribe only")
+                .accessibilityIdentifier("toolbar.transcribeOnly")
+
+                Button {
+                    app.reprocess(meeting, transcribe: false, summarize: true)
+                } label: {
+                    Label("Re-summarize", systemImage: "arrow.clockwise")
+                        .labelStyle(.titleAndIcon)
+                }
+                .help("Re-summarize and keep the current transcript")
+                .accessibilityIdentifier("toolbar.resummarize")
+
                 Menu {
                     Button {
                         toggleSummarySpeech()
@@ -477,14 +504,6 @@ struct MeetingDetailView: View {
                     }
                     .disabled(isExportingSpeech || spokenSummaryText == nil)
                     Divider()
-                    Menu {
-                        Button("Transcribe & Summarize") { app.reprocess(meeting, transcribe: true, summarize: true) }
-                        Button("Transcribe Only") { app.reprocess(meeting, transcribe: true, summarize: false) }
-                        Button("Re-summarize (Keep Transcript)") { app.reprocess(meeting, transcribe: false, summarize: true) }
-                    } label: {
-                        Label("Process", systemImage: "wand.and.stars")
-                    }
-                    Divider()
                     Button {
                         exportAudioRecording()
                     } label: {
@@ -498,7 +517,7 @@ struct MeetingDetailView: View {
                         Label("Show in Finder", systemImage: "folder")
                     }
                 } label: {
-                    Label("Meeting Actions", systemImage: "ellipsis.circle")
+                    Label("More Meeting Actions", systemImage: "ellipsis.circle")
                 }
                 .accessibilityIdentifier("toolbar.meetingActions")
             }
@@ -663,7 +682,7 @@ struct MeetingDetailView: View {
                 "No summary yet",
                 systemImage: "text.badge.checkmark",
                 description: Text(stage == nil
-                    ? "Use Process → Transcribe & summarize. Summaries are written to summary.md."
+                    ? "Use Transcribe & Summarize in the toolbar. Summaries are written to summary.md."
                     : "Working on it…"))
         }
     }
@@ -710,7 +729,7 @@ struct MeetingDetailView: View {
                 "No transcript yet",
                 systemImage: "text.bubble",
                 description: Text(stage == nil
-                    ? "Use Process → Transcribe & summarize. The first run downloads the Parakeet model (~600 MB) from Hugging Face."
+                    ? "Use Transcribe & Summarize in the toolbar. The first run downloads the Parakeet model (~600 MB) from Hugging Face."
                     : "Working on it…"))
         }
     }
@@ -1347,7 +1366,8 @@ struct GettingStartedCard: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .onAppear {
-            modelDownloaded = TranscriptionModelStore.downloadedChoices()
+            modelDownloaded = TranscriptionModelStore.downloadedChoices(
+                graniteConfiguration: app.settings.graniteSpeechModel)
                 .contains(app.settings.transcriptionModel.id)
         }
     }
@@ -1382,11 +1402,12 @@ struct GettingStartedCard: View {
         guard !preparingModel else { return }
         preparingModel = true
         modelError = nil
-        let choice = app.settings.transcriptionModel
+        let config = app.settings
+        let engine = config.transcriptionEngine()
         Task { @MainActor in
             defer { preparingModel = false }
             do {
-                try await choice.engine.prepare { update in
+                try await engine.prepare { update in
                     modelProgress = update.fractionCompleted
                     modelStatus = update.status
                 }

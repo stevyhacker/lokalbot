@@ -190,7 +190,7 @@ final class ProcessingPipeline: ObservableObject {
                 // trusts them.
                 if !job.resumed { clearCheckpoints(in: folder) }
                 stages[meeting.id] = .preparingTranscriptionModel
-                let engine = config.transcriptionModel.engine   // engines prepare lazily inside transcribe
+                let engine = config.transcriptionEngine()   // engines prepare lazily inside transcribe
 
                 stages[meeting.id] = .transcribing
                 var transcript = try await transcribeTracks(meeting: meeting, folder: folder,

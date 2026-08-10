@@ -186,6 +186,33 @@ final class MainWindowUITests: XCTestCase {
         }
     }
 
+    func testModelsCanOpenCustomGraniteSpeechPicker() {
+        clickSidebar("sidebar.settings")
+        let tabs = app.descendants(matching: .any)["settings.tab"]
+        XCTAssertTrue(tabs.waitForExistence(timeout: 8), "settings tab strip missing")
+        let segment = tabs.buttons["Models"].exists
+            ? tabs.buttons["Models"] : tabs.radioButtons["Models"]
+        XCTAssertTrue(segment.waitForExistence(timeout: 4), "Models segment missing")
+        segment.click()
+
+        let change = app.buttons["models.stack.change.transcribe"]
+        XCTAssertTrue(change.waitForExistence(timeout: 6), "Transcribe Change button missing")
+        change.click()
+
+        let customize = app.buttons["models.granite.customize"]
+        UITestHarness.scrollTo(customize, in: app, attempts: 4)
+        XCTAssertTrue(customize.waitForExistence(timeout: 4),
+                      "custom Granite model button missing")
+        customize.click()
+
+        XCTAssertTrue(app.staticTexts["models.granite.picker.title"]
+            .waitForExistence(timeout: 5), "custom Granite picker did not open")
+        XCTAssertTrue(app.textFields["models.granite.repository"].exists,
+                      "Hugging Face repository field missing")
+        XCTAssertTrue(app.buttons["Use selected model"].exists,
+                      "custom-model confirmation action missing")
+    }
+
     // MARK: - Timeline
 
     /// The Timeline section renders the day surface from the seeded
@@ -309,6 +336,25 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertGreaterThan(
             app.staticTexts.matching(NSPredicate(format: "value == 'Me'")).count, 0,
             "speaker chip 'Me' missing on transcript")
+    }
+
+    /// Processing is the meeting detail's primary action, so each mode stays
+    /// directly reachable from the toolbar instead of regressing into a
+    /// nested overflow submenu.
+    func testMeetingProcessingActionsAreDirectToolbarButtons() {
+        openLibrary()
+        selectMeeting(fixture.designReview)
+        XCTAssertTrue(app.staticTexts["detail.title"].waitForExistence(timeout: 4),
+                      "meeting detail did not open")
+
+        let toolbar = app.toolbars.firstMatch
+        for identifier in ["toolbar.transcribeAndSummarize",
+                           "toolbar.transcribeOnly",
+                           "toolbar.resummarize"] {
+            let button = toolbar.children(matching: .button)[identifier]
+            XCTAssertTrue(button.waitForExistence(timeout: 4),
+                          "\(identifier) is not a direct toolbar button")
+        }
     }
 
     // MARK: - Ask

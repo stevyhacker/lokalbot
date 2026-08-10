@@ -471,9 +471,10 @@ final class DictationCoordinator: ObservableObject {
         }
         let config = settingsProvider()
         let choice = config.transcriptionModel
+        let engine = config.transcriptionEngine()
         beginModelPreparation()
         do {
-            try await choice.engine.prepare { [weak self] update in
+            try await engine.prepare { [weak self] update in
                 self?.receiveModelPreparation(update, generation: session)
             }
             try Task.checkCancellation()
@@ -728,7 +729,7 @@ final class DictationCoordinator: ObservableObject {
         if let speech = await SpeechActivity.shared.speechSeconds(in: audioURL), speech < 0.5 {
             throw DictationError.noSpeech
         }
-        return try await config.transcriptionModel.engine.transcribe(
+        return try await config.transcriptionEngine().transcribe(
             audio: audioURL,
             language: config.transcriptionLanguage.code)
     }
@@ -1011,13 +1012,15 @@ final class DictationCoordinator: ObservableObject {
 
     private func prewarmSelectedModel(reason: String) {
         prewarmTask?.cancel()
-        let choice = settingsProvider().transcriptionModel
+        let config = settingsProvider()
+        let choice = config.transcriptionModel
+        let engine = config.transcriptionEngine()
         let session = generation
         beginModelPreparation()
-        prewarmTask = Task { [weak self, choice, reason, session] in
+        prewarmTask = Task { [weak self, choice, engine, reason, session] in
             guard let self else { return }
             do {
-                try await choice.engine.prepare { [weak self] update in
+                try await engine.prepare { [weak self] update in
                     self?.receiveModelPreparation(update, generation: session)
                 }
                 guard self.generation == session, !Task.isCancelled else { return }
