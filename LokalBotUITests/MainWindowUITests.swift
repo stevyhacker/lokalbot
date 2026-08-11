@@ -35,15 +35,15 @@ final class MainWindowUITests: XCTestCase {
 
     // MARK: - Today
 
-    /// Today keeps the useful digest hierarchy without repeating the host
+    /// Today keeps the task-first digest hierarchy without repeating the host
     /// page's time chart or exposing capture/evidence bookkeeping.
     func testTodayUsesCompactDigestHierarchy() {
         XCTAssertTrue(textWithContent(SyntheticFixture.todayDigestMarker).firstMatch
             .waitForExistence(timeout: 6), "today's persisted digest did not render")
         XCTAssertTrue(textWithContent("Highlights").firstMatch.exists,
                       "digest highlights hierarchy is missing")
-        XCTAssertTrue(textWithContent("Work sessions").firstMatch.exists,
-                      "digest work-session hierarchy is missing")
+        XCTAssertTrue(textWithContent("Tasks").firstMatch.exists,
+                      "digest task hierarchy is missing")
         XCTAssertTrue(textWithContent("Updated the Timeline UI").firstMatch.exists,
                       "human-facing focus summary is missing")
         XCTAssertFalse(textWithContent("User updated the Timeline UI").firstMatch.exists,
@@ -226,8 +226,8 @@ final class MainWindowUITests: XCTestCase {
                       "day-overview totals headline missing — seeded activity did not load")
         XCTAssertTrue(textWithContent("Xcode").firstMatch.exists,
                       "seeded activity app 'Xcode' missing from Timeline")
-        XCTAssertTrue(textWithContent("Work sessions").firstMatch.exists,
-                      "digest work-session hierarchy is missing")
+        XCTAssertTrue(textWithContent("Tasks").firstMatch.exists,
+                      "digest task hierarchy is missing")
         XCTAssertTrue(textWithContent("Updated the Timeline UI").firstMatch.exists,
                       "human-facing focus summary is missing")
         XCTAssertFalse(textWithContent("User updated the Timeline UI").firstMatch.exists,
