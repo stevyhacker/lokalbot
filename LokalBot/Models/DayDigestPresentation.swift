@@ -71,7 +71,7 @@ struct DayDigestPresentation: Equatable {
         let overview = Self.body(
             named: ["at a glance", "overview"], in: summaryParts)
         let focus = Self.body(
-            named: ["focus blocks", "work completed and in progress"],
+            named: ["tasks", "focus blocks", "work completed and in progress"],
             in: summaryParts) ?? legacyWork
         let otherActivity = Self.body(
             named: ["other activity", "brief activity"],
@@ -82,18 +82,28 @@ struct DayDigestPresentation: Equatable {
 
         let unknownSummary = summaryParts.filter {
             let title = Self.normalized($0.title)
-            return !["at a glance", "overview", "focus blocks",
+            return !["at a glance", "overview", "tasks", "focus blocks",
                      "work completed and in progress", "other activity",
                      "brief activity", "decisions and next steps",
                      "decisions, follow-ups, and blockers"].contains(title)
         }.map { "### \($0.title)\n\n\($0.body)" }
 
-        atAGlanceMarkdown = Self.conciseOverview(Self.joinNonempty(
-            [overview, summaryPreamble] + unknownSummary))
+        let parsedFocusBlocks = Self.focusBlocks(from: focus ?? "")
+        let parsedOtherActivityBlocks = Self.focusBlocks(from: otherActivity ?? "")
+        let taskComparisons = parsedFocusBlocks.map(Self.comparisonText)
+        let overviewMarkdown = Self.joinNonempty(
+            [overview, summaryPreamble] + unknownSummary)
+        let uniqueOverview = Self.removingSimilarContent(
+            overviewMarkdown,
+            excluding: taskComparisons) ?? ""
+        let conciseOverviewMarkdown = Self.conciseOverview(uniqueOverview)
 
-        focusBlocks = Self.focusBlocks(from: focus ?? "")
-        otherActivityBlocks = Self.focusBlocks(from: otherActivity ?? "")
-        decisionsMarkdown = Self.meaningful(decisions)
+        atAGlanceMarkdown = conciseOverviewMarkdown
+        focusBlocks = parsedFocusBlocks
+        otherActivityBlocks = parsedOtherActivityBlocks
+        decisionsMarkdown = Self.removingSimilarContent(
+            decisions,
+            excluding: taskComparisons + [conciseOverviewMarkdown])
 
         let meetings = document.first(where: {
             Self.normalized($0.title) == "meetings"
@@ -193,6 +203,40 @@ struct DayDigestPresentation: Equatable {
         values.compactMap(meaningful).joined(separator: "\n\n")
     }
 
+    /// New journals give every fact one section. Older journals can contain
+    /// the same task in overview, task, and follow-up sections, so suppress
+    /// copied or lightly rephrased items at presentation time as well.
+    private static func removingSimilarContent(
+        _ value: String?,
+        excluding existing: [String]
+    ) -> String? {
+        guard let clean = meaningful(value) else { return nil }
+        let items = topLevelItems(in: clean)
+        if items.isEmpty {
+            return existing.contains(where: {
+                DayDigestTextSimilarity.isSimilar(clean, $0)
+            }) ? nil : clean
+        }
+
+        var comparisons = existing.filter { !$0.isEmpty }
+        var accepted: [String] = []
+        for item in items {
+            let comparison = strippingListMarker(item)
+            guard !comparisons.contains(where: {
+                DayDigestTextSimilarity.isSimilar(comparison, $0)
+            }) else { continue }
+            accepted.append(item)
+            comparisons.append(comparison)
+        }
+        return meaningful(accepted.joined(separator: "\n"))
+    }
+
+    private static func comparisonText(_ block: FocusBlock) -> String {
+        [block.title, block.summaryMarkdown]
+            .compactMap { $0 }
+            .joined(separator: " ")
+    }
+
     /// The journal can retain a longer overview for export, but the default UI
     /// should answer "what mattered?" in one glance. Paragraph-style legacy
     /// summaries are kept intact; generated bullet lists show at most three.
@@ -210,10 +254,9 @@ struct DayDigestPresentation: Equatable {
         return blocks.enumerated().map { focusBlock(id: $0.offset, markdown: $0.element) }
     }
 
-    /// New journals store focus blocks as
-    /// `**time · topic** — summary [screen:id]`. Split those fields for the UI
-    /// instead of exposing Markdown syntax and private evidence identifiers.
-    /// Legacy bullets fall back to a plain summary row.
+    /// Task-first journals store `**task** — summary`; previous journals used
+    /// `**time · topic** — summary [screen:id]`. Split both shapes for the UI
+    /// without exposing Markdown syntax or private evidence identifiers.
     private static func focusBlock(id: Int, markdown: String) -> FocusBlock {
         let raw = strippingListMarker(markdown)
             .trimmingCharacters(in: .whitespacesAndNewlines)

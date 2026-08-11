@@ -574,9 +574,10 @@ final class ProcessingPipeline: ObservableObject {
     }
 
     /// Day digest (M4/M6) — shared by the Timeline UI, scheduler, and
-    /// `--digest`. The local model writes only the overview. LokalBot renders
-    /// the full chronological activity/meeting log and time table directly, so
-    /// a terse model response can no longer erase the rest of the workday.
+    /// `--digest`. The model writes only the task-first overview. LokalBot
+    /// renders the complete chronological activity/meeting log and time table
+    /// directly as optional evidence, so filtering summary noise never loses
+    /// the underlying workday record.
     func generateDayDigest(
         for day: Date,
         blocks: [ActivityBlock],
@@ -622,8 +623,8 @@ final class ProcessingPipeline: ObservableObject {
         return DayDigestGenerationResult(text: text, url: url, summaryWarning: warning)
     }
 
-    /// Code owns chronological coverage; the model only supplies grounded
-    /// wording for each required evidence segment and the compact highlights.
+    /// Code owns evidence coverage and persistence. The model rejects
+    /// metadata-only segments, extracts substantive work, and groups it by task.
     private func generateDayOverview(
         evidence: DayDigestEvidence,
         engine: TextEngine,

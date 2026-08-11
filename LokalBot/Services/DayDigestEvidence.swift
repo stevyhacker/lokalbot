@@ -23,21 +23,17 @@ struct DayDigestMeetingEvidence: Equatable, Sendable {
     var outcomes: String
 }
 
-/// One deterministic slice of the day that must receive a visible focus
-/// summary. Character pressure may split a long active session, while a real
-/// idle gap always starts a new slice. The model can describe a slice but
-/// cannot silently remove it from the digest.
+/// One deterministic slice of the day that receives a substantive-work
+/// eligibility pass. Character pressure may split a long active session, while
+/// a real idle gap always starts a new slice. Metadata-only slices stay in the
+/// lossless journal without becoming visible summary items.
 struct DayDigestSummarySegment: Equatable, Sendable {
     var start: Date
     var end: Date
     var activeDuration: TimeInterval
-    var shareOfRecordedTime: Double
-    var isPrimary: Bool
     var evidence: String
     var eventCount: Int
     var sourceIDs: [Int64]
-    var apps: [String]
-    var titles: [String]
 }
 
 /// Complete, ordered evidence for one local calendar day. The model consumes
@@ -180,10 +176,9 @@ struct DayDigestEvidence: Equatable, Sendable {
                 if lower < upper { groups.append(Array(session[lower..<upper])) }
             }
         }
-        let segments = groups.map {
+        return groups.map {
             makeSummarySegment(events: $0, maxCharacters: maxCharacters)
         }
-        return applyingProminence(to: segments)
     }
 
     /// Compatibility view used by existing callers and tests.
@@ -284,58 +279,6 @@ struct DayDigestEvidence: Equatable, Sendable {
         return total + current.duration
     }
 
-    /// Main sessions must account for at least half of the recorded day. A segment is
-    /// initially prominent when it represents at least 30 minutes or 10% of
-    /// tracked time; the longest remaining segments are promoted until the
-    /// main set covers at least 50%. Everything else remains available as
-    /// lower-hierarchy activity instead of competing equally for attention.
-    private func applyingProminence(
-        to input: [DayDigestSummarySegment]
-    ) -> [DayDigestSummarySegment] {
-        guard !input.isEmpty else { return [] }
-        var segments = input
-        let total = segments.reduce(0) { $0 + $1.activeDuration }
-        guard total > 0 else {
-            let equalShare = 1 / Double(segments.count)
-            for index in segments.indices {
-                segments[index].shareOfRecordedTime = equalShare
-                segments[index].isPrimary = true
-            }
-            return segments
-        }
-
-        for index in segments.indices {
-            let share = segments[index].activeDuration / total
-            segments[index].shareOfRecordedTime = share
-            segments[index].isPrimary = segments[index].activeDuration >= 30 * 60
-                || share >= 0.10
-        }
-
-        var primaryDuration = segments.reduce(0) {
-            $0 + ($1.isPrimary ? $1.activeDuration : 0)
-        }
-        let targetDuration = total * 0.50
-        let remaining = segments.indices
-            .filter { !segments[$0].isPrimary }
-            .sorted {
-                if segments[$0].activeDuration == segments[$1].activeDuration {
-                    return segments[$0].start < segments[$1].start
-                }
-                return segments[$0].activeDuration > segments[$1].activeDuration
-            }
-        for index in remaining where primaryDuration < targetDuration {
-            segments[index].isPrimary = true
-            primaryDuration += segments[index].activeDuration
-        }
-        if !segments.contains(where: \.isPrimary),
-           let longest = segments.indices.max(by: {
-               segments[$0].activeDuration < segments[$1].activeDuration
-           }) {
-            segments[longest].isPrimary = true
-        }
-        return segments
-    }
-
     private func summaryEvents() -> [SummaryEvent] {
         var events: [SummaryEvent] = []
         for activity in activities where !isSystemOnlySummaryActivity(app: activity.app) {
@@ -343,21 +286,27 @@ struct DayDigestEvidence: Equatable, Sendable {
             let perContextBudget = contexts.isEmpty
                 ? 0
                 : max(360, min(1_200, 8_400 / contexts.count))
-            var lines = [
-                "[\(time(activity.start))–\(time(activity.end))] ACTIVITY",
-                "App: \(activity.app)",
-                "Window: \(activity.title.isEmpty ? "Unknown" : activity.title)",
-                "Duration: \(duration(activity.end.timeIntervalSince(activity.start)))",
-            ]
+            var lines = ["WORK SOURCE: ACTIVITY"]
+            if !activity.title.isEmpty {
+                lines.append(
+                    "Possible task context (weak; corroborate before summarizing): "
+                        + activity.title)
+            }
             for context in contexts {
                 let source = context.snapshotID > 0 ? "[screen:\(context.snapshotID)]" : "[screen]"
                 let text = summaryExcerpt(
                     context.text,
                     maxCharacters: perContextBudget)
                 if !text.isEmpty {
-                    lines.append("Screen context \(source) at \(time(context.capturedAt)):\n\(text)")
+                    lines.append("Screen context \(source):\n\(text)")
                 }
             }
+            lines.append(
+                "LOW-PRIORITY TRACE METADATA — do not summarize directly:\n"
+                    + "\(time(activity.start))–\(time(activity.end)); "
+                    + "app=\(activity.app); "
+                    + "window=\(activity.title.isEmpty ? "Unknown" : activity.title); "
+                    + "duration=\(duration(activity.end.timeIntervalSince(activity.start)))")
             events.append(SummaryEvent(
                 start: activity.start,
                 end: activity.end,
@@ -375,27 +324,27 @@ struct DayDigestEvidence: Equatable, Sendable {
                 end: context.capturedAt,
                 order: 2,
                 text: """
-                    [\(time(context.capturedAt))] SCREEN CONTEXT \(source)
-                    App: \(context.app)
-                    Window: \(context.windowTitle.isEmpty ? "Unknown" : context.windowTitle)
-                    Captured text: \(text)
+                    WORK SOURCE: SCREEN CONTEXT \(source)
+                    Captured work text: \(text)
+                    LOW-PRIORITY TRACE METADATA — do not summarize directly:
+                    \(time(context.capturedAt)); app=\(context.app); window=\(context.windowTitle.isEmpty ? "Unknown" : context.windowTitle)
                     """,
                 sourceIDs: context.snapshotID > 0 ? [context.snapshotID] : [],
                 app: context.app,
                 title: context.windowTitle))
         }
         for meeting in meetings {
-            var lines = [
-                "[\(time(meeting.startedAt))–\(time(meeting.endedAt))] MEETING",
-                "Title: \(meeting.title)",
-                "App: \(meeting.app)",
-            ]
+            var lines = ["WORK SOURCE: MEETING", "Task context: \(meeting.title)"]
             let sourceSummary = PromptContextSanitizer.sanitize(
                 meeting.sourceSummary, maxCharacters: 6_000)
             if !sourceSummary.isEmpty { lines.append("Source summary:\n" + sourceSummary) }
             let outcomes = PromptContextSanitizer.sanitize(
                 meeting.outcomes, maxCharacters: 3_000)
             if !outcomes.isEmpty { lines.append("Outcomes:\n" + outcomes) }
+            lines.append(
+                "LOW-PRIORITY TRACE METADATA — do not summarize directly:\n"
+                    + "\(time(meeting.startedAt))–\(time(meeting.endedAt)); "
+                    + "app=\(meeting.app)")
             events.append(SummaryEvent(
                 start: meeting.startedAt,
                 end: meeting.endedAt,
@@ -423,53 +372,43 @@ struct DayDigestEvidence: Equatable, Sendable {
         events: [SummaryEvent],
         maxCharacters: Int
     ) -> DayDigestSummarySegment {
-        let inventoryBudget = max(96, Int(Double(maxCharacters) * 0.58))
-        let perLineBudget = max(48, min(220, inventoryBudget / max(1, events.count)))
-        let inventoryLines = events.map { event in
-            let title = event.title.isEmpty ? "Unknown" : event.title
-            return singleLine(
-                "[\(time(event.start))–\(time(event.end))] \(event.app) — \(title)",
-                maxCharacters: perLineBudget)
-        }
-        var evidence = "Chronological event inventory:\n"
-            + inventoryLines.joined(separator: "\n")
+        let detailIndices = evenlySpacedIndices(count: events.count, limit: 12)
+        let contentBudget = max(120, Int(Double(maxCharacters) * 0.82))
+        let perDetailBudget = max(120, contentBudget / max(1, detailIndices.count))
+        let details = detailIndices.map { index in
+            PromptContextSanitizer.sanitize(
+                events[index].text,
+                maxCharacters: perDetailBudget)
+        }.filter { !$0.isEmpty }
+        var evidence = "WORK CONTENT — primary evidence:\n"
+            + details.joined(separator: "\n\n---\n\n")
 
-        let detailIndices = evenlySpacedIndices(count: events.count, limit: 8)
-        let remaining = max(0, maxCharacters - evidence.count - 28)
-        if remaining > 80, !detailIndices.isEmpty {
-            let perDetailBudget = max(80, remaining / detailIndices.count)
-            let details = detailIndices.map { index in
-                PromptContextSanitizer.sanitize(
-                    events[index].text,
-                    maxCharacters: perDetailBudget)
-            }.filter { !$0.isEmpty }
-            if !details.isEmpty {
-                evidence += "\n\nRepresentative evidence:\n"
-                    + details.joined(separator: "\n\n---\n\n")
+        let remaining = max(0, maxCharacters - evidence.count - 72)
+        if remaining > 80 {
+            let perLineBudget = max(48, min(160, remaining / max(1, events.count)))
+            let inventoryLines = events.map { event in
+                let title = event.title.isEmpty ? "Unknown" : event.title
+                return singleLine(
+                    "[\(time(event.start))–\(time(event.end))] \(event.app) — \(title)",
+                    maxCharacters: perLineBudget)
             }
+            evidence += "\n\nLOW-PRIORITY TRACE METADATA — context only, never a work item:\n"
+                + inventoryLines.joined(separator: "\n")
         }
         evidence = PromptContextSanitizer.sanitize(
             evidence, maxCharacters: maxCharacters)
 
         var sourceIDs: [Int64] = []
-        var apps: [String] = []
-        var titles: [String] = []
         for event in events {
             for id in event.sourceIDs where !sourceIDs.contains(id) { sourceIDs.append(id) }
-            if !event.app.isEmpty, !apps.contains(event.app) { apps.append(event.app) }
-            if !event.title.isEmpty, !titles.contains(event.title) { titles.append(event.title) }
         }
         return DayDigestSummarySegment(
             start: events.first?.start ?? day,
             end: events.map(\.end).max() ?? events.first?.start ?? day,
             activeDuration: coveredDuration(of: events),
-            shareOfRecordedTime: 0,
-            isPrimary: false,
             evidence: evidence,
             eventCount: events.count,
-            sourceIDs: sourceIDs,
-            apps: apps,
-            titles: titles)
+            sourceIDs: sourceIDs)
     }
 
     private func evenlySpacedIndices(count: Int, limit: Int) -> [Int] {
@@ -649,51 +588,115 @@ struct DayDigestEvidence: Equatable, Sendable {
 }
 
 struct DayDigestGeneratedFocusBlock: Equatable, Sendable {
-    var start: Date
-    var end: Date
-    var activeDuration: TimeInterval
-    var shareOfRecordedTime: Double
-    var isPrimary: Bool
-    var topic: String
-    var summary: String
+    var task: String
+    var workDone: String
+    var status: String
+    var outcome: String
+    var nextStep: String
     var sourceIDs: [Int64]
 }
 
+/// Conservative lexical overlap detection for short, structured digest text.
+/// It catches copied or lightly rephrased facts without treating every mention
+/// of the same project as redundant.
+enum DayDigestTextSimilarity {
+    private static let ignoredWords: Set<String> = [
+        "a", "an", "and", "are", "as", "at", "be", "been", "being", "by",
+        "for", "from", "in", "is", "of", "on", "or", "that", "the", "this",
+        "to", "was", "were", "with",
+    ]
+
+    static func isSimilar(_ lhs: String, _ rhs: String) -> Bool {
+        let leftWords = meaningfulWords(in: lhs)
+        let rightWords = meaningfulWords(in: rhs)
+        guard !leftWords.isEmpty, !rightWords.isEmpty else { return false }
+
+        let leftText = leftWords.joined(separator: " ")
+        let rightText = rightWords.joined(separator: " ")
+        if leftText == rightText { return true }
+
+        let shorter = leftText.count <= rightText.count ? leftText : rightText
+        let longer = leftText.count <= rightText.count ? rightText : leftText
+        if shorter.count >= 16, longer.contains(shorter) { return true }
+
+        let left = Set(leftWords)
+        let right = Set(rightWords)
+        if left == right, left.count >= 2 { return true }
+
+        let sharedCount = left.intersection(right).count
+        let smallerCount = min(left.count, right.count)
+        guard sharedCount >= 4, smallerCount > 0 else { return false }
+        return Double(sharedCount) / Double(smallerCount) >= 0.8
+    }
+
+    private static func meaningfulWords(in value: String) -> [String] {
+        value
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .filter { !ignoredWords.contains($0) }
+    }
+}
+
 /// Converts deterministic, gap-aware evidence segments into the compact
-/// human layer shown above the lossless journal. The model writes wording for
-/// every segment; code owns the segment count, time ranges, citations, and
-/// final Markdown hierarchy so no synthesis pass can erase most of the day.
+/// human layer shown above the lossless journal. A first model pass rejects
+/// metadata-only segments and extracts structured work candidates. A second
+/// pass groups those candidates by task; code retains every accepted candidate
+/// even if that aggregation pass fails or omits one.
 enum DayDigestOverviewGenerator {
     private struct FocusDraft: Decodable {
-        var topic: String
-        var summary: String
-        var sourceIDs: [Int64]?
+        var substantive: Bool
+        var task: String
+        var workDone: String
+        var status: String
+        var outcome: String
+        var nextStep: String
+        var sourceIDs: [Int64]
 
         enum CodingKeys: String, CodingKey {
-            case topic
-            case summary
+            case substantive
+            case task
+            case workDone = "work_done"
+            case status
+            case outcome
+            case nextStep = "next_step"
             case sourceIDs = "source_ids"
         }
     }
 
-    private struct HighlightsDraft: Decodable {
-        struct Highlight: Decodable {
-            var blockIndex: Int
-            var text: String
+    private struct ParsedFocus {
+        var block: DayDigestGeneratedFocusBlock?
+    }
+
+    private struct DigestDraft: Decodable {
+        struct Task: Decodable {
+            var title: String
+            var status: String
+            var summary: String
+            var nextStep: String
+            var blockIndices: [Int]
 
             enum CodingKeys: String, CodingKey {
-                case blockIndex = "block_index"
-                case text
+                case title
+                case status
+                case summary
+                case nextStep = "next_step"
+                case blockIndices = "block_indices"
             }
         }
 
-        var atAGlance: [Highlight]
-        var decisionsAndNextSteps: [String]
+        var tasks: [Task]
+        var decisions: [String]
+        var blockers: [String]
+    }
 
-        enum CodingKeys: String, CodingKey {
-            case atAGlance = "at_a_glance"
-            case decisionsAndNextSteps = "decisions_and_next_steps"
-        }
+    private struct NormalizedTask: Equatable {
+        var title: String
+        var status: String
+        var summary: String
+        var nextStep: String
+        var blockIndices: [Int]
     }
 
     static func generate(
@@ -703,7 +706,7 @@ enum DayDigestOverviewGenerator {
         calendar: Calendar = .current
     ) async throws -> String {
         let segments = evidence.summarySegments()
-        guard !segments.isEmpty else { return fallback(evidence, calendar: calendar) }
+        guard !segments.isEmpty else { return fallback(evidence) }
         let ranges = segments.map {
             "\(time($0.start, calendar: calendar))-\(time($0.end, calendar: calendar))"
         }.joined(separator: ",")
@@ -721,13 +724,8 @@ enum DayDigestOverviewGenerator {
             try Task.checkCancellation()
             let startedAt = Date()
             let focusPrompt = """
-                Summarize required coverage segment \(index + 1) of \(segments.count).
-                Exact time range: \(time(segment.start, calendar: calendar))–\(time(segment.end, calendar: calendar))
-                Active recorded time: \(compactDuration(segment.activeDuration))
-                Share of recorded day: \(Int((segment.shareOfRecordedTime * 100).rounded()))%
-                Narrative prominence: \(segment.isPrimary ? "primary work" : "secondary activity")
-                Summary limit: \(segment.isPrimary ? 36 : 14) words
-                Recorded events: \(segment.eventCount)
+                Extract a substantive-work candidate from evidence segment \(index + 1) of \(segments.count).
+                Decide eligibility from the work content, not from time spent or app usage.
                 Allowed screen source IDs: \(segment.sourceIDs)
 
                 \(segment.evidence)
@@ -782,116 +780,133 @@ enum DayDigestOverviewGenerator {
                             + error.localizedDescription)
                 }
             }
-            blocks.append(parsed ?? fallbackBlock(segment))
+            if let block = parsed?.block { blocks.append(block) }
             lokalbotLog(
                 "day digest segment index=\(index + 1)/\(segments.count) "
                     + "events=\(segment.eventCount) chars=\(segment.evidence.count) "
-                    + "parsed=\(parsed != nil) attempts=\(attempts) elapsed="
+                    + "parsed=\(parsed != nil) substantive=\(parsed?.block != nil) "
+                    + "attempts=\(attempts) elapsed="
                     + String(format: "%.2fs", Date().timeIntervalSince(startedAt)))
         }
 
-        let highlights: HighlightsDraft?
-        let highlightStartedAt = Date()
+        guard !blocks.isEmpty else { return render(blocks: [], draft: nil) }
+
+        let digest: DigestDraft?
+        let digestStartedAt = Date()
         do {
-            let primaryMaterial = blocks.enumerated()
-                .filter { $0.element.isPrimary }
-                .map { focusMaterial($0.element, index: $0.offset, calendar: calendar) }
-                .joined(separator: "\n")
-            let secondaryMaterial = blocks.enumerated()
-                .filter { !$0.element.isPrimary }
-                .map { focusMaterial($0.element, index: $0.offset, calendar: calendar) }
+            let material = blocks.enumerated()
+                .map { candidateMaterial($0.element, index: $0.offset) }
                 .joined(separator: "\n")
             let output = try await engine.generate(
                 system: PromptTemplates.dayDigestSystem(custom: customPrompt),
                 prompt: """
-                    Select the highest-signal highlights in proportion to recorded time.
-                    Only PRIMARY blocks are eligible for at_a_glance. Return each highlight with
-                    that block's exact index. SECONDARY blocks may inform explicit decisions or
-                    next steps, but must not become at_a_glance highlights.
+                    Build the task-first daily recap from every accepted candidate below.
+                    Merge candidates for the same task and include every contributing
+                    candidate index in block_indices. Rank by concrete outcome, useful
+                    progress, decision, or blocker. Do not rank by duration or chronology.
 
-                    PRIMARY BLOCKS:
-                    \(primaryMaterial.isEmpty ? "- None" : primaryMaterial)
-
-                    SECONDARY BLOCKS:
-                    \(secondaryMaterial.isEmpty ? "- None" : secondaryMaterial)
+                    SUBSTANTIVE WORK CANDIDATES:
+                    \(material)
                     """,
                 context: dateContext,
-                schema: highlightsSchema,
+                schema: digestSchema,
                 options: TextGenerationOptions(
-                    maxTokens: 1_200,
+                    maxTokens: 1_600,
                     reasoningBudgetTokens: 512,
                     temperature: 0.2))
-            highlights = parseHighlights(output)
+            digest = parseDigest(output)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
             lokalbotLog(
-                "day digest highlights fallback error=\(error.localizedDescription)")
-            highlights = nil
+                "day digest task aggregation fallback error=\(error.localizedDescription)")
+            digest = nil
         }
         lokalbotLog(
-            "day digest highlights parsed=\(highlights != nil) elapsed="
-                + String(format: "%.2fs", Date().timeIntervalSince(highlightStartedAt)))
+            "day digest task aggregation parsed=\(digest != nil) elapsed="
+                + String(format: "%.2fs", Date().timeIntervalSince(digestStartedAt)))
 
-        return render(
-            blocks: blocks,
-            highlights: highlights,
-            calendar: calendar)
+        return render(blocks: blocks, draft: digest)
     }
 
-    static func fallback(
-        _ evidence: DayDigestEvidence,
-        calendar: Calendar = .current
-    ) -> String {
-        let blocks = evidence.summarySegments().map(fallbackBlock)
-        guard !blocks.isEmpty else {
-            return "### At a glance\n- No activity was recorded.\n\n"
-                + "### Focus blocks\n- None recorded."
+    static func fallback(_ evidence: DayDigestEvidence) -> String {
+        if evidence.isEmpty {
+            return "### At a glance\n_No activity was recorded._"
         }
-        return render(blocks: blocks, highlights: nil, calendar: calendar)
+        return "### At a glance\n_No task-level summary could be generated."
+            + " The complete activity evidence is available below._"
     }
 
     private static var focusSchema: [String: Any] {
         [
             "type": "object",
             "properties": [
-                "topic": ["type": "string"],
-                "summary": ["type": "string"],
+                "substantive": ["type": "boolean"],
+                "task": ["type": "string"],
+                "work_done": ["type": "string"],
+                "status": [
+                    "type": "string",
+                    "enum": ["completed", "in_progress", "blocked", "unknown"],
+                ],
+                "outcome": ["type": "string"],
+                "next_step": ["type": "string"],
                 "source_ids": [
                     "type": "array",
                     "items": ["type": "integer"],
+                    "maxItems": 2,
                 ],
             ],
-            "required": ["topic", "summary", "source_ids"],
+            "required": [
+                "substantive", "task", "work_done", "status", "outcome",
+                "next_step", "source_ids",
+            ],
             "additionalProperties": false,
         ]
     }
 
-    private static var highlightsSchema: [String: Any] {
+    private static var digestSchema: [String: Any] {
         [
             "type": "object",
             "properties": [
-                "at_a_glance": [
+                "tasks": [
                     "type": "array",
                     "items": [
                         "type": "object",
                         "properties": [
-                            "block_index": ["type": "integer"],
-                            "text": ["type": "string"],
+                            "title": ["type": "string"],
+                            "status": [
+                                "type": "string",
+                                "enum": [
+                                    "completed", "in_progress", "blocked", "unknown",
+                                ],
+                            ],
+                            "summary": ["type": "string"],
+                            "next_step": ["type": "string"],
+                            "block_indices": [
+                                "type": "array",
+                                "items": ["type": "integer"],
+                                "minItems": 1,
+                            ],
                         ],
-                        "required": ["block_index", "text"],
+                        "required": [
+                            "title", "status", "summary", "next_step", "block_indices",
+                        ],
                         "additionalProperties": false,
                     ],
-                    "minItems": 1,
-                    "maxItems": 3,
+                    "maxItems": 8,
                 ],
-                "decisions_and_next_steps": [
+                "decisions": [
+                    "type": "array",
+                    "items": ["type": "string"],
+                    "maxItems": 4,
+                ],
+                "blockers": [
                     "type": "array",
                     "items": ["type": "string"],
                     "maxItems": 4,
                 ],
             ],
-            "required": ["at_a_glance", "decisions_and_next_steps"],
+            "required": ["tasks", "decisions", "blockers"],
             "additionalProperties": false,
         ]
     }
@@ -899,157 +914,209 @@ enum DayDigestOverviewGenerator {
     private static func parseFocus(
         _ output: String,
         segment: DayDigestSummarySegment
-    ) -> DayDigestGeneratedFocusBlock? {
+    ) -> ParsedFocus? {
         guard let json = ChatPrompt.extractJSONObject(strippingReasoning(output)),
               let data = json.data(using: .utf8),
               let draft = try? JSONDecoder().decode(FocusDraft.self, from: data) else {
             return nil
         }
-        let topic = cleanInline(draft.topic, maxCharacters: 72)
-        let summary = cleanSummary(
-            draft.summary,
-            maxWords: segment.isPrimary ? 36 : 14)
-        guard !topic.isEmpty, !summary.isEmpty else { return nil }
+        guard draft.substantive else { return ParsedFocus(block: nil) }
+
+        let task = cleanInline(draft.task, maxCharacters: 72)
+        let workDone = cleanSummary(draft.workDone, maxWords: 48)
+        guard !task.isEmpty, !workDone.isEmpty else { return nil }
         let allowed = Set(segment.sourceIDs)
         var sourceIDs: [Int64] = []
-        for id in draft.sourceIDs ?? [] where allowed.contains(id) && !sourceIDs.contains(id) {
+        for id in draft.sourceIDs where allowed.contains(id) && !sourceIDs.contains(id) {
             sourceIDs.append(id)
             if sourceIDs.count == 2 { break }
         }
-        return DayDigestGeneratedFocusBlock(
-            start: segment.start,
-            end: segment.end,
-            activeDuration: segment.activeDuration,
-            shareOfRecordedTime: segment.shareOfRecordedTime,
-            isPrimary: segment.isPrimary,
-            topic: topic,
-            summary: summary,
-            sourceIDs: sourceIDs)
+        return ParsedFocus(block: DayDigestGeneratedFocusBlock(
+            task: task,
+            workDone: workDone,
+            status: normalizedStatus(draft.status),
+            outcome: cleanSummary(draft.outcome, maxWords: 32),
+            nextStep: cleanSummary(draft.nextStep, maxWords: 28),
+            sourceIDs: sourceIDs))
     }
 
-    private static func parseHighlights(_ output: String) -> HighlightsDraft? {
+    private static func parseDigest(_ output: String) -> DigestDraft? {
         guard let json = ChatPrompt.extractJSONObject(strippingReasoning(output)),
               let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(HighlightsDraft.self, from: data)
-    }
-
-    private static func fallbackBlock(
-        _ segment: DayDigestSummarySegment
-    ) -> DayDigestGeneratedFocusBlock {
-        let meaningfulTitle = segment.titles.first(where: {
-            let normalized = $0.trimmingCharacters(in: .whitespacesAndNewlines)
-            return !normalized.isEmpty && normalized.caseInsensitiveCompare("New Tab") != .orderedSame
-        })
-        let topic = cleanInline(
-            meaningfulTitle ?? segment.apps.first ?? "Recorded work",
-            maxCharacters: 72)
-        let apps = segment.apps.prefix(3).joined(separator: ", ")
-        let summary = segment.eventCount == 1
-            ? "One recorded activity event in \(apps.isEmpty ? "this interval" : apps)."
-            : "\(segment.eventCount) recorded activity events across "
-                + (apps.isEmpty ? "this interval." : "\(apps).")
-        return DayDigestGeneratedFocusBlock(
-            start: segment.start,
-            end: segment.end,
-            activeDuration: segment.activeDuration,
-            shareOfRecordedTime: segment.shareOfRecordedTime,
-            isPrimary: segment.isPrimary,
-            topic: topic.isEmpty ? "Recorded work" : topic,
-            summary: summary,
-            sourceIDs: Array(segment.sourceIDs.prefix(1)))
+        return try? JSONDecoder().decode(DigestDraft.self, from: data)
     }
 
     private static func render(
         blocks: [DayDigestGeneratedFocusBlock],
-        highlights: HighlightsDraft?,
-        calendar: Calendar
+        draft: DigestDraft?
     ) -> String {
-        let normalized = normalizedHighlights(highlights, blocks: blocks)
-        let primaryBlocks = blocks.filter(\.isPrimary)
-        let secondaryBlocks = blocks.filter { !$0.isPrimary }
-        var sections = [
-            "### At a glance\n" + normalized.bullets.map { "- \($0)" }.joined(separator: "\n"),
-            "### Focus blocks\n" + primaryBlocks.map {
-                renderedBlock($0, calendar: calendar)
-            }.joined(separator: "\n"),
-        ]
-        if !secondaryBlocks.isEmpty {
-            sections.append(
-                "### Other activity\n" + secondaryBlocks.map {
-                    renderedBlock($0, calendar: calendar)
-                }.joined(separator: "\n"))
+        let normalized = normalizedDigest(draft, blocks: blocks)
+        guard !normalized.tasks.isEmpty else {
+            return "### At a glance\n_No substantive work was identified from the available context._"
         }
-        if !normalized.decisions.isEmpty {
+
+        var sections = [
+            "### Tasks\n" + normalized.tasks.map(renderedTask).joined(separator: "\n"),
+        ]
+
+        let followUps = uniqueFollowUps(
+            tasks: normalized.tasks,
+            decisions: normalized.decisions,
+            blockers: normalized.blockers)
+        if !followUps.isEmpty {
             sections.append(
                 "### Decisions and next steps\n"
-                    + normalized.decisions.map { "- \($0)" }.joined(separator: "\n"))
+                    + followUps.map { "- \($0)" }.joined(separator: "\n"))
         }
         return sections.joined(separator: "\n\n")
     }
 
-    private static func normalizedHighlights(
-        _ draft: HighlightsDraft?,
+    private static func normalizedDigest(
+        _ draft: DigestDraft?,
         blocks: [DayDigestGeneratedFocusBlock]
-    ) -> (bullets: [String], decisions: [String]) {
-        let primaryIndices = Set(blocks.indices.filter { blocks[$0].isPrimary })
-        var bullets: [String] = []
-        for highlight in draft?.atAGlance ?? [] where primaryIndices.contains(highlight.blockIndex) {
-            let clean = cleanBullet(highlight.text, maxWords: 38)
-            if !clean.isEmpty && !bullets.contains(clean) { bullets.append(clean) }
-            if bullets.count == 3 { break }
-        }
-        if bullets.isEmpty,
-           let block = blocks.filter(\.isPrimary).max(by: {
-               if $0.activeDuration == $1.activeDuration {
-                   return $0.start > $1.start
-               }
-               return $0.activeDuration < $1.activeDuration
-           }) {
-            let fallback = cleanBullet("\(block.topic): \(block.summary)", maxWords: 38)
-            if !fallback.isEmpty { bullets = [fallback] }
-        }
-        if bullets.isEmpty { bullets = ["No high-signal activity summary was available."] }
+    ) -> (tasks: [NormalizedTask], decisions: [String], blockers: [String]) {
+        let validIndices = Set(blocks.indices)
+        var tasks: [NormalizedTask] = []
+        var coveredIndices: Set<Int> = []
 
-        var decisions: [String] = []
-        for raw in draft?.decisionsAndNextSteps ?? [] {
-            let clean = cleanBullet(raw, maxWords: 32)
-            if !clean.isEmpty && !decisions.contains(clean) { decisions.append(clean) }
-            if decisions.count == 4 { break }
+        for raw in draft?.tasks ?? [] {
+            let indices = raw.blockIndices.filter(validIndices.contains)
+                .reduce(into: [Int]()) { result, index in
+                    if !result.contains(index) { result.append(index) }
+                }
+            let title = cleanInline(raw.title, maxCharacters: 72)
+            let summary = cleanSummary(raw.summary, maxWords: 52)
+            guard !indices.isEmpty, !title.isEmpty, !summary.isEmpty else { continue }
+            let key = normalizedTaskKey(title)
+            guard !tasks.contains(where: { normalizedTaskKey($0.title) == key }) else { continue }
+            tasks.append(NormalizedTask(
+                title: title,
+                status: normalizedStatus(raw.status),
+                summary: summary,
+                nextStep: cleanSummary(raw.nextStep, maxWords: 32),
+                blockIndices: indices))
+            coveredIndices.formUnion(indices)
         }
-        return (Array(bullets.prefix(3)), decisions)
+
+        for index in blocks.indices where !coveredIndices.contains(index) {
+            mergeFallbackCandidate(blocks[index], index: index, into: &tasks)
+        }
+
+        let decisions = normalizedList(draft?.decisions ?? [], maxWords: 32)
+        let blockers = normalizedList(draft?.blockers ?? [], maxWords: 32)
+        return (tasks, decisions, blockers)
     }
 
-    private static func focusMaterial(
+    private static func candidateMaterial(
+        _ block: DayDigestGeneratedFocusBlock,
+        index: Int
+    ) -> String {
+        """
+        - [candidate_index \(index)]
+          Task: \(block.task)
+          Work done: \(block.workDone)
+          Status: \(block.status)
+          Outcome: \(block.outcome.isEmpty ? "None supported" : block.outcome)
+          Next step: \(block.nextStep.isEmpty ? "None supported" : block.nextStep)
+        """
+    }
+
+    private static func mergeFallbackCandidate(
         _ block: DayDigestGeneratedFocusBlock,
         index: Int,
-        calendar: Calendar
-    ) -> String {
-        "- [index \(index)] [\(time(block.start, calendar: calendar))–"
-            + "\(time(block.end, calendar: calendar))] "
-            + "[\(compactDuration(block.activeDuration)), "
-            + "\(Int((block.shareOfRecordedTime * 100).rounded()))%] "
-            + "\(block.topic): \(block.summary)"
-    }
-
-    private static func renderedBlock(
-        _ block: DayDigestGeneratedFocusBlock,
-        calendar: Calendar
-    ) -> String {
-        let citations = block.sourceIDs.map { "[screen:\($0)]" }.joined(separator: " ")
-        let suffix = citations.isEmpty ? "" : " \(citations)"
-        return "- **\(time(block.start, calendar: calendar))–"
-            + "\(time(block.end, calendar: calendar)) · \(block.topic)** — "
-            + block.summary + suffix
-    }
-
-    private static func compactDuration(_ seconds: TimeInterval) -> String {
-        let roundedMinutes = max(0, Int((seconds / 60).rounded()))
-        if roundedMinutes >= 60 {
-            let hours = roundedMinutes / 60
-            let minutes = roundedMinutes % 60
-            return minutes == 0 ? "\(hours)h" : "\(hours)h \(minutes)m"
+        into tasks: inout [NormalizedTask]
+    ) {
+        let key = normalizedTaskKey(block.task)
+        if let taskIndex = tasks.firstIndex(where: { normalizedTaskKey($0.title) == key }) {
+            if !tasks[taskIndex].summary.localizedCaseInsensitiveContains(block.workDone) {
+                tasks[taskIndex].summary = cleanSummary(
+                    tasks[taskIndex].summary + " " + candidateSummary(block),
+                    maxWords: 64)
+            }
+            if block.status != "unknown" { tasks[taskIndex].status = block.status }
+            if !block.nextStep.isEmpty { tasks[taskIndex].nextStep = block.nextStep }
+            tasks[taskIndex].blockIndices.append(index)
+            return
         }
-        return "\(roundedMinutes)m"
+        tasks.append(NormalizedTask(
+            title: block.task,
+            status: block.status,
+            summary: candidateSummary(block),
+            nextStep: block.nextStep,
+            blockIndices: [index]))
+    }
+
+    private static func candidateSummary(_ block: DayDigestGeneratedFocusBlock) -> String {
+        var summary = block.workDone
+        if !block.outcome.isEmpty,
+           !summary.localizedCaseInsensitiveContains(block.outcome) {
+            summary += " Outcome: \(block.outcome)"
+        }
+        return cleanSummary(summary, maxWords: 52)
+    }
+
+    private static func renderedTask(_ task: NormalizedTask) -> String {
+        "- **\(task.title)** — \(statusLead(task.status))\(task.summary)"
+    }
+
+    private static func uniqueFollowUps(
+        tasks: [NormalizedTask],
+        decisions: [String],
+        blockers: [String]
+    ) -> [String] {
+        var accepted: [(content: String, rendered: String)] = []
+        let taskContent = tasks.map { "\($0.title) \($0.summary)" }
+
+        func append(content: String, rendered: String) {
+            guard !taskContent.contains(where: {
+                DayDigestTextSimilarity.isSimilar(content, $0)
+            }), !accepted.contains(where: {
+                DayDigestTextSimilarity.isSimilar(content, $0.content)
+            }) else { return }
+            accepted.append((content, rendered))
+        }
+
+        for decision in decisions {
+            append(content: decision, rendered: "Decision: \(decision)")
+        }
+        for blocker in blockers {
+            append(content: blocker, rendered: "Blocker: \(blocker)")
+        }
+        for task in tasks where !task.nextStep.isEmpty {
+            append(
+                content: task.nextStep,
+                rendered: "Next — \(task.title): \(task.nextStep)")
+        }
+        return accepted.map { $0.rendered }
+    }
+
+    private static func statusLead(_ status: String) -> String {
+        switch status {
+        case "completed": return "Completed. "
+        case "in_progress": return "In progress. "
+        case "blocked": return "Blocked. "
+        default: return ""
+        }
+    }
+
+    private static func normalizedStatus(_ value: String) -> String {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ["completed", "in_progress", "blocked", "unknown"].contains(normalized)
+            ? normalized : "unknown"
+    }
+
+    private static func normalizedTaskKey(_ value: String) -> String {
+        cleanInline(value, maxCharacters: 72).lowercased()
+    }
+
+    private static func normalizedList(_ values: [String], maxWords: Int) -> [String] {
+        var result: [String] = []
+        for raw in values {
+            let clean = cleanBullet(raw, maxWords: maxWords)
+            if !clean.isEmpty && !result.contains(clean) { result.append(clean) }
+            if result.count == 4 { break }
+        }
+        return result
     }
 
     private static func cleanSummary(_ value: String, maxWords: Int) -> String {

@@ -25,6 +25,10 @@ final class DayDigestEvidenceTests: XCTestCase {
     private struct StructuredDigestEngine: TextEngine {
         let recorder: GenerationRecorder
         var invalidFirstFocus = false
+        var alwaysInvalidFocus = false
+        var invalidFinal = false
+        var nonSubstantiveFocusIndices: Set<Int> = []
+        var finalResponse: String?
         var displayName: String { "structured-test" }
 
         func generate(system: String, prompt: String, context: [String]) async throws -> String {
@@ -37,13 +41,30 @@ final class DayDigestEvidenceTests: XCTestCase {
             let isFocus = system == PromptTemplates.dayDigestFocusSystem
             let index = await recorder.record(isFocus: isFocus, options: options)
             if isFocus {
-                if invalidFirstFocus && index == 1 { return "not valid JSON" }
+                if alwaysInvalidFocus || (invalidFirstFocus && index == 1) {
+                    return "not valid JSON"
+                }
+                if nonSubstantiveFocusIndices.contains(index) {
+                    return """
+                        {"substantive":false,"task":"","work_done":"","status":"unknown","outcome":"","next_step":"","source_ids":[]}
+                        """
+                }
                 return """
-                    {"topic":"Segment \(index)","summary":"Grounded work for segment \(index).","source_ids":[]}
+                    {"substantive":true,"task":"Task \(index)","work_done":"Advanced substantive work for task \(index).","status":"in_progress","outcome":"Useful progress was recorded.","next_step":"","source_ids":[]}
                     """
             }
+            if invalidFinal { return "not valid JSON" }
+            if let finalResponse { return finalResponse }
             return """
-                {"at_a_glance":[{"block_index":0,"text":"Morning implementation was recorded."},{"block_index":1,"text":"The brief invoice payment was recorded."},{"block_index":2,"text":"Evening verification was recorded."}],"decisions_and_next_steps":[]}
+                {
+                  "tasks": [
+                    {"title":"Task 1","status":"in_progress","summary":"Advanced the first substantive task.","next_step":"","block_indices":[0]},
+                    {"title":"Task 2","status":"completed","summary":"Completed the second substantive task.","next_step":"","block_indices":[1]},
+                    {"title":"Task 3","status":"completed","summary":"Completed the third substantive task.","next_step":"","block_indices":[2]}
+                  ],
+                  "decisions": [],
+                  "blockers": []
+                }
                 """
         }
     }
@@ -204,7 +225,7 @@ final class DayDigestEvidenceTests: XCTestCase {
         XCTAssertTrue(segments[2].evidence.contains("Evening verification"))
     }
 
-    func testSummaryProminenceIsProportionalToRecordedDuration() async throws {
+    func testBriefSubstantiveTaskCanOutrankLongerWork() async throws {
         let evidence = DayDigestEvidence.build(
             day: day,
             blocks: [
@@ -231,27 +252,36 @@ final class DayDigestEvidenceTests: XCTestCase {
 
         XCTAssertEqual(segments.count, 2)
         XCTAssertEqual(segments.map(\.activeDuration), expectedDurations)
-        XCTAssertEqual(segments[0].shareOfRecordedTime, 300.0 / 305.0, accuracy: 0.001)
-        XCTAssertEqual(segments[1].shareOfRecordedTime, 5.0 / 305.0, accuracy: 0.001)
-        XCTAssertEqual(segments.map(\.isPrimary), [true, false])
 
         let recorder = GenerationRecorder()
+        let finalResponse = """
+            {"tasks":[{"title":"Invoice reconciliation","status":"completed","summary":"Paid the outstanding supplier invoice.","next_step":"","block_indices":[1]},{"title":"Main project","status":"in_progress","summary":"Advanced the main project implementation.","next_step":"Continue implementation.","block_indices":[0]}],"decisions":[],"blockers":[]}
+            """
         let overview = try await DayDigestOverviewGenerator.generate(
             evidence: evidence,
-            engine: StructuredDigestEngine(recorder: recorder),
+            engine: StructuredDigestEngine(
+                recorder: recorder,
+                finalResponse: finalResponse),
             customPrompt: "",
             calendar: calendar)
         let document = evidence.renderDocument(summary: overview, calendar: calendar)
         let presentation = DayDigestPresentation(markdown: document)
 
-        XCTAssertEqual(presentation.focusBlocks.map(\.title), ["Segment 1"])
-        XCTAssertEqual(presentation.otherActivityBlocks.map(\.title), ["Segment 2"])
-        XCTAssertTrue(presentation.atAGlanceMarkdown.contains("Morning implementation"))
-        XCTAssertFalse(presentation.atAGlanceMarkdown.contains("invoice"))
+        XCTAssertEqual(
+            presentation.focusBlocks.map(\.title),
+            ["Invoice reconciliation", "Main project"])
+        XCTAssertTrue(presentation.otherActivityBlocks.isEmpty)
+        XCTAssertTrue(presentation.atAGlanceMarkdown.isEmpty)
+        let invoice = overview.range(of: "Invoice reconciliation")!.lowerBound
+        let project = overview.range(of: "Main project")!.lowerBound
+        XCTAssertLessThan(invoice, project)
+        XCTAssertTrue(presentation.decisionsMarkdown?.contains("Continue implementation") == true)
+        XCTAssertFalse(presentation.focusBlocks[1].summaryMarkdown.contains(
+            "Continue implementation"))
         XCTAssertTrue(document.contains("Invoice payment"))
     }
 
-    func testPrimarySegmentsNeedToCoverOnlyHalfOfRecordedTime() {
+    func testSegmentLimitPreservesLongAndBriefSessions() {
         var briefBlocks: [ActivityBlock] = []
         for index in 0..<7 {
             briefBlocks.append(block(
@@ -280,10 +310,8 @@ final class DayDigestEvidenceTests: XCTestCase {
         let segments = evidence.summarySegments()
 
         XCTAssertEqual(segments.count, 8)
-        XCTAssertEqual(segments.filter(\.isPrimary).count, 1)
         XCTAssertEqual(segments.first?.activeDuration, 40 * 60)
-        XCTAssertEqual(segments.first?.shareOfRecordedTime ?? 0, 40.0 / 75.0,
-                       accuracy: 0.001)
+        XCTAssertTrue(segments.dropFirst().allSatisfy { $0.activeDuration == 5 * 60 })
     }
 
     func testLongActivityReceivesBroaderScreenCoverageThanBriefActivity() {
@@ -338,7 +366,7 @@ final class DayDigestEvidenceTests: XCTestCase {
         XCTAssertTrue(segments[1].evidence.contains("invoice evidence 4"))
     }
 
-    func testOverviewGeneratorPreservesEverySegmentAndUsesTaskSpecificReasoning() async throws {
+    func testOverviewGeneratorExtractsEverySegmentBeforeTaskAggregation() async throws {
         let evidence = DayDigestEvidence.build(
             day: day,
             blocks: [
@@ -357,9 +385,10 @@ final class DayDigestEvidenceTests: XCTestCase {
             customPrompt: "",
             calendar: calendar)
 
-        XCTAssertTrue(overview.contains("**08:00–08:45 · Segment 1**"))
-        XCTAssertTrue(overview.contains("**13:00–13:45 · Segment 2**"))
-        XCTAssertTrue(overview.contains("**19:00–19:45 · Segment 3**"))
+        XCTAssertTrue(overview.contains("**Task 1**"))
+        XCTAssertTrue(overview.contains("**Task 2**"))
+        XCTAssertTrue(overview.contains("**Task 3**"))
+        XCTAssertFalse(overview.contains("08:00–08:45"))
         let calls = await recorder.calls
         XCTAssertEqual(calls.count, 4)
         XCTAssertTrue(calls.prefix(3).allSatisfy {
@@ -368,7 +397,7 @@ final class DayDigestEvidenceTests: XCTestCase {
         })
         XCTAssertEqual(calls.last, GenerationRecorder.Call(
             isFocus: false,
-            maxTokens: 1_200,
+            maxTokens: 1_600,
             reasoningBudgetTokens: 512,
             temperature: 0.2))
     }
@@ -386,11 +415,13 @@ final class DayDigestEvidenceTests: XCTestCase {
             evidence: evidence,
             engine: StructuredDigestEngine(
                 recorder: recorder,
-                invalidFirstFocus: true),
+                invalidFirstFocus: true,
+                invalidFinal: true),
             customPrompt: "",
             calendar: calendar)
 
-        XCTAssertTrue(overview.contains("Segment 2"))
+        XCTAssertTrue(overview.contains("**Task 2**"))
+        XCTAssertFalse(overview.localizedCaseInsensitiveContains("recorded activity"))
         let calls = await recorder.calls
         XCTAssertEqual(calls.count, 3)
         XCTAssertEqual(calls[1], GenerationRecorder.Call(
@@ -398,6 +429,148 @@ final class DayDigestEvidenceTests: XCTestCase {
             maxTokens: 1_200,
             reasoningBudgetTokens: 256,
             temperature: 0))
+    }
+
+    func testMetadataOnlySegmentIsOmittedWithoutAppFallback() async throws {
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [
+                block(
+                    1,
+                    startHour: 9,
+                    endHour: 10,
+                    title: "New Tab",
+                    app: "Safari"),
+            ],
+            screenContexts: [],
+            meetings: [],
+            calendar: calendar)
+        let recorder = GenerationRecorder()
+
+        let overview = try await DayDigestOverviewGenerator.generate(
+            evidence: evidence,
+            engine: StructuredDigestEngine(
+                recorder: recorder,
+                nonSubstantiveFocusIndices: [1]),
+            customPrompt: "",
+            calendar: calendar)
+
+        XCTAssertTrue(overview.contains("No substantive work"))
+        XCTAssertFalse(overview.contains("Safari"))
+        XCTAssertFalse(overview.contains("New Tab"))
+        XCTAssertFalse(overview.localizedCaseInsensitiveContains("recorded activity"))
+        let calls = await recorder.calls
+        XCTAssertEqual(calls.count, 1)
+    }
+
+    func testInvalidFocusOutputNeverFallsBackToAppMetadata() async throws {
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [block(1, 9, "Release dashboard")],
+            screenContexts: [],
+            meetings: [],
+            calendar: calendar)
+        let recorder = GenerationRecorder()
+
+        let overview = try await DayDigestOverviewGenerator.generate(
+            evidence: evidence,
+            engine: StructuredDigestEngine(
+                recorder: recorder,
+                alwaysInvalidFocus: true),
+            customPrompt: "",
+            calendar: calendar)
+
+        XCTAssertTrue(overview.contains("No substantive work"))
+        XCTAssertFalse(overview.contains("Xcode"))
+        XCTAssertFalse(overview.localizedCaseInsensitiveContains("recorded activity"))
+        let calls = await recorder.calls
+        XCTAssertEqual(calls.count, 2)
+    }
+
+    func testAggregationGroupsSameTaskAcrossSeparateSessions() async throws {
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [
+                block(1, 9, "Release configuration"),
+                block(2, 17, "Release verification"),
+            ],
+            screenContexts: [
+                context(11, 9, 10, "Updated the release signing configuration."),
+                context(22, 17, 10, "Gatekeeper verification passed."),
+            ],
+            meetings: [],
+            calendar: calendar)
+        let recorder = GenerationRecorder()
+        let finalResponse = """
+            {"tasks":[{"title":"Release pipeline","status":"completed","summary":"Updated the signing configuration and verified the resulting build with Gatekeeper.","next_step":"","block_indices":[0,1]}],"decisions":["Publish the verified build."],"blockers":[]}
+            """
+
+        let overview = try await DayDigestOverviewGenerator.generate(
+            evidence: evidence,
+            engine: StructuredDigestEngine(
+                recorder: recorder,
+                finalResponse: finalResponse),
+            customPrompt: "",
+            calendar: calendar)
+        let document = evidence.renderDocument(summary: overview, calendar: calendar)
+        let presentation = DayDigestPresentation(markdown: document)
+
+        XCTAssertEqual(presentation.focusBlocks.count, 1)
+        XCTAssertEqual(presentation.focusBlocks.first?.title, "Release pipeline")
+        XCTAssertTrue(presentation.focusBlocks.first?.summaryMarkdown.contains(
+            "signing configuration") == true)
+        XCTAssertTrue(presentation.decisionsMarkdown?.contains("Publish") == true)
+        XCTAssertFalse(overview.contains("Xcode"))
+        XCTAssertFalse(overview.contains("17:00"))
+    }
+
+    func testRendererGivesEachFactOneSectionAndDeduplicatesSimilarFollowUps() async throws {
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [block(1, 9, "Release pipeline")],
+            screenContexts: [
+                context(11, 9, 10, "Updated signing and verified the release build."),
+            ],
+            meetings: [],
+            calendar: calendar)
+        let recorder = GenerationRecorder()
+        let finalResponse = """
+            {"tasks":[{"title":"Release pipeline","status":"completed","summary":"Updated the signing configuration and verified the release build.","next_step":"Publish the verified build.","block_indices":[0]}],"decisions":["Publish verified build."],"blockers":[]}
+            """
+
+        let overview = try await DayDigestOverviewGenerator.generate(
+            evidence: evidence,
+            engine: StructuredDigestEngine(
+                recorder: recorder,
+                finalResponse: finalResponse),
+            customPrompt: "",
+            calendar: calendar)
+
+        XCTAssertTrue(overview.hasPrefix("### Tasks"))
+        XCTAssertFalse(overview.contains("### At a glance"))
+        XCTAssertEqual(occurrences(of: "Updated the signing configuration", in: overview), 1)
+        XCTAssertEqual(occurrences(of: "Publish", in: overview), 1)
+        XCTAssertTrue(overview.contains("Decision: Publish verified build."))
+        XCTAssertFalse(overview.contains("Next —"))
+    }
+
+    func testSummaryEvidenceLeadsWithWorkContentBeforeTraceMetadata() {
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [block(1, 9, "Day Digest implementation")],
+            screenContexts: [
+                context(11, 9, 10, "Implemented task-first digest extraction."),
+            ],
+            meetings: [],
+            calendar: calendar)
+
+        let material = evidence.summaryChunks().joined(separator: "\n")
+        let workHeader = material.range(of: "WORK CONTENT")!.lowerBound
+        let workText = material.range(of: "Implemented task-first")!.lowerBound
+        let metadata = material.range(of: "LOW-PRIORITY TRACE METADATA")!.lowerBound
+
+        XCTAssertLessThan(workHeader, workText)
+        XCTAssertLessThan(workText, metadata)
     }
 
     func testOnlyExactConsecutiveScreenDuplicatesAreCollapsed() {

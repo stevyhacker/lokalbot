@@ -122,6 +122,36 @@ final class DayDigestPresentationTests: XCTestCase {
         XCTAssertFalse(presentation.atAGlanceMarkdown.contains("Fourth"))
     }
 
+    func testSuppressesLegacyOverviewAndFollowUpAlreadyShownInTask() {
+        let markdown = """
+            ## Day summary
+
+            ### At a glance
+            - Release pipeline: Completed. Updated signing and verified the release build.
+
+            ### Tasks
+            - **Release pipeline** — Completed. Updated signing and verified the release build. Next: Publish the verified build.
+
+            ### Decisions and next steps
+            - Next — Release pipeline: Publish the verified build.
+            """
+
+        let presentation = DayDigestPresentation(markdown: markdown)
+
+        XCTAssertTrue(presentation.atAGlanceMarkdown.isEmpty)
+        XCTAssertEqual(presentation.focusBlocks.count, 1)
+        XCTAssertNil(presentation.decisionsMarkdown)
+    }
+
+    func testSimilarityRejectsLightRephrasingWithoutHidingDistinctFacts() {
+        XCTAssertTrue(DayDigestTextSimilarity.isSimilar(
+            "Publish verified build.",
+            "Publish the verified build."))
+        XCTAssertFalse(DayDigestTextSimilarity.isSimilar(
+            "Publish the verified build.",
+            "Gatekeeper verification passed."))
+    }
+
     func testEmbeddedModesDoNotRepeatHostOwnedSections() {
         XCTAssertFalse(DayDigestView.Mode.timeline.showsTimeAllocation)
         XCTAssertTrue(DayDigestView.Mode.timeline.showsMeetings)
@@ -189,16 +219,18 @@ final class DayDigestPresentationTests: XCTestCase {
     }
 
     func testGenerationPromptEnforcesConciseProgressiveStructure() {
-        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("at_a_glance"))
-        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("35-75 words"))
-        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("PRIMARY"))
-        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("SECONDARY"))
-        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("block_index"))
-        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("Browser toolbars"))
-        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("empty array"))
-        XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("exactly one required segment"))
+        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("task-first"))
+        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("block_indices"))
+        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("Recorded time may only break ties"))
+        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("Omit low-signal activity"))
+        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("different apps"))
+        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("exactly one owner"))
+        XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("substantive work"))
+        XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("weak metadata"))
+        XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("substantive: false"))
+        XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("work_done"))
         XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("source_ids"))
-        XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("per-segment summary word limit"))
-        XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("Never begin with \"User\""))
+        XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("Do not infer completion"))
+        XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("non-overlapping"))
     }
 }

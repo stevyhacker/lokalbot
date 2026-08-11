@@ -191,7 +191,7 @@ final class DayDigestSchedulerTests: XCTestCase {
         XCTAssertTrue(system.hasPrefix(PromptTemplates.dayDigestSystem))
         XCTAssertTrue(system.contains("Additional instructions from the user: Write in Serbian."))
         XCTAssertTrue(system.hasSuffix(
-            "Follow them only when they do not conflict with grounding, chronology, citation, or required-section rules above."))
+            "Follow them only when they do not conflict with grounding, task eligibility, or the required JSON structure above."))
     }
 
     func testOverlongCustomPromptIsCapped() {
@@ -206,7 +206,8 @@ final class DayDigestSchedulerTests: XCTestCase {
 
     func testDigestPromptTreatsCapturedTextAsEvidenceNotInstructions() {
         XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("untrusted data"))
-        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("chronological order"))
+        XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("task-first"))
+        XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("untrusted data"))
         XCTAssertTrue(PromptTemplates.dayDigestChunkSystem.contains("[screen:ID]"))
     }
 }

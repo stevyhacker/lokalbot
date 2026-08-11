@@ -20,6 +20,7 @@ struct DayDigestView: View {
     @State private var fullActivityExpanded = false
     @State private var extraFocusExpanded = false
     @State private var otherActivityExpanded = false
+    @State private var timeAllocationExpanded = false
 
     init(_ markdown: String, mode: Mode = .standalone) {
         presentation = DayDigestPresentation(markdown: markdown)
@@ -35,7 +36,7 @@ struct DayDigestView: View {
             }
 
             if !presentation.focusBlocks.isEmpty {
-                digestSection("Work sessions", icon: "scope") {
+                digestSection("Tasks", icon: "briefcase") {
                     VStack(alignment: .leading, spacing: 8) {
                         sessionList(Array(presentation.focusBlocks.prefix(3)))
                         let additional = Array(presentation.focusBlocks.dropFirst(3))
@@ -89,7 +90,7 @@ struct DayDigestView: View {
             }
 
             if mode.showsTimeAllocation, !presentation.timeAllocations.isEmpty {
-                timeAllocationSection
+                timeAllocationDisclosure
             }
 
             if mode.showsFullActivityLog, presentation.activityCount > 0 {
@@ -169,12 +170,12 @@ struct DayDigestView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var timeAllocationSection: some View {
+    private var timeAllocationDisclosure: some View {
         let total = presentation.timeAllocations.reduce(0) { $0 + $1.seconds }
         let segments = ProportionBarMath.segments(perApp: presentation.timeAllocations.map {
             (label: $0.app, seconds: $0.seconds)
         })
-        return digestSection("Time allocation", icon: "chart.bar.xaxis") {
+        return DisclosureGroup(isExpanded: $timeAllocationExpanded) {
             VStack(alignment: .leading, spacing: 7) {
                 if total > 0 {
                     ProportionBar(segments: segments.map {
@@ -194,10 +195,22 @@ struct DayDigestView: View {
                                 ? .callout.monospacedDigit() : .callout)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.trailing)
-                    }
+                        }
                 }
             }
+            .padding(.top, 10)
+        } label: {
+            HStack(spacing: 8) {
+                Label("Time allocation", systemImage: "chart.bar.xaxis")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("Activity details")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
+        .accessibilityIdentifier("dayDigest.timeAllocation")
+        .accessibilityHint("Tracked app time shown as optional supporting detail")
     }
 }
 
