@@ -10,23 +10,36 @@ struct TodayView: View {
     @StateObject private var upcomingMeeting = UpcomingMeetingPreparationModel()
     @AppStorage("lokalbotv3.gettingStartedDismissed")
     private var gettingStartedDismissed = false
+    @State private var showingActionReview = false
+    @State private var moreExpanded = false
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
                 header
-                if !gettingStartedDismissed {
-                    GettingStartedCard()
-                }
-                dreamCard
                 nowCard
+                NeedsAttentionSection(
+                    actions: app.outcomeIndex.openUserActions,
+                    limit: 3,
+                    showingReview: $showingActionReview)
                 UpcomingMeetingSection(model: upcomingMeeting)
-                daySoFar
-                meetingsSection
-                askSection
+                capturedSection
+                summarySection
+                WorkspaceDisclosure(
+                    isExpanded: $moreExpanded,
+                    identifier: "today.moreLocalContext") {
+                    VStack(alignment: .leading, spacing: 16) {
+                        dreamCard
+                        if !gettingStartedDismissed { GettingStartedCard() }
+                        askSection
+                    }
+                } label: {
+                    Label("More local context", systemImage: "rectangle.stack")
+                        .font(WorkspaceTypography.sectionTitle)
+                }
             }
-            .padding(24)
-            .frame(maxWidth: 900, alignment: .leading)
+            .padding(WorkspaceMetric.pagePadding)
+            .frame(maxWidth: WorkspaceMetric.contentMaxWidth, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .navigationTitle("Today")
@@ -68,12 +81,47 @@ struct TodayView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("Today")
-                .font(.largeTitle.bold())
-                .accessibilityIdentifier("today.header")
-            Text(Date().formatted(date: .complete, time: .omitted))
-                .font(.callout).foregroundStyle(.secondary)
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Today")
+                    .font(WorkspaceTypography.display)
+                    .accessibilityIdentifier("today.header")
+                Text(Date().formatted(date: .complete, time: .omitted))
+                    .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button {
+                showingActionReview = true
+            } label: {
+                Label("Review actions", systemImage: "checklist")
+            }
+            .disabled(app.outcomeIndex.openUserActions.isEmpty)
+            Button {
+                app.openAsk(dayScope: model.day)
+            } label: {
+                Label("Ask about today", systemImage: "sparkle.magnifyingglass")
+            }
+            .buttonStyle(.borderedProminent)
+            Menu {
+                Button("Plan open actions in Agent") {
+                    let openActions = app.outcomeIndex.openUserActions
+                    let lines = openActions.prefix(8).map { "- \($0.text)" }
+                    app.openAgent(.init(
+                        title: "Today's open actions",
+                        prompt: "Help me plan today's open meeting actions:\n\(lines.joined(separator: "\n"))",
+                        meetingID: openActions.first?.meetingID,
+                        actionID: openActions.first?.action.id))
+                }
+                .disabled(app.outcomeIndex.openUserActions.isEmpty)
+                Divider()
+                Button("Record now") {
+                    app.startRecording(context: app.recordingContext(for: app.detector.activeApp))
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
         }
     }
 
@@ -101,11 +149,11 @@ struct TodayView: View {
                     Image(systemName: "moon.zzz.fill")
                         .foregroundStyle(Brand.teal)
                     Text(dreamDayLabel(dream))
-                        .font(.title3.bold())
+                        .font(WorkspaceTypography.sectionTitle)
                         .accessibilityIdentifier("today.dream")
                     Spacer()
                     Text("Morning brief")
-                        .font(.caption.weight(.medium))
+                        .font(WorkspaceTypography.metadataEmphasis)
                         .foregroundStyle(.secondary)
                     Button {
                         showingDreamInfo = true
@@ -125,7 +173,7 @@ struct TodayView: View {
                 }
                 if !dream.topActions.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Priorities for today").font(.headline)
+                        Text("Priorities for today").font(WorkspaceTypography.bodyEmphasis)
                         ForEach(Array(dream.topActions.enumerated()), id: \.offset) { index, action in
                             Text("\(index + 1). \(action)")
                                 .textSelection(.enabled)
@@ -134,7 +182,7 @@ struct TodayView: View {
                 }
                 if !dream.narrative.isEmpty {
                     Text(displayedNarrative(dream))
-                        .font(.callout)
+                        .font(WorkspaceTypography.body)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
@@ -238,7 +286,7 @@ struct TodayView: View {
         } else {
             HStack(spacing: 10) {
                 Label("Nothing recording right now", systemImage: "record.circle")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(WorkspaceTypography.body).foregroundStyle(.secondary)
                 Spacer()
                 Button("Record now") {
                     app.startRecording(
@@ -262,7 +310,7 @@ struct TodayView: View {
         if !model.blocks.isEmpty || !model.shots.isEmpty || model.digest != nil {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Text("Day so far").font(.title3.bold())
+                    Text("Day so far").font(WorkspaceTypography.sectionTitle)
                     Spacer()
                     Button("Open timeline") { app.navSection = .timeline }
                         .buttonStyle(.plain)
@@ -307,15 +355,64 @@ struct TodayView: View {
 
     // MARK: Meetings
 
+    private var capturedSection: some View {
+        let todays = model.meetings(in: app)
+        return WorkspaceSection(title: "Captured", icon: "tray.full") {
+            VStack(spacing: 0) {
+                if todays.isEmpty && model.shots.isEmpty {
+                    EmptyWorkspaceRow(text: "Nothing has been captured today yet.")
+                } else {
+                    ForEach(todays.prefix(4)) { meeting in
+                        Button {
+                            app.previewMeeting(meeting.id)
+                        } label: {
+                            HStack(spacing: 8) {
+                                MeetingRowView(meeting: meeting)
+                                if meeting.endedAt != nil,
+                                   app.pipeline.stages[meeting.id] == nil {
+                                    BrandChip(icon: "checkmark.circle", text: "Ready", size: .compact)
+                                }
+                                let ownedCount = app.outcomeIndex.projection(for: meeting.id)?
+                                    .actionReferences.filter(\.isForUser).count ?? 0
+                                BrandChip(
+                                    icon: "checklist",
+                                    text: "\(ownedCount) mine",
+                                    size: .compact)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.vertical, 6)
+                        Divider()
+                    }
+                    HStack {
+                        Label("\(model.shots.count) screen moments", systemImage: "camera")
+                            .font(WorkspaceTypography.body).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Open timeline") { app.navSection = .timeline }
+                            .buttonStyle(.plain).foregroundStyle(Brand.teal)
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+        }
+    }
+
+    private var summarySection: some View {
+        WorkspaceSection(title: "Summary", icon: "chart.bar") {
+            daySoFar
+        }
+    }
+
     private var meetingsSection: some View {
         let todays = model.meetings(in: app)
         return VStack(alignment: .leading, spacing: 8) {
             Text("Today's meetings")
-                .font(.title3.bold())
+                .font(WorkspaceTypography.sectionTitle)
                 .accessibilityIdentifier("today.meetings")
             if todays.isEmpty {
                 Text("No meetings captured today. LokalBot detects meeting apps automatically — or choose Record now.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(WorkspaceTypography.body).foregroundStyle(.secondary)
             } else {
                 ForEach(todays) { meeting in
                     Button {
@@ -334,7 +431,7 @@ struct TodayView: View {
 
     private var askSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Ask about today").font(.title3.bold())
+            Text("Ask about today").font(WorkspaceTypography.sectionTitle)
             HStack(spacing: 8) {
                 TextField("What did we decide about…", text: $question)
                     .textFieldStyle(.roundedBorder)

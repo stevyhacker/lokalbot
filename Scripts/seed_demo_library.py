@@ -18,7 +18,7 @@ Usage:
 Point the app at <storage-root> via LOKALBOT_STORAGE_ROOT. See
 Scripts/capture-screenshots.sh for the full capture flow.
 """
-import json, os, shutil, sqlite3, struct, sys, time, zlib
+import json, math, os, re, shutil, sqlite3, struct, subprocess, sys, time, wave, zlib
 from datetime import datetime, timezone, timedelta
 
 ENGINE = "on-device demo"
@@ -215,6 +215,105 @@ def write_meeting(root, mm):
         f.write(md)
     with open(os.path.join(folder, "summary.md"), "w") as f:
         f.write(mm["summary"])
+    with open(os.path.join(folder, "outcomes.json"), "w") as f:
+        json.dump(demo_outcomes(mm), f, indent=2)
+    if mm["id"] == DESIGN_REVIEW:
+        write_demo_audio(folder)
+
+
+def write_demo_audio(folder):
+    """Add a short, decodable source track for the detail-player happy path."""
+    wav_path = os.path.join(folder, "demo-audio.wav")
+    m4a_path = os.path.join(folder, "mic.m4a")
+    sample_rate = 16_000
+    duration = 140
+    with wave.open(wav_path, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(sample_rate)
+        frames = bytearray()
+        for index in range(sample_rate * duration):
+            seconds = index / sample_rate
+            pulse = 0.25 + 0.75 * abs(math.sin(seconds * math.pi / 3.4))
+            sample = int(1_600 * pulse * math.sin(2 * math.pi * 196 * seconds))
+            frames.extend(struct.pack("<h", sample))
+        audio.writeframes(frames)
+    try:
+        subprocess.run(
+            ["/usr/bin/afconvert", "-f", "m4af", "-d", "aac", wav_path, m4a_path],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL)
+    finally:
+        if os.path.exists(wav_path):
+            os.remove(wav_path)
+
+
+def demo_outcomes(mm):
+    """Derive grounded workflow fixtures from the demo's authored summary.
+
+    These are deterministic screenshot/test records, not a second production
+    extractor. Every visible action/decision points back to a real transcript
+    segment so the redesigned evidence controls can be exercised end to end.
+    """
+    sections = {"actionItems": [], "decisionRecords": [], "openQuestions": []}
+    active = None
+    headings = {
+        "## Action items": "actionItems",
+        "## Decisions": "decisionRecords",
+        "## Open questions": "openQuestions",
+    }
+    for raw in mm["summary"].splitlines():
+        line = raw.strip()
+        if line.startswith("## "):
+            active = headings.get(line)
+            continue
+        if active and line.startswith("-"):
+            text = re.sub(r"^-\s*(?:\[.\]\s*)?", "", line).strip()
+            if active == "openQuestions":
+                sections[active].append(text)
+                continue
+            owner = None
+            if active == "actionItems":
+                owner_match = re.search(r"\s+[—-]\s+(Me|Them)$", text, re.I)
+                paren_match = re.search(r"\s+\((Me|Them)\)\.?$", text, re.I)
+                match = owner_match or paren_match
+                if match:
+                    owner = match.group(1).capitalize()
+                    text = text[:match.start()].rstrip(" .")
+            segment_index = best_segment(text, mm["transcript"])
+            segment = mm["transcript"][segment_index]
+            citation = {
+                "meetingID": mm["id"],
+                "segmentID": f"segment-{segment_index:04d}-{round(segment['start'] * 1000):010d}-{round(segment['end'] * 1000):010d}",
+                "start": segment["start"],
+                "end": segment["end"],
+                "speaker": segment["speaker"],
+                "excerpt": segment["text"][:220],
+            }
+            prefix = "action" if active == "actionItems" else "decision"
+            record = {
+                "id": f"demo-{prefix}-{mm['id'][:8]}-{len(sections[active]) + 1}",
+                "schemaVersion": 2,
+                "text": text,
+                "citations": [citation],
+            }
+            if active == "actionItems":
+                record.update({
+                    "owner": owner,
+                    "isForUser": owner == "Me",
+                })
+            sections[active].append(record)
+    return {"schemaVersion": 2, **sections}
+
+
+def best_segment(text, segments):
+    words = set(re.findall(r"[a-z0-9]+", text.lower()))
+    scored = []
+    for index, segment in enumerate(segments):
+        candidate = set(re.findall(r"[a-z0-9]+", segment["text"].lower()))
+        scored.append((len(words & candidate), index))
+    return max(scored, default=(0, 0))[1]
 
 
 def seed_chats(root, now):

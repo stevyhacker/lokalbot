@@ -141,10 +141,10 @@ private extension OnboardingView {
 
             VStack(spacing: 8) {
                 Text("Welcome to LokalBot")
-                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
 
                 Text("Your private AI memory for work. Remember meetings and the context you choose, ask with evidence, write anywhere, and automate — on-device by default.")
-                    .font(.system(size: 15, design: .rounded))
+                    .font(.system(size: 14, design: .rounded))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -504,7 +504,7 @@ private struct LokalBotHeroDemo: View {
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(.white.opacity(0.65))
                         Text(phases[phase].1)
-                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
                             .foregroundStyle(.white)
                             .lineLimit(1)
                         Text(phases[phase].2)
@@ -670,8 +670,8 @@ private struct TimelineCard: View {
             }
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    Text(title)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
                 Text(subtitle)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -696,8 +696,8 @@ private struct OnboardingOptInCard: View {
         HStack(spacing: 14) {
             IconTile(systemImage: systemImage, tint: tint, size: 40)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    Text(title)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
                 Text(subtitle)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -724,8 +724,8 @@ private struct PrivacyCard: View {
         HStack(spacing: 14) {
             IconTile(systemImage: systemImage, tint: tint, size: 40)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    Text(title)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
                 Text(subtitle)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -800,11 +800,11 @@ private struct OnboardingStepHeader: View {
             }
 
             Text(title)
-                .font(.system(size: 26, weight: .bold, design: .rounded))
+                .font(.system(size: 22, weight: .bold, design: .rounded))
                 .multilineTextAlignment(.center)
 
             Text(subtitle)
-                .font(.system(size: 14, design: .rounded))
+                .font(.system(size: 13, design: .rounded))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -828,6 +828,7 @@ private struct OnboardingProgressPips: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: current)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Step \(current) of \(total)")
+        .accessibilityIdentifier("onboarding.progress")
     }
 
     private func fillStyle(for index: Int) -> AnyShapeStyle {

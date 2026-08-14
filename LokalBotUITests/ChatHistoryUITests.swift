@@ -58,12 +58,15 @@ final class ChatHistoryUITests: XCTestCase {
     func testSelectingConversationClearsActiveSearch() {
         UITestHarness.clickSidebar("sidebar.ask", in: app)
 
+        let keyword = app.buttons["Keyword search"]
+        XCTAssertTrue(keyword.waitForExistence(timeout: 4), "keyword mode control missing")
+        keyword.click()
         let field = app.textFields["search.field"]
         XCTAssertTrue(field.waitForExistence(timeout: 6), "ask search field missing")
         field.click()
         field.typeText("a query that would otherwise mask the transcript")
         XCTAssertTrue(app.descendants(matching: .any)["ask.escalate"]
-            .waitForExistence(timeout: 4), "search results did not appear")
+            .waitForExistence(timeout: 4), "keyword results did not appear")
 
         let older = text(containing: olderConversationTitle)
         XCTAssertTrue(older.waitForExistence(timeout: 4), "older conversation missing")

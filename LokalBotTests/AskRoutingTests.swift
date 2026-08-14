@@ -44,4 +44,44 @@ final class AskRoutingTests: XCTestCase {
         XCTAssertEqual(app.askScreenContextIDs, [42])
         XCTAssertTrue(app.askSubmitRequested)
     }
+
+    func testTodayOnlyScopeForcesCurrentDayAndHidesAmbientLibrary() async {
+        let base = RecordingToolRunner()
+        let scoped = ScopedChatToolRunner(base: base, scopes: [.today])
+
+        XCTAssertEqual(scoped.libraryOverview(), "")
+        _ = await scoped.run(.init(
+            name: "search_meetings", arguments: ["query": "roadmap"]))
+        XCTAssertEqual(base.lastCall?.string("_lokalbot_day_scope"), "today")
+
+        _ = await scoped.run(.init(
+            name: "activity_summary", arguments: ["day": "yesterday"]))
+        XCTAssertEqual(base.lastCall?.string("day"), "today")
+    }
+
+    func testDisabledSourceIsAbsentAndDeniedAtExecution() async {
+        let base = RecordingToolRunner()
+        let scoped = ScopedChatToolRunner(base: base, scopes: [.meetings])
+
+        XCTAssertFalse(scoped.specs.contains { $0.name == "search_screen" })
+        let result = await scoped.run(.init(
+            name: "search_screen", arguments: ["query": "secret" ]))
+        XCTAssertEqual(result.summary, "source not enabled")
+        XCTAssertNil(base.lastCall)
+    }
+
+    private final class RecordingToolRunner: ChatToolRunner {
+        let specs = [
+            ChatToolSpec(name: "search_meetings", summary: "meetings", arguments: []),
+            ChatToolSpec(name: "search_screen", summary: "screen", arguments: []),
+            ChatToolSpec(name: "activity_summary", summary: "today", arguments: []),
+        ]
+        var lastCall: ChatToolCall?
+
+        func libraryOverview() -> String { "all meeting titles" }
+        func run(_ call: ChatToolCall) async -> ChatToolResult {
+            lastCall = call
+            return ChatToolResult(text: "ok", summary: "ok")
+        }
+    }
 }

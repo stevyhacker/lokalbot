@@ -154,6 +154,36 @@ struct Transcript: Codable {
         }.joined(separator: "\n\n")
     }
 
+    /// Stable source IDs used by outcome extraction and evidence links. The ID
+    /// is derived from immutable source order and timing, so re-opening the same
+    /// transcript resolves citations without adding migration-only fields to
+    /// every legacy segment.
+    func segmentID(at index: Int) -> String {
+        guard segments.indices.contains(index) else { return "segment-invalid" }
+        let segment = segments[index]
+        return String(
+            format: "segment-%04d-%010lld-%010lld",
+            index,
+            Int64((segment.start * 1_000).rounded()),
+            Int64((segment.end * 1_000).rounded()))
+    }
+
+    var segmentSourceMap: [String: Segment] {
+        Dictionary(uniqueKeysWithValues: segments.indices.map { (segmentID(at: $0), segments[$0]) })
+    }
+
+    /// Source-ready transcript for grounded extraction. IDs appear in the
+    /// exact notation required by the schema so the model can only cite known
+    /// segments that LokalBot can resolve back to audio.
+    var evidenceMarkdown: String {
+        segments.enumerated().compactMap { index, segment in
+            let text = segment.displayText
+            guard !text.isEmpty else { return nil }
+            return "[\(segmentID(at: index))] [\(Self.stamp(segment.start))] "
+                + "\(displaySpeaker(for: segment.speaker)): \(text)"
+        }.joined(separator: "\n\n")
+    }
+
     /// Plain spoken text used for language detection and similar NLP passes.
     /// Keep timestamps, speaker labels, and Markdown out of the sample: Apple's
     /// language recognizer can over-weight that short formatting noise.

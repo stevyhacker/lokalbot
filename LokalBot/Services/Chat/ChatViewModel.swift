@@ -22,18 +22,24 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     let role: ChatRole
     var text: String
     var activity: [Activity]
+    /// Sources enabled for this specific question. Empty on legacy turns.
+    var sourceScopes: [AskSourceScope]
     /// The assistant turn is still being generated. Transient — never persisted.
     var isPending: Bool
     /// The turn failed (engine unreachable, no model, …) — rendered as an error.
     var isError: Bool
 
     init(id: UUID = UUID(), role: ChatRole, text: String,
-         activity: [Activity] = [], isPending: Bool = false, isError: Bool = false) {
+         activity: [Activity] = [], sourceScopes: [AskSourceScope] = [],
+         isPending: Bool = false, isError: Bool = false) {
         self.id = id; self.role = role; self.text = text
-        self.activity = activity; self.isPending = isPending; self.isError = isError
+        self.activity = activity; self.sourceScopes = sourceScopes
+        self.isPending = isPending; self.isError = isError
     }
 
-    private enum CodingKeys: String, CodingKey { case id, role, text, activity, isError }
+    private enum CodingKeys: String, CodingKey {
+        case id, role, text, activity, sourceScopes, isError
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -41,6 +47,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         role = try c.decode(ChatRole.self, forKey: .role)
         text = try c.decode(String.self, forKey: .text)
         activity = try c.decodeIfPresent([Activity].self, forKey: .activity) ?? []
+        sourceScopes = try c.decodeIfPresent([AskSourceScope].self, forKey: .sourceScopes) ?? []
         isError = try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false
         isPending = false
     }
@@ -51,6 +58,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         try c.encode(role, forKey: .role)
         try c.encode(text, forKey: .text)
         if !activity.isEmpty { try c.encode(activity, forKey: .activity) }
+        if !sourceScopes.isEmpty { try c.encode(sourceScopes, forKey: .sourceScopes) }
         if isError { try c.encode(isError, forKey: .isError) }
     }
 }
@@ -197,6 +205,7 @@ final class ChatViewModel: ObservableObject {
     private struct RetryPayload {
         var prompt: String
         var displayText: String
+        var scopes: Set<AskSourceScope>
     }
     private var retryPayloads: [UUID: RetryPayload] = [:]
 
@@ -225,7 +234,8 @@ final class ChatViewModel: ObservableObject {
     /// Send the current draft (or an explicit `prompt`, e.g. a suggestion chip).
     /// `displayText` keeps model-only context such as attached OCR excerpts out
     /// of the visible transcript while still sending it in the current turn.
-    func send(_ prompt: String? = nil, displayText: String? = nil) {
+    func send(_ prompt: String? = nil, displayText: String? = nil,
+              sourceScopes: Set<AskSourceScope> = AskSourceScope.defaults) {
         let text = (prompt ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isResponding else { return }
         let trimmedDisplay = displayText?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -237,17 +247,25 @@ final class ChatViewModel: ObservableObject {
             .filter { !$0.isPending && !$0.isError }
             .map { ChatAgent.Turn(role: $0.role, text: $0.text) }
 
-        messages.append(ChatMessage(role: .user, text: visibleText))
-        let assistant = ChatMessage(role: .assistant, text: "", isPending: true)
+        let orderedScopes = AskSourceScope.allCases.filter(sourceScopes.contains)
+        messages.append(ChatMessage(
+            role: .user, text: visibleText, sourceScopes: orderedScopes))
+        let assistant = ChatMessage(
+            role: .assistant, text: "", sourceScopes: orderedScopes, isPending: true)
         let assistantID = assistant.id
         messages.append(assistant)
         isResponding = true
         responsePhase = .preparingEngine
-        retryPayloads[assistantID] = .init(prompt: text, displayText: visibleText)
+        retryPayloads[assistantID] = .init(
+            prompt: text, displayText: visibleText, scopes: sourceScopes)
         persist()
 
         task = Task { [weak self] in
-            await self?.run(latest: text, history: history, assistantID: assistantID)
+            await self?.run(
+                latest: text,
+                history: history,
+                assistantID: assistantID,
+                scopes: sourceScopes)
         }
     }
 
@@ -272,11 +290,15 @@ final class ChatViewModel: ObservableObject {
               let userIndex = messages[..<assistantIndex].lastIndex(where: { $0.role == .user })
         else { return }
         let payload = retryPayloads[assistantID]
-            ?? .init(prompt: messages[userIndex].text, displayText: messages[userIndex].text)
+            ?? .init(
+                prompt: messages[userIndex].text,
+                displayText: messages[userIndex].text,
+                scopes: Set(messages[userIndex].sourceScopes.isEmpty
+                    ? AskSourceScope.allCases : messages[userIndex].sourceScopes))
         messages.remove(at: assistantIndex)
         messages.remove(at: userIndex)
         retryPayloads[assistantID] = nil
-        send(payload.prompt, displayText: payload.displayText)
+        send(payload.prompt, displayText: payload.displayText, sourceScopes: payload.scopes)
     }
 
     /// Start a new, empty conversation (persisting the current one first).
@@ -349,7 +371,8 @@ final class ChatViewModel: ObservableObject {
 
     // MARK: - Run
 
-    private func run(latest: String, history: [ChatAgent.Turn], assistantID: UUID) async {
+    private func run(latest: String, history: [ChatAgent.Turn], assistantID: UUID,
+                     scopes: Set<AskSourceScope>) async {
         defer {
             isResponding = false
             responsePhase = nil
@@ -358,7 +381,8 @@ final class ChatViewModel: ObservableObject {
         do {
             let engine = try await makeEngine()
             responsePhase = .startingAssistant
-            var agent = ChatAgent(engine: engine, runner: tools)
+            let scopedTools = ScopedChatToolRunner(base: tools, scopes: scopes)
+            var agent = ChatAgent(engine: engine, runner: scopedTools)
             agent.workMemory = workMemory()
             let answer = try await agent.respond(history: history, latest: latest) { [weak self] event in
                 self?.apply(event, to: assistantID)

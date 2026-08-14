@@ -20,8 +20,10 @@ final class DictationSettingsUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["today.header"]
             .waitForExistence(timeout: 10), "main window never rendered its Today landing")
         UITestHarness.clickSidebar("sidebar.type", in: app)
+        UITestHarness.selectSegment(
+            "Dictation", pickerIdentifier: "type.tab", in: app)
         XCTAssertTrue(dictationForm.waitForExistence(timeout: 8),
-                      "Dictation should be the default Type tab")
+                      "Dictation tab did not render")
     }
 
     override func tearDownWithError() throws {
@@ -129,6 +131,12 @@ final class DictationSettingsUITests: XCTestCase {
         UITestHarness.clickSidebar("sidebar.settings", in: app)
         UITestHarness.selectSegment(
             "Models", pickerIdentifier: "settings.tab", in: app)
+        let advanced = app.buttons["models.advanced"]
+        UITestHarness.scrollTo(advanced, in: app)
+        XCTAssertTrue(advanced.waitForExistence(timeout: 5),
+                      "Advanced model configuration did not render")
+        advanced.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).click()
         XCTAssertTrue(app.descendants(matching: .any)["models.dictationComposition"]
             .waitForExistence(timeout: 8), "Models pane did not render Dictation composition")
     }

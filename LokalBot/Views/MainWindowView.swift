@@ -51,16 +51,9 @@ struct MainWindowView: View {
         // truth. (The generated item itself is removed inside `sidebar` —
         // the only attachment point where SwiftUI honors the removal.)
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    sidebarVisible.toggle()
-                } label: {
-                    Label(sidebarVisible ? "Hide Sidebar" : "Show Sidebar",
-                          systemImage: "sidebar.left")
-                }
-                .help(sidebarVisible ? "Hide Sidebar" : "Show Sidebar")
-                .keyboardShortcut("s", modifiers: [.command, .control])
-                .accessibilityIdentifier("toolbar.sidebarToggle")
+            sidebarToolbarItem
+            if #available(macOS 26.0, *) {
+                ToolbarSpacer(.flexible)
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -113,6 +106,44 @@ struct MainWindowView: View {
         }
     }
 
+    /// macOS 26 automatically groups navigation items into a Liquid Glass
+    /// capsule. The approved reference uses a quiet standalone control, so
+    /// hide only that shared background while retaining the native toolbar.
+    @ToolbarContentBuilder
+    private var sidebarToolbarItem: some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            ToolbarItem(placement: .navigation) {
+                sidebarToggleButton
+            }
+            .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .navigation) {
+                sidebarToggleButton
+            }
+        }
+    }
+
+    private var sidebarToggleButton: some View {
+        Button {
+            sidebarVisible.toggle()
+        } label: {
+            HStack(spacing: 0) {
+                Color.clear.frame(width: 86, height: 1)
+                Image(systemName: "sidebar.left")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 28, height: 28)
+                    .background(.quaternary.opacity(0.34), in: Circle())
+                    .overlay { Circle().strokeBorder(Color.primary.opacity(0.08)) }
+            }
+            .padding(.trailing, 7)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(sidebarVisible ? "Hide Sidebar" : "Show Sidebar")
+        .help(sidebarVisible ? "Hide Sidebar" : "Show Sidebar")
+        .keyboardShortcut("s", modifiers: [.command, .control])
+        .accessibilityIdentifier("toolbar.sidebarToggle")
+    }
+
     /// Master/detail sections (Timeline, Meetings, Ask) use the native
     /// three-column split; single-surface sections (forms) use two.
     @ViewBuilder private var navigation: some View {
@@ -124,14 +155,10 @@ struct MainWindowView: View {
                     .workspaceSurface()
             }
         } else if app.navSection == .timeline {
-            NavigationSplitView(columnVisibility: threeColumnVisibility) {
+            NavigationSplitView(columnVisibility: twoColumnVisibility) {
                 sidebar
-            } content: {
-                TimelineContentView(model: capture)
-                    .modifier(ScriptedCaptureContentWidth(
-                        maximum: scriptedCaptureContentMaximum))
             } detail: {
-                CaptureDetailView(model: capture, pendingDelete: $pendingDelete)
+                TimelineOutcomeView(model: capture, pendingDelete: $pendingDelete)
                     .workspaceSurface()
             }
         } else if app.navSection == .meetings {
@@ -143,7 +170,7 @@ struct MainWindowView: View {
                     .modifier(ScriptedCaptureContentWidth(
                         maximum: scriptedCaptureContentMaximum))
             } detail: {
-                CaptureDetailView(model: capture, pendingDelete: $pendingDelete)
+                MeetingLibraryDetailView(pendingDelete: $pendingDelete)
                     .workspaceSurface()
             }
         } else if app.navSection == .type {
@@ -158,9 +185,11 @@ struct MainWindowView: View {
                 sidebar
             } content: {
                 ChatConversationList()
-                    .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
+                    .frame(minWidth: 250, idealWidth: 250, maxWidth: 280)
+                    .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 280)
             } detail: {
                 AskView()
+                    .frame(minWidth: 420)
                     .workspaceSurface()
                     .navigationSplitViewColumnWidth(min: 420, ideal: 680)
             }
@@ -202,51 +231,58 @@ struct MainWindowView: View {
     }
 
     private var sidebar: some View {
-        List(selection: sidebarSelection) {
+        List {
             Section {
-                sidebarLabel("Today", systemImage: "sun.max", section: .today)
-                    .tag(AppState.NavSection.today)
-                    .accessibilityIdentifier("sidebar.today")
+                sidebarDestination(
+                    "Today", systemImage: "sun.max", section: .today,
+                    identifier: "sidebar.today")
             }
             Section {
-                sidebarLabel(
+                sidebarDestination(
                     "Timeline",
                     systemImage: "calendar.day.timeline.left",
-                    section: .timeline)
-                    .tag(AppState.NavSection.timeline)
-                    .accessibilityIdentifier("sidebar.timeline")
-                sidebarLabel("Meetings", systemImage: "waveform.circle", section: .meetings)
-                    .tag(AppState.NavSection.meetings)
-                    .accessibilityIdentifier("sidebar.meetings")
+                    section: .timeline,
+                    identifier: "sidebar.timeline")
+                sidebarDestination(
+                    "Meetings", systemImage: "waveform.circle", section: .meetings,
+                    identifier: "sidebar.meetings")
+                sidebarDestination(
+                    "Ask", systemImage: "sparkle.magnifyingglass", section: .ask,
+                    identifier: "sidebar.ask")
             } header: {
                 sidebarSectionHeader("Remember")
             }
             Section {
-                sidebarLabel("Ask", systemImage: "sparkle.magnifyingglass", section: .ask)
-                    .tag(AppState.NavSection.ask)
-                    .accessibilityIdentifier("sidebar.ask")
-            }
-            Section {
-                sidebarLabel("Type", systemImage: "keyboard", section: .type)
-                    .tag(AppState.NavSection.type)
-                    .accessibilityIdentifier("sidebar.type")
-                sidebarLabel("Agent", systemImage: "wand.and.sparkles", section: .agent)
-                    .tag(AppState.NavSection.agent)
-                    .accessibilityIdentifier("sidebar.agent")
+                sidebarDestination(
+                    "Type", systemImage: "keyboard", section: .type,
+                    identifier: "sidebar.type")
+                sidebarDestination(
+                    "Agent", systemImage: "wand.and.sparkles", section: .agent,
+                    identifier: "sidebar.agent")
             } header: {
                 sidebarSectionHeader("Write & act")
             }
             Section {
-                sidebarLabel("Settings", systemImage: "gearshape", section: .settings)
-                    .tag(AppState.NavSection.settings)
-                    .accessibilityIdentifier("sidebar.settings")
+                sidebarDestination(
+                    "Settings", systemImage: "gearshape", section: .settings,
+                    identifier: "sidebar.settings")
             }
         }
+        .listStyle(.sidebar)
         .tint(Brand.teal)
         .safeAreaInset(edge: .top, spacing: 0) {
             SidebarBrandHeader()
         }
-        .navigationSplitViewColumnWidth(min: 180, ideal: 204, max: 230)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            SidebarPrivacyFooter()
+        }
+        .scrollContentBackground(.hidden)
+        .background(WorkspacePalette.sidebar(for: colorScheme))
+        // 167 points is the measured first-column width in the approved Ask
+        // reference. An explicit frame is needed because macOS otherwise
+        // compresses a List sidebar below its column-width preference.
+        .frame(minWidth: 167, idealWidth: 167, maxWidth: 190)
+        .navigationSplitViewColumnWidth(min: 167, ideal: 167, max: 190)
         // The system toggle is only removable from the sidebar column's own
         // content — applied outside the NavigationSplitView the removal is a
         // no-op and the generated toggle duplicates the owned one in the
@@ -259,6 +295,26 @@ struct MainWindowView: View {
     /// composited label color. Use resolved colors only for scripted exports;
     /// normal app and UI-test windows keep the native sidebar rendering.
     @ViewBuilder
+    private func sidebarDestination(
+        _ title: String,
+        systemImage: String,
+        section: AppState.NavSection,
+        identifier: String
+    ) -> some View {
+        let selected = app.navSection == section
+        Button {
+            app.navSection = section
+        } label: {
+            sidebarLabel(title, systemImage: systemImage, section: section)
+        }
+        .buttonStyle(.plain)
+        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: -5))
+        .listRowBackground(Color.clear)
+        .accessibilityIdentifier(identifier)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    @ViewBuilder
     private func sidebarLabel(
         _ title: String,
         systemImage: String,
@@ -266,31 +322,45 @@ struct MainWindowView: View {
     ) -> some View {
         let selected = app.navSection == section
 
-        HStack(spacing: 9) {
+        HStack(spacing: 10) {
             Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(
                     selected
                         ? Brand.teal
                         : (isScriptedCapture ? scriptedSidebarHeaderColor : Color.secondary))
-                .frame(width: 17)
+                .frame(width: 18)
 
             Text(title)
                 .font(.system(size: 13, weight: selected ? .semibold : .medium))
-                .foregroundStyle(isScriptedCapture ? scriptedSidebarLabelColor : Color.primary)
+                .foregroundStyle(
+                    selected
+                        ? Brand.teal
+                        : (isScriptedCapture ? scriptedSidebarLabelColor : Color.primary))
 
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(
+            selected ? Brand.teal.opacity(0.18) : Color.clear,
+            in: RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous))
+        .padding(.top, section == .ask ? 13 : 0)
+        .offset(y: section == .today ? -2 : 0)
         .contentShape(Rectangle())
     }
 
     @ViewBuilder
     private func sidebarSectionHeader(_ title: String) -> some View {
         Text(title.uppercased())
-            .font(.system(size: 9, weight: .semibold))
+            .font(.system(size: 10, weight: .semibold))
             .tracking(0.7)
             .foregroundStyle(isScriptedCapture ? scriptedSidebarHeaderColor : Color.secondary)
+            .padding(.leading, 11)
+            .padding(.top, title == "Remember" ? 3 : 8)
+            .padding(.bottom, title == "Remember" ? 10 : 5)
+            .accessibilityIdentifier(
+                title == "Remember" ? "sidebar.section.remember" : "sidebar.section.writeAct")
     }
 
     private var scriptedSidebarLabelColor: Color {
@@ -309,10 +379,6 @@ struct MainWindowView: View {
 #endif
     }
 
-    private var sidebarSelection: Binding<AppState.NavSection?> {
-        Binding(get: { app.navSection }, set: { app.navSection = $0 ?? .today })
-    }
-
     private var scriptedCaptureContentMaximum: CGFloat? {
 #if LOKALBOT_UI_TEST_HOST
         guard let raw = ProcessInfo.processInfo.environment["LOKALBOT_CAPTURE_CONTENT_MAX"],
@@ -325,27 +391,56 @@ struct MainWindowView: View {
 
 }
 
-private struct SidebarBrandHeader: View {
+private struct SidebarPrivacyFooter: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
-        HStack(spacing: 9) {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                StatusDot(color: .green, size: 7)
+                Text("All memory is local")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            Text("No data leaves your Mac")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 20)
+        .padding(.trailing, 12)
+        .padding(.vertical, 22)
+        .background(WorkspacePalette.sidebar(for: colorScheme))
+        .overlay(alignment: .top) { Divider() }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("sidebar.localPrivacy")
+    }
+}
+
+private struct SidebarBrandHeader: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        HStack(spacing: 10) {
             Image(nsImage: NSApp.applicationIconImage ?? NSImage())
                 .resizable()
                 .scaledToFit()
-                .frame(width: 28, height: 28)
+                .frame(width: 30, height: 30)
                 .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
 
             VStack(alignment: .leading, spacing: 1) {
                 Text("LokalBot")
                     .font(.system(size: 14, weight: .semibold))
-                Text("Private work memory")
-                    .font(.system(size: 10, weight: .medium))
+                Text("Private work\nmemory")
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.top, 10)
-        .padding(.bottom, 12)
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        .padding(.bottom, 17)
+        .background(WorkspacePalette.sidebar(for: colorScheme))
+        .overlay(alignment: .bottom) { Divider() }
         .accessibilityElement(children: .combine)
     }
 }
@@ -1206,11 +1301,21 @@ struct SelectableDigestText: View {
 /// ordered lists, blockquotes, and horizontal rules, with inline
 /// bold/italic/code via AttributedString. Enough for summary.md.
 struct MarkdownText: View {
+    enum Style {
+        case standard
+        case editorial
+    }
+
     let text: String
-    init(_ text: String) { self.text = text }
+    let style: Style
+
+    init(_ text: String, style: Style = .standard) {
+        self.text = text
+        self.style = style
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: style == .editorial ? 8 : 7) {
             ForEach(Array(text.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
                 render(line)
             }
@@ -1225,27 +1330,35 @@ struct MarkdownText: View {
         } else if trimmed == "---" || trimmed == "***" || trimmed == "___" {
             Divider().padding(.vertical, 4)
         } else if trimmed.hasPrefix("### ") {
-            inline(String(trimmed.dropFirst(4))).font(.headline).padding(.top, 4)
+            inline(String(trimmed.dropFirst(4)))
+                .font(style == .editorial ? WorkspaceTypography.editorialBodyEmphasis : .headline)
+                .padding(.top, 4)
         } else if trimmed.hasPrefix("## ") {
-            inline(String(trimmed.dropFirst(3))).font(.title3.bold()).padding(.top, 8)
+            inline(String(trimmed.dropFirst(3)))
+                .font(style == .editorial ? WorkspaceTypography.editorialSectionTitle : .title3.bold())
+                .padding(.top, 8)
         } else if trimmed.hasPrefix("# ") {
-            inline(String(trimmed.dropFirst(2))).font(.title2.bold())
+            inline(String(trimmed.dropFirst(2)))
+                .font(style == .editorial ? WorkspaceTypography.conversationTitle : .title2.bold())
         } else if trimmed.hasPrefix("- [ ] ") || trimmed.hasPrefix("- [x] ") {
-            HStack(alignment: .top, spacing: 6) {
+            HStack(alignment: .top, spacing: style == .editorial ? 8 : 6) {
                 Image(systemName: trimmed.hasPrefix("- [x]") ? "checkmark.square" : "square")
-                    .font(.system(size: 12)).padding(.top, 2)
+                    .font(.system(size: style == .editorial ? 13 : 12)).padding(.top, 2)
                 inline(String(trimmed.dropFirst(6)))
             }
+            .font(baseFont)
         } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
-            HStack(alignment: .top, spacing: 6) {
+            HStack(alignment: .top, spacing: style == .editorial ? 8 : 6) {
                 Text("•")
                 inline(String(trimmed.dropFirst(2)))
             }
+            .font(baseFont)
         } else if let ordered = Self.orderedListItem(trimmed) {
             HStack(alignment: .top, spacing: 6) {
-                Text("\(ordered.number).").font(.body.monospacedDigit())
+                Text("\(ordered.number).").font(baseFont.monospacedDigit())
                 inline(ordered.rest)
             }
+            .font(baseFont)
         } else if trimmed.hasPrefix("> ") {
             HStack(alignment: .top, spacing: 8) {
                 // A thin accent rule reads as a quote bar without a custom shape.
@@ -1253,9 +1366,16 @@ struct MarkdownText: View {
                 inline(String(trimmed.dropFirst(2)))
                     .italic().foregroundStyle(.secondary)
             }
+            .font(baseFont)
         } else {
             inline(trimmed)
+                .font(baseFont)
+                .lineSpacing(style == .editorial ? 3 : 0)
         }
+    }
+
+    private var baseFont: Font {
+        style == .editorial ? WorkspaceTypography.editorialBody : .body
     }
 
     /// Matches "1. text", "12. text" — returns the number and the remainder.
@@ -1269,12 +1389,31 @@ struct MarkdownText: View {
     }
 
     private func inline(_ s: String) -> Text {
-        if let attributed = try? AttributedString(
-            markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-            Text(attributed)
-        } else {
-            Text(s)
+        var remainder = s[...]
+        var rendered = Text("")
+
+        while let open = remainder.firstIndex(of: "[") {
+            let afterOpen = remainder.index(after: open)
+            guard let close = remainder[afterOpen...].firstIndex(of: "]"),
+                  Int(remainder[afterOpen..<close]) != nil else { break }
+
+            rendered = rendered + inlineMarkdown(String(remainder[..<open]))
+            rendered = rendered + Text(String(remainder[open...close]))
+                .font(WorkspaceTypography.metadataEmphasis)
+                .foregroundColor(Brand.teal)
+            remainder = remainder[remainder.index(after: close)...]
         }
+
+        return rendered + inlineMarkdown(String(remainder))
+    }
+
+    private func inlineMarkdown(_ source: String) -> Text {
+        if let attributed = try? AttributedString(
+            markdown: source,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+            return Text(attributed)
+        }
+        return Text(source)
     }
 }
 

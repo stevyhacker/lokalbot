@@ -30,6 +30,11 @@ final class GettingStartedUITests: XCTestCase {
     }
 
     func testDismissedCardStaysDismissedAcrossRelaunch() throws {
+        let more = app.descendants(matching: .any)["today.moreLocalContext"]
+        XCTAssertTrue(more.waitForExistence(timeout: 8),
+                      "Today's local-context disclosure did not render")
+        more.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).click()
         let dismiss = app.buttons["welcome.dismiss"]
         XCTAssertTrue(dismiss.waitForExistence(timeout: 8),
                       "getting-started card did not appear on the Today home")

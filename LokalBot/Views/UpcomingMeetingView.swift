@@ -47,9 +47,9 @@ struct UpcomingMeetingSection: View {
             HStack(alignment: .center, spacing: 12) {
                 IconTile(systemImage: icon, tint: Brand.teal, size: 38)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.headline)
+                    Text(title).font(WorkspaceTypography.rowTitle)
                     Text(detail)
-                        .font(.callout)
+                        .font(WorkspaceTypography.body)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -98,6 +98,8 @@ struct UpcomingMeetingSection: View {
 private struct TodayMeetingsSchedule: View {
     @EnvironmentObject private var app: AppState
     @ObservedObject var model: UpcomingMeetingPreparationModel
+    @State private var laterExpanded = false
+    @State private var preparationExpanded = false
 
     private var remainingMeetings: [CalendarMeetingCandidate] {
         guard let preparedID = model.evidence?.event.externalID else {
@@ -109,31 +111,39 @@ private struct TodayMeetingsSchedule: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
             HStack(spacing: 8) {
-                Label("Meetings today", systemImage: "calendar")
-                    .font(.headline)
+                Label("Upcoming", systemImage: "calendar")
+                    .font(WorkspaceTypography.sectionTitle)
                 Spacer()
                 Text("\(model.meetingsToday.count) scheduled")
-                    .font(.caption.monospacedDigit())
+                    .font(WorkspaceTypography.metadata.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
 
             if let evidence = model.evidence {
-                UpcomingMeetingCard(model: model, evidence: evidence)
+                TodayMeetingRow(event: evidence.event)
                     .environmentObject(app)
             }
 
             if !remainingMeetings.isEmpty {
-                VStack(alignment: .leading, spacing: 7) {
-                    if model.evidence != nil {
-                        Text("Schedule")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
+                DisclosureGroup(
+                    "\(remainingMeetings.count) later today",
+                    isExpanded: $laterExpanded
+                ) {
                     ForEach(remainingMeetings, id: \.externalID) { event in
                         TodayMeetingRow(event: event)
                             .environmentObject(app)
                     }
                 }
+                .font(.callout)
+            }
+
+            if let evidence = model.evidence, evidence.hasPreparationContext {
+                DisclosureGroup("Preparation context", isExpanded: $preparationExpanded) {
+                    UpcomingMeetingCard(model: model, evidence: evidence)
+                        .environmentObject(app)
+                        .padding(.top, 7)
+                }
+                .font(.callout)
             }
         }
         .accessibilityElement(children: .contain)
@@ -149,18 +159,18 @@ private struct TodayMeetingRow: View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             HStack(alignment: .center, spacing: 12) {
                 Text(UpcomingMeetingPresentation.timeRange(event))
-                    .font(.callout.monospacedDigit().weight(.medium))
+                    .font(WorkspaceTypography.metadataEmphasis.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(width: 118, alignment: .leading)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(event.title)
-                        .font(.callout.weight(.semibold))
+                        .font(WorkspaceTypography.rowTitle)
                         .lineLimit(1)
                         .textSelection(.enabled)
                     if let participants = UpcomingMeetingPresentation.participantLabel(event) {
                         Text(participants)
-                            .font(.caption)
+                            .font(WorkspaceTypography.metadata)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -169,7 +179,7 @@ private struct TodayMeetingRow: View {
                 Spacer(minLength: 8)
 
                 Text(UpcomingMeetingPresentation.statusLabel(event: event, now: context.date))
-                    .font(.caption.weight(.medium))
+                    .font(WorkspaceTypography.metadataEmphasis)
                     .foregroundStyle(event.endDate < context.date ? .tertiary : .secondary)
                     .lineLimit(1)
 
@@ -178,7 +188,7 @@ private struct TodayMeetingRow: View {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .padding(.vertical, WorkspaceMetric.rowVerticalPadding)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(.quaternary.opacity(0.25)))
@@ -193,7 +203,7 @@ private struct TodayMeetingRow: View {
                 Link(destination: meetingURL) {
                     Label("Join", systemImage: "video")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("today.meeting.\(event.externalID).join")
             }
             Button {

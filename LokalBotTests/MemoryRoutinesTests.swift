@@ -3,6 +3,48 @@ import XCTest
 
 @MainActor
 final class MemoryRoutinesTests: XCTestCase {
+    func testUnfinishedActionsUseOverlayCorrectionsAndExcludeDoneItems() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MemoryRoutineOverlay-\(UUID().uuidString)", isDirectory: true)
+        let storageRoot = base.appendingPathComponent("library", isDirectory: true)
+        let destination = base.appendingPathComponent("drafts", isDirectory: true)
+        try FileManager.default.createDirectory(at: storageRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let meetingID = UUID()
+        let date = Date()
+        try MeetingFixture.write([
+            .init(id: meetingID, title: "Overlay review", startedAt: date)
+        ], under: storageRoot)
+        let storage = StorageManager(rootURL: storageRoot)
+        let meeting = try XCTUnwrap(SessionLookup.loadAllMeetings(root: storageRoot).first)
+        let done = MeetingOutcomes.ActionItem(text: "Already shipped", owner: "Me")
+        let corrected = MeetingOutcomes.ActionItem(text: "Old wording", owner: "Them")
+        try MeetingOutcomes(actionItems: [done, corrected])
+            .write(to: meeting.folderURL(in: storage))
+        var state = MeetingOutcomeState()
+        state.actions[done.id] = .init(status: .done, userEdited: true)
+        state.actions[corrected.id] = .init(
+            ownerOverride: "Me",
+            dueOverride: "Friday",
+            textCorrection: "Publish the corrected plan",
+            userEdited: true)
+        try MeetingOutcomeStore.writeState(state, to: meeting.folderURL(in: storage))
+
+        let output = try MemoryRoutineRunner.run(
+            kind: .unfinishedActions,
+            referenceDate: date,
+            storageRoot: storageRoot,
+            destinationRoot: destination,
+            meetingID: nil)
+        let body = try String(contentsOf: output, encoding: .utf8)
+
+        XCTAssertFalse(body.contains("Already shipped"))
+        XCTAssertFalse(body.contains("Old wording"))
+        XCTAssertTrue(body.contains("Publish the corrected plan"))
+        XCTAssertTrue(body.contains("owner: Me"))
+        XCTAssertTrue(body.contains("due: Friday"))
+    }
+
     func testPostMeetingDraftIsPrivateRedactedIdempotentAndCollisionSafe() throws {
         let base = FileManager.default.temporaryDirectory
             .appendingPathComponent("MemoryRoutineTests-\(UUID().uuidString)", isDirectory: true)

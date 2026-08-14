@@ -60,7 +60,7 @@ struct SettingsView: View {
     /// Search field + tab strip, above the tabbed content so search works
     /// from any tab (including Models).
     private var header: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 18) {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .center, spacing: 18) {
                     settingsHeaderTitle
@@ -85,18 +85,18 @@ struct SettingsView: View {
             .frame(maxWidth: 520, alignment: .leading)
             .accessibilityIdentifier("settings.tab")
         }
-        .padding(.horizontal, 22)
-        .padding(.top, 20)
-        .padding(.bottom, 16)
+        .padding(.horizontal, WorkspaceMetric.pagePadding)
+        .padding(.top, 22)
+        .padding(.bottom, 18)
     }
 
     private var settingsHeaderTitle: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(app.settingsTab.displayName)
-                .font(.system(size: 22, weight: .semibold))
+                .font(WorkspaceTypography.pageTitle)
                 .tracking(-0.35)
             Text(settingsTabSubtitle)
-                .font(.callout)
+                .font(WorkspaceTypography.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -108,6 +108,7 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
             TextField("Search settings…", text: $settingsQuery)
                 .textFieldStyle(.plain)
+                .font(WorkspaceTypography.control)
                 .accessibilityIdentifier("settings.search")
             if !settingsQuery.isEmpty {
                 Button { settingsQuery = "" } label: {
@@ -118,7 +119,7 @@ struct SettingsView: View {
             }
         }
         .padding(.horizontal, 10)
-        .frame(height: 32)
+        .frame(height: 36)
         .workspaceControl()
     }
 
@@ -220,18 +221,65 @@ struct SettingsView: View {
 
     }
 
-    /// A pointer, not a settings surface: cotyping's one home (enable, model,
-    /// suggestions, exclusions, advanced) is Type → Cotyping. This section
-    /// only keeps it findable from Settings search.
     @ViewBuilder private var cotypingSection: some View {
-        if shows("Cotyping", ["cotyping", "autocomplete", "suggestion", "suggestions",
+        if shows("Autocomplete", ["cotyping", "autocomplete", "suggestion", "suggestions",
                               "length", "words", "max words", "ghost", "inline",
                               "completion", "typing"]) {
-            Section("Cotyping") {
-                LabeledContent("Inline autocomplete") {
-                    Button("Open Type → Cotyping") { app.openType(.cotyping) }
+            Section("Autocomplete") {
+                Toggle("Enable autocomplete", isOn: $app.settings.cotypingEnabled)
+                Picker("Model", selection: $app.settings.cotypingBuiltInModelID) {
+                    ForEach(ModelCatalog.keystrokeScaleEntries(
+                        custom: app.settings.customBuiltInModels,
+                        keeping: app.settings.cotypingBuiltInModelID)) { entry in
+                        Text(entry.displayName).tag(entry.id)
+                    }
                 }
-                Text("Enable cotyping, pick its model, and tune suggestions in Type → Cotyping — its one home.")
+                CotypingModelPreparationView(compact: true)
+                Stepper("Suggestion length: up to \(app.settings.cotypingMaxWords) words",
+                        value: $app.settings.cotypingMaxWords, in: 2...50)
+                Toggle("Allow multi-line suggestions", isOn: $app.settings.cotypingMultiLine)
+                LabeledContent("Pause before suggesting") {
+                    Text("\(app.settings.cotypingDebounceMs) ms").foregroundStyle(.secondary)
+                }
+                Slider(value: Binding(
+                    get: { Double(app.settings.cotypingDebounceMs) },
+                    set: { app.settings.cotypingDebounceMs = Int($0) }),
+                    in: 20...1_000, step: 20)
+                Picker("Accept next", selection: $app.settings.cotypingAcceptKey) {
+                    ForEach(CotypingAcceptKey.allCases) { Text($0.label).tag($0) }
+                }
+                Picker("Each accept takes", selection: $app.settings.cotypingAcceptGranularity) {
+                    ForEach(CotypingAcceptGranularity.allCases) { Text($0.label).tag($0) }
+                }
+                Divider()
+                Toggle("Use app and window context", isOn: $app.settings.cotypingUseAppContext)
+                Toggle("Use clipboard as temporary context", isOn: $app.settings.cotypingUseClipboard)
+                Toggle("Learn locally from accepted completions",
+                       isOn: $app.settings.cotypingUseLocalLearning)
+                TextField("Your name (optional)", text: $app.settings.cotypingUserName)
+                TextField("Writing style (optional)", text: $app.settings.cotypingStyleNote)
+                TextField("Languages (optional)", text: $app.settings.cotypingLanguages)
+                Divider()
+                TextField("Never suggest in (apps, comma-separated)",
+                          text: $app.settings.cotypingExcludedApps)
+                TextField("Never suggest on (sites, comma-separated)",
+                          text: $app.settings.cotypingExcludedDomains)
+                Toggle("Suggest in integrated terminals",
+                       isOn: $app.settings.cotypingSuggestInIntegratedTerminals)
+                DisclosureGroup("Advanced") {
+                    Toggle("Stream partial suggestions",
+                           isOn: $app.settings.cotypingStreamSuggestionsWhileGenerating)
+                    Toggle("Use fast in-process runtime",
+                           isOn: $app.settings.cotypingInProcessRuntime)
+                    Toggle("Match the app font and text color",
+                           isOn: $app.settings.cotypingMatchHostStyle)
+                    Toggle("Autocorrect the current word",
+                           isOn: $app.settings.cotypingAutocorrect)
+                    Toggle("Emoji autocomplete", isOn: $app.settings.cotypingEmoji)
+                    Toggle("Macros", isOn: $app.settings.cotypingMacros)
+                }
+                Button("Open the autocomplete rehearsal") { app.openType(.cotyping) }
+                Text("Preview and rehearsal runs are excluded from production stats and local learning.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

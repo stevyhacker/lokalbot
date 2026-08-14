@@ -33,24 +33,35 @@ struct ModelsView: View {
     @State private var openAIAPIKeySavedValue = ""
     @State private var didLoadOpenAIAPIKey = false
     @State private var openAIAPIKeySaved = false
+    @State private var advancedExpanded = false
 
     private enum StackRole: String { case transcribe, think, type }
     @State private var expandedRoles: Set<StackRole> = []
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                ModelMemoryBanner()
-                yourStackCard
-                if expandedRoles.contains(.transcribe) { transcriptionCard }
-                dictationCompositionCard
-                if expandedRoles.contains(.think) { summarizationCard }
-                speechCard
-                if expandedRoles.contains(.type) { cotypingCard }
-                embeddingsCard
+            VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
+                ModelStackOverviewView()
+                WorkspaceDisclosure(
+                    isExpanded: $advancedExpanded,
+                    identifier: "models.advanced") {
+                    VStack(alignment: .leading, spacing: 16) {
+                        ModelMemoryBanner()
+                        yourStackCard
+                        if expandedRoles.contains(.transcribe) { transcriptionCard }
+                        dictationCompositionCard
+                        if expandedRoles.contains(.think) { summarizationCard }
+                        speechCard
+                        if expandedRoles.contains(.type) { cotypingCard }
+                        embeddingsCard
+                    }
+                } label: {
+                    Label("Advanced model details", systemImage: "slider.horizontal.3")
+                        .font(WorkspaceTypography.sectionTitle)
+                }
             }
-            .padding(20)
-            .frame(maxWidth: 760, alignment: .leading)
+            .padding(WorkspaceMetric.pagePadding)
+            .frame(maxWidth: WorkspaceMetric.contentMaxWidth, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .task {
@@ -121,7 +132,7 @@ struct ModelsView: View {
             stackRow(.think, name: "Think", model: thinkModelName,
                      detail: "Writes summaries, answers Ask, runs Agent Mode")
             Divider()
-            stackRow(.type, name: "Type", model: typeModelName,
+            stackRow(.type, name: "Autocomplete", model: typeModelName,
                      detail: "Completes your sentences as you type")
         }
         // No identifier on the card container: it would propagate onto the
@@ -483,10 +494,10 @@ struct ModelsView: View {
     }
 
     private var cotypingCard: some View {
-        ModelCard(icon: "text.cursor", title: "Cotyping",
+        ModelCard(icon: "text.cursor", title: "Autocomplete",
                   subtitle: "Inline AI autocomplete as you type") {
             CotypingModelPreparationView(compact: true)
-            Picker("Cotyping model", selection: $app.settings.cotypingBuiltInModelID) {
+            Picker("Autocomplete model", selection: $app.settings.cotypingBuiltInModelID) {
                 ForEach(ModelCatalog.keystrokeScaleEntries(
                     custom: app.settings.customBuiltInModels,
                     keeping: app.settings.cotypingBuiltInModelID)) { entry in
@@ -494,7 +505,7 @@ struct ModelsView: View {
                 }
             }
             .frame(maxWidth: 360)
-            Text("Cotyping runs in its own local model process, separate from the Main LLM. LFM2.5 1.2B is the benchmarked low-latency default; Gemma 4 · E4B is a higher-capacity option.")
+            Text("Autocomplete runs in its own local model process, separate from the Main LLM. LFM2.5 1.2B is the benchmarked low-latency default.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .accessibilityIdentifier("models.cotyping")

@@ -234,7 +234,8 @@ final class ProcessingPipeline: ObservableObject {
                 let outcomesTask: Task<Void, Never>? = concurrentOutcomes
                     ? Task { [weak self] in
                         await self?.extractOutcomes(
-                            transcript: transcript, summary: "", folder: folder, config: config)
+                            transcript: transcript, summary: "", meetingID: meeting.id,
+                            folder: folder, config: config)
                     }
                     : nil
                 let summary: String
@@ -263,8 +264,8 @@ final class ProcessingPipeline: ObservableObject {
                 if let outcomesTask {
                     await outcomesTask.value
                 } else {
-                    await extractOutcomes(transcript: transcript, summary: summary, folder: folder,
-                                          config: config)
+                    await extractOutcomes(transcript: transcript, summary: summary,
+                                          meetingID: meeting.id, folder: folder, config: config)
                 }
             }
             if let jobStore, !jobStore.markCompleted(meetingID: meeting.id) {
@@ -547,25 +548,36 @@ final class ProcessingPipeline: ObservableObject {
     /// the backend supports it (see `OutcomesExtractor`). Failure is non-fatal
     /// — outcomes are an enhancement, never a gate on the meeting artifacts.
     private func extractOutcomes(transcript: Transcript, summary: String,
-                                 folder: URL, config: AppSettings) async {
+                                 meetingID: Meeting.ID, folder: URL,
+                                 config: AppSettings) async {
         do {
             try Task.checkCancellation()
             let engine = try await makeTextEngine(config)
             let userSpeakerLabel = transcript.displaySpeaker(for: "me")
             let output = try await engine.generate(
                 system: OutcomesExtractor.systemPrompt(userSpeakerLabel: userSpeakerLabel),
-                prompt: OutcomesExtractor.prompt(transcriptMarkdown: transcript.markdown,
-                                                 summary: summary),
+                prompt: OutcomesExtractor.prompt(transcript: transcript, summary: summary),
                 context: MeetingNotes.promptContext(in: folder),
                 schema: OutcomesExtractor.schema)
             try Task.checkCancellation()
             guard let outcomes = OutcomesExtractor.parse(
-                output, userSpeakerLabel: userSpeakerLabel) else {
+                output,
+                userSpeakerLabel: userSpeakerLabel,
+                sourceSegments: transcript.segmentSourceMap,
+                meetingID: meetingID,
+                requireEvidence: true) else {
                 lokalbotLog("outcomes extraction unparseable, skipping")
                 return
             }
             try Task.checkCancellation()
+            let previous = MeetingOutcomes.load(from: folder)
+            let previousState = MeetingOutcomeStore.loadState(from: folder)
             try outcomes.write(to: folder)
+            if let previous {
+                let reconciled = MeetingOutcomeStore.reconcileState(
+                    previousState, from: previous, to: outcomes)
+                try MeetingOutcomeStore.writeState(reconciled, to: folder)
+            }
         } catch {
             lokalbotLog("outcomes extraction failed error=\(error.localizedDescription)")
         }

@@ -9,13 +9,13 @@ struct TypeView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
-                TypeStatusHeader(coordinator: app.cotyping, dictation: app.dictation)
                 Picker("Tool", selection: $app.typeTab) {
+                    Text("Autocomplete").tag(AppState.TypeTab.cotyping)
                     Text("Dictation").tag(AppState.TypeTab.dictation)
-                    Text("Cotyping").tag(AppState.TypeTab.cotyping)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .frame(maxWidth: 360)
                 .accessibilityIdentifier("type.tab")
             }
             .padding([.horizontal, .top], 16)
@@ -23,7 +23,7 @@ struct TypeView: View {
 
             switch app.typeTab {
             case .dictation: DictationView(dictation: app.dictation)
-            case .cotyping: CotypingView()
+            case .cotyping: AutocompleteExperienceView()
             }
         }
         .navigationTitle("Type")
@@ -56,7 +56,7 @@ private struct TypeStatusHeader: View {
                         .frame(width: 1)
                         .frame(maxHeight: .infinity)
                     featureColumn(icon: "text.cursor",
-                                  title: "Cotyping",
+                                  title: "Autocomplete",
                                   status: cotypingStatus,
                                   live: app.settings.cotypingEnabled && coordinator.isRunning,
                                   toggleLabel: "Inline suggestions",

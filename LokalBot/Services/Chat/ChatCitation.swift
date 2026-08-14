@@ -3,9 +3,9 @@ import Foundation
 /// Inline citation markers the assistant emits — `[meeting:ID]`,
 /// `[meeting:ID@HH:MM:SS]`, or `[screen:ID]` (see ChatPrompt's citation
 /// instructions).
-/// Messages are persisted with the markers in place; the chat UI strips them
-/// for display and renders the citations as source cards that deep-link to the
-/// cited meeting or exact captured screen moment.
+/// Messages are persisted with the markers in place; the chat UI replaces each
+/// one in situ with a stable numbered reference and renders a matching source
+/// table that deep-links to the cited evidence.
 struct ChatCitation: Equatable, Identifiable, Sendable {
     enum Kind: String, Equatable, Sendable {
         case meeting
@@ -54,8 +54,8 @@ enum ChatCitationParser {
     private static let pattern =
         #"\[(meeting|screen):([A-Za-z0-9_-]{1,64})(?:@(\d{1,2}(?::\d{2}){1,2}))?\]"#
 
-    /// Split `text` into marker-free display text and the ordered, deduped
-    /// citations. Text without markers passes through untouched.
+    /// Replace markers with ordered `[n]` references and return the matching,
+    /// deduped citations. Repeated sources retain their first source number.
     static func extract(_ text: String) -> (display: String, citations: [ChatCitation]) {
         guard text.contains("[meeting:") || text.contains("[screen:"),
               let regex = try? NSRegularExpression(pattern: pattern) else { return (text, []) }
@@ -85,7 +85,14 @@ enum ChatCitationParser {
 
             display += ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
             cursor = match.range.location + match.range.length
-            if !citations.contains(citation) { citations.append(citation) }
+            let number: Int
+            if let existing = citations.firstIndex(of: citation) {
+                number = existing + 1
+            } else {
+                citations.append(citation)
+                number = citations.count
+            }
+            display += "[\(number)]"
         }
         display += ns.substring(from: cursor)
         return (cleaned(display), citations)

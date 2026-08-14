@@ -284,13 +284,19 @@ private struct QuickRecallContent: View {
 
     private func displayedRow(_ row: QuickRecallRowModel) -> some View {
         let index = rows.firstIndex(where: { $0.id == row.id }) ?? 0
-        return QuickRecallRow(row: row, selected: selection == index)
-            .contentShape(Rectangle())
+        return Button {
+            run(row)
+        } label: {
+            QuickRecallRow(row: row, selected: selection == index)
+                .contentShape(Rectangle())
+        }
+            .buttonStyle(.plain)
             .onHover { hovering in
                 if hovering { selection = index }
             }
-            .onTapGesture { run(row) }
             .accessibilityIdentifier("quickRecall.row.\(row.id)")
+            .accessibilityLabel(row.title)
+            .accessibilityValue(row.accessibilityValue)
     }
 
     private var noMatchesState: some View {
@@ -653,6 +659,13 @@ private struct QuickRecallRowModel: Identifiable {
     var isAsk: Bool {
         guard case .ask = destination else { return false }
         return true
+    }
+
+    var accessibilityValue: String {
+        [subtitle, snippet]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ". ")
     }
 
     static func screen(

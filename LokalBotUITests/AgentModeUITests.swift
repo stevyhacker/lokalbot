@@ -25,7 +25,7 @@ final class AgentModeUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["agent.tabs"]
             .waitForExistence(timeout: 8), "Agent session tabs did not render")
         XCTAssertTrue(app.textFields["agent.composer"].waitForExistence(timeout: 6),
-                      "Agent composer did not reach its ready state")
+                      "Agent composer did not render")
     }
 
     override func tearDownWithError() throws {
@@ -109,6 +109,23 @@ final class AgentModeUITests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 2), "Agent composer did not return")
         XCTAssertEqual(composer.value as? String, "Keep this draft while I check Today",
                        "Agent navigation discarded the session draft")
+    }
+
+    func testStarterOnlyPrefillsAndRuntimeWaitsForExplicitSend() {
+        XCTAssertTrue(app.staticTexts["Ready to start"].waitForExistence(timeout: 4),
+                      "idle runtime status missing")
+        let starter = app.buttons["agent.starter.followUp"]
+        XCTAssertTrue(starter.waitForExistence(timeout: 4), "follow-up starter missing")
+        starter.click()
+
+        let composer = app.textFields["agent.composer"]
+        XCTAssertTrue(UITestHarness.waitUntil {
+            (composer.value as? String)?.contains("Draft a follow-up") == true
+        }, "starter did not prefill the reviewed prompt")
+        XCTAssertTrue(app.staticTexts["Ready to start"].exists,
+                      "prefill started the runtime before Send")
+        XCTAssertFalse(app.staticTexts["Starting..."].exists)
+        XCTAssertFalse(app.staticTexts["Ready"].exists)
     }
 
     private var openTabButtons: XCUIElementQuery {

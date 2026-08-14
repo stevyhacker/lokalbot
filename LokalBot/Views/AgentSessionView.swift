@@ -20,10 +20,7 @@ struct AgentSessionView: View {
             Divider()
             composer
         }
-        .task {
-            await controller.start()
-            focusComposerWhenReady()
-        }
+        .task { focusComposerWhenReady() }
         .onChange(of: isSelected) {
             focusComposerWhenReady()
         }
@@ -51,10 +48,13 @@ struct AgentSessionView: View {
             .fileImporter(isPresented: $pickingFolder,
                           allowedContentTypes: [.folder]) { result in
                 if case .success(let url) = result {
+                    let wasStarted = controller.state != .idle
                     controller.workspace = url
-                    Task {
-                        await controller.shutdown()
-                        await controller.start()
+                    if wasStarted {
+                        Task {
+                            await controller.shutdown()
+                            await controller.start()
+                        }
                     }
                 }
             }
@@ -62,39 +62,30 @@ struct AgentSessionView: View {
 
             statusBadge
             Spacer()
-            Toggle("Allow all file changes", isOn: Binding(
-                get: { controller.autoApproveSession },
-                set: { enabled in
-                    if enabled {
-                        confirmingAutoApprove = true
-                    } else {
-                        controller.autoApproveSession = false
-                    }
-                }))
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .help("Skip approval cards for file writes and edits in this session")
-                .accessibilityHint("When enabled, file writes and edits run without individual confirmation; shell commands still ask")
-                .accessibilityIdentifier("agent.autoApprove")
+            Label("Ask before changes", systemImage: "hand.raised")
+                .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     @ViewBuilder private var statusBadge: some View {
         switch controller.state {
-        case .idle, .starting:
-            HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("Starting…") }
-                .font(.caption).foregroundStyle(.secondary)
+        case .idle:
+            Label("Ready to start", systemImage: "circle")
+                .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+        case .starting:
+            HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("Starting...") }
+                .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
         case .ready:
             Label("Ready", systemImage: "circle.fill")
-                .font(.caption).foregroundStyle(.green)
+                .font(WorkspaceTypography.metadata).foregroundStyle(.green)
         case .running:
             HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("Working…") }
-                .font(.caption).foregroundStyle(.secondary)
+                .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
         case .failed(let message):
             Label("Needs attention", systemImage: "exclamationmark.triangle.fill")
-                .font(.caption).foregroundStyle(.orange)
+                .font(WorkspaceTypography.metadata).foregroundStyle(.orange)
                 .help(message)
         }
     }
@@ -108,7 +99,7 @@ struct AgentSessionView: View {
                         row(for: item).id(item.id)
                     }
                 }
-                .padding(12)
+                .padding(WorkspaceMetric.pagePadding)
                 .frame(maxWidth: .infinity, minHeight: 320, alignment: .topLeading)
             }
             .onChange(of: controller.items.count) {
@@ -139,48 +130,114 @@ struct AgentSessionView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             Image(systemName: "sparkles")
                 .font(.system(size: 30))
-                .foregroundStyle(.secondary)
-            VStack(spacing: 5) {
-                Text("What should the agent help with?")
-                    .font(.title3.weight(.semibold))
+                .foregroundStyle(Brand.teal)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Turn a local outcome into action")
+                    .font(WorkspaceTypography.pageTitle)
                 Text(emptyStateDetail)
+                    .font(WorkspaceTypography.body)
                     .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+            }
+            if let context = app.agentLaunchContext {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Selected outcome").font(WorkspaceTypography.metadataEmphasis)
+                        .foregroundStyle(.secondary)
+                    Text(context.title).font(WorkspaceTypography.rowTitle)
+                    Text("The prompt is prefilled below. Review it before sending.")
+                        .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+                }
+                .workspacePanel()
             }
             if controller.canResumePreviousSession {
                 Button {
-                    Task { await controller.resumePreviousSession() }
+                    Task {
+                        if controller.state == .idle { await controller.start() }
+                        await controller.resumePreviousSession()
+                    }
                 } label: {
                     Label("Resume Most Recent Session", systemImage: "clock.arrow.circlepath")
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(controller.state != .ready)
+                .buttonStyle(.bordered)
+                .disabled(controller.state == .starting)
                 .accessibilityIdentifier("agent.resumePrevious")
             }
-            VStack(spacing: 7) {
-                starterButton("Summarize my most recent meeting")
-                starterButton("Find meetings with unresolved action items")
-                starterButton("List the main topics in my Meeting Library")
+            HStack(spacing: 10) {
+                starterCard(
+                    "Draft follow-up",
+                    id: "agent.starter.followUp",
+                    icon: "arrowshape.turn.up.right",
+                    prompt: "Draft a follow-up from my most recent meeting. Do not send it.")
+                starterCard(
+                    "Prepare stand-up update",
+                    id: "agent.starter.standUp",
+                    icon: "person.3.sequence",
+                    prompt: "Prepare a concise stand-up update from my recent meetings and open actions.")
+                starterCard(
+                    "Export my actions",
+                    id: "agent.starter.exportActions",
+                    icon: "square.and.arrow.up",
+                    prompt: "Prepare a local Markdown export of my open meeting actions. Show me the plan before writing files.")
             }
-            .frame(maxWidth: 340)
+            DisclosureGroup("What it can access") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Working folder: \(controller.workspaceDisplayName)", systemImage: "folder")
+                    Label("Meeting Library: scoped local read access", systemImage: "lock.open")
+                    Label("File changes and shell commands require approval", systemImage: "hand.raised")
+                }
+                .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+                .padding(.top, 8)
+            }
+            .font(WorkspaceTypography.body)
+            DisclosureGroup("Advanced") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle("Allow all file changes for this session", isOn: Binding(
+                        get: { controller.autoApproveSession },
+                        set: { enabled in
+                            if enabled { confirmingAutoApprove = true }
+                            else { controller.autoApproveSession = false }
+                        }))
+                        .toggleStyle(.switch)
+                        .accessibilityIdentifier("agent.autoApprove")
+                    Text("Off by default and reset when this session closes.")
+                }
+                .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+                .padding(.top, 8)
+            }
+            .font(WorkspaceTypography.body)
         }
+        .frame(maxWidth: 960, alignment: .leading)
     }
 
-    private func starterButton(_ prompt: String) -> some View {
-        Button(prompt) {
+    private func starterCard(_ title: String, id: String, icon: String,
+                             prompt: String) -> some View {
+        Button {
             controller.draft = prompt
-            if canSend { submit() }
+            composerFocused = true
+        } label: {
+            VStack(alignment: .leading, spacing: 7) {
+                Image(systemName: icon).foregroundStyle(Brand.teal)
+                Text(title).font(WorkspaceTypography.rowTitle)
+                Text("Prefill prompt").font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(.quaternary.opacity(0.25),
+                        in: RoundedRectangle(cornerRadius: Brand.Radius.control))
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
+        .accessibilityIdentifier(id)
     }
 
     private var emptyStateDetail: String {
-        if controller.state == .idle || controller.state == .starting {
-            return "Your local agent is starting. You can prepare a prompt while the Main LLM gets ready."
+        if controller.state == .idle {
+            return "Choose or review a prompt. The Agent runtime and model start only after you press Send."
+        }
+        if controller.state == .starting {
+            return "Your local Agent runtime and Main LLM are starting."
         }
         return "It can read your Meeting Library now. File changes and commands ask first. Session history stays on this Mac."
     }
@@ -386,7 +443,7 @@ struct AgentSessionView: View {
             Button("Send", action: submit)
                 .buttonStyle(.borderedProminent)
                 .disabled(controller.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                          || !canSend)
+                          || controller.state == .starting)
                 .accessibilityIdentifier("agent.send")
         }
         .padding(12)
@@ -394,9 +451,16 @@ struct AgentSessionView: View {
 
     private func submit() {
         let text = controller.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, canSend else { return }
-        controller.draft = ""
-        Task { await controller.send(prompt: text) }
+        guard !text.isEmpty else { return }
+        Task {
+            if !canSend {
+                await controller.start()
+            }
+            guard canSend else { return }
+            controller.draft = ""
+            app.agentLaunchContext = nil
+            await controller.send(prompt: text)
+        }
     }
 
     private var canSend: Bool {

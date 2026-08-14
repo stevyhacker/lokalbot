@@ -80,9 +80,13 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(text(containing: title).waitForExistence(timeout: 6),
                       "onboarding page missing: \(title)")
         let progress = app.descendants(matching: .any).matching(NSPredicate(
-            format: "label == %@", "Step \(step) of 5")).firstMatch
+            format: "identifier == 'onboarding.progress'")).firstMatch
         XCTAssertTrue(progress.waitForExistence(timeout: 4),
-                      "onboarding progress did not reach step \(step)")
+                      "onboarding progress control missing at step \(step)")
+        XCTAssertTrue(UITestHarness.waitUntil {
+            progress.label == "Step \(step) of 5"
+                || progress.value as? String == "Step \(step) of 5"
+        }, "onboarding progress did not reach step \(step)")
     }
 
     private func text(containing fragment: String) -> XCUIElement {

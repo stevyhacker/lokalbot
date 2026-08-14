@@ -8,35 +8,74 @@ import SwiftUI
 struct MeetingListView: View {
     @EnvironmentObject var app: AppState
     @Binding var pendingDelete: Set<Meeting.ID>?
+    @State private var query = ""
+    @State private var filter: StatusFilter = .all
+
+    private enum StatusFilter: String, CaseIterable, Identifiable {
+        case all = "All"
+        case ready = "Ready"
+        case processing = "Processing"
+        case failed = "Failed"
+        var id: String { rawValue }
+    }
 
     var body: some View {
-        List(selection: $app.selectedMeetingIDs) {
-            ForEach(groupedMeetings, id: \.label) { group in
-                Section {
-                    ForEach(group.items) { meeting in
-                        MeetingRowView(meeting: meeting).tag(meeting.id)
+        VStack(spacing: 0) {
+            VStack(spacing: 10) {
+                HStack {
+                    TextField("Search meetings", text: $query)
+                        .textFieldStyle(.roundedBorder)
+                        .font(WorkspaceTypography.control)
+                        .accessibilityIdentifier("meeting.search")
+                    Button {
+                        app.startRecording(
+                            context: app.recordingContext(for: app.detector.activeApp))
+                    } label: {
+                        Image(systemName: "record.circle")
                     }
-                } header: {
-                    SectionHeader(text: group.label)
+                    .help("Record now")
+                }
+                Picker("Status", selection: $filter) {
+                    ForEach(StatusFilter.allCases) { item in Text(item.rawValue).tag(item) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .accessibilityIdentifier("meeting.statusFilter")
+            }
+            .padding(14)
+            .background(.bar)
+            Divider()
+
+            List(selection: meetingSelection) {
+                ForEach(groupedMeetings, id: \.label) { group in
+                    Section {
+                        ForEach(group.items) { meeting in
+                            MeetingRowView(meeting: meeting)
+                                .tag(meeting.id)
+                        }
+                    } header: {
+                        SectionHeader(text: group.label)
+                    }
                 }
             }
-        }
-        .accessibilityIdentifier("meeting.list")
-        .overlay {
-            if !app.libraryReady {
-                VStack(spacing: 10) {
-                    ProgressView()
-                    Text("Loading your meeting library…")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+            .accessibilityIdentifier("meeting.list")
+            .overlay {
+                if !app.libraryReady {
+                    VStack(spacing: 10) {
+                        ProgressView()
+                        Text("Loading your meeting library…")
+                            .font(WorkspaceTypography.body)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityIdentifier("meeting.libraryLoading")
+                } else if groupedMeetings.isEmpty {
+                    ContentUnavailableView(
+                        query.isEmpty ? "No meetings yet" : "No matching meetings",
+                        systemImage: "waveform.circle",
+                        description: Text(query.isEmpty
+                            ? "LokalBot detects meeting apps automatically -- or choose Record now."
+                            : "Try a different title, app, or status."))
                 }
-                .accessibilityIdentifier("meeting.libraryLoading")
-            } else if groupedMeetings.isEmpty {
-                ContentUnavailableView(
-                    "No meetings yet",
-                    systemImage: "waveform.circle",
-                    description: Text("LokalBot detects meeting apps automatically — or choose Record now in the menu bar.")
-                )
             }
         }
         .contextMenu(forSelectionType: Meeting.ID.self) { ids in
@@ -48,15 +87,51 @@ struct MeetingListView: View {
         .onDeleteCommand {
             if !app.selectedMeetingIDs.isEmpty { pendingDelete = app.selectedMeetingIDs }
         }
+        .task { app.selectDefaultMeetingIfNeeded() }
+        .onChange(of: app.libraryReady) { _, ready in
+            if ready { app.selectDefaultMeetingIfNeeded() }
+        }
+    }
+
+    /// Keep native macOS List selection semantics (including Command-click)
+    /// while making an ordinary row selection open the lightweight preview.
+    /// Programmatic deep links write AppState directly, so they can still opt
+    /// into the full meeting workspace without this binding overriding them.
+    private var meetingSelection: Binding<Set<Meeting.ID>> {
+        Binding(
+            get: { app.selectedMeetingIDs },
+            set: { selection in
+                app.selectedMeetingIDs = selection
+                if selection.count == 1 { app.meetingPresentation = .preview }
+            })
     }
 
     /// Live recording first, then finished meetings, grouped by day.
     private var groupedMeetings: [(label: String, items: [Meeting])] {
         let calendar = Calendar.current
-        let all = (app.currentMeeting.map { [$0] } ?? []) + app.meetings
+        let all = ((app.currentMeeting.map { [$0] } ?? []) + app.meetings)
+            .filter(matchesQuery)
+            .filter(matchesFilter)
         let groups = Dictionary(grouping: all) { calendar.startOfDay(for: $0.startedAt) }
         return groups.keys.sorted(by: >).map { day in
             (Self.dayLabel(day), groups[day]!.sorted { $0.startedAt > $1.startedAt })
+        }
+    }
+
+    private func matchesQuery(_ meeting: Meeting) -> Bool {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return true }
+        return meeting.displayTitle.localizedCaseInsensitiveContains(needle)
+            || meeting.appName.localizedCaseInsensitiveContains(needle)
+    }
+
+    private func matchesFilter(_ meeting: Meeting) -> Bool {
+        let stage = app.pipeline.stages[meeting.id]
+        switch filter {
+        case .all: return true
+        case .ready: return meeting.endedAt != nil && stage == nil
+        case .processing: return meeting.endedAt == nil || (stage != nil && stage?.isFailure == false)
+        case .failed: return stage?.isFailure == true
         }
     }
 
@@ -96,25 +171,25 @@ struct MeetingRowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     if live { StatusDot(color: Brand.recording, size: 9) }
-                    Text(meeting.title).font(.headline)
+                    Text(meeting.displayTitle).font(WorkspaceTypography.rowTitle)
                     if live {
                         Spacer(minLength: 6)
                         LiveWaveform(barCount: 5, barWidth: 2.5, maxHeight: 10)
                     }
                 }
                 Text("\(meeting.appName) · \(time) · \(duration)")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(meeting.title)
+            .accessibilityLabel(meeting.displayTitle)
             .accessibilityIdentifier("meeting.row.\(meeting.id.uuidString)")
 
             if !live, let stage = app.pipeline.stages[meeting.id] {
                 status(stage)
             }
         }
-        .padding(.vertical, 1)
+        .padding(.vertical, 6)
     }
 
     @ViewBuilder
@@ -122,13 +197,13 @@ struct MeetingRowView: View {
         if stage.isFailure {
             VStack(alignment: .trailing, spacing: 2) {
                 Label("Failed", systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
+                    .font(WorkspaceTypography.metadata)
                     .foregroundStyle(.orange)
                 Button("Retry") {
                     app.retryProcessing(meeting)
                 }
                 .buttonStyle(.borderless)
-                .font(.caption)
+                .font(WorkspaceTypography.metadata)
             }
             .help(stage.label)
             .accessibilityIdentifier("meeting.retry.\(meeting.id.uuidString)")
@@ -138,7 +213,7 @@ struct MeetingRowView: View {
                 Text(stage.rowLabel)
                     .lineLimit(1)
             }
-            .font(.caption)
+            .font(WorkspaceTypography.metadata)
             .foregroundStyle(.secondary)
             .help(stage.label)
             .accessibilityIdentifier("meeting.status.\(meeting.id.uuidString)")

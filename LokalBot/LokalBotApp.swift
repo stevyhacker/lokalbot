@@ -245,7 +245,7 @@ final class AppState: ObservableObject {
             case "today": self = .today
             case "timeline", "capture": self = .timeline
             case "meetings": self = .meetings
-            case "type", "dictation", "cotyping": self = .type
+            case "type", "dictation", "cotyping", "autocomplete": self = .type
             case "ask", "search", "chat": self = .ask
             case "agent": self = .agent
             case "settings", "models": self = .settings
@@ -259,15 +259,31 @@ final class AppState: ObservableObject {
     enum TypeTab: String, CaseIterable {
         case dictation, cotyping
 
+        var displayName: String {
+            self == .cotyping ? "Autocomplete" : "Dictation"
+        }
+
         /// Legacy capture names select their tab; anything else leaves the
         /// current tab untouched.
         init?(captureName: String) {
             switch captureName.lowercased() {
             case "dictation": self = .dictation
-            case "cotyping": self = .cotyping
+            case "cotyping", "autocomplete": self = .cotyping
             default: return nil
             }
         }
+    }
+
+    enum MeetingPresentation: String {
+        case preview
+        case detail
+    }
+
+    struct AgentLaunchContext: Equatable {
+        var title: String
+        var prompt: String
+        var meetingID: Meeting.ID?
+        var actionID: String?
     }
 
     /// Which tab the Settings surface shows (spec §2.5 — Settings absorbs
@@ -429,9 +445,20 @@ final class AppState: ObservableObject {
     // Navigation (main window): sidebar section, selected meeting, and a
     // pending "jump to timestamp" handed from search to the detail player.
     @Published var navSection: NavSection = .today
-    @Published var typeTab: TypeTab = .dictation
+    private static let typeTabDefaultsKey = "lokalbotv3.type.selectedTab"
+    private static var navigationDefaults: UserDefaults {
+        if let suite = UITestRuntime.defaultsSuiteName,
+           let defaults = UserDefaults(suiteName: suite) {
+            return defaults
+        }
+        return .standard
+    }
+    @Published var typeTab: TypeTab = .dictation {
+        didSet { Self.navigationDefaults.set(typeTab.rawValue, forKey: Self.typeTabDefaultsKey) }
+    }
     @Published var settingsTab: SettingsTab = .general
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []
+    @Published var meetingPresentation: MeetingPresentation = .preview
     @Published var pendingSeek: TimeInterval?
     /// A screen-memory deep link waiting for Timeline's shared capture model.
     /// Search, assistant citations, and Quick Recall set this before switching
@@ -452,6 +479,9 @@ final class AppState: ObservableObject {
     @Published var askDayScope: Date?
     /// Screens explicitly attached from Timeline to the next Ask turn.
     @Published var askScreenContextIDs: [Int64] = []
+    /// Contextual handoffs only prefill Agent. The subprocess starts after the
+    /// user reviews the prompt and explicitly chooses Send.
+    @Published var agentLaunchContext: AgentLaunchContext?
 
     /// Navigate to the Type section with a specific tab preselected.
     func openType(_ tab: TypeTab) {
@@ -476,11 +506,37 @@ final class AppState: ObservableObject {
         navSection = .ask
     }
 
+    func openAgent(_ context: AgentLaunchContext? = nil) {
+        agentLaunchContext = context
+        if let prompt = context?.prompt {
+            agentSessions.ensureSelectedController().draft = prompt
+        }
+        navSection = .agent
+    }
+
     /// Open one meeting in the Meetings section — the deep-link target
     /// for search hits, menu-bar recents, and palette recents.
     func openMeeting(_ id: Meeting.ID) {
         selectedMeetingIDs = [id]
+        meetingPresentation = .detail
         navSection = .meetings
+    }
+
+    func previewMeeting(_ id: Meeting.ID) {
+        selectedMeetingIDs = [id]
+        meetingPresentation = .preview
+        navSection = .meetings
+    }
+
+    func selectDefaultMeetingIfNeeded() {
+        guard selectedMeetingIDs.isEmpty else { return }
+        if let live = currentMeeting {
+            previewMeeting(live.id)
+        } else if let completed = meetings.first(where: { meeting in
+            meeting.endedAt != nil && pipeline.stages[meeting.id] == nil
+        }) ?? meetings.first(where: { $0.endedAt != nil }) {
+            previewMeeting(completed.id)
+        }
     }
 
     /// The meeting shown in the detail pane (single selection only). The
@@ -494,6 +550,7 @@ final class AppState: ObservableObject {
     }
 
     let storage = StorageManager()
+    private(set) lazy var outcomeIndex = OutcomeIndex(storage: storage)
     private(set) lazy var cotypingLearning = CotypingLearningStore(storageRoot: storage.rootURL)
     let detector = MeetingDetector()
     let audioMonitor = AudioSourceMonitor()
@@ -712,6 +769,7 @@ final class AppState: ObservableObject {
     }
 
     private var pipelineObserver: AnyCancellable?
+    private var outcomeObserver: AnyCancellable?
     private var dictationObserver: AnyCancellable?
     private var recordingObserver: AnyCancellable?
     private var recordingStatusObserver: AnyCancellable?
@@ -792,18 +850,31 @@ final class AppState: ObservableObject {
     init() {
         AppLog.bootstrap()
         settings = settingsStore.current
+        if let raw = Self.navigationDefaults.string(forKey: Self.typeTabDefaultsKey),
+           let stored = TypeTab(rawValue: raw) {
+            typeTab = stored
+        } else {
+            // Existing installs retain Dictation; genuinely new installs lead
+            // with the approved Autocomplete experience.
+            typeTab = Self.navigationDefaults.bool(forKey: Self.onboardingShownKey)
+                ? .dictation : .cotyping
+        }
         if Self.isUnitTesting { return }
         let headlessCommand = HeadlessCommand.requested
         let needsSynchronousLibrary = headlessCommand != nil || Self.isUITesting
         if needsSynchronousLibrary {
             meetings = storage.loadMeetings()
             libraryReady = true
+            outcomeIndex.refresh(meetings: meetings)
         }
         LiveMeetingTranscriber.sweepOrphanedSnapshots(storageRoot: storage.rootURL)
         // Views observe AppState only; forward pipeline / recording /
         // audio-monitor / calendar change notifications so MainWindowView
         // refreshes when those sub-ObservableObjects publish.
         pipelineObserver = pipeline.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
+        outcomeObserver = outcomeIndex.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
         dictationObserver = Publishers.MergeMany([
@@ -846,6 +917,7 @@ final class AppState: ObservableObject {
         }
         pipeline.onArtifactsWritten = { [weak self] meeting in
             guard let self else { return }
+            self.outcomeIndex.refresh(meeting: meeting)
             self.reindexSearchInBackground(meeting)
             if self.settings.semanticSearchEnabled {
                 self.reindexEmbeddingInBackground(meeting)
@@ -982,6 +1054,7 @@ final class AppState: ObservableObject {
             let merged = byID.values.sorted { $0.startedAt > $1.startedAt }
             self.meetings = merged
             self.libraryReady = true
+            self.outcomeIndex.refresh(meetings: merged)
             self.pipeline.resumePending(meetings: merged)
             // Dreaming was deliberately gated while launch recovery rebuilt
             // the library and durable processing queue. Re-check immediately;
@@ -1579,5 +1652,6 @@ final class AppState: ObservableObject {
         }
         meetings.removeAll { deletedIDs.contains($0.id) }
         selectedMeetingIDs.subtract(deletedIDs)
+        outcomeIndex.refresh(meetings: meetings)
     }
 }

@@ -208,6 +208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let tab = AppState.SettingsTab(captureName: raw) { app.settingsTab = tab }
         }
         applyCaptureMeetingSelection(to: app, environment: env)
+        applyRedesignCaptureState(to: app, environment: env)
         if env["LOKALBOT_SELECT_FIRST"] == "1" || env["LOKALBOT_SELECT_INDEX"] != nil {
             // Storage discovery and NavigationSplitView restoration can both
             // update the selection after AppState is created. Reapply once the
@@ -216,6 +217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self, weak app] in
                 guard let self, let app else { return }
                 self.applyCaptureMeetingSelection(to: app, environment: env)
+                self.applyRedesignCaptureState(to: app, environment: env)
             }
         }
         if env["LOKALBOT_DISMISS_ONBOARDING"] == "1" {
@@ -277,6 +279,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let raw = env["LOKALBOT_SELECT_INDEX"], let idx = Int(raw) {
             let ordered = app.meetings.sorted { $0.startedAt > $1.startedAt }
             if ordered.indices.contains(idx) { app.selectedMeetingIDs = [ordered[idx].id] }
+        }
+    }
+
+    @MainActor
+    private func applyRedesignCaptureState(to app: AppState,
+                                           environment env: [String: String]) {
+        if env["LOKALBOT_MEETING_PRESENTATION"] == "detail" {
+            app.meetingPresentation = .detail
+        } else if env["LOKALBOT_MEETING_PRESENTATION"] == "preview" {
+            app.meetingPresentation = .preview
+        }
+        if env["LOKALBOT_AGENT_DEMO"] == "1" {
+            let meeting = app.meetings.first
+            app.openAgent(.init(
+                title: "Draft the eviction-policy document",
+                prompt: "Draft a concise follow-up for \(meeting?.displayTitle ?? "my latest meeting"). Do not send it.",
+                meetingID: meeting?.id,
+                actionID: nil))
         }
     }
 

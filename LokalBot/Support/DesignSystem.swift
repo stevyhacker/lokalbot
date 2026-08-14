@@ -13,14 +13,50 @@ extension Brand {
     /// to one of these instead of a per-view magic number.
     enum Radius {
         /// Inline wells and small controls (text areas, thumbnails).
-        static let control: CGFloat = 8
+        static let control: CGFloat = 10
         /// Panels, cards, toasts, and chat bubbles.
-        static let panel: CGFloat = 12
+        static let panel: CGFloat = 14
         /// Hero surfaces (getting-started card, onboarding cards).
-        static let card: CGFloat = 14
+        static let card: CGFloat = 16
         /// Floating capsules (dictation HUD, banners, the recording pill).
         static let hud: CGFloat = 20
     }
+}
+
+// MARK: - Workspace typography and rhythm
+
+/// A compact native-macOS hierarchy shared by every workspace surface.
+/// Hierarchy comes primarily from weight and spacing rather than oversized
+/// type, keeping dense meeting and evidence views comfortable by default.
+enum WorkspaceTypography {
+    static let display = Font.system(size: 22, weight: .bold)
+    static let pageTitle = Font.system(size: 20, weight: .bold)
+    static let sectionTitle = Font.system(size: 15, weight: .semibold)
+    static let body = Font.system(size: 14, weight: .regular)
+    static let bodyEmphasis = Font.system(size: 14, weight: .semibold)
+    /// Ask is a dense reading surface rather than a presentation page. Its
+    /// question and answer hierarchy stays compact without shrinking titles
+    /// elsewhere in the app.
+    static let conversationTitle = Font.system(size: 17, weight: .semibold)
+    static let editorialSectionTitle = Font.system(size: 14, weight: .semibold)
+    static let editorialBody = Font.system(size: 13, weight: .regular)
+    static let editorialBodyEmphasis = Font.system(size: 13, weight: .semibold)
+    static let rowTitle = Font.system(size: 14, weight: .semibold)
+    static let control = Font.system(size: 13, weight: .medium)
+    static let metadata = Font.system(size: 12, weight: .regular)
+    static let metadataEmphasis = Font.system(size: 12, weight: .semibold)
+    static let overline = Font.system(size: 10, weight: .semibold)
+}
+
+enum WorkspaceMetric {
+    static let pagePadding: CGFloat = 24
+    static let sectionGap: CGFloat = 22
+    static let panelPadding: CGFloat = 18
+    static let rowVerticalPadding: CGFloat = 11
+    /// At the approved 1584-point window this leaves a compact outer gutter
+    /// while allowing the outcome tables to use the same broad working area
+    /// as the reference instead of collapsing into a narrow centered column.
+    static let contentMaxWidth: CGFloat = 1360
 }
 
 // MARK: - Workspace shell
@@ -31,20 +67,35 @@ extension Brand {
 enum WorkspacePalette {
     static func canvas(for colorScheme: ColorScheme) -> Color {
         colorScheme == .dark
-            ? Color(red: 0.075, green: 0.078, blue: 0.071)
-            : Color(red: 0.953, green: 0.945, blue: 0.929)
+            ? Color(red: 0.050, green: 0.055, blue: 0.057)
+            : Color(red: 0.970, green: 0.968, blue: 0.958)
     }
 
     static func surface(for colorScheme: ColorScheme) -> Color {
         colorScheme == .dark
-            ? Color(red: 0.105, green: 0.109, blue: 0.101)
-            : Color(red: 0.995, green: 0.992, blue: 0.982)
+            ? Color(red: 0.085, green: 0.089, blue: 0.091)
+            : Color(red: 0.995, green: 0.994, blue: 0.988)
+    }
+
+    /// The approved shell uses a cooler, deeper global rail than its content
+    /// columns. Keeping this explicit avoids AppKit's brighter gray sidebar
+    /// material changing the visual hierarchy between OS releases.
+    static func sidebar(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark
+            ? Color(red: 0.035, green: 0.052, blue: 0.057)
+            : Color(red: 0.935, green: 0.946, blue: 0.944)
+    }
+
+    static func conversationColumn(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark
+            ? Color(red: 0.105, green: 0.108, blue: 0.110)
+            : Color(red: 0.950, green: 0.949, blue: 0.944)
     }
 
     static func control(for colorScheme: ColorScheme) -> Color {
         colorScheme == .dark
-            ? Color(red: 0.145, green: 0.149, blue: 0.137)
-            : Color(red: 0.941, green: 0.932, blue: 0.915)
+            ? Color(red: 0.105, green: 0.111, blue: 0.114)
+            : Color(red: 0.945, green: 0.943, blue: 0.934)
     }
 
     static func border(
@@ -66,26 +117,9 @@ enum WorkspacePalette {
 
 private struct WorkspaceSurfaceModifier: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
 
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
-
         content
-            .background(WorkspacePalette.surface(for: colorScheme))
-            .clipShape(shape)
-            .overlay {
-                shape.strokeBorder(
-                    WorkspacePalette.border(for: colorScheme, contrast: contrast),
-                    lineWidth: 1)
-            }
-            .shadow(
-                color: WorkspacePalette.shadow(for: colorScheme),
-                radius: colorScheme == .dark ? 14 : 18,
-                y: 6)
-            .padding(.horizontal, 10)
-            .padding(.top, 8)
-            .padding(.bottom, 10)
             .background(WorkspacePalette.canvas(for: colorScheme))
     }
 }
@@ -117,6 +151,72 @@ extension View {
     func workspaceControl() -> some View {
         modifier(WorkspaceControlModifier())
     }
+
+    /// Shared quiet panel chrome for outcome groups and disclosure sections.
+    func workspacePanel() -> some View {
+        padding(WorkspaceMetric.panelPadding)
+            .background(.quaternary.opacity(0.24),
+                        in: RoundedRectangle(cornerRadius: Brand.Radius.panel,
+                                             style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: Brand.Radius.panel, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.11))
+            }
+    }
+}
+
+/// An explicit workspace disclosure with a full-width hit target. SwiftUI's
+/// native macOS DisclosureGroup can expose a large accessibility frame whose
+/// activation point does not toggle reliably; this component keeps the same
+/// visual hierarchy while making mouse, keyboard, and UI-test activation
+/// deterministic.
+struct WorkspaceDisclosure<Label: View, Content: View>: View {
+    @Binding private var isExpanded: Bool
+    private let identifier: String
+    private let label: () -> Label
+    private let content: () -> Content
+
+    init(
+        isExpanded: Binding<Bool>,
+        identifier: String,
+        @ViewBuilder content: @escaping () -> Content,
+        @ViewBuilder label: @escaping () -> Label
+    ) {
+        _isExpanded = isExpanded
+        self.identifier = identifier
+        self.content = content
+        self.label = label
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    label()
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier(identifier)
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+
+            if isExpanded {
+                content()
+                    .padding(.top, 10)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .workspacePanel()
+    }
 }
 
 // MARK: - Chips
@@ -124,9 +224,11 @@ extension View {
 enum ChipSize {
     case regular, compact
 
-    var font: Font { self == .regular ? .caption : .caption2 }
-    var horizontalPadding: CGFloat { self == .regular ? 9 : 7 }
-    var verticalPadding: CGFloat { self == .regular ? 4 : 2 }
+    var font: Font {
+        self == .regular ? WorkspaceTypography.metadata : .system(size: 11, weight: .medium)
+    }
+    var horizontalPadding: CGFloat { self == .regular ? 10 : 8 }
+    var verticalPadding: CGFloat { self == .regular ? 5 : 3 }
 }
 
 extension View {
@@ -258,7 +360,8 @@ struct SectionHeader: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(.caption2.weight(.semibold))
+            .font(WorkspaceTypography.overline)
+            .tracking(0.65)
             .foregroundStyle(.secondary)
     }
 }
@@ -274,9 +377,9 @@ struct StatTile: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: icon).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.callout.weight(.semibold).monospacedDigit())
-            Text(label).font(.caption).foregroundStyle(.secondary)
+            Image(systemName: icon).font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+            Text(value).font(WorkspaceTypography.metadataEmphasis.monospacedDigit())
+            Text(label).font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
         }
         .fixedSize()
         .chipChrome()

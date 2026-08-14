@@ -111,17 +111,20 @@ enum UITestHarness {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        // Sidebar rows currently expose their labelled text directly on macOS.
-        // Probe that mapping first so every navigation does not spend six
-        // seconds timing out against button and cell queries.
-        for query in [app.staticTexts, app.buttons, app.cells] where query[id].waitForExistence(timeout: 3) {
-            let element = query[id]
-            if element.isHittable {
-                element.click()
-                return
-            }
+        // A background browser or notification can briefly make otherwise
+        // visible sidebar labels non-hittable. Bring the tested app forward,
+        // then click the unique text coordinate. `firstMatch` also avoids the
+        // identifier propagated to the Label's SF Symbol on newer macOS.
+        app.activate()
+        _ = app.wait(for: .runningForeground, timeout: 3)
+        let label = app.staticTexts.matching(
+            NSPredicate(format: "identifier == %@", id)).firstMatch
+        if label.waitForExistence(timeout: 3) {
+            label.click()
+            return
         }
-        let fallback = app.descendants(matching: .any)[id]
+        let fallback = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier == %@", id)).firstMatch
         XCTAssertTrue(fallback.waitForExistence(timeout: 4),
                       "sidebar item \(id) not found", file: file, line: line)
         fallback.click()

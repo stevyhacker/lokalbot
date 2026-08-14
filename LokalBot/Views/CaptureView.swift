@@ -236,7 +236,6 @@ struct CaptureDayView: View {
     var body: some View {
         let meetings = model.meetings(in: app)
         VStack(alignment: .leading, spacing: 12) {
-            header
             if model.blocks.isEmpty && meetings.isEmpty && model.shots.isEmpty {
                 ContentUnavailableView(
                     "No activity recorded",
@@ -297,38 +296,6 @@ struct CaptureDayView: View {
                 app.selectedMeetingIDs = []
             }
         })
-    }
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            Button { changeDay(by: -1) } label: {
-                Image(systemName: "chevron.left")
-            }
-            .accessibilityLabel("Previous day")
-            DatePicker("", selection: daySelection, displayedComponents: .date)
-                .labelsHidden().fixedSize()
-            Button { changeDay(by: 1) } label: {
-                Image(systemName: "chevron.right")
-            }
-            .accessibilityLabel("Next day")
-            .disabled(Calendar.current.isDateInToday(model.day))
-            Spacer()
-        }
-    }
-
-    private var daySelection: Binding<Date> {
-        Binding(get: { model.day }, set: { changeDay(to: $0) })
-    }
-
-    private func changeDay(by offset: Int) {
-        app.selectedMeetingIDs = []
-        model.moveDay(by: offset, app: app)
-    }
-
-    private func changeDay(to day: Date) {
-        guard !Calendar.current.isDate(day, inSameDayAs: model.day) else { return }
-        app.selectedMeetingIDs = []
-        model.selectDay(day, app: app)
     }
 
     private func summaryRail(meetings: [Meeting]) -> some View {

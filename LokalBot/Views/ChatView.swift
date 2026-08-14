@@ -20,12 +20,14 @@ struct ChatTranscriptView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
+                LazyVStack(alignment: .leading, spacing: 16) {
                     ForEach(model.messages) { message in
                         EditorialTurn(message: message, model: model).id(message.id)
                     }
                 }
-                .padding(16)
+                .padding(.horizontal, 24)
+                .padding(.top, 8)
+                .padding(.bottom, 24)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .accessibilityIdentifier("chat.messages")
@@ -65,25 +67,26 @@ private struct EditorialTurn: View {
     }
 
     private var userRow: some View {
-        HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(Brand.teal)
-                .frame(width: 3)
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark.circle")
+                Text("Answered just now")
+            }
+                .font(WorkspaceTypography.metadata)
+                .foregroundStyle(.secondary)
             Text(message.text)
-                .font(.callout.weight(.medium))
+                .font(WorkspaceTypography.conversationTitle)
                 .textSelection(.enabled)
         }
         .fixedSize(horizontal: false, vertical: true)
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(Brand.teal.opacity(0.08),
-                    in: RoundedRectangle(cornerRadius: Brand.Radius.control))
+        .padding(.top, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder private var assistantBlock: some View {
         let parsed = ChatCitationParser.extract(message.text)
         VStack(alignment: .leading, spacing: 6) {
-            if !message.activity.isEmpty {
+            if message.activity.contains(where: { !$0.done }) {
                 WorkedLine(activities: message.activity)
             }
             if message.isPending && message.text.isEmpty {
@@ -101,28 +104,30 @@ private struct EditorialTurn: View {
                     action: model.canRetry(message.id) ? { model.retry(message.id) } : nil)
             } else {
                 if !parsed.display.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    HStack(spacing: 6) {
-                        Button {
-                            toggleAssistantSpeech(parsed.display)
-                        } label: {
-                            Image(systemName: assistantSpeechIcon)
+                    MarkdownText(parsed.display, style: .editorial)
+                        .textSelection(.enabled)
+                        .foregroundStyle(message.isError ? AnyShapeStyle(.red)
+                                                         : AnyShapeStyle(.primary))
+                        .contextMenu {
+                            Button {
+                                toggleAssistantSpeech(parsed.display)
+                            } label: {
+                                Label(readingSpeech ? "Stop reading aloud" : "Read aloud",
+                                      systemImage: assistantSpeechIcon)
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .help(readingSpeech ? "Stop reading aloud" : "Read aloud")
-                        if let speechError {
-                            Text(speechError)
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        }
+                        .accessibilityAction(
+                            named: Text(readingSpeech ? "Stop reading aloud" : "Read aloud")) {
+                                toggleAssistantSpeech(parsed.display)
+                            }
+                    if let speechError {
+                        Text(speechError)
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                 }
-                MarkdownText(parsed.display)
-                    .textSelection(.enabled)
-                    .foregroundStyle(message.isError ? AnyShapeStyle(.red)
-                                                     : AnyShapeStyle(.primary))
                 if !parsed.citations.isEmpty {
                     CitationRow(citations: parsed.citations)
                 }
@@ -243,45 +248,117 @@ private struct EditorialTurn: View {
     }
 }
 
-/// Visual sources parsed from the assistant's meeting and screen citation
-/// markers. Meetings stay compact chips; screen sources carry a private local
-/// thumbnail and open Timeline at the exact captured moment.
+/// Numbered source table matching inline `[n]` references in the answer.
 private struct CitationRow: View {
     @EnvironmentObject var app: AppState
     let citations: [ChatCitation]
+    @State private var explanationExpanded = false
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(citations) { citation in
-                    switch citation.kind {
-                    case .meeting:
-                        Button {
-                            app.openCitation(citation)
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "quote.opening").font(.caption2)
-                                Text(label(for: citation)).font(.caption).lineLimit(1)
-                            }
-                            .foregroundStyle(.secondary)
-                            .chipChrome()
-                        }
-                        .buttonStyle(.plain)
-                        .help("Open this meeting")
-                        .accessibilityIdentifier("chat.citation.meeting.\(citation.meetingID)")
-                    case .screen:
-                        if let snapshotID = citation.snapshotID {
-                            ScreenCitationCard(snapshotID: snapshotID)
-                        }
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            Divider().padding(.vertical, 18)
+            Text("Sources")
+                .font(WorkspaceTypography.editorialSectionTitle)
+                .padding(.bottom, 6)
+            ForEach(Array(citations.enumerated()), id: \.element.id) { index, citation in
+                sourceRow(number: index + 1, citation: citation)
+                if index != citations.count - 1 { Divider() }
+            }
+            WorkspaceDisclosure(
+                isExpanded: $explanationExpanded,
+                identifier: "chat.answerExplanation") {
+                Text("LokalBot used only the sources enabled for this question. Citation numbers remain stable even when a local source is later removed.")
+                    .font(WorkspaceTypography.metadata)
+                    .foregroundStyle(.secondary)
+            } label: {
+                Text("How this answer was built")
+                    .font(WorkspaceTypography.control)
+            }
+            .padding(.top, 20)
+        }
+        .accessibilityIdentifier("chat.sources")
+    }
+
+    @ViewBuilder private func sourceRow(number: Int, citation: ChatCitation) -> some View {
+        let source = resolved(citation)
+        Button {
+            guard source.available else { return }
+            switch citation.kind {
+            case .meeting: app.openCitation(citation)
+            case .screen:
+                if let snapshotID = citation.snapshotID { app.openScreenSnapshot(snapshotID) }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Text("\(number)")
+                    .font(WorkspaceTypography.metadataEmphasis.monospacedDigit())
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(Brand.teal, in: Circle())
+                Image(systemName: source.icon)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(source.title)
+                        .font(WorkspaceTypography.rowTitle)
+                        .foregroundStyle(source.available ? .primary : .secondary)
+                        .lineLimit(1)
+                    Text(source.detail)
+                        .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+                }
+                Spacer()
+                HStack(spacing: 8) {
+                    Text(source.available ? "Jump to evidence" : "Source unavailable")
+                    if source.available { Image(systemName: "arrow.up.right.square") }
+                }
+                .font(WorkspaceTypography.metadata)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .overlay {
+                    Capsule().strokeBorder(Color.primary.opacity(0.13))
                 }
             }
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!source.available)
+    }
+
+    private func resolved(_ citation: ChatCitation) -> (
+        title: String, detail: String, icon: String, available: Bool
+    ) {
+        switch citation.kind {
+        case .meeting:
+            let meeting = (try? SessionLookup.find(
+                id: citation.meetingID, in: app.meetings)) ?? nil
+            guard let meeting else {
+                return ("Meeting \(citation.meetingID)", "Local source missing", "person.2", false)
+            }
+            let stamp = citation.stampText.map { " · \($0)" } ?? ""
+            return (
+                meeting.displayTitle,
+                "Meeting · \(meeting.startedAt.formatted(date: .abbreviated, time: .shortened))\(stamp)",
+                "person.2",
+                true)
+        case .screen:
+            guard let snapshotID = citation.snapshotID,
+                  let shot = app.activityStore.screenshot(id: snapshotID) else {
+                return ("Screen moment", "Local source missing", "display", false)
+            }
+            return (
+                shot.windowTitle.isEmpty ? shot.app : shot.windowTitle,
+                "Screen · \(shot.ts.formatted(date: .abbreviated, time: .shortened))",
+                "display",
+                true)
         }
     }
 
     private func label(for citation: ChatCitation) -> String {
         let meeting = (try? SessionLookup.find(id: citation.meetingID, in: app.meetings)) ?? nil
-        let title = meeting?.title ?? "Meeting \(citation.meetingID)"
+        let title = meeting?.displayTitle ?? "Meeting \(citation.meetingID)"
         guard let stamp = citation.stampText else { return title }
         return "\(title) · \(stamp)"
     }
@@ -317,7 +394,7 @@ private struct WorkedLine: View {
                             .font(.caption2)
                     }
                 }
-                .font(.caption)
+                .font(WorkspaceTypography.metadata)
                 .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
@@ -340,7 +417,7 @@ private struct ActivityRow: View {
             } else {
                 ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 12, height: 12)
             }
-            Text(activity.text).font(.caption).foregroundStyle(.secondary)
+            Text(activity.text).font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
         }
         .chipChrome()
     }
@@ -356,24 +433,38 @@ struct ChatConversationList: View {
 
 private struct ConversationListContent: View {
     @ObservedObject var model: ChatViewModel
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        List(selection: Binding(
-            get: { model.currentID },
-            set: { if let id = $0 { model.select(id) } })) {
-            ForEach(model.conversations) { conversation in
-                row(conversation)
-                    .tag(conversation.id)
-                    .contextMenu {
-                        Button(role: .destructive) { model.delete(conversation.id) } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
+        ScrollView {
+            LazyVStack(spacing: 4) {
+                ForEach(model.conversations) { conversation in
+                    Button {
+                        model.select(conversation.id)
+                    } label: {
+                        row(conversation, selected: model.currentID == conversation.id)
                     }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(
+                            model.currentID == conversation.id ? .isSelected : [])
+                        .contextMenu {
+                            Button(role: .destructive) { model.delete(conversation.id) } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                }
             }
+            .padding(.horizontal, 8)
+            .padding(.top, 12)
         }
-        .navigationTitle("Conversations")
+        .background(WorkspacePalette.conversationColumn(for: colorScheme))
+        // The visible contextual title is supplied by the custom navigation
+        // toolbar item; clear the window's fallback app name to avoid a second
+        // dim "LokalBot" label beside it.
+        .navigationTitle("")
         .toolbar {
-            ToolbarItem {
+            conversationTitleToolbarItem
+            ToolbarItem(placement: .primaryAction) {
                 Button { model.newConversation() } label: {
                     Label("New chat", systemImage: "square.and.pencil")
                 }
@@ -384,14 +475,39 @@ private struct ConversationListContent: View {
         .accessibilityIdentifier("chat.conversationList")
     }
 
-    private func row(_ conversation: Conversation) -> some View {
+    @ToolbarContentBuilder
+    private var conversationTitleToolbarItem: some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            ToolbarItem(placement: .navigation) {
+                conversationTitle
+            }
+            .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .navigation) {
+                conversationTitle
+            }
+        }
+    }
+
+    private var conversationTitle: some View {
+        Text("Conversations")
+            .font(WorkspaceTypography.sectionTitle)
+    }
+
+    private func row(_ conversation: Conversation, selected: Bool) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(conversation.title.isEmpty ? ChatViewModel.newChatTitle : conversation.title)
-                .font(.body).lineLimit(1)
+                .font(WorkspaceTypography.rowTitle).lineLimit(2)
             Text(conversation.updatedAt.formatted(date: .abbreviated, time: .shortened))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
         }
-        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 9)
+        .background(
+            selected ? Color.primary.opacity(0.14) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
         .accessibilityIdentifier("chat.conversation.\(conversation.id.uuidString)")
     }
 }

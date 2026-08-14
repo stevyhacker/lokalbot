@@ -313,7 +313,8 @@ enum MemoryRoutineRunner {
         let summary = (try? String(
             contentsOf: folder.appendingPathComponent("summary.md"),
             encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let outcomes = MeetingOutcomes.load(from: folder) ?? MeetingOutcomes()
+        let projection = MeetingOutcomeProjection.load(for: meeting, storage: storage)
+        let outcomes = projection?.outcomes ?? MeetingOutcomes()
         var lines = [
             "# Follow-up draft — \(clean(meeting.title))",
             "",
@@ -327,9 +328,9 @@ enum MemoryRoutineRunner {
             lines += ["", "### Decisions", ""]
             lines += outcomes.decisions.map { "- \(clean($0))" }
         }
-        if !outcomes.actionItems.isEmpty {
+        if let actions = projection?.actionReferences, !actions.isEmpty {
             lines += ["", "### Actions", ""]
-            lines += outcomes.actionItems.map(actionLine)
+            lines += actions.map(actionLine)
         }
         if !outcomes.openQuestions.isEmpty {
             lines += ["", "### Open questions", ""]
@@ -414,12 +415,12 @@ enum MemoryRoutineRunner {
         var decisions: [String] = []
         var actions: [String] = []
         for meeting in scoped {
-            let outcomes = MeetingOutcomes.load(from: meeting.folderURL(in: storage))
-                ?? MeetingOutcomes()
-            decisions += outcomes.decisions.map {
+            guard let projection = MeetingOutcomeProjection.load(
+                for: meeting, storage: storage) else { continue }
+            decisions += projection.outcomes.decisions.map {
                 "- \(clean($0)) — `\(SessionLookup.shortID(meeting.id))`"
             }
-            actions += outcomes.actionItems.map {
+            actions += projection.actionReferences.map {
                 actionLine($0) + " — `\(SessionLookup.shortID(meeting.id))`"
             }
         }
@@ -454,7 +455,7 @@ enum MemoryRoutineRunner {
         var lines = [
             "# Unfinished action candidates — \(displayDate(day))",
             "",
-            "LokalBot cannot infer completion, so every action extracted in the last fourteen days remains a candidate until you review it.",
+            "Open and deferred actions from the last fourteen days, using your saved corrections and completion state.",
             "",
         ]
         lines += actions.isEmpty ? ["_No extracted action candidates._"] : actions.map(\.line)
@@ -507,20 +508,27 @@ enum MemoryRoutineRunner {
             .filter { $0.startedAt >= cutoff }
             .sorted { $0.startedAt > $1.startedAt }
             .flatMap { meeting -> [ActionReference] in
-                let outcomes = MeetingOutcomes.load(from: meeting.folderURL(in: storage))
-                    ?? MeetingOutcomes()
-                return outcomes.actionItems.map {
+                guard let projection = MeetingOutcomeProjection.load(
+                    for: meeting, storage: storage) else { return [] }
+                return projection.actionReferences.filter { $0.status != .done }.map {
                     ActionReference(
                         line: actionLine($0) + " — `\(SessionLookup.shortID(meeting.id))`")
                 }
             }
     }
 
-    private static func actionLine(_ item: MeetingOutcomes.ActionItem) -> String {
+    private static func actionLine(_ reference: OutcomeActionReference) -> String {
         var suffix: [String] = []
-        if let owner = item.owner, !owner.isEmpty { suffix.append("owner: \(clean(owner))") }
-        if let due = item.due, !due.isEmpty { suffix.append("due: \(clean(due))") }
-        return "- [ ] \(clean(item.text))" + (suffix.isEmpty ? "" : " (\(suffix.joined(separator: ", ")))" )
+        if let owner = reference.owner, !owner.isEmpty {
+            suffix.append("owner: \(clean(owner))")
+        }
+        if let due = reference.due, !due.isEmpty {
+            suffix.append("due: \(clean(due))")
+        }
+        if reference.status == .deferred { suffix.append("status: deferred") }
+        let marker = reference.status == .done ? "x" : " "
+        return "- [\(marker)] \(clean(reference.text))"
+            + (suffix.isEmpty ? "" : " (\(suffix.joined(separator: ", ")))" )
     }
 
     private static func clean(_ value: String) -> String {

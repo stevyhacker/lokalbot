@@ -45,4 +45,35 @@ struct Meeting: Identifiable, Codable, Equatable, Sendable {
         let m = Int(d) / 60
         return m >= 60 ? "\(m / 60)h \(m % 60)m" : "\(m) min"
     }
+
+    /// Human title hierarchy shared by list, preview, Today, Timeline, Ask,
+    /// and Agent surfaces. Calendar provenance beats generic recorder labels;
+    /// otherwise preserve the original title and fall back to app + time.
+    var displayTitle: String {
+        let cleanedTitle = Self.cleanedTitle(title)
+        if !Self.isGenericTitle(cleanedTitle) { return cleanedTitle }
+        let cleanedCalendar = Self.cleanedTitle(calendarTitle ?? "")
+        if !cleanedCalendar.isEmpty { return cleanedCalendar }
+        if !cleanedTitle.isEmpty, cleanedTitle.caseInsensitiveCompare("Meeting") != .orderedSame {
+            return cleanedTitle
+        }
+        let app = Self.cleanedTitle(appName)
+        let time = startedAt.formatted(date: .omitted, time: .shortened)
+        return app.isEmpty ? "Meeting at \(time)" : "\(app) at \(time)"
+    }
+
+    private static func cleanedTitle(_ value: String) -> String {
+        value.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isGenericTitle(_ value: String) -> Bool {
+        guard !value.isEmpty else { return true }
+        let normalized = value.lowercased()
+        return normalized == "meeting"
+            || normalized == "manual recording"
+            || normalized == "recording"
+            || normalized == "untitled meeting"
+            || normalized.hasPrefix("meeting ")
+    }
 }

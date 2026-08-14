@@ -86,7 +86,7 @@ final class MeetingOutcomesTests: XCTestCase {
         let actionItems = try XCTUnwrap(properties["action_items"] as? [String: Any])
         let item = try XCTUnwrap(actionItems["items"] as? [String: Any])
         XCTAssertEqual(Set(item["required"] as? [String] ?? []),
-                       ["text", "owner", "due", "for_user"])
+                       ["text", "owner", "due", "for_user", "source_segment_ids"])
         XCTAssertEqual(item["additionalProperties"] as? Bool, false)
         XCTAssertNil(OpenAIStrictSchemaValidator.validationIssue(
             in: OutcomesExtractor.schema))
@@ -137,6 +137,94 @@ final class MeetingOutcomesTests: XCTestCase {
         outcomes.decisions = ["Adopt Redis"]
         try outcomes.write(to: folder)
         XCTAssertEqual(MeetingOutcomes.load(from: folder), outcomes)
+    }
+
+    func testGroundedParseRejectsUnknownEvidenceAndResolvesKnownSegments() throws {
+        let meetingID = UUID(uuidString: "11111111-2222-4333-8444-555555555555")!
+        let transcript = Transcript(
+            segments: [
+                .init(start: 12, end: 18, speaker: "me", text: "I will send the plan."),
+            ],
+            engine: "fixture")
+        let validID = transcript.segmentID(at: 0)
+        let outcomes = try XCTUnwrap(OutcomesExtractor.parse(
+            """
+            {"action_items": [
+              {"text":"Send the plan","owner":"Me","due":"","for_user":true,
+               "source_segment_ids":["\(validID)"]},
+              {"text":"Invented task","owner":"Me","due":"","for_user":true,
+               "source_segment_ids":["segment-does-not-exist"]}],
+             "decisions": [{"text":"Use the local store","source_segment_ids":["\(validID)"]}],
+             "open_questions":[]}
+            """,
+            sourceSegments: transcript.segmentSourceMap,
+            meetingID: meetingID,
+            requireEvidence: true))
+
+        XCTAssertEqual(outcomes.actionItems.map(\.text), ["Send the plan"])
+        XCTAssertEqual(outcomes.actionItems.first?.citations.first?.segmentID, validID)
+        XCTAssertEqual(outcomes.actionItems.first?.citations.first?.meetingID, meetingID)
+        XCTAssertEqual(outcomes.actionItems.first?.schemaVersion, MeetingOutcomes.currentSchemaVersion)
+        XCTAssertEqual(outcomes.actionItems.first?.isForUser, true)
+        XCTAssertEqual(outcomes.decisionRecords.map(\.text), ["Use the local store"])
+    }
+
+    func testLegacyOutcomeShapeStillDecodesWithDerivedOwnership() throws {
+        let data = Data(#"{"action_items":[{"text":"Ship it","owner":"Me"}],"decisions":["Proceed"],"open_questions":[]}"#.utf8)
+        let outcomes = try JSONDecoder().decode(MeetingOutcomes.self, from: data)
+
+        XCTAssertEqual(outcomes.actionItems.first?.isForUser, true)
+        XCTAssertEqual(outcomes.actionItems.first?.schemaVersion, MeetingOutcomes.currentSchemaVersion)
+        XCTAssertEqual(outcomes.decisions, ["Proceed"])
+    }
+
+    func testOverlayStateAndFollowUpRoundTripWithoutMutatingExtraction() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lokalbot-outcome-state-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let action = MeetingOutcomes.ActionItem(text: "Ship the fix", owner: "Me")
+        var state = MeetingOutcomeState()
+        state.actions[action.id] = .init(
+            status: .deferred,
+            ownerOverride: "Ana",
+            dueOverride: "Monday",
+            textCorrection: "Ship the verified fix",
+            userEdited: true)
+        try MeetingOutcomeStore.writeState(state, to: folder)
+        XCTAssertEqual(MeetingOutcomeStore.loadState(from: folder), state)
+
+        let sourceID = UUID()
+        let draft = FollowUpDraft(
+            recipient: "", cc: "Ana", subject: "Follow-up",
+            body: "Reviewed locally", seeded: false, reviewed: true,
+            sourceMeetingID: sourceID)
+        try MeetingOutcomeStore.writeFollowUp(draft, to: folder)
+        XCTAssertEqual(MeetingOutcomeStore.loadFollowUp(from: folder), draft)
+    }
+
+    func testReprocessingReconcilesEditedStateByEvidence() {
+        let citation = OutcomeSourceCitation(
+            segmentID: "segment-0000-0000001000-0000002000",
+            start: 1, end: 2, speaker: "me", excerpt: "I will ship the fix")
+        let priorAction = MeetingOutcomes.ActionItem(
+            text: "Ship the fix", owner: "Me", citations: [citation])
+        let nextAction = MeetingOutcomes.ActionItem(
+            text: "Ship the verified fix", owner: "Me", citations: [citation])
+        var state = MeetingOutcomeState()
+        state.actions[priorAction.id] = .init(
+            status: .done, textCorrection: "Ship the verified fix",
+            userEdited: true)
+
+        let reconciled = MeetingOutcomeStore.reconcileState(
+            state,
+            from: MeetingOutcomes(actionItems: [priorAction]),
+            to: MeetingOutcomes(actionItems: [nextAction]))
+
+        XCTAssertEqual(reconciled.actions[nextAction.id]?.status, .done)
+        XCTAssertEqual(reconciled.actions[nextAction.id]?.textCorrection, "Ship the verified fix")
+        XCTAssertNil(reconciled.actions[priorAction.id])
     }
 
     // MARK: - Formatting

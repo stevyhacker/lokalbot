@@ -2,14 +2,14 @@ import XCTest
 @testable import LokalBot
 
 /// Citation-marker parsing: meeting and screen markers the assistant emits are
-/// stripped from display text and surfaced as deep-linkable citations, while
+/// replaced with stable inline numbers and surfaced as deep-linkable sources, while
 /// ordinary bracketed text passes through untouched.
 final class ChatCitationTests: XCTestCase {
 
     func testExtractTimedMarker() {
         let (display, citations) = ChatCitationParser.extract(
             "You agreed to ship Friday [meeting:a1b2c3d4@00:14:32].")
-        XCTAssertEqual(display, "You agreed to ship Friday.")
+        XCTAssertEqual(display, "You agreed to ship Friday [1].")
         XCTAssertEqual(citations, [ChatCitation(meetingID: "a1b2c3d4", seconds: 872)])
         XCTAssertEqual(citations.first?.stampText, "00:14:32")
     }
@@ -17,7 +17,7 @@ final class ChatCitationTests: XCTestCase {
     func testExtractUntimedAndShortStampMarkers() {
         let (display, citations) = ChatCitationParser.extract(
             "Decided in kickoff [meeting:a1b2c3d4] and revisited [meeting:ffee9900@7:05].")
-        XCTAssertEqual(display, "Decided in kickoff and revisited.")
+        XCTAssertEqual(display, "Decided in kickoff [1] and revisited [2].")
         XCTAssertEqual(citations, [
             ChatCitation(meetingID: "a1b2c3d4", seconds: nil),
             ChatCitation(meetingID: "ffee9900", seconds: 425),
@@ -33,7 +33,7 @@ final class ChatCitationTests: XCTestCase {
     func testExtractScreenMarkerAlongsideMeeting() {
         let (display, citations) = ChatCitationParser.extract(
             "The design was visible here [screen:4821] and discussed later [meeting:a1b2c3d4@0:30].")
-        XCTAssertEqual(display, "The design was visible here and discussed later.")
+        XCTAssertEqual(display, "The design was visible here [1] and discussed later [2].")
         XCTAssertEqual(citations, [
             ChatCitation(snapshotID: 4_821),
             ChatCitation(meetingID: "a1b2c3d4", seconds: 30),

@@ -18,6 +18,8 @@ private struct AskContent: View {
     @ObservedObject var model: ChatViewModel
 
     @State private var query = ""
+    @State private var mode: AskMode = .ask
+    @State private var sources = AskSourceScope.defaults
     @State private var facet: AskFacet = .all
     @State private var hits: [SearchIndex.Hit] = []
     @State private var ocrHits: [ActivityStore.OCRHit] = []
@@ -29,21 +31,21 @@ private struct AskContent: View {
     @State private var searchTask: Task<Void, Never>?
     @FocusState private var inputFocused: Bool
 
-    private var phase: AskPhase {
-        AskRouter.phase(query: query, hasMessages: !model.messages.isEmpty)
-    }
-
     var body: some View {
-        VStack(spacing: 0) {
+        return VStack(spacing: 0) {
             header
-            Divider()
-            switch phase {
-            case .searching: results
-            case .conversation: ChatTranscriptView(model: model)
-            case .idle: emptyState
+            if mode == .keyword {
+                query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? AnyView(keywordEmptyState)
+                    : AnyView(results)
+            } else if model.messages.isEmpty {
+                emptyState
+            } else {
+                ChatTranscriptView(model: model)
             }
         }
-        .onChange(of: query) { runSearch() }
+        .onChange(of: query) { if mode == .keyword { runSearch() } }
+        .onChange(of: mode) { if mode == .keyword { runSearch() } }
         .onChange(of: facet) { runSearch() }
         .onChange(of: screenDateScope) { runSearch() }
         .onChange(of: selectedScreenApp) { runSearch() }
@@ -54,6 +56,7 @@ private struct AskContent: View {
             // A saved conversation selection is an explicit mode switch. An
             // old search query must not keep masking the selected transcript.
             query = ""
+            mode = .ask
         }
         .onAppear {
             consumePrefill()
@@ -72,6 +75,7 @@ private struct AskContent: View {
 
     private func consumePrefill() {
         guard let prefill = app.askPrefill else { return }
+        mode = .ask
         query = prefill
         app.askPrefill = nil
     }
@@ -101,14 +105,37 @@ private struct AskContent: View {
     // MARK: - Input + facets
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search — press ↵ to ask", text: $query)
-                    .textFieldStyle(.plain)
-                    .focused($inputFocused)
-                    .onSubmit(escalate)
-                    .accessibilityIdentifier("search.field")
+        VStack(alignment: .leading, spacing: 20) {
+            composerPanel
+
+            if mode == .ask {
+                sourceScopeRow
+                if !pinnedScreens.isEmpty { pinnedContextRow }
+            } else {
+                facetRow
+                if facet == .screen { screenFilterRow }
+            }
+        }
+        .padding(.horizontal, 23)
+        .padding(.bottom, 31)
+    }
+
+    private var composerPanel: some View {
+        let canSubmit = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !model.isResponding
+
+        return VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 10) {
+                TextField(
+                    mode == .ask
+                        ? "Ask LokalBot about your work…"
+                        : "Search exact words in local memory…",
+                    text: $query)
+                .textFieldStyle(.plain)
+                .font(WorkspaceTypography.editorialBody)
+                .focused($inputFocused)
+                .onSubmit { mode == .ask ? escalate() : runSearch() }
+                .accessibilityIdentifier("search.field")
                 if model.isResponding {
                     Button(action: model.stop) {
                         Image(systemName: "stop.circle.fill")
@@ -116,25 +143,174 @@ private struct AskContent: View {
                     .buttonStyle(.plain).foregroundStyle(.secondary)
                     .help("Stop")
                     .accessibilityIdentifier("chat.stop")
-                } else if !query.isEmpty {
+                } else if !query.isEmpty, mode == .keyword {
                     Button { query = "" } label: {
                         Image(systemName: "xmark.circle.fill")
                     }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
                     .accessibilityLabel("Clear search")
                 }
+                if mode == .ask {
+                    Button {
+                        guard canSubmit else { return }
+                        escalate()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("Ask")
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.system(size: 16, weight: .semibold))
+                        }
+                        .font(WorkspaceTypography.control)
+                        .foregroundStyle(.white)
+                        .padding(.leading, 56)
+                        .padding(.trailing, 14)
+                        .padding(.vertical, 11)
+                        .background(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.20, green: 0.66, blue: 0.67),
+                                    Color(red: 0.15, green: 0.58, blue: 0.60)
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing),
+                            in: Capsule())
+                        .opacity(canSubmit ? 1 : 0.82)
+                    }
+                    .buttonStyle(.plain)
+                    .allowsHitTesting(canSubmit)
+                    .accessibilityIdentifier("ask.submit")
+                }
             }
-            .padding(.horizontal, 8).padding(.vertical, 6)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-            facetRow
-            if facet == .screen {
-                screenFilterRow
+            .padding(.leading, 26)
+            .padding(.trailing, 17)
+            .frame(minHeight: 70)
+
+            HStack(spacing: 8) {
+                Button {
+                    mode = mode == .ask ? .keyword : .ask
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: mode == .ask ? "magnifyingglass" : "sparkles")
+                        Text(mode == .ask ? "Keyword search" : "Back to Ask")
+                    }
+                    .font(WorkspaceTypography.control)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 8)
+                    .background(.quaternary.opacity(0.42), in: Capsule())
+                    .overlay { Capsule().strokeBorder(Color.primary.opacity(0.10)) }
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                Button {
+                    toggleSemantic()
+                } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: "atom")
+                        Text("Match by meaning")
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(WorkspaceTypography.control)
+                    .padding(.horizontal, 17)
+                    .padding(.vertical, 8)
+                    .background(.quaternary.opacity(0.42), in: Capsule())
+                    .overlay { Capsule().strokeBorder(Color.primary.opacity(0.10)) }
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("ask.semantic")
+                .accessibilityValue(app.settings.semanticSearchEnabled ? "On" : "Off")
             }
-            if !pinnedScreens.isEmpty {
-                pinnedContextRow
+            .padding(.horizontal, 18)
+            .padding(.top, 2)
+            .padding(.bottom, 22)
+        }
+        .background(.quaternary.opacity(0.26),
+                    in: RoundedRectangle(cornerRadius: Brand.Radius.panel,
+                                         style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: Brand.Radius.panel, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.11))
+        }
+    }
+
+    private var sourceScopeRow: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 15) {
+                sourceScopeLabel
+                sourceScopeControls
+                Spacer(minLength: 0)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                sourceScopeLabel
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        sourceScopeControls
+                    }
+                }
             }
         }
-        .padding(12)
+        .padding(.leading, 2)
+    }
+
+    private var sourceScopeLabel: some View {
+        Text("Sources")
+            .font(WorkspaceTypography.bodyEmphasis)
+            .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder
+    private var sourceScopeControls: some View {
+        ForEach(AskSourceScope.allCases) { source in
+            Button {
+                if sources.contains(source) {
+                    if sources.count > 1 { sources.remove(source) }
+                } else {
+                    sources.insert(source)
+                }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: sources.contains(source)
+                          ? "checkmark.circle.fill" : source.icon)
+                    Text(source.rawValue)
+                }
+                .font(WorkspaceTypography.control)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(
+                    sources.contains(source)
+                        ? AnyShapeStyle(Brand.teal.opacity(0.30))
+                        : AnyShapeStyle(.quaternary.opacity(0.42)),
+                    in: Capsule())
+                .overlay {
+                    Capsule().strokeBorder(
+                        sources.contains(source)
+                            ? Brand.teal.opacity(0.32)
+                            : Color.primary.opacity(0.09))
+                }
+                .offset(y: 1)
+                .fixedSize()
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("ask.source.\(source.rawValue.lowercased())")
+            .accessibilityAddTraits(sources.contains(source) ? .isSelected : [])
+        }
+
+        Button {
+            app.openSettings(tab: .privacy)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "gearshape")
+                Text("Manage")
+            }
+            .font(WorkspaceTypography.control)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(.quaternary.opacity(0.42), in: Capsule())
+            .overlay { Capsule().strokeBorder(Color.primary.opacity(0.09)) }
+            .fixedSize()
+        }
+        .buttonStyle(.plain)
     }
 
     private var screenFilterRow: some View {
@@ -147,7 +323,7 @@ private struct AskContent: View {
                 }
                 Spacer()
                 Text("Click to rewind · pin to ask with context")
-                    .font(.caption2)
+                    .font(WorkspaceTypography.metadata)
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
             }
@@ -171,7 +347,7 @@ private struct AskContent: View {
                                   action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(text)
-                .font(.caption2.weight(selected ? .semibold : .regular))
+                .font(.system(size: 11, weight: selected ? .semibold : .regular))
                 .foregroundStyle(selected ? AnyShapeStyle(.white)
                                           : AnyShapeStyle(.secondary))
                 .padding(.horizontal, 7).padding(.vertical, 3)
@@ -186,7 +362,7 @@ private struct AskContent: View {
     private var pinnedContextRow: some View {
         HStack(spacing: 8) {
             Label("Context", systemImage: "pin.fill")
-                .font(.caption.weight(.semibold))
+                .font(WorkspaceTypography.metadataEmphasis)
                 .foregroundStyle(.secondary)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
@@ -195,9 +371,9 @@ private struct AskContent: View {
                             ScreenThumbnailView(snapshotID: context.snapshotID, height: 34)
                                 .frame(width: 54)
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(context.app).font(.caption.weight(.medium)).lineLimit(1)
+                                Text(context.app).font(WorkspaceTypography.metadataEmphasis).lineLimit(1)
                                 Text(context.timestamp.formatted(date: .omitted, time: .shortened))
-                                    .font(.caption2.monospacedDigit())
+                                    .font(WorkspaceTypography.metadata.monospacedDigit())
                                     .foregroundStyle(.secondary)
                             }
                             Button {
@@ -217,7 +393,7 @@ private struct AskContent: View {
             }
             Button("Clear") { pinnedScreens = [] }
                 .buttonStyle(.plain)
-                .font(.caption)
+                .font(WorkspaceTypography.metadata)
                 .foregroundStyle(.secondary)
         }
         .accessibilityIdentifier("ask.screen.context")
@@ -248,7 +424,7 @@ private struct AskContent: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Clear day scope")
                 }
-                .font(.caption)
+                .font(WorkspaceTypography.metadata)
                 .foregroundStyle(.secondary)
                 .chipChrome()
                 .help("Questions sent to the assistant are scoped to this day.")
@@ -262,7 +438,7 @@ private struct AskContent: View {
                            action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
-                .font(.caption.weight(on ? .semibold : .regular))
+                .font(.system(size: 12, weight: on ? .semibold : .regular))
                 .foregroundStyle(on ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                 .padding(.horizontal, 9).padding(.vertical, 4)
                 .background(on ? AnyShapeStyle(Brand.teal)
@@ -305,9 +481,11 @@ private struct AskContent: View {
         } else {
             prompt = contextualQuestion
         }
-        model.send(prompt, displayText: q)
+        let questionSources = sources
+        model.send(prompt, displayText: q, sourceScopes: questionSources)
         pinnedScreens = []
         query = ""
+        sources = AskSourceScope.defaults
     }
 
     // MARK: - Results
@@ -484,7 +662,7 @@ private struct AskContent: View {
         } actions: {
             VStack(spacing: 8) {
                 ForEach(model.suggestions, id: \.self) { suggestion in
-                    Button { model.send(suggestion) } label: {
+                    Button { sendSuggestion(suggestion) } label: {
                         HStack {
                             Text(suggestion).foregroundStyle(.primary)
                             Spacer(minLength: 8)
@@ -501,5 +679,19 @@ private struct AskContent: View {
             .padding(.top, 4)
         }
         .accessibilityIdentifier("chat.empty")
+    }
+
+    private var keywordEmptyState: some View {
+        ContentUnavailableView {
+            Label("Keyword search", systemImage: "magnifyingglass")
+        } description: {
+            Text("Search meeting titles, transcripts, summaries, and permitted screen text without asking the model.")
+        }
+    }
+
+    private func sendSuggestion(_ suggestion: String) {
+        let questionSources = sources
+        model.send(suggestion, sourceScopes: questionSources)
+        sources = AskSourceScope.defaults
     }
 }

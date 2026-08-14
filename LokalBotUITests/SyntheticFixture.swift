@@ -316,6 +316,120 @@ enum SyntheticFixture {
         // summary.md — rendered by MarkdownText in the Summary tab.
         try meeting.summaryMarkdown.write(to: folder.appendingPathComponent("summary.md"),
                                           atomically: true, encoding: .utf8)
+
+        // Grounded outcome fixtures drive the redesigned Today, Timeline,
+        // Meetings preview, and full follow-through workspace.
+        try outcomeJSON(for: meeting).write(
+            to: folder.appendingPathComponent("outcomes.json"),
+            atomically: true,
+            encoding: .utf8)
+    }
+
+    private static func outcomeJSON(for meeting: Meeting) -> String {
+        struct Action {
+            let id: String
+            let text: String
+            let owner: String
+            let due: String?
+            let segment: Int
+        }
+        struct Decision {
+            let id: String
+            let text: String
+            let segment: Int
+        }
+
+        let actions: [Action]
+        let decisions: [Decision]
+        let questions: [String]
+        switch meeting.id.uuidString.lowercased().prefix(8) {
+        case "11111111":
+            actions = [
+                .init(id: "fixture-action-design-1",
+                      text: "Draft the eviction policy document", owner: "Me",
+                      due: "Thursday", segment: 2),
+                .init(id: "fixture-action-design-2",
+                      text: "Benchmark failover latency before committing to cluster mode",
+                      owner: "Them", due: nil, segment: 3),
+            ]
+            decisions = [
+                .init(id: "fixture-decision-design-1",
+                      text: "Adopt Redis for caching", segment: 1),
+            ]
+            questions = ["Do we need cluster mode from day one?"]
+        case "22222222":
+            actions = [
+                .init(id: "fixture-action-standup-1",
+                      text: "Unblock the index rebuild with the data team",
+                      owner: "Me", due: nil, segment: 1),
+            ]
+            decisions = []
+            questions = []
+        default:
+            actions = []
+            decisions = [
+                .init(id: "fixture-decision-roadmap-1",
+                      text: "Onboarding ranks above reliability for Q3", segment: 0),
+            ]
+            questions = []
+        }
+
+        let actionJSON = actions.map { action in
+            let due = action.due.map { ",\n        \"due\" : \(jsonString($0))" } ?? ""
+            return """
+              {
+                "id" : "\(action.id)",
+                "schemaVersion" : 2,
+                "text" : \(jsonString(action.text)),
+                "owner" : "\(action.owner)",
+                "isForUser" : \(action.owner == "Me" ? "true" : "false")\(due),
+                "citations" : [\(citationJSON(for: meeting, segment: action.segment))]
+              }
+            """
+        }.joined(separator: ",\n")
+        let decisionJSON = decisions.map { decision in
+            """
+              {
+                "id" : "\(decision.id)",
+                "schemaVersion" : 2,
+                "text" : \(jsonString(decision.text)),
+                "citations" : [\(citationJSON(for: meeting, segment: decision.segment))]
+              }
+            """
+        }.joined(separator: ",\n")
+        let questionJSON = questions.map(jsonString).joined(separator: ", ")
+        return """
+        {
+          "schemaVersion" : 2,
+          "actionItems" : [
+        \(actionJSON)
+          ],
+          "decisionRecords" : [
+        \(decisionJSON)
+          ],
+          "openQuestions" : [\(questionJSON)]
+        }
+        """
+    }
+
+    private static func citationJSON(for meeting: Meeting, segment index: Int) -> String {
+        let segment = meeting.transcript[index]
+        let segmentID = String(
+            format: "segment-%04d-%010lld-%010lld",
+            index,
+            Int64((segment.start * 1_000).rounded()),
+            Int64((segment.end * 1_000).rounded()))
+        return """
+
+                {
+                  "meetingID" : "\(meeting.id.uuidString)",
+                  "segmentID" : "\(segmentID)",
+                  "start" : \(segment.start),
+                  "end" : \(segment.end),
+                  "speaker" : "\(segment.speaker)",
+                  "excerpt" : \(jsonString(segment.text))
+                }
+        """
     }
 
     /// Minimal JSON-string escaper for the few control characters we ever emit.
