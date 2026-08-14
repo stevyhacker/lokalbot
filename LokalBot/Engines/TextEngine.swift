@@ -50,23 +50,179 @@ struct TextGenerationOptions: Equatable, Sendable {
     }
 }
 
-enum TextEngineError: LocalizedError {
+/// Request fields differ between bundled llama-server, generic compatible
+/// servers, OpenAI, and OpenRouter. Keep the dialect explicit so one
+/// provider's extensions can never leak into another provider's request.
+enum ChatCompletionDialect: Equatable, Sendable {
+    case llamaServer
+    case openAI
+    case openRouter
+    case generic
+
+    static func inferred(from baseURL: URL) -> Self {
+        let host = baseURL.host?.lowercased()
+        if host == "api.openai.com" { return .openAI }
+        if host == "openrouter.ai" || host?.hasSuffix(".openrouter.ai") == true {
+            return .openRouter
+        }
+        return .generic
+    }
+}
+
+enum TextEngineError: LocalizedError, Sendable {
     case serverUnreachable(String)
     case badResponse(String)
+    case httpStatus(code: Int, detail: String, retryAfter: TimeInterval?)
     case noModel
     case unavailable(String)
 
     var errorDescription: String? {
         switch self {
         case .serverUnreachable(let base):
-            "Can't reach \(base). Is the server running? (e.g. `ollama serve`)"
+            "Can't reach \(base). Verify that the configured LLM server is available."
         case .badResponse(let detail):
             "LLM server error: \(detail)"
+        case .httpStatus(let code, let detail, _):
+            "LLM server returned HTTP \(code): \(detail)"
         case .noModel:
             "No model selected for the Main LLM engine. Pick one in Settings → Models."
         case .unavailable(let detail):
             detail
         }
+    }
+
+    var isRetryable: Bool {
+        switch self {
+        case .serverUnreachable:
+            true
+        case .httpStatus(let code, _, _):
+            code == 408 || code == 409 || code == 425 || code == 429 || (500...599).contains(code)
+        case .badResponse, .noModel, .unavailable:
+            false
+        }
+    }
+
+    var retryAfter: TimeInterval? {
+        guard case .httpStatus(_, _, let retryAfter) = self else { return nil }
+        return retryAfter
+    }
+
+    static func fromHTTPResponse(_ response: HTTPURLResponse?, data: Data) -> TextEngineError {
+        guard let response else { return .badResponse("missing HTTP response") }
+        let detail = serverErrorDetail(data)
+        let requestID = response.value(forHTTPHeaderField: "x-request-id")
+        let diagnostic = requestID.map { "\(detail) (request ID: \($0))" } ?? detail
+        let retryAfter = response.value(forHTTPHeaderField: "Retry-After")
+            .flatMap { TimeInterval($0) }
+            .map { max(0, $0) }
+        return .httpStatus(code: response.statusCode,
+                           detail: diagnostic,
+                           retryAfter: retryAfter)
+    }
+
+    private static func serverErrorDetail(_ data: Data) -> String {
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let error = json["error"] as? [String: Any],
+           let message = error["message"] as? String {
+            return clipped(message)
+        }
+        guard let text = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else {
+            return "empty error response"
+        }
+        return clipped(text)
+    }
+
+    private static func clipped(_ text: String) -> String {
+        String(text.prefix(600))
+    }
+}
+
+/// One bounded retry for transient transport/status failures. Permanent 4xx,
+/// invalid payloads, cancellations, and missing configuration are never retried.
+enum TextEngineRetryPolicy {
+    static let maximumDelay: TimeInterval = 60
+
+    static func delay(for error: Error, attempt: Int,
+                      jitter: TimeInterval = Double.random(in: 0...0.5)) -> TimeInterval? {
+        guard attempt == 0,
+              let engineError = error as? TextEngineError,
+              engineError.isRetryable else { return nil }
+        if let retryAfter = engineError.retryAfter {
+            return min(retryAfter, maximumDelay)
+        }
+        return min(pow(2, Double(attempt)) + max(0, jitter), maximumDelay)
+    }
+}
+
+/// OpenAI strict Structured Outputs accepts a JSON Schema subset. Validate the
+/// invariants LokalBot relies on locally so malformed schemas never consume a
+/// remote request merely to receive a deterministic 400 response.
+enum OpenAIStrictSchemaValidator {
+    static func validationIssue(in schema: [String: Any]) -> String? {
+        guard schema["type"] as? String == "object" else {
+            return "$ must be an object schema"
+        }
+        return validationIssue(in: schema, path: "$")
+    }
+
+    private static func validationIssue(in node: [String: Any], path: String) -> String? {
+        if let variants = node["anyOf"] as? [[String: Any]] {
+            for (index, variant) in variants.enumerated() {
+                if let issue = validationIssue(in: variant, path: "\(path).anyOf[\(index)]") {
+                    return issue
+                }
+            }
+        }
+
+        let isObject = node["type"] as? String == "object"
+            || (node["type"] as? [String])?.contains("object") == true
+        if isObject {
+            guard node["additionalProperties"] as? Bool == false else {
+                return "\(path) must set additionalProperties to false"
+            }
+            guard let properties = node["properties"] as? [String: Any] else {
+                return "\(path) must declare properties"
+            }
+            let required = Set(node["required"] as? [String] ?? [])
+            let propertyNames = Set(properties.keys)
+            guard required == propertyNames else {
+                let missing = propertyNames.subtracting(required).sorted().joined(separator: ", ")
+                return "\(path) must require every property; missing: \(missing)"
+            }
+            for name in properties.keys.sorted() {
+                guard let property = properties[name] as? [String: Any] else {
+                    return "\(path).properties.\(name) is not a schema object"
+                }
+                if let issue = validationIssue(in: property,
+                                               path: "\(path).properties.\(name)") {
+                    return issue
+                }
+            }
+        }
+
+        let isArray = node["type"] as? String == "array"
+            || (node["type"] as? [String])?.contains("array") == true
+        if isArray {
+            guard let items = node["items"] as? [String: Any] else {
+                return "\(path) must declare array items"
+            }
+            if let issue = validationIssue(in: items, path: "\(path).items") { return issue }
+        }
+
+        if let definitions = node["$defs"] as? [String: Any] {
+            for name in definitions.keys.sorted() {
+                guard let definition = definitions[name] as? [String: Any] else {
+                    return "\(path).$defs.\(name) is not a schema object"
+                }
+                if let issue = validationIssue(in: definition,
+                                               path: "\(path).$defs.\(name)") {
+                    return issue
+                }
+            }
+        }
+        return nil
     }
 }
 
@@ -126,19 +282,32 @@ func cotypingCompletionSend(_ request: URLRequest, base: URL) async throws -> (D
     }
 }
 
-/// Extracts the text delta from one Server-Sent-Events line of an OpenAI-style
-/// streaming completions response. Returns nil for keep-alives, `[DONE]`, blank
-/// lines, or chunks without text. Pure → unit-testable.
-func cotypingParseSSEDelta(_ line: String) -> String? {
+struct CotypingSSEEvent: Equatable {
+    var delta: String?
+    var isTerminal: Bool
+}
+
+/// Parses one Server-Sent-Events line from an OpenAI-style streaming
+/// completion. A terminal event is either `[DONE]` or a choice carrying a
+/// non-null `finish_reason`.
+func cotypingParseSSEEvent(_ line: String) -> CotypingSSEEvent? {
     let trimmed = line.trimmingCharacters(in: .whitespaces)
     guard trimmed.hasPrefix("data:") else { return nil }
     let payload = trimmed.dropFirst("data:".count).trimmingCharacters(in: .whitespaces)
-    guard !payload.isEmpty, payload != "[DONE]" else { return nil }
+    guard !payload.isEmpty else { return nil }
+    if payload == "[DONE]" { return CotypingSSEEvent(delta: nil, isTerminal: true) }
     guard let data = payload.data(using: .utf8),
           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let choices = json["choices"] as? [[String: Any]],
-          let text = choices.first?["text"] as? String else { return nil }
-    return text
+          let choice = (json["choices"] as? [[String: Any]])?.first else { return nil }
+    let finishReason = choice["finish_reason"] as? String
+    return CotypingSSEEvent(delta: choice["text"] as? String,
+                            isTerminal: finishReason != nil)
+}
+
+/// Compatibility helper used by the lightweight parser tests and callers that
+/// only care about text-bearing chunks.
+func cotypingParseSSEDelta(_ line: String) -> String? {
+    cotypingParseSSEEvent(line)?.delta
 }
 
 extension TextEngine {
@@ -242,8 +411,9 @@ struct OllamaEngine: TextEngine {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await send(request, base: baseURL)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw TextEngineError.badResponse(String(data: data, encoding: .utf8) ?? "HTTP error")
+        let httpResponse = response as? HTTPURLResponse
+        guard let status = httpResponse?.statusCode, (200...299).contains(status) else {
+            throw TextEngineError.fromHTTPResponse(httpResponse, data: data)
         }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let message = json["message"] as? [String: Any],
@@ -272,6 +442,7 @@ struct OpenAICompatibleEngine: TextEngine {
     var apiKey: String?
     /// Extra top-level request fields for server-specific compatibility.
     var extraBody: [String: Any] = [:]
+    var chatDialect: ChatCompletionDialect = .generic
     /// llama-server's request-level thinking ceiling. Kept nil for generic
     /// external endpoints that may not understand this extension.
     var defaultThinkingBudgetTokens: Int?
@@ -309,6 +480,32 @@ struct OpenAICompatibleEngine: TextEngine {
                       schema: [String: Any]?,
                       options: TextGenerationOptions?) async throws -> String {
         guard !model.isEmpty else { throw TextEngineError.noModel }
+        let request = try makeChatRequest(system: system, prompt: prompt, context: context,
+                                          schema: schema, options: options)
+        let (data, response) = try await send(request, base: baseURL)
+        let httpResponse = response as? HTTPURLResponse
+        guard let status = httpResponse?.statusCode, (200...299).contains(status) else {
+            throw TextEngineError.fromHTTPResponse(httpResponse, data: data)
+        }
+        let parsed = try Self.parseChatCompletion(data)
+        if let usage = parsed.usage {
+            lokalbotLog(
+                "generation usage model=\(model) input=\(usage.inputTokens) "
+                    + "output=\(usage.outputTokens) cached=\(usage.cachedInputTokens) "
+                    + "reasoning=\(usage.reasoningOutputTokens)")
+        }
+        return strippingReasoning(parsed.content)
+    }
+
+    /// Pure request construction keeps provider-field compatibility covered by
+    /// offline tests without requiring credentials or a billable call.
+    func makeChatRequest(system: String, prompt: String, context: [String],
+                         schema: [String: Any]?,
+                         options: TextGenerationOptions?) throws -> URLRequest {
+        if chatDialect == .openAI || chatDialect == .openRouter, let schema,
+           let issue = OpenAIStrictSchemaValidator.validationIssue(in: schema) {
+            throw TextEngineError.badResponse("invalid strict JSON schema: \(issue)")
+        }
         var request = URLRequest(url: baseURL.appendingPathComponent("chat/completions"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -333,42 +530,148 @@ struct OpenAICompatibleEngine: TextEngine {
         Self.applyGenerationOptions(
             to: &body,
             options: options,
-            defaultThinkingBudgetTokens: defaultThinkingBudgetTokens)
+            defaultThinkingBudgetTokens: defaultThinkingBudgetTokens,
+            dialect: chatDialect,
+            model: model)
+        if chatDialect == .openRouter {
+            var provider: [String: Any] = ["data_collection": "deny"]
+            if schema != nil || (options?.reasoningBudgetTokens ?? 0) > 0 {
+                provider["require_parameters"] = true
+            }
+            body["provider"] = provider
+        }
         body.merge(extraBody) { _, new in new }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await send(request, base: baseURL)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw TextEngineError.badResponse(String(data: data, encoding: .utf8) ?? "HTTP error")
-        }
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else {
-            throw TextEngineError.badResponse("unexpected /chat/completions payload")
-        }
-        return strippingReasoning(content)
+        return request
     }
 
-    /// llama-server counts hidden reasoning and visible content inside the
-    /// same completion limit. Cap thinking at half of any explicit output
-    /// budget so "high reasoning" cannot consume the entire answer.
+    struct ChatUsage: Equatable {
+        var inputTokens: Int
+        var outputTokens: Int
+        var cachedInputTokens: Int
+        var reasoningOutputTokens: Int
+    }
+
+    struct ParsedChatCompletion: Equatable {
+        var content: String
+        var usage: ChatUsage?
+    }
+
+    static func parseChatCompletion(_ data: Data) throws -> ParsedChatCompletion {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choice = (json["choices"] as? [[String: Any]])?.first,
+              let message = choice["message"] as? [String: Any] else {
+            throw TextEngineError.badResponse("unexpected /chat/completions payload")
+        }
+        if let refusal = (message["refusal"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !refusal.isEmpty {
+            throw TextEngineError.badResponse("model refusal: \(String(refusal.prefix(600)))")
+        }
+        switch choice["finish_reason"] as? String {
+        case "length":
+            throw TextEngineError.badResponse(
+                "response was truncated at the model output limit")
+        case "content_filter":
+            throw TextEngineError.badResponse("response was stopped by the content filter")
+        default:
+            break
+        }
+        guard let content = message["content"] as? String else {
+            throw TextEngineError.badResponse("chat completion contained no text")
+        }
+
+        let usageObject = json["usage"] as? [String: Any]
+        let inputDetails = usageObject?["prompt_tokens_details"] as? [String: Any]
+        let outputDetails = usageObject?["completion_tokens_details"] as? [String: Any]
+        let usage = usageObject.map {
+            ChatUsage(inputTokens: $0["prompt_tokens"] as? Int ?? 0,
+                      outputTokens: $0["completion_tokens"] as? Int ?? 0,
+                      cachedInputTokens: inputDetails?["cached_tokens"] as? Int ?? 0,
+                      reasoningOutputTokens: outputDetails?["reasoning_tokens"] as? Int ?? 0)
+        }
+        return ParsedChatCompletion(content: content, usage: usage)
+    }
+
+    /// llama-server counts hidden reasoning and visible content inside the same
+    /// completion limit. OpenAI exposes a qualitative reasoning effort;
+    /// OpenRouter normalizes a provider-independent reasoning object. Generic
+    /// compatible servers receive only common request fields.
     nonisolated static func applyGenerationOptions(
         to body: inout [String: Any],
         options: TextGenerationOptions?,
-        defaultThinkingBudgetTokens: Int?
+        defaultThinkingBudgetTokens: Int?,
+        dialect: ChatCompletionDialect,
+        model: String
     ) {
         let maxTokens = options?.maxTokens.map { max(1, $0) }
-        if let maxTokens { body["max_tokens"] = maxTokens }
-        if let temperature = options?.temperature {
-            body["temperature"] = max(0, temperature)
-        }
+        let isReasoningModel = supportsOpenAIReasoningEffort(model: model)
 
-        guard let requested = options?.reasoningBudgetTokens
-                ?? defaultThinkingBudgetTokens else { return }
-        let nonnegative = max(0, requested)
-        let effective = maxTokens.map { min(nonnegative, $0 / 2) } ?? nonnegative
-        body["thinking_budget_tokens"] = effective
+        switch dialect {
+        case .llamaServer:
+            if let maxTokens { body["max_tokens"] = maxTokens }
+            if let temperature = options?.temperature {
+                body["temperature"] = max(0, temperature)
+            }
+            guard let requested = options?.reasoningBudgetTokens
+                    ?? defaultThinkingBudgetTokens else { return }
+            let nonnegative = max(0, requested)
+            let effective = maxTokens.map { min(nonnegative, $0 / 2) } ?? nonnegative
+            body["thinking_budget_tokens"] = effective
+
+        case .generic:
+            if let maxTokens { body["max_tokens"] = maxTokens }
+            if let temperature = options?.temperature {
+                body["temperature"] = max(0, temperature)
+            }
+
+        case .openRouter:
+            if let maxTokens { body["max_tokens"] = maxTokens }
+            if let requested = options?.reasoningBudgetTokens {
+                let nonnegative = max(0, requested)
+                if nonnegative == 0 {
+                    body["reasoning"] = ["effort": "none"]
+                } else {
+                    let effective = maxTokens.map { min(nonnegative, $0 / 2) }
+                        ?? nonnegative
+                    body["reasoning"] = [
+                        "max_tokens": max(1, effective),
+                        "exclude": true,
+                    ]
+                }
+            }
+            // Sampling controls vary across routed reasoning providers. Keep
+            // temperature only for requests that leave reasoning at the model
+            // default or explicitly disable it.
+            if (options?.reasoningBudgetTokens ?? 0) <= 0,
+               let temperature = options?.temperature {
+                body["temperature"] = max(0, temperature)
+            }
+
+        case .openAI:
+            if let maxTokens { body["max_completion_tokens"] = maxTokens }
+            // Current OpenAI reasoning models reject sampling knobs such as a
+            // custom temperature. Non-reasoning chat models still accept it.
+            if !isReasoningModel, let temperature = options?.temperature {
+                body["temperature"] = max(0, temperature)
+            }
+            if isReasoningModel,
+               let budget = options?.reasoningBudgetTokens,
+               budget > 0 {
+                body["reasoning_effort"] = reasoningEffort(for: budget)
+            }
+        }
+    }
+
+    nonisolated static func supportsOpenAIReasoningEffort(model: String) -> Bool {
+        let name = model.lowercased()
+        return name.hasPrefix("o1") || name.hasPrefix("o3") || name.hasPrefix("o4")
+            || name.hasPrefix("gpt-5")
+    }
+
+    private nonisolated static func reasoningEffort(for tokenBudget: Int) -> String {
+        if tokenBudget <= 512 { return "low" }
+        if tokenBudget <= 4_096 { return "medium" }
+        return "high"
     }
 
     /// Raw `/v1/completions`: the model continues `request.prompt` directly with
@@ -399,8 +702,9 @@ struct OpenAICompatibleEngine: TextEngine {
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await cotypingCompletionSend(urlRequest, base: baseURL)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw TextEngineError.badResponse(String(data: data, encoding: .utf8) ?? "HTTP error")
+        let httpResponse = response as? HTTPURLResponse
+        guard let status = httpResponse?.statusCode, (200...299).contains(status) else {
+            throw TextEngineError.fromHTTPResponse(httpResponse, data: data)
         }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
@@ -410,9 +714,14 @@ struct OpenAICompatibleEngine: TextEngine {
         return text
     }
 
+    private enum StreamingCompatibilityError: Error {
+        case unsupportedPayload
+    }
+
     /// Streaming `/v1/completions` (SSE). Accumulates `choices[].text` deltas,
-    /// emitting the running text via `onPartial`. Falls back to the non-streaming
-    /// request if streaming errors (a server that doesn't support `stream`).
+    /// emitting the running text via `onPartial`. A non-streaming compatibility
+    /// fallback is allowed only when a successful response contains no SSE
+    /// events; transport and HTTP failures are surfaced without duplicating work.
     func completeStreaming(_ request: CompletionRequest,
                            onPartial: @escaping @Sendable (String) -> Void) async throws -> String {
         guard !model.isEmpty else { throw TextEngineError.noModel }
@@ -440,13 +749,19 @@ struct OpenAICompatibleEngine: TextEngine {
 
         var accumulated = ""
         var tokenLikeChunks = 0
+        var receivedEvent = false
+        var receivedTerminalEvent = false
+        var stoppedByPolicy = false
         do {
             let (bytes, response) = try await completionSession.bytes(for: urlRequest)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                throw TextEngineError.badResponse("HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+            let httpResponse = response as? HTTPURLResponse
+            guard let status = httpResponse?.statusCode, (200...299).contains(status) else {
+                throw TextEngineError.fromHTTPResponse(httpResponse, data: Data())
             }
             for try await line in bytes.lines {
-                if let delta = cotypingParseSSEDelta(line) {
+                guard let event = cotypingParseSSEEvent(line) else { continue }
+                receivedEvent = true
+                if let delta = event.delta, !delta.isEmpty {
                     accumulated += delta
                     tokenLikeChunks += 1
                     onPartial(accumulated)
@@ -454,16 +769,29 @@ struct OpenAICompatibleEngine: TextEngine {
                         accumulated: accumulated,
                         tokensGenerated: tokenLikeChunks
                     ) != nil {
+                        stoppedByPolicy = true
                         break
                     }
                 }
+                if event.isTerminal {
+                    receivedTerminalEvent = true
+                    break
+                }
+            }
+            if !stoppedByPolicy, !receivedTerminalEvent {
+                if !receivedEvent && accumulated.isEmpty {
+                    throw StreamingCompatibilityError.unsupportedPayload
+                }
+                throw TextEngineError.badResponse(
+                    "stream ended before a terminal completion event")
             }
         } catch let error as URLError where error.code == .cancelled {
             throw error
         } catch is CancellationError {
             throw CancellationError()
-        } catch {
-            // Server didn't stream cleanly — one non-streaming request instead.
+        } catch is StreamingCompatibilityError where accumulated.isEmpty {
+            // A 2xx non-SSE response means this server does not implement the
+            // streaming contract. No tokens were generated or shown yet.
             let full = try await complete(request)
             onPartial(full)
             return full

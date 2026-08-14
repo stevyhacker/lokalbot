@@ -28,6 +28,7 @@ final class DayDigestEvidenceTests: XCTestCase {
         var alwaysInvalidFocus = false
         var invalidFinal = false
         var nonSubstantiveFocusIndices: Set<Int> = []
+        var bestAvailableFocusIndices: Set<Int> = []
         var finalResponse: String?
         var displayName: String { "structured-test" }
 
@@ -47,6 +48,11 @@ final class DayDigestEvidenceTests: XCTestCase {
                 if nonSubstantiveFocusIndices.contains(index) {
                     return """
                         {"substantive":false,"task":"","work_done":"","status":"unknown","outcome":"","next_step":"","source_ids":[]}
+                        """
+                }
+                if bestAvailableFocusIndices.contains(index) {
+                    return """
+                        {"substantive":false,"task":"Protocol research","work_done":"Reviewed material about a protocol without reaching a visible conclusion.","status":"unknown","outcome":"","next_step":"","source_ids":[]}
                         """
                 }
                 return """
@@ -366,6 +372,38 @@ final class DayDigestEvidenceTests: XCTestCase {
         XCTAssertTrue(segments[1].evidence.contains("invoice evidence 4"))
     }
 
+    func testMeetingDetailSurvivesBusySegmentSampling() {
+        var blocks: [ActivityBlock] = []
+        for index in 0..<24 {
+            blocks.append(ActivityBlock(
+                id: Int64(index + 1),
+                app: "Safari",
+                title: "Activity \(index)",
+                start: time(9, index),
+                end: time(9, index + 1)))
+        }
+        let meeting = DayDigestMeetingEvidence(
+            id: UUID(),
+            title: "Architecture sync",
+            app: "Zoom",
+            startedAt: time(9, 8),
+            endedAt: time(9, 9),
+            sourceSummary: "## TL;DR\nKept the critical meeting detail visible.",
+            outcomes: "Decision: retain the meeting evidence.")
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: blocks,
+            screenContexts: [],
+            meetings: [meeting],
+            calendar: calendar)
+
+        let segments = evidence.summarySegments(maxSegments: 1)
+
+        XCTAssertEqual(segments.count, 1)
+        XCTAssertTrue(segments[0].evidence.contains(
+            "Kept the critical meeting detail visible."))
+    }
+
     func testOverviewGeneratorExtractsEverySegmentBeforeTaskAggregation() async throws {
         let evidence = DayDigestEvidence.build(
             day: day,
@@ -431,7 +469,59 @@ final class DayDigestEvidenceTests: XCTestCase {
             temperature: 0))
     }
 
-    func testMetadataOnlySegmentIsOmittedWithoutAppFallback() async throws {
+    func testBestAvailableActivityIsUsedWhenNoSubstantiveWorkIsFound() async throws {
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [block(1, 9, "Protocol research")],
+            screenContexts: [],
+            meetings: [],
+            calendar: calendar)
+        let recorder = GenerationRecorder()
+
+        let overview = try await DayDigestOverviewGenerator.generate(
+            evidence: evidence,
+            engine: StructuredDigestEngine(
+                recorder: recorder,
+                invalidFinal: true,
+                bestAvailableFocusIndices: [1]),
+            customPrompt: "",
+            calendar: calendar)
+
+        XCTAssertTrue(overview.contains("**Protocol research**"))
+        XCTAssertTrue(overview.contains("Reviewed material about a protocol"))
+        XCTAssertFalse(overview.contains("No substantive work"))
+        let calls = await recorder.calls
+        XCTAssertEqual(calls.count, 2)
+    }
+
+    func testBestAvailableActivityDoesNotDiluteSubstantiveTasks() async throws {
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [
+                block(1, 9, "Implementation"),
+                block(2, 17, "Protocol research"),
+            ],
+            screenContexts: [],
+            meetings: [],
+            calendar: calendar)
+        let recorder = GenerationRecorder()
+
+        let overview = try await DayDigestOverviewGenerator.generate(
+            evidence: evidence,
+            engine: StructuredDigestEngine(
+                recorder: recorder,
+                invalidFinal: true,
+                bestAvailableFocusIndices: [2]),
+            customPrompt: "",
+            calendar: calendar)
+
+        XCTAssertTrue(overview.contains("**Task 1**"))
+        XCTAssertFalse(overview.contains("Protocol research"))
+        let calls = await recorder.calls
+        XCTAssertEqual(calls.count, 3)
+    }
+
+    func testMetadataOnlySegmentUsesGenericRecordedActivityFallback() async throws {
         let evidence = DayDigestEvidence.build(
             day: day,
             blocks: [
@@ -455,15 +545,38 @@ final class DayDigestEvidenceTests: XCTestCase {
             customPrompt: "",
             calendar: calendar)
 
-        XCTAssertTrue(overview.contains("No substantive work"))
+        XCTAssertTrue(overview.contains("**Recorded activity**"))
+        XCTAssertFalse(overview.contains("No substantive work"))
         XCTAssertFalse(overview.contains("Safari"))
         XCTAssertFalse(overview.contains("New Tab"))
-        XCTAssertFalse(overview.localizedCaseInsensitiveContains("recorded activity"))
         let calls = await recorder.calls
         XCTAssertEqual(calls.count, 1)
     }
 
-    func testInvalidFocusOutputNeverFallsBackToAppMetadata() async throws {
+    func testDeterministicFallbackKeepsMeetingWorkVisible() {
+        let meeting = DayDigestMeetingEvidence(
+            id: UUID(),
+            title: "Product standup",
+            app: "Zoom",
+            startedAt: time(10),
+            endedAt: time(10, 30),
+            sourceSummary: "## TL;DR\nReviewed deployment progress and open bugs.",
+            outcomes: "Decision: keep the current deployment tool.")
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [],
+            screenContexts: [],
+            meetings: [meeting],
+            calendar: calendar)
+
+        let overview = DayDigestOverviewGenerator.fallback(evidence)
+
+        XCTAssertTrue(overview.contains("**Product standup**"))
+        XCTAssertTrue(overview.contains("Reviewed deployment progress"))
+        XCTAssertFalse(overview.contains("No substantive work"))
+    }
+
+    func testInvalidFocusOutputFallsBackToNamedActivityWithoutAppMetadata() async throws {
         let evidence = DayDigestEvidence.build(
             day: day,
             blocks: [block(1, 9, "Release dashboard")],
@@ -480,9 +593,9 @@ final class DayDigestEvidenceTests: XCTestCase {
             customPrompt: "",
             calendar: calendar)
 
-        XCTAssertTrue(overview.contains("No substantive work"))
+        XCTAssertTrue(overview.contains("**Release dashboard**"))
+        XCTAssertFalse(overview.contains("No substantive work"))
         XCTAssertFalse(overview.contains("Xcode"))
-        XCTAssertFalse(overview.localizedCaseInsensitiveContains("recorded activity"))
         let calls = await recorder.calls
         XCTAssertEqual(calls.count, 2)
     }

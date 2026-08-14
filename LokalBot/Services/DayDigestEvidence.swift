@@ -372,7 +372,7 @@ struct DayDigestEvidence: Equatable, Sendable {
         events: [SummaryEvent],
         maxCharacters: Int
     ) -> DayDigestSummarySegment {
-        let detailIndices = evenlySpacedIndices(count: events.count, limit: 12)
+        let detailIndices = summaryDetailIndices(events: events, limit: 12)
         let contentBudget = max(120, Int(Double(maxCharacters) * 0.82))
         let perDetailBudget = max(120, contentBudget / max(1, detailIndices.count))
         let details = detailIndices.map { index in
@@ -409,6 +409,29 @@ struct DayDigestEvidence: Equatable, Sendable {
             evidence: evidence,
             eventCount: events.count,
             sourceIDs: sourceIDs)
+    }
+
+    /// Meetings are already structured work evidence, so a busy interval must
+    /// not sample around them merely because it contains many short activity
+    /// events. Fill the remaining detail budget evenly across the interval.
+    private func summaryDetailIndices(
+        events: [SummaryEvent],
+        limit: Int
+    ) -> [Int] {
+        guard !events.isEmpty, limit > 0 else { return [] }
+        let meetingIndices = events.indices.filter { events[$0].order == 0 }
+        if meetingIndices.count >= limit {
+            return evenlySpacedIndices(count: meetingIndices.count, limit: limit)
+                .map { meetingIndices[$0] }
+        }
+
+        let remainingIndices = events.indices.filter { events[$0].order != 0 }
+        let remainingLimit = min(limit - meetingIndices.count, remainingIndices.count)
+        let sampled = evenlySpacedIndices(
+            count: remainingIndices.count,
+            limit: remainingLimit
+        ).map { remainingIndices[$0] }
+        return (meetingIndices + sampled).sorted()
     }
 
     private func evenlySpacedIndices(count: Int, limit: Int) -> [Int] {
@@ -667,6 +690,7 @@ enum DayDigestOverviewGenerator {
 
     private struct ParsedFocus {
         var block: DayDigestGeneratedFocusBlock?
+        var isSubstantive: Bool
     }
 
     private struct DigestDraft: Decodable {
@@ -699,6 +723,12 @@ enum DayDigestOverviewGenerator {
         var blockIndices: [Int]
     }
 
+    private struct FallbackActivity {
+        var title: String
+        var duration: TimeInterval
+        var firstSeenAt: Date
+    }
+
     static func generate(
         evidence: DayDigestEvidence,
         engine: TextEngine,
@@ -717,8 +747,10 @@ enum DayDigestOverviewGenerator {
         let dateContext = [
             "Date: \(evidence.day.formatted(date: .complete, time: .omitted))",
         ]
-        var blocks: [DayDigestGeneratedFocusBlock] = []
-        blocks.reserveCapacity(segments.count)
+        var substantiveBlocks: [DayDigestGeneratedFocusBlock] = []
+        var fallbackBlocks: [DayDigestGeneratedFocusBlock] = []
+        substantiveBlocks.reserveCapacity(segments.count)
+        fallbackBlocks.reserveCapacity(segments.count)
 
         for (index, segment) in segments.enumerated() {
             try Task.checkCancellation()
@@ -780,32 +812,50 @@ enum DayDigestOverviewGenerator {
                             + error.localizedDescription)
                 }
             }
-            if let block = parsed?.block { blocks.append(block) }
+            if let parsed, let block = parsed.block {
+                if parsed.isSubstantive {
+                    substantiveBlocks.append(block)
+                } else {
+                    fallbackBlocks.append(block)
+                }
+            }
             lokalbotLog(
                 "day digest segment index=\(index + 1)/\(segments.count) "
                     + "events=\(segment.eventCount) chars=\(segment.evidence.count) "
-                    + "parsed=\(parsed != nil) substantive=\(parsed?.block != nil) "
+                    + "parsed=\(parsed != nil) "
+                    + "substantive=\(parsed?.isSubstantive == true) "
+                    + "usable=\(parsed?.block != nil) "
                     + "attempts=\(attempts) elapsed="
                     + String(format: "%.2fs", Date().timeIntervalSince(startedAt)))
         }
 
-        guard !blocks.isEmpty else { return render(blocks: [], draft: nil) }
+        let usesBestAvailableActivity = substantiveBlocks.isEmpty
+        let selectedBlocks = usesBestAvailableActivity ? fallbackBlocks : substantiveBlocks
+        guard !selectedBlocks.isEmpty else { return fallback(evidence) }
 
         let digest: DigestDraft?
         let digestStartedAt = Date()
         do {
-            let material = blocks.enumerated()
+            let aggregationInstruction = usesBestAvailableActivity
+                ? "Retain the best grounded activity even without a concrete outcome."
+                : "Rank by concrete outcome, useful progress, decision, or blocker. "
+                    + "Do not rank by duration or chronology."
+            let candidatesHeading = usesBestAvailableActivity
+                ? "BEST AVAILABLE WORK OR ACTIVITY CANDIDATES:"
+                : "SUBSTANTIVE WORK CANDIDATES:"
+            let material = selectedBlocks.enumerated()
                 .map { candidateMaterial($0.element, index: $0.offset) }
                 .joined(separator: "\n")
             let output = try await engine.generate(
-                system: PromptTemplates.dayDigestSystem(custom: customPrompt),
+                system: usesBestAvailableActivity
+                    ? PromptTemplates.dayDigestFallbackSystem(custom: customPrompt)
+                    : PromptTemplates.dayDigestSystem(custom: customPrompt),
                 prompt: """
-                    Build the task-first daily recap from every accepted candidate below.
+                    Build the daily recap from every accepted candidate below.
                     Merge candidates for the same task and include every contributing
-                    candidate index in block_indices. Rank by concrete outcome, useful
-                    progress, decision, or blocker. Do not rank by duration or chronology.
+                    candidate index in block_indices. \(aggregationInstruction)
 
-                    SUBSTANTIVE WORK CANDIDATES:
+                    \(candidatesHeading)
                     \(material)
                     """,
                 context: dateContext,
@@ -823,18 +873,146 @@ enum DayDigestOverviewGenerator {
             digest = nil
         }
         lokalbotLog(
-            "day digest task aggregation parsed=\(digest != nil) elapsed="
+            "day digest task aggregation mode="
+                + "\(usesBestAvailableActivity ? "best-available" : "substantive") "
+                + "parsed=\(digest != nil) elapsed="
                 + String(format: "%.2fs", Date().timeIntervalSince(digestStartedAt)))
 
-        return render(blocks: blocks, draft: digest)
+        return render(blocks: selectedBlocks, draft: digest)
     }
 
     static func fallback(_ evidence: DayDigestEvidence) -> String {
         if evidence.isEmpty {
             return "### At a glance\n_No activity was recorded._"
         }
-        return "### At a glance\n_No task-level summary could be generated."
-            + " The complete activity evidence is available below._"
+        let blocks = bestAvailableFallbackBlocks(evidence)
+        if !blocks.isEmpty {
+            return render(blocks: blocks, draft: nil)
+        }
+        return "### Tasks\n- **Recorded activity** — Activity was captured, but the available context did not identify a more specific item."
+    }
+
+    /// Last-resort output for engine failures or evidence that every model
+    /// pass rejected. Prefer meeting content, then the most sustained named
+    /// activity contexts. This path stays deliberately conservative: it names
+    /// what was present without inventing an accomplishment or outcome.
+    private static func bestAvailableFallbackBlocks(
+        _ evidence: DayDigestEvidence,
+        limit: Int = 6
+    ) -> [DayDigestGeneratedFocusBlock] {
+        guard limit > 0 else { return [] }
+        var blocks: [DayDigestGeneratedFocusBlock] = []
+
+        for meeting in evidence.meetings {
+            let title = cleanInline(meeting.title, maxCharacters: 72)
+            let workDone = fallbackMeetingSummary(meeting)
+            blocks.append(DayDigestGeneratedFocusBlock(
+                task: title.isEmpty ? "Recorded meeting" : title,
+                workDone: workDone.isEmpty ? "Participated in the recorded meeting." : workDone,
+                status: "unknown",
+                outcome: cleanSummary(meeting.outcomes, maxWords: 32),
+                nextStep: "",
+                sourceIDs: []))
+            if blocks.count == limit { return blocks }
+        }
+
+        var grouped: [String: FallbackActivity] = [:]
+        for activity in evidence.activities {
+            guard let title = fallbackActivityTitle(
+                activity.title,
+                app: activity.app
+            ) else { continue }
+            let key = normalizedTaskKey(title)
+            let duration = max(0, activity.end.timeIntervalSince(activity.start))
+            if var existing = grouped[key] {
+                existing.duration += duration
+                existing.firstSeenAt = min(existing.firstSeenAt, activity.start)
+                grouped[key] = existing
+            } else {
+                grouped[key] = FallbackActivity(
+                    title: title,
+                    duration: duration,
+                    firstSeenAt: activity.start)
+            }
+        }
+        for context in evidence.standaloneContexts {
+            guard let title = fallbackActivityTitle(
+                context.windowTitle,
+                app: context.app
+            ) else { continue }
+            let key = normalizedTaskKey(title)
+            if grouped[key] == nil {
+                grouped[key] = FallbackActivity(
+                    title: title,
+                    duration: 0,
+                    firstSeenAt: context.capturedAt)
+            }
+        }
+
+        let activities = grouped.values.sorted { lhs, rhs in
+            if lhs.duration == rhs.duration { return lhs.firstSeenAt < rhs.firstSeenAt }
+            return lhs.duration > rhs.duration
+        }
+        var existingKeys = Set(blocks.map { normalizedTaskKey($0.task) })
+        for activity in activities {
+            let key = normalizedTaskKey(activity.title)
+            guard !existingKeys.contains(key) else { continue }
+            existingKeys.insert(key)
+            blocks.append(DayDigestGeneratedFocusBlock(
+                task: activity.title,
+                workDone: "Activity related to this item was recorded; no more specific outcome was visible.",
+                status: "unknown",
+                outcome: "",
+                nextStep: "",
+                sourceIDs: []))
+            if blocks.count == limit { break }
+        }
+        return blocks
+    }
+
+    private static func fallbackMeetingSummary(
+        _ meeting: DayDigestMeetingEvidence
+    ) -> String {
+        if let tldr = markdownSection(named: "TL;DR", in: meeting.sourceSummary) {
+            let clean = cleanSummary(tldr, maxWords: 48)
+            if !clean.isEmpty { return clean }
+        }
+        let outcomes = cleanSummary(meeting.outcomes, maxWords: 48)
+        if !outcomes.isEmpty { return outcomes }
+        return ""
+    }
+
+    private static func markdownSection(named name: String, in markdown: String) -> String? {
+        guard let heading = markdown.range(
+            of: "## \(name)",
+            options: .caseInsensitive
+        ) else { return nil }
+        let remainder = markdown[heading.upperBound...]
+        let end = remainder.range(of: "\n## ")?.lowerBound ?? remainder.endIndex
+        return String(remainder[..<end])
+    }
+
+    private static func fallbackActivityTitle(_ raw: String, app: String) -> String? {
+        var title = cleanInline(raw, maxCharacters: 120)
+        let cleanApp = cleanInline(app, maxCharacters: 72)
+        if !cleanApp.isEmpty,
+           let suffix = title.range(
+               of: " - \(cleanApp)",
+               options: [.caseInsensitive, .backwards]
+           ) {
+            title = String(title[..<suffix.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let normalized = title.lowercased()
+        let normalizedApp = cleanApp.lowercased()
+        let genericTitles: Set<String> = [
+            "", "home", "login", "login window", "loginwindow", "new tab", "timeline", "today",
+            "unknown",
+        ]
+        guard !genericTitles.contains(normalized),
+              normalizedApp != "loginwindow",
+              normalized != normalizedApp else { return nil }
+        return cleanInline(title, maxCharacters: 72)
     }
 
     private static var focusSchema: [String: Any] {
@@ -920,24 +1098,28 @@ enum DayDigestOverviewGenerator {
               let draft = try? JSONDecoder().decode(FocusDraft.self, from: data) else {
             return nil
         }
-        guard draft.substantive else { return ParsedFocus(block: nil) }
-
         let task = cleanInline(draft.task, maxCharacters: 72)
         let workDone = cleanSummary(draft.workDone, maxWords: 48)
-        guard !task.isEmpty, !workDone.isEmpty else { return nil }
+        if task.isEmpty || workDone.isEmpty {
+            return draft.substantive
+                ? nil
+                : ParsedFocus(block: nil, isSubstantive: false)
+        }
         let allowed = Set(segment.sourceIDs)
         var sourceIDs: [Int64] = []
         for id in draft.sourceIDs where allowed.contains(id) && !sourceIDs.contains(id) {
             sourceIDs.append(id)
             if sourceIDs.count == 2 { break }
         }
-        return ParsedFocus(block: DayDigestGeneratedFocusBlock(
-            task: task,
-            workDone: workDone,
-            status: normalizedStatus(draft.status),
-            outcome: cleanSummary(draft.outcome, maxWords: 32),
-            nextStep: cleanSummary(draft.nextStep, maxWords: 28),
-            sourceIDs: sourceIDs))
+        return ParsedFocus(
+            block: DayDigestGeneratedFocusBlock(
+                task: task,
+                workDone: workDone,
+                status: normalizedStatus(draft.status),
+                outcome: cleanSummary(draft.outcome, maxWords: 32),
+                nextStep: cleanSummary(draft.nextStep, maxWords: 28),
+                sourceIDs: sourceIDs),
+            isSubstantive: draft.substantive)
     }
 
     private static func parseDigest(_ output: String) -> DigestDraft? {
@@ -952,7 +1134,7 @@ enum DayDigestOverviewGenerator {
     ) -> String {
         let normalized = normalizedDigest(draft, blocks: blocks)
         guard !normalized.tasks.isEmpty else {
-            return "### At a glance\n_No substantive work was identified from the available context._"
+            return "### Tasks\n- **Recorded activity** — Activity was captured, but the available context did not identify a more specific item."
         }
 
         var sections = [

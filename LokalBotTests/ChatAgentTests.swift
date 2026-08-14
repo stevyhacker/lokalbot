@@ -141,14 +141,23 @@ final class ChatAgentTests: XCTestCase {
             ChatToolSpec(name: "list_meetings", summary: "l", arguments: []),
         ]
         let schema = ChatPrompt.toolCallSchema(specs)
-        let variants = try XCTUnwrap(schema["anyOf"] as? [[String: Any]])
+        XCTAssertEqual(schema["type"] as? String, "object")
+        XCTAssertEqual(schema["additionalProperties"] as? Bool, false)
+        let rootProperties = try XCTUnwrap(schema["properties"] as? [String: Any])
+        let call = try XCTUnwrap(rootProperties["call"] as? [String: Any])
+        let variants = try XCTUnwrap(call["anyOf"] as? [[String: Any]])
         XCTAssertEqual(variants.count, 2)
         let properties = try XCTUnwrap(variants[0]["properties"] as? [String: Any])
         let tool = try XCTUnwrap(properties["tool"] as? [String: Any])
-        XCTAssertEqual(tool["const"] as? String, "search_meetings")
+        XCTAssertEqual(tool["enum"] as? [String], ["search_meetings"])
         let arguments = try XCTUnwrap(properties["arguments"] as? [String: Any])
-        XCTAssertEqual(arguments["required"] as? [String], ["query"])
-        XCTAssertNotNil((arguments["properties"] as? [String: Any])?["limit"])
+        XCTAssertEqual(arguments["required"] as? [String], ["query", "limit"])
+        XCTAssertEqual(arguments["additionalProperties"] as? Bool, false)
+        let argumentProperties = try XCTUnwrap(
+            arguments["properties"] as? [String: Any])
+        let limit = try XCTUnwrap(argumentProperties["limit"] as? [String: Any])
+        XCTAssertEqual(limit["type"] as? [String], ["string", "null"])
+        XCTAssertNil(OpenAIStrictSchemaValidator.validationIssue(in: schema))
         // Must serialise — it's sent verbatim as the response_format schema.
         XCTAssertNoThrow(try JSONSerialization.data(withJSONObject: schema))
     }
@@ -156,7 +165,7 @@ final class ChatAgentTests: XCTestCase {
     func testMalformedToolAttemptRetriesWithConstrainedDecode() async throws {
         let engine = ScriptedEngine([
             #"{"tool": "search_meetings", "arguments": {"query": "redis""#,       // truncated
-            #"{"tool": "search_meetings", "arguments": {"query": "redis"}}"#,     // constrained retry
+            #"{"call": {"tool": "search_meetings", "arguments": {"query": "redis"}}}"#, // constrained retry
             "We picked Redis.",
         ])
         let runner = FakeRunner(

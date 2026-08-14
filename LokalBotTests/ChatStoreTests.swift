@@ -121,6 +121,18 @@ final class ChatStoreTests: XCTestCase {
             for: TextEngineError.serverUnreachable("http://127.0.0.1:11434"))
         XCTAssertTrue(remote.contains("could not be reached"))
         XCTAssertFalse(remote.contains("127.0.0.1"))
+
+        let unauthorized = ChatViewModel.friendlyFailureMessage(
+            for: TextEngineError.httpStatus(
+                code: 401, detail: "raw provider detail", retryAfter: nil))
+        XCTAssertTrue(unauthorized.contains("API key"))
+        XCTAssertFalse(unauthorized.contains("raw provider detail"))
+
+        let rateLimited = ChatViewModel.friendlyFailureMessage(
+            for: TextEngineError.httpStatus(
+                code: 429, detail: "raw provider detail", retryAfter: 2))
+        XCTAssertTrue(rateLimited.contains("rate-limited"))
+        XCTAssertFalse(rateLimited.contains("raw provider detail"))
     }
 
     private func makeStore() -> ChatStore {

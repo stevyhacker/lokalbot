@@ -242,12 +242,16 @@ final class ProcessingPipeline: ObservableObject {
                     do {
                         summary = try await summarize(transcript, meeting: meeting, config: config)
                     } catch {
-                        // One automatic retry: summarization failures are usually
-                        // transient (server still warming up, brief memory
-                        // pressure) and the expensive transcription work is
-                        // already safely on disk.
-                        lokalbotLog("summary retry after error=\(error.localizedDescription)")
-                        try await Task.sleep(nanoseconds: 2_000_000_000)
+                        guard let delay = TextEngineRetryPolicy.delay(
+                            for: error, attempt: 0) else { throw error }
+                        // One bounded retry for transient network, rate-limit,
+                        // or server failures. Deterministic 4xx/schema/payload
+                        // failures surface immediately instead of doubling work.
+                        lokalbotLog(
+                            "summary retry delay=\(String(format: "%.2f", delay))s "
+                                + "after error=\(error.localizedDescription)")
+                        try await Task.sleep(
+                            nanoseconds: UInt64(delay * 1_000_000_000))
                         summary = try await summarize(transcript, meeting: meeting, config: config)
                     }
                 } catch {
@@ -494,7 +498,8 @@ final class ProcessingPipeline: ObservableObject {
                 let note = try await engine.generate(
                     system: chunkSystem,
                     prompt: chunk,
-                    context: ["Part \(index + 1) of a longer meeting."])
+                    context: ["Part \(index + 1) of a longer meeting."],
+                    options: TextGenerationOptions(maxTokens: 1_536))
                 notes.append(note)
             }
             // Cap the combined per-part notes so the synthesis prompt fits the
@@ -509,7 +514,8 @@ final class ProcessingPipeline: ObservableObject {
                 system: systemPrompt,
                 prompt: "Synthesize the final \(config.noteTemplate.displayName.lowercased()) notes from these per-part notes:\n\n"
                     + fitted,
-                context: noteContext)
+                context: noteContext,
+                options: TextGenerationOptions(maxTokens: 4_096))
         } else {
             body = try await engine.generate(
                 system: systemPrompt,
@@ -517,7 +523,8 @@ final class ProcessingPipeline: ObservableObject {
                                                    template: config.noteTemplate,
                                                    summaryLanguage: language,
                                                    userSpeakerLabel: userSpeakerLabel),
-                context: noteContext)
+                context: noteContext,
+                options: TextGenerationOptions(maxTokens: 4_096))
         }
 
         let date = meeting.startedAt.formatted(date: .long, time: .shortened)
@@ -696,6 +703,7 @@ final class ProcessingPipeline: ObservableObject {
                 model: entry.id,
                 apiKey: authenticationToken,
                 extraBody: MainLLMRuntimePolicy.requestOverrides(for: entry.id),
+                chatDialect: .llamaServer,
                 defaultThinkingBudgetTokens:
                     MainLLMRuntimePolicy.highReasoningBudgetTokens,
                 displayNameOverride: "Built-in — \(entry.displayName)")
@@ -729,8 +737,11 @@ final class ProcessingPipeline: ObservableObject {
             guard let url = URL(string: config.openAIBaseURL) else { throw PipelineError.badServerURL }
             try InferenceEndpointPolicy.validate(
                 url, approvedOrigins: config.approvedRemoteInferenceOrigins)
-            return OpenAICompatibleEngine(baseURL: url, model: config.openAIModel,
-                                          apiKey: config.openAIAPIKey)
+            return OpenAICompatibleEngine(
+                baseURL: url,
+                model: config.openAIModel,
+                apiKey: config.openAIAPIKey,
+                chatDialect: .inferred(from: url))
         }
     }
 

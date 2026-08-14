@@ -81,11 +81,15 @@ final class MeetingOutcomesTests: XCTestCase {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertEqual(Set(object["required"] as? [String] ?? []),
                        ["action_items", "decisions", "open_questions"])
+        XCTAssertEqual(object["additionalProperties"] as? Bool, false)
         let properties = try XCTUnwrap(object["properties"] as? [String: Any])
         let actionItems = try XCTUnwrap(properties["action_items"] as? [String: Any])
         let item = try XCTUnwrap(actionItems["items"] as? [String: Any])
         XCTAssertEqual(Set(item["required"] as? [String] ?? []),
                        ["text", "owner", "due", "for_user"])
+        XCTAssertEqual(item["additionalProperties"] as? Bool, false)
+        XCTAssertNil(OpenAIStrictSchemaValidator.validationIssue(
+            in: OutcomesExtractor.schema))
     }
 
     func testSystemPromptAlwaysChecksWhatTheUserNeedsToDo() {

@@ -183,6 +183,8 @@ final class DayDigestSchedulerTests: XCTestCase {
                        PromptTemplates.dayDigestSystem)
         XCTAssertEqual(PromptTemplates.dayDigestSystem(custom: "   \n\t"),
                        PromptTemplates.dayDigestSystem)
+        XCTAssertEqual(PromptTemplates.dayDigestFallbackSystem(custom: ""),
+                       PromptTemplates.dayDigestFallbackSystem)
     }
 
     func testCustomPromptIsAppendedToTheBasePrompt() {
@@ -207,6 +209,7 @@ final class DayDigestSchedulerTests: XCTestCase {
     func testDigestPromptTreatsCapturedTextAsEvidenceNotInstructions() {
         XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("untrusted data"))
         XCTAssertTrue(PromptTemplates.dayDigestSystem.contains("task-first"))
+        XCTAssertTrue(PromptTemplates.dayDigestFallbackSystem.contains("untrusted data"))
         XCTAssertTrue(PromptTemplates.dayDigestFocusSystem.contains("untrusted data"))
         XCTAssertTrue(PromptTemplates.dayDigestChunkSystem.contains("[screen:ID]"))
     }

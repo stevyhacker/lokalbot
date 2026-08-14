@@ -395,8 +395,16 @@ final class ChatViewModel: ObservableObject {
                 return "No Main LLM is selected. Choose one in Settings → Models, then try again."
             case .serverUnreachable:
                 return "The selected assistant could not be reached. Check its settings, then try again."
+            case .httpStatus(let code, _, _):
+                if code == 401 || code == 403 {
+                    return "The selected assistant rejected its API key. Check the key in Settings, then try again."
+                }
+                if code == 429 {
+                    return "The selected assistant is rate-limited. Wait briefly, then try again."
+                }
+                return "The assistant could not complete that request. Check the selected model in Settings, then try again."
             case .badResponse, .unavailable:
-                break
+                return "The assistant could not complete that request. Check the selected model in Settings, then try again."
             }
         }
         return "The assistant could not complete that request. Check the selected model in Settings, then try again."

@@ -23,7 +23,9 @@ final class TextEngineTests: XCTestCase {
         OpenAICompatibleEngine.applyGenerationOptions(
             to: &body,
             options: TextGenerationOptions(maxTokens: 8_192),
-            defaultThinkingBudgetTokens: MainLLMRuntimePolicy.highReasoningBudgetTokens)
+            defaultThinkingBudgetTokens: MainLLMRuntimePolicy.highReasoningBudgetTokens,
+            dialect: .llamaServer,
+            model: "local")
 
         XCTAssertEqual(body["max_tokens"] as? Int, 8_192)
         XCTAssertEqual(body["thinking_budget_tokens"] as? Int, 4_096)
@@ -35,7 +37,9 @@ final class TextEngineTests: XCTestCase {
         OpenAICompatibleEngine.applyGenerationOptions(
             to: &body,
             options: nil,
-            defaultThinkingBudgetTokens: MainLLMRuntimePolicy.highReasoningBudgetTokens)
+            defaultThinkingBudgetTokens: MainLLMRuntimePolicy.highReasoningBudgetTokens,
+            dialect: .llamaServer,
+            model: "local")
 
         XCTAssertNil(body["max_tokens"])
         XCTAssertEqual(body["thinking_budget_tokens"] as? Int, 8_192)
@@ -50,7 +54,9 @@ final class TextEngineTests: XCTestCase {
                 maxTokens: 512,
                 reasoningBudgetTokens: 0,
                 temperature: 0.2),
-            defaultThinkingBudgetTokens: MainLLMRuntimePolicy.highReasoningBudgetTokens)
+            defaultThinkingBudgetTokens: MainLLMRuntimePolicy.highReasoningBudgetTokens,
+            dialect: .llamaServer,
+            model: "local")
 
         XCTAssertEqual(body["thinking_budget_tokens"] as? Int, 0)
         XCTAssertEqual(body["temperature"] as? Double, 0.2)
@@ -61,10 +67,243 @@ final class TextEngineTests: XCTestCase {
 
         OpenAICompatibleEngine.applyGenerationOptions(
             to: &body,
-            options: nil,
-            defaultThinkingBudgetTokens: nil)
+            options: TextGenerationOptions(maxTokens: 700,
+                                           reasoningBudgetTokens: 256,
+                                           temperature: 0.2),
+            defaultThinkingBudgetTokens: nil,
+            dialect: .generic,
+            model: "generic")
 
         XCTAssertNil(body["thinking_budget_tokens"])
+        XCTAssertNil(body["reasoning_effort"])
+        XCTAssertEqual(body["max_tokens"] as? Int, 700)
+        XCTAssertEqual(body["temperature"] as? Double, 0.2)
+    }
+
+    func testOfficialOpenAIUsesModernReasoningFieldsWithoutSamplingExtension() throws {
+        let engine = OpenAICompatibleEngine(
+            baseURL: URL(string: "https://api.openai.com/v1")!,
+            model: "gpt-5.4-mini",
+            apiKey: "test-token",
+            chatDialect: .openAI)
+
+        let request = try engine.makeChatRequest(
+            system: "system",
+            prompt: "prompt",
+            context: [],
+            schema: nil,
+            options: TextGenerationOptions(maxTokens: 700,
+                                           reasoningBudgetTokens: 256,
+                                           temperature: 0.2))
+        let data = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertEqual(body["max_completion_tokens"] as? Int, 700)
+        XCTAssertEqual(body["reasoning_effort"] as? String, "low")
+        XCTAssertNil(body["max_tokens"])
+        XCTAssertNil(body["thinking_budget_tokens"])
+        XCTAssertNil(body["temperature"])
+    }
+
+    func testOfficialNonReasoningModelKeepsTemperature() {
+        var body: [String: Any] = [:]
+
+        OpenAICompatibleEngine.applyGenerationOptions(
+            to: &body,
+            options: TextGenerationOptions(maxTokens: 300,
+                                           reasoningBudgetTokens: 256,
+                                           temperature: 0.4),
+            defaultThinkingBudgetTokens: nil,
+            dialect: .openAI,
+            model: "gpt-4.1-mini")
+
+        XCTAssertEqual(body["max_completion_tokens"] as? Int, 300)
+        XCTAssertEqual(body["temperature"] as? Double, 0.4)
+        XCTAssertNil(body["reasoning_effort"])
+    }
+
+    func testDialectInferenceSelectsKnownRemoteProviders() {
+        XCTAssertEqual(
+            ChatCompletionDialect.inferred(
+                from: URL(string: "https://api.openai.com/v1")!),
+            .openAI)
+        XCTAssertEqual(
+            ChatCompletionDialect.inferred(
+                from: URL(string: "https://openrouter.ai/api/v1")!),
+            .openRouter)
+        XCTAssertEqual(
+            ChatCompletionDialect.inferred(
+                from: URL(string: "https://eu.openrouter.ai/api/v1")!),
+            .openRouter)
+        XCTAssertEqual(
+            ChatCompletionDialect.inferred(
+                from: URL(string: "http://localhost:1234/v1")!),
+            .generic)
+    }
+
+    func testOpenRouterUsesNativeReasoningAndPrivacyRouting() throws {
+        let engine = OpenAICompatibleEngine(
+            baseURL: URL(string: "https://openrouter.ai/api/v1")!,
+            model: "anthropic/example-model",
+            apiKey: "test-token",
+            chatDialect: .openRouter)
+        let schema: [String: Any] = [
+            "type": "object",
+            "properties": ["answer": ["type": "string"]],
+            "required": ["answer"],
+            "additionalProperties": false,
+        ]
+
+        let request = try engine.makeChatRequest(
+            system: "system",
+            prompt: "prompt",
+            context: [],
+            schema: schema,
+            options: TextGenerationOptions(maxTokens: 700,
+                                           reasoningBudgetTokens: 256,
+                                           temperature: 0.2))
+        let data = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let reasoning = try XCTUnwrap(body["reasoning"] as? [String: Any])
+        let provider = try XCTUnwrap(body["provider"] as? [String: Any])
+
+        XCTAssertEqual(request.url?.absoluteString,
+                       "https://openrouter.ai/api/v1/chat/completions")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"),
+                       "Bearer test-token")
+        XCTAssertEqual(body["max_tokens"] as? Int, 700)
+        XCTAssertEqual(reasoning["max_tokens"] as? Int, 256)
+        XCTAssertEqual(reasoning["exclude"] as? Bool, true)
+        XCTAssertEqual(provider["data_collection"] as? String, "deny")
+        XCTAssertEqual(provider["require_parameters"] as? Bool, true)
+        XCTAssertNil(body["max_completion_tokens"])
+        XCTAssertNil(body["thinking_budget_tokens"])
+        XCTAssertNil(body["reasoning_effort"])
+        XCTAssertNil(body["temperature"])
+    }
+
+    func testOpenRouterPlainChatKeepsTemperatureWithoutForcingParameters() throws {
+        let engine = OpenAICompatibleEngine(
+            baseURL: URL(string: "https://openrouter.ai/api/v1")!,
+            model: "openai/example-model",
+            apiKey: "test-token",
+            chatDialect: .openRouter)
+
+        let request = try engine.makeChatRequest(
+            system: "system",
+            prompt: "prompt",
+            context: [],
+            schema: nil,
+            options: TextGenerationOptions(maxTokens: 300, temperature: 0.4))
+        let data = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let provider = try XCTUnwrap(body["provider"] as? [String: Any])
+
+        XCTAssertEqual(body["max_tokens"] as? Int, 300)
+        XCTAssertEqual(body["temperature"] as? Double, 0.4)
+        XCTAssertEqual(provider["data_collection"] as? String, "deny")
+        XCTAssertNil(provider["require_parameters"])
+        XCTAssertNil(body["reasoning"])
+    }
+
+    func testOpenRouterRejectsInvalidStrictSchemaLocally() {
+        let engine = OpenAICompatibleEngine(
+            baseURL: URL(string: "https://openrouter.ai/api/v1")!,
+            model: "openai/example-model",
+            apiKey: "test-token",
+            chatDialect: .openRouter)
+        let invalidSchema: [String: Any] = [
+            "type": "object",
+            "properties": ["answer": ["type": "string"]],
+            "required": ["answer"],
+        ]
+
+        XCTAssertThrowsError(try engine.makeChatRequest(
+            system: "system",
+            prompt: "prompt",
+            context: [],
+            schema: invalidSchema,
+            options: nil)) {
+            XCTAssertTrue($0.localizedDescription.contains("invalid strict JSON schema"))
+        }
+    }
+
+    func testParseChatCompletionCapturesUsage() throws {
+        let data = try XCTUnwrap(#"""
+            {
+              "choices": [{"finish_reason": "stop", "message": {"content": "Done"}}],
+              "usage": {
+                "prompt_tokens": 30,
+                "completion_tokens": 12,
+                "prompt_tokens_details": {"cached_tokens": 20},
+                "completion_tokens_details": {"reasoning_tokens": 4}
+              }
+            }
+            """#.data(using: .utf8))
+
+        let parsed = try OpenAICompatibleEngine.parseChatCompletion(data)
+
+        XCTAssertEqual(parsed.content, "Done")
+        XCTAssertEqual(parsed.usage,
+                       .init(inputTokens: 30, outputTokens: 12,
+                             cachedInputTokens: 20, reasoningOutputTokens: 4))
+    }
+
+    func testParseChatCompletionRejectsTruncationAndRefusal() throws {
+        let truncated = try XCTUnwrap(#"""
+            {"choices": [{"finish_reason": "length", "message": {"content": "partial"}}]}
+            """#.data(using: .utf8))
+        XCTAssertThrowsError(try OpenAICompatibleEngine.parseChatCompletion(truncated)) {
+            XCTAssertTrue($0.localizedDescription.contains("truncated"))
+        }
+
+        let refusal = try XCTUnwrap(#"""
+            {"choices": [{"finish_reason": "stop", "message": {"content": null, "refusal": "Cannot comply"}}]}
+            """#.data(using: .utf8))
+        XCTAssertThrowsError(try OpenAICompatibleEngine.parseChatCompletion(refusal)) {
+            XCTAssertTrue($0.localizedDescription.contains("refusal"))
+        }
+    }
+
+    func testRetryPolicyHonorsRetryAfterAndRejectsPermanentErrors() {
+        let rateLimit = TextEngineError.httpStatus(
+            code: 429, detail: "slow down", retryAfter: 3)
+        XCTAssertEqual(TextEngineRetryPolicy.delay(
+            for: rateLimit, attempt: 0, jitter: 0), 3)
+
+        let serverFailure = TextEngineError.httpStatus(
+            code: 503, detail: "warming", retryAfter: nil)
+        XCTAssertEqual(TextEngineRetryPolicy.delay(
+            for: serverFailure, attempt: 0, jitter: 0.25), 1.25)
+
+        let invalidRequest = TextEngineError.httpStatus(
+            code: 400, detail: "bad schema", retryAfter: nil)
+        XCTAssertNil(TextEngineRetryPolicy.delay(
+            for: invalidRequest, attempt: 0, jitter: 0))
+        XCTAssertNil(TextEngineRetryPolicy.delay(
+            for: rateLimit, attempt: 1, jitter: 0))
+    }
+
+    func testHTTPErrorParsesSafeDetailRequestIDAndRetryAfter() throws {
+        let response = try XCTUnwrap(HTTPURLResponse(
+            url: URL(string: "https://api.openai.com/v1/chat/completions")!,
+            statusCode: 429,
+            httpVersion: nil,
+            headerFields: ["Retry-After": "2", "x-request-id": "req_test"]))
+        let data = try XCTUnwrap(
+            #"{"error":{"message":"Rate limit reached"}}"#.data(using: .utf8))
+
+        guard case .httpStatus(let code, let detail, let retryAfter) =
+                TextEngineError.fromHTTPResponse(response, data: data) else {
+            return XCTFail("expected HTTP status error")
+        }
+        XCTAssertEqual(code, 429)
+        XCTAssertTrue(detail.contains("Rate limit reached"))
+        XCTAssertTrue(detail.contains("req_test"))
+        XCTAssertEqual(retryAfter, 2)
     }
 
     /// Pressing Stop cancels the Task mid-request; `send` must surface that as

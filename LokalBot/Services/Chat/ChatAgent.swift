@@ -182,10 +182,14 @@ enum ChatPrompt {
     static func parse(_ output: String, tools: Set<String>) -> ChatAction {
         let cleaned = strippingReasoning(output).trimmingCharacters(in: .whitespacesAndNewlines)
         // 1. JSON object form: {"tool": "...", "arguments": { … }}.
-        if let object = jsonObject(in: cleaned),
-           let name = toolName(in: object), tools.contains(name) {
-            return .call(ChatToolCall(name: name,
-                                      arguments: argumentDictionary(in: object, toolNameKeys: nameKeys)))
+        if let object = jsonObject(in: cleaned) {
+            let callObject = toolCallObject(in: object)
+            if let name = toolName(in: callObject), tools.contains(name) {
+                return .call(ChatToolCall(
+                    name: name,
+                    arguments: argumentDictionary(
+                        in: callObject, toolNameKeys: nameKeys)))
+            }
         }
         // 2. Native function-call form some local models emit instead of JSON,
         //    e.g. <|tool_call_start|>[get_meeting(id='abc', include='summary')]<|tool_call_end|>
@@ -220,7 +224,8 @@ enum ChatPrompt {
         if stripped.isEmpty, !cleaned.isEmpty { return true }
         // Balanced JSON carrying a tool-name key (parse() already rejected it,
         // so the name must be unknown — e.g. "search_meeting" for "search_meetings").
-        if let object = jsonObject(in: stripped), toolName(in: object) != nil { return true }
+        if let object = jsonObject(in: stripped),
+           toolName(in: toolCallObject(in: object)) != nil { return true }
         // Truncated JSON: an opening brace plus a tool-name key that never closed.
         if stripped.contains("{"),
            stripped.range(of: #""(tool|tool_name|action)"\s*:"#, options: .regularExpression) != nil {
@@ -230,28 +235,40 @@ enum ChatPrompt {
     }
 
     /// JSON schema forcing exactly one valid tool call, used for the
-    /// constrained retry: anyOf over per-tool shapes (exact name + that tool's
-    /// declared arguments, required ones required). llama-server compiles this
-    /// to a grammar, so a retried turn cannot come back unparseable.
+    /// constrained retry. The root stays an object for OpenAI strict Structured
+    /// Outputs; the nested `call` is an anyOf over closed per-tool shapes.
     static func toolCallSchema(_ tools: [ChatToolSpec]) -> [String: Any] {
         let variants: [[String: Any]] = tools.map { tool in
             var properties: [String: Any] = [:]
             for argument in tool.arguments {
-                properties[argument.name] = ["type": "string", "description": argument.description]
+                var schema: [String: Any] = ["description": argument.description]
+                schema["type"] = argument.required ? "string" : ["string", "null"]
+                properties[argument.name] = schema
             }
-            var argumentsSchema: [String: Any] = ["type": "object", "properties": properties]
-            let required = tool.arguments.filter(\.required).map(\.name)
-            if !required.isEmpty { argumentsSchema["required"] = required }
+            let argumentsSchema: [String: Any] = [
+                "type": "object",
+                "properties": properties,
+                // Strict Structured Outputs requires optional fields to be
+                // required-but-nullable rather than omitted.
+                "required": tool.arguments.map(\.name),
+                "additionalProperties": false,
+            ]
             return [
                 "type": "object",
                 "properties": [
-                    "tool": ["type": "string", "const": tool.name],
+                    "tool": ["type": "string", "enum": [tool.name]],
                     "arguments": argumentsSchema,
                 ],
                 "required": ["tool", "arguments"],
+                "additionalProperties": false,
             ]
         }
-        return ["anyOf": variants]
+        return [
+            "type": "object",
+            "properties": ["call": ["anyOf": variants]],
+            "required": ["call"],
+            "additionalProperties": false,
+        ]
     }
 
     // MARK: Parsing helpers (pure)
@@ -266,6 +283,10 @@ enum ChatPrompt {
             return nil
         }
         return object
+    }
+
+    private static func toolCallObject(in object: [String: Any]) -> [String: Any] {
+        object["call"] as? [String: Any] ?? object
     }
 
     private static func toolName(in object: [String: Any]) -> String? {
@@ -430,7 +451,8 @@ enum ChatPrompt {
     /// no prose — used by `finalText` to fall back instead of echoing a call.
     static func looksLikeBareToolCall(_ text: String) -> Bool {
         let cleaned = stripToolTokens(text).trimmingCharacters(in: .whitespacesAndNewlines)
-        if let object = jsonObject(in: cleaned), toolName(in: object) != nil,
+        if let object = jsonObject(in: cleaned),
+           toolName(in: toolCallObject(in: object)) != nil,
            let json = extractJSONObject(cleaned), json.count >= cleaned.count - 6 {
             return true
         }
@@ -476,7 +498,11 @@ struct ChatAgent {
             let directive = step == 0
                 ? "Decide how to respond to the user's last message. If you need meeting data, reply with a single tool-call JSON object; otherwise reply with your final answer."
                 : "Continue. Call another tool (one JSON object) if you still need data, or give your final answer in plain language."
-            let output = try await engine.generate(system: system, prompt: directive, context: transcript)
+            let output = try await engine.generate(
+                system: system,
+                prompt: directive,
+                context: transcript,
+                options: TextGenerationOptions(maxTokens: 2_048))
             try Task.checkCancellation()
 
             var action = ChatPrompt.parse(output, tools: toolNames)
@@ -486,9 +512,13 @@ struct ChatAgent {
             if case .answer = action, ChatPrompt.looksLikeToolAttempt(output) {
                 let retried = try await engine.generate(
                     system: system,
-                    prompt: "Your previous reply was not a valid tool call. Reply with exactly one JSON object of the form {\"tool\": \"…\", \"arguments\": { … }} for the tool you meant to call.",
+                    prompt: "Your previous reply was not a valid tool call. Reply with exactly one JSON object of the form {\"call\": {\"tool\": \"…\", \"arguments\": { … }}} for the tool you meant to call.",
                     context: transcript,
-                    schema: ChatPrompt.toolCallSchema(runner.specs))
+                    schema: ChatPrompt.toolCallSchema(runner.specs),
+                    options: TextGenerationOptions(
+                        maxTokens: 512,
+                        reasoningBudgetTokens: 128,
+                        temperature: 0.1))
                 try Task.checkCancellation()
                 if case .call(let call) = ChatPrompt.parse(retried, tools: toolNames) {
                     action = .call(call)
@@ -512,7 +542,8 @@ struct ChatAgent {
         let forced = try await engine.generate(
             system: system,
             prompt: "Give your final answer now in plain language using the observations above. Do not call any more tools.",
-            context: transcript)
+            context: transcript,
+            options: TextGenerationOptions(maxTokens: 2_048))
         return ChatPrompt.finalText(forced)
     }
 }

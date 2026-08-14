@@ -58,12 +58,14 @@ enum OutcomesExtractor {
                             "for_user": ["type": "boolean"],
                         ],
                         "required": ["text", "owner", "due", "for_user"],
+                        "additionalProperties": false,
                     ],
                 ],
                 "decisions": ["type": "array", "items": ["type": "string"]],
                 "open_questions": ["type": "array", "items": ["type": "string"]],
             ],
             "required": ["action_items", "decisions", "open_questions"],
+            "additionalProperties": false,
         ]
     }
 

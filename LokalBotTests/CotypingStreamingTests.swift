@@ -64,6 +64,15 @@ final class CotypingStreamingTests: XCTestCase {
 
     func testIgnoresDoneSentinel() {
         XCTAssertNil(cotypingParseSSEDelta("data: [DONE]"))
+        XCTAssertEqual(cotypingParseSSEEvent("data: [DONE]"),
+                       CotypingSSEEvent(delta: nil, isTerminal: true))
+    }
+
+    func testFinishReasonMarksTerminalChunk() {
+        XCTAssertEqual(
+            cotypingParseSSEEvent(
+                #"data: {"choices":[{"text":"","finish_reason":"stop"}]}"#),
+            CotypingSSEEvent(delta: "", isTerminal: true))
     }
 
     func testIgnoresNonDataLines() {
