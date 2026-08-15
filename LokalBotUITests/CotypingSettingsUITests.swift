@@ -53,7 +53,7 @@ final class CotypingSettingsUITests: XCTestCase {
 
     func testAutocompleteTabPersistsAcrossNavigation() {
         UITestHarness.clickSidebar("sidebar.timeline", in: app)
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.outcomes"]
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.dayPicker"]
             .waitForExistence(timeout: 6), "Timeline did not render")
         UITestHarness.clickSidebar("sidebar.type", in: app)
         XCTAssertTrue(app.descendants(matching: .any)["autocomplete.home"]

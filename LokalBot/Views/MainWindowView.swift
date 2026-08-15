@@ -155,10 +155,14 @@ struct MainWindowView: View {
                     .workspaceSurface()
             }
         } else if app.navSection == .timeline {
-            NavigationSplitView(columnVisibility: twoColumnVisibility) {
+            NavigationSplitView(columnVisibility: threeColumnVisibility) {
                 sidebar
+            } content: {
+                TimelineContentView(model: capture)
+                    .modifier(ScriptedCaptureContentWidth(
+                        maximum: scriptedCaptureContentMaximum))
             } detail: {
-                TimelineOutcomeView(model: capture, pendingDelete: $pendingDelete)
+                CaptureDetailView(model: capture, pendingDelete: $pendingDelete)
                     .workspaceSurface()
             }
         } else if app.navSection == .meetings {

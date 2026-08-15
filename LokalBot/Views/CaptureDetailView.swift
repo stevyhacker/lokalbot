@@ -11,6 +11,7 @@ struct CaptureDetailView: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var model: CaptureModel
     @Binding var pendingDelete: Set<Meeting.ID>?
+    @State private var showingActionReview = false
 
     @ViewBuilder
     var body: some View {
@@ -105,26 +106,29 @@ struct CaptureDetailView: View {
             .sorted { $0.value > $1.value }
         return ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Day overview")
-                    .font(.title3.bold())
-                    .accessibilityIdentifier("capture.dayOverview")
+                HStack {
+                    Text("Day overview")
+                        .font(WorkspaceTypography.pageTitle)
+                        .accessibilityIdentifier("capture.dayOverview")
+                    Spacer()
+                    Button {
+                        app.openAsk(dayScope: model.day)
+                    } label: {
+                        Label("Ask about this day", systemImage: "sparkle.magnifyingglass")
+                    }
+                    .accessibilityIdentifier("capture.askDay")
+                }
                 DayStatRow(
                     trackedSeconds: perApp.reduce(0) { $0 + $1.value },
                     appCount: perApp.count,
                     momentCount: model.shots.count,
                     meetingCount: meetings.count)
+                digestSection
+                    .frame(maxWidth: 860, alignment: .leading)
                 if !perApp.isEmpty {
                     totalsSection(perApp)
                 }
-                Button {
-                    app.openAsk(dayScope: model.day)
-                } label: {
-                    Label("Ask about this day", systemImage: "sparkle.magnifyingglass")
-                }
-                .accessibilityIdentifier("capture.askDay")
-                Divider()
-                digestSection
-                    .frame(maxWidth: 860, alignment: .leading)
+                TimelineDayOutcomes(model: model, showingReview: $showingActionReview)
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -185,14 +189,15 @@ struct CaptureDetailView: View {
                 if model.generating { ProgressView().controlSize(.small) }
                 Spacer()
                 if let digest = model.digest {
+                    Button {
+                        Task { await model.generateDigest(app: app) }
+                    } label: {
+                        Label("Regenerate digest", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(model.generating)
+                    .help("Rewrite the digest using the latest activity and meetings")
+                    .accessibilityIdentifier("timeline.dayDigest.generate")
                     Menu {
-                        Button {
-                            Task { await model.generateDigest(app: app) }
-                        } label: {
-                            Label("Regenerate", systemImage: "arrow.clockwise")
-                        }
-                        .disabled(model.generating)
-                        Divider()
                         Button { model.copyDigest(digest) } label: {
                             Label("Copy digest", systemImage: "doc.on.doc")
                         }
@@ -212,6 +217,7 @@ struct CaptureDetailView: View {
                         Task { await model.generateDigest(app: app) }
                     }
                     .disabled(model.generating)
+                    .accessibilityIdentifier("timeline.dayDigest.generate")
                 }
             }
             if model.digestIsStale {

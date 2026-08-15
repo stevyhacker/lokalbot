@@ -11,32 +11,22 @@ struct TodayView: View {
     @AppStorage("lokalbotv3.gettingStartedDismissed")
     private var gettingStartedDismissed = false
     @State private var showingActionReview = false
-    @State private var moreExpanded = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
                 header
                 nowCard
+                dreamCard
+                summarySection
                 NeedsAttentionSection(
                     actions: app.outcomeIndex.openUserActions,
                     limit: 3,
                     showingReview: $showingActionReview)
                 UpcomingMeetingSection(model: upcomingMeeting)
                 capturedSection
-                summarySection
-                WorkspaceDisclosure(
-                    isExpanded: $moreExpanded,
-                    identifier: "today.moreLocalContext") {
-                    VStack(alignment: .leading, spacing: 16) {
-                        dreamCard
-                        if !gettingStartedDismissed { GettingStartedCard() }
-                        askSection
-                    }
-                } label: {
-                    Label("More local context", systemImage: "rectangle.stack")
-                        .font(WorkspaceTypography.sectionTitle)
-                }
+                if !gettingStartedDismissed { GettingStartedCard() }
+                askSection
             }
             .padding(WorkspaceMetric.pagePadding)
             .frame(maxWidth: WorkspaceMetric.contentMaxWidth, alignment: .leading)
@@ -336,14 +326,46 @@ struct TodayView: View {
 
     @ViewBuilder private var digestBlock: some View {
         if let digest = model.digest {
+            HStack(spacing: 8) {
+                Text("Day digest").font(WorkspaceTypography.bodyEmphasis)
+                Spacer()
+                Button {
+                    Task { await model.generateDigest(app: app) }
+                } label: {
+                    Label(model.generating ? "Generating…" : "Regenerate digest",
+                          systemImage: model.generating ? "hourglass" : "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(model.generating)
+                .accessibilityIdentifier("today.dayDigest.generate")
+                Menu {
+                    Button { model.copyDigest(digest) } label: {
+                        Label("Copy digest", systemImage: "doc.on.doc")
+                    }
+                    Button { model.exportDigest(digest) } label: {
+                        Label("Export Markdown", systemImage: "square.and.arrow.up")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .accessibilityLabel("Day digest actions")
+            }
             DayDigestView(digest, mode: .today)
                 .accessibilityIdentifier("today.dayDigest.text")
         } else {
             HStack(spacing: 8) {
+                Text("Day digest").font(WorkspaceTypography.bodyEmphasis)
+                Spacer()
                 Button("Write day digest") {
                     Task { await model.generateDigest(app: app) }
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 .disabled(model.generating)
+                .accessibilityIdentifier("today.dayDigest.generate")
                 if model.generating { ProgressView().controlSize(.small) }
             }
         }

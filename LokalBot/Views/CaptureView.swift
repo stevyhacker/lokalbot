@@ -236,6 +236,7 @@ struct CaptureDayView: View {
     var body: some View {
         let meetings = model.meetings(in: app)
         VStack(alignment: .leading, spacing: 12) {
+            header
             if model.blocks.isEmpty && meetings.isEmpty && model.shots.isEmpty {
                 ContentUnavailableView(
                     "No activity recorded",
@@ -264,6 +265,45 @@ struct CaptureDayView: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Button { changeDay(by: -1) } label: {
+                Image(systemName: "chevron.left")
+            }
+            .accessibilityLabel("Previous day")
+            .accessibilityIdentifier("timeline.previousDay")
+            DatePicker("", selection: daySelection, displayedComponents: .date)
+                .labelsHidden()
+                .fixedSize()
+                .accessibilityIdentifier("timeline.dayPicker")
+            Button("Today") { changeDay(to: Date()) }
+                .disabled(Calendar.current.isDateInToday(model.day))
+                .accessibilityIdentifier("timeline.today")
+            Button { changeDay(by: 1) } label: {
+                Image(systemName: "chevron.right")
+            }
+            .accessibilityLabel("Next day")
+            .accessibilityIdentifier("timeline.nextDay")
+            .disabled(Calendar.current.isDateInToday(model.day))
+            Spacer()
+        }
+    }
+
+    private var daySelection: Binding<Date> {
+        Binding(get: { model.day }, set: { changeDay(to: $0) })
+    }
+
+    private func changeDay(by offset: Int) {
+        app.selectedMeetingIDs = []
+        model.moveDay(by: offset, app: app)
+    }
+
+    private func changeDay(to day: Date) {
+        guard !Calendar.current.isDate(day, inSameDayAs: model.day) else { return }
+        app.selectedMeetingIDs = []
+        model.selectDay(day, app: app)
     }
 
     private func captureTrack(meetings: [Meeting], now: Date) -> some View {

@@ -40,6 +40,10 @@ final class MainWindowUITests: XCTestCase {
     func testTodayUsesCompactDigestHierarchy() {
         XCTAssertTrue(textWithContent(SyntheticFixture.todayDigestMarker).firstMatch
             .waitForExistence(timeout: 6), "today's persisted digest did not render")
+        XCTAssertTrue(identified("today.dayDigest.generate").waitForExistence(timeout: 5),
+                      "Today should expose digest maintenance without another disclosure")
+        XCTAssertFalse(identified("today.moreLocalContext").exists,
+                       "Today should not hide its daily memory behind More local context")
         XCTAssertTrue(textWithContent("Highlights").firstMatch.exists,
                       "digest highlights hierarchy is missing")
         XCTAssertTrue(textWithContent("Tasks").firstMatch.exists,
@@ -162,7 +166,7 @@ final class MainWindowUITests: XCTestCase {
                       "permissions section missing from Settings")
 
         clickSidebar("sidebar.timeline")
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.outcomes"]
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.dayPicker"]
             .waitForExistence(timeout: 4),
                       "timeline section did not come back")
     }
@@ -271,20 +275,23 @@ final class MainWindowUITests: XCTestCase {
 
     // MARK: - Timeline
 
-    /// The Timeline section renders the day surface from the seeded
-    /// `activity_blocks` + meetings: the hour track (with a seeded block
-    /// title and a meeting block in the teal lane) on the left, and the day
-    /// overview's per-app totals in the detail pane — the old inspector's
-    /// four-tab control is gone (spec §2.2).
+    /// Timeline keeps its chronological track visible in the content column
+    /// while the selected-day digest, totals, and outcomes remain in the
+    /// selection-driven detail pane.
     func testTimelineRendersTrackAndOverview() {
         clickSidebar("sidebar.timeline")
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.outcomes"]
-            .waitForExistence(timeout: 6), "outcome-first Timeline did not render")
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.dayPicker"]
+            .waitForExistence(timeout: 6), "Timeline workspace did not render")
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
+            .waitForExistence(timeout: 6), "hour track should be visible immediately")
+        XCTAssertTrue(app.descendants(matching: .any)["capture.dayOverview"]
+            .waitForExistence(timeout: 6), "day overview did not render beside the track")
+        XCTAssertTrue(identified("timeline.dayDigest.generate").waitForExistence(timeout: 5),
+                      "day-digest action should remain directly visible")
+        XCTAssertFalse(identified("timeline.activityEvidence").exists,
+                       "the chronological track should not be hidden behind Activity evidence")
         XCTAssertTrue(textWithContent("Needs attention").firstMatch.exists)
         XCTAssertTrue(textWithContent("Decisions").firstMatch.exists)
-        XCTAssertFalse(app.descendants(matching: .any)["timeline.track"].exists,
-                       "forensic track should begin behind Activity evidence")
-        openTimelineEvidence()
         XCTAssertTrue(textWithContent("Where time went").firstMatch.waitForExistence(timeout: 6),
                       "day-overview totals headline missing — seeded activity did not load")
         XCTAssertTrue(textWithContent("Xcode").firstMatch.exists,
@@ -301,8 +308,6 @@ final class MainWindowUITests: XCTestCase {
                        "embedded digest repeated the host page's app-time chart")
         XCTAssertFalse(textWithContent("No activity recorded").firstMatch.exists,
                        "empty state shown despite seeded activity blocks")
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"].exists,
-                      "hour track identifier missing")
         // The block *title* renders only inside the hour track (totals rows
         // show app names, never titles), so this pins down the track itself.
         XCTAssertTrue(textWithContent("TimelineView.swift").firstMatch.exists,
@@ -325,9 +330,8 @@ final class MainWindowUITests: XCTestCase {
                       "meeting detail did not open before changing the day")
 
         clickSidebar("sidebar.timeline")
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.outcomes"]
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.dayPicker"]
             .waitForExistence(timeout: 6), "Timeline did not render")
-        openTimelineEvidence()
 
         let previousDay = app.buttons["timeline.previousDay"]
         XCTAssertTrue(previousDay.waitForExistence(timeout: 4),
@@ -349,15 +353,15 @@ final class MainWindowUITests: XCTestCase {
     /// and Meetings (grouped meeting list) both ways.
     func testSidebarTogglesBetweenTimelineAndMeetings() {
         clickSidebar("sidebar.timeline")
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.outcomes"]
-            .waitForExistence(timeout: 6), "outcome-first Timeline missing")
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.dayPicker"]
+            .waitForExistence(timeout: 6), "Timeline workspace missing")
 
         openLibrary()
-        XCTAssertFalse(app.descendants(matching: .any)["timeline.outcomes"].exists,
+        XCTAssertFalse(app.descendants(matching: .any)["timeline.dayPicker"].exists,
                        "Timeline should leave the screen in Meetings")
 
         clickSidebar("sidebar.timeline")
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.outcomes"]
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.dayPicker"]
             .waitForExistence(timeout: 4), "Timeline did not come back")
     }
 
@@ -695,17 +699,6 @@ final class MainWindowUITests: XCTestCase {
                       "Advanced model details disclosure missing")
         disclosure.coordinate(
             withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).click()
-    }
-
-    private func openTimelineEvidence() {
-        let disclosure = identified("timeline.activityEvidence")
-        UITestHarness.scrollTo(disclosure, in: app, attempts: 6)
-        XCTAssertTrue(disclosure.waitForExistence(timeout: 5),
-                      "Activity evidence disclosure missing")
-        disclosure.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).click()
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
-            .waitForExistence(timeout: 6), "Timeline evidence did not expand")
     }
 
     private func selectMeeting(_ meeting: SyntheticFixture.Meeting) {

@@ -150,12 +150,10 @@ struct ActionReviewView: View {
     }
 }
 
-struct TimelineOutcomeView: View {
+struct TimelineDayOutcomes: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var model: CaptureModel
-    @Binding var pendingDelete: Set<Meeting.ID>?
-    @State private var showingReview = false
-    @State private var activityExpanded = false
+    @Binding var showingReview: Bool
 
     private var dayActions: [OutcomeActionReference] {
         app.outcomeIndex.openUserActions.filter {
@@ -170,117 +168,42 @@ struct TimelineOutcomeView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
-                header
-                NeedsAttentionSection(
-                    actions: dayActions,
-                    title: "Needs attention",
-                    showingReview: $showingReview)
+        VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
+            NeedsAttentionSection(
+                actions: dayActions,
+                title: "Needs attention",
+                showingReview: $showingReview)
 
-                WorkspaceSection(title: "Decisions", icon: "checkmark.seal") {
-                    if dayDecisions.isEmpty {
-                        EmptyWorkspaceRow(text: "No cited decisions for this day.")
-                    } else {
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(dayDecisions.prefix(6), id: \.decision.id) { item in
-                                HStack(alignment: .firstTextBaseline, spacing: 9) {
-                                    Image(systemName: "checkmark").foregroundStyle(Brand.teal)
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(item.decision.text)
-                                        Button(item.meeting.displayTitle) {
-                                            app.openMeeting(item.meeting.id)
-                                        }
-                                        .buttonStyle(.plain)
-                                        .font(WorkspaceTypography.metadata)
-                                        .foregroundStyle(.secondary)
+            WorkspaceSection(title: "Decisions", icon: "checkmark.seal") {
+                if dayDecisions.isEmpty {
+                    EmptyWorkspaceRow(text: "No cited decisions for this day.")
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(dayDecisions.prefix(6), id: \.decision.id) { item in
+                            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                                Image(systemName: "checkmark").foregroundStyle(Brand.teal)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(item.decision.text)
+                                    Button(item.meeting.displayTitle) {
+                                        app.openMeeting(item.meeting.id)
                                     }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    if let citation = item.decision.citations.first {
-                                        EvidencePill(citation: citation) {
-                                            app.pendingSeek = citation.start
-                                            app.openMeeting(item.meeting.id)
-                                        }
+                                    .buttonStyle(.plain)
+                                    .font(WorkspaceTypography.metadata)
+                                    .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                if let citation = item.decision.citations.first {
+                                    EvidencePill(citation: citation) {
+                                        app.pendingSeek = citation.start
+                                        app.openMeeting(item.meeting.id)
                                     }
                                 }
                             }
                         }
                     }
                 }
-
-                WorkspaceDisclosure(
-                    isExpanded: $activityExpanded,
-                    identifier: "timeline.activityEvidence") {
-                    VStack(spacing: 12) {
-                        TimelineContentView(model: model)
-                            .frame(minHeight: 460)
-                        CaptureDetailView(model: model, pendingDelete: $pendingDelete)
-                            .frame(minHeight: 360)
-                    }
-                } label: {
-                    HStack {
-                        Label("Activity evidence", systemImage: "calendar.day.timeline.left")
-                            .font(WorkspaceTypography.sectionTitle)
-                        Spacer()
-                        Text("\(model.blocks.count) blocks · \(model.shots.count) moments")
-                            .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
-                    }
-                }
             }
-            .padding(WorkspaceMetric.pagePadding)
-            .frame(maxWidth: WorkspaceMetric.contentMaxWidth, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .top)
-        }
-        .navigationTitle("Timeline")
-        .task(id: app.navSection) {
-            if app.navSection == .timeline { model.selectDay(model.day, app: app) }
-        }
-        .onChange(of: app.pendingScreenSnapshotID) { _, id in
-            if id != nil { activityExpanded = true }
         }
         .accessibilityIdentifier("timeline.outcomes")
-    }
-
-    private var header: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(model.day.formatted(date: .complete, time: .omitted))
-                    .font(WorkspaceTypography.display)
-                HStack(spacing: 7) {
-                    StatTile(icon: "clock", value: CaptureStyle.hm(
-                        model.blocks.reduce(0) { $0 + $1.duration }), label: "tracked")
-                    StatTile(icon: "waveform", value: "\(model.meetings(in: app).count)",
-                             label: "meetings")
-                    StatTile(icon: "camera", value: "\(model.shots.count)", label: "moments")
-                }
-            }
-            Spacer()
-            Button { shiftDay(-1) } label: { Image(systemName: "chevron.left") }
-                .accessibilityLabel("Previous day")
-                .accessibilityIdentifier("timeline.previousDay")
-            Button("Today") { selectDay(Date()) }
-                .accessibilityIdentifier("timeline.today")
-            Button { shiftDay(1) } label: { Image(systemName: "chevron.right") }
-                .disabled(Calendar.current.isDateInToday(model.day))
-                .accessibilityLabel("Next day")
-                .accessibilityIdentifier("timeline.nextDay")
-            Button {
-                app.openAsk(dayScope: model.day)
-            } label: {
-                Label("Ask", systemImage: "sparkle.magnifyingglass")
-            }
-        }
-    }
-
-    private func shiftDay(_ value: Int) {
-        guard let date = Calendar.current.date(byAdding: .day, value: value, to: model.day) else {
-            return
-        }
-        selectDay(date)
-    }
-
-    private func selectDay(_ date: Date) {
-        app.selectedMeetingIDs = []
-        model.selectDay(date, app: app)
     }
 }

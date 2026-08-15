@@ -136,17 +136,10 @@ final class TimelineWithoutActivityUITests: XCTestCase {
         // This class pins Timeline behavior; the app now lands on Today, so
         // step onto the Timeline explicitly before each test begins.
         UITestHarness.clickSidebar("sidebar.timeline", in: app)
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.outcomes"]
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.dayPicker"]
             .waitForExistence(timeout: 6), "timeline section did not render")
-        let evidence = app.descendants(matching: .any).matching(
-            NSPredicate(format: "identifier == 'timeline.activityEvidence'")).firstMatch
-        UITestHarness.scrollTo(evidence, in: app)
-        XCTAssertTrue(evidence.waitForExistence(timeout: 4),
-                      "activity-evidence disclosure missing")
-        evidence.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).click()
         XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
-            .waitForExistence(timeout: 6), "timeline evidence did not expand")
+            .waitForExistence(timeout: 6), "timeline track was not immediately visible")
     }
 
     override func tearDownWithError() throws {
