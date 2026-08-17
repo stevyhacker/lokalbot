@@ -26,3 +26,32 @@ Vendor/
 
 # Agent Mode runtime bundle output — Scripts/build-pi-bundle.sh
 dist/
+
+# Local agent/browser workspaces and snapshots
+.claude/launch.json
+.claude/serve-web.js
+.codex/environments/
+.playwright-mcp/
+
+# Generated design and UI QA captures
+Artifacts/
+
+# Generated video-production output and locally reproducible media
+Video/**/.hyperframes/
+Video/**/.media/
+Video/**/capture/
+Video/**/renders/
+Video/**/snapshots/
+Video/**/node_modules/
+Video/**/assets/fonts/
+Video/**/assets/bgm/
+Video/**/assets/sfx/
+Video/**/assets/voice/
+Video/**/audio_engine_meta.json
+Video/**/audio_meta.json
+Video/**/audio_request.json
+Video/**/bgm_request.json
+Video/**/bgm_status.json
+
+# One-off exported video handoff
+lokalbot video ad handoff/
