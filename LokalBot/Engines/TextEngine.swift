@@ -72,6 +72,7 @@ enum ChatCompletionDialect: Equatable, Sendable {
 enum TextEngineError: LocalizedError, Sendable {
     case serverUnreachable(String)
     case badResponse(String)
+    case outputTruncated
     case httpStatus(code: Int, detail: String, retryAfter: TimeInterval?)
     case noModel
     case unavailable(String)
@@ -82,6 +83,8 @@ enum TextEngineError: LocalizedError, Sendable {
             "Can't reach \(base). Verify that the configured LLM server is available."
         case .badResponse(let detail):
             "LLM server error: \(detail)"
+        case .outputTruncated:
+            "LLM server error: response was truncated at the model output limit"
         case .httpStatus(let code, let detail, _):
             "LLM server returned HTTP \(code): \(detail)"
         case .noModel:
@@ -97,7 +100,7 @@ enum TextEngineError: LocalizedError, Sendable {
             true
         case .httpStatus(let code, _, _):
             code == 408 || code == 409 || code == 425 || code == 429 || (500...599).contains(code)
-        case .badResponse, .noModel, .unavailable:
+        case .badResponse, .outputTruncated, .noModel, .unavailable:
             false
         }
     }
@@ -569,8 +572,7 @@ struct OpenAICompatibleEngine: TextEngine {
         }
         switch choice["finish_reason"] as? String {
         case "length":
-            throw TextEngineError.badResponse(
-                "response was truncated at the model output limit")
+            throw TextEngineError.outputTruncated
         case "content_filter":
             throw TextEngineError.badResponse("response was stopped by the content filter")
         default:

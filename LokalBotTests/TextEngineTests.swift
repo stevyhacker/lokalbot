@@ -209,6 +209,39 @@ final class TextEngineTests: XCTestCase {
         XCTAssertNil(body["reasoning"])
     }
 
+    func testOpenRouterCanDisableReasoningForStructuredRetry() throws {
+        let engine = OpenAICompatibleEngine(
+            baseURL: URL(string: "https://openrouter.ai/api/v1")!,
+            model: "deepseek/example-model",
+            apiKey: "test-token",
+            chatDialect: .openRouter)
+        let schema: [String: Any] = [
+            "type": "object",
+            "properties": ["answer": ["type": "string"]],
+            "required": ["answer"],
+            "additionalProperties": false,
+        ]
+
+        let request = try engine.makeChatRequest(
+            system: "system",
+            prompt: "prompt",
+            context: [],
+            schema: schema,
+            options: TextGenerationOptions(
+                maxTokens: 1_600,
+                reasoningBudgetTokens: 0,
+                temperature: 0))
+        let data = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let reasoning = try XCTUnwrap(body["reasoning"] as? [String: Any])
+        let provider = try XCTUnwrap(body["provider"] as? [String: Any])
+
+        XCTAssertEqual(reasoning["effort"] as? String, "none")
+        XCTAssertEqual(body["temperature"] as? Double, 0)
+        XCTAssertEqual(provider["require_parameters"] as? Bool, true)
+    }
+
     func testOpenRouterRejectsInvalidStrictSchemaLocally() {
         let engine = OpenAICompatibleEngine(
             baseURL: URL(string: "https://openrouter.ai/api/v1")!,
@@ -257,6 +290,9 @@ final class TextEngineTests: XCTestCase {
             {"choices": [{"finish_reason": "length", "message": {"content": "partial"}}]}
             """#.data(using: .utf8))
         XCTAssertThrowsError(try OpenAICompatibleEngine.parseChatCompletion(truncated)) {
+            guard case TextEngineError.outputTruncated = $0 else {
+                return XCTFail("Expected outputTruncated, got \($0)")
+            }
             XCTAssertTrue($0.localizedDescription.contains("truncated"))
         }
 

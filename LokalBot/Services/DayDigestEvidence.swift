@@ -762,35 +762,63 @@ enum DayDigestOverviewGenerator {
 
                 \(segment.evidence)
                 """
-            var output = try await engine.generate(
-                system: PromptTemplates.dayDigestFocusSystem,
-                prompt: focusPrompt,
-                context: dateContext,
-                schema: focusSchema,
-                options: TextGenerationOptions(
-                    maxTokens: 768,
-                    reasoningBudgetTokens: 256,
-                    temperature: 0.2))
-            var parsed = parseFocus(output, segment: segment)
             var attempts = 1
-            if parsed == nil,
-               ProcessInfo.processInfo.environment["LOKALBOT_DIGEST_DEBUG_OUTPUT"] == "1" {
-                let preview = PromptContextSanitizer.sanitize(output, maxCharacters: 800)
-                lokalbotLog("day digest parse preview index=\(index + 1): \(preview)")
-            }
-            if parsed == nil {
+            var output: String
+            do {
+                output = try await engine.generate(
+                    system: PromptTemplates.dayDigestFocusSystem,
+                    prompt: focusPrompt,
+                    context: dateContext,
+                    schema: focusSchema,
+                    options: TextGenerationOptions(
+                        maxTokens: 768,
+                        reasoningBudgetTokens: 256,
+                        temperature: 0.2))
+            } catch TextEngineError.outputTruncated {
                 attempts = 2
                 let retryStartedAt = Date()
                 do {
                     output = try await engine.generate(
                         system: PromptTemplates.dayDigestFocusSystem,
-                        prompt: "The previous response failed JSON validation. Retry once.\n\n"
-                            + focusPrompt,
+                        prompt: focusRetryPrompt + "\n\n" + focusPrompt,
                         context: dateContext,
                         schema: focusSchema,
                         options: TextGenerationOptions(
-                            maxTokens: 1_200,
-                            reasoningBudgetTokens: 256,
+                            maxTokens: 1_600,
+                            reasoningBudgetTokens: 0,
+                            temperature: 0))
+                    lokalbotLog(
+                        "day digest segment retry index=\(index + 1) "
+                            + "reason=output-limit elapsed="
+                            + String(format: "%.2fs", Date().timeIntervalSince(retryStartedAt)))
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch TextEngineError.outputTruncated {
+                    lokalbotLog(
+                        "day digest segment retry exhausted index=\(index + 1) "
+                            + "reason=output-limit elapsed="
+                            + String(format: "%.2fs", Date().timeIntervalSince(retryStartedAt)))
+                    continue
+                }
+            }
+            var parsed = parseFocus(output, segment: segment)
+            if parsed == nil,
+               ProcessInfo.processInfo.environment["LOKALBOT_DIGEST_DEBUG_OUTPUT"] == "1" {
+                let preview = PromptContextSanitizer.sanitize(output, maxCharacters: 800)
+                lokalbotLog("day digest parse preview index=\(index + 1): \(preview)")
+            }
+            if parsed == nil, attempts == 1 {
+                attempts = 2
+                let retryStartedAt = Date()
+                do {
+                    output = try await engine.generate(
+                        system: PromptTemplates.dayDigestFocusSystem,
+                        prompt: focusRetryPrompt + "\n\n" + focusPrompt,
+                        context: dateContext,
+                        schema: focusSchema,
+                        options: TextGenerationOptions(
+                            maxTokens: 1_600,
+                            reasoningBudgetTokens: 0,
                             temperature: 0))
                     parsed = parseFocus(output, segment: segment)
                     if parsed == nil,
@@ -846,24 +874,43 @@ enum DayDigestOverviewGenerator {
             let material = selectedBlocks.enumerated()
                 .map { candidateMaterial($0.element, index: $0.offset) }
                 .joined(separator: "\n")
-            let output = try await engine.generate(
-                system: usesBestAvailableActivity
-                    ? PromptTemplates.dayDigestFallbackSystem(custom: customPrompt)
-                    : PromptTemplates.dayDigestSystem(custom: customPrompt),
-                prompt: """
-                    Build the daily recap from every accepted candidate below.
-                    Merge candidates for the same task and include every contributing
-                    candidate index in block_indices. \(aggregationInstruction)
+            let system = usesBestAvailableActivity
+                ? PromptTemplates.dayDigestFallbackSystem(custom: customPrompt)
+                : PromptTemplates.dayDigestSystem(custom: customPrompt)
+            let aggregationPrompt = """
+                Build the daily recap from every accepted candidate below.
+                Merge candidates for the same task and include every contributing
+                candidate index in block_indices. \(aggregationInstruction)
 
-                    \(candidatesHeading)
-                    \(material)
-                    """,
-                context: dateContext,
-                schema: digestSchema,
-                options: TextGenerationOptions(
-                    maxTokens: 1_600,
-                    reasoningBudgetTokens: 512,
-                    temperature: 0.2))
+                \(candidatesHeading)
+                \(material)
+                """
+            let output: String
+            do {
+                output = try await engine.generate(
+                    system: system,
+                    prompt: aggregationPrompt,
+                    context: dateContext,
+                    schema: digestSchema,
+                    options: TextGenerationOptions(
+                        maxTokens: 1_600,
+                        reasoningBudgetTokens: 512,
+                        temperature: 0.2))
+            } catch TextEngineError.outputTruncated {
+                let retryStartedAt = Date()
+                output = try await engine.generate(
+                    system: system,
+                    prompt: digestRetryPrompt + "\n\n" + aggregationPrompt,
+                    context: dateContext,
+                    schema: digestSchema,
+                    options: TextGenerationOptions(
+                        maxTokens: 3_200,
+                        reasoningBudgetTokens: 0,
+                        temperature: 0))
+                lokalbotLog(
+                    "day digest task aggregation retry reason=output-limit elapsed="
+                        + String(format: "%.2fs", Date().timeIntervalSince(retryStartedAt)))
+            }
             digest = parseDigest(output)
         } catch is CancellationError {
             throw CancellationError()
@@ -880,6 +927,20 @@ enum DayDigestOverviewGenerator {
 
         return render(blocks: selectedBlocks, draft: digest)
     }
+
+    private static let focusRetryPrompt = """
+        The previous response was truncated or failed JSON validation.
+        Retry once with a compact JSON object. Do not quote or restate the evidence.
+        Keep task under 12 words, work_done under 48 words, outcome under 32 words,
+        and next_step under 28 words.
+        """
+
+    private static let digestRetryPrompt = """
+        The previous response was truncated. Retry once with compact JSON.
+        Include every candidate, but merge candidates that belong to the same task.
+        Keep each title under 12 words, each summary under 52 words, and each next_step,
+        decision, or blocker under 32 words. Do not quote or restate candidate metadata.
+        """
 
     static func fallback(_ evidence: DayDigestEvidence) -> String {
         if evidence.isEmpty {

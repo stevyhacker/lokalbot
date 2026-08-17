@@ -18,7 +18,7 @@ final class DayDigestEvidenceTests: XCTestCase {
                 maxTokens: options.maxTokens,
                 reasoningBudgetTokens: options.reasoningBudgetTokens,
                 temperature: options.temperature))
-            return calls.filter(\.isFocus).count
+            return calls.filter { $0.isFocus == isFocus }.count
         }
     }
 
@@ -26,6 +26,8 @@ final class DayDigestEvidenceTests: XCTestCase {
         let recorder: GenerationRecorder
         var invalidFirstFocus = false
         var alwaysInvalidFocus = false
+        var truncatedFocusCalls: Set<Int> = []
+        var truncatedFinalCalls: Set<Int> = []
         var invalidFinal = false
         var nonSubstantiveFocusIndices: Set<Int> = []
         var bestAvailableFocusIndices: Set<Int> = []
@@ -42,6 +44,9 @@ final class DayDigestEvidenceTests: XCTestCase {
             let isFocus = system == PromptTemplates.dayDigestFocusSystem
             let index = await recorder.record(isFocus: isFocus, options: options)
             if isFocus {
+                if truncatedFocusCalls.contains(index) {
+                    throw TextEngineError.outputTruncated
+                }
                 if alwaysInvalidFocus || (invalidFirstFocus && index == 1) {
                     return "not valid JSON"
                 }
@@ -58,6 +63,9 @@ final class DayDigestEvidenceTests: XCTestCase {
                 return """
                     {"substantive":true,"task":"Task \(index)","work_done":"Advanced substantive work for task \(index).","status":"in_progress","outcome":"Useful progress was recorded.","next_step":"","source_ids":[]}
                     """
+            }
+            if truncatedFinalCalls.contains(index) {
+                throw TextEngineError.outputTruncated
             }
             if invalidFinal { return "not valid JSON" }
             if let finalResponse { return finalResponse }
@@ -464,8 +472,90 @@ final class DayDigestEvidenceTests: XCTestCase {
         XCTAssertEqual(calls.count, 3)
         XCTAssertEqual(calls[1], GenerationRecorder.Call(
             isFocus: true,
-            maxTokens: 1_200,
-            reasoningBudgetTokens: 256,
+            maxTokens: 1_600,
+            reasoningBudgetTokens: 0,
+            temperature: 0))
+    }
+
+    func testOverviewGeneratorRetriesTruncatedFocusWithLargerBudget() async throws {
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [block(1, 8, "Morning implementation")],
+            screenContexts: [],
+            meetings: [],
+            calendar: calendar)
+        let recorder = GenerationRecorder()
+
+        let overview = try await DayDigestOverviewGenerator.generate(
+            evidence: evidence,
+            engine: StructuredDigestEngine(
+                recorder: recorder,
+                truncatedFocusCalls: [1],
+                invalidFinal: true),
+            customPrompt: "",
+            calendar: calendar)
+
+        XCTAssertTrue(overview.contains("**Task 2**"))
+        let calls = await recorder.calls
+        XCTAssertEqual(calls.count, 3)
+        XCTAssertEqual(calls[1], GenerationRecorder.Call(
+            isFocus: true,
+            maxTokens: 1_600,
+            reasoningBudgetTokens: 0,
+            temperature: 0))
+    }
+
+    func testOverviewGeneratorContinuesAfterTruncationRetryIsExhausted() async throws {
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [
+                block(1, 8, "Morning implementation"),
+                block(2, 13, "Midday investigation"),
+            ],
+            screenContexts: [],
+            meetings: [],
+            calendar: calendar)
+        let recorder = GenerationRecorder()
+
+        let overview = try await DayDigestOverviewGenerator.generate(
+            evidence: evidence,
+            engine: StructuredDigestEngine(
+                recorder: recorder,
+                truncatedFocusCalls: [1, 2],
+                invalidFinal: true),
+            customPrompt: "",
+            calendar: calendar)
+
+        XCTAssertTrue(overview.contains("**Task 3**"))
+        let calls = await recorder.calls
+        XCTAssertEqual(calls.count, 4)
+        XCTAssertTrue(calls.last?.isFocus == false)
+    }
+
+    func testOverviewGeneratorRetriesTruncatedAggregationWithoutReasoning() async throws {
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [block(1, 8, "Morning implementation")],
+            screenContexts: [],
+            meetings: [],
+            calendar: calendar)
+        let recorder = GenerationRecorder()
+
+        let overview = try await DayDigestOverviewGenerator.generate(
+            evidence: evidence,
+            engine: StructuredDigestEngine(
+                recorder: recorder,
+                truncatedFinalCalls: [1]),
+            customPrompt: "",
+            calendar: calendar)
+
+        XCTAssertTrue(overview.contains("**Task 1**"))
+        let calls = await recorder.calls
+        XCTAssertEqual(calls.count, 3)
+        XCTAssertEqual(calls.last, GenerationRecorder.Call(
+            isFocus: false,
+            maxTokens: 3_200,
+            reasoningBudgetTokens: 0,
             temperature: 0))
     }
 

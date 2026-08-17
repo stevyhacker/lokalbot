@@ -427,7 +427,7 @@ final class ChatViewModel: ObservableObject {
                     return "The selected assistant is rate-limited. Wait briefly, then try again."
                 }
                 return "The assistant could not complete that request. Check the selected model in Settings, then try again."
-            case .badResponse, .unavailable:
+            case .badResponse, .outputTruncated, .unavailable:
                 return "The assistant could not complete that request. Check the selected model in Settings, then try again."
             }
         }
