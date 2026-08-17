@@ -207,6 +207,21 @@ struct MeetingRowView: View {
             }
             .help(stage.label)
             .accessibilityIdentifier("meeting.retry.\(meeting.id.uuidString)")
+        } else if stage.isWaitingForModels {
+            // Parked, not in progress: no spinner. The action is explicit
+            // about what it does — it starts the missing model downloads.
+            VStack(alignment: .trailing, spacing: 2) {
+                Label("Waiting for models", systemImage: "arrow.down.circle")
+                    .font(WorkspaceTypography.metadata)
+                    .foregroundStyle(.secondary)
+                Button("Download & process") {
+                    app.retryProcessing(meeting)
+                }
+                .buttonStyle(.borderless)
+                .font(WorkspaceTypography.metadata)
+            }
+            .help(stage.label)
+            .accessibilityIdentifier("meeting.waitingModels.\(meeting.id.uuidString)")
         } else {
             HStack(spacing: 5) {
                 ProgressView().controlSize(.small).scaleEffect(0.75)

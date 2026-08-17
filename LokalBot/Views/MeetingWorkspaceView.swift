@@ -188,15 +188,19 @@ private struct MeetingWorkspaceDetail: View {
                 if player.isLoaded { MeetingAudioBar(player: player, folder: folder) }
                 if let stage = app.pipeline.stages[meeting.id] {
                     HStack(spacing: 10) {
-                        Label(stage.label, systemImage: stage.isFailure
-                              ? "exclamationmark.triangle" : "sparkles")
+                        Label(stage.label, systemImage: stageIcon(stage))
                             .font(.callout)
-                            .foregroundStyle(stage.isFailure ? .orange : .secondary)
+                            .foregroundStyle(stage.isFailure ? Brand.error : .secondary)
                         if stage.isFailure {
                             Button("Retry") { app.retryProcessing(meeting) }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
                                 .accessibilityIdentifier("meeting.workspace.retry")
+                        } else if stage.isWaitingForModels {
+                            Button("Download & process") { app.retryProcessing(meeting) }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .accessibilityIdentifier("meeting.workspace.downloadProcess")
                         }
                     }
                 }
@@ -322,6 +326,12 @@ private struct MeetingWorkspaceDetail: View {
             stopSpeech(clearError: false)
         }
         .accessibilityIdentifier("meeting.detail.workspace")
+    }
+
+    private func stageIcon(_ stage: ProcessingPipeline.Stage) -> String {
+        if stage.isFailure { return "exclamationmark.triangle" }
+        if stage.isWaitingForModels { return "arrow.down.circle" }
+        return "sparkles"
     }
 
     private func load() {

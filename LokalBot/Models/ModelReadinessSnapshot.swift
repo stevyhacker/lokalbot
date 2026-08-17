@@ -57,24 +57,54 @@ struct ModelReadinessSnapshot: Equatable, Sendable {
         return "\(stored) stored locally · \(free) available"
     }
 
+    // MARK: Role readiness (shared by automation gates)
+
+    /// True when the selected meeting-transcription model is fully on disk.
+    /// Automation (auto-processing, prewarm) must consult this before running:
+    /// a missing model means a multi-gigabyte download the user never asked
+    /// for at that moment.
+    static func transcriptionReady(_ settings: AppSettings) -> Bool {
+        TranscriptionModelStore.isDownloaded(
+            settings.transcriptionModel,
+            graniteConfiguration: settings.graniteSpeechModel)
+    }
+
+    /// True when the Think role can run without triggering a model download.
+    /// Remote backends are always "ready" — their approval flow is separate.
+    static func thinkReady(_ settings: AppSettings, storage: StorageManager) -> Bool {
+        guard settings.summarizerBackend == .builtIn else { return true }
+        guard let entry = ModelCatalog.entry(
+            id: settings.builtInModelID,
+            custom: settings.customBuiltInModels) else { return false }
+        return ModelCatalog.localURL(for: entry, storage: storage) != nil
+    }
+
+    static func autocompleteReady(_ settings: AppSettings, storage: StorageManager) -> Bool {
+        guard let entry = ModelCatalog.entry(
+            id: settings.cotypingBuiltInModelID,
+            custom: settings.customBuiltInModels) else { return false }
+        return ModelCatalog.localURL(for: entry, storage: storage) != nil
+    }
+
+    /// Total bytes of the core GGUF models (Think when built-in, Autocomplete)
+    /// still missing on disk. The Transcribe model downloads through its
+    /// engine-specific path and is not included — callers name it separately.
+    static func missingCoreModelBytes(_ settings: AppSettings, storage: StorageManager) -> Int64 {
+        var ids = [settings.cotypingBuiltInModelID]
+        if settings.summarizerBackend == .builtIn { ids.append(settings.builtInModelID) }
+        return ids.compactMap {
+            ModelCatalog.entry(id: $0, custom: settings.customBuiltInModels)
+        }.filter {
+            ModelCatalog.localURL(for: $0, storage: storage) == nil
+        }.reduce(Int64(0)) { $0 + Int64($1.sizeBytes ?? 0) }
+    }
+
     @MainActor
     static func make(app: AppState, downloads: ModelDownloadManager) -> Self {
         let settings = app.settings
-        let mainEntry = ModelCatalog.entry(
-            id: settings.builtInModelID,
-            custom: settings.customBuiltInModels)
-        let autocompleteEntry = ModelCatalog.entry(
-            id: settings.cotypingBuiltInModelID,
-            custom: settings.customBuiltInModels)
-        let transcriptionReady = TranscriptionModelStore.isDownloaded(
-            settings.transcriptionModel,
-            graniteConfiguration: settings.graniteSpeechModel)
-        let thinkReady = settings.summarizerBackend == .builtIn
-            ? mainEntry.flatMap { ModelCatalog.localURL(for: $0, storage: app.storage) } != nil
-            : true
-        let autocompleteReady = autocompleteEntry.flatMap {
-            ModelCatalog.localURL(for: $0, storage: app.storage)
-        } != nil
+        let transcriptionReady = transcriptionReady(settings)
+        let thinkReady = thinkReady(settings, storage: app.storage)
+        let autocompleteReady = autocompleteReady(settings, storage: app.storage)
         let provenance: Provenance = settings.summarizerBackend == .builtIn
             ? .local : .externalThink(settings.summarizerBackend.displayName)
         let modelsFolder = app.storage.rootURL.appendingPathComponent("models", isDirectory: true)

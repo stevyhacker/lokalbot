@@ -59,17 +59,30 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(text(containing: "app activity, visible text, and encrypted visual context selected")
             .exists, "day-memory page did not explain its enabled defaults")
 
+        // The models step names the local stack; the hermetic library has no
+        // GGUFs, so the explicit download affordance must be offered (never
+        // clicked here — it would start real downloads).
+        app.buttons["Continue"].click()
+        assertPage(title: "Prepare on-device models", step: 5)
+        XCTAssertTrue(app.descendants(matching: .any)["onboarding.downloadModels"]
+            .firstMatch.waitForExistence(timeout: 5),
+            "models page did not offer the download action for a fresh library")
+
         // Visual context starts selected, so onboarding exposes its macOS grant.
         app.buttons["Continue to permissions"].click()
-        assertPage(title: "Grant LokalBot access", step: 5)
+        assertPage(title: "Grant LokalBot access", step: 6)
         XCTAssertTrue(text(containing: "Screen Recording").waitForExistence(timeout: 5),
                       "visual-context default did not expose its required permission")
 
         app.buttons["Back"].click()
+        assertPage(title: "Prepare on-device models", step: 5)
+        app.buttons["Back"].click()
         assertPage(title: "Remember your day?", step: 4)
         optIn("Add encrypted visual context").click()
+        app.buttons["Continue"].click()
+        assertPage(title: "Prepare on-device models", step: 5)
         app.buttons["Continue to permissions"].click()
-        assertPage(title: "Grant LokalBot access", step: 5)
+        assertPage(title: "Grant LokalBot access", step: 6)
         XCTAssertFalse(text(containing: "Screen Recording").exists,
                        "visual-context opt-out kept requesting Screen Recording")
         XCTAssertTrue(text(containing: "Permission access stays local")
@@ -84,8 +97,8 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(progress.waitForExistence(timeout: 4),
                       "onboarding progress control missing at step \(step)")
         XCTAssertTrue(UITestHarness.waitUntil {
-            progress.label == "Step \(step) of 5"
-                || progress.value as? String == "Step \(step) of 5"
+            progress.label == "Step \(step) of 6"
+                || progress.value as? String == "Step \(step) of 6"
         }, "onboarding progress did not reach step \(step)")
     }
 

@@ -83,10 +83,12 @@ final class RecordingNotifier: NSObject, UNUserNotificationCenterDelegate {
         post(title: "Recording started", body: title)
     }
 
-    func recordingStopped(title: String, duration: TimeInterval, willTranscribe: Bool) {
+    func recordingStopped(title: String, duration: TimeInterval, willTranscribe: Bool,
+                          waitingForModels: Bool = false) {
         let minutes = max(1, Int(duration / 60))
         var body = "\(title) · \(minutes) min"
         if willTranscribe { body += " · transcribing…" }
+        if waitingForModels { body += " · processes after models download" }
         post(title: "Recording saved", body: body)
     }
 

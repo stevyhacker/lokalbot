@@ -366,14 +366,20 @@ final class RecordingController: ObservableObject {
         status = .idle
         onMeetingFinished(meeting)
         let willTranscribe = process && settings.autoTranscribe
+        // The pipeline parks automatic jobs whose models are missing instead
+        // of ambush-downloading them; the notification says so up front.
+        let waitingForModels = willTranscribe
+            && !ModelReadinessSnapshot.transcriptionReady(settings)
         if isInteractive() {
             RecordingNotifier.shared.recordingStopped(
                 title: meeting.title,
                 duration: meeting.recordedDuration ?? endedAt.timeIntervalSince(meeting.startedAt),
-                willTranscribe: willTranscribe)
+                willTranscribe: willTranscribe && !waitingForModels,
+                waitingForModels: waitingForModels)
         }
         if willTranscribe {
-            pipeline.enqueue(meeting, transcribe: true, summarize: settings.autoSummarize)
+            pipeline.enqueue(meeting, transcribe: true, summarize: settings.autoSummarize,
+                             origin: .automatic)
         }
     }
 
@@ -409,6 +415,14 @@ final class RecordingController: ObservableObject {
         guard settings.autoTranscribe else { return }
         guard transcriptionPrewarmTask == nil else { return }
         let config = settings
+        // Prewarm only warms models that already exist on disk. A missing
+        // model would make `prepare()` download gigabytes mid-recording that
+        // the user never asked for — the pipeline parks the meeting as
+        // "waiting for models" instead.
+        guard ModelReadinessSnapshot.transcriptionReady(config) else {
+            lokalbotLog("transcription prewarm skipped: model not downloaded")
+            return
+        }
         let choice = config.transcriptionModel
         let engine = config.transcriptionEngine()
         transcriptionPrewarmTask = Task { [weak self, choice, engine, reason] in
@@ -425,12 +439,17 @@ final class RecordingController: ObservableObject {
         }
     }
 
-    /// Start a missing built-in summary-model download while the meeting is in
-    /// progress. The pipeline still awaits the same single-flight preparation
-    /// after recording, so a short meeting cannot outrun the download and fail.
+    /// Verify and warm the built-in summary model while the meeting is in
+    /// progress. Warm-only: a model that is not downloaded is left alone —
+    /// the pipeline parks the summary as "waiting for models" rather than
+    /// starting a multi-gigabyte download the user never asked for.
     private func prewarmSelectedSummaryModel(reason: String) {
         let config = settings
         guard config.autoSummarize, config.summarizerBackend == .builtIn else { return }
+        guard ModelReadinessSnapshot.thinkReady(config, storage: storage) else {
+            lokalbotLog("summary prewarm skipped: model not downloaded")
+            return
+        }
         guard summaryPrewarmTask == nil else { return }
         summaryPrewarmTask = Task { [weak self, config, reason] in
             let started = Date()

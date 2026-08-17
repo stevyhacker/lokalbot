@@ -49,6 +49,72 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(AppSettings().multiSpeakerDiarization)
     }
 
+    // MARK: - Decode-fallback audit
+
+    func testAbsentKeysAreNotReportedAsCorruption() throws {
+        // An older build's blob simply lacks newer keys — that is the normal
+        // tolerant-decoding case and must stay silent.
+        let data = #"{"autoTranscribe":true}"#.data(using: .utf8)!
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertTrue(settings.corruptedSettingsKeys.isEmpty)
+    }
+
+    func testCorruptFieldFallsBackToDefaultAndIsReported() throws {
+        // Key present but the value is the wrong shape: the field resets to
+        // its default, and — because a silently flipped privacy setting is a
+        // real event — the reset is recorded by name.
+        let data = #"{"screenContextCaptureMode":42,"autoTranscribe":"yes"}"#
+            .data(using: .utf8)!
+        let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        let defaults = AppSettings()
+        XCTAssertEqual(settings.screenContextCaptureMode, defaults.screenContextCaptureMode)
+        XCTAssertEqual(settings.autoTranscribe, defaults.autoTranscribe)
+        XCTAssertEqual(Set(settings.corruptedSettingsKeys),
+                       ["screenContextCaptureMode", "autoTranscribe"])
+    }
+
+    func testHealthyRoundTripReportsNoCorruption() throws {
+        var original = AppSettings()
+        original.autoRecordMode = .ask
+        original.retentionDays = 7
+
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self, from: JSONEncoder().encode(original))
+
+        XCTAssertTrue(decoded.corruptedSettingsKeys.isEmpty)
+        XCTAssertEqual(decoded.autoRecordMode, .ask)
+        XCTAssertEqual(decoded.retentionDays, 7)
+    }
+
+    func testCorruptedKeysAreNeverPersisted() throws {
+        var settings = AppSettings()
+        settings.corruptedSettingsKeys = ["autoTranscribe"]
+
+        let data = try JSONEncoder().encode(settings)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertNil(object["corruptedSettingsKeys"],
+                     "the audit is transient — one notice, not a sticky flag")
+    }
+
+    func testWholeStoreCorruptionResetsWithMarker() throws {
+        let suiteName = "AppSettingsTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+
+        // No stored blob at all: a genuine first run, nothing to report.
+        XCTAssertTrue(AppSettings.load(from: defaults).corruptedSettingsKeys.isEmpty)
+
+        // Unreadable blob: reset to defaults, but say so.
+        defaults.set(Data("not json".utf8), forKey: AppSettings.key)
+        let reset = AppSettings.load(from: defaults)
+        XCTAssertEqual(reset.corruptedSettingsKeys,
+                       [AppSettings.wholeStoreCorruptionMarker])
+        XCTAssertEqual(reset.autoRecordMode, AppSettings().autoRecordMode)
+    }
+
     func testSemanticSearchDefaultsOnButPreservesAnExplicitOffChoice() throws {
         XCTAssertTrue(AppSettings().semanticSearchEnabled)
 

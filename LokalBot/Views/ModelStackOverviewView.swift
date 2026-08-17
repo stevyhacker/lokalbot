@@ -197,20 +197,9 @@ struct ModelStackOverviewView: View {
         app.settings.summarizerBackend = .builtIn
         app.settings.builtInModelID = preset.mainModelID
         app.settings.cotypingBuiltInModelID = preset.autocompleteModelID
-
-        for id in [preset.mainModelID, preset.autocompleteModelID] {
-            guard let entry = ModelCatalog.entry(
-                id: id, custom: app.settings.customBuiltInModels),
-                  ModelCatalog.localURL(for: entry, storage: app.storage) == nil else { continue }
-            downloads.download(entry, storage: app.storage)
-        }
-        if !TranscriptionModelStore.isDownloaded(
-            preset.transcription,
-            graniteConfiguration: app.settings.graniteSpeechModel) {
-            Task {
-                try? await app.settings.transcriptionEngine(for: preset.transcription).prepare()
-            }
-        }
+        // Shared kickoff also re-checks meetings parked as "waiting for
+        // models" once the downloads land.
+        app.startCoreModelDownloads()
     }
 
     private func runSmokeTests() async {

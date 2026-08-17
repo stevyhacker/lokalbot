@@ -163,7 +163,9 @@ struct TodayView: View {
                 }
                 if !dream.topActions.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Priorities for today").font(WorkspaceTypography.bodyEmphasis)
+                        Text(TodayDreamSelection.prioritiesHeading(
+                            for: dream, referenceDate: model.day))
+                            .font(WorkspaceTypography.bodyEmphasis)
                         ForEach(Array(dream.topActions.enumerated()), id: \.offset) { index, action in
                             Text("\(index + 1). \(action)")
                                 .textSelection(.enabled)
@@ -512,5 +514,29 @@ enum TodayDreamSelection {
     ) -> Bool {
         let yesterday = DreamScheduler.previousDay(of: referenceDate, calendar: calendar)
         return report.day == DreamDay.key(for: yesterday, calendar: calendar)
+    }
+
+    /// A brief from yesterday earns "Priorities for today"; anything older is
+    /// framed with its own day so a Friday brief on Monday never reads as
+    /// current. Weekday alone within the lookback window, full date beyond it.
+    static func prioritiesHeading(
+        for report: DreamReport,
+        referenceDate: Date,
+        calendar: Calendar = .current
+    ) -> String {
+        if isCurrent(report, referenceDate: referenceDate, calendar: calendar) {
+            return "Priorities for today"
+        }
+        guard let day = DreamDay.date(fromKey: report.day) else {
+            return "Priorities from a previous workday"
+        }
+        let daysAgo = calendar.dateComponents(
+            [.day],
+            from: calendar.startOfDay(for: day),
+            to: calendar.startOfDay(for: referenceDate)).day ?? Int.max
+        if daysAgo <= 6 {
+            return "Priorities from \(day.formatted(.dateTime.weekday(.wide)))"
+        }
+        return "Priorities from \(day.formatted(date: .abbreviated, time: .omitted))"
     }
 }

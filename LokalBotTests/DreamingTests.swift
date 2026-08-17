@@ -856,6 +856,44 @@ final class DreamingTests: XCTestCase {
             calendar: calendar))
     }
 
+    func testPrioritiesHeadingFramesStaleBriefsByTheirDay() throws {
+        let report = DreamReport(
+            day: "2026-07-16",
+            generatedAt: try date("2026-07-17T04:01:00Z"),
+            engineName: "Built-in — Test",
+            inferenceProvenance: .init(location: .local),
+            narrative: "A real working day.",
+            topActions: ["Fix CI first"])
+
+        // Yesterday's brief really is today's priorities.
+        XCTAssertEqual(
+            TodayDreamSelection.prioritiesHeading(
+                for: report,
+                referenceDate: try date("2026-07-17T08:00:00Z"),
+                calendar: calendar),
+            "Priorities for today")
+
+        // A Thursday brief surfacing on Sunday must carry its own day —
+        // never "for today".
+        let staleHeading = TodayDreamSelection.prioritiesHeading(
+            for: report,
+            referenceDate: try date("2026-07-19T08:00:00Z"),
+            calendar: calendar)
+        XCTAssertNotEqual(staleHeading, "Priorities for today")
+        let day = try XCTUnwrap(DreamDay.date(fromKey: report.day))
+        XCTAssertEqual(
+            staleHeading,
+            "Priorities from \(day.formatted(.dateTime.weekday(.wide)))")
+
+        // Beyond a week, a bare weekday would be ambiguous — use the date.
+        XCTAssertEqual(
+            TodayDreamSelection.prioritiesHeading(
+                for: report,
+                referenceDate: try date("2026-08-01T08:00:00Z"),
+                calendar: calendar),
+            "Priorities from \(day.formatted(date: .abbreviated, time: .omitted))")
+    }
+
     func testEmptyDayProvenanceSaysNoModelRan() throws {
         let stub = DreamReport(
             day: "2026-07-18",

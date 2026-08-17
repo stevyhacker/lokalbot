@@ -556,6 +556,7 @@ final class AppState: ObservableObject {
     private var audioMonitorObserver: AnyCancellable?
     private var audioMonitorChangeForwarder: AnyCancellable?
     private var calendarObserver: AnyCancellable?
+    private var modelDownloadsObserver: AnyCancellable?
     /// True only on the real interactive launch path (not headless / UI test) —
     /// gates recording notifications and first-run onboarding.
     private var interactive = false
@@ -640,6 +641,16 @@ final class AppState: ObservableObject {
                 ? .dictation : .cotyping
         }
         if Self.isUnitTesting { return }
+        // Settings corruption is a privacy event, not a cosmetic one: a field
+        // like screenshot capture silently resetting to its default changes
+        // what the app records. Say exactly what fell back.
+        if !settings.corruptedSettingsKeys.isEmpty {
+            let keys = settings.corruptedSettingsKeys.joined(separator: ", ")
+            lokalbotLog("settings decode fell back to defaults for: \(keys)")
+            lastError = settings.corruptedSettingsKeys == [AppSettings.wholeStoreCorruptionMarker]
+                ? "Saved settings could not be read and were reset to defaults. Review Settings — especially Privacy and Recording."
+                : "Some saved settings could not be read and were reset to defaults (\(keys)). Review them in Settings."
+        }
         let headlessCommand = HeadlessCommand.requested
         let needsSynchronousLibrary = headlessCommand != nil || Self.isUITesting
         if needsSynchronousLibrary {
@@ -695,6 +706,14 @@ final class AppState: ObservableObject {
         calendarObserver = calendar.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
+        // A finished model download may unblock meetings parked as "waiting
+        // for models" — re-check whenever the active download set drains.
+        modelDownloadsObserver = ModelDownloadManager.shared.$progress
+            .map(\.isEmpty)
+            .removeDuplicates()
+            .dropFirst()
+            .filter { $0 }
+            .sink { [weak self] _ in self?.processMeetingsWaitingForModels() }
         pipeline.onArtifactsWritten = { [weak self] meeting in
             guard let self else { return }
             self.outcomeIndex.refresh(meeting: meeting)
@@ -1100,9 +1119,48 @@ final class AppState: ObservableObject {
     /// Row-level recovery intentionally retries the complete durable pipeline.
     /// It is the safest default when a compact row cannot know which earlier
     /// artifact came from the failed attempt; the detail Process menu still
-    /// offers narrower transcription- or summary-only choices.
+    /// offers narrower transcription- or summary-only choices. User-initiated,
+    /// so missing models download on demand — including for meetings parked
+    /// as "waiting for models".
     func retryProcessing(_ meeting: Meeting) {
         reprocess(meeting, transcribe: true, summarize: true)
+    }
+
+    /// Meetings parked because a model was missing re-enter the queue; jobs
+    /// whose models are still missing simply park again — nothing downloads
+    /// from this path.
+    func processMeetingsWaitingForModels() {
+        pipeline.retryJobsWaitingForModels()
+    }
+
+    /// Start downloads for every missing core model of the current selection:
+    /// GGUFs (Think, Autocomplete) through the shared download manager and
+    /// the Transcribe model through its engine. Used by onboarding and the
+    /// Models presets so the first meeting processes the moment it ends
+    /// instead of parking on missing models.
+    func startCoreModelDownloads() {
+        let snapshot = settings
+        var ids = [snapshot.cotypingBuiltInModelID]
+        if snapshot.summarizerBackend == .builtIn { ids.append(snapshot.builtInModelID) }
+        for id in ids {
+            guard let entry = ModelCatalog.entry(id: id, custom: snapshot.customBuiltInModels),
+                  ModelCatalog.localURL(for: entry, storage: storage) == nil else { continue }
+            ModelDownloadManager.shared.download(entry, storage: storage)
+        }
+        guard !ModelReadinessSnapshot.transcriptionReady(snapshot) else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await snapshot.transcriptionEngine().prepare()
+            } catch {
+                self.lastError = "Could not prepare \(snapshot.transcriptionModel.displayName): "
+                    + error.localizedDescription
+            }
+            // GGUF completions re-check through the download observer; the
+            // Transcribe engine downloads outside the manager, so re-check
+            // here as well.
+            self.processMeetingsWaitingForModels()
+        }
     }
 
     func saveTranscript(_ transcript: Transcript, for meeting: Meeting) throws {
@@ -1198,6 +1256,11 @@ final class AppState: ObservableObject {
             },
             canRun: { [weak self] in
                 guard let self, self.libraryReady else { return false }
+                // Scheduled background work never triggers a model download —
+                // the digest waits until the Think model is actually on disk
+                // (or a remote backend is configured).
+                guard ModelReadinessSnapshot.thinkReady(self.settings, storage: self.storage)
+                else { return false }
                 let cotypingGenerating: Bool
                 if case .generating = self.cotyping.state {
                     cotypingGenerating = true
@@ -1288,6 +1351,10 @@ final class AppState: ObservableObject {
             canRun: { [weak self] in
                 guard let self else { return false }
                 guard self.libraryReady else { return false }
+                // Overnight dreaming is background automation: never let it
+                // trigger a model download on a fresh install.
+                guard ModelReadinessSnapshot.thinkReady(self.settings, storage: self.storage)
+                else { return false }
                 let cotypingGenerating: Bool
                 if case .generating = self.cotyping.state {
                     cotypingGenerating = true
@@ -1435,6 +1502,7 @@ final class AppState: ObservableObject {
         }
         meetings.removeAll { deletedIDs.contains($0.id) }
         selectedMeetingIDs.subtract(deletedIDs)
+        pipeline.forget(meetingIDs: deletedIDs)
         outcomeIndex.refresh(meetings: meetings)
     }
 }

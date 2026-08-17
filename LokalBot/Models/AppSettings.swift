@@ -629,11 +629,30 @@ struct AppSettings: Codable, Equatable {
         case cotypingLearningExamplesInPrompt
     }
 
+    /// Names of settings whose stored values were present but unreadable, so
+    /// they silently fell back to defaults during decode. Transient — never
+    /// encoded — and empty in the normal case, including when an older build's
+    /// blob simply lacks newer keys. `AppState` surfaces a one-time notice
+    /// when this is non-empty: a privacy-relevant field resetting itself (say,
+    /// screenshot capture) must never go unannounced.
+    var corruptedSettingsKeys: [String] = []
+
+    /// Marker used instead of field names when the entire stored blob was
+    /// unreadable and every setting reset to defaults.
+    static let wholeStoreCorruptionMarker = "all settings"
+
     static func load(from defaults: UserDefaults = Self.defaults) -> AppSettings {
         let loaded: AppSettings
-        if let data = defaults.data(forKey: key),
-           let saved = try? JSONDecoder().decode(AppSettings.self, from: data) {
-            loaded = saved
+        if let data = defaults.data(forKey: key) {
+            do {
+                loaded = try JSONDecoder().decode(AppSettings.self, from: data)
+            } catch {
+                // Stored data exists but is unreadable — that is corruption,
+                // not a first run. Reset, but say so.
+                var reset = AppSettings()
+                reset.corruptedSettingsKeys = [wholeStoreCorruptionMarker]
+                loaded = reset
+            }
         } else {
             loaded = AppSettings()
         }
@@ -769,163 +788,143 @@ struct AppSettings: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = AppSettings()
-        let meetingSettingsVersion = (try? c.decode(Int.self, forKey: .meetingSettingsVersion)) ?? 0
-        autoRecordMode = (try? c.decode(AutoRecordMode.self, forKey: .autoRecordMode)) ?? defaults.autoRecordMode
-        let decodedStopDebounceSeconds =
-            (try? c.decode(TimeInterval.self, forKey: .stopDebounceSeconds)) ?? defaults.stopDebounceSeconds
+        // Two very different reasons a stored value can be unusable: the key
+        // is absent (an older build wrote this blob — expected, keep the
+        // default silently) or the key is present but unreadable (corruption
+        // or hand-editing — keep the default, but record the field so the
+        // app can tell the user what silently reset).
+        var corrupted: [String] = []
+        func decode<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            guard c.contains(key) else { return fallback }
+            do {
+                return try c.decode(T.self, forKey: key)
+            } catch {
+                corrupted.append(key.stringValue)
+                return fallback
+            }
+        }
+        let meetingSettingsVersion = decode(.meetingSettingsVersion, 0)
+        autoRecordMode = decode(.autoRecordMode, defaults.autoRecordMode)
         stopDebounceSeconds = Self.migratedStopDebounceSeconds(
-            decodedStopDebounceSeconds,
+            decode(.stopDebounceSeconds, defaults.stopDebounceSeconds),
             decodedSettingsVersion: meetingSettingsVersion)
-        calendarDetectionEnabled = (try? c.decode(Bool.self, forKey: .calendarDetectionEnabled)) ?? defaults.calendarDetectionEnabled
-        useCalendarTitles = (try? c.decode(Bool.self, forKey: .useCalendarTitles)) ?? defaults.useCalendarTitles
-        requireCalendarForBrowser = (try? c.decode(Bool.self, forKey: .requireCalendarForBrowser)) ?? defaults.requireCalendarForBrowser
-        menuBarOnly = (try? c.decode(Bool.self, forKey: .menuBarOnly)) ?? defaults.menuBarOnly
-        transcriptionModel = (try? c.decode(TranscriptionModelChoice.self, forKey: .transcriptionModel)) ?? defaults.transcriptionModel
-        graniteSpeechModel = (try? c.decode(
-            GraniteSpeechModelConfiguration.self,
-            forKey: .graniteSpeechModel)) ?? defaults.graniteSpeechModel
-        if let language = try? c.decode(TranscriptionLanguage.self, forKey: .transcriptionLanguage) {
-            transcriptionLanguage = language
+        calendarDetectionEnabled = decode(.calendarDetectionEnabled, defaults.calendarDetectionEnabled)
+        useCalendarTitles = decode(.useCalendarTitles, defaults.useCalendarTitles)
+        requireCalendarForBrowser = decode(.requireCalendarForBrowser, defaults.requireCalendarForBrowser)
+        menuBarOnly = decode(.menuBarOnly, defaults.menuBarOnly)
+        transcriptionModel = decode(.transcriptionModel, defaults.transcriptionModel)
+        graniteSpeechModel = decode(.graniteSpeechModel, defaults.graniteSpeechModel)
+        if c.contains(.transcriptionLanguage) {
+            transcriptionLanguage = decode(.transcriptionLanguage, defaults.transcriptionLanguage)
         } else if let legacyHint = try? c.decode(String.self, forKey: .languageHint) {
             transcriptionLanguage = TranscriptionLanguage.fromLegacyHint(legacyHint)
         } else {
             transcriptionLanguage = defaults.transcriptionLanguage
         }
-        autoTranscribe = (try? c.decode(Bool.self, forKey: .autoTranscribe)) ?? defaults.autoTranscribe
-        autoSummarize = (try? c.decode(Bool.self, forKey: .autoSummarize)) ?? defaults.autoSummarize
-        speechVoice = (try? c.decode(KokoroVoice.self, forKey: .speechVoice)) ?? defaults.speechVoice
-        speechSpeed = Self.clampedSpeechSpeed(
-            (try? c.decode(Double.self, forKey: .speechSpeed)) ?? defaults.speechSpeed)
-        dictationEnabled = (try? c.decode(Bool.self, forKey: .dictationEnabled)) ?? defaults.dictationEnabled
-        dictationTriggerMode = (try? c.decode(DictationTriggerMode.self, forKey: .dictationTriggerMode)) ?? defaults.dictationTriggerMode
-        dictationOutputMode = (try? c.decode(DictationOutputMode.self, forKey: .dictationOutputMode)) ?? defaults.dictationOutputMode
-        dictationShowOverlay = (try? c.decode(Bool.self, forKey: .dictationShowOverlay)) ?? defaults.dictationShowOverlay
-        dictationLivePreview = (try? c.decode(Bool.self, forKey: .dictationLivePreview)) ?? defaults.dictationLivePreview
-        dictationRetainAudio = (try? c.decode(Bool.self, forKey: .dictationRetainAudio)) ?? defaults.dictationRetainAudio
-        dictationCompositionBuiltInModelID =
-            (try? c.decode(String.self, forKey: .dictationCompositionBuiltInModelID))
-            ?? defaults.dictationCompositionBuiltInModelID
-        trackingEnabled = (try? c.decode(Bool.self, forKey: .trackingEnabled)) ?? defaults.trackingEnabled
-        semanticSearchEnabled = (try? c.decode(Bool.self, forKey: .semanticSearchEnabled)) ?? defaults.semanticSearchEnabled
-        let legacyScreenshotsEnabled =
-            (try? c.decode(Bool.self, forKey: .screenshotsEnabled)) ?? defaults.screenshotsEnabled
-        screenContextCaptureMode =
-            (try? c.decode(ScreenContextCaptureMode.self, forKey: .screenContextCaptureMode))
-            ?? (legacyScreenshotsEnabled ? .visualContext : .activityOnly)
+        autoTranscribe = decode(.autoTranscribe, defaults.autoTranscribe)
+        autoSummarize = decode(.autoSummarize, defaults.autoSummarize)
+        speechVoice = decode(.speechVoice, defaults.speechVoice)
+        speechSpeed = Self.clampedSpeechSpeed(decode(.speechSpeed, defaults.speechSpeed))
+        dictationEnabled = decode(.dictationEnabled, defaults.dictationEnabled)
+        dictationTriggerMode = decode(.dictationTriggerMode, defaults.dictationTriggerMode)
+        dictationOutputMode = decode(.dictationOutputMode, defaults.dictationOutputMode)
+        dictationShowOverlay = decode(.dictationShowOverlay, defaults.dictationShowOverlay)
+        dictationLivePreview = decode(.dictationLivePreview, defaults.dictationLivePreview)
+        dictationRetainAudio = decode(.dictationRetainAudio, defaults.dictationRetainAudio)
+        dictationCompositionBuiltInModelID = decode(
+            .dictationCompositionBuiltInModelID, defaults.dictationCompositionBuiltInModelID)
+        trackingEnabled = decode(.trackingEnabled, defaults.trackingEnabled)
+        semanticSearchEnabled = decode(.semanticSearchEnabled, defaults.semanticSearchEnabled)
+        let legacyScreenshotsEnabled = decode(.screenshotsEnabled, defaults.screenshotsEnabled)
+        screenContextCaptureMode = decode(
+            .screenContextCaptureMode,
+            legacyScreenshotsEnabled ? .visualContext : .activityOnly)
         screenshotsEnabled = screenContextCaptureMode.capturesPixels
-        screenshotIntervalMinutes = (try? c.decode(Double.self, forKey: .screenshotIntervalMinutes)) ?? defaults.screenshotIntervalMinutes
-        meetingVisualContextEnabled =
-            (try? c.decode(Bool.self, forKey: .meetingVisualContextEnabled))
-            ?? defaults.meetingVisualContextEnabled
-        capturePrivateWindows =
-            (try? c.decode(Bool.self, forKey: .capturePrivateWindows))
-            ?? defaults.capturePrivateWindows
-        excludedScreenDomains =
-            (try? c.decode(String.self, forKey: .excludedScreenDomains))
-            ?? defaults.excludedScreenDomains
-        retentionDays = (try? c.decode(Int.self, forKey: .retentionDays)) ?? defaults.retentionDays
-        keepOCRTextForever = (try? c.decode(Bool.self, forKey: .keepOCRTextForever)) ?? defaults.keepOCRTextForever
-        quickRecallEnabled = (try? c.decode(Bool.self, forKey: .quickRecallEnabled)) ?? defaults.quickRecallEnabled
-        dayDigestAutoEnabled =
-            (try? c.decode(Bool.self, forKey: .dayDigestAutoEnabled))
-            ?? defaults.dayDigestAutoEnabled
-        dayDigestHour = min(
-            23,
-            max(0, (try? c.decode(Int.self, forKey: .dayDigestHour))
-                ?? defaults.dayDigestHour))
-        dayDigestCustomPrompt =
-            (try? c.decode(String.self, forKey: .dayDigestCustomPrompt))
-            ?? defaults.dayDigestCustomPrompt
-        dailyMemoryExportEnabled =
-            (try? c.decode(Bool.self, forKey: .dailyMemoryExportEnabled))
-            ?? defaults.dailyMemoryExportEnabled
-        dailyMemoryExportFolder =
-            (try? c.decode(String.self, forKey: .dailyMemoryExportFolder))
-            ?? defaults.dailyMemoryExportFolder
-        dailyMemoryExportFormat =
-            (try? c.decode(DailyMemoryExportFormat.self, forKey: .dailyMemoryExportFormat))
-            ?? defaults.dailyMemoryExportFormat
+        screenshotIntervalMinutes = decode(.screenshotIntervalMinutes, defaults.screenshotIntervalMinutes)
+        meetingVisualContextEnabled = decode(
+            .meetingVisualContextEnabled, defaults.meetingVisualContextEnabled)
+        capturePrivateWindows = decode(.capturePrivateWindows, defaults.capturePrivateWindows)
+        excludedScreenDomains = decode(.excludedScreenDomains, defaults.excludedScreenDomains)
+        retentionDays = decode(.retentionDays, defaults.retentionDays)
+        keepOCRTextForever = decode(.keepOCRTextForever, defaults.keepOCRTextForever)
+        quickRecallEnabled = decode(.quickRecallEnabled, defaults.quickRecallEnabled)
+        dayDigestAutoEnabled = decode(.dayDigestAutoEnabled, defaults.dayDigestAutoEnabled)
+        dayDigestHour = min(23, max(0, decode(.dayDigestHour, defaults.dayDigestHour)))
+        dayDigestCustomPrompt = decode(.dayDigestCustomPrompt, defaults.dayDigestCustomPrompt)
+        dailyMemoryExportEnabled = decode(
+            .dailyMemoryExportEnabled, defaults.dailyMemoryExportEnabled)
+        dailyMemoryExportFolder = decode(
+            .dailyMemoryExportFolder, defaults.dailyMemoryExportFolder)
+        dailyMemoryExportFormat = decode(
+            .dailyMemoryExportFormat, defaults.dailyMemoryExportFormat)
         dailyMemoryExportHour = min(
-            23,
-            max(0, (try? c.decode(Int.self, forKey: .dailyMemoryExportHour))
-                ?? defaults.dailyMemoryExportHour))
-        dreamingEnabled =
-            (try? c.decode(Bool.self, forKey: .dreamingEnabled))
-            ?? defaults.dreamingEnabled
-        dreamingHour = min(
-            23,
-            max(0, (try? c.decode(Int.self, forKey: .dreamingHour))
-                ?? defaults.dreamingHour))
-        dreamingFirstEligibleDayKey = try? c.decodeIfPresent(
-            String.self,
-            forKey: .dreamingFirstEligibleDayKey)
-        memoryRoutinesEnabled =
-            (try? c.decode(Bool.self, forKey: .memoryRoutinesEnabled))
-            ?? defaults.memoryRoutinesEnabled
-        memoryRoutineFolder =
-            (try? c.decode(String.self, forKey: .memoryRoutineFolder))
-            ?? defaults.memoryRoutineFolder
-        enabledMemoryRoutines =
-            (try? c.decode([MemoryRoutineKind].self, forKey: .enabledMemoryRoutines))
-            ?? defaults.enabledMemoryRoutines
+            23, max(0, decode(.dailyMemoryExportHour, defaults.dailyMemoryExportHour)))
+        dreamingEnabled = decode(.dreamingEnabled, defaults.dreamingEnabled)
+        dreamingHour = min(23, max(0, decode(.dreamingHour, defaults.dreamingHour)))
+        dreamingFirstEligibleDayKey = decode(.dreamingFirstEligibleDayKey, String?.none)
+        memoryRoutinesEnabled = decode(.memoryRoutinesEnabled, defaults.memoryRoutinesEnabled)
+        memoryRoutineFolder = decode(.memoryRoutineFolder, defaults.memoryRoutineFolder)
+        enabledMemoryRoutines = decode(.enabledMemoryRoutines, defaults.enabledMemoryRoutines)
         memoryRoutineHour = min(
-            23,
-            max(0, (try? c.decode(Int.self, forKey: .memoryRoutineHour))
-                ?? defaults.memoryRoutineHour))
+            23, max(0, decode(.memoryRoutineHour, defaults.memoryRoutineHour)))
         memoryRoutineWeekday = min(
-            7,
-            max(1, (try? c.decode(Int.self, forKey: .memoryRoutineWeekday))
-                ?? defaults.memoryRoutineWeekday))
-        excludedApps = (try? c.decode(String.self, forKey: .excludedApps)) ?? defaults.excludedApps
-        summarizerBackend = (try? c.decode(SummarizerBackend.self, forKey: .summarizerBackend)) ?? defaults.summarizerBackend
-        builtInModelID = (try? c.decode(String.self, forKey: .builtInModelID)) ?? defaults.builtInModelID
-        customBuiltInModels = (try? c.decode([ModelCatalog.Entry].self, forKey: .customBuiltInModels)) ?? defaults.customBuiltInModels
-        ollamaBaseURL = (try? c.decode(String.self, forKey: .ollamaBaseURL)) ?? defaults.ollamaBaseURL
-        ollamaModel = (try? c.decode(String.self, forKey: .ollamaModel)) ?? defaults.ollamaModel
-        openAIBaseURL = (try? c.decode(String.self, forKey: .openAIBaseURL)) ?? defaults.openAIBaseURL
-        openAIModel = (try? c.decode(String.self, forKey: .openAIModel)) ?? defaults.openAIModel
-        approvedRemoteInferenceOrigins =
-            (try? c.decode([String].self, forKey: .approvedRemoteInferenceOrigins))
-            ?? defaults.approvedRemoteInferenceOrigins
-        noteTemplate = (try? c.decode(NoteTemplate.self, forKey: .noteTemplate)) ?? defaults.noteTemplate
-        summaryLanguage = (try? c.decode(SummaryLanguage.self, forKey: .summaryLanguage)) ?? defaults.summaryLanguage
-        multiSpeakerDiarization = (try? c.decode(Bool.self, forKey: .multiSpeakerDiarization)) ?? defaults.multiSpeakerDiarization
-        cotypingEnabled = (try? c.decode(Bool.self, forKey: .cotypingEnabled)) ?? defaults.cotypingEnabled
-        cotypingUserName = (try? c.decode(String.self, forKey: .cotypingUserName)) ?? defaults.cotypingUserName
-        cotypingStyleNote = (try? c.decode(String.self, forKey: .cotypingStyleNote)) ?? defaults.cotypingStyleNote
-        cotypingMultiLine = (try? c.decode(Bool.self, forKey: .cotypingMultiLine)) ?? defaults.cotypingMultiLine
-        let cotypingSettingsVersion = (try? c.decode(Int.self, forKey: .cotypingSettingsVersion)) ?? 0
-        let decodedCotypingMaxWords = (try? c.decode(Int.self, forKey: .cotypingMaxWords)) ?? defaults.cotypingMaxWords
+            7, max(1, decode(.memoryRoutineWeekday, defaults.memoryRoutineWeekday)))
+        excludedApps = decode(.excludedApps, defaults.excludedApps)
+        summarizerBackend = decode(.summarizerBackend, defaults.summarizerBackend)
+        builtInModelID = decode(.builtInModelID, defaults.builtInModelID)
+        customBuiltInModels = decode(.customBuiltInModels, defaults.customBuiltInModels)
+        ollamaBaseURL = decode(.ollamaBaseURL, defaults.ollamaBaseURL)
+        ollamaModel = decode(.ollamaModel, defaults.ollamaModel)
+        openAIBaseURL = decode(.openAIBaseURL, defaults.openAIBaseURL)
+        openAIModel = decode(.openAIModel, defaults.openAIModel)
+        approvedRemoteInferenceOrigins = decode(
+            .approvedRemoteInferenceOrigins, defaults.approvedRemoteInferenceOrigins)
+        noteTemplate = decode(.noteTemplate, defaults.noteTemplate)
+        summaryLanguage = decode(.summaryLanguage, defaults.summaryLanguage)
+        multiSpeakerDiarization = decode(.multiSpeakerDiarization, defaults.multiSpeakerDiarization)
+        cotypingEnabled = decode(.cotypingEnabled, defaults.cotypingEnabled)
+        cotypingUserName = decode(.cotypingUserName, defaults.cotypingUserName)
+        cotypingStyleNote = decode(.cotypingStyleNote, defaults.cotypingStyleNote)
+        cotypingMultiLine = decode(.cotypingMultiLine, defaults.cotypingMultiLine)
+        let cotypingSettingsVersion = decode(.cotypingSettingsVersion, 0)
         cotypingMaxWords = Self.migratedCotypingMaxWords(
-            decodedCotypingMaxWords,
+            decode(.cotypingMaxWords, defaults.cotypingMaxWords),
             decodedSettingsVersion: cotypingSettingsVersion)
-        let decodedCotypingDebounceMs =
-            (try? c.decode(Int.self, forKey: .cotypingDebounceMs)) ?? defaults.cotypingDebounceMs
         cotypingDebounceMs = Self.migratedCotypingDebounceMs(
-            decodedCotypingDebounceMs,
+            decode(.cotypingDebounceMs, defaults.cotypingDebounceMs),
             decodedSettingsVersion: cotypingSettingsVersion)
-        cotypingStreamSuggestionsWhileGenerating = (try? c.decode(Bool.self, forKey: .cotypingStreamSuggestionsWhileGenerating)) ?? defaults.cotypingStreamSuggestionsWhileGenerating
-        cotypingAcceptGranularity = (try? c.decode(CotypingAcceptGranularity.self, forKey: .cotypingAcceptGranularity)) ?? defaults.cotypingAcceptGranularity
-        cotypingAcceptKey = (try? c.decode(CotypingAcceptKey.self, forKey: .cotypingAcceptKey)) ?? defaults.cotypingAcceptKey
-        cotypingFullAcceptKey = (try? c.decode(CotypingFullAcceptKey.self, forKey: .cotypingFullAcceptKey)) ?? defaults.cotypingFullAcceptKey
-        cotypingAutoAcceptTrailingPunctuation = (try? c.decode(Bool.self, forKey: .cotypingAutoAcceptTrailingPunctuation)) ?? defaults.cotypingAutoAcceptTrailingPunctuation
-        cotypingAddSpaceAfterAccept = (try? c.decode(Bool.self, forKey: .cotypingAddSpaceAfterAccept)) ?? defaults.cotypingAddSpaceAfterAccept
-        cotypingExcludedApps = (try? c.decode(String.self, forKey: .cotypingExcludedApps)) ?? defaults.cotypingExcludedApps
-        cotypingExcludedDomains = (try? c.decode(String.self, forKey: .cotypingExcludedDomains)) ?? defaults.cotypingExcludedDomains
-        cotypingSuggestInIntegratedTerminals = (try? c.decode(Bool.self, forKey: .cotypingSuggestInIntegratedTerminals)) ?? defaults.cotypingSuggestInIntegratedTerminals
-        cotypingUseAppContext = (try? c.decode(Bool.self, forKey: .cotypingUseAppContext)) ?? defaults.cotypingUseAppContext
-        cotypingUseClipboard = (try? c.decode(Bool.self, forKey: .cotypingUseClipboard)) ?? defaults.cotypingUseClipboard
-        cotypingMatchHostStyle = (try? c.decode(Bool.self, forKey: .cotypingMatchHostStyle)) ?? defaults.cotypingMatchHostStyle
-        cotypingMirrorPreference = (try? c.decode(CotypingMirrorPreference.self, forKey: .cotypingMirrorPreference)) ?? defaults.cotypingMirrorPreference
-        cotypingAutocorrect = (try? c.decode(Bool.self, forKey: .cotypingAutocorrect)) ?? defaults.cotypingAutocorrect
-        cotypingEmoji = (try? c.decode(Bool.self, forKey: .cotypingEmoji)) ?? defaults.cotypingEmoji
-        cotypingMacros = (try? c.decode(Bool.self, forKey: .cotypingMacros)) ?? defaults.cotypingMacros
-        cotypingLanguages = (try? c.decode(String.self, forKey: .cotypingLanguages)) ?? defaults.cotypingLanguages
-        cotypingExtendedContext = (try? c.decode(String.self, forKey: .cotypingExtendedContext)) ?? defaults.cotypingExtendedContext
-        cotypingBuiltInModelID = (try? c.decode(String.self, forKey: .cotypingBuiltInModelID)) ?? defaults.cotypingBuiltInModelID
-        cotypingInProcessRuntime = (try? c.decode(Bool.self, forKey: .cotypingInProcessRuntime)) ?? defaults.cotypingInProcessRuntime
-        cotypingUseLocalLearning = (try? c.decode(Bool.self, forKey: .cotypingUseLocalLearning)) ?? defaults.cotypingUseLocalLearning
-        let learnedCount = (try? c.decode(Int.self, forKey: .cotypingLearningExamplesInPrompt)) ?? defaults.cotypingLearningExamplesInPrompt
-        cotypingLearningExamplesInPrompt = min(5, max(1, learnedCount))
+        cotypingStreamSuggestionsWhileGenerating = decode(
+            .cotypingStreamSuggestionsWhileGenerating,
+            defaults.cotypingStreamSuggestionsWhileGenerating)
+        cotypingAcceptGranularity = decode(
+            .cotypingAcceptGranularity, defaults.cotypingAcceptGranularity)
+        cotypingAcceptKey = decode(.cotypingAcceptKey, defaults.cotypingAcceptKey)
+        cotypingFullAcceptKey = decode(.cotypingFullAcceptKey, defaults.cotypingFullAcceptKey)
+        cotypingAutoAcceptTrailingPunctuation = decode(
+            .cotypingAutoAcceptTrailingPunctuation,
+            defaults.cotypingAutoAcceptTrailingPunctuation)
+        cotypingAddSpaceAfterAccept = decode(
+            .cotypingAddSpaceAfterAccept, defaults.cotypingAddSpaceAfterAccept)
+        cotypingExcludedApps = decode(.cotypingExcludedApps, defaults.cotypingExcludedApps)
+        cotypingExcludedDomains = decode(.cotypingExcludedDomains, defaults.cotypingExcludedDomains)
+        cotypingSuggestInIntegratedTerminals = decode(
+            .cotypingSuggestInIntegratedTerminals,
+            defaults.cotypingSuggestInIntegratedTerminals)
+        cotypingUseAppContext = decode(.cotypingUseAppContext, defaults.cotypingUseAppContext)
+        cotypingUseClipboard = decode(.cotypingUseClipboard, defaults.cotypingUseClipboard)
+        cotypingMatchHostStyle = decode(.cotypingMatchHostStyle, defaults.cotypingMatchHostStyle)
+        cotypingMirrorPreference = decode(
+            .cotypingMirrorPreference, defaults.cotypingMirrorPreference)
+        cotypingAutocorrect = decode(.cotypingAutocorrect, defaults.cotypingAutocorrect)
+        cotypingEmoji = decode(.cotypingEmoji, defaults.cotypingEmoji)
+        cotypingMacros = decode(.cotypingMacros, defaults.cotypingMacros)
+        cotypingLanguages = decode(.cotypingLanguages, defaults.cotypingLanguages)
+        cotypingExtendedContext = decode(.cotypingExtendedContext, defaults.cotypingExtendedContext)
+        cotypingBuiltInModelID = decode(.cotypingBuiltInModelID, defaults.cotypingBuiltInModelID)
+        cotypingInProcessRuntime = decode(.cotypingInProcessRuntime, defaults.cotypingInProcessRuntime)
+        cotypingUseLocalLearning = decode(.cotypingUseLocalLearning, defaults.cotypingUseLocalLearning)
+        cotypingLearningExamplesInPrompt = min(5, max(1, decode(
+            .cotypingLearningExamplesInPrompt, defaults.cotypingLearningExamplesInPrompt)))
+        corruptedSettingsKeys = corrupted
     }
 }

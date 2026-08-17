@@ -15,6 +15,7 @@ struct OnboardingView: View {
         case flow
         case privacy
         case dayMemory
+        case models
         case permissions
 
         static func < (lhs: WelcomeStep, rhs: WelcomeStep) -> Bool {
@@ -32,8 +33,10 @@ struct OnboardingView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var app: AppState
     @StateObject private var permissions = PermissionManager.shared
+    @ObservedObject private var downloads = ModelDownloadManager.shared
     @State private var step: WelcomeStep = .welcome
     @State private var navigatesForward = true
+    @State private var startedModelDownloads = false
 
     private var isWelcomeMode: Bool { mode == .welcome }
     private var contentWidth: CGFloat { isWelcomeMode ? 640 : 560 }
@@ -106,6 +109,8 @@ struct OnboardingView: View {
             privacyPage
         case .dayMemory:
             dayMemoryPage
+        case .models:
+            modelsPage
         case .permissions:
             permissionPage
         }
@@ -338,6 +343,113 @@ private extension OnboardingView {
         .pagePadding()
     }
 
+    var modelsPage: some View {
+        let snapshot = ModelReadinessSnapshot.make(app: app, downloads: downloads)
+        return VStack(spacing: 22) {
+            OnboardingStepHeader(
+                systemImage: "square.stack.3d.up",
+                title: "Prepare on-device models",
+                subtitle: "Meetings transcribe and summarize with local models. Download them now so your first meeting is processed the moment it ends — recordings made before then wait safely until models arrive."
+            )
+            .onboardingReveal(0)
+
+            VStack(spacing: 10) {
+                OnboardingModelRow(
+                    systemImage: "waveform",
+                    role: "Transcribe",
+                    model: app.settings.transcriptionModelDisplayName,
+                    ready: snapshot.transcriptionReady)
+                .onboardingReveal(1)
+
+                OnboardingModelRow(
+                    systemImage: "brain",
+                    role: "Think",
+                    model: onboardingThinkModelName,
+                    ready: snapshot.thinkReady)
+                .onboardingReveal(2)
+
+                OnboardingModelRow(
+                    systemImage: "text.cursor",
+                    role: "Autocomplete",
+                    model: onboardingAutocompleteModelName,
+                    ready: snapshot.autocompleteReady)
+                .onboardingReveal(3)
+            }
+
+            modelDownloadAction(snapshot)
+                .onboardingReveal(4)
+
+            Text("You can skip this — everything is also available later in Settings → Models. Models download from Hugging Face; your content never leaves this Mac.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .onboardingReveal(5)
+        }
+        .pagePadding()
+    }
+
+    @ViewBuilder
+    private func modelDownloadAction(_ snapshot: ModelReadinessSnapshot) -> some View {
+        if snapshot.coreReady {
+            HStack(spacing: 7) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text("Ready on this Mac")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+            }
+        } else if startedModelDownloads || snapshot.activeDownloads > 0 {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(modelDownloadProgressLabel)
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            Button(modelDownloadButtonTitle(snapshot)) {
+                startedModelDownloads = true
+                app.startCoreModelDownloads()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Brand.teal)
+            .controlSize(.large)
+            .accessibilityIdentifier("onboarding.downloadModels")
+        }
+    }
+
+    private var onboardingThinkModelName: String {
+        ModelCatalog.entry(
+            id: app.settings.builtInModelID,
+            custom: app.settings.customBuiltInModels)?.displayName
+            ?? app.settings.summarizerBackend.displayName
+    }
+
+    private var onboardingAutocompleteModelName: String {
+        ModelCatalog.entry(
+            id: app.settings.cotypingBuiltInModelID,
+            custom: app.settings.customBuiltInModels)?.displayName
+            ?? "LFM2.5 1.2B Instruct"
+    }
+
+    private func modelDownloadButtonTitle(_ snapshot: ModelReadinessSnapshot) -> String {
+        let ggufBytes = ModelReadinessSnapshot.missingCoreModelBytes(
+            app.settings, storage: app.storage)
+        guard ggufBytes > 0 else { return "Download models" }
+        let size = ByteCountFormatter.string(fromByteCount: ggufBytes, countStyle: .file)
+        // The Transcribe model downloads through its engine and has no exact
+        // byte count here — say so instead of pretending the total is exact.
+        return snapshot.transcriptionReady
+            ? "Download models (\(size))"
+            : "Download models (\(size) + speech model)"
+    }
+
+    private var modelDownloadProgressLabel: String {
+        let active = downloads.progress.values
+        guard !active.isEmpty else { return "Downloading models…" }
+        let percent = Int((active.reduce(0, +) / Double(active.count)) * 100)
+        return "Downloading models… \(percent)%"
+    }
+
     var permissionPage: some View {
         VStack(spacing: 22) {
             OnboardingStepHeader(
@@ -420,7 +532,7 @@ private extension OnboardingView {
                 .disabled(!permissions.allGranted)
                 .help(permissions.allGranted ? "" : "Grant microphone access to finish setup.")
             } else if let next = step.next {
-                Button(step == .dayMemory ? "Continue to permissions" : "Continue") {
+                Button(step == .models ? "Continue to permissions" : "Continue") {
                     go(to: next)
                 }
                 .buttonStyle(.borderedProminent)
@@ -741,6 +853,40 @@ private struct PrivacyCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
+        }
+        .padding(18)
+        .onboardingCard()
+    }
+}
+
+private struct OnboardingModelRow: View {
+    let systemImage: String
+    let role: String
+    let model: String
+    let ready: Bool
+
+    var body: some View {
+        HStack(spacing: 14) {
+            IconTile(systemImage: systemImage, tint: Brand.teal, size: 40)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(role)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                Text(model)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(ready ? Color.green : Color.orange)
+                    .frame(width: 7, height: 7)
+                Text(ready ? "Ready" : "Download needed")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(role): \(ready ? "ready" : "download needed")")
         }
         .padding(18)
         .onboardingCard()

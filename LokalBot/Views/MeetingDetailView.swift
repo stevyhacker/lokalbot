@@ -304,6 +304,16 @@ struct MeetingDetailView: View {
                         .controlSize(.small)
                         .accessibilityIdentifier("meeting.detail.retry")
                 }
+            case .waitingForModels:
+                HStack(spacing: 10) {
+                    Label(stage.label, systemImage: "arrow.down.circle")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    Button("Download & process") { app.retryProcessing(meeting) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("meeting.detail.downloadProcess")
+                }
             default:
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)

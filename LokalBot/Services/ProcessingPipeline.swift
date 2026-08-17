@@ -11,6 +11,7 @@ final class ProcessingPipeline: ObservableObject {
 
     enum Stage: Equatable {
         case queued
+        case waitingForModels
         case preparingTranscriptionModel
         case preparingDiarizationModel
         case preparingSummaryModel
@@ -22,6 +23,8 @@ final class ProcessingPipeline: ObservableObject {
         var label: String {
             switch self {
             case .queued: "Queued…"
+            case .waitingForModels:
+                "Waiting for models — the recording is saved. Download the selected models in Settings → Models, or use Download & process to fetch them now."
             case .preparingTranscriptionModel:
                 "Preparing transcription model (download size depends on your selection)…"
             case .preparingDiarizationModel:
@@ -40,6 +43,7 @@ final class ProcessingPipeline: ObservableObject {
         var rowLabel: String {
             switch self {
             case .queued: "Queued"
+            case .waitingForModels: "Waiting for models"
             case .preparingTranscriptionModel: "Preparing speech model"
             case .preparingDiarizationModel: "Preparing speaker model"
             case .preparingSummaryModel: "Preparing summary model"
@@ -53,6 +57,20 @@ final class ProcessingPipeline: ObservableObject {
         var isFailure: Bool {
             if case .failed = self { true } else { false }
         }
+
+        /// The job is parked because processing would trigger a model download
+        /// the user never asked for. Neither a failure nor active work.
+        var isWaitingForModels: Bool { self == .waitingForModels }
+    }
+
+    /// Who asked for this job. Automatic jobs (auto-transcribe after a
+    /// recording, launch crash-resume) must never trigger a model download —
+    /// they park as `.waitingForModels` instead. A user-initiated job (Retry,
+    /// the Process menu, `--process`) downloads missing models on demand,
+    /// because the user just asked for exactly that.
+    enum JobOrigin {
+        case automatic
+        case userInitiated
     }
 
     struct Job {
@@ -62,6 +80,18 @@ final class ProcessingPipeline: ObservableObject {
         /// Re-enqueued from the persisted queue after a crash/quit — keep any
         /// per-track checkpoints instead of starting from scratch.
         var resumed: Bool = false
+        var origin: JobOrigin = .userInitiated
+    }
+
+    /// Injectable model-readiness checks so unit tests can exercise the
+    /// automation gate without touching real model folders (or the network).
+    struct AutomationReadiness {
+        var transcription: (AppSettings) -> Bool
+        var think: (AppSettings, StorageManager) -> Bool
+
+        static let live = AutomationReadiness(
+            transcription: ModelReadinessSnapshot.transcriptionReady,
+            think: ModelReadinessSnapshot.thinkReady)
     }
 
     /// Stage per meeting. `.failed` sticks around until the next attempt;
@@ -71,12 +101,18 @@ final class ProcessingPipeline: ObservableObject {
     private let storage: StorageManager
     private let settings: () -> AppSettings
     private let builtInModelPreparer: BuiltInModelPreparer
+    private let automationReadiness: AutomationReadiness
     /// In-memory work list; `jobStore` mirrors it on disk so a crash mid-queue
     /// loses nothing — see `resumePending(meetings:)`.
     private var queue: [Job] = []
+    /// Automatic jobs parked because their models are not downloaded yet.
+    /// Their durable rows stay pending (no attempt burned), so a relaunch
+    /// re-checks them; `retryJobsWaitingForModels()` re-checks mid-session.
+    private var waitingForModelsJobs: [Job] = []
     private var isDraining = false
     private var activeMeetingID: Meeting.ID?
     var hasActiveWork: Bool { isDraining || activeMeetingID != nil }
+    var hasJobsWaitingForModels: Bool { !waitingForModelsJobs.isEmpty }
     private let diarizer = NeuralDiarizationEngine()
     private let jobStore: PipelineJobStore?
     /// Fired after transcript/summary files land on disk (search re-index).
@@ -86,14 +122,27 @@ final class ProcessingPipeline: ObservableObject {
          settings: @escaping () -> AppSettings,
          builtInModelPreparer: @escaping BuiltInModelPreparer = { entry, storage in
              try await ModelDownloadManager.shared.ensureAvailable(entry, storage: storage)
-         }) {
+         },
+         automationReadiness: AutomationReadiness = .live) {
         self.storage = storage
         self.jobStore = jobStore
         self.settings = settings
         self.builtInModelPreparer = builtInModelPreparer
+        self.automationReadiness = automationReadiness
     }
 
-    func enqueue(_ meeting: Meeting, transcribe: Bool = true, summarize: Bool = true) {
+    func enqueue(_ meeting: Meeting, transcribe: Bool = true, summarize: Bool = true,
+                 origin: JobOrigin = .userInitiated) {
+        // A fresh enqueue supersedes a parked waiting-for-models job: merge its
+        // requested work so the new attempt (and its origin) covers both.
+        var transcribe = transcribe
+        var summarize = summarize
+        if let waitingIndex = waitingForModelsJobs.firstIndex(
+            where: { $0.meeting.id == meeting.id }) {
+            let waiting = waitingForModelsJobs.remove(at: waitingIndex)
+            transcribe = transcribe || waiting.transcribe
+            summarize = summarize || waiting.summarize
+        }
         if let index = queue.firstIndex(where: { $0.meeting.id == meeting.id }) {
             let mergedTranscribe = queue[index].transcribe || transcribe
             let mergedSummarize = queue[index].summarize || summarize
@@ -108,6 +157,7 @@ final class ProcessingPipeline: ObservableObject {
             queue[index].transcribe = mergedTranscribe
             queue[index].summarize = mergedSummarize
             queue[index].resumed = false
+            if origin == .userInitiated { queue[index].origin = .userInitiated }
             lokalbotLog("pipeline coalesced queued meeting=\(meeting.id)")
             return
         }
@@ -121,9 +171,39 @@ final class ProcessingPipeline: ObservableObject {
             stages[meeting.id] = .failed("Could not persist the processing job.")
             return
         }
-        queue.append(Job(meeting: meeting, transcribe: transcribe, summarize: summarize))
+        queue.append(Job(meeting: meeting, transcribe: transcribe, summarize: summarize,
+                         origin: origin))
         stages[meeting.id] = .queued
         drain()
+    }
+
+    /// Re-check every job parked on missing models — call when a model
+    /// download finishes or the selection changes. Jobs whose models are still
+    /// missing simply park again; nothing downloads from this path.
+    func retryJobsWaitingForModels() {
+        guard !waitingForModelsJobs.isEmpty else { return }
+        let parked = waitingForModelsJobs
+        waitingForModelsJobs = []
+        for job in parked {
+            queue.append(job)
+            stages[job.meeting.id] = .queued
+        }
+        lokalbotLog("pipeline rechecking \(parked.count) job(s) waiting for models")
+        drain()
+    }
+
+    /// Drop all pipeline state for deleted meetings so a parked or queued job
+    /// cannot resurrect processing for a folder that no longer exists.
+    func forget(meetingIDs: Set<Meeting.ID>) {
+        guard !meetingIDs.isEmpty else { return }
+        queue.removeAll { meetingIDs.contains($0.meeting.id) }
+        waitingForModelsJobs.removeAll { meetingIDs.contains($0.meeting.id) }
+        for id in meetingIDs where stages[id] != nil {
+            stages[id] = nil
+        }
+        if let jobStore {
+            for id in meetingIDs { jobStore.markCompleted(meetingID: id) }
+        }
     }
 
     /// Crash recovery, called once at launch: re-enqueue every persisted job
@@ -148,7 +228,8 @@ final class ProcessingPipeline: ObservableObject {
             queue.append(Job(meeting: meeting,
                              transcribe: job.transcribe && !hasTranscript,
                              summarize: job.summarize,
-                             resumed: true))
+                             resumed: true,
+                             origin: .automatic))
             stages[meeting.id] = .queued
         }
         for parked in jobStore.parkedJobs() {
@@ -177,10 +258,26 @@ final class ProcessingPipeline: ObservableObject {
         let meeting = job.meeting
         let folder = meeting.folderURL(in: storage)
         let config = settings()
+        // Automatic work never ambush-downloads a model: park the job instead
+        // (before markStarted, so waiting burns no auto-resume attempts and
+        // the durable row is re-checked on the next launch). A user-initiated
+        // job passes through and downloads on demand.
+        if job.origin == .automatic {
+            let needsTranscription = job.transcribe || !FileManager.default.fileExists(
+                atPath: folder.appendingPathComponent("transcript.json").path)
+            if needsTranscription, !automationReadiness.transcription(config) {
+                waitingForModelsJobs.append(job)
+                stages[meeting.id] = .waitingForModels
+                lokalbotLog(
+                    "pipeline parked meeting=\(meeting.id) waiting for the transcription model")
+                return
+            }
+        }
         if let jobStore, !jobStore.markStarted(meetingID: meeting.id) {
             stages[meeting.id] = .failed("Could not durably start this processing job.")
             return
         }
+        var transcriptWrittenThisJob = false
         do {
             if job.transcribe || !FileManager.default.fileExists(
                 atPath: folder.appendingPathComponent("transcript.json").path) {
@@ -215,8 +312,23 @@ final class ProcessingPipeline: ObservableObject {
                 // preserving playable audio after the transcript is written.
                 MeetingAudioFiles.removeRedundantRecoveryFiles(in: folder)
                 clearCheckpoints(in: folder)
+                transcriptWrittenThisJob = true
             }
             if job.summarize {
+                // Missing Think model on automatic work: keep the transcript
+                // that just landed and park only the summary. The durable row
+                // stays pending, so the summary still happens once the model
+                // is downloaded (or the user asks explicitly).
+                if job.origin == .automatic, !automationReadiness.think(config, storage) {
+                    waitingForModelsJobs.append(Job(
+                        meeting: meeting, transcribe: false, summarize: true,
+                        resumed: job.resumed, origin: .automatic))
+                    stages[meeting.id] = .waitingForModels
+                    lokalbotLog(
+                        "pipeline parked summary meeting=\(meeting.id) waiting for the Think model")
+                    if transcriptWrittenThisJob { onArtifactsWritten?(meeting) }
+                    return
+                }
                 if config.summarizerBackend == .builtIn {
                     stages[meeting.id] = .preparingSummaryModel
                     _ = try await prepareBuiltInModel(config)
