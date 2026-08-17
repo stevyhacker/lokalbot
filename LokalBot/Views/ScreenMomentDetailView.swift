@@ -36,7 +36,7 @@ struct ScreenMomentDetailView: View {
                           systemImage: "text.viewfinder")
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                        .padding(14)
+                        .padding(WorkspaceMetric.cardPadding)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(.quaternary.opacity(0.3),
                                     in: RoundedRectangle(cornerRadius: Brand.Radius.panel))

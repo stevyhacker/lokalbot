@@ -77,13 +77,13 @@ struct GettingStartedCard: View {
                         }
                     }
                 }
-                .padding(14)
+                .padding(WorkspaceMetric.cardPadding)
                 .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
 
                 Text("Tip: press ⌘K anywhere to record, navigate, or jump to a meeting.")
                     .font(.caption).foregroundStyle(.tertiary)
             }
-            .padding(24)
+            .padding(WorkspaceMetric.pagePadding)
             .frame(maxWidth: 560, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }

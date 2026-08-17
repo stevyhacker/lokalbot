@@ -140,7 +140,7 @@ struct OnboardingView: View {
 
 private extension OnboardingView {
     var welcomePage: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: WorkspaceMetric.pagePadding) {
             appIcon
                 .onboardingReveal(0)
 
@@ -174,7 +174,7 @@ private extension OnboardingView {
     }
 
     var flowPage: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: WorkspaceMetric.pagePadding) {
             OnboardingStepHeader(
                 systemImage: "waveform.badge.magnifyingglass",
                 title: "Remember. Ask. Write. Act.",
@@ -224,7 +224,7 @@ private extension OnboardingView {
     }
 
     var privacyPage: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: WorkspaceMetric.pagePadding) {
             OnboardingStepHeader(
                 systemImage: "lock.shield.fill",
                 title: "Private by default",
@@ -270,7 +270,7 @@ private extension OnboardingView {
     }
 
     var dayMemoryPage: some View {
-        VStack(spacing: 22) {
+        VStack(spacing: WorkspaceMetric.sectionGap) {
             OnboardingStepHeader(
                 systemImage: "calendar.day.timeline.left",
                 tint: Brand.teal,
@@ -345,7 +345,7 @@ private extension OnboardingView {
 
     var modelsPage: some View {
         let snapshot = ModelReadinessSnapshot.make(app: app, downloads: downloads)
-        return VStack(spacing: 22) {
+        return VStack(spacing: WorkspaceMetric.sectionGap) {
             OnboardingStepHeader(
                 systemImage: "square.stack.3d.up",
                 title: "Prepare on-device models",
@@ -399,12 +399,9 @@ private extension OnboardingView {
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
             }
         } else if startedModelDownloads || snapshot.activeDownloads > 0 {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(modelDownloadProgressLabel)
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
-            }
+            LoadingStateLabel(
+                modelDownloadProgressLabel,
+                font: .system(size: 13, weight: .medium, design: .rounded))
         } else {
             Button(modelDownloadButtonTitle(snapshot)) {
                 startedModelDownloads = true
@@ -451,7 +448,7 @@ private extension OnboardingView {
     }
 
     var permissionPage: some View {
-        VStack(spacing: 22) {
+        VStack(spacing: WorkspaceMetric.sectionGap) {
             OnboardingStepHeader(
                 systemImage: missingRequiredCount == 0 ? "checkmark.shield.fill" : "lock.shield.fill",
                 tint: missingRequiredCount == 0 ? .green : Brand.teal,
@@ -747,7 +744,7 @@ private struct PermissionSetupCard: View {
                 }
             }
         }
-        .padding(18)
+        .padding(WorkspaceMetric.panelPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .onboardingCard()
         .animation(.spring(response: 0.35, dampingFraction: 0.7), value: granted)
@@ -801,7 +798,7 @@ private struct TimelineCard: View {
 
             Spacer(minLength: 0)
         }
-        .padding(18)
+        .padding(WorkspaceMetric.panelPadding)
         .onboardingCard()
     }
 }
@@ -830,7 +827,7 @@ private struct OnboardingOptInCard: View {
                 .toggleStyle(.switch)
                 .accessibilityIdentifier("onboarding.optIn.\(title)")
         }
-        .padding(18)
+        .padding(WorkspaceMetric.panelPadding)
         .onboardingCard()
     }
 }
@@ -854,7 +851,7 @@ private struct PrivacyCard: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(18)
+        .padding(WorkspaceMetric.panelPadding)
         .onboardingCard()
     }
 }
@@ -888,7 +885,7 @@ private struct OnboardingModelRow: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("\(role): \(ready ? "ready" : "download needed")")
         }
-        .padding(18)
+        .padding(WorkspaceMetric.panelPadding)
         .onboardingCard()
     }
 }

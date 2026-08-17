@@ -25,9 +25,9 @@ struct ChatTranscriptView: View {
                         EditorialTurn(message: message, model: model).id(message.id)
                     }
                 }
-                .padding(.horizontal, 24)
+                .padding(.horizontal, WorkspaceMetric.pagePadding)
                 .padding(.top, 8)
-                .padding(.bottom, 24)
+                .padding(.bottom, WorkspaceMetric.pagePadding)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .accessibilityIdentifier("chat.messages")
@@ -383,9 +383,7 @@ private struct WorkedLine: View {
             } label: {
                 HStack(spacing: 6) {
                     if let current = inFlight {
-                        ProgressView().controlSize(.small).scaleEffect(0.7)
-                            .frame(width: 12, height: 12)
-                        Text(current.text)
+                        LoadingStateLabel(current.text, controlSize: .mini)
                     } else {
                         Image(systemName: "checkmark.circle").font(.caption2)
                         Text("worked: " + activities.map(\.text).joined(separator: " · "))
@@ -414,10 +412,10 @@ private struct ActivityRow: View {
         HStack(spacing: 6) {
             if activity.done {
                 Image(systemName: activity.icon).font(.caption2).foregroundStyle(.secondary)
+                Text(activity.text).font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
             } else {
-                ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 12, height: 12)
+                LoadingStateLabel(activity.text, controlSize: .mini)
             }
-            Text(activity.text).font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
         }
         .chipChrome()
     }

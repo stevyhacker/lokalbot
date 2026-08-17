@@ -59,8 +59,7 @@ struct AgentView: View {
                 .frame(maxWidth: 420)
             switch installer.phase {
             case .checking:
-                ProgressView().controlSize(.small)
-                Text("Verifying Agent runtime…").font(.caption).foregroundStyle(.secondary)
+                LoadingStateLabel("Verifying Agent runtime…", font: .caption)
             case .idle:
                 Button("Download & Enable Agent Mode") {
                     Task { await installer.installIfNeeded() }
@@ -72,8 +71,7 @@ struct AgentView: View {
                     .frame(maxWidth: 320)
                 Text("Downloading \(name)…").font(.caption).foregroundStyle(.secondary)
             case .installing(let name):
-                ProgressView().controlSize(.small)
-                Text("Installing \(name)…").font(.caption).foregroundStyle(.secondary)
+                LoadingStateLabel("Installing \(name)…", font: .caption)
             case .failed(let message):
                 Text(message).font(.caption).foregroundStyle(.red)
                     .frame(maxWidth: 420)

@@ -588,7 +588,10 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(keyword.waitForExistence(timeout: 5), "Keyword search mode missing")
         keyword.click()
         XCTAssertTrue(textWithContent("Keyword search").firstMatch.waitForExistence(timeout: 4))
-        XCTAssertTrue(app.buttons["Back to Ask"].exists)
+        // One segmented control owns all three retrieval modes, so Ask and
+        // Match by meaning stay one click away instead of a "Back" round trip.
+        XCTAssertTrue(identified("ask.mode.ask").exists, "Ask segment missing")
+        XCTAssertTrue(identified("ask.semantic").exists, "Match by meaning segment missing")
         XCTAssertFalse(app.descendants(matching: .any)["ask.source.meetings"].exists,
                        "Ask scopes should not masquerade as keyword facets")
     }
@@ -818,7 +821,7 @@ final class MainWindowUITests: XCTestCase {
         let keyword = app.buttons["Keyword search"]
         XCTAssertTrue(keyword.waitForExistence(timeout: 5), "Keyword search mode missing")
         keyword.click()
-        XCTAssertTrue(app.buttons["Back to Ask"].waitForExistence(timeout: 4),
+        XCTAssertTrue(UITestHarness.waitUntil { keyword.isSelected },
                       "Ask did not enter keyword-search mode")
     }
 

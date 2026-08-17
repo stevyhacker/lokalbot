@@ -26,7 +26,6 @@ struct TodayView: View {
                 UpcomingMeetingSection(model: upcomingMeeting)
                 capturedSection
                 if !gettingStartedDismissed { GettingStartedCard() }
-                askSection
             }
             .padding(WorkspaceMetric.pagePadding)
             .frame(maxWidth: WorkspaceMetric.contentMaxWidth, alignment: .leading)
@@ -115,8 +114,6 @@ struct TodayView: View {
         }
     }
 
-    @State private var question = ""
-
     // MARK: Dream (morning brief)
 
     @State private var dream: DreamReport?
@@ -157,7 +154,7 @@ struct TodayView: View {
                         .popover(isPresented: $showingDreamInfo) {
                             Text(dream.provenanceDescription)
                                 .font(.callout)
-                                .padding(14)
+                                .padding(WorkspaceMetric.cardPadding)
                                 .frame(width: 300, alignment: .leading)
                         }
                 }
@@ -189,7 +186,7 @@ struct TodayView: View {
                 }
                 dreamInferenceNotice(dream)
             }
-            .padding(14)
+            .padding(WorkspaceMetric.cardPadding)
             .background(RoundedRectangle(cornerRadius: 12).fill(.quaternary.opacity(0.4)))
         }
     }
@@ -368,7 +365,7 @@ struct TodayView: View {
                 .controlSize(.small)
                 .disabled(model.generating)
                 .accessibilityIdentifier("today.dayDigest.generate")
-                if model.generating { ProgressView().controlSize(.small) }
+                if model.generating { LoadingStateLabel("Writing digest…") }
             }
         }
         if let digestError = model.digestError {
@@ -383,9 +380,14 @@ struct TodayView: View {
         let todays = model.meetings(in: app)
         return WorkspaceSection(title: "Captured", icon: "tray.full") {
             VStack(spacing: 0) {
-                if todays.isEmpty && model.shots.isEmpty {
-                    EmptyWorkspaceRow(text: "Nothing has been captured today yet.")
+                if todays.isEmpty {
+                    EmptyWorkspaceRow(text: model.shots.isEmpty
+                        ? "Nothing has been captured today yet."
+                        : "No meetings captured yet — today's screen moments live in the Timeline.")
                 } else {
+                    // The screen-moment count already lives in the Day so far
+                    // stat row above; repeating it here read as two different
+                    // numbers for the same thing. Captured stays meetings-only.
                     ForEach(todays.prefix(4)) { meeting in
                         Button {
                             app.previewMeeting(meeting.id)
@@ -409,14 +411,6 @@ struct TodayView: View {
                         .padding(.vertical, 6)
                         Divider()
                     }
-                    HStack {
-                        Label("\(model.shots.count) screen moments", systemImage: "camera")
-                            .font(WorkspaceTypography.body).foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Open timeline") { app.navSection = .timeline }
-                            .buttonStyle(.plain).foregroundStyle(Brand.teal)
-                    }
-                    .padding(.vertical, 8)
                 }
             }
         }
@@ -428,51 +422,6 @@ struct TodayView: View {
         }
     }
 
-    private var meetingsSection: some View {
-        let todays = model.meetings(in: app)
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("Today's meetings")
-                .font(WorkspaceTypography.sectionTitle)
-                .accessibilityIdentifier("today.meetings")
-            if todays.isEmpty {
-                Text("No meetings captured today. LokalBot detects meeting apps automatically — or choose Record now.")
-                    .font(WorkspaceTypography.body).foregroundStyle(.secondary)
-            } else {
-                ForEach(todays) { meeting in
-                    Button {
-                        app.openMeeting(meeting.id)
-                    } label: {
-                        MeetingRowView(meeting: meeting)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-
-    // MARK: Ask
-
-    private var askSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Ask about today").font(WorkspaceTypography.sectionTitle)
-            HStack(spacing: 8) {
-                TextField("What did we decide about…", text: $question)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(submitQuestion)
-                    .accessibilityIdentifier("today.ask")
-                Button("Ask") { submitQuestion() }
-                    .disabled(question.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-        }
-    }
-
-    private func submitQuestion() {
-        let text = question.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return }
-        question = ""
-        app.openAsk(query: text, dayScope: model.day, submit: true)
-    }
 }
 
 /// Pure report selection keeps the overnight/current-day boundary testable

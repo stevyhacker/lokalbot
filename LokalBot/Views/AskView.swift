@@ -19,6 +19,10 @@ private struct AskContent: View {
 
     @State private var query = ""
     @State private var mode: AskMode = .ask
+    /// Search flavor within keyword mode: exact words vs. semantic matching.
+    /// Seeded from the persisted setting; selecting "Match by meaning" turns
+    /// indexing on, while going back to exact words never turns it off.
+    @State private var matchByMeaning = false
     @State private var sources = AskSourceScope.defaults
     @State private var facet: AskFacet = .all
     @State private var hits: [SearchIndex.Hit] = []
@@ -59,6 +63,7 @@ private struct AskContent: View {
             mode = .ask
         }
         .onAppear {
+            matchByMeaning = app.settings.semanticSearchEnabled
             consumePrefill()
             consumeScreenContext()
             consumeSubmitRequest()
@@ -116,7 +121,7 @@ private struct AskContent: View {
                 if facet == .screen { screenFilterRow }
             }
         }
-        .padding(.horizontal, 23)
+        .padding(.horizontal, WorkspaceMetric.pagePadding)
         .padding(.bottom, 31)
     }
 
@@ -129,7 +134,9 @@ private struct AskContent: View {
                 TextField(
                     mode == .ask
                         ? "Ask LokalBot about your work…"
-                        : "Search exact words in local memory…",
+                        : (matchByMeaning
+                            ? "Search local memory by meaning…"
+                            : "Search exact words in local memory…"),
                     text: $query)
                 .textFieldStyle(.plain)
                 .font(WorkspaceTypography.editorialBody)
@@ -186,42 +193,10 @@ private struct AskContent: View {
             .frame(minHeight: 70)
 
             HStack(spacing: 8) {
-                Button {
-                    mode = mode == .ask ? .keyword : .ask
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: mode == .ask ? "magnifyingglass" : "sparkles")
-                        Text(mode == .ask ? "Keyword search" : "Back to Ask")
-                    }
-                    .font(WorkspaceTypography.control)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 8)
-                    .background(.quaternary.opacity(0.42), in: Capsule())
-                    .overlay { Capsule().strokeBorder(Color.primary.opacity(0.10)) }
-                }
-                .buttonStyle(.plain)
+                retrievalModeControl
                 Spacer()
-                Button {
-                    toggleSemantic()
-                } label: {
-                    HStack(spacing: 9) {
-                        Image(systemName: "atom")
-                        Text("Match by meaning")
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .font(WorkspaceTypography.control)
-                    .padding(.horizontal, 17)
-                    .padding(.vertical, 8)
-                    .background(.quaternary.opacity(0.42), in: Capsule())
-                    .overlay { Capsule().strokeBorder(Color.primary.opacity(0.10)) }
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("ask.semantic")
-                .accessibilityValue(app.settings.semanticSearchEnabled ? "On" : "Off")
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, WorkspaceMetric.panelPadding)
             .padding(.top, 2)
             .padding(.bottom, 22)
         }
@@ -232,6 +207,96 @@ private struct AskContent: View {
             RoundedRectangle(cornerRadius: Brand.Radius.panel, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.11))
         }
+    }
+
+    // MARK: - Retrieval mode
+
+    /// The one control for how a query is answered: chat, exact words, or
+    /// semantic matching — previously three competing capsules.
+    private enum AskRetrieval: String, CaseIterable, Identifiable {
+        case ask = "Ask"
+        case keyword = "Keyword search"
+        case meaning = "Match by meaning"
+
+        var id: String { rawValue }
+
+        var icon: String {
+            switch self {
+            case .ask: "sparkles"
+            case .keyword: "magnifyingglass"
+            case .meaning: "atom"
+            }
+        }
+
+        var identifier: String {
+            switch self {
+            case .ask: "ask.mode.ask"
+            case .keyword: "ask.mode.keyword"
+            case .meaning: "ask.semantic"
+            }
+        }
+
+        var helpText: String {
+            switch self {
+            case .ask:
+                "Ask the local assistant, with evidence from your library."
+            case .keyword:
+                "Find exact words in meetings, summaries, and permitted screen text."
+            case .meaning:
+                "Match by meaning, not just keywords. Downloads the Qwen3 embedding model and indexes transcripts plus on-device OCR when first enabled."
+            }
+        }
+    }
+
+    private var currentRetrieval: AskRetrieval {
+        if mode == .ask { return .ask }
+        return matchByMeaning ? .meaning : .keyword
+    }
+
+    private var retrievalModeControl: some View {
+        HStack(spacing: 2) {
+            ForEach(AskRetrieval.allCases) { retrieval in
+                let selected = currentRetrieval == retrieval
+                Button {
+                    select(retrieval)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: retrieval.icon)
+                        Text(retrieval.rawValue)
+                    }
+                    .font(WorkspaceTypography.control)
+                    .foregroundStyle(selected ? AnyShapeStyle(.primary)
+                                              : AnyShapeStyle(.secondary))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(selected ? AnyShapeStyle(Brand.teal.opacity(0.30))
+                                         : AnyShapeStyle(.clear),
+                                in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier(retrieval.identifier)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .help(retrieval.helpText)
+            }
+        }
+        .padding(3)
+        .background(.quaternary.opacity(0.42), in: Capsule())
+        .overlay { Capsule().strokeBorder(Color.primary.opacity(0.10)) }
+    }
+
+    private func select(_ retrieval: AskRetrieval) {
+        switch retrieval {
+        case .ask:
+            mode = .ask
+        case .keyword:
+            matchByMeaning = false
+            mode = .keyword
+        case .meaning:
+            matchByMeaning = true
+            if !app.settings.semanticSearchEnabled { enableSemanticIndexing() }
+            mode = .keyword
+        }
+        if mode == .keyword { runSearch() }
     }
 
     private var sourceScopeRow: some View {
@@ -408,12 +473,6 @@ private struct AskContent: View {
                     facet = candidate
                 }
             }
-            Divider().frame(height: 14)
-            facetChip("≈ Semantic",
-                      on: app.settings.semanticSearchEnabled,
-                      id: "ask.facet.semantic",
-                      action: toggleSemantic)
-                .help("Also match meetings and captured screen text by meaning, not just keywords. Downloads the Qwen3 embedding model and indexes transcripts plus on-device OCR when first enabled.")
             if let day = app.askDayScope {
                 HStack(spacing: 4) {
                     Image(systemName: "calendar")
@@ -450,18 +509,16 @@ private struct AskContent: View {
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 
-    /// Turning semantic search on kicks off the embedding backfill (which
-    /// downloads the embedding model on first use) — same behavior the old
-    /// Search toggle had.
-    private func toggleSemantic() {
-        app.settings.semanticSearchEnabled.toggle()
-        if app.settings.semanticSearchEnabled {
-            Task {
-                await app.embeddingIndex.reindexAll(app.meetings)
-                await app.embeddingIndex.reindexScreenText()
-            }
+    /// First selection of "Match by meaning" turns semantic indexing on and
+    /// kicks off the embedding backfill (which downloads the embedding model
+    /// on first use) — same behavior the old toggle had. Switching back to
+    /// exact words never turns indexing off.
+    private func enableSemanticIndexing() {
+        app.settings.semanticSearchEnabled = true
+        Task {
+            await app.embeddingIndex.reindexAll(app.meetings)
+            await app.embeddingIndex.reindexScreenText()
         }
-        runSearch()
     }
 
     // MARK: - Escalation
@@ -598,7 +655,7 @@ private struct AskContent: View {
                     keyword = app.activityStore.searchOCR(
                         q, limit: 80, matchAll: false, dropStopWords: true, filter: filter)
                 }
-                if app.settings.semanticSearchEnabled {
+                if matchByMeaning {
                     let semantic = await app.embeddingIndex.searchScreen(q, filter: filter, limit: 80)
                     guard !Task.isCancelled else { return }
                     let keywordByID = Dictionary(
@@ -627,7 +684,7 @@ private struct AskContent: View {
                 hits = q.isEmpty ? [] : app.searchIndex.search(q, kind: f.kind)
                 semanticHits = []
                 if f == .all, !q.isEmpty, q.count > 3,
-                   app.settings.semanticSearchEnabled, app.embeddingIndex.hasEmbeddings {
+                   matchByMeaning, app.embeddingIndex.hasEmbeddings {
                     let semantic = await app.embeddingIndex.search(q)
                     guard !Task.isCancelled else { return }
                     // Drop chunks already surfaced by keyword search.
@@ -683,9 +740,12 @@ private struct AskContent: View {
 
     private var keywordEmptyState: some View {
         ContentUnavailableView {
-            Label("Keyword search", systemImage: "magnifyingglass")
+            Label(matchByMeaning ? "Match by meaning" : "Keyword search",
+                  systemImage: matchByMeaning ? "atom" : "magnifyingglass")
         } description: {
-            Text("Search meeting titles, transcripts, summaries, and permitted screen text without asking the model.")
+            Text(matchByMeaning
+                ? "Find meetings and permitted screen text that mean what you type, even when the words differ."
+                : "Search meeting titles, transcripts, summaries, and permitted screen text without asking the model.")
         }
     }
 

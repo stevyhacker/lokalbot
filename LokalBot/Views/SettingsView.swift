@@ -573,8 +573,7 @@ struct SettingsView: View {
                             }
                         }
                         if app.memoryRoutines.isRunning, let kind = app.memoryRoutines.currentKind {
-                            ProgressView().controlSize(.small)
-                            Text(kind.displayName).font(.caption).foregroundStyle(.secondary)
+                            LoadingStateLabel(kind.displayName, font: .caption)
                         }
                     }
                     if !app.memoryRoutines.recentRuns.isEmpty {
@@ -612,8 +611,7 @@ struct SettingsView: View {
                         Button("Dream now") { app.dreamNow() }
                             .disabled(app.dreaming.isDreaming || !app.libraryReady)
                         if app.dreaming.isDreaming {
-                            ProgressView().controlSize(.small)
-                            Text("Dreaming…").font(.caption).foregroundStyle(.secondary)
+                            LoadingStateLabel("Dreaming…", font: .caption)
                         } else if let last = app.dreaming.lastDreamedAt {
                             Text("Last dreamed " + last.formatted(.relative(presentation: .named)))
                                 .font(.caption).foregroundStyle(.secondary)

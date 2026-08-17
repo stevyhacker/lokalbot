@@ -84,7 +84,7 @@ struct MeetingDetailView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .padding(22)
+        .padding(WorkspaceMetric.sectionGap)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task(id: reloadKey) { loadFiles() }
         .task {
@@ -262,17 +262,12 @@ struct MeetingDetailView: View {
 
     @ViewBuilder private var statusRow: some View {
         if isExportingAudio {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Exporting audio…").font(.callout).foregroundStyle(.secondary)
-            }
+            LoadingStateLabel("Exporting audio…", font: .callout)
         }
         if isPreparingSpeech || isExportingSpeech {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(isExportingSpeech ? "Exporting spoken summary…" : "Preparing speech…")
-                    .font(.callout).foregroundStyle(.secondary)
-            }
+            LoadingStateLabel(
+                isExportingSpeech ? "Exporting spoken summary…" : "Preparing speech…",
+                font: .callout)
         }
         if let exportError {
             Label(exportError, systemImage: "exclamationmark.triangle")
@@ -315,10 +310,7 @@ struct MeetingDetailView: View {
                         .accessibilityIdentifier("meeting.detail.downloadProcess")
                 }
             default:
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text(stage.label).font(.callout).foregroundStyle(.secondary)
-                }
+                LoadingStateLabel(stage.label, font: .callout)
             }
         }
     }
@@ -338,7 +330,11 @@ struct MeetingDetailView: View {
                         MeetingOutcomesSection(outcomes: outcomes)
                     }
                     if let summary {
-                        MarkdownText(summary)
+                        let parts = SummaryPresentation.split(summary)
+                        if !parts.metadata.isEmpty {
+                            SummaryMetadataRow(items: parts.metadata)
+                        }
+                        MarkdownText(parts.body)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
                     }
@@ -683,7 +679,7 @@ private struct MeetingOutcomesSection: View {
                 }
             }
         }
-        .padding(14)
+        .padding(WorkspaceMetric.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 9))
         .accessibilityIdentifier("detail.outcomes")
@@ -767,7 +763,7 @@ private struct SpeakerRenameSheet: View {
                     .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(18)
+        .padding(WorkspaceMetric.panelPadding)
         .frame(width: 380)
     }
 }

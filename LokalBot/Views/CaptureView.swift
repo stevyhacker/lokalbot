@@ -415,10 +415,7 @@ private struct TimelineWorkspaceHeader: View {
             Task { await model.generateDigest(app: app) }
         } label: {
             if model.generating {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Updating digest…")
-                }
+                LoadingStateLabel("Updating digest…")
             } else {
                 Label(model.digest == nil ? "Write day digest" : "Rewrite day digest",
                       systemImage: "arrow.clockwise")

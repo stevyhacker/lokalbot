@@ -109,7 +109,7 @@ struct TimelineContextPanel: View {
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
+                    .padding(WorkspaceMetric.cardPadding)
                     .background(.quaternary.opacity(0.24),
                                 in: RoundedRectangle(cornerRadius: Brand.Radius.control))
                 }

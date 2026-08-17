@@ -64,7 +64,7 @@ struct UpcomingMeetingSection: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(14)
+        .padding(WorkspaceMetric.cardPadding)
         .background(
             RoundedRectangle(cornerRadius: Brand.Radius.panel, style: .continuous)
                 .fill(.quaternary.opacity(0.35)))
@@ -320,10 +320,7 @@ private struct UpcomingMeetingCard: View {
                 Text("Brief").font(.headline)
                 Spacer()
                 if model.isGenerating(evidence) {
-                    ProgressView().controlSize(.small)
-                    Text("Preparing…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    LoadingStateLabel("Preparing…", font: .caption)
                 } else if evidence.hasPreparationContext {
                     Button {
                         Task { await model.generate(app: app, evidence: evidence) }

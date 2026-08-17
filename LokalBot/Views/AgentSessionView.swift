@@ -75,14 +75,12 @@ struct AgentSessionView: View {
             Label("Ready to start", systemImage: "circle")
                 .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
         case .starting:
-            HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("Starting...") }
-                .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+            LoadingStateLabel("Starting…", controlSize: .mini)
         case .ready:
             Label("Ready", systemImage: "circle.fill")
                 .font(WorkspaceTypography.metadata).foregroundStyle(.green)
         case .running:
-            HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("Working…") }
-                .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+            LoadingStateLabel("Working…", controlSize: .mini)
         case .failed(let message):
             Label("Needs attention", systemImage: "exclamationmark.triangle.fill")
                 .font(WorkspaceTypography.metadata).foregroundStyle(Brand.error)

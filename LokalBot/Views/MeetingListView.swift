@@ -42,7 +42,7 @@ struct MeetingListView: View {
                 .labelsHidden()
                 .accessibilityIdentifier("meeting.statusFilter")
             }
-            .padding(14)
+            .padding(WorkspaceMetric.cardPadding)
             .background(.bar)
             Divider()
 
@@ -61,12 +61,9 @@ struct MeetingListView: View {
             .accessibilityIdentifier("meeting.list")
             .overlay {
                 if !app.libraryReady {
-                    VStack(spacing: 10) {
-                        ProgressView()
-                        Text("Loading your meeting library…")
-                            .font(WorkspaceTypography.body)
-                            .foregroundStyle(.secondary)
-                    }
+                    LoadingStateLabel(
+                        "Loading your meeting library…",
+                        font: WorkspaceTypography.body)
                     .accessibilityIdentifier("meeting.libraryLoading")
                 } else if groupedMeetings.isEmpty {
                     ContentUnavailableView(
@@ -223,13 +220,8 @@ struct MeetingRowView: View {
             .help(stage.label)
             .accessibilityIdentifier("meeting.waitingModels.\(meeting.id.uuidString)")
         } else {
-            HStack(spacing: 5) {
-                ProgressView().controlSize(.small).scaleEffect(0.75)
-                Text(stage.rowLabel)
-                    .lineLimit(1)
-            }
-            .font(WorkspaceTypography.metadata)
-            .foregroundStyle(.secondary)
+            LoadingStateLabel(stage.rowLabel)
+            .lineLimit(1)
             .help(stage.label)
             .accessibilityIdentifier("meeting.status.\(meeting.id.uuidString)")
         }

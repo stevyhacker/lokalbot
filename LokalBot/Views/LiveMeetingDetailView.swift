@@ -35,7 +35,7 @@ struct LiveMeetingDetailView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(22)
+        .padding(WorkspaceMetric.sectionGap)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
             transcriber.activate()   // opting in starts the ASR passes
@@ -104,16 +104,19 @@ struct LiveMeetingDetailView: View {
     private var transcript: some View {
         Group {
             if transcriber.lines.isEmpty {
-                VStack(spacing: 6) {
+                Group {
                     if transcriber.isWorking || transcriber.statusMessage == nil {
-                        ProgressView().controlSize(.small)
+                        LoadingStateLabel(
+                            transcriber.statusMessage ?? "Listening…",
+                            font: .callout)
+                    } else {
+                        Text(transcriber.statusMessage ?? "Listening…")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
                     }
-                    Text(transcriber.statusMessage ?? "Listening…")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
                 }
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in

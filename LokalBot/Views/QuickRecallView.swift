@@ -126,7 +126,7 @@ private struct QuickRecallContent: View {
                 .font(.caption.monospaced())
                 .foregroundStyle(.tertiary)
         }
-        .padding(.horizontal, 18)
+        .padding(.horizontal, WorkspaceMetric.panelPadding)
         .padding(.vertical, 16)
     }
 
@@ -179,12 +179,7 @@ private struct QuickRecallContent: View {
                     }
 
                     if isSearching {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("Searching your local memory…")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
+                        LoadingStateLabel("Searching your local memory…", font: .callout)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
                         .accessibilityIdentifier("quickRecall.searching")

@@ -57,7 +57,9 @@ private struct MeetingOutcomePreview: View {
 
                 if let summary, !summary.isEmpty {
                     WorkspaceSection(title: "Summary", icon: "text.alignleft") {
-                        MarkdownText(summary)
+                        // The compact preview drops the provenance line — the
+                        // header above already carries title, date, and app.
+                        MarkdownText(SummaryPresentation.split(summary).body)
                             .lineLimit(8)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
@@ -278,9 +280,15 @@ private struct MeetingWorkspaceDetail: View {
                     isExpanded: $summaryExpanded,
                     identifier: "meeting.summaryDisclosure") {
                     if let summary, !summary.isEmpty {
-                        MarkdownText(summary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
+                        let parts = SummaryPresentation.split(summary)
+                        VStack(alignment: .leading, spacing: 8) {
+                            if !parts.metadata.isEmpty {
+                                SummaryMetadataRow(items: parts.metadata)
+                            }
+                            MarkdownText(parts.body)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         EmptyWorkspaceRow(text: "No summary yet.")
                     }
@@ -631,7 +639,7 @@ private struct ActionCorrectionSheet: View {
                     .buttonStyle(.borderedProminent)
             }
         }
-        .padding(22)
+        .padding(WorkspaceMetric.sectionGap)
         .frame(width: 460)
     }
 }

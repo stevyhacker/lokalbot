@@ -52,6 +52,9 @@ enum WorkspaceMetric {
     static let pagePadding: CGFloat = 24
     static let sectionGap: CGFloat = 22
     static let panelPadding: CGFloat = 18
+    /// Inner padding of small rounded cards (morning brief, outcome card) —
+    /// one step tighter than `panelPadding` panels.
+    static let cardPadding: CGFloat = 14
     static let rowVerticalPadding: CGFloat = 11
     /// At the approved 1584-point window this leaves a compact outer gutter
     /// while allowing the outcome tables to use the same broad working area
@@ -292,6 +295,36 @@ struct StatusDot: View {
             }
             .onAppear { pulse = animates }
             .onChange(of: animates) { _, now in pulse = now }
+    }
+}
+
+// MARK: - Loading state
+
+/// The one in-flow loading vocabulary: a compact spinner beside a quiet
+/// description of what's happening. Determinate progress keeps using
+/// `ProgressView(value:)`; bare spinners with no message stay bare.
+struct LoadingStateLabel: View {
+    let text: String
+    var font: Font
+    var controlSize: ControlSize
+
+    init(
+        _ text: String,
+        font: Font = WorkspaceTypography.metadata,
+        controlSize: ControlSize = .small
+    ) {
+        self.text = text
+        self.font = font
+        self.controlSize = controlSize
+    }
+
+    var body: some View {
+        HStack(spacing: 7) {
+            ProgressView().controlSize(controlSize)
+            Text(text)
+                .font(font)
+                .foregroundStyle(.secondary)
+        }
     }
 }
 

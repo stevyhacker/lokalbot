@@ -10,11 +10,12 @@ struct NeedsAttentionSection: View {
     var limit = 4
     @Binding var showingReview: Bool
 
+    /// Nothing to act on means no card at all — an empty "Needs attention"
+    /// section is dead weight on a glanceable page (the Timeline test pins the
+    /// same rule for its day view).
     var body: some View {
-        WorkspaceSection(title: title, icon: "exclamationmark.circle") {
-            if actions.isEmpty {
-                EmptyWorkspaceRow(text: "No open items assigned to you.")
-            } else {
+        if !actions.isEmpty {
+            WorkspaceSection(title: title, icon: "exclamationmark.circle") {
                 VStack(spacing: 0) {
                     ForEach(Array(actions.prefix(limit))) { reference in
                         OutcomeOverviewActionRow(reference: reference)
@@ -27,10 +28,10 @@ struct NeedsAttentionSection: View {
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("outcomes.review")
             }
-        }
-        .sheet(isPresented: $showingReview) {
-            ActionReviewView(actions: actions)
-                .environmentObject(app)
+            .sheet(isPresented: $showingReview) {
+                ActionReviewView(actions: actions)
+                    .environmentObject(app)
+            }
         }
     }
 }
@@ -150,60 +151,3 @@ struct ActionReviewView: View {
     }
 }
 
-struct TimelineDayOutcomes: View {
-    @EnvironmentObject var app: AppState
-    @ObservedObject var model: CaptureModel
-    @Binding var showingReview: Bool
-
-    private var dayActions: [OutcomeActionReference] {
-        app.outcomeIndex.openUserActions.filter {
-            Calendar.current.isDate($0.meetingStartedAt, inSameDayAs: model.day)
-        }
-    }
-
-    private var dayDecisions: [(meeting: Meeting, decision: MeetingOutcomes.Decision)] {
-        app.outcomeIndex.recentDecisions.filter {
-            Calendar.current.isDate($0.meeting.startedAt, inSameDayAs: model.day)
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
-            NeedsAttentionSection(
-                actions: dayActions,
-                title: "Needs attention",
-                showingReview: $showingReview)
-
-            WorkspaceSection(title: "Decisions", icon: "checkmark.seal") {
-                if dayDecisions.isEmpty {
-                    EmptyWorkspaceRow(text: "No cited decisions for this day.")
-                } else {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(dayDecisions.prefix(6), id: \.decision.id) { item in
-                            HStack(alignment: .firstTextBaseline, spacing: 9) {
-                                Image(systemName: "checkmark").foregroundStyle(Brand.teal)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(item.decision.text)
-                                    Button(item.meeting.displayTitle) {
-                                        app.openMeeting(item.meeting.id)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .font(WorkspaceTypography.metadata)
-                                    .foregroundStyle(.secondary)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                if let citation = item.decision.citations.first {
-                                    EvidencePill(citation: citation) {
-                                        app.pendingSeek = citation.start
-                                        app.openMeeting(item.meeting.id)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        .accessibilityIdentifier("timeline.outcomes")
-    }
-}
