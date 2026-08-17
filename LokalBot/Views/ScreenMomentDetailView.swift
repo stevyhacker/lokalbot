@@ -7,9 +7,13 @@ struct ScreenMomentDetailView: View {
     let screenshot: ActivityStore.Screenshot
     let onReload: () -> Void
     let onClear: () -> Void
+    let backLabel: String
+    let onDismiss: (() -> Void)?
 
     @State private var note = ""
     @State private var confirmingDeletion = false
+    @State private var detailsExpanded = false
+    @State private var fullTextExpanded = false
 
     private var capturedText: String {
         app.activityStore.ocrText(snapshotID: screenshot.id) ?? ""
@@ -22,7 +26,7 @@ struct ScreenMomentDetailView: View {
                 if screenshot.hasPixels {
                     ScreenThumbnailView(
                         screenshot: screenshot,
-                        height: 320,
+                        height: 200,
                         contentMode: .fit,
                         cornerRadius: Brand.Radius.panel)
                         .background(.black.opacity(0.82),
@@ -37,12 +41,25 @@ struct ScreenMomentDetailView: View {
                         .background(.quaternary.opacity(0.3),
                                     in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
                 }
-                metadata
+                if !screenshot.windowTitle.isEmpty {
+                    Text(screenshot.windowTitle)
+                        .font(WorkspaceTypography.bodyEmphasis)
+                        .lineLimit(3)
+                        .textSelection(.enabled)
+                }
                 if !capturedText.isEmpty { capturedTextSection }
                 actions
                 if screenshot.isBookmarked {
                     savedNote
                 }
+                WorkspaceDisclosure(
+                    isExpanded: $detailsExpanded,
+                    identifier: "timeline.screenDetail.captureDetails") {
+                        metadata
+                    } label: {
+                        Label("Capture details", systemImage: "info.circle")
+                            .font(WorkspaceTypography.sectionTitle)
+                    }
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -53,30 +70,36 @@ struct ScreenMomentDetailView: View {
         } message: {
             Text("This permanently removes its pixels, captured text, and metadata.")
         }
-        .accessibilityIdentifier("timeline.screenDetail.\(screenshot.id)")
     }
 
     private var header: some View {
         HStack(alignment: .top, spacing: 8) {
+            Button(action: onClear) {
+                Image(systemName: "arrow.left")
+            }
+            .buttonStyle(.plain)
+            .help(backLabel)
+            .accessibilityLabel(backLabel)
+            .accessibilityIdentifier("timeline.screenDetail.backToDayOverview")
             IconTile(systemImage: screenshot.hasPixels ? "camera.viewfinder" : "text.viewfinder",
-                     tint: Brand.teal, size: 34)
+                     tint: Brand.teal, size: 30)
             VStack(alignment: .leading, spacing: 2) {
-                Text(screenshot.app).font(.title3.bold())
+                Text(screenshot.app)
+                    .font(WorkspaceTypography.conversationTitle)
+                    .accessibilityIdentifier("timeline.screenDetail.\(screenshot.id)")
                 Text(screenshot.ts.formatted(date: .abbreviated, time: .standard))
-                    .font(.caption.monospacedDigit())
+                    .font(WorkspaceTypography.metadata.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button {
-                onClear()
-            } label: {
-                Label("Back to day overview", systemImage: "arrow.left")
+            if let onDismiss {
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.plain)
+                .help("Close context panel")
+                .accessibilityLabel("Close context panel")
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .fixedSize()
-            .help("Return to the full-day overview and digest")
-            .accessibilityIdentifier("timeline.screenDetail.backToDayOverview")
         }
     }
 
@@ -126,20 +149,25 @@ struct ScreenMomentDetailView: View {
                 }
             }
         }
-        .font(.callout)
-        .padding(10)
-        .background(.quaternary.opacity(0.3),
-                    in: RoundedRectangle(cornerRadius: Brand.Radius.control))
+        .font(WorkspaceTypography.body)
     }
 
     private var capturedTextSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label("Captured text", systemImage: "text.quote")
-                .font(.headline)
+            Label("Visible text excerpt", systemImage: "text.quote")
+                .font(WorkspaceTypography.sectionTitle)
             Text(capturedText)
-                .font(.callout)
+                .font(WorkspaceTypography.body)
                 .textSelection(.enabled)
-                .lineLimit(12)
+                .lineLimit(fullTextExpanded ? nil : 6)
+            if capturedText.count > 280 {
+                Button(fullTextExpanded ? "Show less" : "Show full captured text") {
+                    fullTextExpanded.toggle()
+                }
+                .buttonStyle(.plain)
+                .font(WorkspaceTypography.metadataEmphasis)
+                .foregroundStyle(Brand.teal)
+            }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -176,7 +204,7 @@ struct ScreenMomentDetailView: View {
 
     private var savedNote: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Saved moment note").font(.headline)
+            Text("Saved moment note").font(WorkspaceTypography.sectionTitle)
             TextField("Why does this moment matter?", text: $note, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(2...5)

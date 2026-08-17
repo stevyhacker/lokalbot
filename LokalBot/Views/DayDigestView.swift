@@ -9,9 +9,10 @@ struct DayDigestView: View {
         case timeline
         case today
 
-        var showsMeetings: Bool { self != .today }
+        var showsMeetings: Bool { self == .standalone }
         var showsTimeAllocation: Bool { self == .standalone }
-        var showsFullActivityLog: Bool { self != .today }
+        var showsFullActivityLog: Bool { self == .standalone }
+        var showsOtherActivity: Bool { self == .standalone }
     }
 
     let presentation: DayDigestPresentation
@@ -59,7 +60,7 @@ struct DayDigestView: View {
                 }
             }
 
-            if !presentation.otherActivityBlocks.isEmpty {
+            if mode.showsOtherActivity, !presentation.otherActivityBlocks.isEmpty {
                 DisclosureGroup(isExpanded: $otherActivityExpanded) {
                     sessionList(presentation.otherActivityBlocks)
                         .padding(.top, 8)

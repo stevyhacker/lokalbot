@@ -68,11 +68,20 @@ struct DayDigestPresentation: Equatable {
                 Self.normalized($0.title))
         })?.body
 
+        let standaloneOverview = document.first(where: {
+            ["today at a glance", "at a glance", "overview"].contains(
+                Self.normalized($0.title))
+        })?.body
+        let standaloneFocus = document.first(where: {
+            ["next", "tasks", "focus blocks"].contains(Self.normalized($0.title))
+        })?.body
+
         let overview = Self.body(
             named: ["at a glance", "overview"], in: summaryParts)
+            ?? standaloneOverview
         let focus = Self.body(
             named: ["tasks", "focus blocks", "work completed and in progress"],
-            in: summaryParts) ?? legacyWork
+            in: summaryParts) ?? legacyWork ?? standaloneFocus
         let otherActivity = Self.body(
             named: ["other activity", "brief activity"],
             in: summaryParts)

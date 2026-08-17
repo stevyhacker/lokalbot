@@ -5,12 +5,18 @@ import SwiftUI
 /// the existing Timeline surface: scrub/play scenes, hover for a temporary
 /// preview, save a moment, or select a destructive time range.
 struct ScreenRewindView: View {
+    enum Presentation: Equatable {
+        case standard
+        case compact
+    }
+
     @EnvironmentObject private var app: AppState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let frames: [ScreenRewindFrame]
     @Binding var selectedSnapshotID: Int64?
     let onReload: () -> Void
+    let presentation: Presentation
 
     @State private var currentIndex = 0
     @State private var hoveredFrameID: Int64?
@@ -21,6 +27,18 @@ struct ScreenRewindView: View {
     @State private var confirmingRangeDeletion = false
 
     private let playbackTimer = Timer.publish(every: 1.2, on: .main, in: .common).autoconnect()
+
+    init(
+        frames: [ScreenRewindFrame],
+        selectedSnapshotID: Binding<Int64?>,
+        onReload: @escaping () -> Void,
+        presentation: Presentation = .standard
+    ) {
+        self.frames = frames
+        _selectedSnapshotID = selectedSnapshotID
+        self.onReload = onReload
+        self.presentation = presentation
+    }
 
     private var currentFrame: ScreenRewindFrame? {
         guard !frames.isEmpty else { return nil }
@@ -36,7 +54,7 @@ struct ScreenRewindView: View {
         if !frames.isEmpty {
             VStack(alignment: .leading, spacing: 9) {
                 header
-                preview
+                if presentation == .standard { preview }
                 playbackControls
                 filmstrip
                 if isSelectingRange {
@@ -44,7 +62,7 @@ struct ScreenRewindView: View {
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
-            .padding(10)
+            .padding(presentation == .compact ? 9 : 10)
             .background(.quaternary.opacity(0.22),
                         in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
             .overlay {
@@ -63,14 +81,15 @@ struct ScreenRewindView: View {
                 } message: {
                     Text("This permanently removes the selected pixels and captured text.")
                 }
-            .accessibilityIdentifier("timeline.rewind")
         }
     }
 
     private var header: some View {
         HStack(spacing: 7) {
-            Label("Context rewind", systemImage: "clock.arrow.circlepath")
+            Label(presentation == .compact ? "Context moments" : "Context rewind",
+                  systemImage: "clock.arrow.circlepath")
                 .font(.headline)
+                .accessibilityIdentifier("timeline.rewind")
             Text("\(frames.count) scene\(frames.count == 1 ? "" : "s")")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -150,6 +169,7 @@ struct ScreenRewindView: View {
             Button { step(-1) } label: { Image(systemName: "backward.frame.fill") }
                 .disabled(currentIndex <= 0)
                 .help("Previous scene")
+                .accessibilityLabel("Previous context moment")
             Button {
                 if currentIndex >= frames.count - 1 { select(index: 0) }
                 isPlaying.toggle()
@@ -158,9 +178,11 @@ struct ScreenRewindView: View {
                     .frame(width: 12)
             }
             .help(isPlaying ? "Pause Rewind" : "Play Rewind")
+            .accessibilityLabel(isPlaying ? "Pause context rewind" : "Play context rewind")
             Button { step(1) } label: { Image(systemName: "forward.frame.fill") }
                 .disabled(currentIndex >= frames.count - 1)
                 .help("Next scene")
+                .accessibilityLabel("Next context moment")
             Slider(value: currentIndexBinding,
                    in: 0...Double(max(frames.count - 1, 1)), step: 1)
                 .disabled(frames.count < 2)
@@ -179,32 +201,42 @@ struct ScreenRewindView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 6) {
                     ForEach(frames) { frame in
-                        ScreenThumbnailView(screenshot: frame.screenshot, height: 42)
-                            .frame(width: 68)
-                            .overlay {
-                                RoundedRectangle(cornerRadius: Brand.Radius.control)
-                                    .strokeBorder(
-                                        currentFrame?.id == frame.id ? Brand.teal : .clear,
-                                        lineWidth: 2)
-                            }
-                            .overlay(alignment: .topTrailing) {
-                                if frame.screenshot.isBookmarked {
-                                    Image(systemName: "bookmark.fill")
-                                        .font(.caption2)
-                                        .foregroundStyle(Brand.amber)
-                                        .padding(4)
+                        Button {
+                            select(frame)
+                        } label: {
+                            ScreenThumbnailView(screenshot: frame.screenshot, height: 42)
+                                .frame(width: 68)
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: Brand.Radius.control)
+                                        .strokeBorder(
+                                            currentFrame?.id == frame.id ? Brand.teal : .clear,
+                                            lineWidth: 2)
                                 }
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture { select(frame) }
+                                .overlay(alignment: .topTrailing) {
+                                    if frame.screenshot.isBookmarked {
+                                        Image(systemName: "bookmark.fill")
+                                            .font(.caption2)
+                                            .foregroundStyle(Brand.amber)
+                                            .padding(4)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                        }
+                            .buttonStyle(.plain)
                             .onHover { hovering in
                                 hoveredFrameID = hovering ? frame.id : nil
                             }
                             .help("\(frame.screenshot.app) · \(frame.screenshot.ts.formatted(date: .omitted, time: .shortened))")
+                            .accessibilityLabel("\(frame.screenshot.app) context moment")
+                            .accessibilityValue(frame.screenshot.ts.formatted(
+                                date: .omitted, time: .shortened))
+                            .accessibilityHint("Show this moment in the context panel")
+                            .accessibilityIdentifier("timeline.moment.\(frame.id)")
                             .id(frame.id)
                     }
                 }
             }
+            .frame(height: 44)
             .onChange(of: currentFrame?.id) {
                 guard let id = currentFrame?.id else { return }
                 withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {

@@ -104,6 +104,26 @@ final class DayDigestPresentationTests: XCTestCase {
         XCTAssertEqual(presentation.activityGroups.first?.label, "17:00–17:59")
     }
 
+    func testTopLevelLegacyBriefHeadingsPopulateHighlightsAndTasks() {
+        let markdown = """
+            ## Today at a glance
+
+            Redis stays the caching layer while the failover benchmark runs.
+
+            ## Next
+
+            - Draft the eviction-policy document.
+            - Run the failover benchmark.
+            """
+
+        let presentation = DayDigestPresentation(markdown: markdown)
+
+        XCTAssertTrue(presentation.atAGlanceMarkdown.contains("Redis stays"))
+        XCTAssertEqual(presentation.focusBlocks.count, 2)
+        XCTAssertEqual(presentation.focusBlocks.first?.summaryMarkdown,
+                       "Draft the eviction-policy document.")
+    }
+
     func testOverviewShowsOnlyTheFirstThreeGeneratedHighlights() {
         let markdown = """
             ## Day summary
@@ -154,16 +174,19 @@ final class DayDigestPresentationTests: XCTestCase {
 
     func testEmbeddedModesDoNotRepeatHostOwnedSections() {
         XCTAssertFalse(DayDigestView.Mode.timeline.showsTimeAllocation)
-        XCTAssertTrue(DayDigestView.Mode.timeline.showsMeetings)
-        XCTAssertTrue(DayDigestView.Mode.timeline.showsFullActivityLog)
+        XCTAssertFalse(DayDigestView.Mode.timeline.showsMeetings)
+        XCTAssertFalse(DayDigestView.Mode.timeline.showsFullActivityLog)
+        XCTAssertFalse(DayDigestView.Mode.timeline.showsOtherActivity)
 
         XCTAssertFalse(DayDigestView.Mode.today.showsTimeAllocation)
         XCTAssertFalse(DayDigestView.Mode.today.showsMeetings)
         XCTAssertFalse(DayDigestView.Mode.today.showsFullActivityLog)
+        XCTAssertFalse(DayDigestView.Mode.today.showsOtherActivity)
 
         XCTAssertTrue(DayDigestView.Mode.standalone.showsTimeAllocation)
         XCTAssertTrue(DayDigestView.Mode.standalone.showsMeetings)
         XCTAssertTrue(DayDigestView.Mode.standalone.showsFullActivityLog)
+        XCTAssertTrue(DayDigestView.Mode.standalone.showsOtherActivity)
     }
 
     func testLegacyUnheadedOverviewAndUnicodeHyphenDecisionSentinel() {

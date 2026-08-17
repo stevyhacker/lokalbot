@@ -1,273 +1,493 @@
 import SwiftUI
-import AppKit
 
-/// The Timeline/Meetings detail pane — a selection-driven inspector (spec
-/// §2.2): a selected meeting opens the unchanged `MeetingDetailView`, a
-/// selected activity block gets its card + per-app context + block-scoped
-/// screenshots, and no selection shows the day overview (stat tiles,
-/// per-app proportion bar + totals, digest) in Timeline or an empty
-/// state in Meetings.
-struct CaptureDetailView: View {
-    @EnvironmentObject var app: AppState
+/// The bounded context panel inside Timeline's one-day workspace. Selection
+/// replaces only this panel; the date, stats, moments strip, and chronology
+/// remain stable so inspecting evidence never turns Timeline into another
+/// Meetings or Today screen.
+struct TimelineContextPanel: View {
+    @EnvironmentObject private var app: AppState
     @ObservedObject var model: CaptureModel
-    @Binding var pendingDelete: Set<Meeting.ID>?
-    @State private var showingActionReview = false
+    let onDismiss: (() -> Void)?
 
     @ViewBuilder
     var body: some View {
-        if app.navSection == .timeline,
-           let snapshotID = model.selectedSnapshotID,
+        if let snapshotID = model.selectedSnapshotID,
            let screenshot = model.shots.first(where: { $0.id == snapshotID }) {
             ScreenMomentDetailView(
                 screenshot: screenshot,
                 onReload: { model.reload(app: app) },
-                onClear: { model.selectedSnapshotID = nil })
+                onClear: { model.selectedSnapshotID = nil },
+                backLabel: model.selectedSessionID == nil
+                    ? "Back to day brief" : "Back to work session",
+                onDismiss: onDismiss)
                 .id(snapshotID)
+        } else if app.selectedMeetingIDs.isEmpty, let session = model.selectedSession {
+            sessionPreview(session)
         } else {
-            switch CaptureInspectorState.resolve(meetingIDs: app.selectedMeetingIDs,
-                                                 blockSelection: model.selection,
-                                                 allowsBlockSelection: app.navSection == .timeline) {
+            switch inspectorState {
             case .meeting:
-                if let meeting = app.selectedMeeting {
-                    if meeting.endedAt == nil {
-                        LiveMeetingDetailView(meeting: meeting)
-                            .id(meeting.id)
-                    } else {
-                        MeetingDetailView(meeting: meeting)
-                            .id(meeting.id)
-                    }
+                if let meeting = selectedMeetingForDay {
+                    TimelineMeetingPreview(
+                        meeting: meeting,
+                        onBack: clearSelection,
+                        onDismiss: onDismiss)
+                        .id(meeting.id)
                 } else {
-                    noSelection
+                    dayBrief
                 }
             case .multiSelection(let count):
-                ContentUnavailableView {
-                    Label("\(count) meetings selected", systemImage: "checklist")
-                } description: {
-                    Text("Press ⌫ or right-click to delete them.")
-                } actions: {
-                    Button("Delete \(count) meetings", role: .destructive) {
-                        pendingDelete = app.selectedMeetingIDs
-                    }
-                }
+                multiSelection(count)
             case .block:
                 if let block = model.selectedBlock {
-                    blockDetail(block)
+                    activityPreview(block)
                 } else {
-                    noSelection
+                    dayBrief
                 }
             case .overview:
-                noSelection
+                dayBrief
             }
         }
     }
 
-    /// Meetings shows the in-progress recording by default while one is
-    /// running (the live view is the whole point of opening the app
-    /// mid-meeting), an empty state otherwise (the getting-started card now
-    /// lives on the Today home); Timeline shows the day overview.
-    @ViewBuilder private var noSelection: some View {
-        if app.navSection == .timeline {
-            dayOverview
-        } else if !app.libraryReady {
-            VStack(spacing: 10) {
-                ProgressView()
-                Text("Loading your meeting library…")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-        } else if let live = app.currentMeeting {
-            LiveMeetingDetailView(meeting: live)
-                .id(live.id)
-        } else {
-            ContentUnavailableView {
-                Label(app.meetings.isEmpty ? "No meetings yet" : "No meeting selected",
-                      systemImage: "waveform.circle")
-            } description: {
-                Text(app.meetings.isEmpty
-                     ? "Choose Record now to capture a meeting."
-                     : "Select a meeting to open its summary and transcript.")
-            } actions: {
-                if app.meetings.isEmpty {
-                    Button("Record now") {
-                        app.startRecording(
-                            context: app.recordingContext(for: app.detector.activeApp))
-                    }
-                }
-            }
-        }
+    private var inspectorState: CaptureInspectorState {
+        CaptureInspectorState.resolve(
+            meetingIDs: app.selectedMeetingIDs,
+            blockSelection: model.selection,
+            allowsBlockSelection: true)
     }
 
-    // MARK: - Day overview (absorbs the old Totals + Digest tabs)
+    private var selectedMeetingForDay: Meeting? {
+        guard let meeting = app.selectedMeeting,
+              Calendar.current.isDate(meeting.startedAt, inSameDayAs: model.day) else {
+            return nil
+        }
+        return meeting
+    }
 
-    private var dayOverview: some View {
-        let meetings = model.meetings(in: app)
+    private var dayBrief: some View {
         let perApp = Dictionary(grouping: model.blocks, by: \.app)
             .mapValues { $0.reduce(0) { $0 + $1.duration } }
             .sorted { $0.value > $1.value }
         return ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("Day overview")
-                        .font(WorkspaceTypography.pageTitle)
-                        .accessibilityIdentifier("capture.dayOverview")
-                    Spacer()
-                    Button {
-                        app.openAsk(dayScope: model.day)
-                    } label: {
-                        Label("Ask about this day", systemImage: "sparkle.magnifyingglass")
+            VStack(alignment: .leading, spacing: 18) {
+                TimelinePanelHeader(
+                    title: "Day brief",
+                    subtitle: model.day.formatted(date: .complete, time: .omitted),
+                    icon: "sparkles",
+                    onBack: nil,
+                    onDismiss: onDismiss)
+                    .accessibilityIdentifier("capture.dayOverview")
+
+                if model.digestIsStale {
+                    Label("Newer activity is available. Regenerate the brief to include it.",
+                          systemImage: "clock.arrow.circlepath")
+                        .font(WorkspaceTypography.metadata)
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("capture.dayDigest.stale")
+                }
+
+                if let digestError = model.digestError {
+                    Label(digestError, systemImage: "exclamationmark.triangle")
+                        .font(WorkspaceTypography.metadata)
+                        .foregroundStyle(.orange)
+                }
+
+                if let digest = model.digest {
+                    DayDigestView(digest, mode: .timeline)
+                        .accessibilityIdentifier("capture.dayDigest.text")
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("No day brief yet", systemImage: "doc.text")
+                            .font(WorkspaceTypography.sectionTitle)
+                        Text("Generate one from the persistent header. Your chronology stays available while it runs.")
+                            .font(WorkspaceTypography.body)
+                            .foregroundStyle(.secondary)
                     }
-                    .accessibilityIdentifier("capture.askDay")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(.quaternary.opacity(0.24),
+                                in: RoundedRectangle(cornerRadius: Brand.Radius.control))
                 }
-                DayStatRow(
-                    trackedSeconds: perApp.reduce(0) { $0 + $1.value },
-                    appCount: perApp.count,
-                    momentCount: model.shots.count,
-                    meetingCount: meetings.count)
-                digestSection
-                    .frame(maxWidth: 860, alignment: .leading)
+
                 if !perApp.isEmpty {
-                    totalsSection(perApp)
+                    compactTimeAllocation(perApp)
                 }
-                TimelineDayOutcomes(model: model, showingReview: $showingActionReview)
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 
-    private func totalsSection(_ perApp: [(key: String, value: TimeInterval)]) -> some View {
+    private func compactTimeAllocation(
+        _ perApp: [(key: String, value: TimeInterval)]
+    ) -> some View {
         let total = perApp.reduce(0) { $0 + $1.value }
         let segments = ProportionBarMath.segments(
             perApp: perApp.map { (label: $0.key, seconds: $0.value) })
         let rows = AppTimePresentation.rows(
             perApp: perApp.map { (label: $0.key, seconds: $0.value) })
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 9) {
             HStack {
-                Text("Where time went").font(.headline)
+                Label("Time allocation", systemImage: "chart.bar.xaxis")
+                    .font(WorkspaceTypography.sectionTitle)
                 Spacer()
                 Text("\(CaptureStyle.hm(total)) tracked")
-                    .font(.caption.monospacedDigit())
+                    .font(WorkspaceTypography.metadata.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             ProportionBar(segments: segments.map {
-                ($0, $0.label == "Other" ? Color(nsColor: .tertiaryLabelColor)
-                                         : CaptureStyle.color(for: $0.label))
+                ($0, $0.label == "Other"
+                    ? Color(nsColor: .tertiaryLabelColor)
+                    : CaptureStyle.color(for: $0.label))
             })
-            .padding(.vertical, 2)
-            ForEach(rows, id: \.label) { row in
-                let label = row.isOther
-                    ? "Other (\(row.appCount) app\(row.appCount == 1 ? "" : "s"))"
-                    : row.label
-                totalsRow(
-                    row.isOther ? Color(nsColor: .tertiaryLabelColor)
-                                : CaptureStyle.color(for: row.label),
-                    label,
-                    row.seconds,
-                    of: total)
-            }
-        }
-        .frame(maxWidth: 680, alignment: .leading)
-    }
-
-    private func totalsRow(_ swatch: Color, _ label: String, _ seconds: TimeInterval,
-                           of total: TimeInterval) -> some View {
-        HStack(spacing: 8) {
-            StatusDot(color: swatch, size: 9)
-            Text(label).font(.body).lineLimit(1)
-            Spacer()
-            Text(CaptureStyle.hm(seconds)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
-            Text(String(format: "%2.0f%%", seconds / max(total, 1) * 100))
-                .font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
-                .frame(width: 38, alignment: .trailing)
-        }
-    }
-
-    private var digestSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Day digest").font(.title3.bold())
-                if model.generating { ProgressView().controlSize(.small) }
-                Spacer()
-                if let digest = model.digest {
-                    Button {
-                        Task { await model.generateDigest(app: app) }
-                    } label: {
-                        Label("Regenerate digest", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(model.generating)
-                    .help("Rewrite the digest using the latest activity and meetings")
-                    .accessibilityIdentifier("timeline.dayDigest.generate")
-                    Menu {
-                        Button { model.copyDigest(digest) } label: {
-                            Label("Copy digest", systemImage: "doc.on.doc")
-                        }
-                        .accessibilityIdentifier("capture.dayDigest.copyAll")
-                        Button { model.exportDigest(digest) } label: {
-                            Label("Export Markdown", systemImage: "square.and.arrow.up")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    .help(digestUpdatedHelp)
-                    .accessibilityLabel("Day digest actions")
-                } else {
-                    Button("Generate digest") {
-                        Task { await model.generateDigest(app: app) }
-                    }
-                    .disabled(model.generating)
-                    .accessibilityIdentifier("timeline.dayDigest.generate")
+            ForEach(rows.prefix(5), id: \.label) { row in
+                HStack(spacing: 7) {
+                    StatusDot(
+                        color: row.isOther ? Color(nsColor: .tertiaryLabelColor)
+                                           : CaptureStyle.color(for: row.label),
+                        size: 8)
+                    Text(row.isOther ? "Other (\(row.appCount))" : row.label)
+                        .font(WorkspaceTypography.body)
+                        .lineLimit(1)
+                    Spacer()
+                    Text(CaptureStyle.hm(row.seconds))
+                        .font(WorkspaceTypography.metadata.monospacedDigit())
+                        .foregroundStyle(.secondary)
                 }
             }
-            if model.digestIsStale {
-                Label("Newer activity is available — regenerate to include it.",
-                      systemImage: "clock.arrow.circlepath")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
-                    .accessibilityIdentifier("capture.dayDigest.stale")
+        }
+        .padding(12)
+        .background(.quaternary.opacity(0.22),
+                    in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
+        .accessibilityIdentifier("timeline.timeAllocation")
+    }
+
+    private func sessionPreview(_ session: TimelineWorkSession) -> some View {
+        let frames = model.frames(in: session)
+        let representative = model.representativeFrames(in: session)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                TimelinePanelHeader(
+                    title: session.title,
+                    subtitle: "\(session.start.formatted(date: .omitted, time: .shortened))–\(session.end.formatted(date: .omitted, time: .shortened)) · \(CaptureStyle.hm(session.activeDuration)) active",
+                    icon: "briefcase",
+                    onBack: clearSelection,
+                    onDismiss: onDismiss)
+                    .accessibilityIdentifier("timeline.sessionPreview")
+
+                VStack(alignment: .leading, spacing: 10) {
+                    sessionMetrics(session)
+                    Text(session.apps.prefix(5).joined(separator: " · "))
+                        .font(WorkspaceTypography.metadata)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(CaptureStyle.color(for: session.primaryApp).opacity(0.10),
+                            in: RoundedRectangle(cornerRadius: Brand.Radius.control))
+
+                if !session.notableTitles.isEmpty {
+                    TimelineContextSection(title: "Activity observed", icon: "text.page") {
+                        VStack(alignment: .leading, spacing: 9) {
+                            ForEach(session.notableTitles.prefix(4), id: \.self) { title in
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Image(systemName: "arrow.right")
+                                        .font(.caption)
+                                        .foregroundStyle(Brand.teal)
+                                    Text(title)
+                                        .font(WorkspaceTypography.body)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                TimelineContextSection(
+                    title: "Representative evidence",
+                    icon: "rectangle.and.text.magnifyingglass") {
+                        VStack(alignment: .leading, spacing: 9) {
+                            if representative.isEmpty {
+                                Text("No context moments were captured during this session.")
+                                    .font(WorkspaceTypography.body)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                ForEach(representative) { frame in
+                                    relatedMomentRow(frame.screenshot)
+                                }
+                                if frames.count > representative.count {
+                                    Text("Showing \(representative.count) representative scenes from \(frames.count). Browse raw capture for every scene.")
+                                        .font(WorkspaceTypography.metadata)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+
+                Button {
+                    app.openAsk(
+                        query: "What matters from my work session on \(session.title)?",
+                        dayScope: model.day)
+                } label: {
+                    Label("Ask about this session", systemImage: "sparkles")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
             }
-            if let digestError = model.digestError {
-                Label(digestError, systemImage: "exclamationmark.triangle")
-                    .font(.callout).foregroundStyle(.orange)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private func sessionMetrics(_ session: TimelineWorkSession) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                activeMetric(session)
+                appMetric(session)
+                if session.contextSwitchCount > 0 { switchMetric(session) }
             }
-            if let digest = model.digest {
-                DayDigestView(digest, mode: .timeline)
-                    .accessibilityIdentifier("capture.dayDigest.text")
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    activeMetric(session)
+                    appMetric(session)
+                }
+                if session.contextSwitchCount > 0 { switchMetric(session) }
             }
         }
     }
 
-    private var digestUpdatedHelp: String {
-        guard let updatedAt = model.digestUpdatedAt else { return "Day digest actions" }
-        return "Updated \(updatedAt.formatted(date: .abbreviated, time: .shortened))"
+    private func activeMetric(_ session: TimelineWorkSession) -> some View {
+        StatTile(icon: "clock", value: CaptureStyle.hm(session.activeDuration), label: "active")
     }
 
-    // MARK: - Activity block detail (card + per-app context + captured moments)
+    private func appMetric(_ session: TimelineWorkSession) -> some View {
+        StatTile(icon: "square.grid.2x2", value: "\(session.appCount)",
+                 label: session.appCount == 1 ? "app" : "apps")
+    }
 
-    private func blockDetail(_ block: ActivityBlock) -> some View {
-        let scoped = model.shots.filter { $0.ts >= block.start && $0.ts <= block.end }
+    private func switchMetric(_ session: TimelineWorkSession) -> some View {
+        StatTile(icon: "arrow.left.arrow.right",
+                 value: "\(session.contextSwitchCount)", label: "switches")
+    }
+
+    private func activityPreview(_ block: ActivityBlock) -> some View {
+        let scoped = model.shots
+            .filter { $0.ts >= block.start && $0.ts <= block.end }
+            .sorted { $0.ts < $1.ts }
         let sameApp = model.blocks.filter { $0.app == block.app }
         let appTotal = sameApp.reduce(0) { $0 + $1.duration }
+
         return ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                blockCard(block)
-                HStack(spacing: 8) {
-                    StatTile(icon: "clock", value: CaptureStyle.hm(appTotal),
-                             label: "in \(block.app) today")
-                    StatTile(icon: "rectangle.stack", value: "\(sameApp.count)",
-                             label: sameApp.count == 1 ? "block" : "blocks")
+            VStack(alignment: .leading, spacing: 16) {
+                TimelinePanelHeader(
+                    title: block.app,
+                    subtitle: "\(block.start.formatted(date: .omitted, time: .shortened))–\(block.end.formatted(date: .omitted, time: .shortened)) · \(CaptureStyle.hm(block.duration))",
+                    icon: "rectangle.stack",
+                    onBack: clearSelection,
+                    onDismiss: onDismiss)
+                    .accessibilityIdentifier("timeline.activityPreview")
+
+                VStack(alignment: .leading, spacing: 8) {
+                    if !block.title.isEmpty {
+                        Text(block.title)
+                            .font(WorkspaceTypography.bodyEmphasis)
+                            .textSelection(.enabled)
+                    }
+                    HStack(spacing: 8) {
+                        StatTile(icon: "clock", value: CaptureStyle.hm(appTotal),
+                                 label: "today")
+                        StatTile(icon: "rectangle.stack", value: "\(sameApp.count)",
+                                 label: sameApp.count == 1 ? "block" : "blocks")
+                    }
                 }
-                Text("Context moments (\(scoped.count))").font(.headline)
-                if scoped.isEmpty {
-                    Text("None during this block.")
-                        .font(.callout).foregroundStyle(.secondary)
-                } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 8)], spacing: 8) {
-                        ForEach(scoped) { shot in
-                            ScreenThumbnailView(screenshot: shot)
-                                .help("\(shot.app) — \(shot.ts.formatted(date: .omitted, time: .shortened))")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(CaptureStyle.color(for: block.app).opacity(0.10),
+                            in: RoundedRectangle(cornerRadius: Brand.Radius.control))
+
+                VStack(alignment: .leading, spacing: 9) {
+                    HStack {
+                        Label("Related moments", systemImage: "rectangle.and.text.magnifyingglass")
+                            .font(WorkspaceTypography.sectionTitle)
+                        Spacer()
+                        Text("\(scoped.count)")
+                            .font(WorkspaceTypography.metadata.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    if scoped.isEmpty {
+                        Text("No context moments were captured during this activity.")
+                            .font(WorkspaceTypography.body)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        VStack(spacing: 8) {
+                            ForEach(scoped.prefix(6)) { screenshot in
+                                relatedMomentRow(screenshot)
+                            }
                         }
+                    }
+                }
+
+                Button {
+                    app.openAsk(
+                        query: "What matters from my \(block.app) activity, \(block.title)?",
+                        dayScope: model.day)
+                } label: {
+                    Label("Ask about this activity", systemImage: "sparkles")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private func relatedMomentRow(_ screenshot: ActivityStore.Screenshot) -> some View {
+        Button {
+            model.selectedSnapshotID = screenshot.id
+            model.selection = nil
+            app.selectedMeetingIDs = []
+        } label: {
+            HStack(spacing: 10) {
+                ScreenThumbnailView(screenshot: screenshot, height: 54)
+                    .frame(width: 86)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(screenshot.windowTitle.isEmpty ? screenshot.app : screenshot.windowTitle)
+                        .font(WorkspaceTypography.bodyEmphasis)
+                        .lineLimit(2)
+                    Text(screenshot.ts.formatted(date: .omitted, time: .shortened))
+                        .font(WorkspaceTypography.metadata.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("timeline.activityMoment.\(screenshot.id)")
+    }
+
+    private func multiSelection(_ count: Int) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            TimelinePanelHeader(
+                title: "\(count) meetings selected",
+                subtitle: "Timeline previews one meeting at a time.",
+                icon: "checklist",
+                onBack: clearSelection,
+                onDismiss: onDismiss)
+            Text("Return to the day brief or select one meeting in Work sessions.")
+                .font(WorkspaceTypography.body)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(16)
+    }
+
+    private func clearSelection() {
+        model.selectedSnapshotID = nil
+        model.selection = nil
+        model.selectedSessionID = nil
+        app.selectedMeetingIDs = []
+    }
+}
+
+private struct TimelineMeetingPreview: View {
+    @EnvironmentObject private var app: AppState
+    let meeting: Meeting
+    let onBack: () -> Void
+    let onDismiss: (() -> Void)?
+
+    private var folder: URL { meeting.folderURL(in: app.storage) }
+    private var projection: MeetingOutcomeProjection? {
+        app.outcomeIndex.projection(for: meeting.id)
+    }
+    private var summary: String? {
+        try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                TimelinePanelHeader(
+                    title: meeting.displayTitle,
+                    subtitle: "\(meeting.startedAt.formatted(date: .abbreviated, time: .shortened)) · \(meeting.durationLabel)",
+                    icon: "waveform",
+                    onBack: onBack,
+                    onDismiss: onDismiss)
+                    .accessibilityIdentifier("timeline.meetingPreview")
+
+                if meeting.endedAt == nil {
+                    Label("Recording in progress", systemImage: "record.circle.fill")
+                        .font(WorkspaceTypography.bodyEmphasis)
+                        .foregroundStyle(Brand.recording)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.quaternary.opacity(0.24),
+                                    in: RoundedRectangle(cornerRadius: Brand.Radius.control))
+                }
+
+                if let summary, !summary.isEmpty {
+                    TimelineContextSection(title: "Summary", icon: "text.alignleft") {
+                        MarkdownText(summary)
+                            .lineLimit(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                if let actions = projection?.actionReferences.filter(\.isForUser), !actions.isEmpty {
+                    TimelineContextSection(title: "My actions", icon: "checklist") {
+                        VStack(spacing: 0) {
+                            ForEach(actions.prefix(4)) { reference in
+                                TimelineMeetingActionRow(reference: reference)
+                                if reference.id != actions.prefix(4).last?.id { Divider() }
+                            }
+                        }
+                    }
+                }
+
+                if let decisions = projection?.outcomes.decisionRecords, !decisions.isEmpty {
+                    TimelineContextSection(title: "Decisions", icon: "checkmark.seal") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(decisions.prefix(4)) { decision in
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(Brand.teal)
+                                    Text(decision.text)
+                                        .font(WorkspaceTypography.body)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if summary?.isEmpty != false,
+                   projection?.actionReferences.isEmpty != false,
+                   projection?.outcomes.decisionRecords.isEmpty != false,
+                   meeting.endedAt != nil {
+                    Text("No outcome summary has been extracted for this meeting yet.")
+                        .font(WorkspaceTypography.body)
+                        .foregroundStyle(.secondary)
+                }
+
+                VStack(spacing: 8) {
+                    Button {
+                        app.openMeeting(meeting.id)
+                    } label: {
+                        Label("Open meeting", systemImage: "arrow.up.right.square")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button {
+                        app.openAsk(query: "What matters from \(meeting.displayTitle)?")
+                    } label: {
+                        Label("Ask about this meeting", systemImage: "sparkles")
+                            .frame(maxWidth: .infinity)
                     }
                 }
             }
@@ -275,25 +495,87 @@ struct CaptureDetailView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
+}
 
-    private func blockCard(_ block: ActivityBlock) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            StatusDot(color: CaptureStyle.color(for: block.app), size: 10)
-                .padding(.top, 3)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(block.app).font(.subheadline.weight(.semibold))
-                if !block.title.isEmpty {
-                    Text(block.title).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                }
-                Text("\(block.start.formatted(date: .omitted, time: .shortened))–\(block.end.formatted(date: .omitted, time: .shortened)) · \(CaptureStyle.hm(block.duration))")
-                    .font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
+private struct TimelineMeetingActionRow: View {
+    @EnvironmentObject private var app: AppState
+    let reference: OutcomeActionReference
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Button {
+                _ = app.outcomeIndex.setStatus(
+                    reference.status == .done ? .open : .done,
+                    actionID: reference.action.id,
+                    meetingID: reference.meetingID)
+            } label: {
+                Image(systemName: reference.status == .done ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(reference.status == .done ? Brand.teal : .secondary)
             }
-            Spacer()
-            Button { model.selection = nil } label: { Image(systemName: "xmark.circle.fill") }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
-                .help("Clear selection")
+            .buttonStyle(.plain)
+            Text(reference.text)
+                .font(WorkspaceTypography.body)
+                .strikethrough(reference.status == .done)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(10)
-        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: Brand.Radius.control))
+        .padding(.vertical, 8)
+    }
+}
+
+private struct TimelinePanelHeader: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    let onBack: (() -> Void)?
+    let onDismiss: (() -> Void)?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            if let onBack {
+                Button(action: onBack) {
+                    Image(systemName: "arrow.left")
+                }
+                .buttonStyle(.plain)
+                .help("Back to day brief")
+                .accessibilityLabel("Back to day brief")
+            }
+            IconTile(systemImage: icon, tint: Brand.teal, size: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(WorkspaceTypography.conversationTitle)
+                    .lineLimit(2)
+                Text(subtitle)
+                    .font(WorkspaceTypography.metadata)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 4)
+            if let onDismiss {
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.plain)
+                .help("Close context panel")
+                .accessibilityLabel("Close context panel")
+            }
+        }
+    }
+}
+
+private struct TimelineContextSection<Content: View>: View {
+    let title: String
+    let icon: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(title, systemImage: icon)
+                .font(WorkspaceTypography.sectionTitle)
+            content
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.22),
+                    in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
     }
 }

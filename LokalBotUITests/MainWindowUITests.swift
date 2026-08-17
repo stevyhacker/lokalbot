@@ -275,25 +275,33 @@ final class MainWindowUITests: XCTestCase {
 
     // MARK: - Timeline
 
-    /// Timeline keeps its chronological track visible in the content column
-    /// while the selected-day digest, totals, and outcomes remain in the
-    /// selection-driven detail pane.
+    /// Timeline is one day explorer: its persistent header and work sessions
+    /// stay put while a bounded panel swaps between the day brief, session, and
+    /// meeting previews.
     func testTimelineRendersTrackAndOverview() {
         clickSidebar("sidebar.timeline")
         XCTAssertTrue(app.descendants(matching: .any)["timeline.dayPicker"]
-            .waitForExistence(timeout: 6), "Timeline workspace did not render")
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
-            .waitForExistence(timeout: 6), "hour track should be visible immediately")
+            .waitForExistence(timeout: 6), "persistent day header did not render")
+        XCTAssertTrue(identified("capture.askDay").exists,
+                      "persistent Timeline actions did not render")
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.workSessions"]
+            .waitForExistence(timeout: 6), "work sessions should be visible immediately")
         XCTAssertTrue(app.descendants(matching: .any)["capture.dayOverview"]
-            .waitForExistence(timeout: 6), "day overview did not render beside the track")
+            .waitForExistence(timeout: 6), "day brief did not render beside the track")
+        XCTAssertLessThan(
+            app.descendants(matching: .any)["capture.dayOverview"].firstMatch.frame.midX,
+            app.descendants(matching: .any)["timeline.workSessions"].firstMatch.frame.midX,
+            "Day brief should be left of Work sessions in the wide Timeline layout")
         XCTAssertTrue(identified("timeline.dayDigest.generate").waitForExistence(timeout: 5),
                       "day-digest action should remain directly visible")
         XCTAssertFalse(identified("timeline.activityEvidence").exists,
                        "the chronological track should not be hidden behind Activity evidence")
-        XCTAssertTrue(textWithContent("Needs attention").firstMatch.exists)
-        XCTAssertTrue(textWithContent("Decisions").firstMatch.exists)
-        XCTAssertTrue(textWithContent("Where time went").firstMatch.waitForExistence(timeout: 6),
-                      "day-overview totals headline missing — seeded activity did not load")
+        XCTAssertFalse(textWithContent("Needs attention").firstMatch.exists,
+                       "empty outcome card should not consume Timeline space")
+        XCTAssertFalse(textWithContent("Decisions").firstMatch.exists,
+                       "empty decisions section should not consume Timeline space")
+        XCTAssertTrue(textWithContent("Time allocation").firstMatch.waitForExistence(timeout: 6),
+                      "compact time allocation missing — seeded activity did not load")
         XCTAssertTrue(textWithContent("Xcode").firstMatch.exists,
                       "seeded activity app 'Xcode' missing from Timeline")
         XCTAssertTrue(textWithContent("Tasks").firstMatch.exists,
@@ -304,25 +312,75 @@ final class MainWindowUITests: XCTestCase {
                        "model bookkeeping subject leaked into the focus summary")
         XCTAssertFalse(textWithContent("screen:4242").firstMatch.exists,
                        "private evidence identifier leaked into the collapsed overview")
-        XCTAssertFalse(textWithContent("Time allocation").firstMatch.exists,
-                       "embedded digest repeated the host page's app-time chart")
         XCTAssertFalse(textWithContent("No activity recorded").firstMatch.exists,
                        "empty state shown despite seeded activity blocks")
-        // The block *title* renders only inside the hour track (totals rows
-        // show app names, never titles), so this pins down the track itself.
-        XCTAssertTrue(textWithContent("TimelineView.swift").firstMatch.exists,
-                      "seeded block title missing from the hour track")
-        // Meetings are first-class track blocks now (spec §2.2).
+        // The grounded block title becomes the human-scale session title.
+        XCTAssertTrue(app.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "TimelineView.swift"))
+            .firstMatch.exists,
+                      "seeded work-session title missing")
+        // Meetings remain first-class chronological rows.
         XCTAssertTrue(app.descendants(matching: .any)["capture.meeting.\(fixture.designReview.id.uuidString)"].exists,
-                      "seeded meeting block missing from the track's meeting lane")
+                      "seeded meeting missing from Work sessions")
+        let rawCapture = app.buttons["timeline.rawCapture"]
+        XCTAssertTrue(rawCapture.exists,
+                      "raw capture disclosure is missing")
+        XCTAssertFalse(app.descendants(matching: .any)["timeline.track"].exists,
+                       "raw block chart should not be the default Timeline presentation")
+        rawCapture.click()
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
+            .waitForExistence(timeout: 4), "raw block chart did not expand on request")
+        XCTAssertTrue(app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "capture.activity."))
+            .firstMatch.exists, "raw activity blocks are no longer inspectable")
         // The four-tab inspector is gone.
         XCTAssertFalse(app.descendants(matching: .any)["timeline.inspector"].exists,
                        "legacy inspector segmented control should be removed")
     }
 
-    /// A date change is one state transition for both split-view columns: it
-    /// clears an old meeting inspector and swaps the cached track, overview,
-    /// and persisted digest to the newly selected local calendar day.
+    func testTimelineSelectionOnlyReplacesBoundedContext() {
+        clickSidebar("sidebar.timeline")
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.workSessions"]
+            .waitForExistence(timeout: 6))
+
+        let session = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "timeline.session."))
+            .firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 4),
+                      "work sessions must be keyboard-focusable buttons")
+        session.click()
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.sessionPreview"]
+            .waitForExistence(timeout: 4), "session preview did not replace the day brief")
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.dayPicker"].exists,
+                      "session selection replaced the persistent day header")
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.workSessions"].exists,
+                      "session selection replaced the session list")
+        XCTAssertTrue(textWithContent("Representative evidence").firstMatch.exists,
+                      "session preview does not explain its evidence")
+
+        let back = app.buttons["Back to day brief"].firstMatch
+        XCTAssertTrue(back.waitForExistence(timeout: 3))
+        back.click()
+        XCTAssertTrue(app.descendants(matching: .any)["capture.dayOverview"]
+            .waitForExistence(timeout: 3))
+
+        let meeting = app.buttons["capture.meeting.\(fixture.designReview.id.uuidString)"]
+        XCTAssertTrue(meeting.waitForExistence(timeout: 4),
+                      "meeting block is not an accessible Timeline button")
+        meeting.click()
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.meetingPreview"]
+            .waitForExistence(timeout: 4), "Timeline did not open its compact meeting preview")
+        XCTAssertFalse(app.descendants(matching: .any)["meeting.detail.workspace"].exists,
+                       "Timeline mounted the full Meetings workspace")
+        XCTAssertTrue(app.buttons["Open meeting"].exists,
+                      "compact preview must provide the explicit Meetings handoff")
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.workSessions"].exists,
+                      "meeting selection replaced Work sessions")
+    }
+
+    /// A date change is one state transition for the whole day workspace: it
+    /// clears an old meeting preview and swaps the cached track, brief, and
+    /// persisted digest to the newly selected local calendar day.
     func testTimelineDateChangeRefreshesOverviewAndDigest() {
         openLibrary()
         selectMeeting(fixture.designReview)
@@ -345,11 +403,11 @@ final class MainWindowUITests: XCTestCase {
             .waitForExistence(timeout: 4), "previous day's digest did not replace today's")
         XCTAssertFalse(textWithContent(SyntheticFixture.todayDigestMarker).firstMatch.exists,
                        "today's digest remained visible after changing the date")
-        XCTAssertFalse(textWithContent("Where time went").firstMatch.exists,
+        XCTAssertFalse(textWithContent("Time allocation").firstMatch.exists,
                        "today's activity totals remained in the previous-day overview")
     }
 
-    /// The sidebar swaps the content column between Timeline (hour track)
+    /// The sidebar swaps the content column between Timeline (work sessions)
     /// and Meetings (grouped meeting list) both ways.
     func testSidebarTogglesBetweenTimelineAndMeetings() {
         clickSidebar("sidebar.timeline")

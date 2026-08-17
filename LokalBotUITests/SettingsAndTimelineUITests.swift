@@ -118,8 +118,8 @@ final class SettingsUITests: XCTestCase {
     }
 }
 
-/// Timeline against a fixture with no activity blocks — pins the
-/// meetings-as-blocks track (meetings alone populate the day track).
+/// Timeline against a fixture with no activity blocks — meetings still
+/// populate the primary chronological Work sessions stream.
 final class TimelineWithoutActivityUITests: XCTestCase {
     private var fixture: SyntheticFixture.Library!
     private var app: XCUIApplication!
@@ -138,8 +138,8 @@ final class TimelineWithoutActivityUITests: XCTestCase {
         UITestHarness.clickSidebar("sidebar.timeline", in: app)
         XCTAssertTrue(app.descendants(matching: .any)["timeline.dayPicker"]
             .waitForExistence(timeout: 6), "timeline section did not render")
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"]
-            .waitForExistence(timeout: 6), "timeline track was not immediately visible")
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.workSessions"]
+            .waitForExistence(timeout: 6), "Work sessions was not immediately visible")
     }
 
     override func tearDownWithError() throws {
@@ -149,19 +149,21 @@ final class TimelineWithoutActivityUITests: XCTestCase {
     }
 
     /// With no activity blocks seeded, the seeded meetings still render as
-    /// first-class track blocks (spec §2.2) rather than the empty state,
+    /// first-class chronological rows rather than the empty state,
     /// and the Meetings section shows the grouped list.
     func testTimelineWithoutActivityShowsMeetingBlocks() {
-        // Meetings alone populate the day track (meetings-as-blocks).
-        XCTAssertTrue(app.descendants(matching: .any)["timeline.track"].exists,
-                      "day track with meeting blocks missing")
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.workSessions"].exists,
+                      "Work sessions with meeting rows missing")
+        XCTAssertTrue(app.descendants(matching: .any)[
+            "capture.meeting.\(fixture.designReview.id.uuidString)"].exists,
+                      "meeting row missing without activity blocks")
         XCTAssertFalse(UITestHarness.staticText(containing: "No activity recorded", in: app).exists,
                        "empty state shown despite seeded meetings in the track")
 
         UITestHarness.clickSidebar("sidebar.meetings", in: app)
         XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 6),
                       "meeting list did not render in Meetings")
-        XCTAssertFalse(app.descendants(matching: .any)["timeline.track"].exists,
-                       "activity track should not render in Meetings")
+        XCTAssertFalse(app.descendants(matching: .any)["timeline.workSessions"].exists,
+                       "Timeline sessions should not render in Meetings")
     }
 }

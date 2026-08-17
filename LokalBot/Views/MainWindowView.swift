@@ -28,7 +28,7 @@ struct MainWindowView: View {
     /// state and the system sidebar toggle becomes unreliable after navigation.
     @SceneStorage("mainWindow.sidebarVisible") private var sidebarVisible = true
     @State private var pendingDelete: Set<Meeting.ID>?
-    /// Shared by the Capture section's two columns (content ↔ detail).
+    /// Shared by Timeline's chronology and bounded context panel.
     @StateObject private var capture = CaptureModel()
 
     var body: some View {
@@ -144,8 +144,10 @@ struct MainWindowView: View {
         .accessibilityIdentifier("toolbar.sidebarToggle")
     }
 
-    /// Master/detail sections (Timeline, Meetings, Ask) use the native
-    /// three-column split; single-surface sections (forms) use two.
+    /// Timeline is one day-explorer workspace inside the global shell. Its
+    /// chronology/context split belongs to that workspace, rather than
+    /// becoming two more global navigation columns. Meetings and Ask retain
+    /// their native three-column information architecture.
     @ViewBuilder private var navigation: some View {
         if app.navSection == .today {
             NavigationSplitView(columnVisibility: twoColumnVisibility) {
@@ -155,14 +157,10 @@ struct MainWindowView: View {
                     .workspaceSurface()
             }
         } else if app.navSection == .timeline {
-            NavigationSplitView(columnVisibility: threeColumnVisibility) {
+            NavigationSplitView(columnVisibility: twoColumnVisibility) {
                 sidebar
-            } content: {
-                TimelineContentView(model: capture)
-                    .modifier(ScriptedCaptureContentWidth(
-                        maximum: scriptedCaptureContentMaximum))
             } detail: {
-                CaptureDetailView(model: capture, pendingDelete: $pendingDelete)
+                TimelineContentView(model: capture)
                     .workspaceSurface()
             }
         } else if app.navSection == .meetings {
