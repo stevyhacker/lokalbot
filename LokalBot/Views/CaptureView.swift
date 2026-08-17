@@ -277,9 +277,9 @@ struct TimelineContentView: View {
                 } else {
                     HSplitView {
                         TimelineContextPanel(model: model, onDismiss: nil)
-                            .frame(minWidth: 320, idealWidth: 370, maxWidth: 440)
+                            .frame(minWidth: 360, idealWidth: 520, maxWidth: .infinity)
                         CaptureDayView(model: model, onOpenContext: {})
-                            .frame(minWidth: 520, maxWidth: .infinity)
+                            .frame(minWidth: 480, idealWidth: 760, maxWidth: .infinity)
                     }
                 }
             }
