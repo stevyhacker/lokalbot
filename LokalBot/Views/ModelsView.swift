@@ -843,6 +843,7 @@ struct ModelsView: View {
                 .prepare(progress: progressHandler)
             downloadedTranscriptionModelIDs.insert(choice.id)
             readyTranscriptionModelIDs.insert(choice.id)
+            app.modelReadinessDidChange()
         } catch {
             transcriptionModelErrors[choice.id] = error.localizedDescription
         }

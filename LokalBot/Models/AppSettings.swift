@@ -275,11 +275,9 @@ struct AppSettings: Codable, Equatable {
     /// agent context off this Mac. Loopback endpoints never need approval.
     var approvedRemoteInferenceOrigins: [String] = []
 
-    /// True when the Think backend is pointed at a non-loopback server, i.e.
-    /// meeting and workday text is (or would be, once approved) sent off this
-    /// Mac. Loopback Ollama / OpenAI-compatible servers still count as local.
-    /// Surfaces like the sidebar privacy footer must consult this instead of
-    /// claiming unconditional locality.
+    /// True only when the selected Think backend may actually send meeting or
+    /// workday text to an approved remote server. Configured-but-unapproved,
+    /// insecure, invalid, and loopback endpoints all return false.
     var usesRemoteMainLLM: Bool {
         let base: String
         switch summarizerBackend {
@@ -289,6 +287,8 @@ struct AppSettings: Codable, Equatable {
         }
         guard let url = URL(string: base) else { return false }
         return InferenceEndpointPolicy.requiresApproval(url)
+            && InferenceEndpointPolicy.isAllowed(
+                url, approvedOrigins: approvedRemoteInferenceOrigins)
     }
     var openAIAPIKey: String {
         get {

@@ -86,6 +86,18 @@ struct ModelReadinessSnapshot: Equatable, Sendable {
         return ModelCatalog.localURL(for: entry, storage: storage) != nil
     }
 
+    /// Settings that can change whether a parked meeting may transcribe or
+    /// summarize without downloading anything. AppState uses this to re-check
+    /// parked work immediately after a selection change.
+    static func processingReadinessChanged(from old: AppSettings,
+                                           to new: AppSettings) -> Bool {
+        old.transcriptionModel != new.transcriptionModel
+            || old.graniteSpeechModel != new.graniteSpeechModel
+            || old.summarizerBackend != new.summarizerBackend
+            || old.builtInModelID != new.builtInModelID
+            || old.customBuiltInModels != new.customBuiltInModels
+    }
+
     /// Total bytes of the core GGUF models (Think when built-in, Autocomplete)
     /// still missing on disk. The Transcribe model downloads through its
     /// engine-specific path and is not included — callers name it separately.

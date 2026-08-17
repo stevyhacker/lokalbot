@@ -25,7 +25,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(AppSettings().menuBarOnly)
     }
 
-    func testUsesRemoteMainLLMTracksBackendAndHost() {
+    func testUsesRemoteMainLLMRequiresApprovedRemoteEndpoint() {
         var settings = AppSettings()
         XCTAssertFalse(settings.usesRemoteMainLLM, "built-in Think is local")
 
@@ -33,13 +33,21 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(settings.usesRemoteMainLLM, "loopback Ollama is local")
 
         settings.ollamaBaseURL = "https://inference.example.com"
+        XCTAssertFalse(settings.usesRemoteMainLLM, "configured is not approved")
+        settings.approvedRemoteInferenceOrigins = ["https://inference.example.com"]
         XCTAssertTrue(settings.usesRemoteMainLLM)
 
         settings.summarizerBackend = .openAICompatible
         XCTAssertFalse(settings.usesRemoteMainLLM, "loopback LM Studio default is local")
 
         settings.openAIBaseURL = "https://api.example.com/v1"
+        XCTAssertFalse(settings.usesRemoteMainLLM, "approval is origin-specific")
+        settings.approvedRemoteInferenceOrigins.append("https://api.example.com")
         XCTAssertTrue(settings.usesRemoteMainLLM)
+
+        settings.openAIBaseURL = "http://api.example.com/v1"
+        settings.approvedRemoteInferenceOrigins.append("http://api.example.com")
+        XCTAssertFalse(settings.usesRemoteMainLLM, "insecure remote inference stays blocked")
 
         settings.summarizerBackend = .appleIntelligence
         XCTAssertFalse(settings.usesRemoteMainLLM, "Apple Intelligence is on-device")

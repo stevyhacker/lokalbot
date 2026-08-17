@@ -134,9 +134,11 @@ final class ProcessingPipelineAutomationGateTests: XCTestCase {
 
     func testAutomaticSummaryParksButKeepsExistingTranscript() async throws {
         let root = try makeRoot()
+        let jobStore = PipelineJobStore(
+            databaseURL: root.appendingPathComponent("test.sqlite"))
         let readiness = ReadinessBox()
         readiness.transcriptionReady = true
-        let pipeline = makePipeline(root: root, readiness: readiness)
+        let pipeline = makePipeline(root: root, jobStore: jobStore, readiness: readiness)
         let meeting = makeMeeting()
 
         // A transcript already on disk (live transcription, earlier run):
@@ -153,6 +155,20 @@ final class ProcessingPipelineAutomationGateTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: folder.appendingPathComponent("transcript.json").path),
             "parking the summary must not disturb the transcript")
+
+        // Repeated launch/download readiness checks while Think is still
+        // absent must remain pure waits, not crash-loop processing attempts.
+        for _ in 0..<(PipelineJobStore.maxAutoResumeAttempts + 1) {
+            pipeline.retryJobsWaitingForModels()
+            await waitUntil {
+                pipeline.stages[meeting.id] == .waitingForModels
+                    && !pipeline.hasActiveWork
+            }
+        }
+        let pending = jobStore.pendingJobs()
+        XCTAssertEqual(pending.first?.attempts, 0,
+                       "summary-only waiting must preserve the auto-resume budget")
+        XCTAssertTrue(jobStore.parkedJobs().isEmpty)
     }
 
     // MARK: - Readiness helpers
@@ -210,6 +226,49 @@ final class ProcessingPipelineAutomationGateTests: XCTestCase {
         XCTAssertEqual(
             ModelReadinessSnapshot.missingCoreModelBytes(settings, storage: storage), 0,
             "a remote Think backend needs no local Think download")
+    }
+
+    func testProcessingReadinessChangeTracksPipelineModelSelections() {
+        let original = AppSettings()
+
+        var changed = original
+        changed.transcriptionModel = .parakeetV3
+        XCTAssertTrue(ModelReadinessSnapshot.processingReadinessChanged(
+            from: original, to: changed))
+
+        changed = original
+        changed.summarizerBackend = .ollama
+        XCTAssertTrue(ModelReadinessSnapshot.processingReadinessChanged(
+            from: original, to: changed))
+
+        changed = original
+        changed.builtInModelID = "another-think-model"
+        XCTAssertTrue(ModelReadinessSnapshot.processingReadinessChanged(
+            from: original, to: changed))
+
+        changed = original
+        changed.autoSummarize.toggle()
+        XCTAssertFalse(ModelReadinessSnapshot.processingReadinessChanged(
+            from: original, to: changed),
+            "non-readiness settings must not churn parked jobs")
+    }
+
+    func testOnboardingDownloadStateStopsSpinningAndAllowsRetryAfterFailure() {
+        XCTAssertEqual(
+            OnboardingModelDownloadState.resolve(
+                coreReady: false, activeDownloads: 0,
+                isPreparingTranscription: false, error: "Network unavailable"),
+            .download(error: "Network unavailable"))
+        XCTAssertEqual(
+            OnboardingModelDownloadState.resolve(
+                coreReady: false, activeDownloads: 0,
+                isPreparingTranscription: true, error: nil),
+            .downloading)
+        XCTAssertEqual(
+            OnboardingModelDownloadState.resolve(
+                coreReady: true, activeDownloads: 0,
+                isPreparingTranscription: false, error: nil),
+            .ready)
     }
 
     func testForgetDropsParkedJobsForDeletedMeetings() async throws {

@@ -272,6 +272,20 @@ final class ProcessingPipeline: ObservableObject {
                     "pipeline parked meeting=\(meeting.id) waiting for the transcription model")
                 return
             }
+            // A transcript may already exist because an earlier attempt
+            // completed transcription before parking its summary. Check Think
+            // before markStarted in that case: merely waiting for a model must
+            // never consume the crash-loop attempt budget.
+            if !needsTranscription, job.summarize,
+               !automationReadiness.think(config, storage) {
+                waitingForModelsJobs.append(Job(
+                    meeting: meeting, transcribe: false, summarize: true,
+                    resumed: job.resumed, origin: .automatic))
+                stages[meeting.id] = .waitingForModels
+                lokalbotLog(
+                    "pipeline parked summary meeting=\(meeting.id) waiting for the Think model")
+                return
+            }
         }
         if let jobStore, !jobStore.markStarted(meetingID: meeting.id) {
             stages[meeting.id] = .failed("Could not durably start this processing job.")
