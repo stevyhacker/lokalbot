@@ -40,31 +40,31 @@ struct CotypingModelPreparationView: View {
         case .ready(let entry):
             return .init(
                 state: .ready,
-                title: "Recommended cotyping model",
+                title: "Recommended autocomplete model",
                 status: "\(entry.displayName) is ready.",
                 actionTitle: isReadyAndActive(status) ? nil : "Use")
         case .downloading(let entry, let progress):
             return .init(
                 state: .preparing,
-                title: "Preparing cotyping model",
+                title: "Preparing autocomplete model",
                 status: "Downloading \(entry.displayName) — \(Int(progress * 100))%",
                 progress: progress)
         case .failed(let entry, let message):
             return .init(
                 state: .failed,
-                title: "Cotyping model needs attention",
+                title: "Autocomplete model needs attention",
                 status: "\(entry.displayName): \(message)",
                 actionTitle: "Retry")
         case .missing(let entry):
             return .init(
                 state: .waiting,
-                title: "Recommended cotyping model",
+                title: "Recommended autocomplete model",
                 status: "\(entry.displayName) has not been downloaded yet.",
                 actionTitle: "Prepare")
         case .unavailable:
             return .init(
                 state: .failed,
-                title: "Cotyping model unavailable",
+                title: "Autocomplete model unavailable",
                 status: "The recommended model is not in this build.")
         }
     }

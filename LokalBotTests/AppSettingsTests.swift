@@ -25,6 +25,26 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(AppSettings().menuBarOnly)
     }
 
+    func testUsesRemoteMainLLMTracksBackendAndHost() {
+        var settings = AppSettings()
+        XCTAssertFalse(settings.usesRemoteMainLLM, "built-in Think is local")
+
+        settings.summarizerBackend = .ollama
+        XCTAssertFalse(settings.usesRemoteMainLLM, "loopback Ollama is local")
+
+        settings.ollamaBaseURL = "https://inference.example.com"
+        XCTAssertTrue(settings.usesRemoteMainLLM)
+
+        settings.summarizerBackend = .openAICompatible
+        XCTAssertFalse(settings.usesRemoteMainLLM, "loopback LM Studio default is local")
+
+        settings.openAIBaseURL = "https://api.example.com/v1"
+        XCTAssertTrue(settings.usesRemoteMainLLM)
+
+        settings.summarizerBackend = .appleIntelligence
+        XCTAssertFalse(settings.usesRemoteMainLLM, "Apple Intelligence is on-device")
+    }
+
     func testMultiSpeakerDiarizationDefaultsTrue() {
         XCTAssertTrue(AppSettings().multiSpeakerDiarization)
     }

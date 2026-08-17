@@ -140,7 +140,7 @@ struct MenuBarView: View {
 
             if let error = app.lastError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption).foregroundStyle(.orange).lineLimit(2)
+                    .font(.caption).foregroundStyle(Brand.error).lineLimit(2)
             }
 
             if app.micRecoveryNeeded {
@@ -152,7 +152,7 @@ struct MenuBarView: View {
                           systemImage: "mic.slash.fill")
                         .font(.caption)
                 }
-                .buttonStyle(.plain).foregroundStyle(.orange)
+                .buttonStyle(.plain).foregroundStyle(Brand.error)
             }
 
             if !permissions.allGranted {
@@ -160,7 +160,7 @@ struct MenuBarView: View {
                     Label("Grant permissions to record", systemImage: "exclamationmark.shield.fill")
                         .font(.caption)
                 }
-                .buttonStyle(.plain).foregroundStyle(.orange)
+                .buttonStyle(.plain).foregroundStyle(Brand.error)
             }
 
             recentSection
@@ -464,13 +464,13 @@ struct MenuBarView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 1) {
-                Text("Cotyping").font(.callout.weight(.medium))
-                Text("Inline autocomplete")
+                Text("Autocomplete").font(.callout.weight(.medium))
+                Text("Suggests text as you type")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Toggle("Cotyping", isOn: $app.settings.cotypingEnabled)
+            Toggle("Autocomplete", isOn: $app.settings.cotypingEnabled)
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.mini)

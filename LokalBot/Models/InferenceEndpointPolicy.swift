@@ -37,11 +37,14 @@ enum InferenceEndpointPolicy {
 
     static func isLoopback(_ url: URL) -> Bool {
         guard let host = url.host?.lowercased() else { return false }
+        // "0.0.0.0" is deliberately NOT loopback: it's the unspecified
+        // address, and treating it as local would silently trust a
+        // nonstandard destination. Local servers should use localhost or
+        // 127.0.0.1 — which is also where a 0.0.0.0-bound server listens.
         return host == "localhost"
             || host.hasSuffix(".localhost")
             || host == "::1"
             || host == "0:0:0:0:0:0:0:1"
-            || host == "0.0.0.0"
             || isIPv4Loopback(host)
     }
 

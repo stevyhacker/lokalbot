@@ -399,7 +399,7 @@ struct ModelsView: View {
                     Label("Remote server: meeting transcripts, screen text, and agent context may leave this Mac.",
                           systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Brand.error)
                     Toggle("Allow sending inference context to \(origin)",
                            isOn: remoteApprovalBinding(rawURL: rawURL))
                         .font(.caption)
@@ -468,7 +468,7 @@ struct ModelsView: View {
                     Text("Local neural speech. Downloads the Kokoro voice model once, then runs offline.")
                         .font(.caption2).foregroundStyle(.secondary)
                     if let speechModelError {
-                        Text(speechModelError).font(.caption2).foregroundStyle(.orange)
+                        Text(speechModelError).font(.caption2).foregroundStyle(Brand.error)
                     }
                 }
                 Spacer()
@@ -595,7 +595,7 @@ struct ModelsView: View {
             }
             .padding(12)
             if let error = hfSearch.errorMessage {
-                Text(error).font(.caption).foregroundStyle(.orange)
+                Text(error).font(.caption).foregroundStyle(Brand.error)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
             }
@@ -715,7 +715,7 @@ struct ModelsView: View {
                             .foregroundStyle(fit == .tooLarge ? .orange : .secondary)
                     }
                     if let error = downloads.errors[entry.id] {
-                        Text(error).font(.caption2).foregroundStyle(.orange)
+                        Text(error).font(.caption2).foregroundStyle(Brand.error)
                     }
                 }
                 Spacer()
@@ -777,7 +777,7 @@ struct ModelsView: View {
                     }
                     Text(blurb).font(.caption2).foregroundStyle(.secondary)
                     if let error {
-                        Text(error).font(.caption2).foregroundStyle(.orange)
+                        Text(error).font(.caption2).foregroundStyle(Brand.error)
                     }
                 }
                 Spacer()

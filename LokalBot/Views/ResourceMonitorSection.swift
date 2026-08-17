@@ -271,7 +271,7 @@ enum ResourceMonitorPresentation {
         switch residencyID {
         case "llama-server:17872": "Main LLM"
         case "llama-server:17873": "Embeddings"
-        case "llama-server:17874", "cotyping-in-process": "Cotyping"
+        case "llama-server:17874", "cotyping-in-process": "Autocomplete"
         case "llama-server:17875": "Transcription"
         default: "Local model"
         }

@@ -198,7 +198,7 @@ struct MeetingRowView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Label("Failed", systemImage: "exclamationmark.triangle.fill")
                     .font(WorkspaceTypography.metadata)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Brand.error)
                 Button("Retry") {
                     app.retryProcessing(meeting)
                 }

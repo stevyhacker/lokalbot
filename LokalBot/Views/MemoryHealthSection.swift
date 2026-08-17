@@ -88,7 +88,7 @@ struct MemoryHealthSection: View {
             if let error = activeError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Brand.error)
                     .textSelection(.enabled)
             }
 
@@ -100,7 +100,7 @@ struct MemoryHealthSection: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
-            Text("Meeting recording and cotyping generation take priority over OCR, embeddings, and routines. Automatic background work catches up when those interactive tasks are idle.")
+            Text("Meeting recording and autocomplete generation take priority over OCR, embeddings, and routines. Automatic background work catches up when those interactive tasks are idle.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

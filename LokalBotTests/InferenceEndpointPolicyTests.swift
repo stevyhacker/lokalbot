@@ -15,6 +15,15 @@ final class InferenceEndpointPolicyTests: XCTestCase {
         }
     }
 
+    func testUnspecifiedAddressIsNotTreatedAsLoopback() throws {
+        for value in ["http://0.0.0.0:11434", "https://0.0.0.0:8080/v1"] {
+            let url = try XCTUnwrap(URL(string: value))
+            XCTAssertFalse(InferenceEndpointPolicy.isLoopback(url), value)
+            XCTAssertTrue(InferenceEndpointPolicy.requiresApproval(url), value)
+            XCTAssertFalse(InferenceEndpointPolicy.isAllowed(url, approvedOrigins: []), value)
+        }
+    }
+
     func testHostnameBeginningWith127IsNotMistakenForLoopback() throws {
         let url = try XCTUnwrap(URL(string: "http://127.attacker.example/v1"))
         XCTAssertFalse(InferenceEndpointPolicy.isLoopback(url))

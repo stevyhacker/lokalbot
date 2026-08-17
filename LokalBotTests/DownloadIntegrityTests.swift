@@ -41,6 +41,29 @@ final class DownloadIntegrityTests: XCTestCase {
 
 @MainActor
 final class ModelDownloadManagerCancellationTests: XCTestCase {
+    func testPlaintextDownloadURLIsRefusedBeforeAnyBytesMove() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("plaintext-refusal-\(UUID().uuidString)", isDirectory: true)
+        let storage = StorageManager(rootURL: root)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let manager = ModelDownloadManager(
+            stagedDownloader: { _, _, _, _ in
+                XCTFail("a plaintext download must never start")
+                throw URLError(.badURL)
+            },
+            sha256Digest: { _ in "" })
+
+        manager.download(
+            url: "http://mirror.example.com/model.gguf",
+            fileName: "model.gguf",
+            id: "plaintext",
+            storage: storage)
+
+        XCTAssertEqual(manager.errors["plaintext"],
+                       "Model downloads must use an https:// URL.")
+        XCTAssertNil(manager.progress["plaintext"])
+    }
+
     func testLegacyCatalogModelIsHashedAndMarkedBeforeReuse() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("legacy-model-\(UUID().uuidString)", isDirectory: true)

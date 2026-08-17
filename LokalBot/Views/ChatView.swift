@@ -123,7 +123,7 @@ private struct EditorialTurn: View {
                     if let speechError {
                         Text(speechError)
                             .font(.caption2)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Brand.error)
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
@@ -490,7 +490,7 @@ private struct ConversationListContent: View {
     }
 
     private var conversationTitle: some View {
-        Text("Conversations")
+        Text("Ask")
             .font(WorkspaceTypography.sectionTitle)
     }
 

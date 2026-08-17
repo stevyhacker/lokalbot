@@ -214,6 +214,14 @@ final class RecordingController: ObservableObject {
             lokalbotLog("startRecording suppressed: calendar event \(calendarEvent?.externalID ?? "?") within cooldown")
             return
         }
+        // Refuse up front on a nearly-full volume: a recording that dies
+        // mid-meeting from ENOSPC loses the meeting; a clear refusal doesn't.
+        if let advisory = DiskSpacePrecheck.recordingAdvisory(
+            availableBytes: DiskSpacePrecheck.availableBytes(at: storage.rootURL)) {
+            lokalbotLog("startRecording refused: low disk space")
+            onError(advisory)
+            return
+        }
         status = .starting
         audioMonitor.isRecordingActive = true
         audioMonitor.accept()

@@ -101,7 +101,7 @@ struct CommandPaletteView: View {
                   title: app.settings.dictationEnabled ? "Go to Dictation (on)" : "Go to Dictation (off)",
                   subtitle: "Type", action: { app.openType(.dictation) }),
             .init(id: "nav.cotyping", icon: "text.cursor",
-                  title: app.settings.cotypingEnabled ? "Go to Cotyping (on)" : "Go to Cotyping (off)",
+                  title: app.settings.cotypingEnabled ? "Go to Autocomplete (on)" : "Go to Autocomplete (off)",
                   subtitle: "Type", action: { app.openType(.cotyping) }),
             .init(id: "nav.agent", icon: "wand.and.sparkles", title: "Go to Agent",
                   subtitle: "Automation", action: { app.navSection = .agent }),

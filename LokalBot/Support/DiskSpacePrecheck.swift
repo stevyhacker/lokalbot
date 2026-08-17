@@ -23,6 +23,22 @@ enum DiskSpacePrecheck {
             + "Free up space or pick a smaller model."
     }
 
+    /// Meeting audio is small next to models, but recording onto a nearly-full
+    /// volume risks truncated m4a files and failed processing. Refuse to start
+    /// below this floor so the failure is a clear sentence, not a corrupt take.
+    static let recordingFloorBytes: Int64 = 1_000_000_000
+
+    /// Nil when recording can start, else a user-facing refusal message.
+    static func recordingAdvisory(availableBytes: Int64?) -> String? {
+        guard let availableBytes, availableBytes < recordingFloorBytes else { return nil }
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        let floor = formatter.string(fromByteCount: recordingFloorBytes)
+        let free = formatter.string(fromByteCount: max(0, availableBytes))
+        return "Recording needs at least \(floor) of free disk space, "
+            + "but only \(free) is available. Free up space and try again."
+    }
+
     /// Free capacity of the volume holding `url`, using the "important usage"
     /// figure so purgeable space (local Time Machine snapshots, caches) counts
     /// as available — matching what Finder reports and what the OS will

@@ -187,18 +187,26 @@ private struct MeetingWorkspaceDetail: View {
 
                 if player.isLoaded { MeetingAudioBar(player: player, folder: folder) }
                 if let stage = app.pipeline.stages[meeting.id] {
-                    Label(stage.label, systemImage: stage.isFailure
-                          ? "exclamationmark.triangle" : "sparkles")
-                        .font(.callout)
-                        .foregroundStyle(stage.isFailure ? .orange : .secondary)
+                    HStack(spacing: 10) {
+                        Label(stage.label, systemImage: stage.isFailure
+                              ? "exclamationmark.triangle" : "sparkles")
+                            .font(.callout)
+                            .foregroundStyle(stage.isFailure ? .orange : .secondary)
+                        if stage.isFailure {
+                            Button("Retry") { app.retryProcessing(meeting) }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .accessibilityIdentifier("meeting.workspace.retry")
+                        }
+                    }
                 }
                 if let exportError {
                     Label(exportError, systemImage: "exclamationmark.triangle")
-                        .font(.callout).foregroundStyle(.orange)
+                        .font(.callout).foregroundStyle(Brand.error)
                 }
                 if let speechError {
                     Label(speechError, systemImage: "speaker.slash")
-                        .font(.callout).foregroundStyle(.orange)
+                        .font(.callout).foregroundStyle(Brand.error)
                 }
 
                 WorkspaceSection(title: "Action items", icon: "checklist") {

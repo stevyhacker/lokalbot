@@ -274,6 +274,22 @@ struct AppSettings: Codable, Equatable {
     /// Origins the user explicitly approved for sending transcript, OCR, and
     /// agent context off this Mac. Loopback endpoints never need approval.
     var approvedRemoteInferenceOrigins: [String] = []
+
+    /// True when the Think backend is pointed at a non-loopback server, i.e.
+    /// meeting and workday text is (or would be, once approved) sent off this
+    /// Mac. Loopback Ollama / OpenAI-compatible servers still count as local.
+    /// Surfaces like the sidebar privacy footer must consult this instead of
+    /// claiming unconditional locality.
+    var usesRemoteMainLLM: Bool {
+        let base: String
+        switch summarizerBackend {
+        case .builtIn, .appleIntelligence: return false
+        case .ollama: base = ollamaBaseURL
+        case .openAICompatible: base = openAIBaseURL
+        }
+        guard let url = URL(string: base) else { return false }
+        return InferenceEndpointPolicy.requiresApproval(url)
+    }
     var openAIAPIKey: String {
         get {
             KeychainSecrets.string(account: "openai-compatible-api-key") ?? ""

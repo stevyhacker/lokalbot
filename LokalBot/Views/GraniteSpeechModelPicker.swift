@@ -76,7 +76,7 @@ struct GraniteSpeechModelPicker: View {
                 if let errorMessage {
                     Label(errorMessage, systemImage: "exclamationmark.triangle")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Brand.error)
                         .textSelection(.enabled)
                 }
 

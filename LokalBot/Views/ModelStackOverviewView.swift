@@ -181,7 +181,7 @@ struct ModelStackOverviewView: View {
                 Spacer()
                 if snapshot.failedDownloads > 0 {
                     Label("\(snapshot.failedDownloads) failed", systemImage: "exclamationmark.triangle")
-                        .font(WorkspaceTypography.metadata).foregroundStyle(.orange)
+                        .font(WorkspaceTypography.metadata).foregroundStyle(Brand.error)
                 } else {
                     Label("Downloads verified on completion", systemImage: "checkmark.shield")
                         .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)

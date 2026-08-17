@@ -110,7 +110,7 @@ struct DictationView: View {
                 Text(app.settings.summarizerBackend.displayName)
                     .foregroundStyle(.secondary)
             }
-            Text("Speech uses the meeting ASR model; final wording uses the Main LLM and your Cotyping writing profile. If Main LLM is remote, spoken and screen text follow that approved backend setting.")
+            Text("Speech uses the meeting ASR model; final wording uses the Main LLM and your autocomplete writing profile. If Main LLM is remote, spoken and screen text follow that approved backend setting.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

@@ -184,6 +184,10 @@ final class MainWindowUITests: XCTestCase {
             XCTAssertLessThan(pair.0.frame.midY, pair.1.frame.midY,
                               "approved sidebar order changed")
         }
+        // The footer is state-aware: these strings are the local-default
+        // posture (test host uses built-in Think). With a remote backend
+        // configured it switches to the "Think uses an approved remote
+        // server" wording — covered by AppSettingsTests.usesRemoteMainLLM.
         XCTAssertTrue(textWithContent("All memory is local").firstMatch.exists)
         XCTAssertTrue(textWithContent("No data leaves your Mac").firstMatch.exists)
     }
@@ -358,7 +362,7 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(textWithContent("Representative evidence").firstMatch.exists,
                       "session preview does not explain its evidence")
 
-        let back = app.buttons["Back to day brief"].firstMatch
+        let back = app.buttons["Back to day digest"].firstMatch
         XCTAssertTrue(back.waitForExistence(timeout: 3))
         back.click()
         XCTAssertTrue(app.descendants(matching: .any)["capture.dayOverview"]

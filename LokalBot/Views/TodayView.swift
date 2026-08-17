@@ -236,7 +236,7 @@ struct TodayView: View {
                 dream.provenanceDescription + " Dream again from Settings → Recording.",
                 systemImage: "exclamationmark.triangle")
                 .font(.caption)
-                .foregroundStyle(.orange)
+                .foregroundStyle(Brand.error)
         } else if dream.inferenceProvenance?.location == .remote {
             Label("Generated using approved remote inference", systemImage: "network")
                 .font(.caption)
@@ -371,7 +371,7 @@ struct TodayView: View {
         }
         if let digestError = model.digestError {
             Label(digestError, systemImage: "exclamationmark.triangle")
-                .font(.callout).foregroundStyle(.orange)
+                .font(.callout).foregroundStyle(Brand.error)
         }
     }
 

@@ -265,19 +265,23 @@ struct BrandChip: View {
 // MARK: - Status dot
 
 /// A small state-colored dot; `pulses` adds the expanding ring used by live
-/// recording indicators.
+/// recording indicators. The ring respects Reduce Motion — the dot's color
+/// alone still communicates the live state.
 struct StatusDot: View {
     var color: Color
     var size: CGFloat = 8
     var pulses: Bool = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
+
+    private var animates: Bool { pulses && !reduceMotion }
 
     var body: some View {
         Circle()
             .fill(color)
             .frame(width: size, height: size)
             .overlay {
-                if pulses {
+                if animates {
                     Circle()
                         .stroke(color.opacity(0.55), lineWidth: 3)
                         .scaleEffect(pulse ? 2.4 : 1)
@@ -286,8 +290,8 @@ struct StatusDot: View {
                                    value: pulse)
                 }
             }
-            .onAppear { pulse = pulses }
-            .onChange(of: pulses) { _, now in pulse = now }
+            .onAppear { pulse = animates }
+            .onChange(of: animates) { _, now in pulse = now }
     }
 }
 
@@ -305,7 +309,7 @@ struct ErrorToast: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Brand.error)
             Text(message).font(.callout).lineLimit(2)
             if let actionTitle, let action {
                 Button(actionTitle, action: action)
@@ -317,7 +321,7 @@ struct ErrorToast: View {
         }
         .padding(.horizontal, 14).padding(.vertical, 9)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
-        .overlay(RoundedRectangle(cornerRadius: Brand.Radius.panel).strokeBorder(.orange.opacity(0.4)))
+        .overlay(RoundedRectangle(cornerRadius: Brand.Radius.panel).strokeBorder(Brand.error.opacity(0.4)))
         .padding(12)
     }
 }

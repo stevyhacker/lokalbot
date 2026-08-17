@@ -85,7 +85,7 @@ struct AgentSessionView: View {
                 .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
         case .failed(let message):
             Label("Needs attention", systemImage: "exclamationmark.triangle.fill")
-                .font(WorkspaceTypography.metadata).foregroundStyle(.orange)
+                .font(WorkspaceTypography.metadata).foregroundStyle(Brand.error)
                 .help(message)
         }
     }
@@ -246,7 +246,7 @@ struct AgentSessionView: View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 28))
-                .foregroundStyle(.orange)
+                .foregroundStyle(Brand.error)
             Text("Agent Mode needs attention")
                 .font(.title3.weight(.semibold))
             Text(message)

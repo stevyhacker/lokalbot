@@ -417,15 +417,15 @@ private struct TimelineWorkspaceHeader: View {
             if model.generating {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text("Updating brief…")
+                    Text("Updating digest…")
                 }
             } else {
-                Label(model.digest == nil ? "Generate brief" : "Regenerate brief",
+                Label(model.digest == nil ? "Write day digest" : "Rewrite day digest",
                       systemImage: "arrow.clockwise")
             }
         }
         .disabled(model.generating)
-        .help("Rewrite the day brief using the latest activity and meetings")
+        .help("Rewrite the day digest using the latest activity and meetings")
         .accessibilityIdentifier("timeline.dayDigest.generate")
     }
 
@@ -452,7 +452,7 @@ private struct TimelineWorkspaceHeader: View {
         if let digest = model.digest {
             Menu {
                 Button { model.copyDigest(digest) } label: {
-                    Label("Copy brief", systemImage: "doc.on.doc")
+                    Label("Copy digest", systemImage: "doc.on.doc")
                 }
                 .accessibilityIdentifier("capture.dayDigest.copyAll")
                 Button { model.exportDigest(digest) } label: {
@@ -464,7 +464,7 @@ private struct TimelineWorkspaceHeader: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             .help(digestUpdatedHelp)
-            .accessibilityLabel("Day brief actions")
+            .accessibilityLabel("Day digest actions")
         }
     }
 
@@ -473,11 +473,11 @@ private struct TimelineWorkspaceHeader: View {
         if !app.selectedMeetingIDs.isEmpty { return "Meeting" }
         if model.selectedSessionID != nil { return "Session" }
         if model.selection != nil { return "Activity" }
-        return "Day brief"
+        return "Day digest"
     }
 
     private var digestUpdatedHelp: String {
-        guard let updatedAt = model.digestUpdatedAt else { return "Day brief actions" }
+        guard let updatedAt = model.digestUpdatedAt else { return "Day digest actions" }
         return "Updated \(updatedAt.formatted(date: .abbreviated, time: .shortened))"
     }
 

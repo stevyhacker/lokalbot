@@ -9,6 +9,9 @@ final class AgentAccessManager: ObservableObject {
     private let gate: AgentAccessGate
     private let storage: StorageManager
     private let settings: () -> AppSettings
+    /// Surfaces enable failures to the user (feeds `AppState.lastError`); a
+    /// silently-off Privacy toggle would read as a broken switch.
+    private let onError: (String) -> Void
     /// Test seam. When nil (production), wakes go through `wakeMainLLM`,
     /// which holds a TTL lease on the broker.
     private let startEngine: ((AppSettings, StorageManager) async -> String?)?
@@ -29,13 +32,15 @@ final class AgentAccessManager: ObservableObject {
         settings: @escaping () -> AppSettings,
         gate: AgentAccessGate = AgentAccessGate(),
         startEngine: ((AppSettings, StorageManager) async -> String?)? = nil,
-        broker: InferenceBroker = .shared
+        broker: InferenceBroker = .shared,
+        onError: @escaping (String) -> Void = { _ in }
     ) {
         self.storage = storage
         self.settings = settings
         self.gate = gate
         self.startEngine = startEngine
         self.broker = broker
+        self.onError = onError
     }
 
     func start() {
@@ -48,6 +53,7 @@ final class AgentAccessManager: ObservableObject {
             do {
                 try gate.enable()
             } catch {
+                onError("Could not enable agent access: \(error.localizedDescription)")
                 return
             }
             isEnabled = true

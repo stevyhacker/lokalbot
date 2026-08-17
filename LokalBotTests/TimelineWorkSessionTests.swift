@@ -68,6 +68,34 @@ final class TimelineWorkSessionTests: XCTestCase {
         XCTAssertEqual(sessions.first?.notableTitles.first, "CaptureView.swift")
     }
 
+    func testSessionTitleStripsBrowserChromeSuffixes() {
+        let sessions = TimelineWorkSession.sessions(from: [
+            block(1, app: "Google Chrome",
+                  title: "Kaya beach Ulcinj bilježi odličnu posjećenost - YouTube - Audio playing - Google Chrome - Stevan",
+                  start: 0, end: 600),
+        ])
+
+        XCTAssertEqual(sessions.first?.title,
+                       "Kaya beach Ulcinj bilježi odličnu posjećenost - YouTube")
+    }
+
+    func testStrippingBrowserChromeHandlesFirefoxAndPlainTitles() {
+        XCTAssertEqual(
+            TimelineWorkSession.strippingBrowserChrome("Docs — Mozilla Firefox"),
+            "Docs")
+        XCTAssertEqual(
+            TimelineWorkSession.strippingBrowserChrome("Home / X - Google Chrome - Stevan"),
+            "Home / X")
+        XCTAssertEqual(
+            TimelineWorkSession.strippingBrowserChrome("Meeting notes - draft two"),
+            "Meeting notes - draft two",
+            "titles without marker segments pass through untouched")
+        XCTAssertEqual(
+            TimelineWorkSession.strippingBrowserChrome("Google Chrome"),
+            "Google Chrome",
+            "a bare browser name is left for the generic-title filter")
+    }
+
     func testDayItemsInterleaveSessionsAndMeetings() {
         let session = TimelineWorkSession.sessions(from: [
             block(1, app: "Xcode", title: "CaptureView.swift", start: 0, end: 600),

@@ -60,7 +60,7 @@ struct UpcomingMeetingSection: View {
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Brand.error)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -351,7 +351,7 @@ private struct UpcomingMeetingCard: View {
             if let generationError = model.generationError(for: evidence) {
                 Label(generationError, systemImage: "exclamationmark.triangle")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Brand.error)
             }
         }
     }

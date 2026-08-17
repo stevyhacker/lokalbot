@@ -171,7 +171,7 @@ struct SettingsView: View {
                     settingsQuery = ""
                     app.settingsTab = .models
                 }
-                Text("Transcription, main LLM, cotyping, and embedding models live in the Models tab.")
+                Text("Transcription, main LLM, autocomplete, and embedding models live in the Models tab.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -296,7 +296,7 @@ struct SettingsView: View {
                     PermissionRow(permission: .screenRecording,
                                   why: "Optional — only used while screenshot capture (Day tracking) is on. System audio does not need it.")
                     PermissionRow(permission: .inputMonitoring,
-                                  why: "Optional — powers the dictation and cotyping shortcuts.")
+                                  why: "Optional — powers the dictation and autocomplete shortcuts.")
                     HStack {
                         Text("Accessibility and Input Monitoring grants apply at launch.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -621,7 +621,7 @@ struct SettingsView: View {
                     }
                     if let error = app.dreaming.lastError {
                         Label(error, systemImage: "exclamationmark.triangle")
-                            .font(.caption).foregroundStyle(.orange)
+                            .font(.caption).foregroundStyle(Brand.error)
                     }
                 }
                 if let memory = app.dreamMemory,
@@ -795,7 +795,7 @@ struct SettingsView: View {
                             } else if !installer.isBundleLocationStable {
                                 Label("Move LokalBot.app to /Applications first",
                                       systemImage: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(Brand.error)
                             } else {
                                 Label("Not installed", systemImage: "circle")
                                     .foregroundStyle(.secondary)
@@ -858,7 +858,7 @@ struct SettingsView: View {
                 if let error = app.calendar.accessRequestError {
                     Text(error)
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Brand.error)
                         .multilineTextAlignment(.trailing)
                         .frame(maxWidth: 320, alignment: .trailing)
                 }

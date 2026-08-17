@@ -628,6 +628,21 @@ final class ReuseSubsystemsTests: XCTestCase {
         XCTAssertNil(DiskSpacePrecheck.advisory(expectedBytes: 1_000, availableBytes: nil))
     }
 
+    func testRecordingAdvisoryRefusesOnlyBelowFloor() {
+        XCTAssertNil(DiskSpacePrecheck.recordingAdvisory(
+            availableBytes: DiskSpacePrecheck.recordingFloorBytes))
+        let message = DiskSpacePrecheck.recordingAdvisory(
+            availableBytes: DiskSpacePrecheck.recordingFloorBytes - 1)
+        XCTAssertNotNil(message)
+        XCTAssertTrue(message?.contains("free disk space") == true)
+    }
+
+    /// An unreadable volume must not block recording — same courtesy-not-gate
+    /// posture as the download precheck.
+    func testRecordingAdvisorySkipsWhenVolumeUnreadable() {
+        XCTAssertNil(DiskSpacePrecheck.recordingAdvisory(availableBytes: nil))
+    }
+
     // MARK: - TokenCountEstimator / WordCountFormatter
 
     func testTokenEstimateZeroForEmptyAndMonotonic() {

@@ -12,6 +12,11 @@ enum Brand {
     /// The single warm note — reserved for the live "recording" indicator,
     /// mirroring the antenna dot on the icon.
     static let amber = Color(red: 0.984, green: 0.749, blue: 0.141)      // #fbbf24
+    /// Failure and warning text, icons, and borders. One semantic hook —
+    /// currently the system orange — so the error presentation can evolve in
+    /// one place instead of dozens of hardcoded `.orange`s.
+    static let error = Color.orange
+
     /// "Me" speaker (mic track) — the user's own voice.
     static let me = teal
     /// "Them" speaker (system track) — other participants.

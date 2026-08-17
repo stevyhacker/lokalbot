@@ -18,7 +18,7 @@ struct TimelineContextPanel: View {
                 onReload: { model.reload(app: app) },
                 onClear: { model.selectedSnapshotID = nil },
                 backLabel: model.selectedSessionID == nil
-                    ? "Back to day brief" : "Back to work session",
+                    ? "Back to day digest" : "Back to work session",
                 onDismiss: onDismiss)
                 .id(snapshotID)
         } else if app.selectedMeetingIDs.isEmpty, let session = model.selectedSession {
@@ -65,13 +65,18 @@ struct TimelineContextPanel: View {
     }
 
     private var dayBrief: some View {
-        let perApp = Dictionary(grouping: model.blocks, by: \.app)
+        // Locked-screen and shell processes (loginwindow, WindowServer…) are
+        // not apps the user worked in; the digest and work-session layers
+        // already exclude them, so the allocation chart must too.
+        let perApp = Dictionary(
+            grouping: model.blocks.filter { !TimelineWorkSession.isSystemOnly(app: $0.app) },
+            by: \.app)
             .mapValues { $0.reduce(0) { $0 + $1.duration } }
             .sorted { $0.value > $1.value }
         return ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 TimelinePanelHeader(
-                    title: "Day brief",
+                    title: "Day digest",
                     subtitle: model.day.formatted(date: .complete, time: .omitted),
                     icon: "sparkles",
                     onBack: nil,
@@ -79,17 +84,17 @@ struct TimelineContextPanel: View {
                     .accessibilityIdentifier("capture.dayOverview")
 
                 if model.digestIsStale {
-                    Label("Newer activity is available. Regenerate the brief to include it.",
+                    Label("Newer activity is available. Regenerate the digest to include it.",
                           systemImage: "clock.arrow.circlepath")
                         .font(WorkspaceTypography.metadata)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Brand.error)
                         .accessibilityIdentifier("capture.dayDigest.stale")
                 }
 
                 if let digestError = model.digestError {
                     Label(digestError, systemImage: "exclamationmark.triangle")
                         .font(WorkspaceTypography.metadata)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Brand.error)
                 }
 
                 if let digest = model.digest {
@@ -97,9 +102,9 @@ struct TimelineContextPanel: View {
                         .accessibilityIdentifier("capture.dayDigest.text")
                 } else {
                     VStack(alignment: .leading, spacing: 6) {
-                        Label("No day brief yet", systemImage: "doc.text")
+                        Label("No day digest yet", systemImage: "doc.text")
                             .font(WorkspaceTypography.sectionTitle)
-                        Text("Generate one from the persistent header. Your chronology stays available while it runs.")
+                        Text("Use \u{201C}Write day digest\u{201D} above to generate one. Your chronology stays available while it runs.")
                             .font(WorkspaceTypography.body)
                             .foregroundStyle(.secondary)
                     }
@@ -379,7 +384,7 @@ struct TimelineContextPanel: View {
                 icon: "checklist",
                 onBack: clearSelection,
                 onDismiss: onDismiss)
-            Text("Return to the day brief or select one meeting in Work sessions.")
+            Text("Return to the day digest or select one meeting in Work sessions.")
                 .font(WorkspaceTypography.body)
                 .foregroundStyle(.secondary)
             Spacer()
@@ -536,8 +541,8 @@ private struct TimelinePanelHeader: View {
                     Image(systemName: "arrow.left")
                 }
                 .buttonStyle(.plain)
-                .help("Back to day brief")
-                .accessibilityLabel("Back to day brief")
+                .help("Back to day digest")
+                .accessibilityLabel("Back to day digest")
             }
             IconTile(systemImage: icon, tint: Brand.teal, size: 30)
             VStack(alignment: .leading, spacing: 2) {

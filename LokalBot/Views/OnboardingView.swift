@@ -201,7 +201,7 @@ private extension OnboardingView {
                     systemImage: "keyboard",
                     tint: Brand.teal,
                     title: "Write",
-                    subtitle: "Dictation and Cotyping bring local assistance anywhere you type."
+                    subtitle: "Dictation and autocomplete bring local assistance anywhere you type."
                 )
                 .onboardingReveal(3)
 
@@ -240,7 +240,7 @@ private extension OnboardingView {
                     systemImage: "record.circle",
                     tint: Brand.amber,
                     title: "Record with consent",
-                    subtitle: "LokalBot starts in manual mode. Tell everyone when you record and follow the consent rules that apply to your meeting and location."
+                    subtitle: "Detected meetings record automatically by default — switch to ask-first or manual anytime in Settings → Recording. Tell everyone when you record and follow the consent rules that apply to your meeting and location."
                 )
                 .onboardingReveal(2)
 
@@ -387,6 +387,13 @@ private extension OnboardingView {
 // MARK: - Footer
 
 private extension OnboardingView {
+    /// The wizard counts as seen only when the user explicitly finishes or
+    /// defers it — quitting mid-wizard re-opens onboarding next launch, so the
+    /// privacy and day-memory education can't be lost to an accidental close.
+    func markOnboardingSeen() {
+        UserDefaults.standard.set(true, forKey: AppState.onboardingShownKey)
+    }
+
     var footer: some View {
         HStack(spacing: 10) {
             if let previous = step.previous {
@@ -398,11 +405,13 @@ private extension OnboardingView {
 
             if step == .permissions {
                 Button("I'll do this later") {
+                    markOnboardingSeen()
                     dismiss()
                 }
                 .controlSize(.large)
 
                 Button("Start using LokalBot") {
+                    markOnboardingSeen()
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)

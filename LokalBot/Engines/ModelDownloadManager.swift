@@ -179,6 +179,13 @@ final class ModelDownloadManager: ObservableObject {
             errors[id] = "The model download URL is invalid."
             return
         }
+        // Every model source today (catalog, HF Browse) is HTTPS; refusing
+        // plaintext keeps a tampered download from ever reaching the digest
+        // check, and keeps non-HF custom URLs on the same encrypted footing.
+        guard url.scheme?.lowercased() == "https" else {
+            errors[id] = "Model downloads must use an https:// URL."
+            return
+        }
         if Self.isHuggingFaceURL(url) {
             guard Self.isPinnedHuggingFaceURL(url), requiredSHA256 != nil else {
                 errors[id] = "For safety, Hugging Face models must use an immutable revision and an advertised SHA-256 digest. Choose the model again from Browse Hugging Face."

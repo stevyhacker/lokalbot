@@ -166,11 +166,11 @@ private struct AskContent: View {
                         .padding(.trailing, 14)
                         .padding(.vertical, 11)
                         .background(
+                            // Brand accent, not a bespoke cyan: the CTA is the
+                            // most prominent tinted control in the app and must
+                            // move with `Brand.teal`.
                             LinearGradient(
-                                colors: [
-                                    Color(red: 0.20, green: 0.66, blue: 0.67),
-                                    Color(red: 0.15, green: 0.58, blue: 0.60)
-                                ],
+                                colors: [Brand.teal, Brand.teal.opacity(0.88)],
                                 startPoint: .leading,
                                 endPoint: .trailing),
                             in: Capsule())

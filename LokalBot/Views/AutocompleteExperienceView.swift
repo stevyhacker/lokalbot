@@ -153,7 +153,7 @@ struct AutocompleteExperienceView: View {
                 }
                 if let error {
                     Label(error, systemImage: "exclamationmark.triangle")
-                        .font(.callout).foregroundStyle(.orange)
+                        .font(.callout).foregroundStyle(Brand.error)
                 } else {
                     Text(previewAttributed)
                         .font(WorkspaceTypography.body)

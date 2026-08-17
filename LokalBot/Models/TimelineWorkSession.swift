@@ -144,11 +144,12 @@ struct TimelineWorkSession: Identifiable, Equatable, Sendable {
     }
 
     private static func cleanedTitle(_ raw: String, app: String) -> String? {
-        let compact = raw
-            .replacingOccurrences(of: "\n", with: " ")
-            .split(whereSeparator: \.isWhitespace)
-            .joined(separator: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let compact = strippingBrowserChrome(
+            raw
+                .replacingOccurrences(of: "\n", with: " ")
+                .split(whereSeparator: \.isWhitespace)
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines))
         let normalized = compact.lowercased()
         let generic: Set<String> = [
             "", "home", "login", "login window", "new tab", "timeline", "today", "unknown",
@@ -157,6 +158,34 @@ struct TimelineWorkSession: Identifiable, Equatable, Sendable {
               normalized != app.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         else { return nil }
         return String(compact.prefix(96))
+    }
+
+    /// Chromium-family windows append status and identity segments to the page
+    /// title ("Page - Audio playing - Google Chrome - Stevan"); Firefox appends
+    /// "Page — Mozilla Firefox". Those trailing segments are browser chrome,
+    /// not content — cut from the first marker segment onward so a session
+    /// reads as the page the user actually saw.
+    private static let browserChromeMarkers: Set<String> = [
+        "google chrome", "google chrome beta", "google chrome canary", "chromium",
+        "microsoft edge", "brave", "vivaldi", "opera", "arc",
+        "mozilla firefox", "firefox",
+        "audio playing", "camera recording", "microphone recording",
+        "high memory usage",
+    ]
+
+    static func strippingBrowserChrome(_ title: String) -> String {
+        for separator in [" - ", " — "] {
+            let parts = title.components(separatedBy: separator)
+            guard parts.count > 1 else { continue }
+            let cut = parts.firstIndex {
+                browserChromeMarkers.contains(
+                    $0.lowercased().trimmingCharacters(in: .whitespaces))
+            }
+            if let cut, cut > 0 {
+                return parts[..<cut].joined(separator: separator)
+            }
+        }
+        return title
     }
 
     private static func contextSwitches(in blocks: [ActivityBlock]) -> Int {
