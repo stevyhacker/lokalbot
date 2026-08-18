@@ -67,10 +67,6 @@ nonisolated enum AppPermission: CaseIterable, Identifiable, Hashable, Sendable {
         }
     }
 
-    var isRequiredForOnboarding: Bool {
-        Self.coreCases.contains(self)
-    }
-
     var isOptionalOnboardingEnhancement: Bool {
         !Self.coreCases.contains(self)
     }
@@ -232,14 +228,6 @@ final class PermissionManager: ObservableObject {
     /// currently granted. Optional grants never block this.
     var allGranted: Bool {
         AppPermission.coreCases.allSatisfy { granted[$0] == true }
-    }
-
-    /// Fires the native prompt only when `permission` is still missing — the
-    /// "ask at the moment the feature is enabled" hook for Settings toggles.
-    func requestIfNeeded(_ permission: AppPermission) {
-        guard granted[permission] != true, !permission.isGranted else { return }
-        permission.request()
-        refresh()
     }
 
     /// Adds one permission-surface consumer and arms a ~1.5s catch-up poll so the

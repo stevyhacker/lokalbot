@@ -408,10 +408,6 @@ struct CotypingBenchmarkSummary: Equatable, Sendable {
         return percentile(values, 0.95)
     }
 
-    var meetsTarget: Bool {
-        total > 0 && results.allSatisfy(\.passed)
-    }
-
     private func percentile(_ values: [Int], _ p: Double) -> Int? {
         guard !values.isEmpty else { return nil }
         let sorted = values.sorted()
@@ -624,25 +620,5 @@ struct CotypingABComparison: Equatable, Sendable {
         guard let l = local.averageFirstVisibleLatencyMs,
               let h = http.averageFirstVisibleLatencyMs else { return nil }
         return h - l
-    }
-}
-
-extension CotypingBenchmarkRunner {
-    /// Runs the default scenarios through both engines (streaming on, so TTFT is
-    /// captured) and returns the comparison. For manual latency validation.
-    static func runAB(
-        local: CotypingCompleting,
-        http: CotypingCompleting,
-        config: CotypingConfiguration,
-        personalization: CotypingPersonalization,
-        learnedExamples: @escaping (CotypingField) -> [String] = { _ in [] }
-    ) async -> CotypingABComparison {
-        let localSummary = await run(
-            engine: local, config: config, personalization: personalization,
-            streamPartials: true, learnedExamples: learnedExamples)
-        let httpSummary = await run(
-            engine: http, config: config, personalization: personalization,
-            streamPartials: true, learnedExamples: learnedExamples)
-        return CotypingABComparison(local: localSummary, http: httpSummary)
     }
 }

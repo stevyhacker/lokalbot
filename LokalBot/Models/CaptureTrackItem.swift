@@ -28,8 +28,6 @@ enum CaptureTrackItem: Identifiable {
         }
     }
 
-    var duration: TimeInterval { end.timeIntervalSince(start) }
-
     /// Merge a day's activity blocks and meetings into one start-ordered
     /// track.
     static func items(blocks: [ActivityBlock], meetings: [Meeting],

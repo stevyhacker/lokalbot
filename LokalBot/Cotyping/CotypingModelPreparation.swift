@@ -18,21 +18,6 @@ enum CotypingModelPreparationStatus: Equatable, Sendable {
     var isDownloading: Bool {
         if case .downloading = self { true } else { false }
     }
-
-    var statusText: String {
-        switch self {
-        case .unavailable:
-            "Recommended cotyping model is not in the catalog."
-        case .missing(let entry):
-            "\(entry.displayName) is not downloaded yet."
-        case .downloading(let entry, let progress):
-            "Downloading \(entry.displayName) \(Int(progress * 100))%."
-        case .ready(let entry):
-            "\(entry.displayName) is downloaded."
-        case .failed(let entry, let message):
-            "\(entry.displayName) download failed: \(message)"
-        }
-    }
 }
 
 enum CotypingModelPreparationAction: Equatable, Sendable {

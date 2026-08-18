@@ -13,8 +13,6 @@ actor GraniteSpeechEngine: TranscriptionEngine {
 
     nonisolated static let modelFileName =
         GraniteSpeechModelConfiguration.defaultModel.localModelFileName
-    nonisolated static let projectorFileName =
-        GraniteSpeechModelConfiguration.defaultModel.localProjectorFileName
     private static let prompt = "transcribe the speech with proper punctuation and capitalization."
     private static let maxSegmentSeconds = 30.0
     private static let serverPort = 17_875

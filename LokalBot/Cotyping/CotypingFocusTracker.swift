@@ -36,8 +36,6 @@ final class CotypingFocusTracker: ObservableObject {
         self.snapshotExecutor = snapshotExecutor
     }
 
-    var isRunning: Bool { timer != nil }
-
     func start() {
         guard timer == nil else { return }
         pollBackoff.reset()

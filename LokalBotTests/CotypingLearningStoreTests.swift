@@ -263,14 +263,9 @@ final class CotypingLearningStorePersistenceTests: XCTestCase {
 
 private actor RecordingCotypingLearningPersistence: CotypingLearningPersisting {
     private var snapshots: [CotypingLearningSnapshot] = []
-    private var removeCount = 0
 
     func persist(_ snapshot: CotypingLearningSnapshot) {
         snapshots.append(snapshot)
-    }
-
-    func remove() {
-        removeCount += 1
     }
 
     func recordedSnapshots() -> [CotypingLearningSnapshot] { snapshots }

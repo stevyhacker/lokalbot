@@ -102,10 +102,6 @@ struct TodayView: View {
                         actionID: openActions.first?.action.id))
                 }
                 .disabled(app.outcomeIndex.openUserActions.isEmpty)
-                Divider()
-                Button("Record now") {
-                    app.startRecording(context: app.recordingContext(for: app.detector.activeApp))
-                }
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
@@ -344,11 +340,12 @@ struct TodayView: View {
                         Label("Export Markdown", systemImage: "square.and.arrow.up")
                     }
                 } label: {
-                    Image(systemName: "ellipsis.circle")
+                    Label("Digest actions", systemImage: "ellipsis.circle")
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
                 .accessibilityLabel("Day digest actions")
+                .accessibilityIdentifier("today.dayDigest.actions")
             }
             DayDigestView(digest, mode: .today)
                 .accessibilityIdentifier("today.dayDigest.text")
@@ -388,7 +385,7 @@ struct TodayView: View {
                     // numbers for the same thing. Captured stays meetings-only.
                     ForEach(todays.prefix(4)) { meeting in
                         Button {
-                            app.previewMeeting(meeting.id)
+                            app.openMeeting(meeting.id)
                         } label: {
                             HStack(spacing: 8) {
                                 MeetingRowView(meeting: meeting)

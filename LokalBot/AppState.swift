@@ -51,12 +51,8 @@ final class AppState: ObservableObject {
 
     /// Which tool the Type section shows. Session-sticky: preserved while
     /// navigating away so returning lands on the last-used tab.
-    enum TypeTab: String, CaseIterable {
+    enum TypeTab: String {
         case dictation, cotyping
-
-        var displayName: String {
-            self == .cotyping ? "Autocomplete" : "Dictation"
-        }
 
         /// Legacy capture names select their tab; anything else leaves the
         /// current tab untouched.
@@ -67,11 +63,6 @@ final class AppState: ObservableObject {
             default: return nil
             }
         }
-    }
-
-    enum MeetingPresentation: String {
-        case preview
-        case detail
     }
 
     struct AgentLaunchContext: Equatable {
@@ -258,7 +249,6 @@ final class AppState: ObservableObject {
     }
     @Published var settingsTab: SettingsTab = .general
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []
-    @Published var meetingPresentation: MeetingPresentation = .preview
     @Published var pendingSeek: TimeInterval?
     /// A screen-memory deep link waiting for Timeline's shared capture model.
     /// Search, assistant citations, and Quick Recall set this before switching
@@ -318,24 +308,17 @@ final class AppState: ObservableObject {
     /// for search hits, menu-bar recents, and palette recents.
     func openMeeting(_ id: Meeting.ID) {
         selectedMeetingIDs = [id]
-        meetingPresentation = .detail
-        navSection = .meetings
-    }
-
-    func previewMeeting(_ id: Meeting.ID) {
-        selectedMeetingIDs = [id]
-        meetingPresentation = .preview
         navSection = .meetings
     }
 
     func selectDefaultMeetingIfNeeded() {
         guard selectedMeetingIDs.isEmpty else { return }
         if let live = currentMeeting {
-            previewMeeting(live.id)
+            openMeeting(live.id)
         } else if let completed = meetings.first(where: { meeting in
             meeting.endedAt != nil && pipeline.stages[meeting.id] == nil
         }) ?? meetings.first(where: { $0.endedAt != nil }) {
-            previewMeeting(completed.id)
+            openMeeting(completed.id)
         }
     }
 
@@ -601,8 +584,6 @@ final class AppState: ObservableObject {
     // Recording facades — views observe AppState only.
     var isRecording: Bool { recording.isRecording }
     var currentMeeting: Meeting? { recording.currentMeeting }
-    var elapsed: TimeInterval { recording.elapsed }
-    var menuBarTimer: String { recording.menuBarTimer }
 
     func startRecording(context: MeetingDetectionContext? = nil, source: String = "ui") {
         RecordingNotifier.shared.invalidateMeetingDetections()

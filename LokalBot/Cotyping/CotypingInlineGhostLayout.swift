@@ -164,10 +164,6 @@ nonisolated struct CotypingInlineGhostLayout: Equatable {
         return frame
     }
 
-    static func renderedWidth(of text: String, font: NSFont) -> CGFloat {
-        measuredWidth(normalizedDisplayText(text), font: font)
-    }
-
     static func estimatedContentSize(
         for layout: CotypingInlineGhostLayout,
         style: CotypingFieldStyle?

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Capture the eight approved redesign surfaces from the real SwiftUI UI-test
+# Capture the seven current product surfaces from the real SwiftUI UI-test
 # host at the reference aspect ratio. The synthetic library contains grounded
 # meetings, outcomes, day activity, and an answered Ask thread.
 set -euo pipefail
@@ -69,16 +69,13 @@ capture() {
 
 capture redesign-01-timeline LOKALBOT_INITIAL_SECTION=timeline
 capture redesign-02-today LOKALBOT_INITIAL_SECTION=today
-capture redesign-03-meetings-library LOKALBOT_INITIAL_SECTION=meetings \
-  LOKALBOT_SELECT_INDEX=0 LOKALBOT_MEETING_PRESENTATION=preview
-capture redesign-04-meeting-detail LOKALBOT_INITIAL_SECTION=meetings \
-  LOKALBOT_SELECT_INDEX=0 LOKALBOT_MEETING_PRESENTATION=detail
-capture redesign-05-ask LOKALBOT_INITIAL_SECTION=ask
-capture redesign-06-agent LOKALBOT_INITIAL_SECTION=agent \
+capture redesign-03-meetings LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=0
+capture redesign-04-ask LOKALBOT_INITIAL_SECTION=ask
+capture redesign-05-agent LOKALBOT_INITIAL_SECTION=agent \
   LOKALBOT_AGENT_UI_TEST_READY=1 LOKALBOT_AGENT_DEMO=1
-capture redesign-07-autocomplete LOKALBOT_INITIAL_SECTION=autocomplete \
+capture redesign-06-autocomplete LOKALBOT_INITIAL_SECTION=autocomplete \
   LOKALBOT_COTYPING_DEMO=1
-capture redesign-08-models LOKALBOT_INITIAL_SECTION=models \
+capture redesign-07-models LOKALBOT_INITIAL_SECTION=models \
   LOKALBOT_MODELS_DEMO_READY=1
 
 echo "Redesign captures: $OUT"

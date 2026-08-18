@@ -635,17 +635,11 @@ final class ActivityStore {
         }
     }
 
-    /// OCR text for a day, for the "ask your day" LLM context.
-    func ocrText(on day: Date, maxChars: Int = 9_000) -> String {
-        let interval = Self.dayInterval(containing: day)
-        return ocrText(from: interval.start, to: interval.end, maxChars: maxChars, includeAppNames: true)
-    }
-
     /// Every retained screen-text record for one local day, oldest first.
-    /// Unlike `ocrText(on:)`, this has no whole-day character ceiling: callers
-    /// can chunk the complete evidence without a busy morning crowding out the
-    /// afternoon. Individual captures stay bounded to keep one pathological
-    /// Accessibility tree from dominating a chunk.
+    /// This has no whole-day character ceiling: callers can chunk the complete
+    /// evidence without a busy morning crowding out the afternoon. Individual
+    /// captures stay bounded to keep one pathological Accessibility tree from
+    /// dominating a chunk.
     func screenContexts(on day: Date, maxCharactersPerCapture: Int = 2_000) -> [DayScreenContext] {
         guard maxCharactersPerCapture > 0 else { return [] }
         let interval = Self.dayInterval(containing: day)
@@ -1068,10 +1062,6 @@ final class ActivitySampler: ObservableObject {
 
     /// Window titles need Accessibility; we degrade to app-name-only.
     nonisolated static var hasAccessibility: Bool { AXIsProcessTrusted() }
-    nonisolated static func requestAccessibility() {
-        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        AXIsProcessTrustedWithOptions(options)
-    }
 
     private func sample() async {
         guard !isPaused else { return }

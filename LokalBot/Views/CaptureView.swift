@@ -421,6 +421,7 @@ private struct TimelineWorkspaceHeader: View {
                       systemImage: "arrow.clockwise")
             }
         }
+        .buttonStyle(.bordered)
         .disabled(model.generating)
         .help("Rewrite the day digest using the latest activity and meetings")
         .accessibilityIdentifier("timeline.dayDigest.generate")
@@ -432,6 +433,7 @@ private struct TimelineWorkspaceHeader: View {
         } label: {
             Label("Ask about day", systemImage: "sparkle.magnifyingglass")
         }
+        .buttonStyle(.borderedProminent)
         .accessibilityIdentifier("capture.askDay")
     }
 
@@ -456,12 +458,13 @@ private struct TimelineWorkspaceHeader: View {
                     Label("Export Markdown", systemImage: "square.and.arrow.up")
                 }
             } label: {
-                Image(systemName: "ellipsis.circle")
+                Label("Digest actions", systemImage: "ellipsis.circle")
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
             .help(digestUpdatedHelp)
             .accessibilityLabel("Day digest actions")
+            .accessibilityIdentifier("timeline.dayDigest.actions")
         }
     }
 

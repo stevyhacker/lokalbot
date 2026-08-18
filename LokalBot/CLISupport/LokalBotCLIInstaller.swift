@@ -65,14 +65,6 @@ struct LokalBotCLIInstaller {
         case copy
     }
 
-    var touchedPaths: [String] {
-        [
-            "~/.local/bin/lokalbot-cli",
-            "~/.agents/skills/lokalbot-cli",
-            "~/.claude/skills/lokalbot-cli",
-        ]
-    }
-
     var isInstalled: Bool {
         guard let binary = bundledBinary, let skill = bundledSkillDir else {
             return false
@@ -93,16 +85,6 @@ struct LokalBotCLIInstaller {
             return false
         }
         return true
-    }
-
-    static let agentConfigDirNames = [
-        ".claude", ".codex", ".cursor", ".gemini", ".agents",
-    ]
-
-    var hasAgentConfigDir: Bool {
-        Self.agentConfigDirNames.contains {
-            isExistingDirectory(home.appending(path: $0))
-        }
     }
 
     var localBinOnPath: Bool {

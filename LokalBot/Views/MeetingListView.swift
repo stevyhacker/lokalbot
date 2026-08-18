@@ -22,19 +22,10 @@ struct MeetingListView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 10) {
-                HStack {
-                    TextField("Search meetings", text: $query)
-                        .textFieldStyle(.roundedBorder)
-                        .font(WorkspaceTypography.control)
-                        .accessibilityIdentifier("meeting.search")
-                    Button {
-                        app.startRecording(
-                            context: app.recordingContext(for: app.detector.activeApp))
-                    } label: {
-                        Image(systemName: "record.circle")
-                    }
-                    .help("Record now")
-                }
+                TextField("Search meetings", text: $query)
+                    .textFieldStyle(.roundedBorder)
+                    .font(WorkspaceTypography.control)
+                    .accessibilityIdentifier("meeting.search")
                 Picker("Status", selection: $filter) {
                     ForEach(StatusFilter.allCases) { item in Text(item.rawValue).tag(item) }
                 }
@@ -46,7 +37,7 @@ struct MeetingListView: View {
             .background(.bar)
             Divider()
 
-            List(selection: meetingSelection) {
+            List(selection: $app.selectedMeetingIDs) {
                 ForEach(groupedMeetings, id: \.label) { group in
                     Section {
                         ForEach(group.items) { meeting in
@@ -66,12 +57,7 @@ struct MeetingListView: View {
                         font: WorkspaceTypography.body)
                     .accessibilityIdentifier("meeting.libraryLoading")
                 } else if groupedMeetings.isEmpty {
-                    ContentUnavailableView(
-                        query.isEmpty ? "No meetings yet" : "No matching meetings",
-                        systemImage: "waveform.circle",
-                        description: Text(query.isEmpty
-                            ? "LokalBot detects meeting apps automatically -- or choose Record now."
-                            : "Try a different title, app, or status."))
+                    meetingEmptyState
                 }
             }
         }
@@ -90,17 +76,30 @@ struct MeetingListView: View {
         }
     }
 
-    /// Keep native macOS List selection semantics (including Command-click)
-    /// while making an ordinary row selection open the lightweight preview.
-    /// Programmatic deep links write AppState directly, so they can still opt
-    /// into the full meeting workspace without this binding overriding them.
-    private var meetingSelection: Binding<Set<Meeting.ID>> {
-        Binding(
-            get: { app.selectedMeetingIDs },
-            set: { selection in
-                app.selectedMeetingIDs = selection
-                if selection.count == 1 { app.meetingPresentation = .preview }
-            })
+    @ViewBuilder private var meetingEmptyState: some View {
+        if libraryIsEmpty && query.isEmpty {
+            ContentUnavailableView {
+                Label("No meetings yet", systemImage: "waveform.circle")
+            } description: {
+                Text("LokalBot detects meeting apps automatically, or start a recording now.")
+            } actions: {
+                Button("Record now") {
+                    app.startRecording(
+                        context: app.recordingContext(for: app.detector.activeApp))
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("meeting.empty.record")
+            }
+        } else {
+            ContentUnavailableView(
+                "No matching meetings",
+                systemImage: "waveform.circle",
+                description: Text("Try a different title, app, or status."))
+        }
+    }
+
+    private var libraryIsEmpty: Bool {
+        app.currentMeeting == nil && app.meetings.isEmpty
     }
 
     /// Live recording first, then finished meetings, grouped by day.

@@ -1,5 +1,4 @@
 import AppKit
-import AudioToolbox
 import CoreAudio
 import Foundation
 
@@ -28,23 +27,18 @@ struct AudioProcess: Identifiable, Equatable, Hashable {
 
 enum CoreAudioError: LocalizedError {
     case osStatus(OSStatus, String)
-    case noData(String)
 
     var errorDescription: String? {
         switch self {
         case .osStatus(let code, let label):
             return "Core Audio \(label) failed (\(code))."
-        case .noData(let label):
-            return "Core Audio \(label) returned no data."
         }
     }
 }
 
 /// Thin wrappers over the `AudioObjectGetPropertyData` calls we need so the
 /// recorder/detector code reads like Swift instead of a thicket of pointer
-/// dances. Modeled on Seminarly's `CoreAudioUtils` (adapted for LokalBot —
-/// adds `isDefaultInputRunning` for the mic-in-use signal the detector
-/// already depended on, inline).
+/// dances. Modeled on Seminarly's `CoreAudioUtils`, adapted for LokalBot.
 enum CoreAudioUtils {
 
     // MARK: - Process objects
@@ -90,11 +84,6 @@ enum CoreAudioUtils {
         var size = UInt32(MemoryLayout<UInt32>.size)
         let err = AudioObjectGetPropertyData(objectID, &address, 0, nil, &size, &isRunning)
         return err == noErr && isRunning == 1
-    }
-
-    static func isProcessRunningOutput(pid: pid_t) -> Bool {
-        guard let processObject = translatePIDToProcessObject(pid: pid) else { return false }
-        return isProcessRunningOutput(objectID: processObject)
     }
 
     static func isProcessRunningInput(objectID: AudioObjectID) -> Bool {
@@ -157,89 +146,5 @@ enum CoreAudioUtils {
             return AudioProcess(id: pid, name: name, bundleID: bundleID,
                                 objectID: objectID, isRunningOutput: running)
         }
-    }
-
-    // MARK: - Default input/output devices
-
-    static func getDefaultInputDeviceID() throws -> AudioDeviceID {
-        try defaultDevice(selector: kAudioHardwarePropertyDefaultInputDevice,
-                          label: "getDefaultInputDevice")
-    }
-
-    static func setDefaultInputDeviceID(_ deviceID: AudioDeviceID) throws {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var mutableDeviceID = deviceID
-        let err = AudioObjectSetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &address,
-            0,
-            nil,
-            UInt32(MemoryLayout<AudioDeviceID>.size),
-            &mutableDeviceID)
-        guard err == noErr else { throw CoreAudioError.osStatus(err, "setDefaultInputDevice") }
-    }
-
-    static func getDefaultOutputDeviceID() throws -> AudioDeviceID {
-        try defaultDevice(selector: kAudioHardwarePropertyDefaultOutputDevice,
-                          label: "getDefaultOutputDevice")
-    }
-
-    private static func defaultDevice(selector: AudioObjectPropertySelector,
-                                      label: String) throws -> AudioDeviceID {
-        var address = AudioObjectPropertyAddress(
-            mSelector: selector,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var deviceID: AudioDeviceID = kAudioObjectUnknown
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        let err = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID)
-        guard err == noErr else { throw CoreAudioError.osStatus(err, label) }
-        return deviceID
-    }
-
-    /// Is *any* process currently using the default input device?
-    /// Replaces the inline implementation that used to live in
-    /// `MeetingDetector.isMicInUse()`.
-    static func isDefaultInputRunning() -> Bool {
-        guard let device = try? getDefaultInputDeviceID() else { return false }
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var isRunning: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        let err = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &isRunning)
-        return err == noErr && isRunning == 1
-    }
-
-    /// True iff the current default output device is the laptop's built-in
-    /// speaker — useful to surface a "wear headphones to avoid echo" warning.
-    static func isOutputBuiltInSpeaker() -> Bool {
-        guard let device = try? getDefaultOutputDeviceID() else { return false }
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyTransportType,
-            mScope: kAudioObjectPropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain)
-        var transport: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        let err = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &transport)
-        return err == noErr && transport == kAudioDeviceTransportTypeBuiltIn
-    }
-
-    static func getDeviceUID(deviceID: AudioDeviceID) throws -> String {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceUID,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var uid: Unmanaged<CFString>?
-        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        let err = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &uid)
-        guard err == noErr else { throw CoreAudioError.osStatus(err, "getDeviceUID") }
-        guard let uid else { throw CoreAudioError.noData("getDeviceUID") }
-        return uid.takeRetainedValue() as String
     }
 }

@@ -476,10 +476,4 @@ final class MeetingDetector {
         guard !browsers.contains(app.bundleID) else { return false }
         return CoreAudioUtils.isProcessRunningInput(pid: app.pid)
     }
-
-    // MARK: - Core Audio: is any process using the default input device?
-
-    static func isMicInUse() -> Bool {
-        CoreAudioUtils.isDefaultInputRunning()
-    }
 }

@@ -197,7 +197,6 @@ enum CotypingLearningRanker {
 /// recorder without touching the user's Keychain.
 protocol CotypingLearningPersisting: Sendable {
     func persist(_ snapshot: CotypingLearningSnapshot) async
-    func remove() async
 }
 
 actor EncryptedCotypingLearningPersistence: CotypingLearningPersisting {
@@ -228,10 +227,6 @@ actor EncryptedCotypingLearningPersistence: CotypingLearningPersisting {
             // Learning is opportunistic. Match the previous best-effort write
             // behavior without blocking typing or surfacing private content.
         }
-    }
-
-    func remove() {
-        try? FileManager.default.removeItem(at: url)
     }
 }
 
@@ -272,12 +267,6 @@ final class CotypingLearningStore: ObservableObject {
         self.exampleCount = snapshot.examples.count
     }
 
-    /// Compatibility entry point. Production coordinator code should call the
-    /// completed-suggestion name after aggregating its accepted chunks.
-    func recordAccepted(field: CotypingField, acceptedText rawText: String) {
-        recordCompletedSuggestion(field: field, acceptedText: rawText)
-    }
-
     func recordCompletedSuggestion(field: CotypingField, acceptedText rawText: String) {
         guard CotypingLearningRanker.canLearn(from: field),
               let acceptedText = CotypingLearningRanker.acceptedText(rawText) else { return }
@@ -301,18 +290,6 @@ final class CotypingLearningStore: ObservableObject {
 
     func examples(for field: CotypingField, limit: Int) -> [String] {
         CotypingLearningRanker.rankedExamples(snapshot.examples, for: field, limit: limit)
-    }
-
-    func clear() {
-        snapshot = .init()
-        revision &+= 1
-        enqueuedRevision = revision
-        let previous = persistenceTask
-        let persistence = persistence
-        persistenceTask = Task.detached(priority: .utility) {
-            if let previous { await previous.value }
-            await persistence.remove()
-        }
     }
 
     /// Forces any dirty in-memory snapshot into the background queue, then

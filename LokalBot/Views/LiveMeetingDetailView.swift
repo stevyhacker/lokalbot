@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// The detail pane for the meeting being recorded right now — the live
-/// counterpart of `MeetingDetailView`, shown when the in-progress row is
-/// selected (and as the Meetings empty state while recording). The rolling
+/// The detail pane for the meeting being recorded right now, shown when the
+/// in-progress row is selected (and as the Meetings empty state while
+/// recording). The rolling
 /// transcript preview (chunked, undiarized — the full pipeline transcript
 /// replaces it after the meeting) sits beside a full-height quick-notes pad;
 /// notes are saved to `notes.md` in the meeting folder and folded into the

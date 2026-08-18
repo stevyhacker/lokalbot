@@ -23,16 +23,6 @@ enum NoteTemplate: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    var icon: String {
-        switch self {
-        case .meeting: return "person.2.fill"
-        case .lecture: return "graduationcap.fill"
-        case .studyGuide: return "book.fill"
-        case .podcast: return "mic.fill"
-        case .freeform: return "doc.text.fill"
-        }
-    }
-
     /// One-line summary used in the Settings picker.
     var description: String {
         switch self {

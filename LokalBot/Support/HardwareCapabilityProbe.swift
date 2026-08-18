@@ -56,15 +56,6 @@ enum ModelFit: Equatable {
         return .tooLarge
     }
 
-    /// Short status word for a picker row.
-    var label: String {
-        switch self {
-        case .comfortable: return "Comfortable"
-        case .tight: return "Tight"
-        case .tooLarge: return "Too large"
-        }
-    }
-
     /// One-line guidance shown beneath the label, or nil when no caveat applies.
     var advisory: String? {
         switch self {

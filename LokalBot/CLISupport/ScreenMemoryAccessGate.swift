@@ -38,14 +38,6 @@ struct ScreenMemoryAccessProfile: Codable, Equatable, Sendable {
                 "Agents can read everything still inside the configured retention window."
             }
         }
-
-        var maximumLookbackDays: Int? {
-            switch self {
-            case .today: 0
-            case .recentWeek: 7
-            case .retainedHistory: nil
-            }
-        }
     }
 
     var scope: Scope = .recentWeek

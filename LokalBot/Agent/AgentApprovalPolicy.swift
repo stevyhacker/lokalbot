@@ -51,10 +51,6 @@ struct AgentApprovalPolicy: Equatable {
         sessionAllowedTools.insert(tool.lowercased())
     }
 
-    static func requiresExplicitPerRequestApproval(tool: String) -> Bool {
-        tool.lowercased() == "read" || tool.lowercased() == "bash"
-    }
-
     static func canPersistApproval(
         tool: String,
         path: String?,

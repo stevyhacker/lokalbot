@@ -21,8 +21,6 @@ enum CotypingCapability: Equatable, Sendable {
     case blocked(String)
     /// Not an editable text field we can drive (button, web link, image, …).
     case unsupported(String)
-
-    var isSupported: Bool { if case .supported = self { true } else { false } }
 }
 
 /// A value-type snapshot of the focused editable field. Produced by
@@ -230,8 +228,7 @@ enum CotypingAcceptanceOwnershipPolicy {
     }
 }
 
-/// Coordinator-published state, surfaced in the in-app Cotyping section for live
-/// status and diagnostics.
+/// Coordinator-published state for cotyping lifecycle and diagnostics.
 enum CotypingState: Equatable, Sendable {
     case idle
     case disabled(String)
@@ -239,15 +236,4 @@ enum CotypingState: Equatable, Sendable {
     case generating
     case ready(text: String)
     case failed(String)
-
-    var label: String {
-        switch self {
-        case .idle: "Idle"
-        case .disabled(let why): why
-        case .debouncing: "Waiting for you to pause…"
-        case .generating: "Thinking…"
-        case .ready(let text): "Suggesting: \(text)"
-        case .failed(let why): "Error: \(why)"
-        }
-    }
 }

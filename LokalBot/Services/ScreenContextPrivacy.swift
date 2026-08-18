@@ -8,8 +8,6 @@ enum ScreenContextPrivacy {
     struct Redaction: Equatable, Sendable {
         var text: String
         var count: Int
-
-        var containsSensitiveText: Bool { count > 0 }
     }
 
     private struct Rule {

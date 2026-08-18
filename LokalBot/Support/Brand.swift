@@ -35,12 +35,6 @@ enum Brand {
         colors: [slateElevated, slate],
         startPoint: .topLeading, endPoint: .bottomTrailing)
 
-    /// Vertical gradient used on hero surfaces (onboarding, empty states) to
-    /// echo the icon body without leaning on the system accent.
-    static let gradient = LinearGradient(
-        colors: [tealBright, teal],
-        startPoint: .topLeading, endPoint: .bottomTrailing)
-
     /// A view modifier that sets the brand tint and offers a softer fallback
     /// in High Contrast / Increase Contrast where the teal can read thin.
     struct TintModifier: ViewModifier {

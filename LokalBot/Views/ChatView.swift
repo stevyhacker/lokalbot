@@ -356,12 +356,6 @@ private struct CitationRow: View {
         }
     }
 
-    private func label(for citation: ChatCitation) -> String {
-        let meeting = (try? SessionLookup.find(id: citation.meetingID, in: app.meetings)) ?? nil
-        let title = meeting?.displayTitle ?? "Meeting \(citation.meetingID)"
-        guard let stamp = citation.stampText else { return title }
-        return "\(title) · \(stamp)"
-    }
 }
 
 /// Tool activity collapsed to a single caption line ("worked: searched

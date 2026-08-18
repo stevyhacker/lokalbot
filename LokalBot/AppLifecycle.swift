@@ -285,11 +285,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private func applyRedesignCaptureState(to app: AppState,
                                            environment env: [String: String]) {
-        if env["LOKALBOT_MEETING_PRESENTATION"] == "detail" {
-            app.meetingPresentation = .detail
-        } else if env["LOKALBOT_MEETING_PRESENTATION"] == "preview" {
-            app.meetingPresentation = .preview
-        }
         if env["LOKALBOT_AGENT_DEMO"] == "1" {
             let meeting = app.meetings.first
             app.openAgent(.init(

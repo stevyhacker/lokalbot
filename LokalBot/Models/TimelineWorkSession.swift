@@ -16,7 +16,6 @@ struct TimelineWorkSession: Identifiable, Equatable, Sendable {
     let notableTitles: [String]
 
     var appCount: Int { apps.count }
-    var blockCount: Int { blocks.count }
 
     /// Collapse adjacent blocks into one work session. A short gap usually
     /// represents reading, typing, or switching apps rather than a new task.

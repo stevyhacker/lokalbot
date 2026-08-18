@@ -110,10 +110,6 @@ struct LeaseBook {
         records.filter { $0.lease.role == role }.count
     }
 
-    func activeModelPath(for role: InferenceRole) -> String? {
-        records.first { $0.lease.role == role }?.lease.modelPath
-    }
-
     /// Residency ids that must never be eviction victims right now.
     var pinnedResidencyIDs: Set<String> {
         Set(records.map { $0.lease.role.residencyID })

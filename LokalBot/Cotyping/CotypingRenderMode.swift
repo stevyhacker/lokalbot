@@ -26,19 +26,10 @@ nonisolated enum CotypingRenderMode: Equatable, Sendable {
 /// User-facing render preference. Ported from Cotabby's `MirrorPreference`.
 /// `auto` defers to caret-geometry quality; the two pins let a user override
 /// when the auto rule misfires for their host mix.
-enum CotypingMirrorPreference: String, Codable, CaseIterable, Identifiable, Sendable {
+enum CotypingMirrorPreference: String, Codable, Sendable {
     case auto
     case alwaysInline
     case alwaysMirror
-
-    var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .auto: "Automatic"
-        case .alwaysInline: "Always inline"
-        case .alwaysMirror: "Always popup"
-        }
-    }
 }
 
 /// Pure rule that translates caret-geometry quality + the mid-line signal + the

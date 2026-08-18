@@ -227,10 +227,6 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    var canSend: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isResponding
-    }
-
     /// Send the current draft (or an explicit `prompt`, e.g. a suggestion chip).
     /// `displayText` keeps model-only context such as attached OCR excerpts out
     /// of the visible transcript while still sending it in the current turn.

@@ -193,23 +193,6 @@ final class AgentSessionController: ObservableObject {
         _ = try? await client.request(.abort(id: freshID("a")))
     }
 
-    func newSession() async {
-        guard let client else { return }
-        do {
-            _ = try await client.request(.newSession(id: freshID("n")))
-            discardPendingTextDelta()
-            folder = AgentTranscriptFolder()
-            policy.resetSession()
-            launchMode = .fresh
-            sessionTitle = nil
-            draft = ""
-            publish()
-            state = .ready
-        } catch {
-            await fail(with: error)
-        }
-    }
-
     func resumePreviousSession() async {
         guard canResumePreviousSession else { return }
         await shutdown()

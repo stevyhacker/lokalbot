@@ -31,9 +31,6 @@ final class FileLogSink: @unchecked Sendable {
         openHandleLocked()
     }
 
-    /// The path being written to — surfaced for diagnostics and tests.
-    var url: URL { fileURL }
-
     /// Appends one already-formatted line (the caller supplies the trailing
     /// newline). The size check runs first so the line that crosses the cap
     /// lands in the fresh file, keeping the live log's tail readable; the

@@ -224,14 +224,6 @@ extension CotypingCoordinator {
         syncAcceptInterception()
     }
 
-    /// Clears both persisted examples and any accepted text still waiting for
-    /// the current suggestion to close, so deletion cannot be undone by a
-    /// later `clearSuggestion()` flush.
-    func clearLearnedWritingData() {
-        acceptedSuggestionBatch.discardLearningRecord()
-        learningStore.clear()
-    }
-
     private func freezeStreamedSuggestionForAcceptance() {
         guard streamAcceptanceFence.consumeForAcceptance() != nil else { return }
         cancelPendingGenerationWork()

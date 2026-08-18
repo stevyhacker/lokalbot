@@ -3,8 +3,8 @@ import AppKit
 import AVFoundation
 import UniformTypeIdentifiers
 
-/// Meetings inspector router: list rows open the outcome preview, while deep
-/// links and the explicit Open meeting action enter the complete workspace.
+/// Meetings inspector router. A completed selection opens the full workspace;
+/// an active recording keeps its dedicated live surface.
 struct MeetingLibraryDetailView: View {
     @EnvironmentObject var app: AppState
     @Binding var pendingDelete: Set<Meeting.ID>?
@@ -24,10 +24,8 @@ struct MeetingLibraryDetailView: View {
         } else if let meeting = app.selectedMeeting {
             if meeting.endedAt == nil {
                 LiveMeetingDetailView(meeting: meeting).id(meeting.id)
-            } else if app.meetingPresentation == .detail {
-                MeetingWorkspaceDetail(meeting: meeting).id(meeting.id)
             } else {
-                MeetingOutcomePreview(meeting: meeting).id(meeting.id)
+                MeetingWorkspaceDetail(meeting: meeting).id(meeting.id)
             }
         } else if !app.libraryReady {
             ProgressView("Loading your meeting library...")
@@ -40,101 +38,18 @@ struct MeetingLibraryDetailView: View {
     }
 }
 
-private struct MeetingOutcomePreview: View {
-    @EnvironmentObject var app: AppState
-    let meeting: Meeting
-
-    private var folder: URL { meeting.folderURL(in: app.storage) }
-    private var projection: MeetingOutcomeProjection? { app.outcomeIndex.projection(for: meeting.id) }
-    private var summary: String? {
-        try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8)
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
-                MeetingWorkspaceHeader(meeting: meeting, compact: true)
-
-                if let summary, !summary.isEmpty {
-                    WorkspaceSection(title: "Summary", icon: "text.alignleft") {
-                        // The compact preview drops the provenance line — the
-                        // header above already carries title, date, and app.
-                        MarkdownText(SummaryPresentation.split(summary).body)
-                            .lineLimit(8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                    }
-                }
-
-                WorkspaceSection(title: "My actions", icon: "checklist") {
-                    if let actions = projection?.actionReferences.filter(\.isForUser), !actions.isEmpty {
-                        VStack(spacing: 0) {
-                            ForEach(actions.prefix(4)) { reference in
-                                PreviewActionRow(reference: reference)
-                                if reference.id != actions.prefix(4).last?.id { Divider() }
-                            }
-                        }
-                    } else {
-                        EmptyWorkspaceRow(text: "No action assigned to you was extracted.")
-                    }
-                }
-
-                WorkspaceSection(title: "Decisions", icon: "checkmark.seal") {
-                    if let decisions = projection?.outcomes.decisionRecords, !decisions.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(decisions.prefix(4)) { decision in
-                                HStack(alignment: .firstTextBaseline, spacing: 9) {
-                                    Image(systemName: "checkmark")
-                                        .foregroundStyle(Brand.teal)
-                                    Text(decision.text)
-                                        .font(WorkspaceTypography.body)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                    if let source = decision.citations.first {
-                                        EvidencePill(citation: source) {
-                                            app.pendingSeek = source.start
-                                            app.meetingPresentation = .detail
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        EmptyWorkspaceRow(text: "No cited decisions were extracted.")
-                    }
-                }
-
-                HStack {
-                    Button("Open meeting") { app.meetingPresentation = .detail }
-                        .buttonStyle(.borderedProminent)
-                    Button("Draft follow-up") { app.meetingPresentation = .detail }
-                    Spacer()
-                    Button("Ask about this meeting") {
-                        app.openAsk(query: "What matters from \(meeting.displayTitle)?")
-                    }
-                }
-            }
-            .padding(WorkspaceMetric.pagePadding)
-            .frame(maxWidth: WorkspaceMetric.contentMaxWidth, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .top)
-        }
-        .accessibilityIdentifier("meeting.preview.scroll")
-        .navigationTitle(meeting.displayTitle)
-        .accessibilityIdentifier("meeting.preview")
-    }
-}
-
 private struct MeetingWorkspaceDetail: View {
     @EnvironmentObject var app: AppState
     let meeting: Meeting
 
     @StateObject private var player = MeetingPlayer()
     @State private var summary: String?
+    @State private var notes: String?
     @State private var transcript: Transcript?
-    @State private var summaryExpanded = false
     @State private var transcriptExpanded = false
     @State private var correction: ActionCorrectionDraft?
-    @State private var followUp = FollowUpDraft()
-    @State private var savedFollowUpNotice = false
+    @State private var speakerRenameDraft: WorkspaceSpeakerRenameDraft?
+    @State private var speakerNameHints: [String] = []
     @State private var exportError: String?
     @State private var speechError: String?
     @State private var isExportingAudio = false
@@ -149,43 +64,7 @@ private struct MeetingWorkspaceDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
-                HStack(alignment: .top) {
-                    MeetingWorkspaceHeader(meeting: meeting, compact: false)
-                    Spacer()
-                    Menu {
-                        Button("Transcribe and summarize") {
-                            app.reprocess(meeting, transcribe: true, summarize: true)
-                        }
-                        Button("Transcribe only") {
-                            app.reprocess(meeting, transcribe: true, summarize: false)
-                        }
-                        Button("Re-summarize") {
-                            app.reprocess(meeting, transcribe: false, summarize: true)
-                        }
-                        Divider()
-                        Button(isReadingSummary ? "Stop spoken summary" : "Read summary aloud") {
-                            isReadingSummary ? stopSpeech() : readSummary()
-                        }
-                        .disabled(summary?.isEmpty != false)
-                        Button(isExportingSpeech ? "Exporting spoken summary..." : "Export spoken summary") {
-                            exportSpokenSummary()
-                        }
-                        .disabled(isExportingSpeech || summary?.isEmpty != false)
-                        Button(isExportingAudio ? "Exporting audio..." : "Export audio") {
-                            exportAudio()
-                        }
-                        .disabled(isExportingAudio || !player.isLoaded)
-                        Divider()
-                        Button("Show in Finder") {
-                            NSWorkspace.shared.activateFileViewerSelecting([folder])
-                        }
-                    } label: {
-                        Label("More", systemImage: "ellipsis.circle")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    .accessibilityIdentifier("meeting.more")
-                }
+                MeetingWorkspaceHeader(meeting: meeting)
 
                 if player.isLoaded { MeetingAudioBar(player: player, folder: folder) }
                 if let stage = app.pipeline.stages[meeting.id] {
@@ -267,40 +146,44 @@ private struct MeetingWorkspaceDetail: View {
                     }
                 }
 
-                FollowUpDraftEditor(
-                    meeting: meeting,
-                    draft: $followUp,
-                    savedNotice: $savedFollowUpNotice,
-                    onSave: {
-                        savedFollowUpNotice = app.outcomeIndex.saveFollowUp(
-                            followUp, meetingID: meeting.id)
-                    })
-
-                WorkspaceDisclosure(
-                    isExpanded: $summaryExpanded,
-                    identifier: "meeting.summaryDisclosure") {
-                    if let summary, !summary.isEmpty {
-                        let parts = SummaryPresentation.split(summary)
-                        VStack(alignment: .leading, spacing: 8) {
-                            if !parts.metadata.isEmpty {
-                                SummaryMetadataRow(items: parts.metadata)
+                WorkspaceSection(title: "Summary", icon: "text.alignleft") {
+                    if notes?.isEmpty == false || summary?.isEmpty == false {
+                        VStack(alignment: .leading, spacing: 14) {
+                            if let notes, !notes.isEmpty {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Label("Your notes", systemImage: "square.and.pencil")
+                                        .font(WorkspaceTypography.metadataEmphasis)
+                                        .foregroundStyle(.secondary)
+                                    SelectableDigestText(notes)
+                                }
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(.quaternary.opacity(0.24),
+                                            in: RoundedRectangle(cornerRadius: Brand.Radius.control))
+                                .accessibilityIdentifier("detail.notes")
                             }
-                            MarkdownText(parts.body)
-                                .textSelection(.enabled)
+                            if let summary, !summary.isEmpty {
+                                let parts = SummaryPresentation.split(summary)
+                                if !parts.metadata.isEmpty {
+                                    SummaryMetadataRow(items: parts.metadata)
+                                }
+                                SelectableDigestText(parts.body)
+                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         EmptyWorkspaceRow(text: "No summary yet.")
                     }
-                } label: {
-                    Label("Summary", systemImage: "text.alignleft")
-                        .font(WorkspaceTypography.sectionTitle)
                 }
+                .accessibilityIdentifier("meeting.summary")
 
                 WorkspaceDisclosure(
                     isExpanded: $transcriptExpanded,
                     identifier: "meeting.transcriptDisclosure") {
-                    TranscriptEvidenceList(transcript: transcript, player: player)
+                    TranscriptEvidenceList(
+                        transcript: transcript,
+                        player: player,
+                        onRenameSpeaker: { beginRenameSpeaker($0) })
                 } label: {
                     Label("Transcript", systemImage: "text.bubble")
                         .font(WorkspaceTypography.sectionTitle)
@@ -329,9 +212,66 @@ private struct MeetingWorkspaceDetail: View {
                 correction = nil
             } onCancel: { correction = nil }
         }
+        .sheet(item: $speakerRenameDraft) { draft in
+            WorkspaceSpeakerRenameSheet(
+                draft: draft,
+                hints: speakerNameHints,
+                onSave: { saveSpeakerAlias($0, for: draft.speaker) },
+                onReset: { saveSpeakerAlias(nil, for: draft.speaker) },
+                onCancel: { speakerRenameDraft = nil })
+        }
         .onDisappear {
             player.stop()
             stopSpeech(clearError: false)
+        }
+        .meetingProcessingToolbar(app: app, meeting: meeting)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button(isReadingSummary ? "Stop spoken summary" : "Read summary aloud") {
+                        isReadingSummary ? stopSpeech() : readSummary()
+                    }
+                    .disabled(summary?.isEmpty != false)
+                    Button(isExportingSpeech ? "Exporting spoken summary..." : "Export spoken summary") {
+                        exportSpokenSummary()
+                    }
+                    .disabled(isExportingSpeech || summary?.isEmpty != false)
+                    Divider()
+                    Button {
+                        copySummary()
+                    } label: {
+                        Label("Copy Summary", systemImage: "doc.on.doc")
+                    }
+                    .disabled(summary?.isEmpty != false)
+                    Button {
+                        copyTranscript()
+                    } label: {
+                        Label("Copy Transcript", systemImage: "text.bubble")
+                    }
+                    .disabled(transcript?.segments.isEmpty != false)
+                    Button {
+                        MeetingMarkdownActions.copy(meeting)
+                    } label: {
+                        Label("Copy Meeting as Markdown", systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        exportError = MeetingMarkdownActions.export(meeting)
+                    } label: {
+                        Label("Export Meeting as Markdown...", systemImage: "square.and.arrow.up")
+                    }
+                    Divider()
+                    Button(isExportingAudio ? "Exporting audio..." : "Export audio") {
+                        exportAudio()
+                    }
+                    .disabled(isExportingAudio || !player.isLoaded)
+                    Button("Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([folder])
+                    }
+                } label: {
+                    Label("More Meeting Actions", systemImage: "ellipsis.circle")
+                }
+                .accessibilityIdentifier("toolbar.meetingActions")
+            }
         }
         .accessibilityIdentifier("meeting.detail.workspace")
     }
@@ -344,15 +284,46 @@ private struct MeetingWorkspaceDetail: View {
 
     private func load() {
         summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8)
+        notes = MeetingNotes.load(from: folder)
         transcript = try? app.pipeline.loadTranscript(from: folder)
+        speakerNameHints = app.speakerNameHints(for: meeting)
         player.load(folder: folder, hasSystemTrack: meeting.hasSystemTrack)
         app.outcomeIndex.refresh(meeting: meeting)
-        followUp = app.outcomeIndex.projection(for: meeting.id)?.followUp
-            ?? FollowUpDraft.seeded(for: meeting, outcomes: MeetingOutcomes())
         if let seek = app.pendingSeek {
             app.pendingSeek = nil
             transcriptExpanded = true
             player.play(at: seek)
+        }
+    }
+
+    private func copySummary() {
+        guard let summary, !summary.isEmpty else { return }
+        MeetingMarkdownActions.copyText(summary)
+    }
+
+    private func copyTranscript() {
+        guard let transcript, !transcript.segments.isEmpty else { return }
+        MeetingMarkdownActions.copyText(transcript.markdown)
+    }
+
+    private func beginRenameSpeaker(_ speaker: String) {
+        guard let transcript else { return }
+        speakerRenameDraft = WorkspaceSpeakerRenameDraft(
+            speaker: speaker,
+            defaultName: Transcript.defaultSpeakerName(for: speaker),
+            currentName: transcript.displaySpeaker(for: speaker))
+    }
+
+    private func saveSpeakerAlias(_ alias: String?, for speaker: String) {
+        guard var updated = transcript else { return }
+        updated.setSpeakerAlias(alias, for: speaker)
+        do {
+            try app.saveTranscript(updated, for: meeting)
+            transcript = updated
+            speakerRenameDraft = nil
+            exportError = nil
+        } catch {
+            exportError = "Could not save speaker name: \(error.localizedDescription)"
         }
     }
 
@@ -447,12 +418,11 @@ private struct MeetingWorkspaceDetail: View {
 
 private struct MeetingWorkspaceHeader: View {
     let meeting: Meeting
-    let compact: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(meeting.displayTitle)
-                .font(compact ? WorkspaceTypography.pageTitle : WorkspaceTypography.display)
+                .font(WorkspaceTypography.display)
                 .accessibilityIdentifier("detail.title")
             HStack(spacing: 7) {
                 BrandChip(icon: "calendar", text: meeting.startedAt.formatted(
@@ -480,6 +450,8 @@ private struct MeetingAudioBar: View {
                         .font(.system(size: 28))
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(.space, modifiers: [])
+                .help("Play / pause (Space)")
                 WaveformView(
                     url: MeetingAudioFiles.readableURL(for: .mic, in: folder)
                         ?? MeetingAudioFiles.readableURL(for: .system, in: folder)
@@ -487,9 +459,11 @@ private struct MeetingAudioBar: View {
                     progress: progress,
                     onSeek: { player.seek(to: $0 * player.duration) })
                 Menu("\(player.speed.formatted())x") {
-                    ForEach([1.0, 1.25, 1.5, 2.0], id: \.self) { speed in
+                    ForEach([1.0, 1.25, 1.5, 1.75, 2.0], id: \.self) { speed in
                         Button("\(speed.formatted())x") { player.speed = Float(speed) }
                     }
+                    Divider()
+                    Button("Reset to 1x") { player.speed = 1.0 }
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
@@ -503,34 +477,7 @@ private struct MeetingAudioBar: View {
             .foregroundStyle(.secondary)
         }
         .workspacePanel()
-    }
-}
-
-private struct PreviewActionRow: View {
-    @EnvironmentObject var app: AppState
-    let reference: OutcomeActionReference
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Button {
-                _ = app.outcomeIndex.setStatus(
-                    reference.status == .done ? .open : .done,
-                    actionID: reference.action.id,
-                    meetingID: reference.meetingID)
-            } label: {
-                Image(systemName: reference.status == .done ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(reference.status == .done ? Brand.teal : .secondary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("meeting.preview.action.toggle.\(reference.action.id)")
-            Text(reference.text)
-                .font(WorkspaceTypography.body)
-                .strikethrough(reference.status == .done)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityIdentifier("meeting.preview.action.text.\(reference.action.id)")
-            if let due = reference.due { BrandChip(icon: "calendar", text: due, size: .compact) }
-        }
-        .padding(.vertical, WorkspaceMetric.rowVerticalPadding)
+        .accessibilityIdentifier("meeting.audioPlayer")
     }
 }
 
@@ -644,103 +591,220 @@ private struct ActionCorrectionSheet: View {
     }
 }
 
-private struct FollowUpDraftEditor: View {
-    let meeting: Meeting
-    @Binding var draft: FollowUpDraft
-    @Binding var savedNotice: Bool
-    let onSave: () -> Void
-
-    var body: some View {
-        WorkspaceSection(title: "Follow-up", icon: "arrowshape.turn.up.right") {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    TextField("Recipient (optional)", text: $draft.recipient)
-                    TextField("Cc (optional)", text: $draft.cc)
-                }
-                HStack {
-                    TextField("Subject", text: $draft.subject)
-                }
-                TextEditor(text: $draft.body)
-                    .font(WorkspaceTypography.body)
-                    .frame(minHeight: 150)
-                    .padding(7)
-                    .workspaceControl()
-                HStack {
-                    if savedNotice {
-                        Label("Saved locally", systemImage: "checkmark.circle")
-                            .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("Save draft", action: onSave)
-                    Button(draft.reviewed ? "Reviewed" : "Mark reviewed") {
-                        draft.reviewed = true
-                        onSave()
-                    }
-                    .disabled(draft.reviewed)
-                    Button("Copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(exportText, forType: .string)
-                    }
-                    Button("Export...") { export() }
-                }
-                Text("LokalBot does not send this. Review it, then copy or export it.")
-                    .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var exportText: String {
-        ([draft.recipient.isEmpty ? nil : "To: \(draft.recipient)",
-          draft.cc.isEmpty ? nil : "Cc: \(draft.cc)",
-          draft.subject.isEmpty ? nil : "Subject: \(draft.subject)", "", draft.body]
-            .compactMap { $0 }).joined(separator: "\n")
-    }
-
-    private func export() {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "\(StorageManager.slugify(meeting.displayTitle))-follow-up.md"
-        panel.allowedContentTypes = [.plainText]
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? exportText.write(to: url, atomically: true, encoding: .utf8)
-    }
-}
-
 private struct TranscriptEvidenceList: View {
     let transcript: Transcript?
     @ObservedObject var player: MeetingPlayer
+    let onRenameSpeaker: (String) -> Void
 
     var body: some View {
         if let transcript, !transcript.segments.isEmpty {
-            LazyVStack(alignment: .leading, spacing: 2) {
-                ForEach(Array(transcript.segments.enumerated()), id: \.offset) { index, segment in
-                    Button {
-                        player.play(at: segment.start)
-                    } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                if !transcript.engine.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "waveform.badge.magnifyingglass")
+                            .foregroundStyle(.tint)
+                        Text("Transcribed with ")
+                            + Text(transcript.engine).fontWeight(.medium)
+                    }
+                    .font(WorkspaceTypography.metadata)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary.opacity(0.24),
+                                in: RoundedRectangle(cornerRadius: Brand.Radius.control))
+                    .accessibilityIdentifier("transcript.model")
+                }
+
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(transcript.segments.enumerated()), id: \.offset) { index, segment in
                         HStack(alignment: .top, spacing: 10) {
-                            Text(Transcript.stamp(segment.start))
-                                .font(.caption.monospacedDigit())
+                            Button {
+                                player.play(at: segment.start)
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "play.fill")
+                                        .font(.system(size: 8))
+                                    Text(Transcript.stamp(segment.start))
+                                        .font(.caption.monospacedDigit())
+                                }
                                 .foregroundStyle(.tertiary)
                                 .frame(width: 64, alignment: .trailing)
-                            Text(transcript.displaySpeaker(for: segment.speaker))
-                                .font(.caption.bold())
-                                .frame(width: 72, alignment: .leading)
-                                .accessibilityIdentifier("transcript.segment.\(index).speaker")
+                            }
+                            .buttonStyle(.plain)
+                            .help("Play from \(Transcript.stamp(segment.start))")
+                            .accessibilityIdentifier("transcript.segment.\(index).play")
+                            Button {
+                                onRenameSpeaker(segment.speaker)
+                            } label: {
+                                Text(transcript.displaySpeaker(for: segment.speaker))
+                                    .font(.caption.bold())
+                                    .frame(width: 72, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Rename speaker")
+                            .accessibilityIdentifier("transcript.segment.\(index).speaker")
                             Text(segment.displayText)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .textSelection(.enabled)
+                                .help("Select text and press Command-C to copy")
+                                .accessibilityIdentifier("transcript.segment.\(index).text")
                         }
                         .padding(.vertical, 6)
-                        .contentShape(Rectangle())
+                        .padding(.horizontal, 6)
+                        .background(
+                            isActive(segment)
+                                ? Brand.teal.opacity(0.10) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 6))
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("transcript.segment.\(index)")
-                    .accessibilityLabel(
-                        "\(transcript.displaySpeaker(for: segment.speaker)), "
-                            + "\(Transcript.stamp(segment.start)). \(segment.displayText)")
                 }
             }
         } else {
             EmptyWorkspaceRow(text: "No transcript yet.")
+        }
+    }
+
+    private func isActive(_ segment: Transcript.Segment) -> Bool {
+        player.currentTime >= segment.start
+            && player.currentTime < max(segment.end, segment.start + 0.5)
+    }
+}
+
+private struct MeetingProcessingToolbarModifier: ViewModifier {
+    @ObservedObject var app: AppState
+    let meeting: Meeting
+
+    func body(content: Content) -> some View {
+        content.toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    app.reprocess(meeting, transcribe: true, summarize: true)
+                } label: {
+                    Label("Transcribe & Summarize", systemImage: "wand.and.stars")
+                        .labelStyle(.titleAndIcon)
+                }
+                .help("Transcribe & summarize")
+                .accessibilityIdentifier("toolbar.transcribeAndSummarize")
+
+                Button {
+                    app.reprocess(meeting, transcribe: true, summarize: false)
+                } label: {
+                    Label("Transcribe", systemImage: "waveform")
+                        .labelStyle(.titleAndIcon)
+                }
+                .help("Transcribe only")
+                .accessibilityIdentifier("toolbar.transcribeOnly")
+
+                Button {
+                    app.reprocess(meeting, transcribe: false, summarize: true)
+                } label: {
+                    Label("Re-summarize", systemImage: "arrow.clockwise")
+                        .labelStyle(.titleAndIcon)
+                }
+                .help("Re-summarize and keep the current transcript")
+                .accessibilityIdentifier("toolbar.resummarize")
+            }
+        }
+    }
+}
+
+private extension View {
+    func meetingProcessingToolbar(app: AppState, meeting: Meeting) -> some View {
+        modifier(MeetingProcessingToolbarModifier(app: app, meeting: meeting))
+    }
+}
+
+private struct WorkspaceSpeakerRenameDraft: Identifiable {
+    let id = UUID()
+    let speaker: String
+    let defaultName: String
+    let currentName: String
+}
+
+private struct WorkspaceSpeakerRenameSheet: View {
+    let draft: WorkspaceSpeakerRenameDraft
+    let hints: [String]
+    let onSave: (String) -> Void
+    let onReset: () -> Void
+    let onCancel: () -> Void
+
+    @State private var name: String
+
+    init(
+        draft: WorkspaceSpeakerRenameDraft,
+        hints: [String],
+        onSave: @escaping (String) -> Void,
+        onReset: @escaping () -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.draft = draft
+        self.hints = hints
+        self.onSave = onSave
+        self.onReset = onReset
+        self.onCancel = onCancel
+        _name = State(initialValue: draft.currentName)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Rename Speaker").font(.headline)
+            TextField("Speaker name", text: $name)
+                .textFieldStyle(.roundedBorder)
+
+            if !hints.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(hints, id: \.self) { hint in
+                            Button(hint) { name = hint }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        }
+                    }
+                }
+            }
+
+            HStack {
+                Button("Reset to \(draft.defaultName)", action: onReset)
+                Spacer()
+                Button("Cancel", action: onCancel)
+                Button("Save") { onSave(name) }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(18)
+        .frame(width: 380)
+    }
+}
+
+@MainActor
+private enum MeetingMarkdownActions {
+    static func copy(_ meeting: Meeting) {
+        copyText(SessionFormatter.getMarkdown(meeting, options: .all))
+    }
+
+    static func copyText(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Returns an error message for inline presentation, or nil after either
+    /// a successful export or a user-cancelled save panel.
+    static func export(_ meeting: Meeting) -> String? {
+        let panel = NSSavePanel()
+        panel.title = "Export Meeting as Markdown"
+        panel.nameFieldStringValue = "\(StorageManager.slugify(meeting.displayTitle)).md"
+        panel.canCreateDirectories = true
+        if let markdown = UTType(filenameExtension: "md") {
+            panel.allowedContentTypes = [markdown]
+        }
+        guard panel.runModal() == .OK, let destination = panel.url else { return nil }
+        do {
+            try SessionFormatter.getMarkdown(meeting, options: .all)
+                .write(to: destination, atomically: true, encoding: .utf8)
+            return nil
+        } catch {
+            return "Meeting export failed: \(error.localizedDescription)"
         }
     }
 }

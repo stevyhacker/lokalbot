@@ -61,11 +61,4 @@ final class GenerationMetricsStore: ObservableObject {
         }
         recent = updated
     }
-
-    /// Drop the window (e.g. a Settings "Clear" action). No-op when already empty so
-    /// it doesn't publish a redundant change.
-    func clear() {
-        guard !recent.isEmpty else { return }
-        recent = []
-    }
 }

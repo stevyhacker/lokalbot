@@ -15,10 +15,6 @@ enum SessionLookup {
         AppDirectories.libraryRoot
     }
 
-    static var meetingsRootURL: URL {
-        storageRootURL.appendingPathComponent("meetings", isDirectory: true)
-    }
-
     /// 8-character truncation of a Meeting's UUID — what `list` prints and
     /// what `get <id>` accepts. Stable, case-insensitive.
     static func shortID(_ id: UUID) -> String {
@@ -50,10 +46,6 @@ enum SessionLookup {
             meetings.append(meeting)
         }
         return meetings.sorted { $0.startedAt > $1.startedAt }
-    }
-
-    static func latest() throws -> Meeting? {
-        try loadAllMeetings().first
     }
 
     /// Find by short ID (8-char prefix), full UUID string, or the literal `"latest"`.

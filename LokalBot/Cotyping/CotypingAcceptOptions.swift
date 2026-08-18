@@ -34,20 +34,12 @@ enum CotypingAcceptKey: Int, Codable, CaseIterable, Identifiable, Sendable {
 }
 
 /// The full-accept key (take the entire remaining suggestion), or off.
-enum CotypingFullAcceptKey: Int, Codable, CaseIterable, Identifiable, Sendable {
+enum CotypingFullAcceptKey: Int, Codable, Sendable {
     case backtick = 50
     case rightArrow = 124
     case off = -1
 
-    var id: Int { rawValue }
     var keyCode: CGKeyCode? { self == .off ? nil : CGKeyCode(rawValue) }
-    var label: String {
-        switch self {
-        case .backtick: "Backtick `"
-        case .rightArrow: "Right Arrow"
-        case .off: "Off"
-        }
-    }
 }
 
 /// Which accept key fired — the next chunk (word/phrase) or the whole tail.

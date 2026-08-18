@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import SQLite3
 
 /// Plants a self-contained LokalBot storage root on disk for one UI test run.
@@ -284,7 +285,7 @@ enum SyntheticFixture {
         try meta.write(to: folder.appendingPathComponent("meta.json"),
                        atomically: true, encoding: .utf8)
 
-        // transcript.json — consumed by SearchIndex.reindex and MeetingDetailView.
+        // transcript.json — consumed by SearchIndex.reindex and the meeting workspace.
         let segments = meeting.transcript.map { segment -> String in
             """
               {
@@ -317,12 +318,29 @@ enum SyntheticFixture {
         try meeting.summaryMarkdown.write(to: folder.appendingPathComponent("summary.md"),
                                           atomically: true, encoding: .utf8)
 
+        // A short readable recovery track makes the real meeting player part
+        // of the UI fixture without reaching for microphone or system audio.
+        try writeAudioFixture(to: folder.appendingPathComponent("mic.live.caf"))
+
         // Grounded outcome fixtures drive the redesigned Today, Timeline,
-        // Meetings preview, and full follow-through workspace.
+        // and full Meetings follow-through workspace.
         try outcomeJSON(for: meeting).write(
             to: folder.appendingPathComponent("outcomes.json"),
             atomically: true,
             encoding: .utf8)
+    }
+
+    private static func writeAudioFixture(to url: URL) throws {
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8_000) else {
+            throw NSError(
+                domain: "LokalBotUITests.SyntheticFixture",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Could not create audio fixture format."])
+        }
+        buffer.frameLength = buffer.frameCapacity
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file.write(from: buffer)
     }
 
     private static func outcomeJSON(for meeting: Meeting) -> String {

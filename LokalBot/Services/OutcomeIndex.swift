@@ -77,12 +77,6 @@ final class OutcomeIndex: ObservableObject {
             .sorted { $0.meetingStartedAt > $1.meetingStartedAt }
     }
 
-    var recentDecisions: [(meeting: Meeting, decision: MeetingOutcomes.Decision)] {
-        all.flatMap { projection in
-            projection.outcomes.decisionRecords.map { (projection.meeting, $0) }
-        }.sorted { $0.meeting.startedAt > $1.meeting.startedAt }
-    }
-
     func projection(for meetingID: Meeting.ID) -> MeetingOutcomeProjection? {
         projections[meetingID]
     }
