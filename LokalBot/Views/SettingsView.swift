@@ -440,7 +440,7 @@ struct SettingsView: View {
                         }
                     }
                     Text(app.settings.effectiveScreenContextCaptureMode.detail)
-                        .font(.caption).foregroundStyle(.secondary)
+                        .workspaceTextRole(.supporting)
                     if app.settings.effectiveScreenContextCaptureMode.capturesText {
                         Slider(value: Binding(
                             get: { app.settings.screenshotIntervalMinutes },
@@ -458,7 +458,7 @@ struct SettingsView: View {
                             Toggle("Capture low-frequency visual context during meetings",
                                    isOn: $app.settings.meetingVisualContextEnabled)
                             Text("Off by default. When enabled, captures the focused display at most once per minute on meaningful changes and links each frame to the active meeting.")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .workspaceTextRole(.trust)
                         }
                     }
                     TextField("Never capture (app names, comma-separated)",
@@ -473,7 +473,7 @@ struct SettingsView: View {
                             + "(see Privacy). Saved moments retain their encrypted frame and text "
                             + "until you unsave or delete them. Excluded apps log as “Private”."
                     )
-                        .font(.caption).foregroundStyle(.secondary)
+                        .workspaceTextRole(.trust)
                     Divider()
                     Toggle("Generate the day digest automatically",
                            isOn: $app.settings.dayDigestAutoEnabled)
@@ -656,7 +656,7 @@ struct SettingsView: View {
                 }
                 Text("While your Mac is otherwise idle after the chosen hour, LokalBot compiles the previous day — meetings, outcomes, the day digest, and time totals — into a morning retrospective and an evolving structured memory of active projects and goals, shown on Today. "
                      + "Nights the Mac slept through catch up at the next launch. Evidence and generated files stay in the local library. Generation uses your configured Main LLM, so an approved remote backend receives the compiled evidence; if no model is reachable, a plain evidence summary is written instead.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .workspaceTextRole(.trust)
             }
         }
     }
@@ -685,15 +685,16 @@ struct SettingsView: View {
                                  "delete", "prune", "forever", "keep", "local", "network",
                                  "data", "security", "agents", "mcp", "claude", "cli"]) {
                 Section("Privacy") {
-                    Label("Audio stays on this Mac. Transcripts and other context leave only when you approve a remote inference origin. Other network access is for models, updates, and optional Agent Mode setup.",
-                          systemImage: "lock.shield")
-                        .foregroundStyle(.secondary)
+                    InferenceDisclosure(
+                        usesRemote: app.settings.usesRemoteMainLLM,
+                        localText: "Audio, transcripts, and captured context stay on this Mac. Network access is limited to model downloads, updates, and optional Agent Mode setup.",
+                        remoteText: "Audio stays on this Mac. Transcripts and approved context may be sent to your remote Main LLM (\(app.settings.summarizerBackend.displayName)). Other network access is for models, updates, and optional Agent Mode setup.")
                     Toggle("Keep screen text forever", isOn: Binding(
                         get: { app.settings.keepOCRTextForever },
                         set: { app.settings.keepOCRTextForever = $0
                                if !$0 { app.screenshots.pruneOldScreenshots() } }))
                     Text("Captured screen text is deleted with any pixels after \(app.settings.retentionDays) days. Saved moments are retained until you unsave or delete them. Turn on to keep all other screen text searchable forever; turning back off deletes text older than the window.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .workspaceTextRole(.trust)
                     AgentAccessToggleRow(manager: app.agentAccess)
                     ScreenMemoryAccessToggleRow(manager: app.screenMemoryAccess)
                     HStack(spacing: 16) {

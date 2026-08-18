@@ -176,9 +176,13 @@ final class MainWindowUITests: XCTestCase {
     func testSidebarUsesApprovedRememberAndWriteActHierarchy() {
         XCTAssertTrue(identified("sidebar.section.remember").exists)
         XCTAssertTrue(identified("sidebar.section.writeAct").exists)
+        XCTAssertFalse(app.buttons["sidebar.section.remember"].exists,
+                       "Remember must be a header, not a destination")
+        XCTAssertFalse(app.buttons["sidebar.section.writeAct"].exists,
+                       "Write & Act must be a header, not a destination")
         let ordered = ["sidebar.today", "sidebar.timeline", "sidebar.meetings",
                        "sidebar.ask", "sidebar.type", "sidebar.agent", "sidebar.settings"]
-            .map { app.staticTexts[$0] }
+            .map(identified)
         for item in ordered {
             XCTAssertTrue(item.exists, "approved sidebar destination missing")
         }
@@ -576,7 +580,7 @@ final class MainWindowUITests: XCTestCase {
     func testAskSectionRendersAndAcceptsInput() {
         clickSidebar("sidebar.ask")
 
-        XCTAssertTrue(textWithContent("Ask your meetings").firstMatch
+        XCTAssertTrue(textWithContent("Ask your work memory").firstMatch
             .waitForExistence(timeout: 6),
                       "ask empty-state did not render")
         XCTAssertTrue(app.descendants(matching: .any)["ask.submit"].exists,

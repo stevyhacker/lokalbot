@@ -17,7 +17,8 @@ struct PermissionRow: View {
                 .foregroundStyle(granted ? .green : .orange)
             VStack(alignment: .leading, spacing: 2) {
                 Text(permission.title)
-                Text(why ?? permission.why).font(.caption).foregroundStyle(.secondary)
+                Text(why ?? permission.why)
+                    .workspaceTextRole(.supporting)
             }
             Spacer()
             if !granted {

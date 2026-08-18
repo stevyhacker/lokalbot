@@ -112,20 +112,11 @@ struct DictationView: View {
             }
             // Where the words go changes what dictation means, so the remote
             // case reads as a first-class notice, not caption fine print.
-            if app.settings.usesRemoteMainLLM {
-                Label {
-                    Text("Final wording uses your approved remote Main LLM (\(app.settings.summarizerBackend.displayName)). What you dictate — and any screen context it composes with — is sent to that server.")
-                        .font(.callout)
-                } icon: {
-                    Image(systemName: "network")
-                        .foregroundStyle(Brand.amber)
-                }
+            InferenceDisclosure(
+                usesRemote: app.settings.usesRemoteMainLLM,
+                localText: "Speech uses the meeting ASR model; final wording uses your local Main LLM and autocomplete writing profile. Everything stays on this Mac.",
+                remoteText: "Final wording uses your approved remote Main LLM (\(app.settings.summarizerBackend.displayName)). What you dictate — and any screen context it composes with — is sent to that server.")
                 .accessibilityIdentifier("dictation.remoteNotice")
-            } else {
-                Text("Speech uses the meeting ASR model; final wording uses the Main LLM and your autocomplete writing profile. Everything stays on this Mac.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 

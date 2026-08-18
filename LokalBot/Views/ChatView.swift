@@ -16,6 +16,7 @@ import AVFoundation
 /// "worked: …" line. Embedded by the Ask surface.
 struct ChatTranscriptView: View {
     @ObservedObject var model: ChatViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -28,7 +29,9 @@ struct ChatTranscriptView: View {
                 .padding(.horizontal, WorkspaceMetric.pagePadding)
                 .padding(.top, 8)
                 .padding(.bottom, WorkspaceMetric.pagePadding)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .workspaceReadingWidth()
+                .frame(maxWidth: .infinity, alignment: .top)
+                .accessibilityIdentifier("chat.readingColumn")
             }
             .accessibilityIdentifier("chat.messages")
             .onChange(of: model.messages.count) { scrollToEnd(proxy) }
@@ -39,7 +42,9 @@ struct ChatTranscriptView: View {
 
     private func scrollToEnd(_ proxy: ScrollViewProxy) {
         guard let last = model.messages.last?.id else { return }
-        withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(last, anchor: .bottom) }
+        withAnimation(WorkspaceMotion.animation(.autoScroll, reduceMotion: reduceMotion)) {
+            proxy.scrollTo(last, anchor: .bottom)
+        }
     }
 }
 
@@ -450,12 +455,11 @@ private struct ConversationListContent: View {
             .padding(.top, 12)
         }
         .background(WorkspacePalette.conversationColumn(for: colorScheme))
-        // The visible contextual title is supplied by the custom navigation
-        // toolbar item; clear the window's fallback app name to avoid a second
-        // dim "LokalBot" label beside it.
-        .navigationTitle("")
+        // One native title owns both the visible toolbar label and the window's
+        // accessibility title. The detail column deliberately adds no second
+        // Ask label.
+        .navigationTitle("Ask")
         .toolbar {
-            conversationTitleToolbarItem
             ToolbarItem(placement: .primaryAction) {
                 Button { model.newConversation() } label: {
                     Label("New chat", systemImage: "square.and.pencil")
@@ -465,25 +469,6 @@ private struct ConversationListContent: View {
             }
         }
         .accessibilityIdentifier("chat.conversationList")
-    }
-
-    @ToolbarContentBuilder
-    private var conversationTitleToolbarItem: some ToolbarContent {
-        if #available(macOS 26.0, *) {
-            ToolbarItem(placement: .navigation) {
-                conversationTitle
-            }
-            .sharedBackgroundVisibility(.hidden)
-        } else {
-            ToolbarItem(placement: .navigation) {
-                conversationTitle
-            }
-        }
-    }
-
-    private var conversationTitle: some View {
-        Text("Ask")
-            .font(WorkspaceTypography.sectionTitle)
     }
 
     private func row(_ conversation: Conversation, selected: Bool) -> some View {
@@ -498,7 +483,7 @@ private struct ConversationListContent: View {
         .padding(.vertical, 9)
         .background(
             selected ? Color.primary.opacity(0.14) : Color.clear,
-            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            in: RoundedRectangle(cornerRadius: Brand.Radius.row, style: .continuous))
         .contentShape(Rectangle())
         .accessibilityIdentifier("chat.conversation.\(conversation.id.uuidString)")
     }

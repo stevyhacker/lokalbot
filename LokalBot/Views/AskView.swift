@@ -9,7 +9,6 @@ struct AskView: View {
 
     var body: some View {
         AskContent(model: app.chat)
-            .navigationTitle("Ask")
     }
 }
 
@@ -36,12 +35,14 @@ private struct AskContent: View {
     @FocusState private var inputFocused: Bool
 
     var body: some View {
-        return VStack(spacing: 0) {
+        VStack(spacing: 0) {
             header
             if mode == .keyword {
-                query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? AnyView(keywordEmptyState)
-                    : AnyView(results)
+                if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    keywordEmptyState
+                } else {
+                    results
+                }
             } else if model.messages.isEmpty {
                 emptyState
             } else {
@@ -123,6 +124,8 @@ private struct AskContent: View {
         }
         .padding(.horizontal, WorkspaceMetric.pagePadding)
         .padding(.bottom, 31)
+        .workspaceReadingWidth()
+        .frame(maxWidth: .infinity, alignment: .top)
     }
 
     private var composerPanel: some View {
@@ -141,7 +144,9 @@ private struct AskContent: View {
                 .textFieldStyle(.plain)
                 .font(WorkspaceTypography.editorialBody)
                 .focused($inputFocused)
-                .onSubmit { mode == .ask ? escalate() : runSearch() }
+                .onSubmit {
+                    if mode == .ask { escalate() } else { runSearch() }
+                }
                 .accessibilityIdentifier("search.field")
                 if model.isResponding {
                     Button(action: model.stop) {
@@ -712,10 +717,17 @@ private struct AskContent: View {
 
     private var emptyState: some View {
         ContentUnavailableView {
-            Label("Ask your meetings", systemImage: "sparkle.magnifyingglass")
+            Label("Ask your work memory", systemImage: "sparkle.magnifyingglass")
         } description: {
-            Text("Search everything LokalBot has indexed, or press ↵ to ask the assistant — decisions, action items, who said what. Everything stays on this Mac.")
-                .frame(maxWidth: 400)
+            VStack(spacing: 10) {
+                Text("Find an answer in indexed meetings and permitted screen text, with sources. Asking is read-only.")
+                    .frame(maxWidth: 400)
+                InferenceDisclosure(
+                    usesRemote: app.settings.usesRemoteMainLLM,
+                    localText: "Answers use your local Main LLM; retrieved evidence stays on this Mac.",
+                    remoteText: "Answers use your approved remote Main LLM (\(app.settings.summarizerBackend.displayName)); retrieved evidence is sent to that server.")
+                    .frame(maxWidth: 400, alignment: .leading)
+            }
         } actions: {
             VStack(spacing: 8) {
                 ForEach(model.suggestions, id: \.self) { suggestion in

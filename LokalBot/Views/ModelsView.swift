@@ -99,7 +99,8 @@ struct ModelsView: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal, 12).padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+            .background(.quaternary.opacity(0.4),
+                        in: RoundedRectangle(cornerRadius: Brand.Radius.row))
             .accessibilityIdentifier("models.residency")
         }
 
@@ -325,7 +326,8 @@ struct ModelsView: View {
                     .font(.caption)
                     .foregroundStyle(.red)
                     .padding(8)
-                    .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+                    .background(.red.opacity(0.08),
+                                in: RoundedRectangle(cornerRadius: Brand.Radius.row))
             } else {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("Remote server: meeting transcripts, screen text, and agent context may leave this Mac.",
@@ -337,7 +339,8 @@ struct ModelsView: View {
                         .font(.caption)
                 }
                 .padding(8)
-                .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+                .background(.orange.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: Brand.Radius.row))
             }
         } else if let url = URL(string: rawURL), InferenceEndpointPolicy.isLoopback(url) {
             Label("Loopback server: inference context stays on this Mac.",

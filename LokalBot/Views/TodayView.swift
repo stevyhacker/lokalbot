@@ -181,7 +181,9 @@ struct TodayView: View {
                 dreamInferenceNotice(dream)
             }
             .padding(WorkspaceMetric.cardPadding)
-            .background(RoundedRectangle(cornerRadius: 12).fill(.quaternary.opacity(0.4)))
+            .background(
+                RoundedRectangle(cornerRadius: Brand.Radius.compactPanel)
+                    .fill(.quaternary.opacity(0.4)))
         }
     }
 

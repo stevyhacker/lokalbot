@@ -238,14 +238,13 @@ private struct TimelineSessionStatRow: View {
 
 struct TimelineContentView: View {
     @EnvironmentObject var app: AppState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var model: CaptureModel
     @State private var contextDrawerPresented = false
 
-    private let drawerBreakpoint: CGFloat = 900
-
     var body: some View {
         GeometryReader { proxy in
-            let usesDrawer = proxy.size.width < drawerBreakpoint
+            let usesDrawer = proxy.size.width < WorkspaceMetric.timelineDrawerBreakpoint
             VStack(spacing: 0) {
                 TimelineWorkspaceHeader(
                     model: model,
@@ -268,22 +267,30 @@ struct TimelineContentView: View {
                             TimelineContextPanel(
                                 model: model,
                                 onDismiss: { contextDrawerPresented = false })
-                                .frame(width: min(410, max(320, proxy.size.width - 72)))
+                                .frame(width: min(
+                                    WorkspaceMetric.timelineDrawerMaxWidth,
+                                    max(320, proxy.size.width - 72)))
                                 .background(.regularMaterial)
                                 .shadow(color: .black.opacity(0.24), radius: 20, x: -8)
-                                .transition(.move(edge: .trailing).combined(with: .opacity))
+                                .transition(WorkspaceMotion.drawerTransition(
+                                    reduceMotion: reduceMotion))
                         }
                     }
                 } else {
                     HSplitView {
                         TimelineContextPanel(model: model, onDismiss: nil)
-                            .frame(minWidth: 360, idealWidth: 520, maxWidth: .infinity)
+                            .frame(
+                                minWidth: WorkspaceMetric.timelineContextMinWidth,
+                                idealWidth: 520,
+                                maxWidth: WorkspaceMetric.readingMaxWidth)
                         CaptureDayView(model: model, onOpenContext: {})
                             .frame(minWidth: 480, idealWidth: 760, maxWidth: .infinity)
                     }
                 }
             }
-            .animation(.easeOut(duration: 0.18), value: contextDrawerPresented)
+            .animation(
+                WorkspaceMotion.animation(.drawer, reduceMotion: reduceMotion),
+                value: contextDrawerPresented)
             .onChange(of: model.selection) { _, selection in
                 if usesDrawer, selection != nil { contextDrawerPresented = true }
             }

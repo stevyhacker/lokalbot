@@ -170,6 +170,7 @@ private struct MeetingWorkspaceDetail: View {
                                 SelectableDigestText(parts.body)
                             }
                         }
+                        .workspaceReadingWidth()
                         .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         EmptyWorkspaceRow(text: "No summary yet.")

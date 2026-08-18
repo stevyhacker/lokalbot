@@ -181,8 +181,8 @@ private struct PaletteRow: View {
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background(selected ? Brand.teal.opacity(0.15) : .clear,
-                    in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8)
+                    in: RoundedRectangle(cornerRadius: Brand.Radius.row))
+        .overlay(RoundedRectangle(cornerRadius: Brand.Radius.row)
             .strokeBorder(selected ? Brand.teal.opacity(0.4) : .clear, lineWidth: 1))
     }
 }

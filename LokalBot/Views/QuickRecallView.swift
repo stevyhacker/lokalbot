@@ -532,7 +532,8 @@ private struct QuickRecallRow: View {
                 .font(.title3)
                 .foregroundStyle(.tint)
                 .frame(width: 34, height: 34)
-                .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+                .background(.quaternary.opacity(0.45),
+                            in: RoundedRectangle(cornerRadius: Brand.Radius.row))
         }
     }
 

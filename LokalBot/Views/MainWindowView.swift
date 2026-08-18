@@ -215,12 +215,10 @@ struct MainWindowView: View {
     }
 
     private var sidebar: some View {
-        List {
-            Section {
-                sidebarDestination(
-                    "Today", systemImage: "sun.max", section: .today,
-                    identifier: "sidebar.today")
-            }
+        List(selection: sidebarSelection) {
+            sidebarDestination(
+                "Today", systemImage: "sun.max", section: .today,
+                identifier: "sidebar.today")
             Section {
                 sidebarDestination(
                     "Timeline",
@@ -246,11 +244,9 @@ struct MainWindowView: View {
             } header: {
                 sidebarSectionHeader("Write & act")
             }
-            Section {
-                sidebarDestination(
-                    "Settings", systemImage: "gearshape", section: .settings,
-                    identifier: "sidebar.settings")
-            }
+            sidebarDestination(
+                "Settings", systemImage: "gearshape", section: .settings,
+                identifier: "sidebar.settings")
         }
         .listStyle(.sidebar)
         .tint(Brand.teal)
@@ -274,6 +270,16 @@ struct MainWindowView: View {
         .toolbar(removing: .sidebarToggle)
     }
 
+    /// Native source-list selection gives VoiceOver and keyboard navigation
+    /// one semantic destination per row. Section headings remain static text.
+    private var sidebarSelection: Binding<AppState.NavSection?> {
+        Binding(
+            get: { app.navSection },
+            set: { selection in
+                if let selection { app.navSection = selection }
+            })
+    }
+
     /// `cacheDisplay` does not flatten the sidebar's vibrancy text correctly:
     /// AppKit gives the offscreen bitmap the mask color (black) instead of the
     /// composited label color. Use resolved colors only for scripted exports;
@@ -286,12 +292,8 @@ struct MainWindowView: View {
         identifier: String
     ) -> some View {
         let selected = app.navSection == section
-        Button {
-            app.navSection = section
-        } label: {
-            sidebarLabel(title, systemImage: systemImage, section: section)
-        }
-        .buttonStyle(.plain)
+        sidebarLabel(title, systemImage: systemImage, section: section)
+        .tag(section)
         .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: -5))
         .listRowBackground(Color.clear)
         .accessibilityIdentifier(identifier)
@@ -329,7 +331,7 @@ struct MainWindowView: View {
         .background(
             selected ? Brand.teal.opacity(0.18) : Color.clear,
             in: RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous))
-        .padding(.top, section == .ask ? 13 : 0)
+        .padding(.top, section == .ask || section == .settings ? 13 : 0)
         .offset(y: section == .today ? -2 : 0)
         .contentShape(Rectangle())
     }
@@ -343,6 +345,7 @@ struct MainWindowView: View {
             .padding(.leading, 11)
             .padding(.top, title == "Remember" ? 3 : 8)
             .padding(.bottom, title == "Remember" ? 10 : 5)
+            .accessibilityAddTraits(.isHeader)
             .accessibilityIdentifier(
                 title == "Remember" ? "sidebar.section.remember" : "sidebar.section.writeAct")
     }
@@ -389,11 +392,11 @@ private struct SidebarPrivacyFooter: View {
             HStack(spacing: 6) {
                 StatusDot(color: remoteThink ? Brand.amber : .green, size: 7)
                 Text(remoteThink ? "Memory is stored locally" : "All memory is local")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(WorkspaceTypography.editorialBodyEmphasis)
+                    .foregroundStyle(.primary)
             }
             Text(remoteThink ? "Think uses an approved remote server" : "No data leaves your Mac")
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
+                .workspaceTextRole(.supporting)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.leading, 20)
@@ -415,7 +418,8 @@ private struct SidebarBrandHeader: View {
                 .resizable()
                 .scaledToFit()
                 .frame(width: 30, height: 30)
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .clipShape(RoundedRectangle(
+                    cornerRadius: Brand.Radius.row, style: .continuous))
 
             VStack(alignment: .leading, spacing: 1) {
                 Text("LokalBot")

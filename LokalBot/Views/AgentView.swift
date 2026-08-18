@@ -3,6 +3,7 @@ import SwiftUI
 /// Agent Mode root: global runtime setup followed by a desktop tab strip.
 /// Each live tab owns an independent AgentSessionController and pi process.
 struct AgentView: View {
+    @EnvironmentObject private var app: AppState
     @ObservedObject var sessions: AgentSessionTabs
     @ObservedObject var installer: AgentRuntimeInstaller
 
@@ -53,9 +54,9 @@ struct AgentView: View {
             Image(systemName: "wand.and.sparkles").font(.system(size: 36))
                 .foregroundStyle(.secondary)
             Text("Agent Mode").font(.title2.bold())
-            Text("An on-device coding and file agent powered by your Main LLM engine. Setup downloads about 50 MB and uses about 225 MB after installation. Agent sessions stay local; commands you approve run with your Mac user permissions and may access files or the network.")
+            Text(installDescription)
                 .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
+                .workspaceTextRole(.trust)
                 .frame(maxWidth: 420)
             switch installer.phase {
             case .checking:
@@ -73,7 +74,7 @@ struct AgentView: View {
             case .installing(let name):
                 LoadingStateLabel("Installing \(name)…", font: .caption)
             case .failed(let message):
-                Text(message).font(.caption).foregroundStyle(.red)
+                Text(message).workspaceTextRole(.warning)
                     .frame(maxWidth: 420)
                 Button("Repair Agent Mode") { Task { await installer.repair() } }
                     .accessibilityIdentifier("agent.installRetry")
@@ -82,6 +83,13 @@ struct AgentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var installDescription: String {
+        let inference = app.settings.usesRemoteMainLLM
+            ? "Prompts and approved context are sent to your remote Main LLM (\(app.settings.summarizerBackend.displayName))."
+            : "Model inference stays on this Mac."
+        return "A local coding and file agent powered by your selected Main LLM. Setup downloads about 50 MB and uses about 225 MB after installation. \(inference) Session history stays local; commands you approve run with your Mac user permissions and may access files or the network."
     }
 }
 
@@ -248,9 +256,9 @@ private struct AgentSessionTabItem: View {
         .padding(.vertical, 2)
         .padding(.trailing, 3)
         .background(isSelected ? Brand.teal.opacity(0.16) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 7))
+                    in: RoundedRectangle(cornerRadius: Brand.Radius.tab))
         .overlay {
-            RoundedRectangle(cornerRadius: 7)
+            RoundedRectangle(cornerRadius: Brand.Radius.tab)
                 .strokeBorder(isSelected ? Brand.teal.opacity(0.32) : Color.secondary.opacity(0.16))
         }
     }

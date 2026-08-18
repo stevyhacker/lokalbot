@@ -12,8 +12,14 @@ extension Brand {
     /// Shared corner radii. Chips are capsules; everything rectangular snaps
     /// to one of these instead of a per-view magic number.
     enum Radius {
+        /// Compact desktop tabs whose height cannot accommodate `control`.
+        static let tab: CGFloat = 7
+        /// Selectable rows and compact inline cards.
+        static let row: CGFloat = 8
         /// Inline wells and small controls (text areas, thumbnails).
         static let control: CGFloat = 10
+        /// Dense content cards that need one step less rounding than panels.
+        static let compactPanel: CGFloat = 12
         /// Panels, cards, toasts, and chat bubbles.
         static let panel: CGFloat = 14
         /// Hero surfaces (getting-started card, onboarding cards).
@@ -60,6 +66,97 @@ enum WorkspaceMetric {
     /// while allowing the outcome tables to use the same broad working area
     /// as the reference instead of collapsing into a narrow centered column.
     static let contentMaxWidth: CGFloat = 1360
+    /// Long-form answers and summaries stay within a comfortable reading line.
+    static let readingMaxWidth: CGFloat = 780
+    /// Timeline context remains useful beside the chronology before it drawers.
+    static let timelineContextMinWidth: CGFloat = 420
+    static let timelineDrawerBreakpoint: CGFloat = 980
+    static let timelineDrawerMaxWidth: CGFloat = 520
+}
+
+// MARK: - Semantic text and inference roles
+
+/// Text importance is independent from layout hierarchy. Metadata may be
+/// visually quiet; privacy, permissions, egress, and recovery explanations
+/// must remain readable in every appearance and Increase Contrast.
+enum WorkspaceTextRole {
+    case metadata
+    case supporting
+    case trust
+    case warning
+}
+
+private struct WorkspaceTextRoleModifier: ViewModifier {
+    @Environment(\.colorSchemeContrast) private var contrast
+    let role: WorkspaceTextRole
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        switch role {
+        case .metadata:
+            content
+                .font(WorkspaceTypography.metadata)
+                .foregroundStyle(Color.secondary)
+        case .supporting:
+            content
+                .font(WorkspaceTypography.editorialBody)
+                .foregroundStyle(contrast == .increased ? Color.primary : Color.secondary)
+        case .trust:
+            content
+                .font(WorkspaceTypography.editorialBody)
+                .foregroundStyle(Color.primary)
+        case .warning:
+            content
+                .font(WorkspaceTypography.editorialBody)
+                .foregroundStyle(Brand.error)
+        }
+    }
+}
+
+/// One honest local/remote inference disclosure. Callers provide copy tailored
+/// to the surface while this view owns readable type and semantic icon color.
+struct InferenceDisclosure: View {
+    let usesRemote: Bool
+    let localText: String
+    let remoteText: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: usesRemote ? "network" : "lock.shield")
+                .foregroundStyle(usesRemote ? Brand.amber : Brand.teal)
+            Text(usesRemote ? remoteText : localText)
+                .workspaceTextRole(.trust)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Motion policy
+
+enum WorkspaceMotionKind {
+    case disclosure
+    case drawer
+    case autoScroll
+}
+
+enum WorkspaceMotion {
+    static func animation(_ kind: WorkspaceMotionKind, reduceMotion: Bool) -> Animation? {
+        guard !reduceMotion else { return nil }
+        switch kind {
+        case .disclosure: return .easeInOut(duration: 0.16)
+        case .drawer: return .easeOut(duration: 0.18)
+        case .autoScroll: return .easeOut(duration: 0.15)
+        }
+    }
+
+    static func disclosureTransition(reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top))
+    }
+
+    static func drawerTransition(reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity)
+    }
 }
 
 // MARK: - Workspace shell
@@ -149,6 +246,16 @@ extension View {
         modifier(WorkspaceControlModifier())
     }
 
+    /// Applies a semantic foreground and minimum readable type size.
+    func workspaceTextRole(_ role: WorkspaceTextRole) -> some View {
+        modifier(WorkspaceTextRoleModifier(role: role))
+    }
+
+    /// Caps narrative prose without constraining tables, evidence, or controls.
+    func workspaceReadingWidth(alignment: Alignment = .leading) -> some View {
+        frame(maxWidth: WorkspaceMetric.readingMaxWidth, alignment: alignment)
+    }
+
     /// Shared quiet panel chrome for outcome groups and disclosure sections.
     func workspacePanel() -> some View {
         padding(WorkspaceMetric.panelPadding)
@@ -168,6 +275,7 @@ extension View {
 /// visual hierarchy while making mouse, keyboard, and UI-test activation
 /// deterministic.
 struct WorkspaceDisclosure<Label: View, Content: View>: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding private var isExpanded: Bool
     private let identifier: String
     private let label: () -> Label
@@ -188,7 +296,8 @@ struct WorkspaceDisclosure<Label: View, Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.easeInOut(duration: 0.16)) {
+                withAnimation(WorkspaceMotion.animation(
+                    .disclosure, reduceMotion: reduceMotion)) {
                     isExpanded.toggle()
                 }
             } label: {
@@ -209,7 +318,8 @@ struct WorkspaceDisclosure<Label: View, Content: View>: View {
             if isExpanded {
                 content()
                     .padding(.top, 10)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .transition(WorkspaceMotion.disclosureTransition(
+                        reduceMotion: reduceMotion))
             }
         }
         .workspacePanel()

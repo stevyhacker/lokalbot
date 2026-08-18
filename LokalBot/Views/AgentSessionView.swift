@@ -63,7 +63,7 @@ struct AgentSessionView: View {
             statusBadge
             Spacer()
             Label("Ask before changes", systemImage: "hand.raised")
-                .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+                .workspaceTextRole(.trust)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -133,11 +133,10 @@ struct AgentSessionView: View {
                 .font(.system(size: 30))
                 .foregroundStyle(Brand.teal)
             VStack(alignment: .leading, spacing: 5) {
-                Text("Turn a local outcome into action")
+                Text("Run an ongoing task")
                     .font(WorkspaceTypography.pageTitle)
                 Text(emptyStateDetail)
-                    .font(WorkspaceTypography.body)
-                    .foregroundStyle(.secondary)
+                    .workspaceTextRole(.trust)
             }
             if let context = app.agentLaunchContext {
                 VStack(alignment: .leading, spacing: 5) {
@@ -145,7 +144,7 @@ struct AgentSessionView: View {
                         .foregroundStyle(.secondary)
                     Text(context.title).font(WorkspaceTypography.rowTitle)
                     Text("The prompt is prefilled below. Review it before sending.")
-                        .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+                        .workspaceTextRole(.supporting)
                 }
                 .workspacePanel()
             }
@@ -185,7 +184,7 @@ struct AgentSessionView: View {
                     Label("Meeting Library: scoped local read access", systemImage: "lock.open")
                     Label("File changes and shell commands require approval", systemImage: "hand.raised")
                 }
-                .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+                .workspaceTextRole(.trust)
                 .padding(.top, 8)
             }
             .font(WorkspaceTypography.body)
@@ -194,19 +193,20 @@ struct AgentSessionView: View {
                     Toggle("Allow all file changes for this session", isOn: Binding(
                         get: { controller.autoApproveSession },
                         set: { enabled in
-                            if enabled { confirmingAutoApprove = true }
-                            else { controller.autoApproveSession = false }
+                            if enabled { confirmingAutoApprove = true } else {
+                                controller.autoApproveSession = false
+                            }
                         }))
                         .toggleStyle(.switch)
                         .accessibilityIdentifier("agent.autoApprove")
                     Text("Off by default and reset when this session closes.")
                 }
-                .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+                .workspaceTextRole(.trust)
                 .padding(.top, 8)
             }
             .font(WorkspaceTypography.body)
         }
-        .frame(maxWidth: 960, alignment: .leading)
+        .workspaceReadingWidth()
     }
 
     private func starterCard(_ title: String, id: String, icon: String,
@@ -232,12 +232,16 @@ struct AgentSessionView: View {
 
     private var emptyStateDetail: String {
         if controller.state == .idle {
-            return "Choose or review a prompt. The Agent runtime and model start only after you press Send."
+            return "Work in the selected folder across a continuing session. Reads and changes follow the approval rules; the runtime starts after you press Send."
         }
         if controller.state == .starting {
-            return "Your local Agent runtime and Main LLM are starting."
+            return app.settings.usesRemoteMainLLM
+                ? "The local Agent runtime is starting and connecting to your approved remote Main LLM."
+                : "Your local Agent runtime and Main LLM are starting."
         }
-        return "It can read your Meeting Library now. File changes and commands ask first. Session history stays on this Mac."
+        return app.settings.usesRemoteMainLLM
+            ? "It can read your Meeting Library now. File changes and commands ask first; prompts and approved context use your remote Main LLM. Session history stays on this Mac."
+            : "It can read your Meeting Library now. File changes and commands ask first. Model inference and session history stay on this Mac."
     }
 
     private func recoveryCard(message: String) -> some View {
@@ -248,7 +252,7 @@ struct AgentSessionView: View {
             Text("Agent Mode needs attention")
                 .font(.title3.weight(.semibold))
             Text(message)
-                .foregroundStyle(.secondary)
+                .workspaceTextRole(.trust)
                 .multilineTextAlignment(.center)
                 .textSelection(.enabled)
                 .frame(maxWidth: 460)
@@ -325,7 +329,8 @@ struct AgentSessionView: View {
             }
         }
         .padding(8)
-        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+        .background(.quaternary.opacity(0.3),
+                    in: RoundedRectangle(cornerRadius: Brand.Radius.row))
     }
 
     private func approvalCard(_ request: AgentApprovalRequest) -> some View {
@@ -360,8 +365,7 @@ struct AgentSessionView: View {
             if request.isTruncated {
                 Label("Preview shortened because the requested change is very large.",
                       systemImage: "ellipsis.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .workspaceTextRole(.supporting)
             }
 
             HStack {
