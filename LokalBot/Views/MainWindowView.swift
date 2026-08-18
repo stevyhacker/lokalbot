@@ -243,10 +243,10 @@ struct MainWindowView: View {
         }
         .scrollContentBackground(.hidden)
         .background(WorkspacePalette.sidebar(for: colorScheme))
-        // 167 points is the measured first-column width in the approved Ask
-        // reference. An explicit frame is needed because macOS otherwise
-        // compresses a List sidebar below its column-width preference.
-        .frame(minWidth: 167, idealWidth: 167, maxWidth: 190)
+        // Keep the sidebar attached to the window edge even if macOS restores
+        // or accepts a wider split column. Capping this child at 190 points
+        // centers it inside the oversized column and creates blank gutters.
+        .frame(minWidth: 167, idealWidth: 167, maxWidth: .infinity, alignment: .leading)
         .navigationSplitViewColumnWidth(min: 167, ideal: 167, max: 190)
         // The system toggle is only removable from the sidebar column's own
         // content — applied outside the NavigationSplitView the removal is a

@@ -136,6 +136,44 @@ final class MainWindowUITests: XCTestCase {
                           "three-column sidebar restored with an empty leading column")
     }
 
+    /// The sidebar content must stay attached to the window edge even when
+    /// AppKit restores or accepts an oversized first split column. A fixed-
+    /// width child centered in that column creates the blank gutters this
+    /// test is intended to prevent.
+    func testSidebarStaysAtLeadingEdgeAfterColumnResizeAndToggle() {
+        clickSidebar("sidebar.meetings")
+        XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 6),
+                      "Meetings did not render before the sidebar resize check")
+
+        let window = app.windows.firstMatch
+        let sidebarDivider = app.splitters.element(boundBy: 0)
+        let privacyFooter = identified("sidebar.localPrivacy")
+        XCTAssertTrue(sidebarDivider.waitForExistence(timeout: 4),
+                      "sidebar divider missing")
+        XCTAssertTrue(privacyFooter.waitForExistence(timeout: 4),
+                      "sidebar footer missing")
+
+        app.activate()
+        _ = app.wait(for: .runningForeground, timeout: 3)
+        let destination = window.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.45, dy: 0.5))
+        sidebarDivider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: destination)
+
+        XCTAssertLessThan(abs(privacyFooter.frame.minX - window.frame.minX), 4,
+                          "resizing centered the sidebar inside an oversized column")
+
+        toolbarSidebarButtons.firstMatch.click()
+        XCTAssertTrue(UITestHarness.waitUntil {
+            !self.app.descendants(matching: .any)["sidebar.settings"].exists
+        }, "resized sidebar remained exposed after hiding it")
+        toolbarSidebarButtons.firstMatch.click()
+        XCTAssertTrue(privacyFooter.waitForExistence(timeout: 5),
+                      "resized sidebar did not return")
+        XCTAssertLessThan(abs(privacyFooter.frame.minX - window.frame.minX), 4,
+                          "restored resized sidebar detached from the window edge")
+    }
+
     /// Query the app-owned identifier among direct toolbar children so nested
     /// accessibility wrappers cannot inflate the count.
     private var toolbarSidebarButtons: XCUIElementQuery {
