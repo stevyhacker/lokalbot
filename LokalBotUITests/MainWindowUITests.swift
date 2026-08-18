@@ -91,6 +91,9 @@ final class MainWindowUITests: XCTestCase {
     /// guards the recent split-view stabilization against a control that is
     /// present but detached from NavigationSplitView's column visibility.
     func testToolbarToggleHidesAndRestoresSidebar() {
+        clickSidebar("sidebar.timeline")
+        XCTAssertTrue(identified("timeline.dayPicker").waitForExistence(timeout: 5),
+                      "Timeline did not render before the sidebar toggle check")
         XCTAssertTrue(toolbarSidebarButtons.firstMatch.waitForExistence(timeout: 4),
                       "native sidebar control missing")
         toolbarSidebarButtons.firstMatch.click()
@@ -101,8 +104,36 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(toolbarSidebarButtons.firstMatch.waitForExistence(timeout: 4),
                       "sidebar control disappeared after hiding")
         toolbarSidebarButtons.firstMatch.click()
-        XCTAssertTrue(app.descendants(matching: .any)["sidebar.timeline"]
-            .waitForExistence(timeout: 5), "sidebar did not return")
+        let timeline = app.descendants(matching: .any)["sidebar.timeline"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 5), "sidebar did not return")
+
+        let window = app.windows.firstMatch
+        let privacyFooter = identified("sidebar.localPrivacy")
+        XCTAssertTrue(privacyFooter.waitForExistence(timeout: 3),
+                      "sidebar footer did not return")
+        XCTAssertLessThan(abs(privacyFooter.frame.minX - window.frame.minX), 4,
+                          "restored sidebar left an empty column at the window edge")
+    }
+
+    func testToolbarToggleWorksInThreeColumnSection() {
+        clickSidebar("sidebar.ask")
+        XCTAssertTrue(app.textFields["search.field"].waitForExistence(timeout: 6),
+                      "Ask did not render before the sidebar toggle check")
+
+        toolbarSidebarButtons.firstMatch.click()
+        XCTAssertTrue(UITestHarness.waitUntil {
+            !self.app.descendants(matching: .any)["sidebar.settings"].exists
+        }, "three-column sidebar remained exposed after hiding it")
+
+        XCTAssertTrue(toolbarSidebarButtons.firstMatch.waitForExistence(timeout: 4),
+                      "three-column sidebar control disappeared after hiding")
+        toolbarSidebarButtons.firstMatch.click()
+        XCTAssertTrue(app.descendants(matching: .any)["sidebar.ask"]
+            .waitForExistence(timeout: 5), "three-column sidebar did not return")
+
+        let privacyFooter = identified("sidebar.localPrivacy")
+        XCTAssertLessThan(abs(privacyFooter.frame.minX - app.windows.firstMatch.frame.minX), 4,
+                          "three-column sidebar restored with an empty leading column")
     }
 
     /// Query the app-owned identifier among direct toolbar children so nested

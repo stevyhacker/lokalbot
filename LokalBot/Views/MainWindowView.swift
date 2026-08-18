@@ -117,15 +117,12 @@ struct MainWindowView: View {
                 from: nil)
             if handled { sidebarVisible.toggle() }
         } label: {
-            HStack(spacing: 0) {
-                Color.clear.frame(width: 86, height: 1)
-                Image(systemName: "sidebar.left")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 28, height: 28)
-                    .background(.quaternary.opacity(0.34), in: Circle())
-                    .overlay { Circle().strokeBorder(Color.primary.opacity(0.08)) }
-            }
-            .padding(.trailing, 7)
+            Image(systemName: "sidebar.left")
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 28, height: 28)
+                .background(.quaternary.opacity(0.34), in: Circle())
+                .overlay { Circle().strokeBorder(Color.primary.opacity(0.08)) }
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(sidebarVisible ? "Hide Sidebar" : "Show Sidebar")
