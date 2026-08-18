@@ -159,12 +159,13 @@ struct TodayView: View {
                         }
                 }
                 if !dream.topActions.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 6) {
                         Text(TodayDreamSelection.prioritiesHeading(
                             for: dream, referenceDate: model.day))
-                            .font(WorkspaceTypography.bodyEmphasis)
+                            .font(.system(size: 16, weight: .semibold))
                         ForEach(Array(dream.topActions.enumerated()), id: \.offset) { index, action in
                             Text("\(index + 1). \(action)")
+                                .font(.system(size: 15))
                                 .textSelection(.enabled)
                         }
                     }
@@ -177,12 +178,9 @@ struct TodayView: View {
                         .textSelection(.enabled)
                 }
                 if let retrospective = retrospectiveMarkdown(dream) {
-                    DisclosureGroup("More from yesterday") {
-                        MarkdownText(retrospective)
+                    MarkdownText(retrospective)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
-                        .padding(.top, 6)
-                    }
                 }
                 dreamInferenceNotice(dream)
             }
