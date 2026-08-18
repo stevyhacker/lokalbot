@@ -2,10 +2,10 @@ import CoreAudio
 import XCTest
 @testable import LokalBot
 
-/// `AudioSourceMonitor` surfaces a "Record …?" suggestion when an app newly
-/// starts producing audio. Pure media/music players (Spotify, Apple Music, …)
-/// must be excluded so playing music never prompts to record — while meeting
-/// apps and the browsers that host web meetings stay eligible.
+/// `AudioSourceMonitor` detects when an app newly starts producing audio.
+/// Pure media/music players (Spotify, Apple Music, …) must be excluded so
+/// playing music never becomes a recording candidate, while meeting apps and
+/// the browsers that host web meetings stay eligible.
 final class AudioSourceMonitorTests: XCTestCase {
 
     func testMusicAndMediaPlayersAreExcluded() {

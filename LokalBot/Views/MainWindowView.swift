@@ -81,24 +81,6 @@ struct MainWindowView: View {
                 ErrorToast(message: error) { app.lastError = nil }
             }
         }
-        .overlay(alignment: .top) {
-            VStack(spacing: 8) {
-                if !app.isRecording, let process = app.audioMonitor.detectedProcess {
-                    AudioSourceBanner(process: process,
-                                      onRecord: {
-                                          let detected = MeetingDetector.DetectedApp(
-                                              name: process.name,
-                                              bundleID: process.bundleID ?? "",
-                                              pid: process.id)
-                                          app.audioMonitor.accept()
-                                          app.startRecording(context: app.recordingContext(for: detected), source: "banner")
-                                      },
-                                      onDismiss: { app.audioMonitor.dismiss() })
-                }
-            }
-            .padding(12)
-            .transition(.move(edge: .top).combined(with: .opacity))
-        }
         .task {
             // Let non-View code (menu bar, AppDelegate reopen) open windows.
             // First-run permission onboarding is now triggered from AppState.

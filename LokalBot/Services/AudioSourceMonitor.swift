@@ -2,28 +2,27 @@ import AppKit
 import AudioToolbox
 import Foundation
 
-/// Polls Core Audio's process list for new audio-producing apps and surfaces
-/// them as candidates to start recording. A second detection signal next to
-/// `MeetingDetector`'s "is the mic in use" — catches the cases the mic
+/// Polls Core Audio's process list for new audio-producing apps and publishes
+/// them as candidates for automatic recording. A second detection signal next
+/// to `MeetingDetector`'s "is the mic in use" — catches the cases the mic
 /// signal misses (Zoom call with mic muted, a meeting in a browser tab the
 /// user opened *before* unmuting). Pattern from Seminarly's
 /// `AudioSourceMonitor`, adapted to LokalBot's coordinator.
 @MainActor
 final class AudioSourceMonitor: ObservableObject {
 
-    /// The most recently-detected new audio source the user has neither
-    /// dismissed nor acted on. UI binds to this to show a "Record …?" banner.
+    /// The most recently detected new audio source. `AppState` observes this
+    /// candidate and decides whether it is safe to start recording.
     @Published private(set) var detectedProcess: AudioProcess?
 
-    /// Set by `AppState` while a recording is in flight — suppresses new
-    /// detections (we don't want to nag the user during a recording, and the
-    /// app we're recording is itself running output).
+    /// Set by `AppState` while a recording is in flight. Suppresses new
+    /// detections because the app being recorded is itself producing output.
     var isRecordingActive = false {
         didSet {
             if isRecordingActive {
                 detectedProcess = nil
-                bannerDismissTask?.cancel()
-                bannerDismissTask = nil
+                candidateExpiryTask?.cancel()
+                candidateExpiryTask = nil
             }
         }
     }
@@ -57,8 +56,8 @@ final class AudioSourceMonitor: ObservableObject {
     ]
 
     /// Pure media/music players. They emit continuous output but are never
-    /// meetings, so — unlike an unknown app — they must not surface a
-    /// "Record …?" suggestion. Browsers are intentionally absent: a web
+    /// meetings, so — unlike an unknown app — they must not become recording
+    /// candidates. Browsers are intentionally absent: a web
     /// meeting (Meet/Jitsi/Whereby) runs inside one, so those stay recordable.
     nonisolated static let mediaBundleIDs: Set<String> = [
         // Streaming music
@@ -85,23 +84,20 @@ final class AudioSourceMonitor: ObservableObject {
         "com.colliderli.iina",         // IINA
     ]
 
-    /// Whether `bundleID` is a pure media player that should never trigger a
-    /// recording suggestion. See ``mediaBundleIDs``.
+    /// Whether `bundleID` is a pure media player that should never become an
+    /// automatic-recording candidate. See ``mediaBundleIDs``.
     nonisolated static func isMediaPlayer(_ bundleID: String) -> Bool {
         mediaBundleIDs.contains(bundleID)
     }
 
     private static let pollInterval: TimeInterval = 3.0
-    private static let bannerTimeout: TimeInterval = 20.0
+    private static let candidateTimeout: TimeInterval = 20.0
 
     private var pollTimer: Timer?
     /// AudioObjectIDs already running output the last time we polled. A new
     /// detection fires only on a not-running → running transition.
     private var knownActiveObjectIDs: Set<AudioObjectID> = []
-    /// Bundle IDs the user dismissed in this session — never re-suggest
-    /// until `reseed()` (typically after a recording ends).
-    private var dismissedBundleIDs: Set<String> = []
-    private var bannerDismissTask: Task<Void, Never>?
+    private var candidateExpiryTask: Task<Void, Never>?
 
     func start() {
         stop()
@@ -114,34 +110,24 @@ final class AudioSourceMonitor: ObservableObject {
     func stop() {
         pollTimer?.invalidate()
         pollTimer = nil
-        bannerDismissTask?.cancel()
-        bannerDismissTask = nil
-    }
-
-    func dismiss() {
-        if let process = detectedProcess, let bundleID = process.bundleID {
-            dismissedBundleIDs.insert(bundleID)
-        }
-        bannerDismissTask?.cancel()
-        bannerDismissTask = nil
-        detectedProcess = nil
+        candidateExpiryTask?.cancel()
+        candidateExpiryTask = nil
     }
 
     /// Consumes the current candidate (caller is starting a recording on it).
     @discardableResult
     func accept() -> AudioProcess? {
-        bannerDismissTask?.cancel()
-        bannerDismissTask = nil
+        candidateExpiryTask?.cancel()
+        candidateExpiryTask = nil
         let process = detectedProcess
         detectedProcess = nil
         return process
     }
 
-    /// Forget dismissals and re-seed against the *current* audio state. Call
-    /// after a recording ends so apps that started playing audio mid-meeting
-    /// don't immediately trigger a banner.
+    /// Re-seed against the *current* audio state after a recording ends so
+    /// apps that started playing audio mid-meeting do not become fresh
+    /// automatic-recording candidates.
     func reseed() {
-        dismissedBundleIDs.removeAll()
         seedCurrentState()
     }
 
@@ -168,7 +154,6 @@ final class AudioSourceMonitor: ObservableObject {
             if let bundleID = process.bundleID {
                 if Self.ignoredBundleIDs.contains(bundleID) { return false }
                 if Self.isMediaPlayer(bundleID) { return false }
-                if dismissedBundleIDs.contains(bundleID) { return false }
             }
             return true
         }
@@ -180,14 +165,14 @@ final class AudioSourceMonitor: ObservableObject {
 
         if let best = meetingApp ?? candidates.first {
             detectedProcess = best
-            scheduleBannerDismiss()
+            scheduleCandidateExpiry()
         }
     }
 
-    private func scheduleBannerDismiss() {
-        bannerDismissTask?.cancel()
-        bannerDismissTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(Self.bannerTimeout))
+    private func scheduleCandidateExpiry() {
+        candidateExpiryTask?.cancel()
+        candidateExpiryTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Self.candidateTimeout))
             guard !Task.isCancelled else { return }
             detectedProcess = nil
         }

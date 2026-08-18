@@ -814,8 +814,8 @@ final class AppState: ObservableObject {
         detector.requireCalendarForBrowser = settings.requireCalendarForBrowser
         // The mic-in-use signal misses meetings with a muted mic. The audio
         // monitor is the complementary "a meeting app just started producing
-        // audio output" signal — in automatic mode it auto-records the
-        // recognised meeting bundles; otherwise it surfaces a banner.
+        // audio output" signal. In automatic mode it records recognised
+        // meeting sources; other candidates expire silently.
         audioMonitor.start()
         audioMonitorObserver = audioMonitor.$detectedProcess
             .compactMap { $0 }
@@ -1045,8 +1045,8 @@ final class AppState: ObservableObject {
 
     /// Builds a detection context for a user-initiated recording on `detectedApp`
     /// (nil → manual), folding in the active calendar event when calendar
-    /// detection is enabled and authorized — so the menu / command / banner
-    /// entry points get calendar titling too.
+    /// detection is enabled and authorized — so menu and command entry points
+    /// get calendar titling too.
     func recordingContext(for detectedApp: MeetingDetector.DetectedApp?) -> MeetingDetectionContext? {
         guard let detectedApp else { return nil }
         let event = (settings.calendarDetectionEnabled && calendar.hasAccess)
@@ -1076,8 +1076,8 @@ final class AppState: ObservableObject {
 
     /// `AudioSourceMonitor` saw an app newly start producing output. Auto-record
     /// in automatic mode only for high-confidence native meeting output or a
-    /// calendar-backed native app; leave broader chat apps as banner/detector
-    /// candidates so notification sounds cannot start recordings.
+    /// verified browser meeting; ignore broader candidates so notification
+    /// sounds cannot start recordings.
     private func audioMonitorDetected(_ process: AudioProcess) {
         guard !recording.isRecording, !recording.isStarting else { return }
         guard settings.autoRecordMode == .automatic, let bundleID = process.bundleID else { return }
