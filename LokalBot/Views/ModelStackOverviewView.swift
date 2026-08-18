@@ -1,12 +1,29 @@
 import SwiftUI
 
-struct ModelStackOverviewView: View {
+enum ModelStackRole: String, Hashable {
+    case transcribe
+    case think
+    case type
+}
+
+struct ModelStackOverviewView<Configuration: View>: View {
     @EnvironmentObject var app: AppState
     @ObservedObject private var downloads = ModelDownloadManager.shared
+
+    @Binding private var expandedRoles: Set<ModelStackRole>
+    private let configuration: Configuration
 
     @State private var pendingPreset: ModelStackPreset?
     @State private var smokeTesting = false
     @State private var smokeResults: [String: String] = [:]
+
+    init(
+        expandedRoles: Binding<Set<ModelStackRole>>,
+        @ViewBuilder configuration: () -> Configuration
+    ) {
+        _expandedRoles = expandedRoles
+        self.configuration = configuration()
+    }
 
     private var mainEntry: ModelCatalog.Entry? {
         ModelCatalog.entry(id: app.settings.builtInModelID,
@@ -32,9 +49,11 @@ struct ModelStackOverviewView: View {
         VStack(alignment: .leading, spacing: 16) {
             readinessBanner
             coreStack
+            if !expandedRoles.isEmpty {
+                configuration
+            }
             presets
             storage
-            optionalModels
         }
         .confirmationDialog(
             pendingPreset.map { "Apply \($0.title) preset?" } ?? "Apply preset?",
@@ -78,6 +97,7 @@ struct ModelStackOverviewView: View {
         WorkspaceSection(title: "Core roles", icon: "square.stack.3d.up") {
             coreRow(
                 icon: "waveform",
+                stackRole: .transcribe,
                 role: "Transcribe",
                 model: app.settings.transcriptionModelDisplayName,
                 detail: "Meeting audio to cited transcript",
@@ -86,6 +106,7 @@ struct ModelStackOverviewView: View {
             Divider()
             coreRow(
                 icon: "brain",
+                stackRole: .think,
                 role: "Think",
                 model: mainEntry?.displayName ?? app.settings.summarizerBackend.displayName,
                 detail: "Summaries, Ask, outcomes, and Agent",
@@ -94,6 +115,7 @@ struct ModelStackOverviewView: View {
             Divider()
             coreRow(
                 icon: "text.cursor",
+                stackRole: .type,
                 role: "Autocomplete",
                 model: autocompleteEntry?.displayName ?? "LFM2.5 1.2B Instruct",
                 detail: "Low-latency writing completion",
@@ -102,8 +124,9 @@ struct ModelStackOverviewView: View {
         }
     }
 
-    private func coreRow(icon: String, role: String, model: String, detail: String,
-                         ready: Bool, result: String?) -> some View {
+    private func coreRow(icon: String, stackRole: ModelStackRole, role: String,
+                         model: String, detail: String, ready: Bool,
+                         result: String?) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon).foregroundStyle(Brand.teal).frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
@@ -119,8 +142,21 @@ struct ModelStackOverviewView: View {
                         .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
                 }
             }
+            Button(expandedRoles.contains(stackRole) ? "Done" : "Change…") {
+                toggle(stackRole)
+            }
+            .controlSize(.small)
+            .accessibilityIdentifier("models.stack.change.\(stackRole.rawValue)")
         }
         .padding(.vertical, 8)
+    }
+
+    private func toggle(_ role: ModelStackRole) {
+        if expandedRoles.contains(role) {
+            expandedRoles.remove(role)
+        } else {
+            expandedRoles.insert(role)
+        }
     }
 
     private var presets: some View {
@@ -148,23 +184,6 @@ struct ModelStackOverviewView: View {
             }
             Text("Preset changes always show the exact role changes and estimated local download before applying.")
                 .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
-        }
-    }
-
-    private var optionalModels: some View {
-        WorkspaceSection(title: "Optional", icon: "plus.circle") {
-            HStack {
-                Label("Voice", systemImage: "speaker.wave.2")
-                Spacer()
-                Text(KokoroSpeechEngine.isModelDownloaded ? "Ready" : "Not downloaded")
-                    .foregroundStyle(.secondary)
-                Divider().frame(height: 24)
-                Label("Embeddings", systemImage: "point.3.connected.trianglepath.dotted")
-                Spacer()
-                Text(app.embeddingIndex.hasEmbeddings ? "Indexed" : "Optional")
-                    .foregroundStyle(.secondary)
-            }
-            .font(WorkspaceTypography.body)
         }
     }
 

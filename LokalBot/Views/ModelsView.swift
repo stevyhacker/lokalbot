@@ -1,11 +1,10 @@
 import SwiftUI
 import AppKit
 
-/// The Models tab of Settings (spec §2.5). All model selection and management
-/// lives here: a "Your stack" summary card leads, with the Transcription,
-/// Main LLM, and Cotyping cards collapsed behind its per-role Change buttons;
-/// dictation composition, speech, and embeddings keep their own cards below.
-/// Downloads come from the local catalog or Hugging Face.
+/// The Models tab of Settings (spec §2.5). The core model overview owns the
+/// per-role Change buttons and expands each role's configuration in place;
+/// supporting model controls remain directly available below. Downloads come
+/// from the local catalog or Hugging Face.
 struct ModelsView: View {
     @EnvironmentObject var app: AppState
 
@@ -33,32 +32,22 @@ struct ModelsView: View {
     @State private var openAIAPIKeySavedValue = ""
     @State private var didLoadOpenAIAPIKey = false
     @State private var openAIAPIKeySaved = false
-    @State private var advancedExpanded = false
-
-    private enum StackRole: String { case transcribe, think, type }
-    @State private var expandedRoles: Set<StackRole> = []
+    @State private var expandedRoles: Set<ModelStackRole> = []
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
-                ModelStackOverviewView()
-                WorkspaceDisclosure(
-                    isExpanded: $advancedExpanded,
-                    identifier: "models.advanced") {
+                ModelStackOverviewView(expandedRoles: $expandedRoles) {
                     VStack(alignment: .leading, spacing: 16) {
-                        ModelMemoryBanner()
-                        yourStackCard
                         if expandedRoles.contains(.transcribe) { transcriptionCard }
-                        dictationCompositionCard
                         if expandedRoles.contains(.think) { summarizationCard }
-                        speechCard
                         if expandedRoles.contains(.type) { cotypingCard }
-                        embeddingsCard
                     }
-                } label: {
-                    Label("Advanced model details", systemImage: "slider.horizontal.3")
-                        .font(WorkspaceTypography.sectionTitle)
                 }
+                ModelMemoryBanner()
+                dictationCompositionCard
+                speechCard
+                embeddingsCard
             }
             .padding(WorkspaceMetric.pagePadding)
             .frame(maxWidth: WorkspaceMetric.contentMaxWidth, alignment: .leading)
@@ -117,63 +106,6 @@ struct ModelsView: View {
         private func gigabytes(_ bytes: Int64) -> String {
             String(format: "%.1f GB", Double(bytes) / 1_073_741_824)
         }
-    }
-
-    /// The three models doing the actual work, named plainly. The full
-    /// per-role pickers stay one "Change…" away — new users see a stack,
-    /// not a zoo.
-    private var yourStackCard: some View {
-        ModelCard(icon: "square.stack.3d.up", title: "Your stack",
-                  subtitle: "The three models doing today's work") {
-            stackRow(.transcribe, name: "Transcribe",
-                     model: app.settings.transcriptionModelDisplayName,
-                     detail: "Turns meeting audio into transcripts")
-            Divider()
-            stackRow(.think, name: "Think", model: thinkModelName,
-                     detail: "Writes summaries, answers Ask, runs Agent Mode")
-            Divider()
-            stackRow(.type, name: "Autocomplete", model: typeModelName,
-                     detail: "Completes your sentences as you type")
-        }
-        // No identifier on the card container: it would propagate onto the
-        // rows and clobber the models.stack.change.* button identifiers.
-    }
-
-    private func stackRow(_ role: StackRole, name: String,
-                          model: String, detail: String) -> some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(name).font(.subheadline.weight(.semibold))
-                Text(detail).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Text(model).font(.callout).foregroundStyle(.secondary)
-                .lineLimit(1)
-            Button(expandedRoles.contains(role) ? "Done" : "Change…") {
-                if expandedRoles.contains(role) {
-                    expandedRoles.remove(role)
-                } else {
-                    expandedRoles.insert(role)
-                }
-            }
-            .controlSize(.small)
-            .accessibilityIdentifier("models.stack.change.\(role.rawValue)")
-        }
-    }
-
-    private var thinkModelName: String {
-        if app.settings.summarizerBackend == .builtIn {
-            return ModelCatalog.entry(id: app.settings.builtInModelID,
-                                      custom: app.settings.customBuiltInModels)?.displayName
-                ?? app.settings.builtInModelID
-        }
-        return app.settings.summarizerBackend.displayName
-    }
-
-    private var typeModelName: String {
-        ModelCatalog.entry(id: app.settings.cotypingBuiltInModelID,
-                           custom: app.settings.customBuiltInModels)?.displayName
-            ?? app.settings.cotypingBuiltInModelID
     }
 
     private var transcriptionCard: some View {

@@ -131,13 +131,9 @@ final class DictationSettingsUITests: XCTestCase {
         UITestHarness.clickSidebar("sidebar.settings", in: app)
         UITestHarness.selectSegment(
             "Models", pickerIdentifier: "settings.tab", in: app)
-        let advanced = app.buttons["models.advanced"]
-        UITestHarness.scrollTo(advanced, in: app)
-        XCTAssertTrue(advanced.waitForExistence(timeout: 5),
-                      "Advanced model configuration did not render")
-        advanced.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).click()
-        XCTAssertTrue(app.descendants(matching: .any)["models.dictationComposition"]
-            .waitForExistence(timeout: 8), "Models pane did not render Dictation composition")
+        let composition = app.descendants(matching: .any)["models.dictationComposition"]
+        UITestHarness.scrollTo(composition, in: app)
+        XCTAssertTrue(composition.waitForExistence(timeout: 8),
+                      "Models pane did not render Dictation composition")
     }
 }

@@ -209,10 +209,11 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["models.storage"].exists,
                       "model storage summary missing")
         XCTAssertTrue(textWithContent("Core roles").firstMatch.exists)
-        openAdvancedModelDetails()
+        XCTAssertFalse(app.buttons["models.advanced"].exists,
+                       "Models should not hide configuration behind Advanced details")
         XCTAssertTrue(app.buttons["models.stack.change.transcribe"]
             .waitForExistence(timeout: 6),
-                      "Models pane did not render the Your stack card")
+                      "Core Transcribe row did not render its Change button")
         XCTAssertTrue(app.descendants(matching: .any)["models.dictationComposition"].exists,
                       "dictation composition model card identifier missing")
         XCTAssertTrue(app.descendants(matching: .any)["models.embeddings"].exists,
@@ -239,7 +240,6 @@ final class MainWindowUITests: XCTestCase {
             ? tabs.buttons["Models"] : tabs.radioButtons["Models"]
         XCTAssertTrue(segment.waitForExistence(timeout: 4), "Models segment missing")
         segment.click()
-        openAdvancedModelDetails()
 
         let change = app.buttons["models.stack.change.transcribe"]
         XCTAssertTrue(change.waitForExistence(timeout: 6), "Transcribe Change button missing")
@@ -774,15 +774,6 @@ final class MainWindowUITests: XCTestCase {
         clickSidebar("sidebar.meetings")
         XCTAssertTrue(app.outlines["meeting.list"].waitForExistence(timeout: 6),
                       "meeting list did not render in Meetings")
-    }
-
-    private func openAdvancedModelDetails() {
-        let disclosure = identified("models.advanced")
-        UITestHarness.scrollTo(disclosure, in: app, attempts: 8)
-        XCTAssertTrue(disclosure.waitForExistence(timeout: 5),
-                      "Advanced model details disclosure missing")
-        disclosure.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).click()
     }
 
     private func selectMeeting(_ meeting: SyntheticFixture.Meeting) {
