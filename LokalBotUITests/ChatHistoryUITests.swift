@@ -15,8 +15,10 @@ final class ChatHistoryUITests: XCTestCase {
     private var defaultsSuiteName: String?
 
     private let conversationTitle = "Pricing decision"
+    private let conversationID = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"
     private let assistantLine = "You chose tiered pricing."
     private let olderConversationTitle = "Roadmap review"
+    private let olderConversationID = "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB"
     private let olderAssistantLine = "The team moved launch to August."
 
     override func setUpWithError() throws {
@@ -43,8 +45,11 @@ final class ChatHistoryUITests: XCTestCase {
         UITestHarness.clickSidebar("sidebar.ask", in: app)
 
         // The seeded conversation appears in the history list…
-        XCTAssertTrue(text(containing: conversationTitle).waitForExistence(timeout: 6),
+        let conversation = conversationButton(conversationID)
+        XCTAssertTrue(conversation.waitForExistence(timeout: 6),
                       "seeded conversation title missing from the chat history list")
+        XCTAssertTrue(conversation.label.localizedCaseInsensitiveContains(conversationTitle),
+                      "seeded conversation row did not expose its title")
 
         // …and the most-recent conversation opens, rendering its messages.
         XCTAssertTrue(text(containing: assistantLine).waitForExistence(timeout: 6),
@@ -58,9 +63,11 @@ final class ChatHistoryUITests: XCTestCase {
     func testSelectingConversationClearsActiveSearch() {
         UITestHarness.clickSidebar("sidebar.ask", in: app)
 
-        let keyword = app.buttons["Keyword search"]
+        let keyword = app.buttons["ask.mode.keyword"]
         XCTAssertTrue(keyword.waitForExistence(timeout: 4), "keyword mode control missing")
         keyword.click()
+        XCTAssertTrue(app.descendants(matching: .any)["ask.facet.all"]
+            .waitForExistence(timeout: 4), "keyword mode did not expose search facets")
         let field = app.textFields["search.field"]
         XCTAssertTrue(field.waitForExistence(timeout: 6), "ask search field missing")
         field.click()
@@ -68,8 +75,10 @@ final class ChatHistoryUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["ask.escalate"]
             .waitForExistence(timeout: 4), "keyword results did not appear")
 
-        let older = text(containing: olderConversationTitle)
+        let older = conversationButton(olderConversationID)
         XCTAssertTrue(older.waitForExistence(timeout: 4), "older conversation missing")
+        XCTAssertTrue(older.label.localizedCaseInsensitiveContains(olderConversationTitle),
+                      "older conversation row did not expose its title")
         older.click()
 
         XCTAssertTrue(text(containing: olderAssistantLine).waitForExistence(timeout: 6),
@@ -81,6 +90,10 @@ final class ChatHistoryUITests: XCTestCase {
         app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@",
                         fragment, fragment)).firstMatch
+    }
+
+    private func conversationButton(_ id: String) -> XCUIElement {
+        app.buttons["chat.conversation.\(id)"]
     }
 
     /// Write one conversation JSON in exactly the shape `ChatStore` decodes

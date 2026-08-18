@@ -537,7 +537,6 @@ private struct OutcomeActionRow: View {
             .accessibilityIdentifier("meeting.action.status.\(reference.action.id)")
         }
         .padding(.vertical, WorkspaceMetric.rowVerticalPadding)
-        .accessibilityIdentifier("meeting.action.\(reference.action.id)")
     }
 }
 

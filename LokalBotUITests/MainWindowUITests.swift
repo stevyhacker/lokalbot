@@ -296,12 +296,13 @@ final class MainWindowUITests: XCTestCase {
                       "persistent Timeline actions did not render")
         XCTAssertTrue(app.descendants(matching: .any)["timeline.workSessions"]
             .waitForExistence(timeout: 6), "work sessions should be visible immediately")
-        XCTAssertTrue(app.descendants(matching: .any)["capture.dayOverview"]
-            .waitForExistence(timeout: 6), "day brief did not render beside the track")
-        XCTAssertLessThan(
-            app.descendants(matching: .any)["capture.dayOverview"].firstMatch.frame.midX,
-            app.descendants(matching: .any)["timeline.workSessions"].firstMatch.frame.midX,
-            "Day brief should be left of Work sessions in the wide Timeline layout")
+        let usesContextDrawer = revealTimelineContext()
+        if !usesContextDrawer {
+            XCTAssertLessThan(
+                identified("capture.dayOverview").frame.midX,
+                identified("timeline.workSessions").frame.midX,
+                "Day brief should be left of Work sessions in the wide Timeline layout")
+        }
         XCTAssertTrue(identified("timeline.dayDigest.generate").waitForExistence(timeout: 5),
                       "day-digest action should remain directly visible")
         XCTAssertTrue(identified("timeline.dayDigest.actions").exists,
@@ -326,6 +327,7 @@ final class MainWindowUITests: XCTestCase {
                        "private evidence identifier leaked into the collapsed overview")
         XCTAssertFalse(textWithContent("No activity recorded").firstMatch.exists,
                        "empty state shown despite seeded activity blocks")
+        if usesContextDrawer { closeTimelineContext() }
         // The grounded block title becomes the human-scale session title.
         XCTAssertTrue(app.buttons.matching(
             NSPredicate(format: "label CONTAINS[c] %@", "TimelineView.swift"))
@@ -375,6 +377,7 @@ final class MainWindowUITests: XCTestCase {
         back.click()
         XCTAssertTrue(app.descendants(matching: .any)["capture.dayOverview"]
             .waitForExistence(timeout: 3))
+        closeTimelineContext()
 
         let meeting = app.buttons["capture.meeting.\(fixture.designReview.id.uuidString)"]
         XCTAssertTrue(meeting.waitForExistence(timeout: 4),
@@ -408,9 +411,7 @@ final class MainWindowUITests: XCTestCase {
                       "previous-day control is missing")
         previousDay.click()
 
-        XCTAssertTrue(app.descendants(matching: .any)["capture.dayOverview"]
-            .waitForExistence(timeout: 6),
-                      "old meeting selection kept the new day's overview hidden")
+        _ = revealTimelineContext()
         XCTAssertTrue(textWithContent(SyntheticFixture.previousDayDigestMarker).firstMatch
             .waitForExistence(timeout: 4), "previous day's digest did not replace today's")
         XCTAssertFalse(textWithContent(SyntheticFixture.todayDigestMarker).firstMatch.exists,
@@ -607,10 +608,11 @@ final class MainWindowUITests: XCTestCase {
 
     func testAskSwitchesExplicitlyToKeywordSearch() {
         clickSidebar("sidebar.ask")
-        let keyword = app.buttons["Keyword search"]
+        let keyword = app.buttons["ask.mode.keyword"]
         XCTAssertTrue(keyword.waitForExistence(timeout: 5), "Keyword search mode missing")
         keyword.click()
-        XCTAssertTrue(textWithContent("Keyword search").firstMatch.waitForExistence(timeout: 4))
+        XCTAssertTrue(identified("ask.facet.all").waitForExistence(timeout: 4),
+                      "Keyword search facets did not appear")
         // One segmented control owns all three retrieval modes, so Ask and
         // Match by meaning stay one click away instead of a "Back" round trip.
         XCTAssertTrue(identified("ask.mode.ask").exists, "Ask segment missing")
@@ -626,7 +628,7 @@ final class MainWindowUITests: XCTestCase {
         clickSidebar("sidebar.ask")
 
         let field = app.textFields["search.field"]
-        let conversations = app.outlines["chat.conversationList"]
+        let conversations = identified("chat.conversationList")
         XCTAssertTrue(field.waitForExistence(timeout: 6), "ask input field missing")
         XCTAssertTrue(conversations.waitForExistence(timeout: 6),
                       "conversation list missing")
@@ -827,11 +829,34 @@ final class MainWindowUITests: XCTestCase {
     }
 
     private func switchToKeywordSearch() {
-        let keyword = app.buttons["Keyword search"]
+        let keyword = app.buttons["ask.mode.keyword"]
         XCTAssertTrue(keyword.waitForExistence(timeout: 5), "Keyword search mode missing")
         keyword.click()
-        XCTAssertTrue(UITestHarness.waitUntil { keyword.isSelected },
+        XCTAssertTrue(identified("ask.facet.all").waitForExistence(timeout: 5),
                       "Ask did not enter keyword-search mode")
+    }
+
+    /// Timeline keeps the day context side by side when wide and behind an
+    /// explicit drawer when narrow. Return whether the responsive drawer was
+    /// needed so callers only make wide-layout frame assertions when valid.
+    @discardableResult
+    private func revealTimelineContext() -> Bool {
+        let overview = identified("capture.dayOverview")
+        let toggle = identified("timeline.context.toggle")
+        let usesDrawer = toggle.exists
+        if usesDrawer, !overview.exists { toggle.click() }
+        XCTAssertTrue(overview.waitForExistence(timeout: 6),
+                      "Timeline day context did not render")
+        return usesDrawer
+    }
+
+    private func closeTimelineContext() {
+        let overview = identified("capture.dayOverview")
+        let toggle = identified("timeline.context.toggle")
+        guard toggle.exists, overview.exists else { return }
+        toggle.click()
+        XCTAssertTrue(UITestHarness.waitUntil { !overview.exists },
+                      "Timeline context drawer did not close")
     }
 
     /// True when the meeting list shows a day-group header beginning with

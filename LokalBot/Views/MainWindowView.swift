@@ -23,10 +23,9 @@ struct MainWindowView: View {
     @EnvironmentObject var app: AppState
     @Environment(\.openWindow) private var openWindow
     @Environment(\.colorScheme) private var colorScheme
-    /// One window-scoped source of truth shared by every split-view topology.
-    /// Without this, each section's NavigationSplitView owns a separate hidden
-    /// state and the system sidebar toggle becomes unreliable after navigation.
-    @SceneStorage("mainWindow.sidebarVisible") private var sidebarVisible = true
+    /// Mirrors the current split controller for the app-owned toolbar label.
+    /// AppKit owns the actual collapse animation through the responder chain.
+    @State private var sidebarVisible = true
     @State private var pendingDelete: Set<Meeting.ID>?
     /// Shared by Timeline's chronology and bounded context panel.
     @StateObject private var capture = CaptureModel()
@@ -86,6 +85,11 @@ struct MainWindowView: View {
             // First-run permission onboarding is now triggered from AppState.
             WindowAccess.shared.register { openWindow(id: $0) }
         }
+        .onChange(of: app.navSection) {
+            // Every section mounts a fresh NavigationSplitView with its sidebar
+            // visible. Keep the app-owned toolbar label in sync with that fact.
+            sidebarVisible = true
+        }
     }
 
     /// macOS 26 automatically groups navigation items into a Liquid Glass
@@ -107,7 +111,11 @@ struct MainWindowView: View {
 
     private var sidebarToggleButton: some View {
         Button {
-            sidebarVisible.toggle()
+            let handled = NSApp.sendAction(
+                #selector(NSSplitViewController.toggleSidebar(_:)),
+                to: nil,
+                from: nil)
+            if handled { sidebarVisible.toggle() }
         } label: {
             HStack(spacing: 0) {
                 Color.clear.frame(width: 86, height: 1)
@@ -132,21 +140,21 @@ struct MainWindowView: View {
     /// their native three-column information architecture.
     @ViewBuilder private var navigation: some View {
         if app.navSection == .today {
-            NavigationSplitView(columnVisibility: twoColumnVisibility) {
+            NavigationSplitView {
                 sidebar
             } detail: {
                 TodayView()
                     .workspaceSurface()
             }
         } else if app.navSection == .timeline {
-            NavigationSplitView(columnVisibility: twoColumnVisibility) {
+            NavigationSplitView {
                 sidebar
             } detail: {
                 TimelineContentView(model: capture)
                     .workspaceSurface()
             }
         } else if app.navSection == .meetings {
-            NavigationSplitView(columnVisibility: threeColumnVisibility) {
+            NavigationSplitView {
                 sidebar
             } content: {
                 MeetingListView(pendingDelete: $pendingDelete)
@@ -158,14 +166,14 @@ struct MainWindowView: View {
                     .workspaceSurface()
             }
         } else if app.navSection == .type {
-            NavigationSplitView(columnVisibility: twoColumnVisibility) {
+            NavigationSplitView {
                 sidebar
             } detail: {
                 TypeView()
                     .workspaceSurface()
             }
         } else if app.navSection == .ask {
-            NavigationSplitView(columnVisibility: threeColumnVisibility) {
+            NavigationSplitView {
                 sidebar
             } content: {
                 ChatConversationList()
@@ -178,40 +186,20 @@ struct MainWindowView: View {
                     .navigationSplitViewColumnWidth(min: 420, ideal: 680)
             }
         } else if app.navSection == .agent {
-            NavigationSplitView(columnVisibility: twoColumnVisibility) {
+            NavigationSplitView {
                 sidebar
             } detail: {
                 AgentView(sessions: app.agentSessions, installer: app.agentInstaller)
                     .workspaceSurface()
             }
         } else {
-            NavigationSplitView(columnVisibility: twoColumnVisibility) {
+            NavigationSplitView {
                 sidebar
             } detail: {
                 SettingsView()
                     .workspaceSurface()
             }
         }
-    }
-
-    /// A hidden three-column sidebar leaves content + detail visible.
-    private var threeColumnVisibility: Binding<NavigationSplitViewVisibility> {
-        Binding(
-            get: { sidebarVisible ? .all : .doubleColumn },
-            set: { visibility in
-                guard visibility != .automatic else { return }
-                sidebarVisible = visibility == .all
-            })
-    }
-
-    /// A hidden two-column sidebar leaves only its detail surface visible.
-    private var twoColumnVisibility: Binding<NavigationSplitViewVisibility> {
-        Binding(
-            get: { sidebarVisible ? .all : .detailOnly },
-            set: { visibility in
-                guard visibility != .automatic else { return }
-                sidebarVisible = visibility != .detailOnly
-            })
     }
 
     private var sidebar: some View {

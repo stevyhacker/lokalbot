@@ -442,6 +442,8 @@ private struct ConversationListContent: View {
                         row(conversation, selected: model.currentID == conversation.id)
                     }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier(
+                            "chat.conversation.\(conversation.id.uuidString)")
                         .accessibilityAddTraits(
                             model.currentID == conversation.id ? .isSelected : [])
                         .contextMenu {
@@ -485,6 +487,5 @@ private struct ConversationListContent: View {
             selected ? Color.primary.opacity(0.14) : Color.clear,
             in: RoundedRectangle(cornerRadius: Brand.Radius.row, style: .continuous))
         .contentShape(Rectangle())
-        .accessibilityIdentifier("chat.conversation.\(conversation.id.uuidString)")
     }
 }

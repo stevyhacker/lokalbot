@@ -150,4 +150,3 @@ struct ActionReviewView: View {
         .frame(minWidth: 720, minHeight: 560)
     }
 }
-
