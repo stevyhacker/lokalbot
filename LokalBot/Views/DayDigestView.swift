@@ -39,8 +39,8 @@ struct DayDigestView: View {
             if !presentation.focusBlocks.isEmpty {
                 digestSection("Tasks", icon: "briefcase") {
                     VStack(alignment: .leading, spacing: 8) {
-                        sessionList(Array(presentation.focusBlocks.prefix(3)))
-                        let additional = Array(presentation.focusBlocks.dropFirst(3))
+                        sessionList(presentation.initialFocusBlocks)
+                        let additional = presentation.collapsibleFocusBlocks
                         if !additional.isEmpty {
                             DisclosureGroup(
                                 isExpanded: $extraFocusExpanded,

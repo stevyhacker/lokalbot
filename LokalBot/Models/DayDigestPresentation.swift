@@ -44,6 +44,21 @@ struct DayDigestPresentation: Equatable {
     let timeAllocations: [TimeAllocation]
     let activityGroups: [ActivityHourGroup]
 
+    /// Keep the digest compact when several sessions remain, but do not make
+    /// someone expand a disclosure just to reveal one final session.
+    var initialFocusBlocks: [FocusBlock] {
+        let collapsedLimit = 3
+        let hiddenCount = max(0, focusBlocks.count - collapsedLimit)
+        let visibleCount = hiddenCount == 1
+            ? focusBlocks.count
+            : min(collapsedLimit, focusBlocks.count)
+        return Array(focusBlocks.prefix(visibleCount))
+    }
+
+    var collapsibleFocusBlocks: [FocusBlock] {
+        Array(focusBlocks.dropFirst(initialFocusBlocks.count))
+    }
+
     var activityCount: Int {
         activityGroups.reduce(0) { $0 + $1.entries.count }
     }
