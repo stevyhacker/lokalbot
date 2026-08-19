@@ -25,10 +25,6 @@ struct ModelStackOverviewView<Configuration: View>: View {
         self.configuration = configuration()
     }
 
-    private var mainEntry: ModelCatalog.Entry? {
-        ModelCatalog.entry(id: app.settings.builtInModelID,
-                           custom: app.settings.customBuiltInModels)
-    }
     private var autocompleteEntry: ModelCatalog.Entry? {
         ModelCatalog.entry(id: app.settings.cotypingBuiltInModelID,
                            custom: app.settings.customBuiltInModels)
@@ -108,7 +104,7 @@ struct ModelStackOverviewView<Configuration: View>: View {
                 icon: "brain",
                 stackRole: .think,
                 role: "Think",
-                model: mainEntry?.displayName ?? app.settings.summarizerBackend.displayName,
+                model: app.settings.thinkModelDisplayName,
                 detail: "Summaries, Ask, outcomes, and Agent",
                 ready: snapshot.thinkReady,
                 result: smokeResults["Think"])
@@ -289,10 +285,7 @@ enum ModelStackPreset: String, CaseIterable, Identifiable {
 
     @MainActor
     func changeSummary(app: AppState) -> String {
-        let currentMain = ModelCatalog.entry(
-            id: app.settings.builtInModelID,
-            custom: app.settings.customBuiltInModels)?.displayName
-            ?? app.settings.builtInModelID
+        let currentMain = app.settings.thinkModelDisplayName
         let nextMain = ModelCatalog.entry(
             id: mainModelID,
             custom: app.settings.customBuiltInModels)?.displayName ?? mainModelID

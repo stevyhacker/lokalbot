@@ -453,10 +453,7 @@ private extension OnboardingView {
     }
 
     private var onboardingThinkModelName: String {
-        ModelCatalog.entry(
-            id: app.settings.builtInModelID,
-            custom: app.settings.customBuiltInModels)?.displayName
-            ?? app.settings.summarizerBackend.displayName
+        app.settings.thinkModelDisplayName
     }
 
     private var onboardingAutocompleteModelName: String {

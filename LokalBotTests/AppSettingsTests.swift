@@ -25,6 +25,29 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(AppSettings().menuBarOnly)
     }
 
+    func testThinkModelDisplayNameFollowsSelectedBackendNotLeftoverLocalID() {
+        var settings = AppSettings()
+        settings.builtInModelID = ModelCatalog.defaultSummarizationID
+        XCTAssertEqual(settings.thinkModelDisplayName, "Qwen3.5 4B")
+
+        settings.summarizerBackend = .openAICompatible
+        settings.openAIModel = "z-ai/glm-5.3"
+        XCTAssertEqual(
+            settings.thinkModelDisplayName, "z-ai/glm-5.3",
+            "Core roles must not keep showing the leftover local Think model")
+
+        settings.openAIModel = "  "
+        XCTAssertEqual(settings.thinkModelDisplayName,
+                       AppSettings.SummarizerBackend.openAICompatible.displayName)
+
+        settings.summarizerBackend = .ollama
+        settings.ollamaModel = "llama3.1"
+        XCTAssertEqual(settings.thinkModelDisplayName, "llama3.1")
+
+        settings.summarizerBackend = .appleIntelligence
+        XCTAssertEqual(settings.thinkModelDisplayName, "Apple Intelligence")
+    }
+
     func testUsesRemoteMainLLMRequiresApprovedRemoteEndpoint() {
         var settings = AppSettings()
         XCTAssertFalse(settings.usesRemoteMainLLM, "built-in Think is local")
