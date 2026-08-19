@@ -278,6 +278,7 @@ jobs:
       # releases/latest/download/appcast.xml, so the appcast must live on the
       # Release next to the DMG it signs. Hyphenated tags (v1.0.0-beta) become
       # pre-releases and never become "latest" (RELEASING.md step 7).
+      # Prefer Scripts/release-notes/<tag>.md as the Release body when present.
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -286,12 +287,21 @@ jobs:
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then
             prerelease_flag="--prerelease"
           fi
+          notes_file="Scripts/release-notes/${GITHUB_REF_NAME}.md"
+          notes_flag=(--generate-notes)
+          if [[ -f "$notes_file" ]]; then
+            notes_flag=(--notes-file "$notes_file")
+          fi
           if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --title "LokalBot ${GITHUB_REF_NAME#v}" \
-              --generate-notes \
+              "${notes_flag[@]}" \
               $prerelease_flag
+          elif [[ -f "$notes_file" ]]; then
+            gh release edit "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --notes-file "$notes_file"
           fi
           gh release upload "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
