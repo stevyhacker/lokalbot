@@ -242,6 +242,11 @@ final class TextEngineTests: XCTestCase {
         XCTAssertNil(reasoning["exclude"])
         XCTAssertEqual(body["max_tokens"] as? Int, 768)
         XCTAssertNil(body["temperature"])
+        XCTAssertNil(body["response_format"],
+                     "strict json_schema is what 404s GLM-5.3 after the reasoning remap")
+        let provider = try XCTUnwrap(body["provider"] as? [String: Any])
+        XCTAssertEqual(provider["data_collection"] as? String, "deny")
+        XCTAssertNil(provider["require_parameters"])
     }
 
     func testOpenRouterHighReasoningFallbackReplacesDisabledReasoning() {

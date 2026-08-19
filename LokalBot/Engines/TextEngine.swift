@@ -69,9 +69,10 @@ enum ChatCompletionDialect: Equatable, Sendable {
     }
 }
 
-/// OpenRouter reasoning shape. Native uses `max_tokens`/`exclude` or
-/// `effort: none`. High-effort is the fallback for models that cannot
-/// disable thinking (for example GLM-5.3).
+/// OpenRouter request shape. Native uses `max_tokens`/`exclude` or
+/// `effort: none` plus strict `json_schema`. High-effort is the fallback
+/// for models that cannot disable thinking or honor structured outputs
+/// (for example GLM-5.3): `effort: high`, no schema, no require_parameters.
 enum OpenRouterReasoningCompatibility: Equatable, Sendable {
     case native
     case highEffort
@@ -541,7 +542,9 @@ struct OpenAICompatibleEngine: TextEngine {
                          schema: [String: Any]?,
                          options: TextGenerationOptions?,
                          openRouterReasoning: OpenRouterReasoningCompatibility = .native) throws -> URLRequest {
-        if chatDialect == .openAI || chatDialect == .openRouter, let schema,
+        if chatDialect == .openAI
+            || (chatDialect == .openRouter && openRouterReasoning != .highEffort),
+           let schema,
            let issue = OpenAIStrictSchemaValidator.validationIssue(in: schema) {
             throw TextEngineError.badResponse("invalid strict JSON schema: \(issue)")
         }
@@ -560,7 +563,7 @@ struct OpenAICompatibleEngine: TextEngine {
                 ["role": "user", "content": user],
             ],
         ]
-        if let schema {
+        if let schema, !(chatDialect == .openRouter && openRouterReasoning == .highEffort) {
             body["response_format"] = [
                 "type": "json_schema",
                 "json_schema": ["name": "response", "strict": true, "schema": schema],
@@ -575,7 +578,8 @@ struct OpenAICompatibleEngine: TextEngine {
             openRouterReasoning: openRouterReasoning)
         if chatDialect == .openRouter {
             var provider: [String: Any] = ["data_collection": "deny"]
-            if schema != nil || (options?.reasoningBudgetTokens ?? 0) > 0 {
+            if openRouterReasoning != .highEffort,
+               (schema != nil || (options?.reasoningBudgetTokens ?? 0) > 0) {
                 provider["require_parameters"] = true
             }
             body["provider"] = provider
