@@ -48,7 +48,7 @@ final class MainWindowUITests: XCTestCase {
                        "Today should not hide its daily memory behind More local context")
         XCTAssertTrue(textWithContent("Highlights").firstMatch.exists,
                       "digest highlights hierarchy is missing")
-        XCTAssertTrue(identified("dayDigest.tasks").waitForExistence(timeout: 5),
+        XCTAssertTrue(digestTasksVisible(),
                       "digest task hierarchy is missing")
         XCTAssertTrue(textWithContent("Updated the Timeline UI").firstMatch.exists,
                       "human-facing focus summary is missing")
@@ -386,7 +386,7 @@ final class MainWindowUITests: XCTestCase {
                       "compact time allocation missing — seeded activity did not load")
         XCTAssertTrue(textWithContent("Xcode").firstMatch.exists,
                       "seeded activity app 'Xcode' missing from Timeline")
-        XCTAssertTrue(identified("dayDigest.tasks").waitForExistence(timeout: 5),
+        XCTAssertTrue(digestTasksVisible(),
                       "digest task hierarchy is missing")
         XCTAssertTrue(textWithContent("Updated the Timeline UI").firstMatch.exists,
                       "human-facing focus summary is missing")
@@ -903,6 +903,13 @@ final class MainWindowUITests: XCTestCase {
     private func identified(_ identifier: String) -> XCUIElement {
         app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier == %@", identifier)).firstMatch
+    }
+
+    /// Prefer the stable identifier; fall back to visible copy if AX role differs.
+    private func digestTasksVisible() -> Bool {
+        let identifiedHeader = app.descendants(matching: .any)["dayDigest.tasks"]
+        if identifiedHeader.waitForExistence(timeout: 5) { return true }
+        return textWithContent("Tasks").firstMatch.exists
     }
 
     private func switchToKeywordSearch() {

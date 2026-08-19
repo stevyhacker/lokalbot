@@ -44,10 +44,14 @@ struct DayDigestView: View {
 
             if !presentation.focusBlocks.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
-                    Label("Tasks", systemImage: "briefcase")
-                        .font(DayDigestTaskType.sectionTitle)
-                        .foregroundStyle(.primary)
-                        .accessibilityAddTraits(.isHeader)
+                    HStack(spacing: 6) {
+                        Image(systemName: "briefcase")
+                            .accessibilityHidden(true)
+                        Text("Tasks")
+                            .font(DayDigestTaskType.sectionTitle)
+                            .accessibilityIdentifier("dayDigest.tasks")
+                    }
+                    .foregroundStyle(.primary)
                     VStack(alignment: .leading, spacing: 8) {
                         sessionList(presentation.initialFocusBlocks, prominent: true)
                         let additional = presentation.collapsibleFocusBlocks
@@ -69,8 +73,6 @@ struct DayDigestView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("dayDigest.tasks")
             }
 
             if mode.showsOtherActivity, !presentation.otherActivityBlocks.isEmpty {
