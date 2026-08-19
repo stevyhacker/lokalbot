@@ -659,7 +659,7 @@ final class MainWindowUITests: XCTestCase {
             XCTAssertTrue(app.descendants(matching: .any)["ask.source.\(source)"].exists,
                           "per-question \(source) source missing")
         }
-        XCTAssertTrue(app.descendants(matching: .any)["ask.semantic"].exists,
+        XCTAssertTrue(askRetrievalSegment("Match by meaning").exists,
                       "Match by meaning control missing")
 
         let field = app.textFields["search.field"]
@@ -677,15 +677,15 @@ final class MainWindowUITests: XCTestCase {
 
     func testAskSwitchesExplicitlyToKeywordSearch() {
         clickSidebar("sidebar.ask")
-        let keyword = app.buttons["ask.mode.keyword"]
-        XCTAssertTrue(keyword.waitForExistence(timeout: 5), "Keyword search mode missing")
-        keyword.click()
+        UITestHarness.selectSegment(
+            "Keyword search", pickerIdentifier: "ask.retrieval", in: app)
         XCTAssertTrue(identified("ask.facet.all").waitForExistence(timeout: 4),
                       "Keyword search facets did not appear")
         // One segmented control owns all three retrieval modes, so Ask and
         // Match by meaning stay one click away instead of a "Back" round trip.
-        XCTAssertTrue(identified("ask.mode.ask").exists, "Ask segment missing")
-        XCTAssertTrue(identified("ask.semantic").exists, "Match by meaning segment missing")
+        XCTAssertTrue(askRetrievalSegment("Ask").exists, "Ask segment missing")
+        XCTAssertTrue(askRetrievalSegment("Match by meaning").exists,
+                      "Match by meaning segment missing")
         XCTAssertFalse(app.descendants(matching: .any)["ask.source.meetings"].exists,
                        "Ask scopes should not masquerade as keyword facets")
     }
@@ -898,11 +898,14 @@ final class MainWindowUITests: XCTestCase {
     }
 
     private func switchToKeywordSearch() {
-        let keyword = app.buttons["ask.mode.keyword"]
-        XCTAssertTrue(keyword.waitForExistence(timeout: 5), "Keyword search mode missing")
-        keyword.click()
+        UITestHarness.selectSegment(
+            "Keyword search", pickerIdentifier: "ask.retrieval", in: app)
         XCTAssertTrue(identified("ask.facet.all").waitForExistence(timeout: 5),
                       "Ask did not enter keyword-search mode")
+    }
+
+    private func askRetrievalSegment(_ name: String) -> XCUIElement {
+        UITestHarness.segment(name, pickerIdentifier: "ask.retrieval", in: app)
     }
 
     /// Timeline keeps the day context side by side when wide and behind an

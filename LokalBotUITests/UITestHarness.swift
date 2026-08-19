@@ -167,11 +167,19 @@ enum UITestHarness {
         let picker = app.descendants(matching: .any)[pickerIdentifier]
         XCTAssertTrue(picker.waitForExistence(timeout: 8),
                       "segmented picker \(pickerIdentifier) missing", file: file, line: line)
-        let segment = picker.buttons[name].exists
-            ? picker.buttons[name] : picker.radioButtons[name]
+        let segment = segment(name, pickerIdentifier: pickerIdentifier, in: app)
         XCTAssertTrue(segment.waitForExistence(timeout: 4),
                       "segment \(name) missing", file: file, line: line)
         segment.click()
+    }
+
+    static func segment(
+        _ name: String,
+        pickerIdentifier: String,
+        in app: XCUIApplication
+    ) -> XCUIElement {
+        let picker = app.descendants(matching: .any)[pickerIdentifier]
+        return picker.buttons[name].exists ? picker.buttons[name] : picker.radioButtons[name]
     }
 
     /// Scroll a lazy SwiftUI Form/ScrollView until an element can be clicked.

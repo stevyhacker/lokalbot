@@ -222,7 +222,7 @@ private struct AskContent: View {
 
     /// The one control for how a query is answered: chat, exact words, or
     /// semantic matching — previously three competing capsules.
-    private enum AskRetrieval: String, CaseIterable, Identifiable {
+    private enum AskRetrieval: String, CaseIterable, Identifiable, Hashable {
         case ask = "Ask"
         case keyword = "Keyword search"
         case meaning = "Match by meaning"
@@ -234,14 +234,6 @@ private struct AskContent: View {
             case .ask: "sparkles"
             case .keyword: "magnifyingglass"
             case .meaning: "atom"
-            }
-        }
-
-        var identifier: String {
-            switch self {
-            case .ask: "ask.mode.ask"
-            case .keyword: "ask.mode.keyword"
-            case .meaning: "ask.semantic"
             }
         }
 
@@ -263,34 +255,22 @@ private struct AskContent: View {
     }
 
     private var retrievalModeControl: some View {
-        HStack(spacing: 2) {
+        Picker("Retrieval mode", selection: retrievalSelection) {
             ForEach(AskRetrieval.allCases) { retrieval in
-                let selected = currentRetrieval == retrieval
-                Button {
-                    select(retrieval)
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: retrieval.icon)
-                        Text(retrieval.rawValue)
-                    }
-                    .font(WorkspaceTypography.control)
-                    .foregroundStyle(selected ? AnyShapeStyle(.primary)
-                                              : AnyShapeStyle(.secondary))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(selected ? AnyShapeStyle(Brand.teal.opacity(0.30))
-                                         : AnyShapeStyle(.clear),
-                                in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier(retrieval.identifier)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-                .help(retrieval.helpText)
+                Label(retrieval.rawValue, systemImage: retrieval.icon)
+                    .tag(retrieval)
             }
         }
-        .padding(3)
-        .background(.quaternary.opacity(0.42), in: Capsule())
-        .overlay { Capsule().strokeBorder(Color.primary.opacity(0.10)) }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityIdentifier("ask.retrieval")
+        .help(currentRetrieval.helpText)
+    }
+
+    private var retrievalSelection: Binding<AskRetrieval> {
+        Binding(get: { currentRetrieval }, set: select)
     }
 
     private func select(_ retrieval: AskRetrieval) {

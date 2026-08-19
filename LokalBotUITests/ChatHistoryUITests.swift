@@ -63,9 +63,8 @@ final class ChatHistoryUITests: XCTestCase {
     func testSelectingConversationClearsActiveSearch() {
         UITestHarness.clickSidebar("sidebar.ask", in: app)
 
-        let keyword = app.buttons["ask.mode.keyword"]
-        XCTAssertTrue(keyword.waitForExistence(timeout: 4), "keyword mode control missing")
-        keyword.click()
+        UITestHarness.selectSegment(
+            "Keyword search", pickerIdentifier: "ask.retrieval", in: app)
         XCTAssertTrue(app.descendants(matching: .any)["ask.facet.all"]
             .waitForExistence(timeout: 4), "keyword mode did not expose search facets")
         let field = app.textFields["search.field"]
