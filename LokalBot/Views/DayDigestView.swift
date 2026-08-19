@@ -1,5 +1,11 @@
 import SwiftUI
 
+private enum DayDigestTaskType {
+    static let sectionTitle = Font.system(size: 15, weight: .semibold)
+    static let taskTitle = Font.system(size: 14, weight: .semibold)
+    static let summary = Font.system(size: 12.5)
+}
+
 /// Human-first rendering of the lossless Markdown day journal. Summary and
 /// focus stay visible; the forensic activity/evidence trail is available on
 /// demand without making every captured moment compete for attention.
@@ -37,27 +43,32 @@ struct DayDigestView: View {
             }
 
             if !presentation.focusBlocks.isEmpty {
-                digestSection("Tasks", icon: "briefcase") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Tasks", systemImage: "briefcase")
+                        .font(DayDigestTaskType.sectionTitle)
+                        .foregroundStyle(.primary)
+                        .accessibilityAddTraits(.isHeader)
                     VStack(alignment: .leading, spacing: 8) {
-                        sessionList(presentation.initialFocusBlocks)
+                        sessionList(presentation.initialFocusBlocks, prominent: true)
                         let additional = presentation.collapsibleFocusBlocks
                         if !additional.isEmpty {
                             DisclosureGroup(
                                 isExpanded: $extraFocusExpanded,
                                 content: {
-                                    sessionList(additional)
+                                    sessionList(additional, prominent: true)
                                     .padding(.top, 8)
                                 },
                                 label: {
                                     Text(extraFocusExpanded
                                          ? "Hide additional sessions"
                                          : "Show \(additional.count) more session\(additional.count == 1 ? "" : "s")")
-                                        .font(.callout.weight(.medium))
+                                        .font(WorkspaceTypography.control)
                                 })
                             .accessibilityIdentifier("dayDigest.moreSummaryDetails")
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if mode.showsOtherActivity, !presentation.otherActivityBlocks.isEmpty {
@@ -132,23 +143,38 @@ struct DayDigestView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func sessionList(_ blocks: [DayDigestPresentation.FocusBlock]) -> some View {
+    private func sessionList(
+        _ blocks: [DayDigestPresentation.FocusBlock],
+        prominent: Bool = false
+    ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(blocks) { block in
-                focusBlock(block)
-                    .padding(.vertical, 10)
+                focusBlock(block, prominent: prominent)
+                    .padding(.vertical, prominent ? 12 : 10)
                 if block.id != blocks.last?.id {
                     Divider()
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .background(.quaternary.opacity(0.24),
-                    in: RoundedRectangle(cornerRadius: Brand.Radius.control))
+        .padding(.horizontal, prominent ? 16 : 12)
+        .background {
+            let radius = prominent ? Brand.Radius.panel : Brand.Radius.control
+            RoundedRectangle(cornerRadius: radius)
+                .fill(.quaternary.opacity(prominent ? 0.42 : 0.24))
+                .overlay {
+                    if prominent {
+                        RoundedRectangle(cornerRadius: radius)
+                            .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                    }
+                }
+        }
     }
 
-    private func focusBlock(_ block: DayDigestPresentation.FocusBlock) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+    private func focusBlock(
+        _ block: DayDigestPresentation.FocusBlock,
+        prominent: Bool = false
+    ) -> some View {
+        VStack(alignment: .leading, spacing: prominent ? 7 : 5) {
             if block.timeRange != nil || block.title != nil {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     if let timeRange = block.timeRange {
@@ -158,14 +184,23 @@ struct DayDigestView: View {
                     }
                     if let title = block.title {
                         Text(title)
-                            .font(.body.weight(.semibold))
+                            .font(prominent
+                                  ? DayDigestTaskType.taskTitle
+                                  : .body.weight(.semibold))
+                            .foregroundStyle(.primary)
                             .textSelection(.enabled)
                     }
                 }
             }
             if !block.summaryMarkdown.isEmpty {
-                SelectableDigestText(block.summaryMarkdown)
-                    .foregroundStyle(.secondary)
+                if prominent {
+                    ExpandableDigestSummary(
+                        text: block.summaryMarkdown,
+                        accessibilityID: "dayDigest.taskShowMore.\(block.id)")
+                } else {
+                    SelectableDigestText(block.summaryMarkdown)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -212,6 +247,87 @@ struct DayDigestView: View {
         }
         .accessibilityIdentifier("dayDigest.timeAllocation")
         .accessibilityHint("Tracked app time shown as optional supporting detail")
+    }
+}
+
+private struct ExpandableDigestSummary: View {
+    let text: String
+    let accessibilityID: String
+    @State private var expanded = false
+    @State private var truncatedByLayout = false
+    @State private var fullHeight: CGFloat = 0
+    @State private var collapsedHeight: CGFloat = 0
+
+    private var showsControl: Bool {
+        truncatedByLayout || DayDigestTaskSummaryExpansion.needsControl(text)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SelectableDigestText(text, font: DayDigestTaskType.summary)
+                .foregroundStyle(.primary)
+                .lineLimit(expanded ? nil : DayDigestTaskSummaryExpansion.collapsedLineLimit)
+                .truncationMode(.tail)
+                .background {
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: DigestSummaryCollapsedHeightKey.self,
+                            value: geo.size.height)
+                    }
+                }
+                .background(alignment: .top) { fullHeightProbe }
+                .onPreferenceChange(DigestSummaryFullHeightKey.self) { fullHeight = $0 }
+                .onPreferenceChange(DigestSummaryCollapsedHeightKey.self) { collapsedHeight = $0 }
+                .onChange(of: fullHeight) { _, _ in refreshTruncation() }
+                .onChange(of: collapsedHeight) { _, _ in refreshTruncation() }
+
+            if showsControl {
+                Button(expanded ? "Show less" : "Show more") {
+                    expanded.toggle()
+                }
+                .buttonStyle(.plain)
+                .font(WorkspaceTypography.control)
+                .foregroundStyle(Brand.teal)
+                .accessibilityHint(expanded
+                    ? "Hides the extra task description"
+                    : "Shows the rest of this task description")
+                .accessibilityIdentifier(accessibilityID)
+            }
+        }
+    }
+
+    private var fullHeightProbe: some View {
+        SelectableDigestText(text, font: DayDigestTaskType.summary)
+            .fixedSize(horizontal: false, vertical: true)
+            .hidden()
+            .background {
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: DigestSummaryFullHeightKey.self,
+                        value: geo.size.height)
+                }
+            }
+            .frame(height: 0, alignment: .top)
+            .allowsHitTesting(false)
+    }
+
+    private func refreshTruncation() {
+        guard !expanded, fullHeight > 0, collapsedHeight > 0 else { return }
+        truncatedByLayout = fullHeight > collapsedHeight + 1
+    }
+}
+
+private struct DigestSummaryFullHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct DigestSummaryCollapsedHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 

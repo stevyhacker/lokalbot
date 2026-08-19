@@ -468,3 +468,20 @@ struct DayDigestPresentation: Equatable {
     }
 
 }
+
+/// Collapsed task copy stays scannable; longer summaries expand in place.
+enum DayDigestTaskSummaryExpansion {
+    static let collapsedLineLimit = 3
+    static let collapsedWordLimit = 40
+    static let collapsedCharacterLimit = 220
+
+    static func needsControl(_ markdown: String) -> Bool {
+        let clean = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return false }
+        if clean.split(whereSeparator: \.isNewline).count > collapsedLineLimit {
+            return true
+        }
+        if clean.count > collapsedCharacterLimit { return true }
+        return clean.split(whereSeparator: \.isWhitespace).count > collapsedWordLimit
+    }
+}

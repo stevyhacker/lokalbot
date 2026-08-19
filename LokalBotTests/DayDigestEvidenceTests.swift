@@ -727,6 +727,44 @@ final class DayDigestEvidenceTests: XCTestCase {
         XCTAssertFalse(overview.contains("17:00"))
     }
 
+    func testJournalKeepsLongTaskTitlesAndCompleteSummaries() async throws {
+        let title = "Oracle price-quote and price-floor logic in AggregatorSwapAdapter (PR #230)"
+        let summary = """
+            Implemented decimal-scaled price conversion in AggregatorSwapAdapter.sol, using Math.tryMul to adjust tokenOutPrice by the tokenIn/tokenOut decimal difference before deriving oracle amount-out values for a WETH/USDC quote in a fork test. The changes, including the oracle price floor logic and related test files, remain open as PR #230; it is unclear whether the tests fully cover the new floor.
+            """.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertGreaterThan(title.count, 72)
+        XCTAssertGreaterThan(summary.split(whereSeparator: \.isWhitespace).count, 52)
+
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [block(1, 9, "AggregatorSwapAdapter")],
+            screenContexts: [
+                context(11, 9, 10, "Implemented oracle price conversion for PR 230."),
+            ],
+            meetings: [],
+            calendar: calendar)
+        let recorder = GenerationRecorder()
+        let finalResponse = """
+            {"tasks":[{"title":"\(title)","status":"in_progress","summary":"\(summary)","next_step":"","block_indices":[0]}],"decisions":[],"blockers":[]}
+            """
+
+        let overview = try await DayDigestOverviewGenerator.generate(
+            evidence: evidence,
+            engine: StructuredDigestEngine(
+                recorder: recorder,
+                finalResponse: finalResponse),
+            customPrompt: "",
+            calendar: calendar)
+        let presentation = DayDigestPresentation(
+            markdown: evidence.renderDocument(summary: overview, calendar: calendar))
+
+        XCTAssertEqual(presentation.focusBlocks.first?.title, title)
+        XCTAssertEqual(
+            presentation.focusBlocks.first?.summaryMarkdown,
+            "In progress. \(summary)")
+        XCTAssertFalse(overview.contains("…"))
+    }
+
     func testRendererGivesEachFactOneSectionAndDeduplicatesSimilarFollowUps() async throws {
         let evidence = DayDigestEvidence.build(
             day: day,

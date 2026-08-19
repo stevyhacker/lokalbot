@@ -7,21 +7,25 @@ import SwiftUI
 /// per-line layout for meeting summaries and chat.
 struct SelectableDigestText: View {
     let text: String
+    var font: Font = .body
 
-    init(_ text: String) { self.text = text }
+    init(_ text: String, font: Font = .body) {
+        self.text = text
+        self.font = font
+    }
 
     var body: some View {
-        Text(Self.attributedText(from: text))
+        Text(Self.attributedText(from: text, font: font))
             .frame(maxWidth: .infinity, alignment: .leading)
             .textSelection(.enabled)
             .help("Select any part and press ⌘C to copy")
     }
 
-    static func attributedText(from markdown: String) -> AttributedString {
+    static func attributedText(from markdown: String, font: Font = .body) -> AttributedString {
         let lines = markdown.components(separatedBy: "\n")
         var document = AttributedString()
         for (index, line) in lines.enumerated() {
-            document.append(attributedLine(line))
+            document.append(attributedLine(line, font: font))
             if index < lines.count - 1 {
                 document.append(AttributedString("\n"))
             }
@@ -29,11 +33,11 @@ struct SelectableDigestText: View {
         return document
     }
 
-    private static func attributedLine(_ line: String) -> AttributedString {
+    private static func attributedLine(_ line: String, font: Font) -> AttributedString {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty { return AttributedString() }
         if trimmed == "---" || trimmed == "***" || trimmed == "___" {
-            return styled("────────────────────", font: .body,
+            return styled("────────────────────", font: font,
                           foreground: .secondary)
         }
         if trimmed.hasPrefix("### ") {
@@ -47,19 +51,19 @@ struct SelectableDigestText: View {
         }
         if trimmed.hasPrefix("- [ ] ") || trimmed.hasPrefix("- [x] ") {
             return prefixed(trimmed.hasPrefix("- [x] ") ? "☑ " : "☐ ",
-                            content: String(trimmed.dropFirst(6)))
+                            content: String(trimmed.dropFirst(6)), font: font)
         }
         if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
-            return prefixed("• ", content: String(trimmed.dropFirst(2)))
+            return prefixed("• ", content: String(trimmed.dropFirst(2)), font: font)
         }
         if let ordered = orderedListItem(trimmed) {
-            return prefixed("\(ordered.number). ", content: ordered.rest)
+            return prefixed("\(ordered.number). ", content: ordered.rest, font: font)
         }
         if trimmed.hasPrefix("> ") {
             return prefixed("▎ ", content: String(trimmed.dropFirst(2)),
-                            font: .body.italic(), foreground: .secondary)
+                            font: font.italic(), foreground: .secondary)
         }
-        return styledInline(trimmed, font: .body)
+        return styledInline(trimmed, font: font)
     }
 
     private static func prefixed(_ prefix: String, content: String,

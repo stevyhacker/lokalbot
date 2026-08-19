@@ -668,6 +668,15 @@ enum DayDigestTextSimilarity {
 /// pass groups those candidates by task; code retains every accepted candidate
 /// even if that aggregation pass fails or omits one.
 enum DayDigestOverviewGenerator {
+    /// Display limits for journal task copy. Sized so titles wrap and
+    /// summaries stay complete sentences instead of ending on an ellipsis.
+    private enum FieldLimit {
+        static let titleCharacters = 160
+        static let summaryWords = 120
+        static let workDoneWords = 80
+        static let bulletCharacters = 1_200
+    }
+
     private struct FocusDraft: Decodable {
         var substantive: Bool
         var task: String
@@ -931,15 +940,18 @@ enum DayDigestOverviewGenerator {
     private static let focusRetryPrompt = """
         The previous response was truncated or failed JSON validation.
         Retry once with a compact JSON object. Do not quote or restate the evidence.
-        Keep task under 12 words, work_done under 48 words, outcome under 32 words,
-        and next_step under 28 words.
+        Keep task titles complete, including identifiers such as PR numbers.
+        Write work_done as complete sentences; do not end mid-sentence.
+        Keep outcome under 32 words and next_step under 28 words.
         """
 
     private static let digestRetryPrompt = """
         The previous response was truncated. Retry once with compact JSON.
         Include every candidate, but merge candidates that belong to the same task.
-        Keep each title under 12 words, each summary under 52 words, and each next_step,
-        decision, or blocker under 32 words. Do not quote or restate candidate metadata.
+        Keep titles complete, including identifiers such as PR numbers.
+        Write each summary as complete sentences; do not end mid-sentence.
+        Keep each next_step, decision, or blocker under 32 words.
+        Do not quote or restate candidate metadata.
         """
 
     static func fallback(_ evidence: DayDigestEvidence) -> String {
@@ -965,7 +977,7 @@ enum DayDigestOverviewGenerator {
         var blocks: [DayDigestGeneratedFocusBlock] = []
 
         for meeting in evidence.meetings {
-            let title = cleanInline(meeting.title, maxCharacters: 72)
+            let title = cleanInline(meeting.title, maxCharacters: FieldLimit.titleCharacters)
             let workDone = fallbackMeetingSummary(meeting)
             blocks.append(DayDigestGeneratedFocusBlock(
                 task: title.isEmpty ? "Recorded meeting" : title,
@@ -1035,10 +1047,10 @@ enum DayDigestOverviewGenerator {
         _ meeting: DayDigestMeetingEvidence
     ) -> String {
         if let tldr = markdownSection(named: "TL;DR", in: meeting.sourceSummary) {
-            let clean = cleanSummary(tldr, maxWords: 48)
+            let clean = cleanSummary(tldr, maxWords: FieldLimit.workDoneWords)
             if !clean.isEmpty { return clean }
         }
-        let outcomes = cleanSummary(meeting.outcomes, maxWords: 48)
+        let outcomes = cleanSummary(meeting.outcomes, maxWords: FieldLimit.workDoneWords)
         if !outcomes.isEmpty { return outcomes }
         return ""
     }
@@ -1073,7 +1085,7 @@ enum DayDigestOverviewGenerator {
         guard !genericTitles.contains(normalized),
               normalizedApp != "loginwindow",
               normalized != normalizedApp else { return nil }
-        return cleanInline(title, maxCharacters: 72)
+        return cleanInline(title, maxCharacters: FieldLimit.titleCharacters)
     }
 
     private static var focusSchema: [String: Any] {
@@ -1159,8 +1171,8 @@ enum DayDigestOverviewGenerator {
               let draft = try? JSONDecoder().decode(FocusDraft.self, from: data) else {
             return nil
         }
-        let task = cleanInline(draft.task, maxCharacters: 72)
-        let workDone = cleanSummary(draft.workDone, maxWords: 48)
+        let task = cleanInline(draft.task, maxCharacters: FieldLimit.titleCharacters)
+        let workDone = cleanSummary(draft.workDone, maxWords: FieldLimit.workDoneWords)
         if task.isEmpty || workDone.isEmpty {
             return draft.substantive
                 ? nil
@@ -1227,8 +1239,8 @@ enum DayDigestOverviewGenerator {
                 .reduce(into: [Int]()) { result, index in
                     if !result.contains(index) { result.append(index) }
                 }
-            let title = cleanInline(raw.title, maxCharacters: 72)
-            let summary = cleanSummary(raw.summary, maxWords: 52)
+            let title = cleanInline(raw.title, maxCharacters: FieldLimit.titleCharacters)
+            let summary = cleanSummary(raw.summary, maxWords: FieldLimit.summaryWords)
             guard !indices.isEmpty, !title.isEmpty, !summary.isEmpty else { continue }
             let key = normalizedTaskKey(title)
             guard !tasks.contains(where: { normalizedTaskKey($0.title) == key }) else { continue }
@@ -1274,7 +1286,7 @@ enum DayDigestOverviewGenerator {
             if !tasks[taskIndex].summary.localizedCaseInsensitiveContains(block.workDone) {
                 tasks[taskIndex].summary = cleanSummary(
                     tasks[taskIndex].summary + " " + candidateSummary(block),
-                    maxWords: 64)
+                    maxWords: FieldLimit.summaryWords)
             }
             if block.status != "unknown" { tasks[taskIndex].status = block.status }
             if !block.nextStep.isEmpty { tasks[taskIndex].nextStep = block.nextStep }
@@ -1295,7 +1307,7 @@ enum DayDigestOverviewGenerator {
            !summary.localizedCaseInsensitiveContains(block.outcome) {
             summary += " Outcome: \(block.outcome)"
         }
-        return cleanSummary(summary, maxWords: 52)
+        return cleanSummary(summary, maxWords: FieldLimit.summaryWords)
     }
 
     private static func renderedTask(_ task: NormalizedTask) -> String {
@@ -1349,7 +1361,7 @@ enum DayDigestOverviewGenerator {
     }
 
     private static func normalizedTaskKey(_ value: String) -> String {
-        cleanInline(value, maxCharacters: 72).lowercased()
+        cleanInline(value, maxCharacters: FieldLimit.titleCharacters).lowercased()
     }
 
     private static func normalizedList(_ values: [String], maxWords: Int) -> [String] {
@@ -1371,7 +1383,7 @@ enum DayDigestOverviewGenerator {
     }
 
     private static func cleanBullet(_ value: String, maxWords: Int) -> String {
-        var clean = cleanInline(value, maxCharacters: 420)
+        var clean = cleanInline(value, maxCharacters: FieldLimit.bulletCharacters)
         while clean.hasPrefix("-") || clean.hasPrefix("•") {
             clean.removeFirst()
             clean = clean.trimmingCharacters(in: .whitespaces)

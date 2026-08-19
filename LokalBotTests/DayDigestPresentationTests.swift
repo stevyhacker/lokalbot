@@ -188,6 +188,31 @@ final class DayDigestPresentationTests: XCTestCase {
             "Gatekeeper verification passed."))
     }
 
+    func testShortTaskSummaryDoesNotOfferExpansionControl() {
+        XCTAssertFalse(DayDigestTaskSummaryExpansion.needsControl(
+            "Completed. Reviewed the commits and merged pull request #33."))
+    }
+
+    func testLongTaskSummaryOffersExpansionControl() {
+        let words = (1...DayDigestTaskSummaryExpansion.collapsedWordLimit + 1)
+            .map { "word\($0)" }
+            .joined(separator: " ")
+        XCTAssertTrue(DayDigestTaskSummaryExpansion.needsControl(words))
+    }
+
+    func testMultilineTaskSummaryOffersExpansionControl() {
+        let lines = (1...DayDigestTaskSummaryExpansion.collapsedLineLimit + 1)
+            .map { "Line \($0) of the summary." }
+            .joined(separator: "\n")
+        XCTAssertTrue(DayDigestTaskSummaryExpansion.needsControl(lines))
+    }
+
+    func testWideTaskSummaryOffersExpansionControl() {
+        let text = String(repeating: "abcdefghij", count: 23)
+        XCTAssertGreaterThan(text.count, DayDigestTaskSummaryExpansion.collapsedCharacterLimit)
+        XCTAssertTrue(DayDigestTaskSummaryExpansion.needsControl(text))
+    }
+
     func testEmbeddedModesDoNotRepeatHostOwnedSections() {
         XCTAssertFalse(DayDigestView.Mode.timeline.showsTimeAllocation)
         XCTAssertFalse(DayDigestView.Mode.timeline.showsMeetings)
