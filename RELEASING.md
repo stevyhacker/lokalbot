@@ -278,8 +278,14 @@ gh release create v1.0.0 \
   build/LokalBot.dmg \
   build/appcast.xml \
   --title "LokalBot 1.0.0" \
-  --notes "What's new in this release."
+  --notes-file Scripts/release-notes/v1.0.0.md
 ```
+
+CI reads `Scripts/release-notes/<tag>.md` when that file exists (for example
+`Scripts/release-notes/v0.6.1.md`) and posts it as the GitHub Release body.
+Otherwise it falls back to `--generate-notes`. Write a short “What’s new”
+summary there before tagging so Sparkle’s release-notes link and the GitHub
+Release page show the same changelog.
 
 Pre-release tags (a hyphen suffix, e.g. `v1.0.0-beta`) are marked **Pre-release**
 on GitHub and won't become "Latest"; tag without a suffix for a stable release.
