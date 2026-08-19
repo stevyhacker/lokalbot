@@ -677,6 +677,10 @@ final class MainWindowUITests: XCTestCase {
 
     func testAskSwitchesExplicitlyToKeywordSearch() {
         clickSidebar("sidebar.ask")
+        let field = app.textFields["search.field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 6), "ask input field missing")
+        let askFrame = field.frame
+
         UITestHarness.selectSegment(
             "Keyword search", pickerIdentifier: "ask.retrieval", in: app)
         XCTAssertTrue(identified("ask.facet.all").waitForExistence(timeout: 4),
@@ -688,6 +692,10 @@ final class MainWindowUITests: XCTestCase {
                       "Match by meaning segment missing")
         XCTAssertFalse(app.descendants(matching: .any)["ask.source.meetings"].exists,
                        "Ask scopes should not masquerade as keyword facets")
+        XCTAssertEqual(field.frame.minY, askFrame.minY, accuracy: 8,
+                       "composer jumped vertically when leaving Ask")
+        XCTAssertEqual(field.frame.minX, askFrame.minX, accuracy: 8,
+                       "composer jumped horizontally when leaving Ask")
     }
 
     /// Restored split widths from Timeline or Meetings must not let the
