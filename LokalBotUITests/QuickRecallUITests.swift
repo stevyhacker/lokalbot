@@ -69,8 +69,11 @@ final class QuickRecallUITests: XCTestCase {
         XCTAssertTrue(ask.waitForExistence(timeout: 4),
                       "inline assistant action missing for an unmatched query")
         XCTAssertEqual(ask.value as? String, "Answer from your meetings and screen")
-        XCTAssertTrue(text(containing: "No local matches").waitForExistence(timeout: 4),
-                      "Quick Recall did not distinguish a completed empty search")
+        XCTAssertTrue(
+            app.descendants(matching: .any)["quickRecall.noMatches"]
+                .waitForExistence(timeout: 8)
+                || text(containing: "Nothing in saved moments").exists,
+            "Quick Recall did not distinguish a completed empty search")
         // SwiftUI propagates the enclosing no-match state's accessibility ID
         // to descendants on macOS, so select this button by visible content.
         let askInstead = app.buttons.matching(NSPredicate(

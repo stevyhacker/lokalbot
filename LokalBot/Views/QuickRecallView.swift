@@ -296,8 +296,13 @@ private struct QuickRecallContent: View {
 
     private var noMatchesState: some View {
         VStack(spacing: 8) {
-            Label("No local matches", systemImage: "magnifyingglass")
-                .font(.headline)
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .accessibilityHidden(true)
+                Text("No local matches")
+                    .font(.headline)
+                    .accessibilityIdentifier("quickRecall.noMatches")
+            }
             Text("Nothing in saved moments, captured screens, or meetings matches this search.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -312,7 +317,6 @@ private struct QuickRecallContent: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 28)
         .padding(.horizontal, 20)
-        .accessibilityIdentifier("quickRecall.noMatches")
     }
 
     private func search() {
