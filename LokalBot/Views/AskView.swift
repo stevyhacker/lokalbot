@@ -17,7 +17,6 @@ private struct AskContent: View {
     @ObservedObject var model: ChatViewModel
 
     @State private var query = ""
-    @State private var mode: AskMode = .ask
     /// Search flavor within keyword mode: exact words vs. semantic matching.
     /// Seeded from the persisted setting; selecting "Match by meaning" turns
     /// indexing on, while going back to exact words never turns it off.
@@ -33,6 +32,11 @@ private struct AskContent: View {
     @State private var pinnedScreens: [ScreenAskContext] = []
     @State private var searchTask: Task<Void, Never>?
     @FocusState private var inputFocused: Bool
+
+    private var mode: AskMode {
+        get { app.askMode }
+        nonmutating set { app.askMode = newValue }
+    }
 
     var body: some View {
         VStack(spacing: 0) {

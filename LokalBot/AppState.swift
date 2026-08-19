@@ -248,6 +248,10 @@ final class AppState: ObservableObject {
         didSet { Self.navigationDefaults.set(typeTab.rawValue, forKey: Self.typeTabDefaultsKey) }
     }
     @Published var settingsTab: SettingsTab = .general
+    /// Ask's retrieval choice survives NavigationSplitView remounts while the
+    /// app is running. Explicit handoffs and conversation selections still
+    /// switch back to Ask before presenting their content.
+    @Published var askMode: AskMode = .ask
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []
     @Published var pendingSeek: TimeInterval?
     /// A screen-memory deep link waiting for Timeline's shared capture model.
