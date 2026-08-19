@@ -579,7 +579,7 @@ struct OpenAICompatibleEngine: TextEngine {
         if chatDialect == .openRouter {
             var provider: [String: Any] = ["data_collection": "deny"]
             if openRouterReasoning != .highEffort,
-               (schema != nil || (options?.reasoningBudgetTokens ?? 0) > 0) {
+               schema != nil || (options?.reasoningBudgetTokens ?? 0) > 0 {
                 provider["require_parameters"] = true
             }
             body["provider"] = provider
