@@ -69,6 +69,8 @@ struct DayDigestView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("dayDigest.tasks")
             }
 
             if mode.showsOtherActivity, !presentation.otherActivityBlocks.isEmpty {

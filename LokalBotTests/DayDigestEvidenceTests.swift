@@ -730,7 +730,12 @@ final class DayDigestEvidenceTests: XCTestCase {
     func testJournalKeepsLongTaskTitlesAndCompleteSummaries() async throws {
         let title = "Oracle price-quote and price-floor logic in AggregatorSwapAdapter (PR #230)"
         let summary = """
-            Implemented decimal-scaled price conversion in AggregatorSwapAdapter.sol, using Math.tryMul to adjust tokenOutPrice by the tokenIn/tokenOut decimal difference before deriving oracle amount-out values for a WETH/USDC quote in a fork test. The changes, including the oracle price floor logic and related test files, remain open as PR #230; it is unclear whether the tests fully cover the new floor.
+            Implemented decimal-scaled price conversion in AggregatorSwapAdapter.sol, \
+            using Math.tryMul to adjust tokenOutPrice by the tokenIn/tokenOut decimal \
+            difference before deriving oracle amount-out values for a WETH/USDC quote \
+            in a fork test. The changes, including the oracle price floor logic and \
+            related test files, remain open as PR #230; it is unclear whether the \
+            tests fully cover the new floor.
             """.trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertGreaterThan(title.count, 72)
         XCTAssertGreaterThan(summary.split(whereSeparator: \.isWhitespace).count, 52)

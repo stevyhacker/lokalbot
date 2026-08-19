@@ -48,7 +48,7 @@ final class MainWindowUITests: XCTestCase {
                        "Today should not hide its daily memory behind More local context")
         XCTAssertTrue(textWithContent("Highlights").firstMatch.exists,
                       "digest highlights hierarchy is missing")
-        XCTAssertTrue(textWithContent("Tasks").firstMatch.exists,
+        XCTAssertTrue(identified("dayDigest.tasks").waitForExistence(timeout: 5),
                       "digest task hierarchy is missing")
         XCTAssertTrue(textWithContent("Updated the Timeline UI").firstMatch.exists,
                       "human-facing focus summary is missing")
@@ -386,7 +386,7 @@ final class MainWindowUITests: XCTestCase {
                       "compact time allocation missing — seeded activity did not load")
         XCTAssertTrue(textWithContent("Xcode").firstMatch.exists,
                       "seeded activity app 'Xcode' missing from Timeline")
-        XCTAssertTrue(textWithContent("Tasks").firstMatch.exists,
+        XCTAssertTrue(identified("dayDigest.tasks").waitForExistence(timeout: 5),
                       "digest task hierarchy is missing")
         XCTAssertTrue(textWithContent("Updated the Timeline UI").firstMatch.exists,
                       "human-facing focus summary is missing")
