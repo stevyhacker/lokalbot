@@ -209,6 +209,92 @@ final class TextEngineTests: XCTestCase {
         XCTAssertNil(body["reasoning"])
     }
 
+    func testOpenRouterHighReasoningFallbackUsesEffortHigh() throws {
+        let engine = OpenAICompatibleEngine(
+            baseURL: URL(string: "https://openrouter.ai/api/v1")!,
+            model: "z-ai/glm-5.3",
+            apiKey: "test-token",
+            chatDialect: .openRouter)
+        let schema: [String: Any] = [
+            "type": "object",
+            "properties": ["answer": ["type": "string"]],
+            "required": ["answer"],
+            "additionalProperties": false,
+        ]
+
+        let request = try engine.makeChatRequest(
+            system: "system",
+            prompt: "prompt",
+            context: [],
+            schema: schema,
+            options: TextGenerationOptions(
+                maxTokens: 768,
+                reasoningBudgetTokens: 256,
+                temperature: 0.2),
+            openRouterReasoning: .highEffort)
+        let data = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let reasoning = try XCTUnwrap(body["reasoning"] as? [String: Any])
+
+        XCTAssertEqual(reasoning["effort"] as? String, "high")
+        XCTAssertNil(reasoning["max_tokens"])
+        XCTAssertNil(reasoning["exclude"])
+        XCTAssertEqual(body["max_tokens"] as? Int, 768)
+        XCTAssertNil(body["temperature"])
+    }
+
+    func testOpenRouterHighReasoningFallbackReplacesDisabledReasoning() {
+        var body: [String: Any] = [:]
+
+        OpenAICompatibleEngine.applyGenerationOptions(
+            to: &body,
+            options: TextGenerationOptions(
+                maxTokens: 1_600,
+                reasoningBudgetTokens: 0,
+                temperature: 0),
+            defaultThinkingBudgetTokens: nil,
+            dialect: .openRouter,
+            model: "z-ai/glm-5.3",
+            openRouterReasoning: .highEffort)
+
+        let reasoning = body["reasoning"] as? [String: Any]
+        XCTAssertEqual(reasoning?["effort"] as? String, "high")
+        XCTAssertNil(reasoning?["max_tokens"])
+        XCTAssertNil(body["temperature"])
+    }
+
+    func testOpenRouterParameterMismatchTriggersHighReasoningFallbackOnce() {
+        let mismatch = TextEngineError.httpStatus(
+            code: 404,
+            detail: "No endpoints found that can handle the requested parameters. "
+                + "To learn more about provider routing, visit: "
+                + "https://openrouter.ai/docs/guides/routing/provider-selection",
+            retryAfter: nil)
+        let missingModel = TextEngineError.httpStatus(
+            code: 404, detail: "No endpoints found for model z-ai/glm-5.3", retryAfter: nil)
+
+        XCTAssertTrue(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+            dialect: .openRouter, error: mismatch, usedFallback: false,
+            requestedReasoningBudget: 256))
+        XCTAssertTrue(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+            dialect: .openRouter, error: mismatch, usedFallback: false,
+            requestedReasoningBudget: 0),
+                       "effort:none retries also need the high-reasoning fallback")
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+            dialect: .openRouter, error: mismatch, usedFallback: true,
+            requestedReasoningBudget: 256))
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+            dialect: .openRouter, error: missingModel, usedFallback: false,
+            requestedReasoningBudget: 256))
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+            dialect: .generic, error: mismatch, usedFallback: false,
+            requestedReasoningBudget: 256))
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+            dialect: .openRouter, error: mismatch, usedFallback: false,
+            requestedReasoningBudget: nil))
+    }
+
     func testOpenRouterCanDisableReasoningForStructuredRetry() throws {
         let engine = OpenAICompatibleEngine(
             baseURL: URL(string: "https://openrouter.ai/api/v1")!,

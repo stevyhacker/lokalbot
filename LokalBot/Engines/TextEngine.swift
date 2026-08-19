@@ -69,6 +69,14 @@ enum ChatCompletionDialect: Equatable, Sendable {
     }
 }
 
+/// OpenRouter reasoning shape. Native uses `max_tokens`/`exclude` or
+/// `effort: none`. High-effort is the fallback for models that cannot
+/// disable thinking (for example GLM-5.3).
+enum OpenRouterReasoningCompatibility: Equatable, Sendable {
+    case native
+    case highEffort
+}
+
 enum TextEngineError: LocalizedError, Sendable {
     case serverUnreachable(String)
     case badResponse(String)
@@ -482,9 +490,36 @@ struct OpenAICompatibleEngine: TextEngine {
     private func chat(system: String, prompt: String, context: [String],
                       schema: [String: Any]?,
                       options: TextGenerationOptions?) async throws -> String {
+        try await chat(
+            system: system, prompt: prompt, context: context,
+            schema: schema, options: options, openRouterReasoning: .native)
+    }
+
+    private func chat(system: String, prompt: String, context: [String],
+                      schema: [String: Any]?,
+                      options: TextGenerationOptions?,
+                      openRouterReasoning: OpenRouterReasoningCompatibility) async throws -> String {
         guard !model.isEmpty else { throw TextEngineError.noModel }
         let request = try makeChatRequest(system: system, prompt: prompt, context: context,
-                                          schema: schema, options: options)
+                                          schema: schema, options: options,
+                                          openRouterReasoning: openRouterReasoning)
+        do {
+            return try await completeChat(request)
+        } catch {
+            guard Self.shouldFallbackToHighReasoning(
+                dialect: chatDialect,
+                error: error,
+                usedFallback: openRouterReasoning == .highEffort,
+                requestedReasoningBudget: options?.reasoningBudgetTokens)
+            else { throw error }
+            lokalbotLog("openrouter reasoning fallback effort=high model=\(model)")
+            return try await chat(
+                system: system, prompt: prompt, context: context,
+                schema: schema, options: options, openRouterReasoning: .highEffort)
+        }
+    }
+
+    private func completeChat(_ request: URLRequest) async throws -> String {
         let (data, response) = try await send(request, base: baseURL)
         let httpResponse = response as? HTTPURLResponse
         guard let status = httpResponse?.statusCode, (200...299).contains(status) else {
@@ -504,7 +539,8 @@ struct OpenAICompatibleEngine: TextEngine {
     /// offline tests without requiring credentials or a billable call.
     func makeChatRequest(system: String, prompt: String, context: [String],
                          schema: [String: Any]?,
-                         options: TextGenerationOptions?) throws -> URLRequest {
+                         options: TextGenerationOptions?,
+                         openRouterReasoning: OpenRouterReasoningCompatibility = .native) throws -> URLRequest {
         if chatDialect == .openAI || chatDialect == .openRouter, let schema,
            let issue = OpenAIStrictSchemaValidator.validationIssue(in: schema) {
             throw TextEngineError.badResponse("invalid strict JSON schema: \(issue)")
@@ -535,7 +571,8 @@ struct OpenAICompatibleEngine: TextEngine {
             options: options,
             defaultThinkingBudgetTokens: defaultThinkingBudgetTokens,
             dialect: chatDialect,
-            model: model)
+            model: model,
+            openRouterReasoning: openRouterReasoning)
         if chatDialect == .openRouter {
             var provider: [String: Any] = ["data_collection": "deny"]
             if schema != nil || (options?.reasoningBudgetTokens ?? 0) > 0 {
@@ -603,7 +640,8 @@ struct OpenAICompatibleEngine: TextEngine {
         options: TextGenerationOptions?,
         defaultThinkingBudgetTokens: Int?,
         dialect: ChatCompletionDialect,
-        model: String
+        model: String,
+        openRouterReasoning: OpenRouterReasoningCompatibility = .native
     ) {
         let maxTokens = options?.maxTokens.map { max(1, $0) }
         let isReasoningModel = supportsOpenAIReasoningEffort(model: model)
@@ -628,7 +666,9 @@ struct OpenAICompatibleEngine: TextEngine {
 
         case .openRouter:
             if let maxTokens { body["max_tokens"] = maxTokens }
-            if let requested = options?.reasoningBudgetTokens {
+            if openRouterReasoning == .highEffort {
+                body["reasoning"] = ["effort": "high"]
+            } else if let requested = options?.reasoningBudgetTokens {
                 let nonnegative = max(0, requested)
                 if nonnegative == 0 {
                     body["reasoning"] = ["effort": "none"]
@@ -643,8 +683,10 @@ struct OpenAICompatibleEngine: TextEngine {
             }
             // Sampling controls vary across routed reasoning providers. Keep
             // temperature only for requests that leave reasoning at the model
-            // default or explicitly disable it.
-            if (options?.reasoningBudgetTokens ?? 0) <= 0,
+            // default or explicitly disable it. High-effort fallback is
+            // always-on thinking, so omit temperature there too.
+            if openRouterReasoning != .highEffort,
+               (options?.reasoningBudgetTokens ?? 0) <= 0,
                let temperature = options?.temperature {
                 body["temperature"] = max(0, temperature)
             }
@@ -662,6 +704,24 @@ struct OpenAICompatibleEngine: TextEngine {
                 body["reasoning_effort"] = reasoningEffort(for: budget)
             }
         }
+    }
+
+    /// True when an OpenRouter 404 means the requested reasoning/schema
+    /// parameters have no matching endpoint, so one high-effort retry is allowed.
+    nonisolated static func shouldFallbackToHighReasoning(
+        dialect: ChatCompletionDialect,
+        error: Error,
+        usedFallback: Bool,
+        requestedReasoningBudget: Int?
+    ) -> Bool {
+        guard dialect == .openRouter,
+              !usedFallback,
+              requestedReasoningBudget != nil,
+              case .httpStatus(let code, let detail, _) = error as? TextEngineError,
+              code == 404
+        else { return false }
+        return detail.localizedCaseInsensitiveContains(
+            "no endpoints found that can handle the requested parameters")
     }
 
     nonisolated static func supportsOpenAIReasoningEffort(model: String) -> Bool {

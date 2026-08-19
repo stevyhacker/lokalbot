@@ -290,6 +290,26 @@ struct AppSettings: Codable, Equatable {
             && InferenceEndpointPolicy.isAllowed(
                 url, approvedOrigins: approvedRemoteInferenceOrigins)
     }
+
+    /// Name shown for the Think role. Always follows `summarizerBackend`;
+    /// leftover `builtInModelID` is ignored when Think is not the local GGUF.
+    var thinkModelDisplayName: String {
+        switch summarizerBackend {
+        case .builtIn:
+            return ModelCatalog.entry(
+                id: builtInModelID,
+                custom: customBuiltInModels)?.displayName
+                ?? summarizerBackend.displayName
+        case .appleIntelligence:
+            return summarizerBackend.displayName
+        case .ollama:
+            let model = ollamaModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            return model.isEmpty ? summarizerBackend.displayName : model
+        case .openAICompatible:
+            let model = openAIModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            return model.isEmpty ? summarizerBackend.displayName : model
+        }
+    }
     var openAIAPIKey: String {
         get {
             KeychainSecrets.string(account: "openai-compatible-api-key") ?? ""
