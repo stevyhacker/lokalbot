@@ -41,20 +41,26 @@ esac
 SCHEME="LokalBot UI Test Host"
 OUT="$PWD/Assets/screenshots"
 FRAMES="$(mktemp -d)"          # GIF-only frames (kept out of Assets/)
+STILLS="$FRAMES/stills"        # publish only after the full set validates
 LIB="${TMPDIR:-/tmp}/lokalbot-demo-lib"
 SUITE="lokalbot.shots.$(uuidgen)"
-CAPTURE_SIZE="${LOKALBOT_CAPTURE_SIZE:-1480x930}"
+CAPTURE_SIZE="${LOKALBOT_CAPTURE_SIZE:-1400x880}"
 # Keep the master/list column compact so the inspector gets a stable, generous
-# share of three-column marketing captures. 600pt let SwiftUI restore a much
-# wider list in some launches, which made otherwise identical shots look uneven.
-CAPTURE_CONTENT_MAX="${LOKALBOT_CAPTURE_CONTENT_MAX:-420}"
+# share of three-column marketing captures. The 1400pt frame is the smallest
+# verified stable width for the current outcome workspace and keeps README text
+# more legible than the former 1480pt frame.
+CAPTURE_CONTENT_MAX="${LOKALBOT_CAPTURE_CONTENT_MAX:-400}"
 CAPTURE_SCALE="${LOKALBOT_CAPTURE_SCALE:-2}"
 CAPTURE_DELAY="${LOKALBOT_CAPTURE_DELAY:-8}"
 # The committed README set is dark; captures must not follow the host machine's
 # appearance or a light-mode Mac exports a mismatched (and, for the selected
 # sidebar row, unreadable) set. Pinned in the host via NSApp.appearance.
 CAPTURE_APPEARANCE="${LOKALBOT_CAPTURE_APPEARANCE:-dark}"
-mkdir -p "$OUT"
+mkdir -p "$OUT" "$STILLS"
+
+echo "==> Generating Xcode project"
+mkdir -p Vendor/llama-cpp Vendor/sherpa-onnx
+xcodegen generate >/dev/null
 
 echo "==> Building '$SCHEME'"
 xcodebuild -project LokalBot.xcodeproj -scheme "$SCHEME" \
@@ -69,12 +75,16 @@ python3 Scripts/seed_demo_library.py "$LIB"
 
 # capture <dest-dir> <name> [ENV=val ...]
 capture() {
-  dest="$1"; name="$2"; shift 2
+  local dest="$1"
+  local name="$2"
+  local staged="$FRAMES/.${name}-capture.png"
+  local capture_pid
+  shift 2
   pkill -f "LokalBot UI Test Host" >/dev/null 2>&1 || true
   sleep 1
-  rm -f "$dest/$name.png"
+  rm -f "$staged"
   env LOKALBOT_UI_TEST=1 LOKALBOT_STORAGE_ROOT="$LIB" LOKALBOT_DEFAULTS_SUITE="$SUITE" \
-      LOKALBOT_CAPTURE_FILE="$dest/$name.png" LOKALBOT_CAPTURE_SIZE="$CAPTURE_SIZE" \
+      LOKALBOT_CAPTURE_FILE="$staged" LOKALBOT_CAPTURE_SIZE="$CAPTURE_SIZE" \
       LOKALBOT_CAPTURE_CONTENT_MAX="$CAPTURE_CONTENT_MAX" \
       LOKALBOT_CAPTURE_SCALE="$CAPTURE_SCALE" \
       LOKALBOT_CAPTURE_DELAY="$CAPTURE_DELAY" \
@@ -83,30 +93,47 @@ capture() {
     "$APP" -ApplePersistenceIgnoreState YES -AppleLocale en_US -AppleLanguages "(en)" \
     --lokalbot-ui-test --lokalbot-storage-root "$LIB" --lokalbot-defaults-suite "$SUITE" \
     </dev/null >/dev/null 2>&1 &
+  capture_pid=$!
   for _ in $(seq 1 40); do
-    [ -s "$dest/$name.png" ] && break
+    [ -s "$staged" ] && break
+    kill -0 "$capture_pid" 2>/dev/null || break
     sleep 0.5
   done
-  sleep 0.3   # let the PNG write finish before the next launch recycles the app
-  if [ -s "$dest/$name.png" ]; then
+  sleep 0.3   # let the PNG write finish before stopping the self-capture host
+  kill "$capture_pid" >/dev/null 2>&1 || true
+  wait "$capture_pid" 2>/dev/null || true
+  if [ -s "$staged" ]; then
+    mv "$staged" "$dest/$name.png"
     echo "    $name.png"
   else
-    echo "    !! capture failed for $name"
+    rm -f "$staged"
+    echo "    !! capture failed for $name" >&2
+    return 1
   fi
 }
 
 echo "==> Capturing section stills at ${CAPTURE_SIZE}pt (${CAPTURE_SCALE}x, content max ${CAPTURE_CONTENT_MAX}pt, delay ${CAPTURE_DELAY}s)"
-capture "$OUT" meetings-summary    LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=0 LOKALBOT_DETAIL_TAB=summary    LOKALBOT_DISMISS_ONBOARDING=1
-capture "$OUT" meetings-transcript LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=0 LOKALBOT_DETAIL_TAB=transcript LOKALBOT_DISMISS_ONBOARDING=1
-capture "$OUT" timeline            LOKALBOT_INITIAL_SECTION=timeline LOKALBOT_DISMISS_ONBOARDING=1
-capture "$OUT" today               LOKALBOT_INITIAL_SECTION=today LOKALBOT_DISMISS_ONBOARDING=1
-capture "$OUT" quick-recall        LOKALBOT_UI_TEST_WINDOW=quick-recall LOKALBOT_QUICK_RECALL_QUERY=Redis LOKALBOT_CAPTURE_SIZE=660x480 LOKALBOT_DISMISS_ONBOARDING=1
-capture "$OUT" search              LOKALBOT_INITIAL_SECTION=search LOKALBOT_INITIAL_SEARCH=Redis
-capture "$OUT" models              LOKALBOT_INITIAL_SECTION=models
-capture "$OUT" cotyping            LOKALBOT_INITIAL_SECTION=cotyping LOKALBOT_COTYPING_DEMO=1
-capture "$OUT" dictation           LOKALBOT_INITIAL_SECTION=dictation LOKALBOT_DICTATION_DEMO=1
-capture "$OUT" settings            LOKALBOT_INITIAL_SECTION=settings
-capture "$OUT" chat                LOKALBOT_INITIAL_SECTION=chat LOKALBOT_DISMISS_ONBOARDING=1
+capture "$STILLS" meetings-summary    LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=0 LOKALBOT_DETAIL_TAB=summary    LOKALBOT_DISMISS_ONBOARDING=1
+capture "$STILLS" meetings-transcript LOKALBOT_INITIAL_SECTION=meetings LOKALBOT_SELECT_INDEX=0 LOKALBOT_DETAIL_TAB=transcript LOKALBOT_DISMISS_ONBOARDING=1
+if cmp -s "$STILLS/meetings-summary.png" "$STILLS/meetings-transcript.png"; then
+  echo "    !! meeting summary and transcript captures are identical" >&2
+  exit 1
+fi
+capture "$STILLS" timeline            LOKALBOT_INITIAL_SECTION=timeline LOKALBOT_DISMISS_ONBOARDING=1
+capture "$STILLS" today               LOKALBOT_INITIAL_SECTION=today LOKALBOT_DISMISS_ONBOARDING=1
+capture "$STILLS" quick-recall        LOKALBOT_UI_TEST_WINDOW=quick-recall LOKALBOT_QUICK_RECALL_QUERY=Redis LOKALBOT_CAPTURE_SIZE=660x480 LOKALBOT_DISMISS_ONBOARDING=1
+capture "$STILLS" search              LOKALBOT_INITIAL_SECTION=search LOKALBOT_INITIAL_SEARCH=Redis
+capture "$STILLS" models              LOKALBOT_INITIAL_SECTION=models
+capture "$STILLS" cotyping            LOKALBOT_INITIAL_SECTION=cotyping LOKALBOT_COTYPING_DEMO=1
+capture "$STILLS" dictation           LOKALBOT_INITIAL_SECTION=dictation LOKALBOT_DICTATION_DEMO=1
+capture "$STILLS" settings            LOKALBOT_INITIAL_SECTION=settings
+capture "$STILLS" chat                LOKALBOT_INITIAL_SECTION=chat LOKALBOT_DISMISS_ONBOARDING=1
+
+echo "==> Publishing validated stills"
+for name in meetings-summary meetings-transcript timeline today quick-recall \
+            search models cotyping dictation settings chat; do
+  mv "$STILLS/$name.png" "$OUT/$name.png"
+done
 
 if [ "$MODE" = "stills" ]; then
   pkill -f "LokalBot UI Test Host" >/dev/null 2>&1 || true

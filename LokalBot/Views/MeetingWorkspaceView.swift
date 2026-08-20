@@ -60,6 +60,13 @@ private struct MeetingWorkspaceDetail: View {
 
     private var folder: URL { meeting.folderURL(in: app.storage) }
     private var projection: MeetingOutcomeProjection? { app.outcomeIndex.projection(for: meeting.id) }
+    private var captureTranscriptOnly: Bool {
+#if LOKALBOT_UI_TEST_HOST
+        ProcessInfo.processInfo.environment["LOKALBOT_DETAIL_TAB"] == "transcript"
+#else
+        false
+#endif
+    }
 
     var body: some View {
         ScrollView {
@@ -94,89 +101,91 @@ private struct MeetingWorkspaceDetail: View {
                         .font(.callout).foregroundStyle(Brand.error)
                 }
 
-                WorkspaceSection(title: "Action items", icon: "checklist") {
-                    if let actions = projection?.actionReferences, !actions.isEmpty {
-                        VStack(spacing: 0) {
-                            ForEach(actions) { reference in
-                                OutcomeActionRow(
-                                    reference: reference,
-                                    onStatus: { status in
-                                        _ = app.outcomeIndex.setStatus(
-                                            status,
-                                            actionID: reference.action.id,
-                                            meetingID: meeting.id)
-                                    },
-                                    onCorrect: {
-                                        correction = ActionCorrectionDraft(reference: reference)
-                                    },
-                                    onEvidence: { citation in
-                                        transcriptExpanded = true
-                                        player.play(at: citation.start)
-                                    })
-                                if reference.id != actions.last?.id { Divider() }
-                            }
-                        }
-                    } else {
-                        EmptyWorkspaceRow(text: "No action items were extracted from this meeting.")
-                    }
-                }
-
-                WorkspaceSection(title: "Decisions", icon: "checkmark.seal") {
-                    if let decisions = projection?.outcomes.decisionRecords, !decisions.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(decisions) { decision in
-                                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                                    Image(systemName: "checkmark")
-                                        .foregroundStyle(Brand.teal)
-                                    Text(decision.text)
-                                        .font(WorkspaceTypography.body)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .textSelection(.enabled)
-                                    if let citation = decision.citations.first {
-                                        EvidencePill(citation: citation) {
+                if !captureTranscriptOnly {
+                    WorkspaceSection(title: "Action items", icon: "checklist") {
+                        if let actions = projection?.actionReferences, !actions.isEmpty {
+                            VStack(spacing: 0) {
+                                ForEach(actions) { reference in
+                                    OutcomeActionRow(
+                                        reference: reference,
+                                        onStatus: { status in
+                                            _ = app.outcomeIndex.setStatus(
+                                                status,
+                                                actionID: reference.action.id,
+                                                meetingID: meeting.id)
+                                        },
+                                        onCorrect: {
+                                            correction = ActionCorrectionDraft(reference: reference)
+                                        },
+                                        onEvidence: { citation in
                                             transcriptExpanded = true
                                             player.play(at: citation.start)
+                                        })
+                                    if reference.id != actions.last?.id { Divider() }
+                                }
+                            }
+                        } else {
+                            EmptyWorkspaceRow(text: "No action items were extracted from this meeting.")
+                        }
+                    }
+
+                    WorkspaceSection(title: "Decisions", icon: "checkmark.seal") {
+                        if let decisions = projection?.outcomes.decisionRecords, !decisions.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                ForEach(decisions) { decision in
+                                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(Brand.teal)
+                                        Text(decision.text)
+                                            .font(WorkspaceTypography.body)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .textSelection(.enabled)
+                                        if let citation = decision.citations.first {
+                                            EvidencePill(citation: citation) {
+                                                transcriptExpanded = true
+                                                player.play(at: citation.start)
+                                            }
                                         }
                                     }
                                 }
                             }
+                        } else {
+                            EmptyWorkspaceRow(text: "No cited decisions were extracted.")
                         }
-                    } else {
-                        EmptyWorkspaceRow(text: "No cited decisions were extracted.")
                     }
-                }
 
-                WorkspaceSection(title: "Summary", icon: "text.alignleft") {
-                    if notes?.isEmpty == false || summary?.isEmpty == false {
-                        VStack(alignment: .leading, spacing: 14) {
-                            if let notes, !notes.isEmpty {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Label("Your notes", systemImage: "square.and.pencil")
-                                        .font(WorkspaceTypography.metadataEmphasis)
-                                        .foregroundStyle(.secondary)
-                                    SelectableDigestText(notes)
+                    WorkspaceSection(title: "Summary", icon: "text.alignleft") {
+                        if notes?.isEmpty == false || summary?.isEmpty == false {
+                            VStack(alignment: .leading, spacing: 14) {
+                                if let notes, !notes.isEmpty {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Label("Your notes", systemImage: "square.and.pencil")
+                                            .font(WorkspaceTypography.metadataEmphasis)
+                                            .foregroundStyle(.secondary)
+                                        SelectableDigestText(notes)
+                                    }
+                                    .padding(12)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(.quaternary.opacity(0.24),
+                                                in: RoundedRectangle(cornerRadius: Brand.Radius.control))
+                                    .accessibilityIdentifier("detail.notes")
                                 }
-                                .padding(12)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(.quaternary.opacity(0.24),
-                                            in: RoundedRectangle(cornerRadius: Brand.Radius.control))
-                                .accessibilityIdentifier("detail.notes")
-                            }
-                            if let summary, !summary.isEmpty {
-                                let parts = SummaryPresentation.split(summary)
-                                if !parts.metadata.isEmpty {
-                                    SummaryMetadataRow(items: parts.metadata)
+                                if let summary, !summary.isEmpty {
+                                    let parts = SummaryPresentation.split(summary)
+                                    if !parts.metadata.isEmpty {
+                                        SummaryMetadataRow(items: parts.metadata)
+                                    }
+                                    SelectableDigestText(parts.body)
                                 }
-                                SelectableDigestText(parts.body)
                             }
+                            .workspaceReadingWidth()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            EmptyWorkspaceRow(text: "No summary yet.")
                         }
-                        .workspaceReadingWidth()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        EmptyWorkspaceRow(text: "No summary yet.")
                     }
+                    .accessibilityIdentifier("meeting.summary")
                 }
-                .accessibilityIdentifier("meeting.summary")
 
                 WorkspaceDisclosure(
                     isExpanded: $transcriptExpanded,
@@ -195,7 +204,14 @@ private struct MeetingWorkspaceDetail: View {
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .navigationTitle(meeting.displayTitle)
-        .task(id: meeting.id) { load() }
+        .task(id: meeting.id) {
+            load()
+#if LOKALBOT_UI_TEST_HOST
+            if ProcessInfo.processInfo.environment["LOKALBOT_DETAIL_TAB"] == "transcript" {
+                transcriptExpanded = true
+            }
+#endif
+        }
         .onChange(of: app.pendingSeek) { _, value in
             guard let value else { return }
             app.pendingSeek = nil

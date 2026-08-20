@@ -61,8 +61,9 @@ grant optional permissions until you approve them:
 
 - Microphone and system audio for recording meetings.
 - Calendar access for meeting detection and titles.
-- Accessibility for browser-meeting detection, Cotyping, dictation insertion,
-  visible-text context, and approved agent interaction.
+- Accessibility for browser-meeting detection, Autocomplete (the Cotyping
+  engine), dictation insertion, visible-text context, and approved agent
+  interaction.
 - Screen Recording when visual screen context is selected.
 
 Recording defaults to automatic detection on a fresh install. You are
