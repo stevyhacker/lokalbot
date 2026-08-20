@@ -15,6 +15,18 @@ struct Transcript: Codable {
         var confidence: Double?
     }
 
+    /// A compact, timestamp-anchored turn used only for model prompts. The
+    /// persisted transcript and playback rows keep their original segment
+    /// boundaries; summarization can merge nearby runs from the same speaker
+    /// without paying the token cost of a label and timestamp on every ASR
+    /// span.
+    struct PromptTurn: Equatable, Sendable {
+        var start: TimeInterval
+        var end: TimeInterval
+        var speaker: String
+        var text: String
+    }
+
     /// Immutable, UI-ready segment data. Building this value performs the
     /// control-token/whitespace normalization once when a transcript changes,
     /// instead of once per row on every playback timer tick.
@@ -194,6 +206,58 @@ struct Transcript: Codable {
         }.joined(separator: " ")
     }
 
+    /// Consecutive nearby spans from the same speaker become one bounded turn.
+    /// A single pathological/legacy span is split at word boundaries as well,
+    /// so downstream token-aware chunking always has safe split points.
+    func summaryPromptTurns(
+        maxCharacters: Int = 1_200,
+        maximumGap: TimeInterval = 3
+    ) -> [PromptTurn] {
+        let characterLimit = max(200, maxCharacters)
+        var turns: [PromptTurn] = []
+
+        for segment in segments {
+            let text = segment.displayText
+            guard !text.isEmpty else { continue }
+            for part in Self.summaryTextParts(text, maxCharacters: characterLimit) {
+                let canMerge: Bool
+                if let previous = turns.last {
+                    let sameSpeaker = Self.canonicalSpeakerKey(previous.speaker)
+                        == Self.canonicalSpeakerKey(segment.speaker)
+                    let gap = segment.start - previous.end
+                    canMerge = sameSpeaker
+                        && gap <= maximumGap
+                        && gap >= -maximumGap
+                        && previous.text.count + part.count + 1 <= characterLimit
+                } else {
+                    canMerge = false
+                }
+
+                if canMerge {
+                    turns[turns.count - 1].text += " " + part
+                    turns[turns.count - 1].end = max(
+                        turns[turns.count - 1].end,
+                        segment.end)
+                } else {
+                    turns.append(PromptTurn(
+                        start: segment.start,
+                        end: segment.end,
+                        speaker: segment.speaker,
+                        text: part))
+                }
+            }
+        }
+        return turns
+    }
+
+    var summaryPromptMarkdown: String {
+        summaryPromptTurns().map(summaryPromptLine).joined(separator: "\n\n")
+    }
+
+    func summaryPromptLine(_ turn: PromptTurn) -> String {
+        "**[\(Self.stamp(turn.start))] \(displaySpeaker(for: turn.speaker)):** \(turn.text)"
+    }
+
     /// Merge per-track transcripts (mic = "me", system = "them") by timestamp.
     static func merged(_ tracks: [Transcript]) -> Transcript {
         Transcript(
@@ -256,6 +320,37 @@ struct Transcript: Codable {
             result[canonical] = alias
         }
         return result
+    }
+
+    private static func summaryTextParts(
+        _ text: String,
+        maxCharacters: Int
+    ) -> [String] {
+        let words = text.split(whereSeparator: { $0.isWhitespace })
+        guard !words.isEmpty else { return [] }
+        var parts: [String] = []
+        var current = ""
+
+        func appendCurrent() {
+            guard !current.isEmpty else { return }
+            parts.append(current)
+            current = ""
+        }
+
+        for wordSlice in words {
+            var word = String(wordSlice)
+            while word.count > maxCharacters {
+                appendCurrent()
+                let splitIndex = word.index(word.startIndex, offsetBy: maxCharacters)
+                parts.append(String(word[..<splitIndex]))
+                word = String(word[splitIndex...])
+            }
+            let proposedCount = current.count + (current.isEmpty ? 0 : 1) + word.count
+            if proposedCount > maxCharacters { appendCurrent() }
+            current += (current.isEmpty ? "" : " ") + word
+        }
+        appendCurrent()
+        return parts
     }
 
     static func stamp(_ t: TimeInterval) -> String {

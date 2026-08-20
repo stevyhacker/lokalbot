@@ -122,6 +122,42 @@ final class TranscriptTests: XCTestCase {
         XCTAssertEqual(merged.engine, "system")
     }
 
+    func testSummaryPromptMergesNearbySameSpeakerSegments() {
+        let transcript = Transcript(
+            segments: [
+                .init(start: 0, end: 1, speaker: "me", text: "First point.", confidence: nil),
+                .init(start: 2, end: 3, speaker: "me", text: "Second point.", confidence: nil),
+                .init(start: 4, end: 5, speaker: "them", text: "Reply.", confidence: nil),
+                .init(start: 10, end: 11, speaker: "them", text: "Later.", confidence: nil),
+            ],
+            engine: "test",
+            speakerAliases: ["them": "Ana"])
+
+        XCTAssertEqual(transcript.summaryPromptTurns().count, 3)
+        XCTAssertEqual(
+            transcript.summaryPromptMarkdown,
+            "**[00:00:00] Me:** First point. Second point.\n\n"
+                + "**[00:00:04] Ana:** Reply.\n\n"
+                + "**[00:00:10] Ana:** Later.")
+    }
+
+    func testSummaryPromptSplitsOversizedLegacySegmentAtWordBoundaries() {
+        let transcript = Transcript(
+            segments: [.init(
+                start: 7,
+                end: 8,
+                speaker: "me",
+                text: Array(repeating: "abcdefghij", count: 30).joined(separator: " "),
+                confidence: nil)],
+            engine: "test")
+
+        let turns = transcript.summaryPromptTurns(maxCharacters: 200)
+
+        XCTAssertEqual(turns.count, 2)
+        XCTAssertTrue(turns.allSatisfy { $0.text.count <= 200 })
+        XCTAssertTrue(turns.allSatisfy { $0.start == 7 && $0.speaker == "me" })
+    }
+
     func testDisplayIndexCachesNormalizedVisibleTextAndSpeakerPresentation() {
         let transcript = Transcript(
             segments: [

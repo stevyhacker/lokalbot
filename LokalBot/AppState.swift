@@ -1123,14 +1123,12 @@ final class AppState: ObservableObject {
         pipeline.enqueue(meeting, transcribe: transcribe, summarize: summarize)
     }
 
-    /// Row-level recovery intentionally retries the complete durable pipeline.
-    /// It is the safest default when a compact row cannot know which earlier
-    /// artifact came from the failed attempt; the detail Process menu still
-    /// offers narrower transcription- or summary-only choices. User-initiated,
-    /// so missing models download on demand — including for meetings parked
-    /// as "waiting for models".
+    /// Resume from the latest durable artifact. If transcription already
+    /// succeeded, Retry fixes only summarization; missing transcripts still run
+    /// the complete pipeline. User-initiated work may download missing models.
     func retryProcessing(_ meeting: Meeting) {
-        reprocess(meeting, transcribe: true, summarize: true)
+        let work = ProcessingPipeline.retryWork(for: meeting, storage: storage)
+        reprocess(meeting, transcribe: work.transcribe, summarize: work.summarize)
     }
 
     /// Meetings parked because a model was missing re-enter the queue; jobs

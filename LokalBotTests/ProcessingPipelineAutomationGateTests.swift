@@ -132,6 +132,33 @@ final class ProcessingPipelineAutomationGateTests: XCTestCase {
                        "the parked copy must not linger after an explicit retry")
     }
 
+    func testRetryWorkResumesAfterExistingTranscript() throws {
+        let root = try makeRoot()
+        let storage = StorageManager(rootURL: root)
+        let meeting = makeMeeting()
+        let folder = meeting.folderURL(in: storage)
+
+        let missingTranscript = ProcessingPipeline.retryWork(
+            for: meeting,
+            storage: storage)
+        XCTAssertEqual(
+            missingTranscript,
+            .init(transcribe: true, summarize: true))
+
+        try FileManager.default.createDirectory(
+            at: folder,
+            withIntermediateDirectories: true)
+        try Data("{}".utf8).write(
+            to: folder.appendingPathComponent("transcript.json"))
+
+        let existingTranscript = ProcessingPipeline.retryWork(
+            for: meeting,
+            storage: storage)
+        XCTAssertEqual(
+            existingTranscript,
+            .init(transcribe: false, summarize: true))
+    }
+
     func testAutomaticSummaryParksButKeepsExistingTranscript() async throws {
         let root = try makeRoot()
         let jobStore = PipelineJobStore(

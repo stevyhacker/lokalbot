@@ -83,6 +83,25 @@ final class ProcessingPipeline: ObservableObject {
         var origin: JobOrigin = .userInitiated
     }
 
+    struct RetryWork: Equatable {
+        var transcribe: Bool
+        var summarize: Bool
+    }
+
+    /// A completed transcript is the durable boundary between the expensive
+    /// ASR stage and summarization. Row-level Retry can safely resume after it
+    /// instead of re-transcribing audio that already succeeded.
+    nonisolated static func retryWork(
+        for meeting: Meeting,
+        storage: StorageManager
+    ) -> RetryWork {
+        let transcriptURL = meeting.folderURL(in: storage)
+            .appendingPathComponent("transcript.json")
+        return RetryWork(
+            transcribe: !FileManager.default.fileExists(atPath: transcriptURL.path),
+            summarize: true)
+    }
+
     /// Injectable model-readiness checks so unit tests can exercise the
     /// automation gate without touching real model folders (or the network).
     struct AutomationReadiness {
@@ -320,6 +339,15 @@ final class ProcessingPipeline: ObservableObject {
                 }
                 transcript = SpeakerAutoNamer.applyingAliases(
                     to: transcript, participantNames: meeting.participantNameHints ?? [])
+                let mergedSanitization = TranscriptSanitizer.sanitize(transcript)
+                transcript = mergedSanitization.transcript
+                if mergedSanitization.changed {
+                    lokalbotLog(
+                        "transcript cleanup after merge changedSegments="
+                            + "\(mergedSanitization.changedSegments) removedWords="
+                            + "\(mergedSanitization.removedWords) removedCharacters="
+                            + "\(mergedSanitization.removedCharacters)")
+                }
                 try write(transcript, to: folder)
                 // A finalized AAC track makes its CAF duplicate redundant. A
                 // crash-recovery CAF remains when the AAC container is broken,
@@ -348,7 +376,17 @@ final class ProcessingPipeline: ObservableObject {
                     _ = try await prepareBuiltInModel(config)
                 }
                 stages[meeting.id] = .summarizing
-                let transcript = try loadTranscript(from: folder)
+                var transcript = try loadTranscript(from: folder)
+                let sanitization = TranscriptSanitizer.sanitize(transcript)
+                if sanitization.changed {
+                    transcript = sanitization.transcript
+                    try write(transcript, to: folder)
+                    lokalbotLog(
+                        "transcript cleanup before summary changedSegments="
+                            + "\(sanitization.changedSegments) removedWords="
+                            + "\(sanitization.removedWords) removedCharacters="
+                            + "\(sanitization.removedCharacters)")
+                }
                 // The default built-in server supports continuous batching.
                 // For a short transcript, outcomes and summary are independent
                 // reads of the same source, so overlap their generation instead
@@ -387,6 +425,7 @@ final class ProcessingPipeline: ObservableObject {
                 }
                 try summary.data(using: .utf8)?.write(
                     to: folder.appendingPathComponent("summary.md"), options: .atomic)
+                MeetingSummaryGenerator.removeCheckpoint(in: folder)
                 if let outcomesTask {
                     await outcomesTask.value
                 } else {
@@ -470,6 +509,7 @@ final class ProcessingPipeline: ObservableObject {
         for name in ["mic", "system"] {
             try? FileManager.default.removeItem(at: Self.checkpointURL(track: name, in: folder))
         }
+        MeetingSummaryGenerator.removeCheckpoint(in: folder)
     }
 
     private func transcribeTrack(name: String, url: URL, speaker: String,
@@ -494,6 +534,15 @@ final class ProcessingPipeline: ObservableObject {
             "transcription track start track=\(name) engine=\(engine.displayName) duration=\(Self.formatSeconds(duration)) language=\(language ?? "auto")")
         var transcript = try await engine.transcribe(audio: url, language: language)
         for i in transcript.segments.indices { transcript.segments[i].speaker = speaker }
+        let sanitization = TranscriptSanitizer.sanitize(transcript)
+        transcript = sanitization.transcript
+        if sanitization.changed {
+            lokalbotLog(
+                "transcript cleanup track=\(name) changedSegments="
+                    + "\(sanitization.changedSegments) removedWords="
+                    + "\(sanitization.removedWords) removedCharacters="
+                    + "\(sanitization.removedCharacters)")
+        }
 
         let elapsed = Date().timeIntervalSince(started)
         let rtfx = elapsed > 0 ? duration / elapsed : 0
@@ -597,8 +646,8 @@ final class ProcessingPipeline: ObservableObject {
                            config: AppSettings) async throws -> String {
         let started = Date()
         let engine = try await makeTextEngine(config)
-        let text = transcript.markdown
-        let wordCount = text.split(whereSeparator: { $0.isWhitespace }).count
+        let wordCount = transcript.languageDetectionText
+            .split(whereSeparator: { $0.isWhitespace }).count
         // Resolve `.matchTranscript` against raw spoken text now so both the
         // chunk extractions and the final synthesis share the same language
         // directive. Do not use rendered Markdown here: timestamps and speaker
@@ -613,46 +662,18 @@ final class ProcessingPipeline: ObservableObject {
         // in the final pass (both paths) — they're the user's own words, so
         // the summary should fold them in rather than rediscover them.
         let noteContext = MeetingNotes.promptContext(in: meeting.folderURL(in: storage))
-        let body: String
-
-        // Map-reduce long meetings: per-chunk notes, then one synthesis pass.
-        if text.count > 24_000 {
-            var notes: [String] = []
-            let chunkSystem = PromptTemplates.chunkExtractionSystem(
-                summaryLanguage: language,
-                userSpeakerLabel: userSpeakerLabel)
-            for (index, chunk) in chunked(transcript).enumerated() {
-                let note = try await engine.generate(
-                    system: chunkSystem,
-                    prompt: chunk,
-                    context: ["Part \(index + 1) of a longer meeting."],
-                    options: TextGenerationOptions(maxTokens: 1_536))
-                notes.append(note)
-            }
-            // Cap the combined per-part notes so the synthesis prompt fits the
-            // model context (lowest-priority/largest parts trimmed first).
-            let fitted = PromptSectionBudget().fit(
-                sections: notes.enumerated().map {
-                    PromptSectionBudget.Section(label: "Part \($0.offset + 1)", text: $0.element,
-                                                priority: 1, minCharacters: 200)
-                },
-                totalBudget: 48_000).map { $0.text }.joined(separator: "\n\n---\n\n")
-            body = try await engine.generate(
-                system: systemPrompt,
-                prompt: "Synthesize the final \(config.noteTemplate.displayName.lowercased()) notes from these per-part notes:\n\n"
-                    + fitted,
-                context: noteContext,
-                options: TextGenerationOptions(maxTokens: 4_096))
-        } else {
-            body = try await engine.generate(
-                system: systemPrompt,
-                prompt: PromptTemplates.userPrompt(transcript: text,
-                                                   template: config.noteTemplate,
-                                                   summaryLanguage: language,
-                                                   userSpeakerLabel: userSpeakerLabel),
-                context: noteContext,
-                options: TextGenerationOptions(maxTokens: 4_096))
-        }
+        let body = try await MeetingSummaryGenerator.generate(
+            transcript: transcript,
+            engine: engine,
+            systemPrompt: systemPrompt,
+            template: config.noteTemplate,
+            language: language,
+            userSpeakerLabel: userSpeakerLabel,
+            context: noteContext,
+            contextTokens: MeetingSummaryGenerator.contextTokenLimit(
+                for: config.summarizerBackend),
+            checkpointURL: MeetingSummaryGenerator.checkpointURL(
+                in: meeting.folderURL(in: storage)))
 
         let date = meeting.startedAt.formatted(date: .long, time: .shortened)
         var header = "# \(meeting.title) — \(date)\n"
@@ -896,27 +917,6 @@ final class ProcessingPipeline: ObservableObject {
         // The preparer also validates legacy on-disk models. Bypassing it for a
         // GGUF header match would skip the newly pinned SHA-256 digest.
         return try await builtInModelPreparer(entry, storage)
-    }
-
-    /// Split segments into ~12k-char chunks, never mid-segment.
-    private func chunked(_ transcript: Transcript) -> [String] {
-        var chunks: [String] = []
-        var current: [String] = []
-        var length = 0
-        for segment in transcript.segments {
-            let text = segment.displayText
-            guard !text.isEmpty else { continue }
-            let line = "**[\(Transcript.stamp(segment.start))] \(transcript.displaySpeaker(for: segment.speaker)):** \(text)"
-            if length + line.count > 12_000, !current.isEmpty {
-                chunks.append(current.joined(separator: "\n\n"))
-                current = []
-                length = 0
-            }
-            current.append(line)
-            length += line.count
-        }
-        if !current.isEmpty { chunks.append(current.joined(separator: "\n\n")) }
-        return chunks
     }
 
     enum PipelineError: LocalizedError {
