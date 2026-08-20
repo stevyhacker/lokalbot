@@ -26,6 +26,8 @@ final class DayDigestEvidenceTests: XCTestCase {
         let recorder: GenerationRecorder
         var invalidFirstFocus = false
         var alwaysInvalidFocus = false
+        var failedFocusCalls: Set<Int> = []
+        var failedFinalCalls: Set<Int> = []
         var truncatedFocusCalls: Set<Int> = []
         var truncatedFinalCalls: Set<Int> = []
         var invalidFinal = false
@@ -44,6 +46,11 @@ final class DayDigestEvidenceTests: XCTestCase {
             let isFocus = system == PromptTemplates.dayDigestFocusSystem
             let index = await recorder.record(isFocus: isFocus, options: options)
             if isFocus {
+                if failedFocusCalls.contains(index) {
+                    throw TextEngineError.serverUnreachable(
+                        "http://127.0.0.1:17872/v1",
+                        transportCode: URLError.networkConnectionLost.rawValue)
+                }
                 if truncatedFocusCalls.contains(index) {
                     throw TextEngineError.outputTruncated
                 }
@@ -63,6 +70,11 @@ final class DayDigestEvidenceTests: XCTestCase {
                 return """
                     {"substantive":true,"task":"Task \(index)","work_done":"Advanced substantive work for task \(index).","status":"in_progress","outcome":"Useful progress was recorded.","next_step":"","source_ids":[]}
                     """
+            }
+            if failedFinalCalls.contains(index) {
+                throw TextEngineError.serverUnreachable(
+                    "http://127.0.0.1:17872/v1",
+                    transportCode: URLError.networkConnectionLost.rawValue)
             }
             if truncatedFinalCalls.contains(index) {
                 throw TextEngineError.outputTruncated
@@ -532,6 +544,79 @@ final class DayDigestEvidenceTests: XCTestCase {
         XCTAssertTrue(calls.last?.isFocus == false)
     }
 
+    func testOverviewResultPreservesCompletedSegmentsAfterTransportRecoveryExhausts() async throws {
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [
+                block(1, 8, "Morning implementation"),
+                block(2, 13, "Midday investigation"),
+            ],
+            screenContexts: [],
+            meetings: [],
+            calendar: calendar)
+        let recorder = GenerationRecorder()
+
+        let result = try await DayDigestOverviewGenerator.generateResult(
+            evidence: evidence,
+            engine: StructuredDigestEngine(
+                recorder: recorder,
+                failedFocusCalls: [2]),
+            customPrompt: "",
+            calendar: calendar)
+
+        XCTAssertEqual(result.quality, .partial)
+        XCTAssertTrue(result.summary.contains("**Task 1**"))
+        XCTAssertFalse(result.summary.contains("**Task 2**"))
+        let calls = await recorder.calls
+        XCTAssertEqual(calls.count, 3)
+    }
+
+    func testOverviewResultFallsBackWhenFirstTransportRecoveryExhausts() async throws {
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [block(1, 8, "Morning implementation")],
+            screenContexts: [],
+            meetings: [],
+            calendar: calendar)
+        let recorder = GenerationRecorder()
+
+        let result = try await DayDigestOverviewGenerator.generateResult(
+            evidence: evidence,
+            engine: StructuredDigestEngine(
+                recorder: recorder,
+                failedFocusCalls: [1]),
+            customPrompt: "",
+            calendar: calendar)
+
+        XCTAssertEqual(result.quality, .fallback)
+        XCTAssertTrue(result.summary.contains("**Morning implementation**"))
+        let calls = await recorder.calls
+        XCTAssertEqual(calls.count, 1)
+    }
+
+    func testOverviewResultKeepsExtractedTasksWhenAggregationRecoveryExhausts() async throws {
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [block(1, 8, "Morning implementation")],
+            screenContexts: [],
+            meetings: [],
+            calendar: calendar)
+        let recorder = GenerationRecorder()
+
+        let result = try await DayDigestOverviewGenerator.generateResult(
+            evidence: evidence,
+            engine: StructuredDigestEngine(
+                recorder: recorder,
+                failedFinalCalls: [1]),
+            customPrompt: "",
+            calendar: calendar)
+
+        XCTAssertEqual(result.quality, .partial)
+        XCTAssertTrue(result.summary.contains("**Task 1**"))
+        let calls = await recorder.calls
+        XCTAssertEqual(calls.count, 2)
+    }
+
     func testOverviewGeneratorRetriesTruncatedAggregationWithoutReasoning() async throws {
         let evidence = DayDigestEvidence.build(
             day: day,
@@ -664,6 +749,41 @@ final class DayDigestEvidenceTests: XCTestCase {
         XCTAssertTrue(overview.contains("**Product standup**"))
         XCTAssertTrue(overview.contains("Reviewed deployment progress"))
         XCTAssertFalse(overview.contains("No substantive work"))
+    }
+
+    func testDegradedDigestMetadataAllowsThreeBoundedAttempts() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let journal = directory.appendingPathComponent("2026-08-20.md")
+        try "digest".write(to: journal, atomically: true, encoding: .utf8)
+        let evidenceDate = time(17)
+
+        XCTAssertNotNil(DayDigestGenerationMetadataStore.completedAt(for: journal))
+        for attempt in 1...DayDigestGenerationMetadataStore.maximumDegradedAttempts {
+            let metadata = try DayDigestGenerationMetadataStore.record(
+                quality: .fallback,
+                evidenceLatestAt: evidenceDate,
+                for: journal,
+                generatedAt: time(18, attempt))
+            XCTAssertEqual(metadata.degradedAttemptCount, attempt)
+            if attempt < DayDigestGenerationMetadataStore.maximumDegradedAttempts {
+                XCTAssertNil(DayDigestGenerationMetadataStore.completedAt(for: journal))
+            } else {
+                XCTAssertNotNil(DayDigestGenerationMetadataStore.completedAt(for: journal))
+            }
+        }
+
+        let repaired = try DayDigestGenerationMetadataStore.record(
+            quality: .complete,
+            evidenceLatestAt: evidenceDate,
+            for: journal,
+            generatedAt: time(19))
+        XCTAssertEqual(repaired.degradedAttemptCount, 0)
+        XCTAssertNotNil(DayDigestGenerationMetadataStore.completedAt(for: journal))
     }
 
     func testInvalidFocusOutputFallsBackToNamedActivityWithoutAppMetadata() async throws {

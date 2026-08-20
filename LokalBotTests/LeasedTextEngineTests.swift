@@ -19,7 +19,11 @@ final class LeasedTextEngineTests: XCTestCase {
 
     private actor CallRecorder {
         private(set) var events: [String] = []
-        func record(_ event: String) { events.append(event) }
+        @discardableResult
+        func record(_ event: String) -> Int {
+            events.append(event)
+            return events.filter { $0 == event }.count
+        }
         func count(of event: String) -> Int { events.filter { $0 == event }.count }
     }
 
@@ -70,6 +74,32 @@ final class LeasedTextEngineTests: XCTestCase {
         var displayName: String { "throwing-engine" }
         func generate(system: String, prompt: String, context: [String]) async throws -> String {
             throw TestFailure()
+        }
+    }
+
+    private struct RecoveringEngine: TextEngine {
+        let recorder: CallRecorder
+        let failuresBeforeSuccess: Int
+        var displayName: String { "recovering-engine" }
+
+        func generate(system: String, prompt: String, context: [String]) async throws -> String {
+            let attempt = await recorder.record("recovering-generate")
+            if attempt <= failuresBeforeSuccess {
+                throw TextEngineError.serverUnreachable(
+                    "http://127.0.0.1:17872/v1",
+                    transportCode: URLError.cannotConnectToHost.rawValue)
+            }
+            return "recovered:\(prompt)"
+        }
+    }
+
+    private struct CancellingEngine: TextEngine {
+        let recorder: CallRecorder
+        var displayName: String { "cancelling-engine" }
+
+        func generate(system: String, prompt: String, context: [String]) async throws -> String {
+            await recorder.record("cancelled-generate")
+            throw CancellationError()
         }
     }
 
@@ -175,6 +205,85 @@ final class LeasedTextEngineTests: XCTestCase {
             XCTAssertTrue(error is TestFailure)
         }
         let active = await broker.activeLeaseCount(.mainLLM)
+        XCTAssertEqual(active, 0)
+    }
+
+    func testManagedTransportFailureReleasesReEnsuresAndReplaysOnce() async throws {
+        let recorder = CallRecorder()
+        let broker = makeBroker(recorder: recorder)
+        let engine = LeasedTextEngine(
+            base: RecoveringEngine(recorder: recorder, failuresBeforeSuccess: 1),
+            broker: broker,
+            role: .mainLLM,
+            modelURL: modelURL,
+            priority: .background,
+            purpose: "day digest")
+
+        let reply = try await engine.generate(system: "s", prompt: "p", context: [])
+
+        XCTAssertEqual(reply, "recovered:p")
+        let ensures = await recorder.count(of: "ensure:mainLLM")
+        let calls = await recorder.count(of: "recovering-generate")
+        let active = await broker.activeLeaseCount(.mainLLM)
+        XCTAssertEqual(ensures, 2)
+        XCTAssertEqual(calls, 2)
+        XCTAssertEqual(active, 0)
+    }
+
+    func testManagedTransportRecoveryStopsAfterOneReplay() async {
+        let recorder = CallRecorder()
+        let broker = makeBroker(recorder: recorder)
+        let engine = LeasedTextEngine(
+            base: RecoveringEngine(recorder: recorder, failuresBeforeSuccess: 2),
+            broker: broker,
+            role: .mainLLM,
+            modelURL: modelURL,
+            priority: .background,
+            purpose: "day digest")
+
+        do {
+            _ = try await engine.generate(system: "s", prompt: "p", context: [])
+            XCTFail("expected the replay to exhaust")
+        } catch let error as TextEngineError {
+            guard case .serverUnreachable(_, let code) = error else {
+                return XCTFail("expected serverUnreachable, got \(error)")
+            }
+            XCTAssertEqual(code, URLError.cannotConnectToHost.rawValue)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+        let ensures = await recorder.count(of: "ensure:mainLLM")
+        let calls = await recorder.count(of: "recovering-generate")
+        let active = await broker.activeLeaseCount(.mainLLM)
+        XCTAssertEqual(ensures, 2)
+        XCTAssertEqual(calls, 2)
+        XCTAssertEqual(active, 0)
+    }
+
+    func testCancellationIsNeverReplayed() async {
+        let recorder = CallRecorder()
+        let broker = makeBroker(recorder: recorder)
+        let engine = LeasedTextEngine(
+            base: CancellingEngine(recorder: recorder),
+            broker: broker,
+            role: .mainLLM,
+            modelURL: modelURL,
+            priority: .interactive,
+            purpose: "chat")
+
+        do {
+            _ = try await engine.generate(system: "s", prompt: "p", context: [])
+            XCTFail("expected cancellation")
+        } catch is CancellationError {
+            // expected
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+        let ensures = await recorder.count(of: "ensure:mainLLM")
+        let calls = await recorder.count(of: "cancelled-generate")
+        let active = await broker.activeLeaseCount(.mainLLM)
+        XCTAssertEqual(ensures, 1)
+        XCTAssertEqual(calls, 1)
         XCTAssertEqual(active, 0)
     }
 }

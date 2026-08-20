@@ -17,6 +17,12 @@ import Foundation
 ///   meeting that ends at 19:00 still gets digested the same evening.
 @MainActor
 final class DayDigestScheduler {
+    enum GenerationOutcome: Equatable, Sendable {
+        case completed
+        case deferred
+        case needsRepair
+    }
+
     struct Configuration: Equatable, Sendable {
         var enabled: Bool
         /// Local wall-clock hour (0...23) after which today's digest is
@@ -26,10 +32,10 @@ final class DayDigestScheduler {
         var normalizedHour: Int { min(23, max(0, hour)) }
     }
 
-    /// Generates and persists the digest for the day containing `date`.
-    /// Returns `false` when the day has nothing to digest yet; the scheduler
-    /// retries on a later tick without burning the failure backoff.
-    typealias Generate = @MainActor (Date) async throws -> Bool
+    /// Generates and persists the digest for the day containing `date`. A
+    /// degraded journal remains readable but receives a quiet later repair
+    /// under the same backoff as a failed generation.
+    typealias Generate = @MainActor (Date) async throws -> GenerationOutcome
 
     private let calendar: Calendar
     private let now: () -> Date
@@ -119,11 +125,18 @@ final class DayDigestScheduler {
         generateTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                // `false` means the day is still empty: the journal file is
-                // not written, so the marker stays absent and a later tick
-                // retries once the day has content.
-                _ = try await generate(day)
-                if generation == runGeneration { lastFailure = nil }
+                let outcome = try await generate(day)
+                if generation == runGeneration {
+                    switch outcome {
+                    case .completed, .deferred:
+                        lastFailure = nil
+                    case .needsRepair:
+                        // The fallback/partial journal stays visible. Its
+                        // sidecar keeps the durable completion marker absent,
+                        // and this timestamp prevents a retry every minute.
+                        lastFailure = self.now()
+                    }
+                }
             } catch is CancellationError {
             } catch {
                 if generation == runGeneration {

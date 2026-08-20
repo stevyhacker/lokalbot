@@ -1276,8 +1276,7 @@ final class AppState: ObservableObject {
             digestModifiedAt: { day in
                 let name = DreamDay.key(for: day)
                 let url = storageRoot.appendingPathComponent("journal/\(name).md")
-                let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-                return attributes?[.modificationDate] as? Date
+                return DayDigestGenerationMetadataStore.completedAt(for: url)
             },
             latestEvidenceAt: { [weak self] day in
                 guard let self else { return nil }
@@ -1320,16 +1319,13 @@ final class AppState: ObservableObject {
                 }
                 let screenContexts = self.activityStore.screenContexts(on: day)
                 guard !blocks.isEmpty || !finished.isEmpty || !screenContexts.isEmpty else {
-                    return false
+                    return .deferred
                 }
                 let result = try await self.pipeline.generateDayDigest(
                     for: day, blocks: blocks, meetings: finished,
                     screenContexts: screenContexts,
                     config: self.settings)
-                if let warning = result.summaryWarning {
-                    self.lastError = warning
-                }
-                return true
+                return result.quality.needsRepair ? .needsRepair : .completed
             },
             onError: { [weak self] message in
                 self?.lastError = message

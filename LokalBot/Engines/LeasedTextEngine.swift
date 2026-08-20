@@ -14,14 +14,14 @@ struct LeasedTextEngine: TextEngine {
     var displayName: String { base.displayName }
 
     func generate(system: String, prompt: String, context: [String]) async throws -> String {
-        try await broker.withLease(role, model: modelURL, priority: priority, purpose: purpose) {
+        try await withManagedRecovery {
             try await base.generate(system: system, prompt: prompt, context: context)
         }
     }
 
     func generate(system: String, prompt: String, context: [String],
                   options: TextGenerationOptions) async throws -> String {
-        try await broker.withLease(role, model: modelURL, priority: priority, purpose: purpose) {
+        try await withManagedRecovery {
             try await base.generate(system: system, prompt: prompt, context: context,
                                     options: options)
         }
@@ -29,7 +29,7 @@ struct LeasedTextEngine: TextEngine {
 
     func generate(system: String, prompt: String, context: [String],
                   schema: [String: Any]) async throws -> String {
-        try await broker.withLease(role, model: modelURL, priority: priority, purpose: purpose) {
+        try await withManagedRecovery {
             try await base.generate(system: system, prompt: prompt, context: context,
                                     schema: schema)
         }
@@ -38,7 +38,7 @@ struct LeasedTextEngine: TextEngine {
     func generate(system: String, prompt: String, context: [String],
                   schema: [String: Any],
                   options: TextGenerationOptions) async throws -> String {
-        try await broker.withLease(role, model: modelURL, priority: priority, purpose: purpose) {
+        try await withManagedRecovery {
             try await base.generate(system: system, prompt: prompt, context: context,
                                     schema: schema, options: options)
         }
@@ -54,6 +54,51 @@ struct LeasedTextEngine: TextEngine {
                            onPartial: @escaping @Sendable (String) -> Void) async throws -> String {
         try await broker.withLease(role, model: modelURL, priority: priority, purpose: purpose) {
             try await base.completeStreaming(request, onPartial: onPartial)
+        }
+    }
+
+    /// A managed localhost runtime can disappear after lease acquisition but
+    /// before its HTTP response arrives. Releasing and reacquiring the lease
+    /// runs the broker's existing health/configuration check, which starts a
+    /// replacement server when needed. Generation is side-effect free, so one
+    /// replay is safe; raw/streaming completions deliberately stay single-shot
+    /// because callers may already have displayed partial text.
+    private func withManagedRecovery<T>(
+        _ operation: () async throws -> T
+    ) async throws -> T {
+        do {
+            return try await withLease(operation)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as TextEngineError {
+            guard case .serverUnreachable(_, let transportCode) = error else { throw error }
+            lokalbotLog(
+                "managed inference recovery starting role=\(role.rawValue) "
+                    + "purpose=\(purpose) transportCode=\(transportCode.map(String.init) ?? "unknown")")
+            do {
+                let value = try await withLease(operation)
+                lokalbotLog(
+                    "managed inference recovery succeeded role=\(role.rawValue) purpose=\(purpose)")
+                return value
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lokalbotLog(
+                    "managed inference recovery failed role=\(role.rawValue) "
+                        + "purpose=\(purpose) error=\(error.localizedDescription)")
+                throw error
+            }
+        }
+    }
+
+    private func withLease<T>(_ operation: () async throws -> T) async throws -> T {
+        try await broker.withLease(
+            role,
+            model: modelURL,
+            priority: priority,
+            purpose: purpose
+        ) {
+            try await operation()
         }
     }
 }

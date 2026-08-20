@@ -141,7 +141,7 @@ final class CaptureModel: ObservableObject {
                 atPath: result.url.path)
             digestUpdatedAt = attributes?[.modificationDate] as? Date
             latestDigestEvidenceAt = latestEvidenceDate(app: app)
-            digestError = result.summaryWarning
+            digestError = nil
         } catch {
             guard digestGeneration == generation else { return }
             digestError = error.localizedDescription

@@ -79,7 +79,7 @@ enum OpenRouterReasoningCompatibility: Equatable, Sendable {
 }
 
 enum TextEngineError: LocalizedError, Sendable {
-    case serverUnreachable(String)
+    case serverUnreachable(String, transportCode: Int?)
     case badResponse(String)
     case outputTruncated
     case httpStatus(code: Int, detail: String, retryAfter: TimeInterval?)
@@ -88,7 +88,7 @@ enum TextEngineError: LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .serverUnreachable(let base):
+        case .serverUnreachable(let base, _):
             "Can't reach \(base). Verify that the configured LLM server is available."
         case .badResponse(let detail):
             "LLM server error: \(detail)"
@@ -290,7 +290,13 @@ func cotypingCompletionSend(_ request: URLRequest, base: URL) async throws -> (D
     } catch let error as URLError where error.code == .cancelled {
         throw error
     } catch {
-        throw TextEngineError.serverUnreachable(base.absoluteString)
+        let diagnostic = error as NSError
+        lokalbotLog(
+            "text engine transport failure host=\(base.host ?? "unknown") "
+                + "domain=\(diagnostic.domain) code=\(diagnostic.code)")
+        throw TextEngineError.serverUnreachable(
+            base.absoluteString,
+            transportCode: diagnostic.code)
     }
 }
 
@@ -877,6 +883,12 @@ private func send(_ request: URLRequest, base: URL) async throws -> (Data, URLRe
         // difference.
         throw CancellationError()
     } catch {
-        throw TextEngineError.serverUnreachable(base.absoluteString)
+        let diagnostic = error as NSError
+        lokalbotLog(
+            "text engine transport failure host=\(base.host ?? "unknown") "
+                + "domain=\(diagnostic.domain) code=\(diagnostic.code)")
+        throw TextEngineError.serverUnreachable(
+            base.absoluteString,
+            transportCode: diagnostic.code)
     }
 }

@@ -118,7 +118,9 @@ final class ChatStoreTests: XCTestCase {
         XCTAssertFalse(download.contains("raw transport details"))
 
         let remote = ChatViewModel.friendlyFailureMessage(
-            for: TextEngineError.serverUnreachable("http://127.0.0.1:11434"))
+            for: TextEngineError.serverUnreachable(
+                "http://127.0.0.1:11434",
+                transportCode: nil))
         XCTAssertTrue(remote.contains("could not be reached"))
         XCTAssertFalse(remote.contains("127.0.0.1"))
 

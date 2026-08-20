@@ -59,6 +59,15 @@ struct DayDigestEvidence: Equatable, Sendable {
         activities.isEmpty && standaloneContexts.isEmpty && meetings.isEmpty
     }
 
+    var latestEvidenceAt: Date? {
+        let activityEnd = activities.map(\.end).max()
+        let contextCapture = standaloneContexts.map(\.capturedAt).max()
+        let meetingEnd = meetings.map(\.endedAt).max()
+        return [activityEnd, contextCapture, meetingEnd]
+            .compactMap { $0 }
+            .max()
+    }
+
     static func build(
         day: Date,
         blocks: [ActivityBlock],
@@ -662,6 +671,19 @@ enum DayDigestTextSimilarity {
     }
 }
 
+enum DayDigestGenerationQuality: String, Codable, Equatable, Sendable {
+    case complete
+    case partial
+    case fallback
+
+    var needsRepair: Bool { self != .complete }
+}
+
+struct DayDigestOverviewGeneration: Equatable, Sendable {
+    var summary: String
+    var quality: DayDigestGenerationQuality
+}
+
 /// Converts deterministic, gap-aware evidence segments into the compact
 /// human layer shown above the lossless journal. A first model pass rejects
 /// metadata-only segments and extracts structured work candidates. A second
@@ -744,8 +766,25 @@ enum DayDigestOverviewGenerator {
         customPrompt: String,
         calendar: Calendar = .current
     ) async throws -> String {
+        try await generateResult(
+            evidence: evidence,
+            engine: engine,
+            customPrompt: customPrompt,
+            calendar: calendar).summary
+    }
+
+    static func generateResult(
+        evidence: DayDigestEvidence,
+        engine: TextEngine,
+        customPrompt: String,
+        calendar: Calendar = .current
+    ) async throws -> DayDigestOverviewGeneration {
         let segments = evidence.summarySegments()
-        guard !segments.isEmpty else { return fallback(evidence) }
+        guard !segments.isEmpty else {
+            return DayDigestOverviewGeneration(
+                summary: fallback(evidence),
+                quality: .complete)
+        }
         let ranges = segments.map {
             "\(time($0.start, calendar: calendar))-\(time($0.end, calendar: calendar))"
         }.joined(separator: ",")
@@ -758,10 +797,11 @@ enum DayDigestOverviewGenerator {
         ]
         var substantiveBlocks: [DayDigestGeneratedFocusBlock] = []
         var fallbackBlocks: [DayDigestGeneratedFocusBlock] = []
+        var degraded = false
         substantiveBlocks.reserveCapacity(segments.count)
         fallbackBlocks.reserveCapacity(segments.count)
 
-        for (index, segment) in segments.enumerated() {
+        segmentLoop: for (index, segment) in segments.enumerated() {
             try Task.checkCancellation()
             let startedAt = Date()
             let focusPrompt = """
@@ -774,41 +814,56 @@ enum DayDigestOverviewGenerator {
             var attempts = 1
             var output: String
             do {
-                output = try await engine.generate(
-                    system: PromptTemplates.dayDigestFocusSystem,
-                    prompt: focusPrompt,
-                    context: dateContext,
-                    schema: focusSchema,
-                    options: TextGenerationOptions(
-                        maxTokens: 768,
-                        reasoningBudgetTokens: 256,
-                        temperature: 0.2))
-            } catch TextEngineError.outputTruncated {
-                attempts = 2
-                let retryStartedAt = Date()
                 do {
                     output = try await engine.generate(
                         system: PromptTemplates.dayDigestFocusSystem,
-                        prompt: focusRetryPrompt + "\n\n" + focusPrompt,
+                        prompt: focusPrompt,
                         context: dateContext,
                         schema: focusSchema,
                         options: TextGenerationOptions(
-                            maxTokens: 1_600,
-                            reasoningBudgetTokens: 0,
-                            temperature: 0))
-                    lokalbotLog(
-                        "day digest segment retry index=\(index + 1) "
-                            + "reason=output-limit elapsed="
-                            + String(format: "%.2fs", Date().timeIntervalSince(retryStartedAt)))
-                } catch is CancellationError {
-                    throw CancellationError()
+                            maxTokens: 768,
+                            reasoningBudgetTokens: 256,
+                            temperature: 0.2))
                 } catch TextEngineError.outputTruncated {
-                    lokalbotLog(
-                        "day digest segment retry exhausted index=\(index + 1) "
-                            + "reason=output-limit elapsed="
-                            + String(format: "%.2fs", Date().timeIntervalSince(retryStartedAt)))
-                    continue
+                    attempts = 2
+                    let retryStartedAt = Date()
+                    do {
+                        output = try await engine.generate(
+                            system: PromptTemplates.dayDigestFocusSystem,
+                            prompt: focusRetryPrompt + "\n\n" + focusPrompt,
+                            context: dateContext,
+                            schema: focusSchema,
+                            options: TextGenerationOptions(
+                                maxTokens: 1_600,
+                                reasoningBudgetTokens: 0,
+                                temperature: 0))
+                        lokalbotLog(
+                            "day digest segment retry index=\(index + 1) "
+                                + "reason=output-limit elapsed="
+                                + String(
+                                    format: "%.2fs",
+                                    Date().timeIntervalSince(retryStartedAt)))
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch TextEngineError.outputTruncated {
+                        degraded = true
+                        lokalbotLog(
+                            "day digest segment retry exhausted index=\(index + 1) "
+                                + "reason=output-limit elapsed="
+                                + String(
+                                    format: "%.2fs",
+                                    Date().timeIntervalSince(retryStartedAt)))
+                        continue segmentLoop
+                    }
                 }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                degraded = true
+                lokalbotLog(
+                    "day digest segment generation stopped index=\(index + 1) "
+                        + "error=\(error.localizedDescription)")
+                break segmentLoop
             }
             var parsed = parseFocus(output, segment: segment)
             if parsed == nil,
@@ -844,11 +899,17 @@ enum DayDigestOverviewGenerator {
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {
+                    degraded = true
                     lokalbotLog(
                         "day digest segment retry index=\(index + 1) error="
                             + error.localizedDescription)
+                    if let engineError = error as? TextEngineError,
+                       case .serverUnreachable = engineError {
+                        break segmentLoop
+                    }
                 }
             }
+            if parsed == nil { degraded = true }
             if let parsed, let block = parsed.block {
                 if parsed.isSubstantive {
                     substantiveBlocks.append(block)
@@ -868,7 +929,11 @@ enum DayDigestOverviewGenerator {
 
         let usesBestAvailableActivity = substantiveBlocks.isEmpty
         let selectedBlocks = usesBestAvailableActivity ? fallbackBlocks : substantiveBlocks
-        guard !selectedBlocks.isEmpty else { return fallback(evidence) }
+        guard !selectedBlocks.isEmpty else {
+            return DayDigestOverviewGeneration(
+                summary: fallback(evidence),
+                quality: degraded ? .fallback : .complete)
+        }
 
         let digest: DigestDraft?
         let digestStartedAt = Date()
@@ -924,17 +989,21 @@ enum DayDigestOverviewGenerator {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
+            degraded = true
             lokalbotLog(
                 "day digest task aggregation fallback error=\(error.localizedDescription)")
             digest = nil
         }
+        if digest == nil { degraded = true }
         lokalbotLog(
             "day digest task aggregation mode="
                 + "\(usesBestAvailableActivity ? "best-available" : "substantive") "
                 + "parsed=\(digest != nil) elapsed="
                 + String(format: "%.2fs", Date().timeIntervalSince(digestStartedAt)))
 
-        return render(blocks: selectedBlocks, draft: digest)
+        return DayDigestOverviewGeneration(
+            summary: render(blocks: selectedBlocks, draft: digest),
+            quality: degraded ? .partial : .complete)
     }
 
     private static let focusRetryPrompt = """
@@ -1418,6 +1487,93 @@ enum DayDigestOverviewGenerator {
     }
 }
 
+struct DayDigestGenerationMetadata: Codable, Equatable, Sendable {
+    static let currentVersion = 1
+
+    var version: Int
+    var quality: DayDigestGenerationQuality
+    var generatedAt: Date
+    var journalModifiedAt: Date
+    var evidenceLatestAt: Date?
+    var degradedAttemptCount: Int
+}
+
+enum DayDigestGenerationMetadataStore {
+    static let maximumDegradedAttempts = 3
+
+    static func metadataURL(for journalURL: URL) -> URL {
+        journalURL.deletingPathExtension().appendingPathExtension("meta.json")
+    }
+
+    static func load(for journalURL: URL) -> DayDigestGenerationMetadata? {
+        let url = metadataURL(for: journalURL)
+        guard let data = try? Data(contentsOf: url),
+              let metadata = try? JSONDecoder().decode(
+                DayDigestGenerationMetadata.self,
+                from: data),
+              metadata.version == DayDigestGenerationMetadata.currentVersion
+        else { return nil }
+        return metadata
+    }
+
+    /// Records whether this journal still needs a model-backed repair. Repeated
+    /// degraded writes for unchanged evidence increment a durable budget so a
+    /// persistently crashing model cannot be relaunched forever.
+    @discardableResult
+    static func record(
+        quality: DayDigestGenerationQuality,
+        evidenceLatestAt: Date?,
+        for journalURL: URL,
+        generatedAt: Date = Date()
+    ) throws -> DayDigestGenerationMetadata {
+        let previous = load(for: journalURL)
+        let sameEvidence = previous?.evidenceLatestAt == evidenceLatestAt
+        let degradedAttemptCount: Int
+        if quality.needsRepair {
+            let previousCount = previous?.quality.needsRepair == true && sameEvidence
+                ? previous?.degradedAttemptCount ?? 0
+                : 0
+            degradedAttemptCount = min(
+                maximumDegradedAttempts,
+                previousCount + 1)
+        } else {
+            degradedAttemptCount = 0
+        }
+        let attributes = try FileManager.default.attributesOfItem(
+            atPath: journalURL.path)
+        let journalModifiedAt = attributes[.modificationDate] as? Date ?? generatedAt
+        let metadata = DayDigestGenerationMetadata(
+            version: DayDigestGenerationMetadata.currentVersion,
+            quality: quality,
+            generatedAt: generatedAt,
+            journalModifiedAt: journalModifiedAt,
+            evidenceLatestAt: evidenceLatestAt,
+            degradedAttemptCount: degradedAttemptCount)
+        let data = try JSONEncoder().encode(metadata)
+        try data.write(to: metadataURL(for: journalURL), options: .atomic)
+        return metadata
+    }
+
+    /// Legacy or externally edited journals keep their modification-time
+    /// semantics. A matching degraded sidecar returns nil while a bounded quiet
+    /// repair is still eligible, making the scheduler treat it as unfinished.
+    static func completedAt(for journalURL: URL) -> Date? {
+        guard let attributes = try? FileManager.default.attributesOfItem(
+            atPath: journalURL.path),
+              let modifiedAt = attributes[.modificationDate] as? Date
+        else { return nil }
+        guard let metadata = load(for: journalURL) else { return modifiedAt }
+        let sidecarMatchesJournal = abs(
+            metadata.journalModifiedAt.timeIntervalSince(modifiedAt)) < 0.5
+        guard sidecarMatchesJournal else { return modifiedAt }
+        if metadata.quality.needsRepair,
+           metadata.degradedAttemptCount < maximumDegradedAttempts {
+            return nil
+        }
+        return modifiedAt
+    }
+}
+
 enum DayDigestFreshness {
     static func isStale(digestModifiedAt: Date?, latestEvidenceAt: Date?) -> Bool {
         guard let digestModifiedAt, let latestEvidenceAt else { return false }
@@ -1428,5 +1584,5 @@ enum DayDigestFreshness {
 struct DayDigestGenerationResult {
     var text: String
     var url: URL
-    var summaryWarning: String?
+    var quality: DayDigestGenerationQuality
 }

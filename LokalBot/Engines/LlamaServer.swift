@@ -76,6 +76,7 @@ actor LlamaServer {
     }
 
     private var process: Process?
+    private var processStartedAt: Date?
     private var loadedModelPath: String?
     private var loadedAuthenticationToken: String?
     private var residencyGeneration: UUID?
@@ -246,10 +247,18 @@ actor LlamaServer {
             process.standardError = FileHandle.nullDevice
             process.terminationHandler = { [weak self] process in
                 let processIdentifier = process.processIdentifier
-                Task { await self?.processDidTerminate(processIdentifier) }
+                let status = process.terminationStatus
+                let reason = process.terminationReason == .exit ? "exit" : "signal"
+                Task {
+                    await self?.processDidTerminate(
+                        processIdentifier,
+                        status: status,
+                        reason: reason)
+                }
             }
             try process.run()
             self.process = process
+            processStartedAt = Date()
             loadedModelPath = url.path
             loadedAuthenticationToken = authenticationToken
             writePidMarker(LocalLlamaServerMarker(
@@ -301,6 +310,7 @@ actor LlamaServer {
         let old = process
         let generation = residencyGeneration
         process = nil
+        processStartedAt = nil
         loadedModelPath = nil
         loadedAuthenticationToken = nil
         residencyGeneration = nil
@@ -332,10 +342,26 @@ actor LlamaServer {
         }
     }
 
-    private func processDidTerminate(_ processIdentifier: pid_t) async {
+    private func processDidTerminate(
+        _ processIdentifier: pid_t,
+        status: Int32,
+        reason: String
+    ) async {
         guard process?.processIdentifier == processIdentifier else { return }
+        let uptime = processStartedAt.map { Date().timeIntervalSince($0) }
+        let model = loadedModelPath.map {
+            URL(fileURLWithPath: $0).lastPathComponent
+        } ?? "unknown"
+        let uptimeDescription = uptime.map {
+            String(format: "%.2fs", $0)
+        } ?? "unknown"
+        lokalbotLog(
+            "llama-server terminated unexpectedly port=\(port) pid=\(processIdentifier) "
+                + "model=\(model) reason=\(reason) status=\(status) uptime="
+                + uptimeDescription)
         let generation = residencyGeneration
         process = nil
+        processStartedAt = nil
         loadedModelPath = nil
         loadedAuthenticationToken = nil
         residencyGeneration = nil

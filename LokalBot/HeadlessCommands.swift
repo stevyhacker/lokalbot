@@ -224,9 +224,6 @@ struct HeadlessCommandRunner {
                 print("LokalBot --digest: model=\(config.builtInModelID) "
                       + "day=\(DreamDay.key(for: day)) \(result.url.path) "
                       + "(\(result.text.count) chars)")
-                if let warning = result.summaryWarning {
-                    print("LokalBot --digest: WARNING — \(warning)")
-                }
                 await LlamaServer.shared.stop()
                 exit(0)
             } catch {

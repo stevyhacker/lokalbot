@@ -127,11 +127,42 @@ final class DayDigestSchedulerTests: XCTestCase {
             canRun: { true },
             generate: { _ in
                 generated.fulfill()
-                return false
+                return .deferred
             },
             onError: { _ in unexpectedError.fulfill() })
 
         await fulfillment(of: [generated], timeout: 2)
+        await fulfillment(of: [unexpectedError], timeout: 0.1)
+        scheduler.stop()
+    }
+
+    @MainActor
+    func testDegradedDigestUsesQuietFailureBackoff() async throws {
+        let current = try date("2026-07-21T18:00:00Z")
+        let scheduler = DayDigestScheduler(calendar: calendar, now: { current })
+        let generated = expectation(description: "degraded digest generated")
+        let unexpectedError = expectation(description: "degraded digest surfaced an error")
+        unexpectedError.isInverted = true
+        var calls = 0
+
+        scheduler.configure(
+            .init(enabled: true, hour: 18),
+            digestModifiedAt: { _ in nil },
+            latestEvidenceAt: { _ in current },
+            canRun: { true },
+            generate: { _ in
+                calls += 1
+                generated.fulfill()
+                return .needsRepair
+            },
+            onError: { _ in unexpectedError.fulfill() })
+
+        await fulfillment(of: [generated], timeout: 2)
+        try await Task.sleep(for: .milliseconds(100))
+        scheduler.tick()
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(calls, 1)
         await fulfillment(of: [unexpectedError], timeout: 0.1)
         scheduler.stop()
     }
@@ -169,7 +200,7 @@ final class DayDigestSchedulerTests: XCTestCase {
             digestModifiedAt: { _ in nil },
             latestEvidenceAt: { _ in nil },
             canRun: { true },
-            generate: { _ in false },
+            generate: { _ in .deferred },
             onError: { _ in unexpectedError.fulfill() })
         await fulfillment(of: [cancelled], timeout: 2)
         await fulfillment(of: [unexpectedError], timeout: 0.1)

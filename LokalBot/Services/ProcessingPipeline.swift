@@ -407,6 +407,15 @@ final class ProcessingPipeline: ObservableObject {
                     do {
                         summary = try await summarize(transcript, meeting: meeting, config: config)
                     } catch {
+                        // The built-in engine has already health-checked,
+                        // relaunched, and replayed once inside LeasedTextEngine.
+                        // Do not turn one exhausted recovery into four process
+                        // starts through this provider-level retry as well.
+                        if config.summarizerBackend == .builtIn,
+                           let engineError = error as? TextEngineError,
+                           case .serverUnreachable = engineError {
+                            throw error
+                        }
                         guard let delay = TextEngineRetryPolicy.delay(
                             for: error, attempt: 0) else { throw error }
                         // One bounded retry for transient network, rate-limit,
@@ -757,36 +766,45 @@ final class ProcessingPipeline: ObservableObject {
             screenContexts: screenContexts,
             meetings: dayMeetingEvidence(meetings))
 
-        var warning: String?
-        let summary: String
+        let overview: DayDigestOverviewGeneration
         if evidence.isEmpty {
-            summary = DayDigestOverviewGenerator.fallback(evidence)
+            overview = DayDigestOverviewGeneration(
+                summary: DayDigestOverviewGenerator.fallback(evidence),
+                quality: .complete)
         } else {
             do {
                 try Task.checkCancellation()
                 let engine = try await makeTextEngine(config, purpose: "day digest")
-                summary = try await generateDayOverview(
+                overview = try await generateDayOverview(
                     evidence: evidence,
                     engine: engine,
                     customPrompt: config.dayDigestCustomPrompt)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                warning = "The detailed overview could not be generated: "
-                    + error.localizedDescription
-                    + " The complete chronological log was still saved."
-                summary = DayDigestOverviewGenerator.fallback(evidence)
+                lokalbotLog(
+                    "day digest overview fallback error=\(error.localizedDescription)")
+                overview = DayDigestOverviewGeneration(
+                    summary: DayDigestOverviewGenerator.fallback(evidence),
+                    quality: .fallback)
             }
         }
 
         try Task.checkCancellation()
-        let text = evidence.renderDocument(summary: summary)
+        let text = evidence.renderDocument(summary: overview.summary)
         let name = DreamDay.key(for: day)
         let url = storage.rootURL.appendingPathComponent("journal/\(name).md")
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try text.write(to: url, atomically: true, encoding: .utf8)
-        return DayDigestGenerationResult(text: text, url: url, summaryWarning: warning)
+        try DayDigestGenerationMetadataStore.record(
+            quality: overview.quality,
+            evidenceLatestAt: evidence.latestEvidenceAt,
+            for: url)
+        return DayDigestGenerationResult(
+            text: text,
+            url: url,
+            quality: overview.quality)
     }
 
     /// Code owns evidence coverage and persistence. The model rejects
@@ -795,8 +813,8 @@ final class ProcessingPipeline: ObservableObject {
         evidence: DayDigestEvidence,
         engine: TextEngine,
         customPrompt: String
-    ) async throws -> String {
-        try await DayDigestOverviewGenerator.generate(
+    ) async throws -> DayDigestOverviewGeneration {
+        try await DayDigestOverviewGenerator.generateResult(
             evidence: evidence,
             engine: engine,
             customPrompt: customPrompt)
