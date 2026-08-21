@@ -1,4 +1,12 @@
-import { Action, ActionPanel, Icon, List, Toast, showToast, open } from "@raycast/api";
+import {
+  Action,
+  ActionPanel,
+  Icon,
+  List,
+  Toast,
+  showToast,
+  open,
+} from "@raycast/api";
 import { useEffect, useState } from "react";
 import type { LaunchProps } from "@raycast/api";
 import { CliMissingError, runCli, runCliPath } from "./cli";
@@ -12,11 +20,17 @@ interface SearchHit {
 
 /** Strip markdown heading hashes and collapse whitespace for list display. */
 function cleanSnippet(snippet: string): string {
-  return snippet.replace(/^#+\s*/gm, "").replace(/\s+/g, " ").trim();
+  return snippet
+    .replace(/^#+\s*/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function reveal(meetingId: string) {
-  const toast = await showToast({ style: Toast.Style.Animated, title: "Locating meeting…" });
+  const toast = await showToast({
+    style: Toast.Style.Animated,
+    title: "Locating meeting…",
+  });
   try {
     const folder = await runCliPath("path", meetingId);
     if (folder) {
@@ -33,7 +47,9 @@ async function reveal(meetingId: string) {
   }
 }
 
-export default function Command(props: LaunchProps<{ arguments: { query: string } }>) {
+export default function Command(
+  props: LaunchProps<{ arguments: { query: string } }>,
+) {
   const query = props.arguments.query;
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [missing, setMissing] = useState(false);
@@ -90,7 +106,10 @@ export default function Command(props: LaunchProps<{ arguments: { query: string 
                   icon={Icon.Finder}
                   onAction={() => reveal(hit.meeting_id)}
                 />
-                <Action.CopyToClipboard title="Copy Snippet" content={hit.snippet} />
+                <Action.CopyToClipboard
+                  title="Copy Snippet"
+                  content={hit.snippet}
+                />
               </ActionPanel>
             }
           />

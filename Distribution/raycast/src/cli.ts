@@ -4,7 +4,8 @@ import { getPreferenceValues } from "@raycast/api";
 
 const execFileAsync = promisify(execFile);
 
-export const FALLBACK_CLI = "/Applications/LokalBot.app/Contents/Helpers/lokalbot-cli";
+export const FALLBACK_CLI =
+  "/Applications/LokalBot.app/Contents/Helpers/lokalbot-cli";
 
 interface Preferences {
   cliPath: string;
@@ -48,7 +49,9 @@ export async function runCli<T>(...args: string[]): Promise<T> {
       "Install LokalBot — https://github.com/stevyhacker/lokalbot/releases",
     );
   }
-  const { stdout } = await execFileAsync(cli, args, { maxBuffer: 32 * 1024 * 1024 });
+  const { stdout } = await execFileAsync(cli, args, {
+    maxBuffer: 32 * 1024 * 1024,
+  });
   return JSON.parse(stdout) as T;
 }
 

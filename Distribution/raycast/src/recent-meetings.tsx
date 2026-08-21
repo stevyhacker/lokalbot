@@ -1,4 +1,12 @@
-import { Action, ActionPanel, Icon, List, Toast, showToast, open } from "@raycast/api";
+import {
+  Action,
+  ActionPanel,
+  Icon,
+  List,
+  Toast,
+  showToast,
+  open,
+} from "@raycast/api";
 import { useEffect, useState } from "react";
 import { CliMissingError, runCli, runCliPath } from "./cli";
 
@@ -53,7 +61,10 @@ export default function Command() {
   }, []);
 
   async function reveal(meetingId: string) {
-    const toast = await showToast({ style: Toast.Style.Animated, title: "Locating meeting…" });
+    const toast = await showToast({
+      style: Toast.Style.Animated,
+      title: "Locating meeting…",
+    });
     try {
       const folder = await runCliPath("path", meetingId);
       if (folder) {
@@ -86,10 +97,16 @@ export default function Command() {
       {error ? (
         <List.EmptyView title="Failed to load meetings" description={error} />
       ) : meetings !== null && meetings.length === 0 ? (
-        <List.EmptyView title="No meetings yet" description="Capture your first meeting with LokalBot." />
+        <List.EmptyView
+          title="No meetings yet"
+          description="Capture your first meeting with LokalBot."
+        />
       ) : (
         meetings?.map((meeting) => {
-          const flags = [meeting.has_transcript ? "T" : "", meeting.has_summary ? "S" : ""]
+          const flags = [
+            meeting.has_transcript ? "T" : "",
+            meeting.has_summary ? "S" : "",
+          ]
             .filter(Boolean)
             .join("/");
           return (
