@@ -17,6 +17,8 @@ cask "lokalbot" do
   depends_on arch: :arm64
   depends_on macos: :sequoia
 
+  app "LokalBot.app"
+
   zap trash: [
     "~/Library/Application Support/me.dotenv.LokalBot",
     "~/Library/Preferences/me.dotenv.LokalBot.plist",
