@@ -2,8 +2,7 @@ cask "lokalbot" do
   version "0.6.2"
   sha256 "17817f2cae9beb5c14a43aedad98bd6d51c9985261414791e73c1b30df173842"
 
-  url "https://github.com/stevyhacker/lokalbot/releases/download/v#{version}/LokalBot.dmg",
-      verified: "github.com/stevyhacker/lokalbot/"
+  url "https://github.com/stevyhacker/lokalbot/releases/download/v#{version}/LokalBot.dmg"
   name "LokalBot"
   desc "Local LLM workhorse that keeps a private memory of your workday"
   homepage "https://www.lokalbot.com/"
