@@ -39,14 +39,17 @@ Expected results:
 | `brew style …` | `1 file inspected, no offenses detected` |
 | `brew info …` | shows `lokalbot (LokalBot): 0.6.2 (auto_updates)`, the desc, and `Required: arm64 architecture, macOS >= 15` |
 | `brew livecheck …` | shows `0.6.2 ==> 0.6.2` |
-| `brew audit …` | exits 0 silently (downloads the ~55 MB DMG, verifies sha256, checks signing) |
+| `brew audit …` | must exit 0 before an upstream submission can proceed (downloads the ~55 MB DMG, verifies sha256, checks signing and policy eligibility) |
 
 Verified on this machine: `ruby -c`, `brew style`, `brew info`, and
 `brew livecheck local/scratch/lokalbot` (`0.6.2 ==> 0.6.2`, proving the
-`:github_releases` strategy resolves the version). The full audit was blocked
-by an environment issue — Homebrew's signature-verification step requires a
-newer Xcode than installed ("Your Xcode (26.6) is too outdated") — so the
-sha256 was verified manually instead:
+`:github_releases` strategy resolves the version). A clean install put
+`LokalBot.app` in `/Applications`; Gatekeeper accepted the notarized Developer
+ID app; uninstall removed it; and the previous installation was restored
+byte-for-byte. The full local audit was blocked because Homebrew's current
+toolchain requires Xcode 27 while this machine has Xcode 26.6. Hosted CI did
+run the audit and rejected the upstream submission on Homebrew's notability
+policy. The sha256 was also verified independently:
 
 ```sh
 curl -sLO https://github.com/stevyhacker/lokalbot/releases/download/v0.6.2/LokalBot.dmg
@@ -61,6 +64,15 @@ brew untap local/scratch
 ```
 
 ## 2. Submit upstream to Homebrew/homebrew-cask
+
+**Current status (2026-08-21): blocked by upstream policy.** Draft PR
+[#282446](https://github.com/Homebrew/homebrew-cask/pull/282446) was closed by
+automation because Homebrew requires the account owner to read and complete its
+current PR template personally. Hosted audit also reports that the
+self-submitted repository does not meet the current notability threshold. The
+deprecated `verified:` stanza reported in the same run has been removed, but
+that code fix cannot address notability. Keep the own tap below as the shipping
+path until the project has enough adoption to pass a fresh audit.
 
 Follow both [CONTRIBUTING.md](https://github.com/Homebrew/homebrew-cask/blob/HEAD/CONTRIBUTING.md)
 and the maintained [pull-request guide](https://docs.brew.sh/How-To-Open-a-Homebrew-Pull-Request#cask-related-pull-request).
@@ -119,17 +131,18 @@ Steps:
 
 ### Realistic risk: notability
 
-`homebrew/cask` applies an acceptance bar and routinely challenges or closes
-PRs for apps without meaningful adoption (a ~30-star repo will draw the
-question). Prepare one paragraph up front pointing at concrete traction
-(downloads, users, coverage) and link it in the PR body. If maintainers close
-it as not notable, do not relitigate — use the tap fallback below. The cask
-file itself needs zero changes to live there.
+`homebrew/cask` applies an acceptance bar to self-submitted apps. On 2026-08-21
+its hosted audit reported: fewer than 90 forks, fewer than 90 watchers, and
+fewer than 225 stars. Do not relitigate or manufacture traction. Re-run the
+current audit after real adoption clears the policy, then have the account
+owner personally complete Homebrew's current template and answer maintainer
+questions.
 
-## 3. Fallback: own tap
+## 3. Shipping path: own tap
 
-If upstream declines, ship via `stevyhacker/homebrew-tap`. Repo layout is
-minimal — just the cask at the root of the default branch:
+The public tap is live at
+[`stevyhacker/homebrew-tap`](https://github.com/stevyhacker/homebrew-tap).
+Repo layout is minimal — just the cask at the root of the default branch:
 
 ```
 homebrew-tap/

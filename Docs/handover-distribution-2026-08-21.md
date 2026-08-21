@@ -1,20 +1,40 @@
 # Handover: distribution launch tasks (for Codex)
 
-_Date: 2026-08-21. The distribution batch is committed locally as `c7f863138c4ba187663c75c4685a8f0075a45842`; the repair pass described below is currently an unstaged working-tree diff. Neither the commit nor the repairs are on `origin/master`._
-_Repo: `stevyhacker/lokalbot`. Verified machine state: `gh` is authenticated as **stevyhacker** with SSH git protocol and `repo` scope; `claude` is installed; `hf` 1.28.0 is installed through `uv` and authenticated as **stevyhacker**; Raycast.app is installed._
+_Date: 2026-08-21. The distribution implementation and repair commits are on `origin/master`; this document now records the executed result rather than an unpushed starting state._
+_Repo: `stevyhacker/lokalbot`. Verified machine state: `gh` is authenticated as **stevyhacker** with SSH git protocol and `repo` scope; `claude` is installed; `hf` 1.28.0 is installed through `uv` and authenticated as **stevyhacker** with a token that cannot create a Collection or Space; Raycast is authenticated as **stevan_bogosavljevic**._
 
-## State you inherit
+## Execution update
+
+| Task | Result on 2026-08-21 |
+| --- | --- |
+| Repository integration | Distribution commits `91e2b46`, `83549ee`, `de810a8`, `9b8e82d`, `67ba763`, `5c32843`, `9c8538a`, and `c0e5039` are on `origin/master`. Unrelated `Video/` and `script/` work remains untouched. |
+| Own Homebrew tap | Complete: [`stevyhacker/homebrew-tap`](https://github.com/stevyhacker/homebrew-tap) serves LokalBot 0.6.2 with sha256 `17817f2cae9beb5c14a43aedad98bd6d51c9985261414791e73c1b30df173842`. Clean install, signature, Gatekeeper, and uninstall checks passed; the previous `/Applications/LokalBot.app` was restored byte-for-byte. Tap head: `eb34397`. |
+| Upstream Homebrew cask | Blocked by policy: draft [PR #282446](https://github.com/Homebrew/homebrew-cask/pull/282446) was closed until the account owner personally completes the current template. Hosted audit also rejects the self-submission as below the current notability threshold. The separate deprecated-`verified:` finding is fixed on fork branch head `fdef914ed14`. Do not claim this task accepted or CI-green. |
+| Claude Code plugin | `claude plugin validate .`, public marketplace installation in a clean scratch project, namespaced command discovery, and MCP initialization passed. The community-directory form redirects to Anthropic login, so account login/2FA and the final form submission remain owner-gated. |
+| Console.dev | Pitch sent to `hello@console.dev` after re-checking the current selection criteria and newsletter cadence. |
+| skills.sh | Public-repo discovery and a clean `npx skills add stevyhacker/lokalbot --skill lokalbot-cli --agent codex -y` install passed. The listing is live at <https://www.skills.sh/stevyhacker/lokalbot/lokalbot-cli>, and the README badge is published. |
+| Uneed / DevHunt | Uneed has the public product name and repo URL staged but not previewed/submitted. DevHunt is at its login page. Both require live owner confirmation/authentication before the external forms can continue. |
+| Hugging Face | All referenced model repos and quant filenames were re-verified. Idempotent Collection/Space creation plus deterministic static-Space rendering is committed as `c0e5039`. The installed token is not write-capable; the signed-in web forms are ready, but public creation/upload remains owner-confirmation-gated. No third-party weights were uploaded. |
+| Raycast | Store submission [PR #30399](https://github.com/raycast/extensions/pull/30399) is open and ready for review. Both commands passed lint/build and an in-app synthetic-data test; changelog and core hosted checks pass. No private meeting data was used for validation. |
+
+## Artifact state
 
 | Artifact | Path | Local status |
 | --- | --- | --- |
-| Cask v0.6.2 (sha256 verified) + tap guide | `Distribution/homebrew/` | base commit + unstaged repair |
-| Raycast extension | `Distribution/raycast/` | base commit + unstaged repair |
-| Claude Code plugin + `/lokalbot:recall` | `.claude-plugin/`, `Distribution/claude-plugin/` | base commit + unstaged repair |
-| HF collection/Space specs + benchmark data | `Distribution/huggingface/` | base commit + unstaged repair |
-| Submission copy | `Docs/distribution-submissions-2026-08.md` | base commit + unstaged repair |
-| Shared privacy/namespace guidance | `.agents/skills/lokalbot-cli/SKILL.md`, `README.md`, `.gitignore` | unstaged repair |
+| Cask v0.6.2 (sha256 verified) + tap guide | `Distribution/homebrew/` | committed and published; upstream-policy status recorded |
+| Raycast extension | `Distribution/raycast/` | committed; Store PR open for review |
+| Claude Code plugin + `/lokalbot:recall` | `.claude-plugin/`, `Distribution/claude-plugin/` | committed; public install verified; directory form awaiting owner login |
+| HF collection/Space specs + benchmark data | `Distribution/huggingface/` | committed; publication automation verified; public objects not yet created |
+| Submission copy | `Docs/distribution-submissions-2026-08.md` | committed; Console pitch sent; remaining forms owner-gated |
+| Shared privacy/namespace guidance | `.agents/skills/lokalbot-cli/SKILL.md`, `README.md`, `.gitignore` | committed; skills.sh listing and badge live |
 
-Before any public task:
+## Retained runbook
+
+The original procedure remains below for reproducibility. Do not repeat a task
+already marked complete in the execution table; re-check current policy and
+external state before resuming a blocked task.
+
+Before any future public task:
 
 1. Run `git status --short` and review the complete repair diff. Preserve every unrelated untracked file.
 2. This handover is **not** authorization to commit, push, create a public repository, open a PR, send email, publish an extension, or submit a form. Require an explicit owner instruction for each public action or an instruction that clearly authorizes the complete launch sequence.
