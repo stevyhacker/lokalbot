@@ -253,6 +253,8 @@ lokalbot-cli mcp        # stdio MCP: meeting tools + separately gated screen-mem
 
 Agent skill: [SKILL.md](.agents/skills/lokalbot-cli/SKILL.md) · architecture, headless flags, testing, and on-disk layout: [DEVELOPMENT.md](DEVELOPMENT.md)
 
+Claude Code users can install this access as a plugin: `/plugin marketplace add stevyhacker/lokalbot`, then `/plugin install lokalbot@lokalbot`. It adds a `/recall` slash command, the `lokalbot-cli` skill, and a stdio MCP server — details in [Distribution/claude-plugin/README.md](Distribution/claude-plugin/README.md).
+
 ## Build from source
 
 You'll need **Xcode 16+** with a signing team, [XcodeGen](https://github.com/yonaskolb/XcodeGen), and CMake (`brew install xcodegen cmake`).

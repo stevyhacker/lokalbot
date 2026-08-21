@@ -1,0 +1,21 @@
+{
+  "name": "lokalbot",
+  "description": "A local LLM workhorse that keeps a private memory of your workday. Gives Claude Code read-only access to your local LokalBot meeting library via a /recall command, the lokalbot-cli skill, and a stdio MCP server.",
+  "version": "0.1.0",
+  "author": {
+    "name": "stevyhacker",
+    "url": "https://github.com/stevyhacker"
+  },
+  "homepage": "https://www.lokalbot.com",
+  "repository": "https://github.com/stevyhacker/lokalbot",
+  "license": "GPL-3.0",
+  "keywords": ["meetings", "transcription", "local-llm", "mcp", "privacy"],
+  "commands": ["./Distribution/claude-plugin/commands"],
+  "skills": ["./.agents/skills/lokalbot-cli"],
+  "mcpServers": {
+    "lokalbot": {
+      "command": "lokalbot-cli",
+      "args": ["mcp"]
+    }
+  }
+}
