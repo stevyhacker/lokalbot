@@ -8,7 +8,8 @@ The simplest viable hosting for `benchmark-summary.md` is a **static Space**: no
 
 ```
 lokalbot-benchmarks/
-├── README.md          # HF Space card with YAML frontmatter (below)
+├── README.template.md # Source template kept in the LokalBot repo
+├── README.md          # Generated HF Space card with YAML frontmatter (below)
 ├── index.html         # rendered version of benchmark-summary.md
 └── style.css          # minimal dark/light styling (optional but recommended)
 ```
@@ -16,9 +17,8 @@ lokalbot-benchmarks/
 `index.html` is generated from `benchmark-summary.md` (tables must render as real `<table>` elements — static Spaces do not render markdown directly):
 
 ```sh
-pandoc Distribution/huggingface/benchmark-summary.md \
-  -f gfm -t html -s --metadata title="LokalBot local-stack benchmarks" \
-  -c style.css -o index.html
+uv run --with markdown python Distribution/huggingface/scripts/render_space.py \
+  --collection-url "https://huggingface.co/collections/<collection-slug>"
 ```
 
 Regenerate and push whenever `benchmark-summary.md` changes. Keep the Space content generated from the repo file — never hand-edit the HTML, so the repo stays the single source of truth.

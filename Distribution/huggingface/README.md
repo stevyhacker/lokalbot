@@ -9,6 +9,10 @@ Everything in this directory ships LokalBot's Hugging Face presence: a curated m
 | `benchmark-summary.md` | Every measured number in the repo, each with its source path, plus honest gaps. Single source of truth. |
 | `COLLECTION.md` | Spec for the "LokalBot recommended local stack" collection: verified repo ids, curation notes, creation steps (UI + API). |
 | `SPACE-benchmark.md` | Spec for the static Space hosting the benchmark summary, including frontmatter and cross-link plan. |
+| `scripts/create_collection.py` | Idempotently verifies the model repos and creates the public Collection. |
+| `scripts/render_space.py` | Renders the benchmark summary into the static Space HTML. |
+| `scripts/create_space.py` | Creates or updates the public static Space through `huggingface_hub`. |
+| `space/` | Space-card template, generated card/HTML, and stylesheet. Only `README.md`, `index.html`, and `style.css` are uploaded. |
 
 ## Prerequisites
 
@@ -16,13 +20,27 @@ Everything in this directory ships LokalBot's Hugging Face presence: a curated m
 - For the API path only: install the current CLI with `uv tool install hf` (or run it ephemerally with `uvx hf`), then `hf auth login` with a write token.
 - No other tooling required — the Space is static.
 
-## Step 1 — Create the Collection (~20 min)
+## Step 1 — Create the Collection
 
-Follow `COLLECTION.md`. All six repo ids there were verified against the HF API on 2026-08-21; re-verify with the documented API calls if more than a few weeks have passed. Save the resulting collection slug — every later step references it.
+All referenced repo ids were verified against the HF API on 2026-08-21. With a write token, create and populate the Collection idempotently:
 
-## Step 2 — Create the benchmark Space (~30 min)
+```sh
+uv run --with huggingface_hub python Distribution/huggingface/scripts/create_collection.py
+```
 
-Follow `SPACE-benchmark.md`: generate `index.html` from `benchmark-summary.md` with pandoc, push to a new Static SDK Space named `lokalbot-benchmarks`, confirm tables render and source paths link back into the repo.
+The script prints the Collection URL. Without a write token, follow the web-UI path in `COLLECTION.md` and save the resulting URL.
+
+## Step 2 — Create the benchmark Space
+
+Render `index.html` with the Collection URL, then create or update the Static SDK Space:
+
+```sh
+uv run --with markdown python Distribution/huggingface/scripts/render_space.py \
+  --collection-url "https://huggingface.co/collections/<collection-slug>"
+uv run --with huggingface_hub python Distribution/huggingface/scripts/create_space.py
+```
+
+Without a write token, create a public Static Space named `lokalbot-benchmarks` in the web UI and upload the three files from `space/`.
 
 ## Step 3 — Publish checklist
 
