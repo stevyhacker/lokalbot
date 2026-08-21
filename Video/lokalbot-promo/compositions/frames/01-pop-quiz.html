@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <!-- Frame 1 — Pop quiz. All render-critical content lives inside <template>. -->
+  </head>
+  <body>
+    <template>
+      <style>
+        @font-face {
+          font-family: "SF Pro Display";
+          src: url("assets/fonts/SF-Pro-Display-Black.otf") format("opentype");
+          font-weight: 900;
+          font-style: normal;
+        }
+
+        /* Root styled via #root only (scoper drops root classes). */
+        #root {
+          position: absolute;
+          inset: 0;
+          width: 1920px;
+          height: 1080px;
+          overflow: hidden;
+          container-type: size;
+          font-family: "SF Pro Display", sans-serif;
+          -webkit-font-smoothing: antialiased;
+        }
+
+        /* Full-bleed ink ground on a dedicated clip layer, never on #root. */
+        .f01pq-bg {
+          position: absolute;
+          inset: 0;
+          background: #0b1220;
+        }
+
+        /* ---- Scene 1 — "pop quiz." beat slams (kinetic-beat-slam) ---- */
+        .f01pq-slam-stage {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding-bottom: 16cqh; /* biases the optical center to ~42% height, above the caption band */
+          box-sizing: border-box;
+        }
+        .f01pq-slamline {
+          display: flex;
+          gap: 0.28em;
+          font-size: 13cqw;
+          font-weight: 900;
+          line-height: 0.9;
+          letter-spacing: -0.04em;
+          text-transform: lowercase;
+          color: #eff6fa;
+          will-change: transform, filter, opacity;
+        }
+        .f01pq-slamword {
+          display: inline-block;
+          will-change: transform, filter, opacity;
+        }
+
+        /* ---- Scene 2 — the question, per-word on the VO rail ---- */
+        .f01pq-qstage {
+          position: absolute;
+          left: 5.5cqw;
+          top: 29.5cqh;
+          width: 75cqw;
+          display: flex;
+          flex-direction: column;
+          gap: 2.2cqw;
+          font-size: 6cqw;
+          font-weight: 900;
+          line-height: 1;
+          letter-spacing: -0.03em;
+          text-transform: lowercase;
+          color: #eff6fa;
+        }
+        .f01pq-qline {
+          display: flex;
+          gap: 0.27em;
+        }
+        .f01pq-qw {
+          position: relative;
+          display: inline-block;
+          will-change: transform, filter, opacity;
+        }
+        .f01pq-accent {
+          color: #23c4ae;
+        }
+        .f01pq-underline {
+          position: absolute;
+          left: 0.02em;
+          right: 0.04em;
+          bottom: -0.12em;
+          height: 0.055em;
+          display: block;
+          background: #23c4ae;
+          transform: scaleX(0);
+          transform-origin: left center;
+        }
+
+        /* ---- Scene 3 — countdown ring, right third ---- */
+        .f01pq-ringstage {
+          position: absolute;
+          right: 5cqw;
+          top: 25cqh;
+          width: 19cqw;
+          height: 19cqw;
+        }
+        .f01pq-glow {
+          position: absolute;
+          inset: -40%;
+          background: radial-gradient(closest-side, rgba(35, 196, 174, 0.5), rgba(35, 196, 174, 0) 70%);
+          opacity: 0;
+        }
+        .f01pq-ringsvg {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+        }
+        #f01pq-ringc {
+          fill: none;
+          stroke: #23c4ae;
+          stroke-width: 3;
+          stroke-linecap: round;
+          /* circumference of r=88 circle: 2 * PI * 88 = 552.92 — fixed geometry, not a magic number */
+          stroke-dasharray: 553;
+          stroke-dashoffset: 553;
+          transform: rotate(-90deg); /* stroke starts at 12 o'clock; GSAP never tweens transforms here */
+          transform-origin: 100px 100px;
+        }
+        .f01pq-nums {
+          position: absolute;
+          inset: 0;
+          display: grid;
+          place-items: center;
+        }
+        .f01pq-num {
+          grid-area: 1 / 1;
+          font-size: 6.5cqw;
+          font-weight: 900;
+          letter-spacing: -0.04em;
+          line-height: 1;
+          color: #eff6fa;
+          opacity: 0; /* hard-cut states are toggled by zero-duration timeline sets */
+        }
+      </style>
+
+      <div data-hf-id="hf-ky8p" id="root" data-composition-id="01-pop-quiz" data-width="1920" data-height="1080" data-duration="4.304">
+        <div data-hf-id="hf-6ljp" id="pop-quiz-background" class="f01pq-bg clip" data-start="0" data-duration="4.304" data-track-index="0"></div>
+
+        <!-- Scene 1: bare ink field, "pop quiz." beat slams, cleared by a zoom-through exit -->
+        <section data-hf-id="hf-159v" id="pop-quiz-slam" class="clip" data-start="0" data-duration="1.3" data-track-index="1">
+          <div data-hf-id="hf-6ah9" class="f01pq-slam-stage">
+            <div data-hf-id="hf-60gy" class="f01pq-slamline" id="f01pq-slamline">
+              <span data-hf-id="hf-qdh8" class="f01pq-slamword" id="f01pq-pop">pop</span>
+              <span data-hf-id="hf-p7fg" class="f01pq-slamword" id="f01pq-quiz">quiz.</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Scene 2 + 3 hold: the question, built per-word on the word rail -->
+        <section data-hf-id="hf-62pf" id="pop-quiz-question" class="clip" data-start="1.2" data-duration="3.104" data-track-index="2">
+          <div data-hf-id="hf-cmeu" class="f01pq-qstage">
+            <div data-hf-id="hf-nzfm" class="f01pq-qline">
+              <span data-hf-id="hf-zu80" class="f01pq-qw" id="f01pq-w0">what</span>
+              <span data-hf-id="hf-odx4" class="f01pq-qw" id="f01pq-w1">did</span>
+              <span data-hf-id="hf-h6bf" class="f01pq-qw" id="f01pq-w2">you</span>
+              <span data-hf-id="hf-rc53" class="f01pq-qw" id="f01pq-w3">agree</span>
+              <span data-hf-id="hf-05ir" class="f01pq-qw" id="f01pq-w4">to</span>
+            </div>
+            <div data-hf-id="hf-rqx2" class="f01pq-qline">
+              <span data-hf-id="hf-qb62" class="f01pq-qw" id="f01pq-w5">at</span>
+              <span data-hf-id="hf-05vw" class="f01pq-qw f01pq-accent" id="f01pq-w6">9:15<i data-hf-id="hf-wqp0" class="f01pq-underline" id="f01pq-underline"></i></span>
+              <span data-hf-id="hf-ecih" class="f01pq-qw" id="f01pq-w7">this</span>
+              <span data-hf-id="hf-or73" class="f01pq-qw" id="f01pq-w8">morning?</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Scene 3: teal countdown ring self-draws, drains 3-2-1, flashes on the buzz -->
+        <section data-hf-id="hf-q9ae" id="pop-quiz-countdown" class="clip" data-start="2.55" data-duration="1.754" data-track-index="3">
+          <div data-hf-id="hf-m1z1" class="f01pq-ringstage">
+            <div data-hf-id="hf-1try" class="f01pq-glow" id="f01pq-glow"></div>
+            <svg data-hf-id="hf-1f65" class="f01pq-ringsvg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+              <circle data-hf-id="hf-0are" id="f01pq-ringc" cx="100" cy="100" r="88" />
+            </svg>
+            <div data-hf-id="hf-972w" class="f01pq-nums">
+              <span data-hf-id="hf-tifj" class="f01pq-num" id="f01pq-n3">3</span>
+              <span data-hf-id="hf-df0f" class="f01pq-num" id="f01pq-n2">2</span>
+              <span data-hf-id="hf-64dj" class="f01pq-num" id="f01pq-n1">1</span>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+      <script>
+        window.__timelines = window.__timelines || {};
+        const tl = gsap.timeline({ paused: true });
+
+        /* ============================================================
+         * Scene 1 (0.0–1.2) — two kinetic beat slams on the VO rail
+         * (kinetic-beat-slam: one beat array, distinct entrance per word)
+         * ============================================================ */
+        const F01PQ_BEATS = [0.06, 0.5]; // "pop" @0.04, "quiz." @0.48 on the word rail
+
+        // "pop" — hard slam: oversized + blurred, settles with power4
+        tl.fromTo(
+          "#f01pq-pop",
+          { scale: 1.6, opacity: 0, filter: "blur(14px)" },
+          { scale: 1, opacity: 1, filter: "blur(0px)", duration: 0.42, ease: "power4.out" },
+          F01PQ_BEATS[0],
+        );
+        // "quiz." — distinct axis: rises hard from below, expo snap
+        tl.fromTo(
+          "#f01pq-quiz",
+          { y: 84, opacity: 0, filter: "blur(10px)" },
+          { y: 0, opacity: 1, filter: "blur(0px)", duration: 0.44, ease: "expo.out" },
+          F01PQ_BEATS[1],
+        );
+
+        /* Seam @~1.2 — zoom-through exit clears the slam (cut catalog:
+         * scale accelerates toward viewer, 10px text-scale blur, opacity
+         * on its own linear tween, hard kill at the cut). */
+        tl.to(
+          "#f01pq-slamline",
+          { scale: 1.22, filter: "blur(10px)", duration: 0.2, ease: "power3.in" },
+          1.02,
+        );
+        tl.to("#f01pq-slamline", { opacity: 0.15, duration: 0.18, ease: "none" }, 1.02);
+        tl.set("#f01pq-slamline", { opacity: 0 }, 1.21);
+
+        /* ============================================================
+         * Scene 2 (1.2–2.6) — the question builds per-word, exactly on
+         * the word rail (per-word staggered fade/blur reveal)
+         * ============================================================ */
+        const F01PQ_WORDS = [
+          ["#f01pq-w0", 1.26], // what
+          ["#f01pq-w1", 1.37], // did
+          ["#f01pq-w2", 1.48], // you
+          ["#f01pq-w3", 1.6], // agree
+          ["#f01pq-w4", 1.93], // to
+          ["#f01pq-w5", 2.06], // at
+          ["#f01pq-w6", 2.19], // 9:15 (teal)
+          ["#f01pq-w7", 3.0], // this
+          ["#f01pq-w8", 3.36], // morning?
+        ];
+        F01PQ_WORDS.forEach(([sel, t]) => {
+          tl.fromTo(
+            sel,
+            { y: 30, opacity: 0, filter: "blur(8px)" },
+            { y: 0, opacity: 1, filter: "blur(0px)", duration: 0.46, ease: "power3.out" },
+            t,
+          );
+        });
+
+        // "9:15" gets a quick drawn teal underline (css-marker-patterns:
+        // flat sweep, transform-origin left — broadside stays flat, no wobble)
+        tl.fromTo(
+          "#f01pq-underline",
+          { scaleX: 0 },
+          { scaleX: 1, duration: 0.28, ease: "power2.out" },
+          2.32,
+        );
+
+        /* ============================================================
+         * Scene 3 (2.6–3.9) — countdown ring: self-draw, drain, buzz
+         * ============================================================ */
+        const F01PQ_RING_LEN = 553; // 2 * PI * 88, fixed circle geometry
+
+        // Ring self-draws clockwise from 12 o'clock (svg-path-draw: dashoffset len -> 0)
+        tl.to(
+          "#f01pq-ringc",
+          { strokeDashoffset: 0, duration: 0.35, ease: "power2.out" },
+          2.62,
+        );
+        // ...then drains linearly, clock-like, dying exactly on the buzz
+        tl.to(
+          "#f01pq-ringc",
+          { strokeDashoffset: F01PQ_RING_LEN, duration: 0.66, ease: "none" },
+          3.0,
+        );
+
+        // Center numeral hard-cuts 3, 2, 1 on ~0.4s ticks
+        // (discrete-text-sequence: whole-state swaps at thresholds, no tween between)
+        tl.set("#f01pq-n3", { opacity: 1 }, 2.7);
+        tl.set("#f01pq-n3", { opacity: 0 }, 3.06);
+        tl.set("#f01pq-n2", { opacity: 1 }, 3.06);
+        tl.set("#f01pq-n2", { opacity: 0 }, 3.42);
+        tl.set("#f01pq-n1", { opacity: 1 }, 3.42);
+        tl.set("#f01pq-n1", { opacity: 0 }, 3.66); // cuts to blank as the buzzer lands
+
+        // The buzz @~3.66: ring flashes (finite blink) + one teal glow bloom,
+        // then everything reads dead still through the cut
+        tl.to(
+          "#f01pq-ringc",
+          { opacity: 0.12, duration: 0.05, yoyo: true, repeat: 3, ease: "none" },
+          3.655,
+        );
+        tl.fromTo(
+          "#f01pq-glow",
+          { opacity: 0 },
+          { opacity: 0.55, duration: 0.06, ease: "power1.out" },
+          3.655,
+        );
+        tl.to("#f01pq-glow", { opacity: 0, duration: 0.18, ease: "power2.out" }, 3.715);
+
+        window.__timelines["01-pop-quiz"] = tl;
+      </script>
+    </template>
+  </body>
+</html>

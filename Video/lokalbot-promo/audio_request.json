@@ -1,0 +1,37 @@
+{
+  "provider": "kokoro",
+  "speed": 1,
+  "lines": [
+    {
+      "id": "01",
+      "text": "Pop quiz. What did you agree to at nine fifteen this morning?"
+    },
+    {
+      "id": "02",
+      "text": "You forgot. Your Mac didn't. LokalBot answers from a private memory of your whole workday, quoting the source."
+    },
+    {
+      "id": "03",
+      "text": "It captures both sides of your call. Nothing joins the meeting."
+    },
+    {
+      "id": "04",
+      "text": "Dictate into any app, and Tab accepts autocomplete from a model on your machine."
+    },
+    {
+      "id": "05",
+      "text": "Built-in processing stays local. No account. No telemetry. Check the network yourself."
+    },
+    {
+      "id": "06",
+      "text": "Your workday, remembered. Free at lokalbot dot com."
+    }
+  ],
+  "bgm": {
+    "mode": "retrieve",
+    "query": "driving confident minimal-electronic tech underscore",
+    "blob": "LokalBot remembers your workday and answers with proof, on-device by default",
+    "arc": "Demo Loop (challenge-hook variant) — quiz → instant answer → demo cycles → trust proof → CTA"
+  },
+  "voice": "am_michael"
+}

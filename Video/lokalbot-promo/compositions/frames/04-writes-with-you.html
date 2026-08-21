@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <!-- Frame 4 — It writes with you. All runtime content lives inside <template>. -->
+  </head>
+  <body>
+    <template>
+      <style>
+        @font-face {
+          font-family: "SF Pro Display";
+          src: url("assets/fonts/SF-Pro-Display-Regular.otf") format("opentype");
+          font-weight: 400;
+        }
+        @font-face {
+          font-family: "SF Pro Display";
+          src: url("assets/fonts/SF-Pro-Display-Semibold.otf") format("opentype");
+          font-weight: 600;
+        }
+        @font-face {
+          font-family: "SF Mono";
+          src: url("assets/fonts/SF-Mono-Regular.otf") format("opentype");
+          font-weight: 400;
+        }
+        @font-face {
+          font-family: "SF Mono";
+          src: url("assets/fonts/SF-Mono-Medium.otf") format("opentype");
+          font-weight: 500;
+        }
+
+        /* Root styled via #root only — never a class on the composition root. */
+        #root {
+          position: absolute;
+          inset: 0;
+          width: 1920px;
+          height: 1080px;
+          overflow: hidden;
+        }
+
+        /* Full-bleed ink ground lives on a dedicated clip, never on #root. */
+        .f04-bg {
+          position: absolute;
+          inset: 0;
+          background: #0b1220;
+        }
+        .f04-content {
+          position: absolute;
+          inset: 0;
+        }
+
+        /* ── Ambient side glows (behind the card slots, near 30% / 70%) ── */
+        .f04-glow {
+          position: absolute;
+          width: 700px;
+          height: 700px;
+          top: 190px;
+          background: radial-gradient(
+            circle,
+            rgba(35, 196, 174, 0.45) 0%,
+            rgba(35, 196, 174, 0) 66%
+          );
+          opacity: 0;
+          transform-origin: 50% 50%;
+          pointer-events: none;
+          will-change: transform, opacity;
+          z-index: 1;
+        }
+        #f04-glow-left {
+          left: 226px;
+        }
+        #f04-glow-right {
+          left: 994px;
+        }
+
+        /* ── Title (h3, lowercase, one display moment) ── */
+        #f04-title {
+          position: absolute;
+          top: 96px;
+          left: 0;
+          width: 100%;
+          text-align: center;
+          font-family: "SF Pro Display", sans-serif;
+          font-weight: 600;
+          font-size: 54px;
+          line-height: 1.2;
+          letter-spacing: -0.02em;
+          text-transform: lowercase;
+          color: #eff6fa;
+          z-index: 3;
+          will-change: transform, opacity;
+        }
+        .f04-accent {
+          color: #23c4ae;
+        }
+
+        /* ── Stage: shared perspective parent for the split-tilt pair ── */
+        #f04-stage {
+          position: absolute;
+          left: 194px;
+          top: 250px;
+          width: 1532px;
+          height: 560px;
+          perspective: 1600px;
+          transform-style: preserve-3d;
+          z-index: 2;
+        }
+        .f04-card {
+          position: absolute;
+          top: 0;
+          width: 730px;
+          height: 560px;
+          box-sizing: border-box;
+          padding: 44px 48px;
+          display: flex;
+          flex-direction: column;
+          gap: 26px;
+          background: #101b2d;
+          border: 1px solid #1b2a40;
+          border-radius: 10px;
+          transform-style: preserve-3d;
+          will-change: transform, opacity;
+        }
+        #f04-card-left {
+          left: 0;
+          /* faces right → shadow falls right (positive X) */
+          box-shadow: 22px 24px 60px rgba(0, 0, 0, 0.5);
+        }
+        #f04-card-right {
+          left: 802px;
+          /* faces left → shadow falls left (negative X) */
+          box-shadow: -22px 24px 60px rgba(0, 0, 0, 0.5);
+        }
+        .f04-eyebrow {
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 14px;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+          color: #23c4ae;
+          will-change: transform, opacity;
+        }
+
+        /* Left card — dictation pill + field */
+        #f04-pill {
+          display: flex;
+          align-items: center;
+          gap: 18px;
+          height: 84px;
+          box-sizing: border-box;
+          padding: 0 30px;
+          border-radius: 42px;
+          background: #0c1626;
+          border: 1px solid #1b2a40;
+          will-change: transform, opacity;
+        }
+        .f04-pill-chrome {
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 15px;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+          color: #9fb2c4;
+          white-space: nowrap;
+        }
+        #f04-wave {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          margin-left: auto;
+        }
+        .f04-wbar {
+          display: block;
+          width: 4px;
+          height: 26px;
+          background: #23c4ae;
+          transform-origin: 50% 50%;
+          will-change: transform;
+        }
+        #f04-field {
+          flex: 1;
+          box-sizing: border-box;
+          padding: 26px 28px;
+          background: #0b1424;
+          border: 1px solid #1b2a40;
+          border-radius: 8px;
+          font-family: "SF Pro Display", sans-serif;
+          font-weight: 400;
+          font-size: 30px;
+          line-height: 1.5;
+          color: #eff6fa;
+          will-change: transform, opacity;
+        }
+        #f04-caret {
+          display: inline-block;
+          width: 3px;
+          height: 34px;
+          margin-left: 2px;
+          vertical-align: text-bottom;
+          background: #23c4ae;
+        }
+
+        /* Right card — editor line + Tab keycap */
+        #f04-editor {
+          flex: 1;
+          box-sizing: border-box;
+          padding: 26px 28px;
+          background: #0b1424;
+          border: 1px solid #1b2a40;
+          border-radius: 8px;
+          font-family: "SF Pro Display", sans-serif;
+          font-weight: 400;
+          font-size: 30px;
+          line-height: 1.5;
+          color: #eff6fa;
+          will-change: transform, opacity;
+        }
+        #f04-ghost {
+          opacity: 0.45;
+        }
+        #f04-keyrow {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          height: 56px;
+          will-change: transform, opacity;
+        }
+        #f04-keycap {
+          width: 108px;
+          height: 56px;
+          box-sizing: border-box;
+          display: grid;
+          place-items: center;
+          background: #16233a;
+          border: 1px solid #2a3b55;
+          border-bottom-width: 3px;
+          border-radius: 8px;
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 16px;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+          color: #eff6fa;
+          transform-origin: 50% 50%;
+          will-change: transform;
+        }
+
+        /* Inner-edge badges — flat on the stage so they never inherit the tilt */
+        .f04-badge {
+          position: absolute;
+          height: 56px;
+          box-sizing: border-box;
+          display: flex;
+          align-items: center;
+          padding: 0 26px;
+          background: #23c4ae;
+          color: #0b1220;
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 19px;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+          white-space: nowrap;
+          transform-origin: 50% 50%;
+          will-change: transform, opacity;
+          z-index: 4;
+        }
+        #f04-badge-left {
+          top: 368px;
+          right: 762px;
+        }
+        #f04-badge-right {
+          top: 488px;
+          left: 762px;
+        }
+      </style>
+
+      <div data-hf-id="hf-4gdg" id="root" data-composition-id="04-writes-with-you" data-width="1920" data-height="1080" data-duration="5.912">
+        <div data-hf-id="hf-3vvz" id="f04-bg" class="clip f04-bg" data-start="0" data-duration="5.912" data-track-index="0"></div>
+
+        <div data-hf-id="hf-nfcu" id="f04-content" class="clip f04-content" data-start="0" data-duration="5.912" data-track-index="1">
+          <div data-hf-id="hf-mxz4" id="f04-glow-left" class="f04-glow"></div>
+          <div data-hf-id="hf-dhbj" id="f04-glow-right" class="f04-glow"></div>
+
+          <div data-hf-id="hf-0a76" id="f04-title">it <span data-hf-id="hf-o8ck" class="f04-accent">writes</span> with you</div>
+
+          <div data-hf-id="hf-rqcg" id="f04-stage">
+            <div data-hf-id="hf-hj1k" id="f04-card-left" class="f04-card">
+              <div data-hf-id="hf-4k84" id="f04-dict-eyebrow" class="f04-eyebrow">Dictation</div>
+              <div data-hf-id="hf-yyab" id="f04-pill">
+                <span data-hf-id="hf-beu7" class="f04-pill-chrome">⌥ Space · Hold</span>
+                <div data-hf-id="hf-8zjx" id="f04-wave">
+                  <span data-hf-id="hf-bwrw" class="f04-wbar"></span><span data-hf-id="hf-5r9g" class="f04-wbar"></span><span data-hf-id="hf-4kcd" class="f04-wbar"></span><span data-hf-id="hf-4yne" class="f04-wbar"></span><span data-hf-id="hf-6y6j" class="f04-wbar"></span><span data-hf-id="hf-7chk" class="f04-wbar"></span><span data-hf-id="hf-65kh" class="f04-wbar"></span><span data-hf-id="hf-6jvi" class="f04-wbar"></span><span data-hf-id="hf-8jen" class="f04-wbar"></span><span data-hf-id="hf-8xpo" class="f04-wbar"></span><span data-hf-id="hf-ucnw" class="f04-wbar"></span><span data-hf-id="hf-tycv" class="f04-wbar"></span><span data-hf-id="hf-tk1u" class="f04-wbar"></span><span data-hf-id="hf-t5qt" class="f04-wbar"></span><span data-hf-id="hf-vxw0" class="f04-wbar"></span><span data-hf-id="hf-vjkz" class="f04-wbar"></span><span data-hf-id="hf-v59y" class="f04-wbar"></span><span data-hf-id="hf-uqyx" class="f04-wbar"></span>
+                </div>
+              </div>
+              <div data-hf-id="hf-xfum" id="f04-field">
+                <span data-hf-id="hf-vpbv" id="f04-typed"></span><span data-hf-id="hf-pmv6" id="f04-caret"></span>
+              </div>
+            </div>
+
+            <div data-hf-id="hf-r4qf" id="f04-card-right" class="f04-card">
+              <div data-hf-id="hf-ves7" id="f04-auto-eyebrow" class="f04-eyebrow">Autocomplete</div>
+              <div data-hf-id="hf-tcgd" id="f04-editor">
+                <span data-hf-id="hf-fotl">the beta moves to</span><span data-hf-id="hf-g00j" id="f04-ghost"> friday, july 24.</span>
+              </div>
+              <div data-hf-id="hf-6df5" id="f04-keyrow">
+                <div data-hf-id="hf-1ivc" id="f04-keycap">Tab</div>
+              </div>
+            </div>
+
+            <div data-hf-id="hf-1jqd" id="f04-badge-left" class="f04-badge">Any App</div>
+            <div data-hf-id="hf-h932" id="f04-badge-right" class="f04-badge">On-Device Model</div>
+          </div>
+        </div>
+      </div>
+
+      <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+      <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/TextPlugin.min.js"></script>
+      <script>
+        window.__timelines = window.__timelines || {};
+        gsap.registerPlugin(TextPlugin);
+
+        const tl = gsap.timeline({ paused: true });
+
+        /* ── Scene 1 (0.0–0.8) — title slides DOWN into the upper third;
+           two ambient glows bloom behind the empty card slots. ── */
+        tl.fromTo(
+          "#f04-title",
+          { y: -44, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.7, ease: "power3.out" },
+          0.02,
+        );
+        tl.fromTo(
+          "#f04-glow-left",
+          { opacity: 0, scale: 0.85 },
+          { opacity: 0.16, scale: 1, duration: 0.95, ease: "power2.out" },
+          0.12,
+        );
+        tl.fromTo(
+          "#f04-glow-right",
+          { opacity: 0, scale: 0.85 },
+          { opacity: 0.16, scale: 1, duration: 0.95, ease: "power2.out" },
+          0.28,
+        );
+
+        /* ── Scene 2 (0.4–1.9) — on "Dictate" the left card arrives from the
+           left wing with the mirrored book-open tilt (+rotateY), scaling to seat.
+           Long-tail power3, no overshoot. ── */
+        tl.fromTo(
+          "#f04-card-left",
+          { x: -420, scale: 0.87, rotateY: 18, opacity: 0 },
+          { x: 0, scale: 1, rotateY: 12, opacity: 1, duration: 0.9, ease: "power3.out" },
+          0.45,
+        );
+        tl.fromTo(
+          "#f04-dict-eyebrow, #f04-pill, #f04-field",
+          { opacity: 0, y: 18 },
+          { opacity: 1, y: 0, duration: 0.5, stagger: 0.09, ease: "power2.out" },
+          0.9,
+        );
+
+        /* The dictated sentence types into the field on the spoken words. */
+        tl.to(
+          "#f04-typed",
+          { text: { value: "send the recap to the team." }, duration: 1.4, ease: "none" },
+          1.15,
+        );
+
+        /* Caret: solid while typing, then a deterministic square-wave blink
+           driven by a finite phase tween (no CSS animation). */
+        const caret = document.getElementById("f04-caret");
+        const blink = { p: 0 };
+        tl.to(
+          blink,
+          {
+            p: Math.PI * 2 * 2.5,
+            duration: 2.6,
+            ease: "none",
+            onUpdate: () => {
+              caret.style.opacity = Math.sin(blink.p) >= 0 ? "1" : "0";
+            },
+          },
+          2.66,
+        );
+
+        /* Waveform bars step deterministically: per-index sine at fixed speeds,
+           full amplitude while dictating, settling low once the sentence lands. */
+        const bars = Array.prototype.slice.call(document.querySelectorAll(".f04-wbar"));
+        bars.forEach((b) => gsap.set(b, { scaleY: 0.18 }));
+        const WAVE_START = 0.95;
+        const wave = { t: 0 };
+        tl.to(
+          wave,
+          {
+            t: 5.31 - WAVE_START,
+            duration: 5.31 - WAVE_START,
+            ease: "none",
+            onUpdate: () => {
+              const tm = WAVE_START + wave.t;
+              let env;
+              if (tm < 2.7) env = 1;
+              else if (tm < 3.2) env = 1 - ((tm - 2.7) / 0.5) * 0.78;
+              else env = 0.22;
+              for (let i = 0; i < bars.length; i++) {
+                const sp = 7 + (i % 5) * 1.35;
+                const off = i * 0.9;
+                const osc = 0.5 + 0.5 * Math.sin(tm * sp + off);
+                gsap.set(bars[i], { scaleY: 0.18 + env * (0.17 + 0.62 * osc) });
+              }
+            },
+          },
+          WAVE_START,
+        );
+
+        /* ── Scene 3 (1.9–3.7) — on "Tab accepts" the right card mirrors in
+           from the right wing (−rotateY). ── */
+        tl.fromTo(
+          "#f04-card-right",
+          { x: 420, scale: 0.87, rotateY: -18, opacity: 0 },
+          { x: 0, scale: 1, rotateY: -12, opacity: 1, duration: 0.9, ease: "power3.out" },
+          2.05,
+        );
+        tl.fromTo(
+          "#f04-auto-eyebrow, #f04-editor, #f04-keyrow",
+          { opacity: 0, y: 18 },
+          { opacity: 1, y: 0, duration: 0.5, stagger: 0.09, ease: "power2.out" },
+          2.5,
+        );
+
+        /* Tab keycap: linear press, spring release (press-release chain —
+           release start equals press end for state continuity). The ghost
+           completion solidifies to full cream on the release — the beat. */
+        tl.to("#f04-keycap", { scale: 0.9, duration: 0.12, ease: "power1.in" }, 3.0);
+        tl.to("#f04-keycap", { scale: 1, duration: 0.45, ease: "back.out(1.4)" }, 3.12);
+        tl.fromTo(
+          "#f04-ghost",
+          { opacity: 0.45 },
+          { opacity: 1, duration: 0.4, ease: "power2.out" },
+          3.12,
+        );
+
+        /* ── Scene 4 (3.7–5.31) — on "model on your machine" the inner-edge
+           badges spring-pop ~0.3s apart: the video's one budgeted overshoot. ── */
+        tl.fromTo(
+          "#f04-badge-left",
+          { scale: 0, opacity: 0 },
+          { scale: 1, opacity: 1, duration: 0.5, ease: "back.out(1.7)" },
+          3.98,
+        );
+        tl.fromTo(
+          "#f04-badge-right",
+          { scale: 0, opacity: 0 },
+          { scale: 1, opacity: 1, duration: 0.5, ease: "back.out(1.7)" },
+          4.28,
+        );
+
+        /* Held tail — phase-opposed subtle jitter on the pair (left sin(t),
+           right sin(t+pi)), +/-2px, ending back at rest. No exit: the root
+           transition owns the cut. gsap.set preserves the cards' rotateY. */
+        const cardL = document.getElementById("f04-card-left");
+        const cardR = document.getElementById("f04-card-right");
+        const jit = { p: 0 };
+        tl.to(
+          jit,
+          {
+            p: Math.PI,
+            duration: 0.63,
+            ease: "none",
+            onUpdate: () => {
+              const s = Math.sin(jit.p) * 2;
+              gsap.set(cardL, { y: -s });
+              gsap.set(cardR, { y: s });
+            },
+          },
+          4.68,
+        );
+
+        window.__timelines["04-writes-with-you"] = tl;
+      </script>
+    </template>
+  </body>
+</html>

@@ -39,6 +39,8 @@ Artifacts/
 # Generated video-production output and locally reproducible media
 Video/**/.hyperframes/
 Video/**/.media/
+Video/**/.thumbnails/
+Video/**/.waveform-cache/
 Video/**/capture/
 Video/**/renders/
 Video/**/snapshots/
@@ -52,6 +54,31 @@ Video/**/audio_meta.json
 Video/**/audio_request.json
 Video/**/bgm_request.json
 Video/**/bgm_status.json
+
+# The canonical landscape promo keeps its request manifest as source. Audio,
+# fonts, renders, and provider metadata remain reproducible local output.
+!Video/lokalbot-promo/audio_request.json
+
+# Private product/launch working material. Public product documentation stays
+# tracked; these drafts remain on the author's Mac without polluting git status.
+Docs/distribution-channels-*.md
+Docs/local/
+Docs/marketing-plan.md
+Docs/reddit-*.md
+Docs/screenpipe-lessons-for-lokalbot.md
+Docs/set-and-forget-listings.md
+Docs/show-hn-*.md
+Docs/thread-plug-plan-*.md
+Docs/superpowers/
+/design-qa.md
+/social-posts.md
+
+# Derived social crops and unused local website handoff material. The canonical
+# 16:9 source lives in Video/lokalbot-promo/.
+Video/lokalbot-promo-square/
+Video/lokalbot-promo-vertical/
+web/assets/feature-demo-poster.jpg
+web/assets/fonts/
 
 # One-off exported video handoff
 lokalbot video ad handoff/

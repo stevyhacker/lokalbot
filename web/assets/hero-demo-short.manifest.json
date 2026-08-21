@@ -1,109 +1,69 @@
 {
-  "version": 1,
+  "version": 2,
   "output": "hero-demo-short.mp4",
-  "sha256": "dff83c10ccdcb4a1814e16c0f607f50c7c9ca16b564266d53410fe7c2253a351",
+  "sha256": "616d9c04a87ece5104da95ada047cce58ab73d806d49508dd49b89e5bb20f33b",
   "production": {
     "engine": "HyperFrames",
-    "engineVersion": "0.7.42",
-    "source": "Video/hero-demo/short.html",
+    "engineVersion": "0.8.6",
+    "source": "Video/lokalbot-promo/index.html",
     "canvas": [
-      1872,
-      1276
+      1920,
+      1080
     ],
     "fps": 30,
-    "durationSeconds": 30.0
+    "durationSeconds": 30.000000
   },
   "audio": {
     "narration": {
-      "engine": "ElevenLabs Eleven v3",
-      "modelId": "eleven_v3",
-      "voice": "Will",
-      "voiceId": "bIHbv24MWmeRgasZH58o",
-      "speed": 1.0,
-      "stabilityMode": "Natural",
-      "timing": "natural performance with sentence-boundary pauses; no time stretching"
+      "engine": "Kokoro-82M",
+      "voice": "am_michael",
+      "local": true
     },
-    "music": "original deterministic score",
-    "effects": "original scene-aligned UI sound-design stem",
+    "music": "local production bed",
+    "effects": "scene-aligned local sound design",
     "deliveryLoudness": {
-      "integratedTargetLufs": -16.0,
+      "integratedTargetLufs": -16,
       "truePeakTargetDbtp": -1.5
-    },
-    "deliveryEncoding": {
-      "video": "HyperFrames H.264 master stream; no second-generation encode",
-      "audio": "AAC 192 kb/s"
     }
   },
   "captions": {
     "language": "en",
     "burnedIn": true,
-    "source": "ElevenLabs character timings"
+    "source": "local narration timings"
   },
   "scenes": [
     {
-      "id": "hook",
-      "start": 0.0,
-      "end": 4.2,
-      "purpose": "private on-device AI memory hook"
+      "id": "pop-quiz",
+      "start": 0,
+      "end": 3.904
     },
     {
-      "id": "quick-recall",
-      "start": 4.2,
-      "end": 8.12,
-      "purpose": "search meetings and saved screen moments"
+      "id": "cited-recall",
+      "start": 3.904,
+      "end": 11.008
     },
     {
-      "id": "context-rewind",
-      "start": 8.12,
-      "end": 12.92,
-      "purpose": "scrub play and bookmark the workday timeline"
+      "id": "bot-free-capture",
+      "start": 11.008,
+      "end": 14.976
     },
     {
-      "id": "dictation",
-      "start": 12.92,
-      "end": 16.14,
-      "purpose": "local speech inserted into the active app"
+      "id": "dictation-and-autocomplete",
+      "start": 14.976,
+      "end": 20.288
     },
     {
-      "id": "cotyping",
-      "start": 16.14,
-      "end": 20.5,
-      "purpose": "on-device ghost text accepted with Tab"
+      "id": "scoped-network-check",
+      "start": 20.288,
+      "end": 26.325
     },
     {
-      "id": "privacy-outro",
-      "start": 20.5,
-      "end": 30.0,
-      "purpose": "privacy proof and brand payoff"
+      "id": "cta",
+      "start": 26.325,
+      "end": 29.973
     }
   ],
   "delivery": {
-    "programs": [],
-    "stream_groups": [],
-    "streams": [
-      {
-        "index": 0,
-        "codec_name": "h264",
-        "codec_type": "video",
-        "width": 1872,
-        "height": 1276,
-        "r_frame_rate": "30/1",
-        "bit_rate": "3602625"
-      },
-      {
-        "index": 1,
-        "codec_name": "aac",
-        "codec_type": "audio",
-        "sample_rate": "48000",
-        "channels": 2,
-        "r_frame_rate": "0/0",
-        "bit_rate": "195953"
-      }
-    ],
-    "format": {
-      "duration": "30.000000",
-      "size": "14272535",
-      "bit_rate": "3806009"
-    }
+    "bytes": 2387938
   }
 }

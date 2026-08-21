@@ -18,8 +18,8 @@ Scripts/capture-screenshots.sh --stills-only
 
 The still pass writes eleven PNGs under `Assets/screenshots/`. Run the script
 without `--stills-only` only when you intentionally want to rebuild the GIF
-sequences and narrated website videos too; that path also requires `ffmpeg` and
-the video toolchain.
+sequences too; that path also requires `ffmpeg`. Narrated website video is a
+separate reviewed workflow described in `Docs/demo-film-kit.md`.
 
 ## Reproducible frame
 

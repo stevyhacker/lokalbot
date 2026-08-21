@@ -163,10 +163,6 @@ python3 Scripts/assemble_gif.py "$OUT/recap.gif" 1720 \
 python3 Scripts/assemble_gif.py "$OUT/search.gif" 1720 \
   "$OUT/search.png" "$FRAMES/search-sso.png" "$FRAMES/search-postgres.png"
 
-echo "==> Rendering narrated landing-page product film"
-# HyperFrames turns these real captures into a directed interaction story with
-# camera choreography, captions, narration, original score, and UI sound design.
-Scripts/render-hero-video.sh
-Scripts/render-hero-video-short.sh
-
-echo "==> Done: $OUT/{*.png, hero.gif, recap.gif, search.gif} + web/assets/hero-demo{,-short,-long}.mp4"
+echo "==> Video rendering remains a separate reviewed workflow"
+echo "    See Docs/demo-film-kit.md before running a HyperFrames render script."
+echo "==> Done: $OUT/{*.png, hero.gif, recap.gif, search.gif}"

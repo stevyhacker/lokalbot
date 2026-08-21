@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>06-cta</title>
+    <!-- head is metadata only; the runtime clones template contents. Everything lives inside <template>. -->
+  </head>
+  <body>
+    <template>
+      <style>
+        /* ————— fonts (project-root-relative, local files only) ————— */
+        @font-face {
+          font-family: "SF Pro Display";
+          src: url("assets/fonts/SF-Pro-Display-Semibold.otf") format("opentype");
+          font-weight: 600;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: "SF Pro Display";
+          src: url("assets/fonts/SF-Pro-Display-Bold.otf") format("opentype");
+          font-weight: 700;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: "SF Pro Display";
+          src: url("assets/fonts/SF-Pro-Display-Black.otf") format("opentype");
+          font-weight: 900;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: "SF Mono";
+          src: url("assets/fonts/SF-Mono-Medium.otf") format("opentype");
+          font-weight: 500;
+          font-style: normal;
+        }
+
+        /* ————— root: styled via #root, never a class ————— */
+        #root {
+          position: absolute;
+          inset: 0;
+          width: 1920px;
+          height: 1080px;
+          overflow: hidden;
+          font-family: "SF Pro Display";
+        }
+
+        /* ————— full-bleed ink ground (dedicated clip, never on #root) ————— */
+        .cta06-bg {
+          position: absolute;
+          inset: 0;
+          background: #0b1220;
+        }
+        /* faint teal bloom behind the lockup — blooms with the cascade, then holds static */
+        .cta06-glow {
+          position: absolute;
+          left: 460px;
+          top: 60px;
+          width: 1000px;
+          height: 560px;
+          background: radial-gradient(
+            closest-side,
+            rgba(35, 196, 174, 0.13),
+            rgba(35, 196, 174, 0) 72%
+          );
+          opacity: 0;
+          will-change: opacity;
+        }
+
+        /* ————— foreground stage ————— */
+        .cta06-stage {
+          position: absolute;
+          inset: 0;
+        }
+
+        /* Scene 1 — tagline on the word rail (h2: 4.5cqw ≈ 86px, weight 700, lowercase) */
+        .cta06-tagline {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 398px;
+          display: flex;
+          justify-content: center;
+          gap: 0.26em;
+          font-size: 86px;
+          font-weight: 700;
+          letter-spacing: -0.02em;
+          line-height: 1.1;
+          color: #eff6fa;
+          transform-origin: 50% 50%;
+          will-change: transform, opacity;
+        }
+        .cta06-word {
+          display: inline-block;
+          opacity: 0;
+          will-change: transform, opacity;
+        }
+        .cta06-teal {
+          color: #23c4ae;
+        }
+
+        /* Scenes 2–3 — end card */
+        .cta06-endcard {
+          position: absolute;
+          inset: 0;
+        }
+        /* wordmark lockup (the frame's one display moment: ~13cqw, weight 900, lowercase) */
+        .cta06-wordmark {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 288px;
+          text-align: center;
+          font-size: 248px;
+          font-weight: 900;
+          letter-spacing: -0.04em;
+          line-height: 0.88;
+          color: #eff6fa;
+        }
+        .cta06-glyph {
+          display: inline-block;
+          opacity: 0;
+          transform-origin: 50% 60%;
+          will-change: transform, opacity;
+        }
+        .cta06-slash {
+          color: #23c4ae;
+          margin-right: 0.1em;
+        }
+
+        /* URL — left-to-right wipe: ink cover shrinks (scaleX, origin right) + teal leading edge */
+        .cta06-url {
+          position: absolute;
+          left: calc(50% - 170px);
+          top: 556px;
+          width: 340px;
+          height: 62px;
+          overflow: hidden;
+        }
+        .cta06-url-text {
+          display: block;
+          width: 100%;
+          text-align: center;
+          font-size: 48px;
+          font-weight: 600;
+          line-height: 62px;
+          letter-spacing: -0.01em;
+          color: #eff6fa;
+        }
+        .cta06-url-cover {
+          position: absolute;
+          inset: 0;
+          background: #0b1220;
+          transform-origin: 100% 50%;
+          will-change: transform;
+        }
+        .cta06-url-bar {
+          position: absolute;
+          left: 0;
+          top: 6px;
+          bottom: 6px;
+          width: 4px;
+          background: #23c4ae;
+          box-shadow: 0 0 14px rgba(35, 196, 174, 0.85);
+          opacity: 0;
+          will-change: transform, opacity;
+        }
+
+        /* mono chip row — chrome: SF Mono uppercase, 0.14em */
+        .cta06-chips {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 664px;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          gap: 1.1em;
+          font-family: "SF Mono";
+          font-size: 18px;
+          font-weight: 500;
+          letter-spacing: 0.14em;
+          color: rgba(239, 246, 250, 0.62);
+          opacity: 0;
+          will-change: transform, opacity;
+        }
+        .cta06-dot {
+          color: #23c4ae;
+        }
+      </style>
+
+      <div data-hf-id="hf-sqad" id="root" data-composition-id="06-cta" data-width="1920" data-height="1080" data-duration="3.648">
+        <!-- ground -->
+        <div data-hf-id="hf-5cbc" id="cta-background" class="clip cta06-bg" data-start="0" data-duration="3.648" data-track-index="0">
+          <div data-hf-id="hf-qgim" class="cta06-glow"></div>
+        </div>
+
+        <!-- stage -->
+        <div data-hf-id="hf-wrfp" id="cta-stage" class="clip cta06-stage" data-start="0" data-duration="3.648" data-track-index="1">
+          <!-- Scene 1: tagline assembles per-word on the VO rail -->
+          <div data-hf-id="hf-7y4d" class="cta06-tagline">
+            <span data-hf-id="hf-8vgb" class="cta06-word">your</span>
+            <span data-hf-id="hf-9157" class="cta06-word">workday,</span>
+            <span data-hf-id="hf-zl2h" class="cta06-word cta06-teal">remembered.</span>
+          </div>
+
+          <!-- Scenes 2–3: wordmark cascade → URL wipe → chip row → dead-static end card -->
+          <div data-hf-id="hf-j8y6" class="cta06-endcard">
+            <div data-hf-id="hf-vjd6" class="cta06-wordmark"><span data-hf-id="hf-sbav" class="cta06-glyph cta06-slash">/</span><span data-hf-id="hf-r8bu" class="cta06-glyph">l</span><span data-hf-id="hf-rmmv" class="cta06-glyph">o</span><span data-hf-id="hf-t7uz" class="cta06-glyph">k</span><span data-hf-id="hf-vlp5" class="cta06-glyph">a</span><span data-hf-id="hf-rpv2" class="cta06-glyph">l</span><span data-hf-id="hf-wsm8" class="cta06-glyph">b</span><span data-hf-id="hf-i15j" class="cta06-glyph">o</span><span data-hf-id="hf-o1vm" class="cta06-glyph">t</span></div>
+
+            <div data-hf-id="hf-ynw0" class="cta06-url">
+              <span data-hf-id="hf-6mkm" class="cta06-url-text">lokalbot.com</span>
+              <div data-hf-id="hf-8iuq" class="cta06-url-cover" data-layout-allow-occlusion></div>
+              <div data-hf-id="hf-v39c" class="cta06-url-bar"></div>
+            </div>
+
+            <div data-hf-id="hf-v74u" class="cta06-chips">
+              <span data-hf-id="hf-azhr">FREE</span><span data-hf-id="hf-wu8m" class="cta06-dot">·</span><span data-hf-id="hf-rs3m">OPEN SOURCE</span><span data-hf-id="hf-89oa" class="cta06-dot">·</span><span data-hf-id="hf-ycac">MACOS 15</span><span data-hf-id="hf-8nzb" class="cta06-dot">·</span><span data-hf-id="hf-i87u">APPLE SILICON</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+      <script>
+        window.__timelines = window.__timelines || {};
+        const tl = gsap.timeline({ paused: true });
+
+        /* ————— Scene 1 (0.0–1.7s): tagline builds per-word on the spoken rail —————
+           VO words: "your" 0.09 · "workday," 0.30 · "remembered." 0.82
+           Long-tail power3 settles — smooth beats bouncy. */
+        const cta06Words = gsap.utils.toArray(".cta06-word");
+        const cta06WordCues = [0.09, 0.3, 0.82];
+        cta06Words.forEach((el, i) => {
+          tl.fromTo(
+            el,
+            { y: 30, opacity: 0 },
+            { y: 0, opacity: 1, duration: 0.55, ease: "power3.out" },
+            cta06WordCues[i]
+          );
+        });
+
+        /* ————— Scene 2 (1.7–2.6s): on "Free" @1.77 the tagline scale-swaps away —————
+           scale-swap-transition: outgoing shrinks on power2.in; opacity fades on a
+           separate linear tween so the dimming is even. */
+        tl.to(
+          ".cta06-tagline",
+          { scale: 0.72, duration: 0.28, ease: "power2.in" },
+          1.74
+        );
+        tl.to(
+          ".cta06-tagline",
+          { opacity: 0, duration: 0.22, ease: "none" },
+          1.76
+        );
+
+        /* teal bloom rises behind the arriving lockup, then holds static */
+        tl.fromTo(
+          ".cta06-glow",
+          { autoAlpha: 0 },
+          { autoAlpha: 1, duration: 0.65, ease: "power2.out" },
+          1.9
+        );
+
+        /* wordmark letter cascade, left to right — the video's second budgeted
+           (light) overshoot: back.out(1.4) per glyph, index-derived stagger
+           (9 × 0.045s = 0.405s ≤ 0.5s cap). fromTo so t=0 seeks are exact. */
+        const cta06Glyphs = gsap.utils.toArray(".cta06-glyph");
+        cta06Glyphs.forEach((el, i) => {
+          tl.fromTo(
+            el,
+            { y: 46, opacity: 0, scale: 0.9 },
+            {
+              y: 0,
+              opacity: 1,
+              scale: 1,
+              duration: 0.46,
+              ease: "back.out(1.4)",
+            },
+            1.88 + i * 0.045
+          );
+        });
+
+        /* ————— Scene 3 (2.6–3.65s): URL wipes in left→right with a teal leading edge —————
+           Wipe = ink cover scaleX 1→0 (origin right) revealing the text; the glowing
+           bar rides the reveal front (same ease + duration ⇒ positions match), then dies. */
+        tl.fromTo(
+          ".cta06-url-cover",
+          { scaleX: 1 },
+          { scaleX: 0, duration: 0.5, ease: "power2.inOut" },
+          2.56
+        );
+        tl.fromTo(
+          ".cta06-url-bar",
+          { x: 0, autoAlpha: 0 },
+          { autoAlpha: 1, duration: 0.06, ease: "none" },
+          2.56
+        );
+        tl.to(
+          ".cta06-url-bar",
+          { x: 340, duration: 0.5, ease: "power2.inOut" },
+          2.56
+        );
+        tl.to(
+          ".cta06-url-bar",
+          { autoAlpha: 0, duration: 0.12, ease: "none" },
+          3.02
+        );
+
+        /* chip row fades up beneath the URL */
+        tl.fromTo(
+          ".cta06-chips",
+          { y: 14, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.32, ease: "power3.out" },
+          2.88
+        );
+
+        /* End card holds dead static from ~3.2s — this frame is the video's final
+           frame, so the static hold IS the exit. No exit animation. */
+
+        window.__timelines["06-cta"] = tl;
+      </script>
+    </template>
+  </body>
+</html>
