@@ -2,7 +2,7 @@
 
 Copy-paste-ready submission kits for four surfaces. Every field below is either an exact value to paste or a file path verified to exist in this repo on 2026-08-21. Each section is executable end-to-end in under 20 minutes.
 
-Shared facts used across all sections (do not embellish): GPLv3 · Apple Silicon M1+ · macOS 15.0+ · no account, no telemetry, no LokalBot cloud · Developer ID signed, notarized, stapled · Sparkle updates · bot-free two-track capture via Core Audio process tap ("Me" = mic, "Them" = meeting-app tap) · local transcription (IBM Granite Speech 4.1 default; Parakeet ~190x realtime; Whisper 99 languages; Qwen3-ASR) · local summaries/chat with citations · Dictation (hold Option-Space) · Cotyping ghost-text autocomplete in any app · day Timeline · `lokalbot-cli` read-only CLI + stdio MCP server · LokalBot.mcpb one-click MCP bundle. Latest release: v0.6.2 (2026-08-20).
+Shared facts used across all sections (do not embellish): GPLv3 · Apple Silicon M1+ · macOS 15.0+ · no account, no telemetry, no LokalBot cloud · Developer ID signed, notarized, stapled · Sparkle updates · bot-free two-track capture via Core Audio process tap ("Me" = mic, "Them" = meeting-app tap) · local transcription (IBM Granite Speech 4.1 default; Parakeet ~190x realtime; Whisper 99 languages; Qwen3-ASR) · local summaries/chat with citations · Dictation (hold Option-Space) · Cotyping ghost-text autocomplete in any app · day Timeline · `lokalbot-cli` read-only CLI + stdio MCP server · LokalBot.mcpb one-click MCP bundle. External-client boundary: LokalBot does not upload library content, but Claude Code, Cursor, and other MCP clients may transmit tool inputs and results under their own privacy terms; connect only trusted clients. Latest release: v0.6.2 (2026-08-20).
 
 Canonical links:
 
@@ -40,8 +40,9 @@ Beyond meetings, LokalBot gives you Dictation (hold Option-Space anywhere),
 Cotyping ghost-text autocomplete in any app, and a day Timeline of what you
 worked on. Developers get lokalbot-cli: a read-only CLI plus a stdio MCP
 server, shipped as a one-click .mcpb bundle, so your agent can answer
-"what did we decide last Tuesday?" without ever seeing the cloud — because
-there is no LokalBot cloud. GPLv3, Apple Silicon M1+, macOS 15.0+, signed,
+"what did we decide last Tuesday?" through an opt-in local bridge. LokalBot
+does not upload library content; the connected agent may process tool data
+under its own privacy terms. GPLv3, Apple Silicon M1+, macOS 15.0+, signed,
 notarized, Sparkle updates.
 ```
 
@@ -64,7 +65,8 @@ both sides of the call, zero bots in your calendar invites — and citations
 on every summary, so the AI has to show its work against the real
 transcript. Everything runs on-device (Granite Speech / Parakeet /
 Whisper), and if you're a terminal person, lokalbot-cli + its MCP server
-let your coding agent query your own meeting history locally. Happy to
+let a coding agent query your on-device meeting library through an opt-in
+read-only bridge. The agent client's privacy terms still apply. Happy to
 answer anything about the architecture or the models.
 ```
 
@@ -96,14 +98,16 @@ from.
 Why I think it fits Console: the developer story isn't the GUI — it's
 lokalbot-cli, a read-only CLI (list / search / get) plus a stdio MCP
 server, also shipped as a one-click LokalBot.mcpb bundle, so an agent in
-your editor can answer questions about yesterday's meetings locally. You
-can build from source; releases are Developer ID signed, notarized, and
-stapled with Sparkle updates.
+your editor can answer questions about yesterday's meetings through an
+opt-in local bridge. LokalBot does not upload the library; the editor or
+agent may process tool data under its own privacy terms. You can build from
+source; releases are Developer ID signed, notarized, and stapled with
+Sparkle updates.
 
 Links:
 - Repo: https://github.com/stevyhacker/lokalbot
 - Site: https://www.lokalbot.com
-- CLI skill docs: https://github.com/stevyhacker/lokalbot/blob/main/.agents/skills/lokalbot-cli/SKILL.md
+- CLI skill docs: https://github.com/stevyhacker/lokalbot/blob/master/.agents/skills/lokalbot-cli/SKILL.md
 
 Latest release is v0.6.2 (pre-1.0, so eligible for your betas section as
 well). Happy to answer anything.
@@ -140,9 +144,11 @@ summaries/chat always cite the transcript.
 
 For developers: lokalbot-cli is a read-only CLI and stdio MCP server
 (one-click LokalBot.mcpb bundle), so your agent can query your meeting
-history locally. Also includes Dictation (hold Option-Space), Cotyping
-ghost-text autocomplete in any app, and a day Timeline. No account, no
-telemetry, no LokalBot cloud. Signed, notarized, Sparkle updates.
+history through an opt-in local bridge. LokalBot does not upload library
+content; the connected client's privacy terms apply. Also includes Dictation
+(hold Option-Space), Cotyping ghost-text autocomplete in any app, and a day
+Timeline. No account, no telemetry, no LokalBot cloud. Signed, notarized,
+Sparkle updates.
 ```
 
 **Gallery asset paths (verified in-repo):**
@@ -162,8 +168,10 @@ notes should be too. LokalBot taps both audio tracks locally (no bot in
 your calls), transcribes with local models, and cites every summary
 against the transcript. Terminal folks: lokalbot-cli speaks JSON by
 default, has --table, and doubles as a stdio MCP server, so Claude Code or
-any MCP client can ask "what did we decide on Tuesday?" without a single
-byte leaving your Mac. GPLv3, M1+, macOS 15+. Ask me anything.
+another MCP client can ask "what did we decide on Tuesday?" through an
+opt-in local bridge. LokalBot itself does not upload the library; the client
+may process tool data under its own privacy terms. GPLv3, M1+, macOS 15+.
+Ask me anything.
 ```
 
 ---
@@ -199,19 +207,21 @@ npx skills add stevyhacker/lokalbot
 
 The lokalbot-cli skill teaches Claude Code, Cursor, Codex, and friends to
 query your on-device LokalBot meeting library — list, search, get with
-citations — over a read-only CLI and stdio MCP server. Nothing leaves your
-Mac. Works with any agent that reads SKILL.md files.
+citations — over a read-only CLI and stdio MCP server. LokalBot does not
+upload the library; connect only clients you trust because their privacy
+terms govern tool data. Works with any agent that reads SKILL.md files.
 ```
 
 ### 4b. Anthropic community plugin directory (Claude Code / Cowork)
 
-Verified: the directory lives at `anthropics/claude-plugins-community` (read-only mirror synced nightly from Anthropic's review pipeline after automated security scanning). **PRs opened directly against the repo are closed automatically** — the only real submission path is the web form at **https://clau.de/plugin-directory-submission**.
+Verified: the directory lives at `anthropics/claude-plugins-community` (read-only mirror synced nightly from Anthropic's review pipeline after automated security scanning). **PRs opened directly against the repo are closed automatically.** Individual authors submit through the [Console form](https://platform.claude.com/plugins/submit); Team or Enterprise organization owners with directory-management access may use the [claude.ai form](https://claude.ai/admin-settings/directory/submissions/plugins/new). The old `https://clau.de/plugin-directory-submission` short link now redirects to documentation rather than directly to a form.
 
 Submission step (≈15 minutes):
 
-1. Wait until `.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json` exist on `main` (added in this batch by the sibling agent) and are pushed to GitHub — the form will ask for the repo/source.
-2. Open https://clau.de/plugin-directory-submission and fill it in with the values below.
-3. Expect automated security scanning, then nightly sync into the marketplace. After approval, users install with:
+1. Run `claude plugin validate .` and resolve errors before submission (warnings are allowed but should be reviewed).
+2. Wait until `.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json` are pushed to the repository's `master` branch — the form asks for the public source.
+3. Individual author: open https://platform.claude.com/plugins/submit. Team/Enterprise directory owner: open https://claude.ai/admin-settings/directory/submissions/plugins/new. If login or organization access is required, hand the final click to the owner.
+4. Expect automated security scanning, then nightly sync into the marketplace. After approval, users install with:
    ```
    claude plugin marketplace add anthropics/claude-plugins-community
    claude plugin install <plugin-name>@claude-community
@@ -226,16 +236,19 @@ What it does: connects Claude Code and Claude Cowork to LokalBot, a
 local-first macOS workspace that records, transcribes, and summarizes
 meetings entirely on-device. Through the bundled read-only lokalbot-cli
 and its stdio MCP server, the plugin lets Claude list, search, and quote
-past meetings with transcript citations — locally, with nothing sent to
-any external service. MCP tool access is gated behind explicit in-app
-consent toggles.
+past meetings with transcript citations through a locally running bridge.
+LokalBot does not upload library content, but Claude Code or Cowork may
+process tool inputs and results under Anthropic's terms. MCP access is gated
+behind explicit in-app consent toggles; users should connect only clients
+they trust and retrieve the minimum meeting content needed.
 
 Manifests: .claude-plugin/plugin.json and .claude-plugin/marketplace.json
 in the repo root define the plugin and its marketplace entry.
 
 Skill: the plugin wraps .agents/skills/lokalbot-cli/SKILL.md, which
-documents list/search/get/path verbs, JSON output, and a hard rule never
-to send meeting content to external services.
+documents list/search/get/path verbs, JSON output, least-data guidance, and
+the boundary between LokalBot's local bridge and the connected client's
+privacy terms.
 
 Facts for reviewers: GPLv3; Apple Silicon M1+; macOS 15.0+; no account,
 no telemetry, no vendor cloud; Developer ID signed, notarized, stapled;

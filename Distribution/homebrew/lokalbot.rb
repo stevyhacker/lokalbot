@@ -17,11 +17,6 @@ cask "lokalbot" do
   depends_on arch: :arm64
   depends_on macos: :sequoia
 
-  # ~/Library/Application Support/me.dotenv.LokalBot IS the user's meeting
-  # library (transcripts, summaries) — privacy-sensitive data, not cache.
-  # It is listed here so an explicit `brew zap --cask lokalbot` removes it,
-  # and zap always moves files to the Trash rather than deleting them.
-  # A plain `brew uninstall --cask lokalbot` never touches this folder.
   zap trash: [
     "~/Library/Application Support/me.dotenv.LokalBot",
     "~/Library/Preferences/me.dotenv.LokalBot.plist",

@@ -1,5 +1,6 @@
 {
   "name": "lokalbot",
+  "description": "Read-only LokalBot meeting recall for Claude Code.",
   "owner": {
     "name": "stevyhacker",
     "url": "https://github.com/stevyhacker"
@@ -8,7 +9,7 @@
     {
       "name": "lokalbot",
       "source": "./",
-      "description": "A local LLM workhorse that keeps a private memory of your workday. Gives Claude Code read-only access to your local LokalBot meeting library via a /recall command, the lokalbot-cli skill, and a stdio MCP server.",
+      "description": "A local LLM workhorse that keeps a private memory of your workday. Gives Claude Code read-only access to your local LokalBot meeting library via the /lokalbot:recall command, the lokalbot-cli skill, and a stdio MCP server.",
       "version": "0.1.0",
       "author": {
         "name": "stevyhacker",

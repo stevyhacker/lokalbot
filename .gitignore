@@ -83,5 +83,6 @@ web/assets/fonts/
 # One-off exported video handoff
 lokalbot video ad handoff/
 
-# Raycast extension local install
+# Raycast extension generated files and local install
+Distribution/raycast/raycast-env.d.ts
 Distribution/raycast/node_modules/

@@ -13,7 +13,7 @@ Everything in this directory ships LokalBot's Hugging Face presence: a curated m
 ## Prerequisites
 
 - A Hugging Face account (`huggingface.co/join`). Using the existing `stevyhacker` account keeps collection/Space URLs consistent with the GitHub handle.
-- For the API path only: `pip install -U huggingface_hub`, then `hf auth login` (a write token).
+- For the API path only: install the current CLI with `uv tool install hf` (or run it ephemerally with `uvx hf`), then `hf auth login` with a write token.
 - No other tooling required — the Space is static.
 
 ## Step 1 — Create the Collection (~20 min)

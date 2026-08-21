@@ -23,6 +23,6 @@ Search the user's local LokalBot meeting library and answer their query using re
 
 - Never invent meeting content. If the CLI returns no hits, say so plainly.
 - The CLI is read-only by design. Never write into the meetings folder.
-- Meeting content is sensitive personal data. Keep it local: never send transcripts or summaries to external services.
+- Meeting content is sensitive personal data. Retrieve only what is needed, avoid full transcripts unless the user explicitly requests one, and do not forward content to any additional service. LokalBot itself does not upload tool data, but Claude Code may process tool inputs and results under Anthropic's terms.
 - If any command returns `[access_disabled]`, tell the user to enable Settings > Privacy > "Allow external agents to read your meeting library" in the LokalBot app. Do not try to work around it.
 - If `lokalbot-cli` is not on PATH, use the embedded copy at `/Applications/LokalBot.app/Contents/Helpers/lokalbot-cli`.

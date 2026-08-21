@@ -74,6 +74,8 @@ claude mcp add lokalbot -- /Applications/LokalBot.app/Contents/Helpers/lokalbot-
 
 The MCP tools require the user's consent toggle: LokalBot → Settings → Privacy → "Allow external agents to read your meeting library". If a tool returns `[access_disabled]`, tell the user to flip that toggle — do not try to work around it.
 
+LokalBot itself does not upload library content. An external agent or MCP client may transmit tool inputs and results under its own privacy terms, so connect only clients the user trusts and retrieve the minimum meeting content needed.
+
 Screen-memory tools require the separate "Allow external agents to read screen memory" toggle. A meeting-library grant never implies a screen-memory grant. If a screen tool returns `[screen_access_disabled]`, explain that separate choice and do not work around it.
 
 ## What you SHOULD do
@@ -88,4 +90,4 @@ Screen-memory tools require the separate "Allow external agents to read screen m
 - Never invent meeting content. If `lokalbot-cli` returns no hits, say so.
 - Never write into the meetings folder. The CLI is read-only by design.
 - Never paste full transcripts into the chat unless explicitly asked — long meetings are long. Summarise, then offer to expand.
-- Meeting content is sensitive personal data. Never send transcripts or summaries to external services; work with them locally.
+- Meeting content is sensitive personal data. Do not forward transcripts, summaries, or tool results to any additional service beyond the client the user deliberately connected.

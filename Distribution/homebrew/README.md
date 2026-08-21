@@ -25,9 +25,10 @@ mkdir -p "$(brew --repository)/Library/Taps/local/homebrew-scratch/Casks"
 cp Distribution/homebrew/lokalbot.rb \
    "$(brew --repository)/Library/Taps/local/homebrew-scratch/Casks/"
 
-brew style --cask local/scratch/lokalbot           # style gate
-brew info --cask local/scratch/lokalbot            # parses + prints metadata
-brew audit --cask local/scratch/lokalbot --online  # full audit (downloads DMG)
+brew style --cask local/scratch/lokalbot       # style gate
+brew info --cask local/scratch/lokalbot        # parses + prints metadata
+brew livecheck local/scratch/lokalbot          # release discovery
+brew audit --new --cask local/scratch/lokalbot # strict online new-cask audit
 ```
 
 Expected results:
@@ -37,6 +38,7 @@ Expected results:
 | `ruby -c …` | `Syntax OK` |
 | `brew style …` | `1 file inspected, no offenses detected` |
 | `brew info …` | shows `lokalbot (LokalBot): 0.6.2 (auto_updates)`, the desc, and `Required: arm64 architecture, macOS >= 15` |
+| `brew livecheck …` | shows `0.6.2 ==> 0.6.2` |
 | `brew audit …` | exits 0 silently (downloads the ~55 MB DMG, verifies sha256, checks signing) |
 
 Verified on this machine: `ruby -c`, `brew style`, `brew info`, and
@@ -55,34 +57,47 @@ shasum -a 256 LokalBot.dmg
 Clean up the scratch tap when done:
 
 ```sh
-rm -rf "$(brew --repository)/Library/Taps/local/homebrew-scratch"
-brew untap local/scratch 2>/dev/null || true
+brew untap local/scratch
 ```
 
 ## 2. Submit upstream to Homebrew/homebrew-cask
 
-Per [CONTRIBUTING.md](https://github.com/Homebrew/homebrew-cask/blob/HEAD/CONTRIBUTING.md):
-one PR per cask, two-space indent, no extraneous comments (the privacy note in
-our zap block is allowed only if reviewers accept it — be ready to trim it),
-and **AI-assisted PRs must be disclosed** in the opening comment (name the
-tool/model used), must not carry an AI `Co-authored-by`/`Assisted-by` trailer,
-and you may have only one open at a time. You answer all maintainer questions
-yourself.
+Follow both [CONTRIBUTING.md](https://github.com/Homebrew/homebrew-cask/blob/HEAD/CONTRIBUTING.md)
+and the maintained [pull-request guide](https://docs.brew.sh/How-To-Open-a-Homebrew-Pull-Request#cask-related-pull-request).
+The important constraints are one PR per cask, two-space indentation, no
+extraneous comments, and a disclosure in the opening comment naming any
+AI/LLM tool and model used. Do not add AI attribution trailers, and answer all
+maintainer questions yourself.
 
 Steps:
 
-1. Fork https://github.com/Homebrew/homebrew-cask and clone your fork.
-2. Add the file at exactly `Casks/l/lokalbot.rb` (one-letter subdirectory by
-   first character of the token) on a branch named after the change.
-3. Commit message for a new cask follows the `"<token> <version>"` pattern
-   from CONTRIBUTING (`ie. transmission 2.82`):
+1. Fork `Homebrew/homebrew-cask`, run `brew tap --force homebrew/cask`, and add
+   the fork as a pushable remote in `$(brew --repository homebrew/cask)`.
+2. Create a branch from the current `origin/HEAD`, then add the file at exactly
+   `Casks/l/lokalbot.rb` (one-letter subdirectory by the cask token's first
+   character).
+3. With the owner's approval to install locally, run the current cask gates:
+
+   ```sh
+   HOMEBREW_NO_INSTALL_FROM_API=1 brew install --cask lokalbot
+   brew uninstall --cask lokalbot
+   brew audit --new --cask lokalbot
+   brew style --fix --cask lokalbot
+   brew lgtm --online
+   ```
+
+   If the installed Xcode blocks a local gate, record the exact output, but do
+   not call the gate passed and do not treat the caveat as a substitute for
+   green hosted CI.
+4. Use the current new-cask commit convention:
 
    ```sh
    git add Casks/l/lokalbot.rb
-   git commit -m "lokalbot 0.6.2"
+   git commit -m "lokalbot 0.6.2 (new cask)"
    ```
 
-4. Open the PR against `Homebrew/homebrew-cask` → `master`. PR body template
+5. Push the branch to the fork and open the PR against
+   `Homebrew/homebrew-cask` → `main`. PR body template
    (GitHub inserts most of this via the PR template — keep those checklist
    items and add):
 
@@ -93,18 +108,14 @@ Steps:
    - Repo (source): https://github.com/stevyhacker/lokalbot
    - DMG is Developer ID signed, notarized, stapled; updates via Sparkle
      (appcast attached to each release).
-   - `brew audit --cask` and `brew style --cask` pass locally.
+   - Local validation: <list each command and its actual result; disclose any
+     Xcode-blocked command as not run or blocked, never as passed>.
    - Disclosure: this cask was drafted with an LLM assistant (<tool/model>); I
      reviewed every line.
    ```
 
-5. CI runs `brew test --cask lokalbot` (installs, launches, uninstalls on all
-   supported macOS runners). It must be green before review proceeds. Watch it
-   from your machine with:
-
-   ```sh
-   brew test --cask lokalbot   # after merging locally, or rely on CI
-   ```
+6. Hosted CI must be green before the PR is considered complete. A local Xcode
+   limitation belongs in the PR body but does not excuse a failed hosted job.
 
 ### Realistic risk: notability
 
@@ -140,8 +151,9 @@ Bump routine for future releases:
 
 1. New release is cut on GitHub (tag `vX.Y.Z`, asset `LokalBot.dmg`).
 2. Compute the new sha256 of the DMG: `shasum -a 256 LokalBot.dmg`.
-3. In `Casks/l/lokalbot.rb`, update `version` and `sha256`. Nothing else
-   changes — the URL already interpolates `v#{version}`.
+3. In the upstream checkout update `Casks/l/lokalbot.rb`; in the own tap update
+   `Casks/lokalbot.rb`. Change `version` and `sha256`; the URL already
+   interpolates `v#{version}`.
 4. Livecheck keeps working across both distributions: the app's Sparkle
    `appcast.xml` is attached to every GitHub release, and the cask's
    `strategy :github_releases` reads the repo's releases API directly, so

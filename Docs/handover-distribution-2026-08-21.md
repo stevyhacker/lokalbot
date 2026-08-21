@@ -1,82 +1,142 @@
 # Handover: distribution launch tasks (for Codex)
 
-_Date: 2026-08-21. Author session produced all artifacts below; they are staged, not committed._
-_Repo: `stevyhacker/lokalbot`. Machine has: `gh` authed as **stevyhacker** (scopes include `repo`, SSH git protocol), `claude` CLI, `hf` CLI (**unauthenticated**), Raycast.app installed._
+_Date: 2026-08-21. The distribution batch is committed locally as `c7f863138c4ba187663c75c4685a8f0075a45842`; the repair pass described below is currently an unstaged working-tree diff. Neither the commit nor the repairs are on `origin/master`._
+_Repo: `stevyhacker/lokalbot`. Verified machine state: `gh` is authenticated as **stevyhacker** with SSH git protocol and `repo` scope; `claude` is installed; `hf` 1.28.0 is installed through `uv` and authenticated as **stevyhacker**; Raycast.app is installed._
 
 ## State you inherit
 
-| Artifact | Path | Status |
+| Artifact | Path | Local status |
 | --- | --- | --- |
-| Cask v0.6.2 (sha256 verified) + tap guide | `Distribution/homebrew/` | staged |
-| Raycast extension (tsc clean) | `Distribution/raycast/` | staged |
-| Claude Code plugin manifests + `/recall` | `.claude-plugin/`, `Distribution/claude-plugin/` | staged |
-| HF collection/Space specs + benchmark data | `Distribution/huggingface/` | staged |
-| Submission copy (Uneed/Console/DevHunt/registries) | `Docs/distribution-submissions-2026-08.md` | staged |
+| Cask v0.6.2 (sha256 verified) + tap guide | `Distribution/homebrew/` | base commit + unstaged repair |
+| Raycast extension | `Distribution/raycast/` | base commit + unstaged repair |
+| Claude Code plugin + `/lokalbot:recall` | `.claude-plugin/`, `Distribution/claude-plugin/` | base commit + unstaged repair |
+| HF collection/Space specs + benchmark data | `Distribution/huggingface/` | base commit + unstaged repair |
+| Submission copy | `Docs/distribution-submissions-2026-08.md` | base commit + unstaged repair |
+| Shared privacy/namespace guidance | `.agents/skills/lokalbot-cli/SKILL.md`, `README.md`, `.gitignore` | unstaged repair |
 
-**Prerequisite for tasks 2–3:** commit and push the staged set to `master`
-(suggested message: `Add distribution artifacts: Homebrew cask, Raycast extension, Claude Code plugin, HF kit, submission docs`).
-Do not push until the owner confirms, unless this handover is your authorization.
+Before any public task:
+
+1. Run `git status --short` and review the complete repair diff. Preserve every unrelated untracked file.
+2. This handover is **not** authorization to commit, push, create a public repository, open a PR, send email, publish an extension, or submit a form. Require an explicit owner instruction for each public action or an instruction that clearly authorizes the complete launch sequence.
+3. When commit authorization exists, stage only the paths in the table plus this handover; create a follow-up commit such as `Repair distribution launch workflow and privacy boundary`.
+4. When push authorization exists, push `master`, then verify `origin/master` equals local `HEAD` before Task 3 or any public submission depends on the repaired files.
 
 ---
 
-## Task 1 — Own tap (do first; guaranteed win)
+## Task 1 — Own Homebrew tap
 
-1. `gh repo create stevyhacker/homebrew-tap --public --clone /tmp/homebrew-tap` (add a one-line README: "Homebrew tap for LokalBot").
-2. Copy `Distribution/homebrew/lokalbot.rb` to `/tmp/homebrew-tap/Casks/lokalbot.rb`. Commit message: `Add lokalbot 0.6.2`. Push to `main`.
-3. Verify read-only: `brew tap stevyhacker/tap && brew info --cask lokalbot` must show version 0.6.2 and the correct sha256. Do NOT `brew install` on this machine without asking.
+1. Read-only preflight: `gh repo view stevyhacker/homebrew-tap`. If it already exists, inspect it and do not recreate it.
+2. After explicit approval to create the public repository, use separate create and clone commands because `gh repo create --clone` does not accept a destination:
 
-**Acceptance:** `brew info --cask lokalbot` resolves from the tap; repo public.
+   ```sh
+   tap_dir="$(mktemp -d /tmp/lokalbot-homebrew-tap.XXXXXX)"
+   gh repo create stevyhacker/homebrew-tap --public
+   gh repo clone stevyhacker/homebrew-tap "$tap_dir"
+   ```
 
-## Task 2 — Upstream homebrew-cask PR
+3. Add a one-line `README.md` containing `Homebrew tap for LokalBot`. Copy `Distribution/homebrew/lokalbot.rb` to `$tap_dir/Casks/lokalbot.rb`, commit as `Add lokalbot 0.6.2`, and push the initial branch as `main`.
+4. Verify without installing the app:
 
-1. Read <https://raw.githubusercontent.com/Homebrew/homebrew-cask/HEAD/CONTRIBUTING.md> for the current new-cask commit-message convention before committing.
-2. `gh repo fork Homebrew/homebrew-cask --clone /tmp/hbc`; add file at `Casks/l/lokalbot.rb` (copy of our cask, byte-identical apart from nothing — keep identical).
-3. In `/tmp/hbc`: `brew audit --strict --new-cask Casks/l/lokalbot.rb` and `brew style --fix Casks/l/lokalbot.rb`. Fix everything audit reports. Known machine limitation: Xcode 26.6 < required 27.0 blocks the full audit — record that in the PR body rather than skipping silently.
-4. Commit per convention, push to fork, `gh pr create -R Homebrew/homebrew-cask` with title `lokalbot (new cask)` plus: what it is, source URL, signed/notarized note, `brew audit` result incl. the Xcode caveat.
-5. If a maintainer challenges notability (30 stars): reply politely linking lokalbot.com, the signed/notarized releases, and the own-tap existence; do not argue.
+   ```sh
+   brew tap stevyhacker/tap
+   brew info --cask stevyhacker/tap/lokalbot
+   brew cat --cask stevyhacker/tap/lokalbot | rg 'version|sha256'
+   ```
 
-**Acceptance:** PR open with CI green (or documented Xcode caveat); no force-pushes after review starts.
+   Require version `0.6.2` and sha256 `17817f2cae9beb5c14a43aedad98bd6d51c9985261414791e73c1b30df173842`. Do **not** run `brew install` on this machine without separate owner approval.
+
+**Acceptance:** the public tap exists; the fully qualified cask resolves as 0.6.2 with the expected sha256; no installation occurred.
+
+## Task 2 — Upstream Homebrew cask PR
+
+1. Re-read the current [Homebrew Cask contributing rules](https://raw.githubusercontent.com/Homebrew/homebrew-cask/HEAD/CONTRIBUTING.md) and [cask PR guide](https://docs.brew.sh/How-To-Open-a-Homebrew-Pull-Request#cask-related-pull-request) immediately before starting.
+2. From the LokalBot root, save `lokalbot_root="$PWD"`. If the fork does not exist, create it without cloning: `gh repo fork Homebrew/homebrew-cask --clone=false`. Then prepare Homebrew's contribution checkout:
+
+   ```sh
+   brew tap --force homebrew/cask
+   hbc_dir="$(brew --repository homebrew/cask)"
+   cd "$hbc_dir"
+   git remote get-url stevyhacker >/dev/null 2>&1 || git remote add stevyhacker git@github.com:stevyhacker/homebrew-cask.git
+   git fetch origin
+   git switch -c lokalbot-0.6.2-new-cask origin/HEAD
+   cp "$lokalbot_root/Distribution/homebrew/lokalbot.rb" Casks/l/lokalbot.rb
+   ```
+
+3. With explicit approval to install/uninstall locally, run the current gates:
+
+   ```sh
+   HOMEBREW_NO_INSTALL_FROM_API=1 brew install --cask lokalbot
+   brew uninstall --cask lokalbot
+   brew audit --new --cask lokalbot
+   brew style --fix --cask lokalbot
+   brew lgtm --online
+   ```
+
+   Review every style edit. If Xcode 26.6 blocks a local command, record the exact command and output as **blocked**, not passed. A local caveat never substitutes for hosted CI.
+4. Commit as `lokalbot 0.6.2 (new cask)`, push to the `stevyhacker` fork remote, and open the PR against `Homebrew/homebrew-cask:main`. The opening body must disclose the actual AI tool/model used, summarize LokalBot, link the canonical site/source, note signing/notarization, and report each local gate's real result.
+5. If maintainers challenge notability, reply politely with verifiable links only. Answer maintainer questions yourself. Do not rewrite published history unless the current guide or a maintainer requires it; if required, use `--force-with-lease`.
+
+**Acceptance:** PR open; all hosted CI green; local results reported honestly; no failed job waived by the Xcode caveat.
 
 ## Task 3 — Claude Code plugin: verify, then list
 
-1. After the push (prerequisite): in a scratch dir run `claude` and execute `/plugin marketplace add stevyhacker/lokalbot` then `/plugin install lokalbot@lokalbot`. Confirm `/recall` appears.
-2. Headless MCP check without Claude: `printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}\n' | lokalbot-cli mcp | head -c 400` must return a server init response.
-3. Submit the community directory form <https://clau.de/plugin-directory-submission> using the text in `Docs/distribution-submissions-2026-08.md` §4b. If the form needs an interactive browser login you cannot complete, stop and flag for the owner.
+1. Before submission, run `claude plugin validate .` from the LokalBot root and review every warning.
+2. After the repaired files are on public `master`, start Claude Code in a scratch directory and run:
 
-**Acceptance:** plugin installs from the public repo; form submitted or explicitly handed back.
+   ```text
+   /plugin marketplace add stevyhacker/lokalbot
+   /plugin install lokalbot@lokalbot
+   /reload-plugins
+   ```
 
-## Task 4 — Launch platforms (mostly pre-filled)
+   Confirm the namespaced `/lokalbot:recall` command appears. Do not expect `/recall`, and do not query private meeting data merely to validate installation.
+3. Headless MCP initialization check:
 
-Copy lives in `Docs/distribution-submissions-2026-08.md`. Field-by-field.
+   ```sh
+   printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}\n' | lokalbot-cli mcp | head -c 400
+   ```
 
-- **Console.dev:** send the pitch email to hello@console.dev Mon/Tue for the Thursday newsletter. If you have no mail access, save the final draft to `Docs/outbox/console-dev-pitch.md` and flag.
-- **Uneed.best / DevHunt:** both need interactive logins. Pre-check the live forms still match the kit's field lists; update the kit if fields changed; then hand off to the owner for the actual submission clicks.
-- Timing note from the kit: stack Uneed/DevHunt on the same day as the Show HN post (star velocity feeds GitHub Trending); Reddit drips after.
+4. Submit using `Docs/distribution-submissions-2026-08.md` §4b. Individual authors use <https://platform.claude.com/plugins/submit>; Team/Enterprise directory owners may use <https://claude.ai/admin-settings/directory/submissions/plugins/new>. The old `clau.de` short link is documentation-only. Stop for owner login, organization access, 2FA, or the final submission click unless explicitly authorized.
 
-**Acceptance:** kit re-verified against live forms; email drafted; submissions either done or explicitly owner-gated.
+**Acceptance:** validation passes; public installation works; `/lokalbot:recall` appears; MCP initialization responds; submission is completed only with authorization or explicitly handed back.
 
-## Task 5 — Hugging Face (blocked on one credential)
+## Task 4 — Launch platforms
 
-Blocker: `hf` is unauthenticated and `.env` has no HF token. Ask the owner to run `hf auth login` once.
+Use `Docs/distribution-submissions-2026-08.md` field by field. Its agent-facing copy now states the real boundary: LokalBot does not upload library content, but an external client may transmit tool inputs/results under its own privacy terms.
 
-Then:
-1. Write `Distribution/huggingface/scripts/create_collection.py` using `huggingface_hub`: creates collection "LokalBot recommended local stack" with the six API-verified repos listed in `Distribution/huggingface/COLLECTION.md` and the description paragraph from that file.
-2. Create the Space per `Distribution/huggingface/SPACE-benchmark.md` (sdk: static): Space README.yaml frontmatter included there; body generated from `benchmark-summary.md`.
-3. Run both, capture the resulting URLs, and append them to `Distribution/huggingface/README.md`.
+- **Console.dev:** re-check the current selection page and newsletter cadence. Draft the pitch to `hello@console.dev`; if sending is not explicitly authorized, create `Docs/outbox/` and save the final draft as `Docs/outbox/console-dev-pitch.md`.
+- **Uneed.best / DevHunt:** re-check the live fields. Interactive login and final submission remain owner-gated unless explicitly authorized.
+- Coordinating launch dates with Show HN is a marketing hypothesis, not a guaranteed GitHub Trending mechanism. Do not present it as a measured fact.
 
-**Acceptance:** collection + Space live; URLs recorded; zero third-party weights uploaded.
+**Acceptance:** live fields re-verified; all `github.com/stevyhacker/lokalbot/blob/...` links use `master`; email drafted; every send/submission either authorized and completed or clearly owner-gated.
+
+## Task 5 — Hugging Face
+
+The former CLI blocker is repaired: active `hf` is version 1.28.0 installed by `uv`, and `hf auth whoami` returns `stevyhacker`. Re-check both immediately before any write. Creating a public Collection or Space is still an external action and requires explicit authorization.
+
+After authorization:
+
+1. Write `Distribution/huggingface/scripts/create_collection.py` with `huggingface_hub`; create `LokalBot recommended local stack` using the six API-verified repositories and description in `Distribution/huggingface/COLLECTION.md`.
+2. Create the static Space from `Distribution/huggingface/SPACE-benchmark.md`; generate its body from `benchmark-summary.md`.
+3. Run both, capture their public URLs, and append them to `Distribution/huggingface/README.md`.
+
+**Acceptance:** Collection and Space live; URLs recorded; zero third-party weights uploaded.
 
 ## Task 6 — Raycast extension
 
-1. `cd Distribution/raycast && npm install && npm run build` — fix anything `ray build` reports (tsc already clean).
-2. Store publish (`npm run publish`) requires the owner's Raycast account session in Raycast.app — prepare everything, then hand the single command to the owner.
+1. Run `cd Distribution/raycast && npm ci && npm run build`. The generated `raycast-env.d.ts` is intentionally ignored and included by `tsconfig.json`.
+2. Verify `npm pkg get scripts.publish` returns `npx @raycast/api@latest publish`.
+3. Review `npm audit` before publishing. As of this handover it reports two low-severity findings from the Windows-only esbuild development-server advisory through `@raycast/api` 1.104.25; the offered fix is a fresh major API upgrade, so do not apply it blindly.
+4. `npm run publish` requires the owner's Raycast session and is an external Store action. Prepare it, but do not run it without explicit publish authorization.
 
-**Acceptance:** `ray build` succeeds; publish command ready.
+**Acceptance:** `npm run build` succeeds; the publish script exists; publishing is completed only with authorization or handed to the owner as one command.
 
 ---
 
 ## Ground rules
 
-- Never modify files outside the paths named above; never rehost third-party model weights.
-- All product claims come from the fact whitelist at the top of `Docs/distribution-submissions-2026-08.md` — no invented metrics anywhere.
-- Anything requiring a password, 2FA, or an interactive OAuth consent: stop and flag instead of improvising.
+- Preserve unrelated tracked and untracked work; stage only exact intended paths.
+- Never rehost third-party model weights.
+- No commit, push, public repository creation, PR, email, listing, Space, Collection, form submission, or Store publish without explicit authorization.
+- All product claims come from the fact whitelist in `Docs/distribution-submissions-2026-08.md`. For external agents, distinguish LokalBot's local bridge from the connected client's privacy terms.
+- Anything requiring a password, token entry, 2FA, interactive OAuth consent, or organization permission stops for the owner.
