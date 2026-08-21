@@ -1,107 +1,171 @@
 #!/bin/sh
-# Render the natural-speed, 30-second LokalBot showcase cut.
+# Render and atomically promote the canonical 16:9, 30-second product promo.
+# Run only after the HyperFrames Studio preview has been reviewed.
 set -eu
 
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-PROJECT_DIR="$REPO_ROOT/Video/hero-demo"
-VIDEO_SCREENSHOTS="$REPO_ROOT/Assets/video-screenshots"
-VENV_DIR="$PROJECT_DIR/.venv"
-HYPERFRAMES_VERSION="0.7.42"
-MASTER="$PROJECT_DIR/renders/lokalbot-showcase-short-master.mp4"
-FINAL_TMP="$REPO_ROOT/web/assets/hero-demo-short.production.mp4"
-FINAL="$REPO_ROOT/web/assets/hero-demo-short.mp4"
-POSTER="$REPO_ROOT/web/assets/hero-poster-short.jpg"
-MANIFEST="$REPO_ROOT/web/assets/hero-demo-short.manifest.json"
-DEFAULT_FINAL_TMP="$REPO_ROOT/web/assets/hero-demo.production.mp4"
-DEFAULT_FINAL="$REPO_ROOT/web/assets/hero-demo.mp4"
-DEFAULT_POSTER_TMP="$REPO_ROOT/web/assets/hero-poster.production.jpg"
-DEFAULT_POSTER="$REPO_ROOT/web/assets/hero-poster.jpg"
-DEFAULT_MANIFEST="$REPO_ROOT/web/assets/hero-demo.manifest.json"
-SCRIPT="$PROJECT_DIR/short-script.txt"
-MP3="$PROJECT_DIR/assets/narration-short.mp3"
-WAV="$PROJECT_DIR/assets/narration-short.wav"
-TIMING="$PROJECT_DIR/assets/narration-short-timing.json"
-VOICE_ID="bIHbv24MWmeRgasZH58o"
-VOICE_NAME="Will"
-MODEL_ID="eleven_v3"
-OUTPUT_FORMAT="mp3_44100_128"
+PROJECT_DIR="$REPO_ROOT/Video/lokalbot-promo"
+HYPERFRAMES_VERSION=0.8.4
+MASTER="$PROJECT_DIR/renders/video.mp4"
+FINAL_TMP="$REPO_ROOT/web/assets/hero-demo.production.mp4"
+FINAL="$REPO_ROOT/web/assets/hero-demo.mp4"
+POSTER_TMP="$REPO_ROOT/web/assets/hero-poster.production.jpg"
+POSTER="$REPO_ROOT/web/assets/hero-poster.jpg"
+MODE=${1:-}
 
-if ! command -v uv >/dev/null 2>&1; then
-  echo "error: uv is required to prepare the local narration environment" >&2
+case "$MODE" in
+  ""|--postprocess-only) ;;
+  *)
+    echo "usage: $0 [--postprocess-only]" >&2
+    exit 2
+    ;;
+esac
+
+for command in ffmpeg ffprobe jq shasum; do
+  if ! command -v "$command" >/dev/null 2>&1; then
+    echo "error: $command is required" >&2
+    exit 1
+  fi
+done
+
+for asset in \
+  assets/bgm/track.wav \
+  assets/voice/01.wav \
+  assets/voice/02.wav \
+  assets/voice/03.wav \
+  assets/voice/04.wav \
+  assets/voice/05.wav \
+  assets/voice/06.wav; do
+  if [ ! -s "$PROJECT_DIR/$asset" ]; then
+    echo "error: missing generated promo asset: $PROJECT_DIR/$asset" >&2
+    echo "prepare the local media assets and preview the project before rendering" >&2
+    exit 1
+  fi
+done
+
+mkdir -p "$PROJECT_DIR/renders" "$REPO_ROOT/web/assets"
+
+if [ "$MODE" != "--postprocess-only" ]; then
+  (
+    cd "$PROJECT_DIR"
+    npm run check
+    npx --yes "hyperframes@$HYPERFRAMES_VERSION" render \
+      --skill=product-launch-video \
+      --output "$MASTER" --fps 30 --quality high --strict
+  )
+fi
+
+if [ ! -s "$MASTER" ]; then
+  echo "error: missing rendered master: $MASTER" >&2
   exit 1
 fi
-if [ ! -x "$VENV_DIR/bin/python" ]; then
-  uv venv --python 3.12 "$VENV_DIR"
-fi
-uv pip install --python "$VENV_DIR/bin/python" numpy soundfile
-PYTHON="$VENV_DIR/bin/python"
 
-mkdir -p "$PROJECT_DIR/assets" "$PROJECT_DIR/renders" "$REPO_ROOT/web/assets"
-for name in quick-recall timeline dictation cotyping; do
-  cp "$VIDEO_SCREENSHOTS/$name.png" "$PROJECT_DIR/assets/$name.png"
-done
-cp "$REPO_ROOT/Assets/lokalbot-icon.svg" "$PROJECT_DIR/assets/lokalbot-icon.svg"
+# Measure first, then apply a linear second pass. A single loudnorm pass can
+# miss both integrated loudness and true-peak targets on a short, dynamic mix.
+LOUDNESS_LOG=$(mktemp "${TMPDIR:-/tmp}/lokalbot-loudnorm.XXXXXX")
+trap 'rm -f "$LOUDNESS_LOG"' EXIT HUP INT TERM
 
-if [ ! -f "$WAV" ] || [ "$SCRIPT" -nt "$WAV" ]; then
-  set -- \
-    --script "$SCRIPT" \
-    --mp3 "$MP3" \
-    --wav "$WAV" \
-    --timing "$TIMING" \
-    --max-duration 30 \
-    --voice-id "$VOICE_ID" \
-    --voice-name "$VOICE_NAME" \
-    --model-id "$MODEL_ID" \
-    --output-format "$OUTPUT_FORMAT" \
-    --anchor "Dictate=13.20" \
-    --anchor "LokalBot:=23.72"
-  if [ -f "$MP3" ] && [ -f "$TIMING" ] && [ ! "$SCRIPT" -nt "$MP3" ]; then
-    "$PYTHON" "$PROJECT_DIR/generate_elevenlabs_narration.py" "$@" --reuse-audio
-  else
-    if [ -z "${ELEVENLABS_API_KEY:-}" ]; then
-      echo "error: ELEVENLABS_API_KEY is required to regenerate the Will narration" >&2
-      exit 1
-    fi
-    "$PYTHON" "$PROJECT_DIR/generate_elevenlabs_narration.py" "$@"
+ffmpeg -hide_banner -nostats -v info -i "$MASTER" -map 0:a:0 \
+  -af 'loudnorm=I=-16:TP=-1.5:LRA=7:print_format=json' \
+  -f null - 2> "$LOUDNESS_LOG"
+
+MEASURED_I=$(sed -n '/^{/,/^}/p' "$LOUDNESS_LOG" | jq -r '.input_i')
+MEASURED_TP=$(sed -n '/^{/,/^}/p' "$LOUDNESS_LOG" | jq -r '.input_tp')
+MEASURED_LRA=$(sed -n '/^{/,/^}/p' "$LOUDNESS_LOG" | jq -r '.input_lra')
+MEASURED_THRESH=$(sed -n '/^{/,/^}/p' "$LOUDNESS_LOG" | jq -r '.input_thresh')
+TARGET_OFFSET=$(sed -n '/^{/,/^}/p' "$LOUDNESS_LOG" | jq -r '.target_offset')
+
+for measurement in \
+  "$MEASURED_I" \
+  "$MEASURED_TP" \
+  "$MEASURED_LRA" \
+  "$MEASURED_THRESH" \
+  "$TARGET_OFFSET"; do
+  if [ -z "$measurement" ] || [ "$measurement" = "null" ]; then
+    echo "error: unable to parse loudnorm analysis" >&2
+    exit 1
   fi
-fi
+done
 
-"$PYTHON" "$PROJECT_DIR/write_short_captions.py"
-"$PYTHON" "$PROJECT_DIR/generate_short_audio.py"
+LOUDNORM_FILTER="loudnorm=I=-16:TP=-1.5:LRA=7:measured_I=$MEASURED_I:measured_TP=$MEASURED_TP:measured_LRA=$MEASURED_LRA:measured_thresh=$MEASURED_THRESH:offset=$TARGET_OFFSET:linear=true:print_format=summary"
 
-CHECK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/lokalbot-showcase-short.XXXXXX")
-trap 'rm -rf "$CHECK_DIR"' EXIT HUP INT TERM
-ln -s "$PROJECT_DIR/short.html" "$CHECK_DIR/index.html"
-ln -s "$PROJECT_DIR/assets" "$CHECK_DIR/assets"
-ln -s "$PROJECT_DIR/captions-short.generated.js" "$CHECK_DIR/captions-short.generated.js"
-
-npx --yes "hyperframes@$HYPERFRAMES_VERSION" lint "$CHECK_DIR"
-npx --yes "hyperframes@$HYPERFRAMES_VERSION" validate "$CHECK_DIR"
-npx --yes "hyperframes@$HYPERFRAMES_VERSION" inspect "$CHECK_DIR" \
-  --at "0.8,3.2,5.8,7.4,8.8,10.5,12.2,13.6,14.8,16.8,18.6,19.4,21.3,24.6,27.6" \
-  --strict
-npx --yes "hyperframes@$HYPERFRAMES_VERSION" render "$CHECK_DIR" \
-  --output "$MASTER" --fps 30 --quality high --strict --skill creative-production
-
-ffmpeg -y -v error -i "$MASTER" -t 30 \
-  -map 0:v:0 -map 0:a:0 \
-  -filter:a 'loudnorm=I=-16:TP=-1.5:LRA=7' \
-  -c:v copy \
+ffmpeg -y -v error -i "$MASTER" -map 0:v:0 -map 0:a:0 \
+  -filter:a "$LOUDNORM_FILTER" \
+  -c:v libx264 -preset slow -crf 19 -profile:v high -level 4.2 \
+  -pix_fmt yuv420p -colorspace bt709 -color_primaries bt709 \
+  -color_trc bt709 -color_range tv \
   -c:a aac -b:a 192k -ar 48000 -movflags +faststart "$FINAL_TMP"
 mv "$FINAL_TMP" "$FINAL"
 
-ffmpeg -y -v error -ss 5.8 -i "$FINAL" -frames:v 1 -q:v 2 -pix_fmt yuvj444p "$POSTER"
-"$PYTHON" "$PROJECT_DIR/write_short_manifest.py" "$FINAL" "$MANIFEST"
+# The complete cited-answer frame reads clearly before playback and at social-card size.
+ffmpeg -y -v error -ss 10.8 -i "$FINAL" -frames:v 1 \
+  -q:v 2 -pix_fmt yuvj444p "$POSTER_TMP"
+mv "$POSTER_TMP" "$POSTER"
 
-# The short cut is the canonical website and README showcase. Keep promotion
-# atomic so readers never see a partially copied media file.
-cp "$FINAL" "$DEFAULT_FINAL_TMP"
-mv "$DEFAULT_FINAL_TMP" "$DEFAULT_FINAL"
-cp "$POSTER" "$DEFAULT_POSTER_TMP"
-mv "$DEFAULT_POSTER_TMP" "$DEFAULT_POSTER"
-"$PYTHON" "$PROJECT_DIR/write_short_manifest.py" "$DEFAULT_FINAL" "$DEFAULT_MANIFEST"
+write_manifest() {
+  output=$1
+  manifest=$2
+  output_name=$(basename "$output")
+  sha256=$(shasum -a 256 "$output" | awk '{print $1}')
+  duration=$(ffprobe -v error -show_entries format=duration \
+    -of default=noprint_wrappers=1:nokey=1 "$output")
+  bytes=$(stat -f %z "$output")
+  temp="$manifest.production"
 
-echo "Rendered $FINAL"
-echo "Poster   $POSTER"
-echo "Manifest $MANIFEST"
-echo "Default  $DEFAULT_FINAL"
+  jq -n \
+    --arg output "$output_name" \
+    --arg sha256 "$sha256" \
+    --arg duration "$duration" \
+    --argjson bytes "$bytes" \
+    '{
+      version: 2,
+      output: $output,
+      sha256: $sha256,
+      production: {
+        engine: "HyperFrames",
+        engineVersion: "0.8.4",
+        source: "Video/lokalbot-promo/index.html",
+        canvas: [1920, 1080],
+        fps: 30,
+        durationSeconds: ($duration | tonumber)
+      },
+      audio: {
+        narration: {engine: "Kokoro-82M", voice: "am_michael", local: true},
+        music: "local production bed",
+        effects: "scene-aligned local sound design",
+        deliveryLoudness: {integratedTargetLufs: -16, truePeakTargetDbtp: -1.5}
+      },
+      captions: {language: "en", burnedIn: true, source: "local narration timings"},
+      scenes: [
+        {id: "pop-quiz", start: 0, end: 3.904},
+        {id: "cited-recall", start: 3.904, end: 11.008},
+        {id: "bot-free-capture", start: 11.008, end: 14.976},
+        {id: "dictation-and-autocomplete", start: 14.976, end: 20.288},
+        {id: "scoped-network-check", start: 20.288, end: 26.325},
+        {id: "cta", start: 26.325, end: 29.973}
+      ],
+      delivery: {bytes: $bytes}
+    }' > "$temp"
+  mv "$temp" "$manifest"
+}
+
+write_manifest "$FINAL" "$REPO_ROOT/web/assets/hero-demo.manifest.json"
+
+# Keep the previous public aliases aligned with the canonical website cut.
+for alias in hero-demo-short feature-demo; do
+  alias_tmp="$REPO_ROOT/web/assets/$alias.production.mp4"
+  alias_final="$REPO_ROOT/web/assets/$alias.mp4"
+  cp "$FINAL" "$alias_tmp"
+  mv "$alias_tmp" "$alias_final"
+done
+
+cp "$POSTER" "$REPO_ROOT/web/assets/hero-poster-short.production.jpg"
+mv "$REPO_ROOT/web/assets/hero-poster-short.production.jpg" \
+  "$REPO_ROOT/web/assets/hero-poster-short.jpg"
+write_manifest "$REPO_ROOT/web/assets/hero-demo-short.mp4" \
+  "$REPO_ROOT/web/assets/hero-demo-short.manifest.json"
+
+echo "Rendered  $FINAL"
+echo "Poster    $POSTER"
+echo "Manifest  $REPO_ROOT/web/assets/hero-demo.manifest.json"
+echo "Aliases   web/assets/hero-demo-short.mp4, web/assets/feature-demo.mp4"

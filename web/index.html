@@ -112,9 +112,9 @@
 
       <div class="hero__stage">
         <figure class="hero__diagram hero__diagram--demo">
-          <video class="hero__demo" controls playsinline preload="metadata" poster="assets/hero-poster.jpg" width="936" height="637" aria-label="LokalBot 30-second app tour: Quick Recall, Context Rewind, local Dictation, Cotyping, and privacy by default.">
+          <video class="hero__demo" controls playsinline preload="metadata" poster="assets/hero-poster.jpg" width="936" height="527" aria-label="LokalBot 30-second app tour: cited recall, bot-free meeting capture, local Dictation and Autocomplete, and a reproducible built-in network check.">
             <source src="assets/hero-demo.mp4" type="video/mp4" />
-            <img src="assets/hero-poster.jpg" width="936" height="637" alt="LokalBot: your private AI memory for work, entirely on your Mac." />
+            <img src="assets/hero-poster.jpg" width="936" height="527" alt="LokalBot: your private AI memory for work, on-device by default." />
           </video>
         </figure>
       </div>
@@ -270,7 +270,7 @@ LokalBot  4821 you  <span class="c-flag">24u</span>  IPv4  TCP <span class="c-st
             <i class="ph ph-keyboard" aria-hidden="true"></i>
           </div>
           <h3>Write</h3>
-          <p>Bring that context back into any app. Dictate with <kbd>⌥ Space</kbd>, or let Cotyping complete the next thought inline.</p>
+          <p>Bring that context back into any app. Dictate with <kbd>⌥ Space</kbd>, or let Autocomplete finish the next thought inline.</p>
           <ul class="memory-pillar__proof">
             <li>On-device voice typing</li>
             <li>Inline autocomplete</li>
@@ -294,8 +294,8 @@ LokalBot  4821 you  <span class="c-flag">24u</span>  IPv4  TCP <span class="c-st
       </div>
 
       <figure class="shot shot--wide reveal">
-        <img class="shot__img" src="assets/screens/search.jpg" width="2080" height="1028" alt="Searching the local library for &quot;Redis&quot; with semantic search on: matches from Engineering standup, Design review, Sprint planning and a search outage postmortem, each showing the sentence that matched, whether it was said by Me or Them, and a timestamp that plays back that moment." loading="lazy" decoding="async" />
-        <figcaption class="shot__cap">Recall — one query, every matching moment, each with its speaker, source and timestamp</figcaption>
+        <img class="shot__img" src="assets/screens/meetings-summary.jpg" width="1800" height="1198" alt="LokalBot meeting workspace showing a Design review with audio playback, cited action items, cited decisions, and a structured summary beside the meeting library." loading="lazy" decoding="async" />
+        <figcaption class="shot__cap">Remember — a meeting becomes reviewable actions, decisions, evidence, and a readable recap</figcaption>
       </figure>
 
       <p class="memory__boundary reveal"><i class="ph ph-lock-key" aria-hidden="true"></i><span><strong>Private by construction.</strong> Built-in processing stays local. Optional remote inference and network-capable Agent Mode commands require your explicit approval.</span></p>
@@ -350,12 +350,12 @@ LokalBot  4821 you  <span class="c-flag">24u</span>  IPv4  TCP <span class="c-st
             <div class="cotype__field" id="cotypeField">
               <span class="ct-typed" id="ctTyped">Following up on</span><span class="ct-caret" aria-hidden="true"></span><span class="ct-ghost" id="ctGhost"> our sync, the on-device build is ready to ship.</span>
             </div>
-            <input id="ctInput" class="ct-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Cotyping demo. Type, then press Tab to accept the suggestion." />
+            <input id="ctInput" class="ct-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Autocomplete demo. Type, then press Tab to accept the suggestion." />
             <div class="cotype__hint"><kbd>Tab</kbd> to accept &middot; <kbd>Esc</kbd> to dismiss</div>
           </div>
         </div>
         <div class="spotlight__copy reveal">
-          <h3 class="spotlight__title">Cotyping finishes the thought inline.</h3>
+          <h3 class="spotlight__title">Autocomplete finishes the thought inline.</h3>
           <p class="spotlight__lead">Ghost text appears as you type in almost any app. Press Tab to accept a word or the whole line. With the built-in backend, the same local model that writes summaries completes your text on the Mac.</p>
           <ul class="checklist">
             <li><i class="ph ph-check" aria-hidden="true"></i> Works system-wide, opt-in per app</li>
@@ -395,22 +395,22 @@ LokalBot  4821 you  <span class="c-flag">24u</span>  IPv4  TCP <span class="c-st
       </div>
     </section>
 
-    <!-- ───────────────────────── DAY TIMELINE SPOTLIGHT ───────────────────────── -->
+    <!-- ───────────────────────── TODAY + TIMELINE SPOTLIGHT ───────────────────────── -->
     <section class="section spotlight spotlight--flip">
       <div class="spotlight__demo reveal">
         <figure class="shot">
-          <img class="shot__img" src="assets/screens/timeline.jpg" width="1200" height="944" alt="LokalBot's day overview: 5h 5m tracked across 6 apps, 5 moments and 2 meetings; a colour-coded time-by-app bar reading Xcode 1h 30m at 30%, Notion 1h 20m at 26%, Safari 45m, Terminal 40m, Zoom 25m and Slack 25m; an ask-about-this-day button; and a generated day digest summarising the day with three follow-up items." loading="lazy" decoding="async" />
-          <figcaption class="shot__cap">Timeline — time by app, day digest, and ask-your-day, all local</figcaption>
+          <img class="shot__img" src="assets/screens/today.jpg" width="1800" height="1198" alt="LokalBot Today showing work-session totals, a day digest, evidence-linked tasks, and open action items that can be reviewed or completed." loading="lazy" decoding="async" />
+          <figcaption class="shot__cap">Today — the digest and outstanding outcomes first, with the supporting timeline one click away</figcaption>
         </figure>
       </div>
       <div class="spotlight__copy reveal">
-        <p class="eyebrow">Remember · Day timeline</p>
-        <h2 class="section__title">Remember the work between meetings.</h2>
-        <p class="section__lead">If you turn it on, LokalBot notes which app and window is in front, then builds a private timeline and one-click digest. The built-in backend answers on-device; an approved remote backend receives the context needed for your request.</p>
+        <p class="eyebrow">Remember · Today and Timeline</p>
+        <h2 class="section__title">Start with outcomes. Keep the evidence behind them.</h2>
+        <p class="section__lead">Today surfaces the digest and commitments that need attention. Timeline explains the work sessions, meetings, apps, and retained moments behind that view. The built-in backend answers on-device; an approved remote backend receives the context needed for your request.</p>
         <ul class="checklist">
-          <li><i class="ph ph-check" aria-hidden="true"></i> Colour-coded timeline + time-by-app totals</li>
-          <li><i class="ph ph-check" aria-hidden="true"></i> One-click daily digest, generated on-device</li>
-          <li><i class="ph ph-check" aria-hidden="true"></i> Ask your day in plain language</li>
+          <li><i class="ph ph-check" aria-hidden="true"></i> Work sessions and time-by-app totals</li>
+          <li><i class="ph ph-check" aria-hidden="true"></i> Evidence-linked actions and daily digest</li>
+          <li><i class="ph ph-check" aria-hidden="true"></i> Ask about the day in plain language</li>
         </ul>
       </div>
     </section>
@@ -425,23 +425,27 @@ LokalBot  4821 you  <span class="c-flag">24u</span>  IPv4  TCP <span class="c-st
       <div class="models__grid reveal">
         <article class="glass model-card">
           <i class="ph ph-waveform model-card__icon" aria-hidden="true"></i>
-          <span class="model-card__task">Transcription</span>
+          <span class="model-card__task">Transcribe</span>
           <span class="model-card__name">IBM Granite Speech 4.1 · 2B</span>
-          <span class="model-card__note">Fast, accurate speech-to-text on the Neural Engine.</span>
+          <span class="model-card__note">The default local speech model, with no transcription API key.</span>
         </article>
         <article class="glass model-card">
           <i class="ph ph-file-text model-card__icon" aria-hidden="true"></i>
-          <span class="model-card__task">Summarization</span>
-          <span class="model-card__name">Qwen 3.6 · 35B-A3B</span>
-          <span class="model-card__note">MoE quality for recaps, decisions, and action items.</span>
+          <span class="model-card__task">Think</span>
+          <span class="model-card__name">Qwen3.5 · 4B</span>
+          <span class="model-card__note">The default for summaries, Ask, outcomes, and Agent.</span>
         </article>
         <article class="glass model-card">
           <i class="ph ph-keyboard model-card__icon" aria-hidden="true"></i>
-          <span class="model-card__task">Cotyping</span>
-          <span class="model-card__name">Gemma 4 · E4B</span>
-          <span class="model-card__note">Low-latency inline autocomplete, runs in-process.</span>
+          <span class="model-card__task">Autocomplete</span>
+          <span class="model-card__name">LFM2.5 · 1.2B Instruct</span>
+          <span class="model-card__note">The low-latency default for a dedicated local writing runtime.</span>
         </article>
       </div>
+      <figure class="shot shot--wide reveal">
+        <img class="shot__img" src="assets/screens/models.jpg" width="1800" height="1198" alt="LokalBot Models settings showing separate Transcribe, Think, and Autocomplete roles, Recommended and Lightweight presets, readiness states, and local model storage." loading="lazy" decoding="async" />
+        <figcaption class="shot__cap">Models — one place to see readiness, change each role, and understand what will download</figcaption>
+      </figure>
     </section>
 
     <!-- ───────────────────────── COMPARE ───────────────────────── -->

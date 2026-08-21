@@ -63,7 +63,7 @@
     <text x="0" y="0" fill="#ecf3f7" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="68" font-weight="760" letter-spacing="-3.6">Your work,</text>
     <text x="0" y="82" fill="#6ef2dc" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="68" font-weight="760" letter-spacing="-3.6">remembered</text>
     <text x="370" y="82" fill="#ecf3f7" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="68" font-weight="760" letter-spacing="-3.6">on your Mac.</text>
-    <text x="2" y="144" fill="#a2b4c2" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="25" font-weight="450">Bot-free meetings become evidence you can recall, write from, and act on.</text>
+    <text x="2" y="144" fill="#a2b4c2" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="25" font-weight="450">Meetings and chosen work context become outcomes, evidence, and answers.</text>
   </g>
 
   <g transform="translate(76 500)" filter="url(#softShadow)">
@@ -74,12 +74,12 @@
       <g transform="translate(46 0)">
         <circle cx="34" cy="41" r="8" fill="#6ef2dc"/>
         <text x="54" y="35" fill="#ecf3f7" font-size="17" font-weight="700">Remember</text>
-        <text x="54" y="56" fill="#6f8696" font-size="13">meetings + context</text>
+        <text x="54" y="56" fill="#6f8696" font-size="13">meetings + work sessions</text>
       </g>
       <g transform="translate(304 0)">
         <circle cx="34" cy="41" r="8" fill="#23c4ae"/>
         <text x="54" y="35" fill="#ecf3f7" font-size="17" font-weight="700">Recall</text>
-        <text x="54" y="56" fill="#6f8696" font-size="13">answers + evidence</text>
+        <text x="54" y="56" fill="#6f8696" font-size="13">answers + sources</text>
       </g>
       <g transform="translate(554 0)">
         <circle cx="34" cy="41" r="8" fill="#23c4ae"/>
@@ -89,7 +89,7 @@
       <g transform="translate(806 0)">
         <circle cx="34" cy="41" r="8" fill="#fbbf24"/>
         <text x="54" y="35" fill="#ecf3f7" font-size="17" font-weight="700">Act</text>
-        <text x="54" y="56" fill="#6f8696" font-size="13">drafts + local routines</text>
+        <text x="54" y="56" fill="#6f8696" font-size="13">outcomes + routines</text>
       </g>
     </g>
   </g>

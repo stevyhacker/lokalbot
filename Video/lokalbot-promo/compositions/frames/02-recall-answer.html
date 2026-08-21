@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <!-- head is source-file metadata only; the runtime clones <template> contents -->
+  </head>
+  <body>
+    <template>
+      <style>
+        @font-face {
+          font-family: "SF Pro Display";
+          src: url("assets/fonts/SF-Pro-Display-Regular.otf") format("opentype");
+          font-weight: 400;
+        }
+        @font-face {
+          font-family: "SF Pro Display";
+          src: url("assets/fonts/SF-Pro-Display-Medium.otf") format("opentype");
+          font-weight: 500;
+        }
+        @font-face {
+          font-family: "SF Pro Display";
+          src: url("assets/fonts/SF-Pro-Display-Black.otf") format("opentype");
+          font-weight: 900;
+        }
+        @font-face {
+          font-family: "SF Mono";
+          src: url("assets/fonts/SF-Mono-Medium.otf") format("opentype");
+          font-weight: 500;
+        }
+
+        #root {
+          position: absolute;
+          inset: 0;
+          width: 1920px;
+          height: 1080px;
+          overflow: hidden;
+          container-type: size;
+          font-family: "SF Pro Display", -apple-system, sans-serif;
+          color: #eff6fa;
+        }
+
+        /* ---- track 0: full-bleed ink ground (never on #root) ---- */
+        .fr02ra-bg {
+          position: absolute;
+          inset: 0;
+          background: #0b1220;
+        }
+
+        /* ---- track 1: scene 1 statement (zoom-through swap) ---- */
+        .fr02ra-s1 {
+          position: absolute;
+          inset: 0;
+        }
+        .fr02ra-s1swap {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100%;
+          height: 83cqh; /* content region above the caption band */
+          display: grid;
+          place-items: center;
+        }
+        .fr02ra-line {
+          grid-area: 1 / 1;
+          font-size: 4.5cqw;
+          font-weight: 900;
+          letter-spacing: -0.02em;
+          line-height: 1.1;
+          color: #eff6fa;
+          opacity: 0;
+          will-change: transform, opacity, filter;
+          transform-origin: 50% 50%;
+        }
+        .fr02ra-teal {
+          color: #23c4ae;
+        }
+
+        /* ---- track 2: quick recall overlay (staged product surface) ---- */
+        .fr02ra-qr {
+          position: absolute;
+          inset: 0;
+          overflow: hidden;
+        }
+        .fr02ra-world {
+          position: absolute;
+          inset: 0;
+          transform-origin: 50% 50%;
+          will-change: transform;
+        }
+        .fr02ra-stack {
+          width: 55cqw;
+          margin: 26cqh auto 0;
+          opacity: 0;
+          will-change: transform, opacity;
+          transform-origin: 50% 50%;
+        }
+        .fr02ra-kicker {
+          font-family: "SF Mono", ui-monospace, Menlo, monospace;
+          font-size: 0.78cqw;
+          font-weight: 500;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+          color: #23c4ae;
+          margin: 0 0 1.3cqh 0.2cqw;
+        }
+        .fr02ra-strong {
+          background: #101b2d;
+          border: 1px solid #1b2a40;
+          border-radius: 0.55cqw; /* small radius: recreated window surfaces only */
+          box-shadow: 0 2.4cqh 5.5cqh rgba(0, 0, 0, 0.45);
+        }
+        .fr02ra-bar {
+          height: 4.8cqw;
+          display: flex;
+          align-items: center;
+          gap: 1.1cqw;
+          padding: 0 1.6cqw;
+        }
+        .fr02ra-mag {
+          width: 1.35cqw;
+          height: 1.35cqw;
+          flex: 0 0 auto;
+          display: block;
+        }
+        .fr02ra-qwrap {
+          display: flex;
+          align-items: center;
+          min-width: 0;
+        }
+        .fr02ra-q {
+          font-size: 1.7cqw;
+          font-weight: 500;
+          color: #eff6fa;
+          white-space: pre;
+          line-height: 1.2;
+        }
+        .fr02ra-caret {
+          display: inline-block;
+          width: 2.5px;
+          height: 2.1cqw;
+          margin-left: 0.28cqw;
+          background: #23c4ae;
+          will-change: opacity;
+        }
+        .fr02ra-card {
+          margin-top: 2.2cqh;
+          padding: 2.6cqh 2.2cqw 2.8cqh;
+          opacity: 0;
+          will-change: transform, opacity;
+        }
+        .fr02ra-ans {
+          font-size: 1.6cqw;
+          font-weight: 400;
+          line-height: 1.5;
+          color: #eff6fa;
+        }
+        .fr02ra-cite {
+          margin-top: 2.4cqh;
+          border-top: 1px solid #1b2a40;
+          padding-top: 2.2cqh;
+          opacity: 0;
+          will-change: transform, opacity;
+        }
+        .fr02ra-chip {
+          display: inline-block;
+          font-family: "SF Mono", ui-monospace, Menlo, monospace;
+          font-size: 0.72cqw;
+          font-weight: 500;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+          color: #23c4ae;
+          border: 1px solid rgba(35, 196, 174, 0.35);
+          padding: 0.6cqh 0.6cqw;
+        }
+        .fr02ra-quote {
+          margin-top: 1.5cqh;
+          font-size: 1.35cqw;
+          font-weight: 400;
+          line-height: 1.5;
+          color: #9fb2c4;
+        }
+        .fr02ra-w {
+          display: inline-block;
+          transform-origin: 50% 50%;
+          will-change: transform, text-shadow, color;
+        }
+      </style>
+
+      <div data-hf-id="hf-zaeh" id="root" data-composition-id="02-recall-answer" data-width="1920" data-height="1080" data-duration="7.604">
+        <div data-hf-id="hf-5uaq" id="recall-answer-background" class="clip fr02ra-bg" data-start="0" data-duration="7.604" data-track-index="0"></div>
+
+        <div data-hf-id="hf-kmgk" id="recall-answer-statement" class="clip fr02ra-s1" data-start="0" data-duration="2.9" data-track-index="1">
+          <div data-hf-id="hf-cwqv" class="fr02ra-s1swap">
+            <div data-hf-id="hf-k1i1" class="fr02ra-line" id="frame-02-recall-answer-s1a" data-layout-allow-overlap>you forgot.</div>
+            <div data-hf-id="hf-rlvq" class="fr02ra-line" id="frame-02-recall-answer-s1b">
+              your mac <span data-hf-id="hf-jtg1" class="fr02ra-teal">didn't</span>.
+            </div>
+          </div>
+        </div>
+
+        <div data-hf-id="hf-iq6m" id="recall-answer-result" class="clip fr02ra-qr" data-start="2.5" data-duration="5.104" data-track-index="2">
+          <div data-hf-id="hf-u9gg" class="fr02ra-world" id="frame-02-recall-answer-world" data-layout-allow-overflow>
+            <div data-hf-id="hf-iy8w" class="fr02ra-stack" id="frame-02-recall-answer-stack">
+              <div data-hf-id="hf-jb16" class="fr02ra-kicker">⌃ ⌥ SPACE · QUICK RECALL</div>
+              <div data-hf-id="hf-j8bg" class="fr02ra-strong fr02ra-bar">
+                <svg data-hf-id="hf-0m3o" class="fr02ra-mag" viewBox="0 0 22 22" aria-hidden="true">
+                  <circle data-hf-id="hf-4a53" cx="9.5" cy="9.5" r="6.5" fill="none" stroke="#9FB2C4" stroke-width="2" />
+                  <line data-hf-id="hf-m8bs" x1="14.4" y1="14.4" x2="19" y2="19" stroke="#9FB2C4" stroke-width="2" stroke-linecap="round" />
+                </svg>
+                <div data-hf-id="hf-jxwn" class="fr02ra-qwrap">
+                  <span data-hf-id="hf-w1zp" class="fr02ra-q" id="frame-02-recall-answer-q"></span>
+                  <span data-hf-id="hf-mv8t" class="fr02ra-caret" id="frame-02-recall-answer-caret"></span>
+                </div>
+              </div>
+              <div data-hf-id="hf-6z01" class="fr02ra-strong fr02ra-card" id="frame-02-recall-answer-card">
+                <div data-hf-id="hf-ild4" class="fr02ra-ans">the beta cut moved to friday.</div>
+                <div data-hf-id="hf-56m6" class="fr02ra-cite" id="frame-02-recall-answer-cite">
+                  <div data-hf-id="hf-yeow"><span data-hf-id="hf-4rd7" class="fr02ra-chip">STANDUP · 9:15 · THEM</span></div>
+                  <div data-hf-id="hf-yh2u" class="fr02ra-quote">
+                    <span data-hf-id="hf-9es5" class="fr02ra-w" data-wi="0">“friday</span>
+                    <span data-hf-id="hf-bwmt" class="fr02ra-w" data-wi="1">works,</span>
+                    <span data-hf-id="hf-bzzf" class="fr02ra-w" data-wi="2">let's</span>
+                    <span data-hf-id="hf-xcq4" class="fr02ra-w" data-wi="3">move</span>
+                    <span data-hf-id="hf-xnd5" class="fr02ra-w" data-wi="4">the</span>
+                    <span data-hf-id="hf-jott" class="fr02ra-w" data-wi="5">beta</span>
+                    <span data-hf-id="hf-9y2d" class="fr02ra-w" data-wi="6">cut.”</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+      <script>
+        (function () {
+          window.__timelines = window.__timelines || {};
+
+          var DUR = 7.104;
+          var tl = gsap.timeline({ paused: true });
+
+          function g(id) {
+            return document.getElementById(id) || {};
+          }
+          var elA = g("frame-02-recall-answer-s1a");
+          var elB = g("frame-02-recall-answer-s1b");
+          var stack = g("frame-02-recall-answer-stack");
+          var card = g("frame-02-recall-answer-card");
+          var cite = g("frame-02-recall-answer-cite");
+          var world = g("frame-02-recall-answer-world");
+
+          /* ---------- Scene 1 (0.0-2.5): statement slam + zoom-through token swap ---------- */
+          /* baseline states at the clip's own start */
+          tl.set(elA, { autoAlpha: 0, scale: 1, filter: "blur(0px)" }, 0);
+          tl.set(elB, { autoAlpha: 0, scale: 0.75, filter: "blur(10px)" }, 0);
+
+          /* "you forgot." hard-cuts in on the spoken word */
+          tl.set(elA, { autoAlpha: 1 }, 0.1);
+
+          /* zoom-through (forward, text-scale): exit accelerates toward viewer */
+          tl.to(elA, { scale: 1.2, filter: "blur(10px)", duration: 0.2, ease: "power3.in" }, 1.1);
+          tl.to(elA, { opacity: 0.15, duration: 0.2, ease: "none" }, 1.1); /* opacity split, linear */
+
+          /* hard cut at peak velocity + peak blur; values match on both sides */
+          tl.set(elA, { autoAlpha: 0 }, 1.3);
+          tl.set(elB, { autoAlpha: 0.15 }, 1.3);
+
+          /* entry continues forward, decelerating into the focal plane */
+          tl.to(
+            elB,
+            { autoAlpha: 1, scale: 1, filter: "blur(0px)", duration: 0.5, ease: "expo.out" },
+            1.301
+          );
+
+          /* ---------- Scene 2 (2.5-4.7): scale-swap to the Quick Recall overlay ---------- */
+          /* outgoing line rushes away (scale-swap-transition exit) */
+          tl.to(elB, { scale: 0.7, autoAlpha: 0, duration: 0.32, ease: "power2.in" }, 2.5);
+
+          /* incoming overlay: same footprint anchor, overlap 0.15s, smooth long-tail settle
+             (power3.out - the two overshoot budgets live in frames 4 and 6, not here) */
+          tl.set(stack, { autoAlpha: 0, scale: 0.86, y: 24 }, 2.5);
+          tl.to(
+            stack,
+            { autoAlpha: 1, scale: 1, y: 0, duration: 0.72, ease: "power3.out" },
+            2.67
+          );
+
+          /* answer card slides up beneath the bar as "answers" is spoken */
+          tl.set(card, { autoAlpha: 0, y: 34 }, 2.5);
+          tl.to(card, { autoAlpha: 1, y: 0, duration: 0.65, ease: "power3.out" }, 3.6);
+
+          /* citation row hidden until "quoting the source" */
+          tl.set(cite, { autoAlpha: 0, y: 14 }, 2.5);
+          tl.to(cite, { autoAlpha: 1, y: 0, duration: 0.55, ease: "power3.out" }, 6.0);
+
+          /* ---------- camera: slow push-in toward the card (viewport-change) ----------
+             single wrapper, translate(x,y) scale(S); card center sits ~+6px below
+             viewport center, so T = -offset * S = -6 * 1.085 ~= -6.5. Settles by 5.5,
+             then the camera is dead: no back-half drift. */
+          tl.fromTo(
+            world,
+            { scale: 1, y: 0 },
+            { scale: 1.085, y: -6.5, duration: 1.7, ease: "power2.inOut", immediateRender: false },
+            3.8
+          );
+
+          /* ---------- driver: typed question, caret blink, keyword glow sweep ----------
+             one linear driver over the full duration; every visual below is a pure
+             function of driver.t (seek-safe, deterministic). */
+          var QUESTION_SEQ = [
+            [2.92, "w"],
+            [2.99, "wha"],
+            [3.05, "what "],
+            [3.12, "what did "],
+            [3.19, "what did I "],
+            [3.26, "what did I agre"],
+            [3.33, "what did I agree "],
+            [3.39, "what did I agree to "],
+            [3.46, "what did I agree to at "],
+            [3.52, "what did I agree to at 9:"],
+            [3.57, "what did I agree to at 9:15?"],
+          ];
+          function textAt(t) {
+            var s = "";
+            for (var i = 0; i < QUESTION_SEQ.length; i++) {
+              if (t >= QUESTION_SEQ[i][0]) s = QUESTION_SEQ[i][1];
+            }
+            return s;
+          }
+
+          /* caret: solid while typing, deterministic hard blink once idle */
+          function caretOpacity(t) {
+            if (t < 3.65) return 1;
+            return ((t - 3.65) % 0.9) < 0.5 ? 1 : 0;
+          }
+
+          /* asr-keyword-glow envelope: attack-sustain-decay-rest, swept left to right */
+          var QUOTE_T = [
+            [6.15, 6.24],
+            [6.255, 6.345],
+            [6.36, 6.45],
+            [6.465, 6.555],
+            [6.57, 6.66],
+            [6.675, 6.765],
+            [6.78, 6.87],
+          ];
+          var ATTACK = 0.08;
+          var RELEASE = 0.25;
+          var REST_LEVEL = 0.55;
+          var REST_RGB = { r: 159, g: 178, b: 196 }; /* #9FB2C4 muted */
+          var ACTIVE_RGB = { r: 239, g: 246, b: 250 }; /* #EFF6FA cream */
+          function envAt(t, s, e) {
+            if (t < s) return 0;
+            if (t < s + ATTACK) return (t - s) / ATTACK;
+            if (t < e) return 1;
+            if (t < e + RELEASE) return 1 - ((t - e) / RELEASE) * (1 - REST_LEVEL);
+            return REST_LEVEL;
+          }
+          function lerp(a, b, t) {
+            return Math.round(a + (b - a) * t);
+          }
+
+          var driver = { t: 0 };
+          tl.to(
+            driver,
+            {
+              t: DUR,
+              duration: DUR,
+              ease: "none",
+              onUpdate: function () {
+                var t = driver.t;
+                /* lazy lookups so a re-mounted clip clone is always the one updated */
+                var qEl = document.getElementById("frame-02-recall-answer-q");
+                if (qEl) qEl.textContent = textAt(t);
+                var cEl = document.getElementById("frame-02-recall-answer-caret");
+                if (cEl) cEl.style.opacity = caretOpacity(t);
+                var words = document.querySelectorAll(".fr02ra-w");
+                for (var i = 0; i < words.length; i++) {
+                  var wi = parseInt(words[i].getAttribute("data-wi"), 10);
+                  var win = QUOTE_T[wi];
+                  if (!win) continue;
+                  var env = envAt(t, win[0], win[1]);
+                  words[i].style.color =
+                    "rgb(" +
+                    lerp(REST_RGB.r, ACTIVE_RGB.r, env) +
+                    "," +
+                    lerp(REST_RGB.g, ACTIVE_RGB.g, env) +
+                    "," +
+                    lerp(REST_RGB.b, ACTIVE_RGB.b, env) +
+                    ")";
+                  words[i].style.textShadow =
+                    "0 0 " + (14 * env).toFixed(2) + "px rgba(35,196,174," + (0.55 * env).toFixed(3) + ")";
+                  words[i].style.transform = "scale(" + (1 + 0.045 * env).toFixed(4) + ")";
+                }
+              },
+            },
+            0
+          );
+
+          window.__timelines["02-recall-answer"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

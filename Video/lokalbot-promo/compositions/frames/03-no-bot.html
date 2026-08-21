@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>03-no-bot</title>
+    <!-- head is source-file metadata only; the runtime clones template contents -->
+  </head>
+  <body>
+    <template>
+      <style>
+        /* ---- fonts (project-root-relative; resolved from the assembled index) ---- */
+        @font-face {
+          font-family: "SF Pro Display";
+          src: url("assets/fonts/SF-Pro-Display-Regular.otf") format("opentype");
+          font-weight: 400;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: "SF Pro Display";
+          src: url("assets/fonts/SF-Pro-Display-Black.otf") format("opentype");
+          font-weight: 900;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: "SF Mono";
+          src: url("assets/fonts/SF-Mono-Medium.otf") format("opentype");
+          font-weight: 500;
+          font-style: normal;
+        }
+
+        /* ---- root (styled via #root per contract, never a class) ---- */
+        #root {
+          position: absolute;
+          inset: 0;
+          width: 1920px;
+          height: 1080px;
+          overflow: hidden;
+          font-family: "SF Pro Display", sans-serif;
+        }
+
+        /* full-bleed ground lives on a clip layer, never on the root */
+        .nb3-bg {
+          position: absolute;
+          inset: 0;
+          background: #0b1220;
+        }
+        .nb3-stage {
+          position: absolute;
+          inset: 0;
+        }
+
+        /* ---- left third: the statement (the frame's one display moment) ---- */
+        .nb3-say {
+          position: absolute;
+          left: 106px;
+          top: 388px;
+          width: 580px;
+        }
+        .nb3-line {
+          display: block;
+        }
+        .nb3-word {
+          display: inline-block;
+          font-family: "SF Pro Display", sans-serif;
+          font-weight: 900;
+          font-size: 86px;
+          line-height: 1.04;
+          letter-spacing: -0.02em;
+          color: #eff6fa;
+          opacity: 0;
+          visibility: hidden;
+        }
+        .nb3-accent {
+          color: #23c4ae;
+        }
+
+        /* ---- the recreated meeting recap window (hero, center-right) ---- */
+        .nb3-window {
+          position: absolute;
+          left: 758px;
+          top: 168px;
+          width: 1056px;
+          height: 500px;
+          background: #101b2d;
+          border: 1px solid #1b2a40;
+          border-radius: 12px;
+          box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+          display: flex;
+          flex-direction: column;
+        }
+
+        .nb3-titlebar {
+          height: 58px;
+          flex: 0 0 58px;
+          display: flex;
+          align-items: center;
+          padding: 0 24px;
+          border-bottom: 1px solid #1b2a40;
+        }
+        .nb3-winbtns {
+          display: flex;
+          gap: 7px;
+        }
+        .nb3-winbtn {
+          display: block;
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: #1b2a40;
+        }
+        .nb3-wintitle {
+          margin-left: 18px;
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 14px;
+          letter-spacing: 0.14em;
+          color: #9fb2c4;
+        }
+        .nb3-rec {
+          margin-left: auto;
+          display: flex;
+          align-items: center;
+          gap: 9px;
+        }
+        .nb3-recdot {
+          display: inline-block;
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: #ffb020; /* the video's one sanctioned amber: the REC dot */
+        }
+        .nb3-reclabel {
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 12px;
+          letter-spacing: 0.14em;
+          color: #9fb2c4;
+        }
+
+        .nb3-body {
+          flex: 1 1 auto;
+          padding: 24px 32px 0;
+          display: flex;
+          flex-direction: column;
+        }
+
+        /* participant strip: ME + THEM + one empty dashed slot */
+        .nb3-strip {
+          display: flex;
+          gap: 16px;
+          height: 76px;
+          flex: 0 0 76px;
+        }
+        .nb3-cell {
+          flex: 1 1 0;
+          position: relative;
+        }
+        .nb3-tile {
+          position: absolute;
+          inset: 0;
+          background: rgba(159, 178, 196, 0.05);
+          border: 1px solid #1b2a40;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+        }
+        .nb3-tname {
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 14px;
+          letter-spacing: 0.14em;
+          color: #eff6fa;
+        }
+        .nb3-tsub {
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 10px;
+          letter-spacing: 0.14em;
+          color: #9fb2c4;
+        }
+        .nb3-tile-empty {
+          background: transparent;
+          border: 1.5px dashed rgba(159, 178, 196, 0.4);
+        }
+        .nb3-ring {
+          position: absolute;
+          left: -6px;
+          top: -6px;
+          width: 332px;
+          height: 88px;
+          overflow: visible;
+          pointer-events: none;
+        }
+        .nb3-ring rect {
+          fill: none;
+          stroke: #23c4ae;
+          stroke-width: 2;
+          stroke-linecap: round;
+          stroke-linejoin: round;
+        }
+        .nb3-nobot {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: calc(100% + 14px);
+          text-align: center;
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 14px;
+          letter-spacing: 0.14em;
+          color: #23c4ae;
+          opacity: 0;
+          visibility: hidden;
+        }
+
+        /* transcript viewport: the turns cycle inside a clipped area */
+        .nb3-viewport {
+          margin-top: 44px;
+          height: 190px;
+          flex: 0 0 190px;
+          overflow: hidden;
+          position: relative;
+        }
+        .nb3-turns {
+          padding-top: 76px;
+        }
+        .nb3-turn {
+          height: 44px;
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          opacity: 0;
+          visibility: hidden;
+        }
+        .nb3-turn-me {
+          margin-bottom: 24px;
+        }
+        .nb3-chip {
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 13px;
+          letter-spacing: 0.14em;
+          color: #9fb2c4;
+        }
+        .nb3-sep {
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 15px;
+          color: #9fb2c4;
+        }
+        .nb3-utt {
+          font-family: "SF Pro Display", sans-serif;
+          font-weight: 400;
+          font-size: 23px;
+          line-height: 1.5;
+          color: #eff6fa;
+          white-space: nowrap;
+        }
+        .nb3-wave {
+          display: flex;
+          align-items: center;
+          gap: 3px;
+          height: 30px;
+        }
+        .nb3-wave i {
+          display: block;
+          width: 3px;
+          background: #23c4ae;
+          transform-origin: 50% 50%;
+        }
+        .nb3-wave-them {
+          margin-left: auto;
+        }
+
+        /* window foot */
+        .nb3-foot {
+          margin-top: auto;
+          flex: 0 0 52px;
+          height: 52px;
+          border-top: 1px solid #1b2a40;
+          display: flex;
+          align-items: center;
+          padding: 0 24px;
+        }
+        .nb3-foottag {
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 13px;
+          letter-spacing: 0.14em;
+          color: #23c4ae;
+          opacity: 0;
+          visibility: hidden;
+        }
+      </style>
+
+      <div data-hf-id="hf-n7oc" id="root" data-composition-id="03-no-bot" data-width="1920" data-height="1080" data-duration="4.468">
+        <div data-hf-id="hf-jv1n" id="no-bot-background" class="clip nb3-bg" data-start="0" data-duration="4.468" data-track-index="0"></div>
+
+        <div data-hf-id="hf-6kah" id="no-bot-stage" class="clip nb3-stage" data-start="0" data-duration="4.468" data-track-index="1">
+          <!-- left third: quiet ink until the answer lands -->
+          <div data-hf-id="hf-oo65" class="nb3-say">
+            <div data-hf-id="hf-45qq" class="nb3-line"><span data-hf-id="hf-llqi" class="nb3-word nb3-accent">nothing</span></div>
+            <div data-hf-id="hf-pqvq" class="nb3-line"><span data-hf-id="hf-n67g" class="nb3-word">joins.</span></div>
+          </div>
+
+          <!-- meeting recap window recreation (hero) -->
+          <div data-hf-id="hf-hl1t" class="nb3-window" data-layout-allow-overflow="">
+            <div data-hf-id="hf-1kh5" class="nb3-titlebar">
+              <span data-hf-id="hf-dgri" class="nb3-winbtns">
+                <span data-hf-id="hf-uq3r" class="nb3-winbtn"></span>
+                <span data-hf-id="hf-lqh3" class="nb3-winbtn"></span>
+                <span data-hf-id="hf-lc62" class="nb3-winbtn"></span>
+              </span>
+              <span data-hf-id="hf-syr0" class="nb3-wintitle">STANDUP · 9:15</span>
+              <span data-hf-id="hf-9hxp" class="nb3-rec">
+                <span data-hf-id="hf-02rq" class="nb3-recdot"></span>
+                <span data-hf-id="hf-my49" class="nb3-reclabel">REC</span>
+              </span>
+            </div>
+
+            <div data-hf-id="hf-x5f4" class="nb3-body">
+              <div data-hf-id="hf-dp8u" class="nb3-strip">
+                <div data-hf-id="hf-13gw" class="nb3-cell">
+                  <div data-hf-id="hf-5u3c" class="nb3-tile">
+                    <span data-hf-id="hf-twxw" class="nb3-tname">ME</span>
+                    <span data-hf-id="hf-4l6e" class="nb3-tsub">MIC</span>
+                  </div>
+                </div>
+                <div data-hf-id="hf-8bzc" class="nb3-cell">
+                  <div data-hf-id="hf-xgc0" class="nb3-tile">
+                    <span data-hf-id="hf-mkrc" class="nb3-tname">THEM</span>
+                    <span data-hf-id="hf-vou8" class="nb3-tsub">SYSTEM AUDIO</span>
+                  </div>
+                </div>
+                <div data-hf-id="hf-7529" class="nb3-cell">
+                  <div data-hf-id="hf-vul8" class="nb3-tile nb3-tile-empty"></div>
+                  <svg data-hf-id="hf-5foy" class="nb3-ring" viewBox="0 0 332 88" xmlns="http://www.w3.org/2000/svg">
+                    <rect data-hf-id="hf-u350" x="1" y="1" width="330" height="86" />
+                  </svg>
+                  <div data-hf-id="hf-vdem" class="nb3-nobot">NO BOT</div>
+                </div>
+              </div>
+
+              <div data-hf-id="hf-tlfu" class="nb3-viewport">
+                <div data-hf-id="hf-7zwp" class="nb3-turns" data-layout-allow-overflow="">
+                  <div data-hf-id="hf-ajv9" class="nb3-turn nb3-turn-me">
+                    <span data-hf-id="hf-b4uw" class="nb3-wave nb3-wave-me">
+                      <i data-hf-id="hf-deqt" style="height: 10px"></i>
+                      <i data-hf-id="hf-igz7" style="height: 16px"></i>
+                      <i data-hf-id="hf-a3zs" style="height: 24px"></i>
+                      <i data-hf-id="hf-iigx" style="height: 14px"></i>
+                      <i data-hf-id="hf-u4x0" style="height: 28px"></i>
+                      <i data-hf-id="hf-ddfg" style="height: 20px"></i>
+                      <i data-hf-id="hf-6h73" style="height: 30px"></i>
+                      <i data-hf-id="hf-wn99" style="height: 18px"></i>
+                      <i data-hf-id="hf-bbw7" style="height: 12px"></i>
+                      <i data-hf-id="hf-9ov2" style="height: 8px"></i>
+                    </span>
+                    <span data-hf-id="hf-v395" class="nb3-chip">ME</span>
+                    <span data-hf-id="hf-quvw" class="nb3-sep">·</span>
+                    <span data-hf-id="hf-t3fd" class="nb3-utt">we need a call on the beta date.</span>
+                  </div>
+                  <div data-hf-id="hf-uuqh" class="nb3-turn nb3-turn-them">
+                    <span data-hf-id="hf-a56t" class="nb3-chip">THEM</span>
+                    <span data-hf-id="hf-9j9w" class="nb3-sep">·</span>
+                    <span data-hf-id="hf-o0fw" class="nb3-utt">friday works, let's move the beta cut.</span>
+                    <span data-hf-id="hf-a8sc" class="nb3-wave nb3-wave-them">
+                      <i data-hf-id="hf-90ci" style="height: 8px"></i>
+                      <i data-hf-id="hf-mj9x" style="height: 14px"></i>
+                      <i data-hf-id="hf-a5hi" style="height: 22px"></i>
+                      <i data-hf-id="hf-uz30" style="height: 28px"></i>
+                      <i data-hf-id="hf-5bkj" style="height: 16px"></i>
+                      <i data-hf-id="hf-f97m" style="height: 26px"></i>
+                      <i data-hf-id="hf-m8l3" style="height: 12px"></i>
+                      <i data-hf-id="hf-uugk" style="height: 20px"></i>
+                      <i data-hf-id="hf-3po0" style="height: 15px"></i>
+                      <i data-hf-id="hf-toqf" style="height: 9px"></i>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div data-hf-id="hf-iwiw" class="nb3-foot">
+              <span data-hf-id="hf-2efr" class="nb3-foottag">ON-DEVICE TRANSCRIPT</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+      <script>
+        (function () {
+          window.__timelines = window.__timelines || {};
+
+          var win = document.querySelector(".nb3-window");
+          var recDot = document.querySelector(".nb3-recdot");
+          var meRow = document.querySelector(".nb3-turn-me");
+          var themRow = document.querySelector(".nb3-turn-them");
+          var meBars = document.querySelectorAll(".nb3-wave-me i");
+          var themBars = document.querySelectorAll(".nb3-wave-them i");
+          var turnsCol = document.querySelector(".nb3-turns");
+          var footTag = document.querySelector(".nb3-foottag");
+          var words = document.querySelectorAll(".nb3-word");
+          var cap = document.querySelector(".nb3-nobot");
+          var ringRect = document.querySelector(".nb3-ring rect");
+
+          // svg-path-draw setup: measure real geometry, park the stroke fully offset
+          var ringLen = ringRect.getTotalLength() * 1.02;
+          ringRect.style.strokeDasharray = ringLen;
+          ringRect.style.strokeDashoffset = ringLen;
+
+          var tl = gsap.timeline({ paused: true });
+
+          /* Scene 1 (0.0-1.3s) - the window slides in from the right edge, settles.
+             Camera static for the whole shot (static-tour variant). */
+          tl.fromTo(
+            win,
+            { x: 1170 },
+            { x: 0, duration: 1.0, ease: "power3.out" },
+            0.02
+          );
+
+          // the amber REC dot pulses exactly once, then stays static
+          tl.fromTo(
+            recDot,
+            { scale: 1 },
+            { scale: 1.45, duration: 0.16, ease: "sine.inOut", yoyo: true, repeat: 1 },
+            0.78
+          );
+
+          // "both sides" @0.9 - first speaker turn reveals
+          tl.fromTo(
+            meRow,
+            { y: 26, autoAlpha: 0 },
+            { y: 0, autoAlpha: 1, duration: 0.6, ease: "power3.out" },
+            0.9
+          );
+          tl.fromTo(
+            meBars,
+            { scaleY: 0.12 },
+            { scaleY: 1, duration: 0.45, ease: "power3.out", stagger: 0.03 },
+            0.98
+          );
+
+          /* Scene 2 (1.3-2.6s) - the turns cycle: Me slides up + dims, Them pushes in
+             beneath (element-level content cycling inside the held hero surface). */
+          tl.fromTo(
+            footTag,
+            { autoAlpha: 0 },
+            { autoAlpha: 1, duration: 0.5, ease: "power2.out" },
+            1.45
+          );
+          tl.fromTo(
+            turnsCol,
+            { y: 0 },
+            { y: -68, duration: 0.6, ease: "power3.inOut" },
+            1.6
+          );
+          tl.fromTo(
+            meRow,
+            { opacity: 1 },
+            { opacity: 0.4, duration: 0.5, ease: "power2.out", immediateRender: false },
+            1.6
+          );
+          tl.fromTo(
+            themRow,
+            { y: 26, autoAlpha: 0 },
+            { y: 0, autoAlpha: 1, duration: 0.6, ease: "power3.out" },
+            1.64
+          );
+          tl.fromTo(
+            themBars,
+            { scaleY: 0.12 },
+            { scaleY: 1, duration: 0.45, ease: "power3.out", stagger: 0.03 },
+            1.74
+          );
+
+          /* Scene 3 (2.6-4.29s) - "Nothing joins" @2.7: per-word staggered reveal
+             in the quiet left third; then NO BOT stamps under the empty slot as a
+             teal hairline draws around it. Dead still from ~3.55 to the cut. */
+          tl.fromTo(
+            words,
+            { y: 42, autoAlpha: 0 },
+            { y: 0, autoAlpha: 1, duration: 0.6, ease: "power3.out", stagger: 0.16 },
+            2.7
+          );
+          tl.fromTo(
+            cap,
+            { scale: 1.3, autoAlpha: 0 },
+            { scale: 1, autoAlpha: 1, duration: 0.32, ease: "power3.out" },
+            3.1
+          );
+          tl.fromTo(
+            ringRect,
+            { strokeDashoffset: ringLen },
+            { strokeDashoffset: 0, duration: 0.42, ease: "power2.out" },
+            3.12
+          );
+
+          window.__timelines["03-no-bot"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

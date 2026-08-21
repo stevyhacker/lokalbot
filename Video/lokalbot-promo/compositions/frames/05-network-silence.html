@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <!-- Frame 5 — Verify the built-in path. Everything the runtime needs lives inside <template>. -->
+  </head>
+  <body>
+    <template>
+      <style>
+        @font-face {
+          font-family: "SF Pro Display";
+          src: url("assets/fonts/SF-Pro-Display-Regular.otf") format("opentype");
+          font-weight: 400;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: "SF Pro Display";
+          src: url("assets/fonts/SF-Pro-Display-Medium.otf") format("opentype");
+          font-weight: 500;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: "SF Mono";
+          src: url("assets/fonts/SF-Mono-Medium.otf") format("opentype");
+          font-weight: 500;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: "SF Mono";
+          src: url("assets/fonts/SF-Mono-Bold.otf") format("opentype");
+          font-weight: 700;
+          font-style: normal;
+        }
+
+        #root {
+          position: absolute;
+          inset: 0;
+          width: 1920px;
+          height: 1080px;
+          overflow: hidden;
+          font-family: "SF Pro Display", sans-serif;
+          -webkit-font-smoothing: antialiased;
+        }
+
+        .clip {
+          position: absolute;
+          inset: 0;
+        }
+
+        /* ---- track 0: full-bleed ink field ---- */
+        #ns05-bg {
+          background: #0b1220;
+        }
+
+        /* ---- track 1: claims, left third ---- */
+        #ns05-claims {
+          pointer-events: none;
+        }
+        .ns05-claim {
+          position: relative;
+          display: flex;
+          align-items: baseline;
+          gap: 20px;
+          width: 540px;
+        }
+        #ns05-claim-1 { position: absolute; left: 106px; top: 326px; }
+        #ns05-claim-2 { position: absolute; left: 106px; top: 424px; }
+        #ns05-claim-3 { position: absolute; left: 106px; top: 522px; }
+        .ns05-mark {
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 26px;
+          color: #23c4ae;
+        }
+        .ns05-ctext {
+          font-size: 40px;
+          font-weight: 500;
+          line-height: 1.3;
+          letter-spacing: -0.01em;
+          color: #eff6fa;
+          text-transform: lowercase;
+        }
+
+        /* ---- track 2: network monitor window recreation ---- */
+        #ns05-winlayer {
+          pointer-events: none;
+        }
+        #ns05-win {
+          position: absolute;
+          left: 787px;
+          top: 160px;
+          width: 880px;
+          height: 580px;
+          background: #101b2d;
+          border: 1px solid #1b2a40;
+          border-radius: 10px;
+          overflow: hidden;
+          box-sizing: border-box;
+        }
+        .ns05-titlebar {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          height: 54px;
+          padding: 0 22px;
+          border-bottom: 1px solid #1b2a40;
+          box-sizing: border-box;
+        }
+        .ns05-dots {
+          display: flex;
+          gap: 8px;
+        }
+        .ns05-dots i {
+          display: block;
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: #23334d;
+        }
+        .ns05-title {
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 14px;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+          color: #9fb2c4;
+        }
+        .ns05-thead {
+          display: grid;
+          grid-template-columns: 0.9fr 1.4fr 0.45fr;
+          align-items: center;
+          height: 46px;
+          padding: 0 26px;
+          border-bottom: 1px solid #1b2a40;
+          box-sizing: border-box;
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 13px;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+          color: #9fb2c4;
+        }
+        .ns05-thead span {
+          opacity: 0.8;
+        }
+        .ns05-r {
+          text-align: right;
+        }
+        .ns05-tbody {
+          position: relative;
+          height: 478px;
+          overflow: hidden;
+        }
+        .ns05-rows {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          flex-direction: column;
+        }
+        .ns05-row {
+          flex: 1;
+          border-bottom: 1px solid rgba(27, 42, 64, 0.75);
+        }
+        .ns05-row:last-child {
+          border-bottom: none;
+        }
+
+        /* scan line — finite dash-flow sweep */
+        #ns05-scan {
+          position: absolute;
+          left: 26px;
+          right: 26px;
+          top: 0;
+          height: 50px;
+        }
+        .ns05-scan-trail {
+          height: 46px;
+          background: linear-gradient(
+            to bottom,
+            rgba(35, 196, 174, 0),
+            rgba(35, 196, 174, 0.12)
+          );
+        }
+        .ns05-scan-svg {
+          display: block;
+          width: 100%;
+          height: 4px;
+        }
+
+        /* the climax row */
+        #ns05-zero-wrap {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        #ns05-zero {
+          font-family: "SF Mono", monospace;
+          font-weight: 700;
+          font-size: 28px;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+          color: #23c4ae;
+          padding: 18px 46px;
+          border-top: 1px solid rgba(35, 196, 174, 0.4);
+          border-bottom: 1px solid rgba(35, 196, 174, 0.4);
+        }
+        #ns05-scope {
+          position: absolute;
+          right: 24px;
+          bottom: 16px;
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 12px;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          color: #9fb2c4;
+        }
+
+        /* ---- track 3: micro-labels in the margins ---- */
+        #ns05-lablayer {
+          pointer-events: none;
+        }
+        .ns05-lab {
+          position: absolute;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          font-family: "SF Mono", monospace;
+          font-weight: 500;
+          font-size: 14px;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+          color: #9fb2c4;
+        }
+        .ns05-dot {
+          display: inline-block;
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          background: #23c4ae;
+        }
+        #ns05-lab-1 { left: 787px; top: 118px; }
+        #ns05-lab-2 { left: 787px; top: 766px; }
+        #ns05-lab-3 { right: 253px; top: 118px; }
+      </style>
+
+      <div data-hf-id="hf-6xil" id="root" data-composition-id="05-network-silence" data-width="1920" data-height="1080" data-duration="6.437">
+        <!-- full-bleed ink ground -->
+        <div data-hf-id="hf-orta" class="clip" id="ns05-bg" data-start="0" data-duration="6.437" data-track-index="0"></div>
+
+        <!-- Scene 1 — the three claims, left third -->
+        <div data-hf-id="hf-ebiz" class="clip" id="ns05-claims" data-start="0" data-duration="6.437" data-track-index="1">
+          <div data-hf-id="hf-snaw" class="ns05-claim" id="ns05-claim-1">
+            <span data-hf-id="hf-sr72" class="ns05-mark">/</span>
+            <span data-hf-id="hf-hge7" class="ns05-ctext">built-in processing</span>
+          </div>
+          <div data-hf-id="hf-3isj" class="ns05-claim" id="ns05-claim-2">
+            <span data-hf-id="hf-sn8y" class="ns05-mark">/</span>
+            <span data-hf-id="hf-18m4" class="ns05-ctext">no account</span>
+          </div>
+          <div data-hf-id="hf-xd2q" class="ns05-claim" id="ns05-claim-3">
+            <span data-hf-id="hf-t1jz" class="ns05-mark">/</span>
+            <span data-hf-id="hf-320w" class="ns05-ctext">no telemetry</span>
+          </div>
+        </div>
+
+        <!-- Scene 2 — the network monitor window recreation -->
+        <div data-hf-id="hf-unn8" class="clip" id="ns05-winlayer" data-start="0" data-duration="6.437" data-track-index="2">
+          <div data-hf-id="hf-7myo" id="ns05-win">
+            <div data-hf-id="hf-3bb0" class="ns05-titlebar">
+              <span data-hf-id="hf-bneu" class="ns05-dots"><i data-hf-id="hf-wt6k"></i><i data-hf-id="hf-zeb8"></i><i data-hf-id="hf-y7e5"></i></span>
+              <span data-hf-id="hf-9xjd" class="ns05-title">Network Check · Built-in Backend</span>
+            </div>
+            <div data-hf-id="hf-njir" class="ns05-thead" id="ns05-header">
+              <span data-hf-id="hf-qln2">Process</span>
+              <span data-hf-id="hf-jdhf">Remote Address</span>
+              <span data-hf-id="hf-0d13" class="ns05-r">Bytes</span>
+            </div>
+            <div data-hf-id="hf-zwcn" class="ns05-tbody">
+              <div data-hf-id="hf-91qq" class="ns05-rows">
+                <div data-hf-id="hf-fxgj" class="ns05-row"></div>
+                <div data-hf-id="hf-ab6r" class="ns05-row"></div>
+                <div data-hf-id="hf-9wvq" class="ns05-row"></div>
+                <div data-hf-id="hf-9ikp" class="ns05-row"></div>
+                <div data-hf-id="hf-949o" class="ns05-row"></div>
+                <div data-hf-id="hf-8pyn" class="ns05-row"></div>
+                <div data-hf-id="hf-8bnm" class="ns05-row"></div>
+              </div>
+              <div data-hf-id="hf-ix6x" id="ns05-scan">
+                <div data-hf-id="hf-zlfl" class="ns05-scan-trail"></div>
+                <svg data-hf-id="hf-e6kr" class="ns05-scan-svg" viewBox="0 0 826 4" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+                  <line data-hf-id="hf-f0gi" id="ns05-scanline" x1="0" y1="2" x2="826" y2="2" stroke="#23C4AE" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="12 12" />
+                </svg>
+              </div>
+              <!-- Scene 3 — the stamped zero row (product UI content) -->
+              <div data-hf-id="hf-488x" id="ns05-zero-wrap">
+                <div data-hf-id="hf-lnq4" id="ns05-zero">0 Outbound During Processing</div>
+              </div>
+              <div data-hf-id="hf-t6o3" id="ns05-scope">Models downloaded · Updates off</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Scene 2 — mono micro-labels pulsing in the margins -->
+        <div data-hf-id="hf-k81u" class="clip" id="ns05-lablayer" data-start="0" data-duration="6.437" data-track-index="3">
+          <div data-hf-id="hf-a5g0" class="ns05-lab" id="ns05-lab-1">
+            <i data-hf-id="hf-6cie" class="ns05-dot"></i><span data-hf-id="hf-rczx">Transcribing</span>
+          </div>
+          <div data-hf-id="hf-l0xn" class="ns05-lab" id="ns05-lab-2">
+            <i data-hf-id="hf-5vay" class="ns05-dot"></i><span data-hf-id="hf-531l">Summarizing</span>
+          </div>
+          <div data-hf-id="hf-ev7u" class="ns05-lab" id="ns05-lab-3">
+            <i data-hf-id="hf-69lz" class="ns05-dot"></i><span data-hf-id="hf-djy9">Autocomplete</span>
+          </div>
+        </div>
+      </div>
+
+      <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+      <script>
+        window.__timelines = window.__timelines || {};
+        (function () {
+          const tl = gsap.timeline({ paused: true });
+
+          /* ============================================================
+             Scene 1 (0.0–3.0) — three claims land beat-by-beat on the VO:
+             "built-in processing" @0.3, "no account" @1.3,
+             "no telemetry" @2.4.
+             Hard-cut opacity + short long-tail power3 settle on x.
+             ============================================================ */
+          const CLAIMS = [
+            ["#ns05-claim-1", 0.3],
+            ["#ns05-claim-2", 1.3],
+            ["#ns05-claim-3", 2.4],
+          ];
+          CLAIMS.forEach(function (c) {
+            const sel = c[0];
+            const at = c[1];
+            tl.fromTo(
+              sel,
+              { opacity: 0 },
+              { opacity: 1, duration: 0.08, ease: "none" },
+              at
+            );
+            tl.fromTo(
+              sel,
+              { x: -36 },
+              { x: 0, duration: 0.85, ease: "power3.out" },
+              at
+            );
+          });
+
+          /* ============================================================
+             Scene 2 (3.0–4.9) — "Verify the network yourself" @3.4:
+             the window rises into the right two-thirds on a smooth
+             long-tail settle (no overshoot), internals cascade in.
+             ============================================================ */
+          tl.fromTo(
+            "#ns05-win",
+            { opacity: 0 },
+            { opacity: 1, duration: 0.4, ease: "power1.out" },
+            3.38
+          );
+          tl.fromTo(
+            "#ns05-win",
+            { y: 74, scale: 0.975 },
+            { y: 0, scale: 1, duration: 0.9, ease: "power3.out" },
+            3.38
+          );
+          tl.fromTo(
+            ["#ns05-header", ".ns05-row"],
+            { opacity: 0 },
+            { opacity: 1, duration: 0.35, ease: "power2.out", stagger: 0.045 },
+            3.55
+          );
+
+          /* Scan line — one finite dash-flow sweep down the empty rows:
+             linear translate (the scan) + linear strokeDashoffset drive
+             (the dash flow), completing and vanishing on "silence." */
+          tl.fromTo(
+            "#ns05-scan",
+            { opacity: 0 },
+            { opacity: 1, duration: 0.12, ease: "none" },
+            3.85
+          );
+          tl.fromTo(
+            "#ns05-scan",
+            { y: 0 },
+            { y: 428, duration: 1.03, ease: "none" },
+            3.85
+          );
+          tl.fromTo(
+            "#ns05-scanline",
+            { strokeDashoffset: 0 },
+            { strokeDashoffset: -168, duration: 1.03, ease: "none" },
+            3.85
+          );
+          tl.to(
+            "#ns05-scan",
+            { opacity: 0, duration: 0.18, ease: "power1.in" },
+            4.78
+          );
+
+          /* Micro-labels pulse briefly in the margins — the app visibly
+             working while the table stays empty. Finite yoyo pulses. */
+          const LABS = [
+            ["#ns05-lab-1", 3.95],
+            ["#ns05-lab-2", 4.22],
+            ["#ns05-lab-3", 4.42],
+          ];
+          LABS.forEach(function (l) {
+            const sel = l[0];
+            const at = l[1];
+            tl.fromTo(
+              sel,
+              { opacity: 0 },
+              { opacity: 0.95, duration: 0.14, ease: "none" },
+              at
+            );
+            tl.to(
+              sel,
+              {
+                opacity: 0.5,
+                duration: 0.15,
+                ease: "sine.inOut",
+                yoyo: true,
+                repeat: 1,
+              },
+              at + 0.17
+            );
+            tl.fromTo(
+              sel + " .ns05-dot",
+              { scale: 1 },
+              {
+                scale: 1.3,
+                duration: 0.15,
+                ease: "sine.inOut",
+                yoyo: true,
+                repeat: 1,
+              },
+              at + 0.1
+            );
+          });
+
+          /* ============================================================
+             Scene 3 (5.0–6.04) — the scoped result lands: everything stops.
+             Labels fade, the scan is gone, and the zero row stamps in.
+             Then the frame holds perfectly dead-still to the cut —
+             nothing is scheduled after t = 5.32.
+             ============================================================ */
+          tl.to(
+            ["#ns05-lab-1", "#ns05-lab-2", "#ns05-lab-3"],
+            { opacity: 0, duration: 0.12, ease: "power1.in" },
+            4.9
+          );
+
+          tl.fromTo(
+            "#ns05-zero",
+            { opacity: 0 },
+            { opacity: 1, duration: 0.1, ease: "none" },
+            5.06
+          );
+          tl.fromTo(
+            "#ns05-zero",
+            { scale: 1.16, filter: "blur(7px)" },
+            {
+              scale: 1,
+              filter: "blur(0px)",
+              duration: 0.26,
+              ease: "power4.out",
+            },
+            5.06
+          );
+
+          window.__timelines["05-network-silence"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>
