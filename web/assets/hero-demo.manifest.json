@@ -1,10 +1,10 @@
 {
   "version": 2,
   "output": "hero-demo.mp4",
-  "sha256": "bad8be6536b6c4e7d5596eec566e413d090a237e50eba0fe5c6a7f46a67dd7ce",
+  "sha256": "616d9c04a87ece5104da95ada047cce58ab73d806d49508dd49b89e5bb20f33b",
   "production": {
     "engine": "HyperFrames",
-    "engineVersion": "0.8.4",
+    "engineVersion": "0.8.6",
     "source": "Video/lokalbot-promo/index.html",
     "canvas": [
       1920,
@@ -64,6 +64,6 @@
     }
   ],
   "delivery": {
-    "bytes": 2390670
+    "bytes": 2387938
   }
 }

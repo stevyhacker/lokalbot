@@ -3,9 +3,8 @@
 # Run only after the HyperFrames Studio preview has been reviewed.
 set -eu
 
-REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 PROJECT_DIR="$REPO_ROOT/Video/lokalbot-promo"
-HYPERFRAMES_VERSION=0.8.4
 MASTER="$PROJECT_DIR/renders/video.mp4"
 FINAL_TMP="$REPO_ROOT/web/assets/hero-demo.production.mp4"
 FINAL="$REPO_ROOT/web/assets/hero-demo.mp4"
@@ -28,28 +27,47 @@ for command in ffmpeg ffprobe jq shasum; do
   fi
 done
 
-for asset in \
-  assets/bgm/track.wav \
-  assets/voice/01.wav \
-  assets/voice/02.wav \
-  assets/voice/03.wav \
-  assets/voice/04.wav \
-  assets/voice/05.wav \
-  assets/voice/06.wav; do
-  if [ ! -s "$PROJECT_DIR/$asset" ]; then
-    echo "error: missing generated promo asset: $PROJECT_DIR/$asset" >&2
-    echo "prepare the local media assets and preview the project before rendering" >&2
-    exit 1
-  fi
-done
+HYPERFRAMES_VERSION=$(jq -r '
+  [.scripts.check, .scripts.render]
+  | map(capture("hyperframes@(?<version>[0-9]+\\.[0-9]+\\.[0-9]+)").version)
+  | unique
+  | if length == 1 then .[0] else empty end
+' "$PROJECT_DIR/package.json")
+if [ -z "$HYPERFRAMES_VERSION" ]; then
+  echo "error: HyperFrames check and render scripts must use one exact version" >&2
+  exit 1
+fi
 
 mkdir -p "$PROJECT_DIR/renders" "$REPO_ROOT/web/assets"
 
 if [ "$MODE" != "--postprocess-only" ]; then
+  for asset in \
+    assets/bgm/track.wav \
+    assets/voice/01.wav \
+    assets/voice/02.wav \
+    assets/voice/03.wav \
+    assets/voice/04.wav \
+    assets/voice/05.wav \
+    assets/voice/06.wav; do
+    if [ ! -s "$PROJECT_DIR/$asset" ]; then
+      echo "error: missing generated promo asset: $PROJECT_DIR/$asset" >&2
+      echo "prepare the local media assets and preview the project before rendering" >&2
+      exit 1
+    fi
+  done
+
+  for caption_asset in caption_groups.json compositions/captions.html; do
+    if grep -qi 'localbot\.com' "$PROJECT_DIR/$caption_asset"; then
+      echo "error: incorrect CTA domain in $PROJECT_DIR/$caption_asset" >&2
+      echo "replace localbot.com with lokalbot.com before rendering" >&2
+      exit 1
+    fi
+  done
+
   (
     cd "$PROJECT_DIR"
     npm run check
-    npx --yes "hyperframes@$HYPERFRAMES_VERSION" render \
+    npm run render -- \
       --skill=product-launch-video \
       --output "$MASTER" --fps 30 --quality high --strict
   )
@@ -116,6 +134,7 @@ write_manifest() {
     --arg output "$output_name" \
     --arg sha256 "$sha256" \
     --arg duration "$duration" \
+    --arg engine_version "$HYPERFRAMES_VERSION" \
     --argjson bytes "$bytes" \
     '{
       version: 2,
@@ -123,7 +142,7 @@ write_manifest() {
       sha256: $sha256,
       production: {
         engine: "HyperFrames",
-        engineVersion: "0.8.4",
+        engineVersion: $engine_version,
         source: "Video/lokalbot-promo/index.html",
         canvas: [1920, 1080],
         fps: 30,
