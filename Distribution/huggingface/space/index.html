@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Measured on-device model benchmarks behind LokalBot on an Apple M4 Max.">
+  <title>LokalBot local-stack benchmarks</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="hero">
+    <p class="eyebrow">Measured locally · published with sources</p>
+    <h1>LokalBot local-stack benchmarks</h1>
+    <p class="lede">Transcription, summaries, autocomplete, OCR, and diarization measured on an Apple M4 Max. No estimates and no rehosted model weights.</p>
+    <nav aria-label="Project links">
+      <a href="https://github.com/stevyhacker/lokalbot">GitHub repository</a>
+      <a href="https://huggingface.co/collections/stevyhacker/lokalbot-recommended-local-stack">Recommended model collection</a>
+      <a href="https://www.lokalbot.com/">LokalBot website</a>
+    </nav>
+  </header>
+  <main><h1>LokalBot local-stack benchmarks — extracted numbers</h1>
+<p>Every number below is copied verbatim from a file in this repository; the <strong>Source</strong> column is the path to check. Nothing here is estimated or invented. All measurements to date were taken on a single machine: an <strong>Apple M4 Max MacBook Pro, 48 GB</strong>, running LokalBot's bundled llama.cpp runtime with full Metal offload (per <a href="https://github.com/stevyhacker/lokalbot/blob/master/README.md"><code>README.md</code></a>, "Example model stack and performance").</p>
+<h2>Recommended-stack leaderboard (generation throughput)</h2>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Model</th>
+<th>Quant / format</th>
+<th style="text-align: right;">Model files size</th>
+<th>Measured</th>
+<th>Hardware</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Summaries and chat</td>
+<td>Qwen3.5 4B</td>
+<td><code>Q4_K_M</code></td>
+<td style="text-align: right;">2.74 GB</td>
+<td>~100 tokens/s generation</td>
+<td>48 GB M4 Max, bundled llama.cpp, full Metal offload</td>
+<td><a href="https://github.com/stevyhacker/lokalbot/blob/master/README.md"><code>README.md</code></a> (model stack table)</td>
+</tr>
+<tr>
+<td>Autocomplete (higher-capacity option)</td>
+<td>Gemma 4 E4B</td>
+<td><code>UD-Q5_K_XL</code></td>
+<td style="text-align: right;">6.66 GB</td>
+<td>~78 tokens/s generation</td>
+<td>48 GB M4 Max, bundled llama.cpp, full Metal offload</td>
+<td><a href="https://github.com/stevyhacker/lokalbot/blob/master/README.md"><code>README.md</code></a> (model stack table)</td>
+</tr>
+<tr>
+<td>Transcription (default)</td>
+<td>IBM Granite Speech 4.1 2B</td>
+<td><code>Q4_K_M</code> + F16 projector</td>
+<td style="text-align: right;">2.30 GB</td>
+<td>ASR — no generation-speed figure published</td>
+<td>48 GB M4 Max</td>
+<td><a href="https://github.com/stevyhacker/lokalbot/blob/master/README.md"><code>README.md</code></a> (model stack table)</td>
+</tr>
+<tr>
+<td>Semantic search</td>
+<td>Qwen3-Embedding 0.6B</td>
+<td><code>Q8_0</code></td>
+<td style="text-align: right;">0.64 GB</td>
+<td>Embeddings; not generative</td>
+<td>48 GB M4 Max</td>
+<td><a href="https://github.com/stevyhacker/lokalbot/blob/master/README.md"><code>README.md</code></a> (model stack table)</td>
+</tr>
+<tr>
+<td>Speaker diarization</td>
+<td>pyannote-community-1 via FluidAudio</td>
+<td>Core ML</td>
+<td style="text-align: right;">~0.10 GB</td>
+<td>Diarization; not generative</td>
+<td>48 GB M4 Max</td>
+<td><a href="https://github.com/stevyhacker/lokalbot/blob/master/README.md"><code>README.md</code></a> (model stack table)</td>
+</tr>
+</tbody>
+</table>
+<p>The full measured example stack occupies about <strong>12.4 GB</strong> after download (<a href="https://github.com/stevyhacker/lokalbot/blob/master/README.md"><code>README.md</code></a>). The current <em>Recommended</em> preset uses the smaller LFM2.5 1.2B for Autocomplete instead of Gemma (see next table).</p>
+<p>Transcription speed headline: <strong>Parakeet runs up to ~190× realtime in local benchmarks</strong> (<a href="https://github.com/stevyhacker/lokalbot/blob/master/README.md"><code>README.md</code></a>, features section; repeated in <a href="https://github.com/stevyhacker/lokalbot/blob/master/Docs/show-hn-kit.md"><code>Docs/show-hn-kit.md</code></a>, <a href="https://github.com/stevyhacker/lokalbot/blob/master/Docs/reddit-launch-posts.md"><code>Docs/reddit-launch-posts.md</code></a>). No realtime factor has been published for Granite Speech 4.1, Whisper large-v3 turbo, or Qwen3-ASR.</p>
+<h2>Cotyping (inline autocomplete) latency matrix</h2>
+<p>Harness: production <code>LokalBot --cotyping-bench</code>, all 28 default scenarios through the real in-process llama.cpp engine. Gate = 28/28 safety, ≥12/13 word completions, p95 ≤ 2000 ms. Source: <a href="https://github.com/stevyhacker/lokalbot/blob/master/Benchmarks/Cotyping/results/2026-07-21-model-debounce-benchmark.md"><code>Benchmarks/Cotyping/results/2026-07-21-model-debounce-benchmark.md</code></a>.</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Exact file</th>
+<th style="text-align: right;">Bytes</th>
+<th>Safety</th>
+<th>Word completions</th>
+<th>Avg latency</th>
+<th>p95 latency</th>
+<th>Gate</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LFM2.5 1.2B Instruct</td>
+<td><code>LFM2.5-1.2B-Instruct-Q4_K_M.gguf</code></td>
+<td style="text-align: right;">730,895,584</td>
+<td>28/28</td>
+<td>12/13</td>
+<td>143 / 143 / 151 ms (3 warmed runs)</td>
+<td>484 / 487 / 494 ms</td>
+<td>Pass ×3</td>
+</tr>
+<tr>
+<td>Gemma 4 E4B Instruct</td>
+<td><code>gemma-4-E4B-it-UD-Q5_K_XL.gguf</code></td>
+<td style="text-align: right;">6,656,152,736</td>
+<td>28/28</td>
+<td>12/13</td>
+<td>399 ms</td>
+<td>1,830 ms</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Qwen3.5 2B</td>
+<td><code>Qwen3.5-2B-Q4_K_M.gguf</code></td>
+<td style="text-align: right;">1,280,835,840</td>
+<td>27/28</td>
+<td>11/13</td>
+<td>437 ms</td>
+<td>1,629 ms</td>
+<td>Fail quality</td>
+</tr>
+<tr>
+<td>Qwen3.5 4B</td>
+<td><code>Qwen3.5-4B-Q4_K_M.gguf</code></td>
+<td style="text-align: right;">2,740,937,888</td>
+<td>27/28</td>
+<td>11/13</td>
+<td>434 ms</td>
+<td>1,652 ms</td>
+<td>Fail quality</td>
+</tr>
+<tr>
+<td>Gemma 4 E2B (base)</td>
+<td><code>gemma-4-E2B.i1-Q6_K.gguf</code></td>
+<td style="text-align: right;">3,845,328,608</td>
+<td>26/28</td>
+<td>10/13</td>
+<td>883 ms</td>
+<td>2,560 ms</td>
+<td>Fail quality + latency</td>
+</tr>
+<tr>
+<td>Gemma 4 E4B (base)</td>
+<td><code>gemma-4-E4B-UD-Q5_K_XL.gguf</code></td>
+<td style="text-align: right;">6,700,259,616</td>
+<td>26/28</td>
+<td>10/13</td>
+<td>697 ms</td>
+<td>3,022 ms</td>
+<td>Fail quality + latency</td>
+</tr>
+</tbody>
+</table>
+<p>Supporting figures from the same sources:</p>
+<ul>
+<li>LFM2.5 keyword relevance: <strong>15/64 hits vs 13/64</strong> for the Gemma instruct baseline — "a weak relevance signal, not a separate gate" (<a href="https://github.com/stevyhacker/lokalbot/blob/master/Benchmarks/Cotyping/results/2026-07-21-model-debounce-benchmark.md"><code>Benchmarks/Cotyping/results/2026-07-21-model-debounce-benchmark.md</code></a>).</li>
+<li>Cold Metal-kernel compilation, first scenario only: LFM2.5 <strong>19,349 ms</strong>, Gemma E4B instruct <strong>127,466 ms</strong> (same file).</li>
+<li>Debounce replay on LFM warmed runs: in-process debounce <strong>35 / 55 ms</strong> avg/p95; inferred end-to-end <strong>178–186 / 509–519 ms</strong> avg/p95 (same file; arithmetic replay, not a typing trace).</li>
+<li>Earlier engine bench (2026-07-06): Gemma E4B instruct avg <strong>459 ms</strong>, p95 <strong>1798 ms</strong>, steady-state <strong>~200 ms</strong>; the base variant measured avg <strong>564 ms</strong>, p95 <strong>2393 ms</strong> (<a href="https://github.com/stevyhacker/lokalbot/blob/master/Benchmarks/Cotyping/results/2026-07-06-cotypist-parity.md"><code>Benchmarks/Cotyping/results/2026-07-06-cotypist-parity.md</code></a>; raw JSON siblings <code>2026-07-06-engine-bench.json</code>, <code>2026-07-06-engine-bench-base-model.json</code>). A later side-by-side run logged avg <strong>471 ms</strong> / p95 <strong>1798 ms</strong> (<a href="https://github.com/stevyhacker/lokalbot/blob/master/Benchmarks/Cotyping/results/20260706-165057-cotypist-vs-lokalbot.md"><code>Benchmarks/Cotyping/results/20260706-165057-cotypist-vs-lokalbot.md</code></a>; its GUI capture leg recorded no insertions and is not usable as data).</li>
+</ul>
+<h2>Screenshot OCR — real stored screenshots</h2>
+<p>Input: 15 real LokalBot screenshots exported from the encrypted local store; Apple Vision baseline min 140.8 ms / max 404.8 ms. Hardware: M4 Max. Source: <a href="https://github.com/stevyhacker/lokalbot/blob/master/Benchmarks/OCR/RESULTS-2026-06-24.md"><code>Benchmarks/OCR/RESULTS-2026-06-24.md</code></a>. "Overlap" = token overlap vs Apple Vision output.</p>
+<table>
+<thead>
+<tr>
+<th>Engine</th>
+<th style="text-align: right;">Images</th>
+<th style="text-align: right;">Mean latency</th>
+<th style="text-align: right;">Token overlap vs Vision</th>
+<th>Verdict in source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Apple Vision <code>VNRecognizeTextRequest</code></td>
+<td style="text-align: right;">15</td>
+<td style="text-align: right;">243.2 ms</td>
+<td style="text-align: right;">—</td>
+<td>Current LokalBot baseline</td>
+</tr>
+<tr>
+<td>PP-OCRv5 mobile det+rec</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">18.46 s</td>
+<td style="text-align: right;">0.187</td>
+<td>Too slow</td>
+</tr>
+<tr>
+<td>PP-OCRv5 server det+rec</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">15.32 s</td>
+<td style="text-align: right;">0.147</td>
+<td>Too slow</td>
+</tr>
+<tr>
+<td>PP-OCRv6 medium det+rec</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">22.43 s</td>
+<td style="text-align: right;">0.208</td>
+<td>Too slow</td>
+</tr>
+<tr>
+<td>TrOCR small printed</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">2.47 s</td>
+<td style="text-align: right;">0.001</td>
+<td>Line-level; not a screenshot replacement</td>
+</tr>
+<tr>
+<td>GOT-OCR 2.0 (HF, MPS, 256-token cap)</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">3.70 s</td>
+<td style="text-align: right;">0.000</td>
+<td>Poor screenshot output</td>
+</tr>
+<tr>
+<td>GLM-OCR (MPS, 256-token cap)</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">5.74 s</td>
+<td style="text-align: right;">0.127</td>
+<td>Too slow/partial</td>
+</tr>
+<tr>
+<td>PaddleOCR-VL 1.6 GGUF (256-token cap)</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">1.30 s</td>
+<td style="text-align: right;">0.027</td>
+<td>Fast but heavily truncated</td>
+</tr>
+<tr>
+<td>PaddleOCR-VL 1.6 GGUF (1024-token cap)</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">2.74 s</td>
+<td style="text-align: right;">0.104</td>
+<td>Best non-Vision runtime, still slower and partial</td>
+</tr>
+<tr>
+<td>DeepSeek-OCR GGUF (512-token cap)</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">1.64 s</td>
+<td style="text-align: right;">0.000</td>
+<td>Hallucinated unrelated content</td>
+</tr>
+</tbody>
+</table>
+<h2>Screenshot OCR — synthetic set with ground truth</h2>
+<p>Input: 5 generated screenshots with ground-truth text (<a href="https://github.com/stevyhacker/lokalbot/blob/master/Benchmarks/OCR/synthetic/manifest.tsv"><code>Benchmarks/OCR/synthetic/manifest.tsv</code></a>). Metric: normalized multiset token scores; char similarity is reading-order sensitive. Hardware: M4 Max. Source: <a href="https://github.com/stevyhacker/lokalbot/blob/master/Benchmarks/OCR/SYNTHETIC-RESULTS-2026-06-24.md"><code>Benchmarks/OCR/SYNTHETIC-RESULTS-2026-06-24.md</code></a>.</p>
+<table>
+<thead>
+<tr>
+<th>Engine</th>
+<th style="text-align: right;">Mean latency</th>
+<th style="text-align: right;">Token precision</th>
+<th style="text-align: right;">Token recall</th>
+<th style="text-align: right;">Token F1</th>
+<th style="text-align: right;">Char similarity</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Apple Vision</td>
+<td style="text-align: right;">119.6 ms</td>
+<td style="text-align: right;">0.971</td>
+<td style="text-align: right;">0.971</td>
+<td style="text-align: right;">0.971</td>
+<td style="text-align: right;">0.812</td>
+</tr>
+<tr>
+<td>PP-OCRv6 medium</td>
+<td style="text-align: right;">6.78 s</td>
+<td style="text-align: right;">0.960</td>
+<td style="text-align: right;">0.990</td>
+<td style="text-align: right;">0.974</td>
+<td style="text-align: right;">0.867</td>
+</tr>
+<tr>
+<td>PaddleOCR-VL GGUF</td>
+<td style="text-align: right;">1.70 s</td>
+<td style="text-align: right;">0.871</td>
+<td style="text-align: right;">0.813</td>
+<td style="text-align: right;">0.777</td>
+<td style="text-align: right;">0.731</td>
+</tr>
+<tr>
+<td>DeepSeek-OCR GGUF</td>
+<td style="text-align: right;">1.44 s</td>
+<td style="text-align: right;">0.844</td>
+<td style="text-align: right;">0.732</td>
+<td style="text-align: right;">0.741</td>
+<td style="text-align: right;">0.680</td>
+</tr>
+</tbody>
+</table>
+<p>Notes from the same file: PP-OCRv6 was the only open-source option slightly above Apple Vision on quality but <strong>~57× slower</strong> with a <strong>~15 s model load</strong>; a DeepSeek-OCR rerun with the upstream-style <code>Free OCR.</code> prompt fell to mean token F1 <strong>0.529</strong>. Decision in both OCR files: keep Apple Vision as the default screenshot OCR pipeline.</p>
+<h2>Honest gaps — what is NOT yet measured</h2>
+<table>
+<thead>
+<tr>
+<th>Gap</th>
+<th>One-line plan</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Single-chip coverage: every number above is one M4 Max (48 GB)</td>
+<td>Re-run <code>--cotyping-bench</code> and the OCR harness on M1, M2, and M3 machines before claiming per-chip guidance.</td>
+</tr>
+<tr>
+<td>No ASR accuracy (WER/CER) for any transcription engine</td>
+<td>Run Granite Speech 4.1, Parakeet v3, Whisper large-v3 turbo, and Qwen3-ASR against a standard eval set (e.g. Common Voice / ESB subsets) and publish WER alongside the realtime factors.</td>
+</tr>
+<tr>
+<td>No realtime factor for Granite Speech 4.1, Whisper, or Qwen3-ASR</td>
+<td>Time each engine over a fixed reference audio file and record ×realtime like the existing Parakeet figure.</td>
+</tr>
+<tr>
+<td>No diarization error rate (DER) for pyannote-community-1 via FluidAudio</td>
+<td>Score against a labeled multi-speaker fixture using pyannote.metrics or dscore.</td>
+</tr>
+<tr>
+<td>No embedding-retrieval quality metric for Qwen3-Embedding 0.6B</td>
+<td>Build a small recall@k fixture from real meeting queries and measure hit rate against hand-labeled relevant meetings.</td>
+</tr>
+<tr>
+<td>No summarization-quality evaluation for Qwen3.5 4B</td>
+<td>Human-rate recaps on a fixed meeting corpus (faithfulness, action-item completeness); publish rubric + raw ratings.</td>
+</tr>
+<tr>
+<td>OCR sets are small (15 real + 5 synthetic screenshots)</td>
+<td>Grow the synthetic manifest to ≥50 fixtures across app categories and re-run <code>score_text_outputs.py</code>.</td>
+</tr>
+<tr>
+<td>Cotyping keyword-hit count is self-declared a weak signal</td>
+<td>Replace with a curated expected-completion suite reviewed by humans before quoting relevance numbers.</td>
+</tr>
+</tbody>
+</table></main>
+  <footer>
+    Generated from <a href="https://github.com/stevyhacker/lokalbot/blob/master/Distribution/huggingface/benchmark-summary.md"><code>Distribution/huggingface/benchmark-summary.md</code></a>.
+  </footer>
+</body>
+</html>

@@ -1,7 +1,7 @@
 # Handover: distribution launch tasks (for Codex)
 
 _Date: 2026-08-21. The distribution implementation and repair commits are on `origin/master`; this document now records the executed result rather than an unpushed starting state._
-_Repo: `stevyhacker/lokalbot`. Verified machine state: `gh` is authenticated as **stevyhacker** with SSH git protocol and `repo` scope; `claude` is installed; `hf` 1.28.0 is installed through `uv` and authenticated as **stevyhacker** with a token that cannot create a Collection or Space; Raycast is authenticated as **stevan_bogosavljevic**._
+_Repo: `stevyhacker/lokalbot`. Verified machine state: `gh` is authenticated as **stevyhacker** with SSH git protocol and `repo` scope; `claude` is installed; `hf` 1.28.0 is installed through `uv` and authenticated as **stevyhacker** with a token that cannot create a Collection or Space through the API; the signed-in Hugging Face web session and git credential can publish those resources; Raycast is authenticated as **stevan_bogosavljevic**._
 
 ## Execution update
 
@@ -13,8 +13,8 @@ _Repo: `stevyhacker/lokalbot`. Verified machine state: `gh` is authenticated as 
 | Claude Code plugin | `claude plugin validate .`, public marketplace installation in a clean scratch project, namespaced command discovery, and MCP initialization passed. The community-directory form redirects to Anthropic login, so account login/2FA and the final form submission remain owner-gated. |
 | Console.dev | Pitch sent to `hello@console.dev` after re-checking the current selection criteria and newsletter cadence. |
 | skills.sh | Public-repo discovery and a clean `npx skills add stevyhacker/lokalbot --skill lokalbot-cli --agent codex -y` install passed. The listing is live at <https://www.skills.sh/stevyhacker/lokalbot/lokalbot-cli>, and the README badge is published. |
-| Uneed / DevHunt | Uneed has the public product name and repo URL staged but not previewed/submitted. DevHunt is at its login page. Both require live owner confirmation/authentication before the external forms can continue. |
-| Hugging Face | All referenced model repos and quant filenames were re-verified. Idempotent Collection/Space creation plus deterministic static-Space rendering is committed as `c0e5039`. The installed token is not write-capable; the signed-in web forms are ready, but public creation/upload remains owner-confirmation-gated. No third-party weights were uploaded. |
+| Uneed / DevHunt | Uneed's **Preview my product** step is complete: it scraped LokalBot's logo, GitHub URL, and repository description. Saving and scheduling the listing now requires account creation/login and remains owner-gated. DevHunt remains at its login page. |
+| Hugging Face | Complete: the public [recommended-model Collection](https://huggingface.co/collections/stevyhacker/lokalbot-recommended-local-stack) contains the six verified repos and six curation notes, and the public [benchmark Space](https://huggingface.co/spaces/stevyhacker/lokalbot-benchmarks) is running the static dashboard at commit `d3315ea`. No third-party weights were uploaded. The optional Collection description remains unset because the inline editor did not persist it and the installed API token returns 403 for Collection metadata writes. |
 | Raycast | Store submission [PR #30399](https://github.com/raycast/extensions/pull/30399) is open and ready for review. Both commands passed lint/build and an in-app synthetic-data test; changelog and core hosted checks pass. No private meeting data was used for validation. |
 
 ## Artifact state
@@ -24,8 +24,8 @@ _Repo: `stevyhacker/lokalbot`. Verified machine state: `gh` is authenticated as 
 | Cask v0.6.2 (sha256 verified) + tap guide | `Distribution/homebrew/` | committed and published; upstream-policy status recorded |
 | Raycast extension | `Distribution/raycast/` | committed; Store PR open for review |
 | Claude Code plugin + `/lokalbot:recall` | `.claude-plugin/`, `Distribution/claude-plugin/` | committed; public install verified; directory form awaiting owner login |
-| HF collection/Space specs + benchmark data | `Distribution/huggingface/` | committed; publication automation verified; public objects not yet created |
-| Submission copy | `Docs/distribution-submissions-2026-08.md` | committed; Console pitch sent; remaining forms owner-gated |
+| HF collection/Space specs + benchmark data | `Distribution/huggingface/` | committed and published; Collection and static Space publicly verified |
+| Submission copy | `Docs/distribution-submissions-2026-08.md` | committed; Console pitch sent; Uneed preview complete; remaining account-backed submissions owner-gated |
 | Shared privacy/namespace guidance | `.agents/skills/lokalbot-cli/SKILL.md`, `README.md`, `.gitignore` | committed; skills.sh listing and badge live |
 
 ## Retained runbook
@@ -125,16 +125,21 @@ Before any future public task:
 Use `Docs/distribution-submissions-2026-08.md` field by field. Its agent-facing copy now states the real boundary: LokalBot does not upload library content, but an external client may transmit tool inputs/results under its own privacy terms.
 
 - **Console.dev:** re-check the current selection page and newsletter cadence. Draft the pitch to `hello@console.dev`; if sending is not explicitly authorized, create `Docs/outbox/` and save the final draft as `Docs/outbox/console-dev-pitch.md`.
-- **Uneed.best / DevHunt:** re-check the live fields. Interactive login and final submission remain owner-gated unless explicitly authorized.
+- **Uneed.best / DevHunt:** Uneed's anonymous preview is complete. Account creation/login, saving, launch scheduling, and final submission remain owner-gated unless explicitly authorized. DevHunt still requires login.
 - Coordinating launch dates with Show HN is a marketing hypothesis, not a guaranteed GitHub Trending mechanism. Do not present it as a measured fact.
 
 **Acceptance:** live fields re-verified; all `github.com/stevyhacker/lokalbot/blob/...` links use `master`; email drafted; every send/submission either authorized and completed or clearly owner-gated.
 
 ## Task 5 — Hugging Face
 
-The former CLI blocker is repaired: active `hf` is version 1.28.0 installed by `uv`, and `hf auth whoami` returns `stevyhacker`. Re-check both immediately before any write. Creating a public Collection or Space is still an external action and requires explicit authorization.
+Completed on 2026-08-21 after explicit authorization. The active `hf` CLI is version 1.28.0 and `hf auth whoami` returns `stevyhacker`, but that token lacks Collection/Space API-write permission; publication used the signed-in web session and the authenticated Space git remote instead.
 
-After authorization:
+Published resources:
+
+- Collection: <https://huggingface.co/collections/stevyhacker/lokalbot-recommended-local-stack>
+- Static Space: <https://huggingface.co/spaces/stevyhacker/lokalbot-benchmarks> (`d3315ea`)
+
+Reproduction path:
 
 1. Write `Distribution/huggingface/scripts/create_collection.py` with `huggingface_hub`; create `LokalBot recommended local stack` using the six API-verified repositories and description in `Distribution/huggingface/COLLECTION.md`.
 2. Create the static Space from `Distribution/huggingface/SPACE-benchmark.md`; generate its body from `benchmark-summary.md`.

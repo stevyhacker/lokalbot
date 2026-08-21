@@ -18,4 +18,4 @@ to its source file in the repository; nothing is estimated.
 
 - Repo: https://github.com/stevyhacker/lokalbot
 - Source of truth: https://github.com/stevyhacker/lokalbot/blob/master/Distribution/huggingface/benchmark-summary.md
-- Recommended models: __COLLECTION_URL__
+- Recommended models: https://huggingface.co/collections/stevyhacker/lokalbot-recommended-local-stack

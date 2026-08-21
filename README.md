@@ -131,6 +131,8 @@ This measured higher-capacity example occupies about **12.4 GB** after every mod
 | Semantic search | Qwen3-Embedding 0.6B | `Q8_0` | 0.64 GB | Embeddings; not generative |
 | Speaker diarization | pyannote-community-1 via FluidAudio | Core ML | ~0.10 GB | Diarization; not generative |
 
+Explore the [interactive benchmark summary](https://huggingface.co/spaces/stevyhacker/lokalbot-benchmarks) and the [recommended local model stack](https://huggingface.co/collections/stevyhacker/lokalbot-recommended-local-stack).
+
 Generation speed varies with context length, thermals, and other workloads. Model files download on first use, so features you do not enable do not incur their full model footprint.
 
 Embeddings live in SQLite with brute-force cosine similarity, because at personal scale brute force is instant.

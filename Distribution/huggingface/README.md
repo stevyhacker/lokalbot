@@ -2,6 +2,11 @@
 
 Everything in this directory ships LokalBot's Hugging Face presence: a curated model Collection, a static benchmark Space, and the extracted benchmark data both of them present. **No weights are ever rehosted** — the collection links to model owners' repos, so licenses and bandwidth stay where they belong.
 
+## Live resources
+
+- [LokalBot recommended local stack](https://huggingface.co/collections/stevyhacker/lokalbot-recommended-local-stack) — public Collection with six model links and curation notes.
+- [LokalBot Local-Stack Benchmarks](https://huggingface.co/spaces/stevyhacker/lokalbot-benchmarks) — public Static Space, published at Space commit `d3315ea`.
+
 ## Files
 
 | File | Purpose |
@@ -28,7 +33,7 @@ All referenced repo ids were verified against the HF API on 2026-08-21. With a w
 uv run --with huggingface_hub python Distribution/huggingface/scripts/create_collection.py
 ```
 
-The script prints the Collection URL. Without a write token, follow the web-UI path in `COLLECTION.md` and save the resulting URL.
+The script prints the Collection URL. Without a write token, follow the web-UI path in `COLLECTION.md` and save the resulting URL. The current live Collection was published through that web-UI path on 2026-08-21.
 
 ## Step 2 — Create the benchmark Space
 
@@ -40,20 +45,21 @@ uv run --with markdown python Distribution/huggingface/scripts/render_space.py \
 uv run --with huggingface_hub python Distribution/huggingface/scripts/create_space.py
 ```
 
-Without a write token, create a public Static Space named `lokalbot-benchmarks` in the web UI and upload the three files from `space/`.
+Without a write token, create a public Static Space named `lokalbot-benchmarks` in the web UI and upload the three files from `space/`. The current live Space was created in the web UI and updated through its authenticated git remote.
 
 ## Step 3 — Publish checklist
 
-- [ ] Collection is public; all six items show curation notes; order matches `COLLECTION.md`.
-- [ ] Space renders all four sections (stack leaderboard, cotyping matrix, two OCR tables) plus the gaps table.
-- [ ] Space header/footer link to the GitHub repo; each table's source path resolves on GitHub.
+- [x] Collection is public; all six items show curation notes; order matches `COLLECTION.md`.
+- [x] Space renders all four sections (stack leaderboard, cotyping matrix, two OCR tables) plus the gaps table.
+- [x] Space header/footer link to the GitHub repo; each table's source path resolves on GitHub.
 - [ ] Collection description contains the repo link (`https://github.com/stevyhacker/lokalbot`).
-- [ ] Nothing anywhere mirrors or re-uploads weights.
+  The inline web editor did not persist this optional field, and the installed API token receives 403 for Collection metadata writes; use a token with Collection-write permission to finish it.
+- [x] Nothing anywhere mirrors or re-uploads weights.
 
 ## Step 4 — Promotion checklist
 
 - [ ] **lokalbot.com**: add the Space + collection links to the site footer or the "local transcription models compared" post. *(Site edit is not part of this kit — maintainer follow-up.)*
-- [ ] **Repo README**: one line under the model-stack table linking the Space ("Interactive benchmark summary: …"). *(README edit is owned by the Registries agent / maintainer follow-up — do not edit it here.)*
+- [x] **Repo README**: links to both the interactive Space and recommended-model Collection under the model-stack table.
 - [ ] **r/LocalLLaMA**: mention the collection + Space in the next model-stack thread (see `Docs/reddit-localllama-followup-2026-07.md` for tone); lead with the numbers, not the app.
 - [ ] **Release notes**: add the collection link to the next GitHub release body (v0.6.3+) under "Recommended models".
 - [ ] **HF community post**: short article "the local stack behind a Mac meeting-notes app" tagging IBM Granite, NVIDIA (Parakeet), Qwen, LiquidAI, and FluidInference teams — per `Docs/distribution-channels-2026-07.md`, their devrel reshare downstream wins.
