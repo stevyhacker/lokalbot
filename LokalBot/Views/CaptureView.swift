@@ -55,9 +55,10 @@ final class CaptureModel: ObservableObject {
     }
 
     var digestIsStale: Bool {
-        DayDigestFreshness.isStale(
-            digestModifiedAt: digestUpdatedAt,
-            latestEvidenceAt: latestDigestEvidenceAt)
+        DayDigestLifecycle.Snapshot(
+            text: digest,
+            modifiedAt: digestUpdatedAt,
+            latestEvidenceAt: latestDigestEvidenceAt).isStale
     }
 
     /// Change the selected day and synchronously replace every day-scoped
@@ -86,11 +87,10 @@ final class CaptureModel: ObservableObject {
         let reloadedShots = app.activityStore.screenshots(on: day, includingTextOnly: true)
         shots = reloadedShots
         rewindFrames = ScreenRewindSequence.frames(from: reloadedShots)
-        let digestURL = journalURL(app: app)
-        digest = try? String(contentsOf: digestURL, encoding: .utf8)
-        let attributes = try? FileManager.default.attributesOfItem(atPath: digestURL.path)
-        digestUpdatedAt = attributes?[.modificationDate] as? Date
-        latestDigestEvidenceAt = latestEvidenceDate(app: app)
+        let digestSnapshot = app.dayDigest.snapshot(for: day)
+        digest = digestSnapshot.text
+        digestUpdatedAt = digestSnapshot.modifiedAt
+        latestDigestEvidenceAt = digestSnapshot.latestEvidenceAt
         digestError = nil
         selection = nil
         selectedSessionID = nil
@@ -101,20 +101,7 @@ final class CaptureModel: ObservableObject {
     /// The selected day's meetings, live recording included, for the track
     /// and the overview stats.
     func meetings(in app: AppState) -> [Meeting] {
-        ((app.currentMeeting.map { [$0] } ?? []) + app.meetings)
-            .filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }
-    }
-
-    private func journalURL(app: AppState) -> URL {
-        let name = DreamDay.key(for: day)
-        return app.storage.rootURL.appendingPathComponent("journal/\(name).md")
-    }
-
-    private func latestEvidenceDate(app: AppState) -> Date? {
-        let meetingEnd = meetings(in: app).compactMap(\.endedAt).max()
-        return [app.activityStore.latestEvidenceAt(on: day), meetingEnd]
-            .compactMap { $0 }
-            .max()
+        app.dayDigest.meetings(for: day)
     }
 
     func generateDigest(app: AppState) async {
@@ -126,21 +113,16 @@ final class CaptureModel: ObservableObject {
         defer {
             if digestGeneration == generation { generating = false }
         }
-        let todays = meetings(in: app).filter { $0.endedAt != nil }
         let freshBlocks = app.activityStore.blocks(on: requestedDay)
-        let screenContexts = app.activityStore.screenContexts(on: requestedDay)
         do {
-            let result = try await app.pipeline.generateDayDigest(
-                for: requestedDay, blocks: freshBlocks, meetings: todays,
-                screenContexts: screenContexts, config: app.settings)
+            let result = try await app.dayDigest.generate(for: requestedDay)
             guard digestGeneration == generation,
                   Calendar.current.isDate(day, inSameDayAs: requestedDay) else { return }
             blocks = freshBlocks
             digest = result.text
-            let attributes = try? FileManager.default.attributesOfItem(
-                atPath: result.url.path)
-            digestUpdatedAt = attributes?[.modificationDate] as? Date
-            latestDigestEvidenceAt = latestEvidenceDate(app: app)
+            let snapshot = app.dayDigest.snapshot(for: requestedDay)
+            digestUpdatedAt = snapshot.modifiedAt
+            latestDigestEvidenceAt = snapshot.latestEvidenceAt
             digestError = nil
         } catch {
             guard digestGeneration == generation else { return }

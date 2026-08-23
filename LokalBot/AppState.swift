@@ -356,7 +356,6 @@ final class AppState: ObservableObject {
         return controller
     }()
     private let dailyMemoryExportScheduler = DailyMemoryExportScheduler()
-    private let dayDigestScheduler = DayDigestScheduler()
     private(set) lazy var memoryRoutines = MemoryRoutineScheduler(
         storageRoot: storage.rootURL,
         databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"),
@@ -438,6 +437,17 @@ final class AppState: ObservableObject {
         storage: storage, jobStore: pipelineJobStore) { [store = settingsStore] in
         store.current
     }
+    /// One Day Digest lifecycle for manual, scheduled, and headless callers.
+    /// It owns evidence collection, journal state, freshness, and repair policy.
+    private(set) lazy var dayDigest = DayDigestLifecycle(
+        storage: storage,
+        activityStore: activityStore,
+        pipeline: pipeline,
+        meetings: { [weak self] in
+            guard let self else { return [] }
+            return (self.currentMeeting.map { [$0] } ?? []) + self.meetings
+        },
+        settings: { [store = settingsStore] in store.current })
     /// Meeting-recording lifecycle: recorders, watchdog, timer tick, prewarm.
     private(set) lazy var recording = RecordingController(
         storage: storage,
@@ -1268,26 +1278,10 @@ final class AppState: ObservableObject {
 
     func applyDayDigestSetting() {
         let snapshot = settings
-        let storageRoot = storage.rootURL
-        dayDigestScheduler.configure(
+        dayDigest.configureAutomaticGeneration(
             DayDigestScheduler.Configuration(
                 enabled: snapshot.dayDigestAutoEnabled,
                 hour: snapshot.dayDigestHour),
-            digestModifiedAt: { day in
-                let name = DreamDay.key(for: day)
-                let url = storageRoot.appendingPathComponent("journal/\(name).md")
-                return DayDigestGenerationMetadataStore.completedAt(for: url)
-            },
-            latestEvidenceAt: { [weak self] day in
-                guard let self else { return nil }
-                let meetingEnd = self.meetings
-                    .filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }
-                    .compactMap(\.endedAt)
-                    .max()
-                return [self.activityStore.latestEvidenceAt(on: day), meetingEnd]
-                    .compactMap { $0 }
-                    .max()
-            },
             canRun: { [weak self] in
                 guard let self, self.libraryReady else { return false }
                 // Scheduled background work never triggers a model download —
@@ -1307,25 +1301,6 @@ final class AppState: ObservableObject {
                     && !self.dictation.state.isWorking
                     && !cotypingGenerating
                     && !self.pipeline.hasActiveWork
-            },
-            generate: { [weak self] day in
-                guard let self else {
-                    throw TextEngineError.unavailable("LokalBot is shutting down.")
-                }
-                let blocks = self.activityStore.blocks(on: day)
-                let finished = self.meetings.filter {
-                    Calendar.current.isDate($0.startedAt, inSameDayAs: day)
-                        && $0.endedAt != nil
-                }
-                let screenContexts = self.activityStore.screenContexts(on: day)
-                guard !blocks.isEmpty || !finished.isEmpty || !screenContexts.isEmpty else {
-                    return .deferred
-                }
-                let result = try await self.pipeline.generateDayDigest(
-                    for: day, blocks: blocks, meetings: finished,
-                    screenContexts: screenContexts,
-                    config: self.settings)
-                return result.quality.needsRepair ? .needsRepair : .completed
             },
             onError: { [weak self] message in
                 self?.lastError = message

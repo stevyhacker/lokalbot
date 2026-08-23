@@ -120,7 +120,7 @@ case $? in
 esac
 
 echo "== T7: day digest (activity + meetings → journal/*.md) =="
-OUT=$("$BIN" --digest today 2>/dev/null | tail -1)
+OUT=$("$BIN" --digest 2>/dev/null | tail -1)
 JOURNAL="${OUT#*: }"; JOURNAL="${JOURNAL%% (*}"
 if [[ "$OUT" == *"--digest: /"* && -s "$JOURNAL" ]] && grep -q "^## " "$JOURNAL"; then
   pass "digest written: $(basename "$JOURNAL")"
