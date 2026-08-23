@@ -391,10 +391,14 @@ final class AppState: ObservableObject {
     }
     private(set) lazy var pipelineJobStore = PipelineJobStore(
         databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"))
+    /// Backend selection, preparation, privacy policy, leases, and recovery
+    /// for every feature that uses LokalBot's Think role.
+    private(set) lazy var thinkExecution = ThinkExecution(storage: storage)
     private(set) lazy var pipeline = ProcessingPipeline(
-        storage: storage, jobStore: pipelineJobStore) { [store = settingsStore] in
-        store.current
-    }
+        storage: storage,
+        jobStore: pipelineJobStore,
+        settings: { [store = settingsStore] in store.current },
+        thinkExecution: thinkExecution)
     /// Canonical state machine for Transcribe, Think, and Autocomplete.
     private(set) lazy var modelRoles = ModelRoles(
         settings: { [store = settingsStore] in store.current },
@@ -435,7 +439,7 @@ final class AppState: ObservableObject {
                 throw TextEngineError.unavailable("LokalBot is shutting down.")
             }
             let config = self.settingsStore.current.dictationCompositionTextEngineSettings
-            return try await self.pipeline.makeTextEngine(
+            return try await self.thinkExecution.makeTextEngine(
                 config,
                 priority: .interactive,
                 purpose: "dictation compose")
@@ -462,7 +466,7 @@ final class AppState: ObservableObject {
         http: CotypingEngine(
             makeEngine: { [weak self] in
                 guard let self else { throw TextEngineError.unavailable("LokalBot is shutting down.") }
-                return try await self.pipeline.makeTextEngine(
+                return try await self.thinkExecution.makeTextEngine(
                     self.settings.cotypingTextEngineSettings,
                     server: .cotyping,
                     priority: .interactive,
@@ -501,7 +505,7 @@ final class AppState: ObservableObject {
     private(set) lazy var chat = ChatViewModel(
         makeEngine: { [weak self] in
             guard let self else { throw TextEngineError.unavailable("LokalBot is shutting down.") }
-            return try await self.pipeline.makeTextEngine(
+            return try await self.thinkExecution.makeTextEngine(
                 self.settings,
                 priority: .interactive,
                 purpose: "chat")
@@ -526,7 +530,8 @@ final class AppState: ObservableObject {
     let agentInstaller = AgentRuntimeInstaller()
     private(set) lazy var agentSessions = AgentSessionTabs(
         settings: { [store = settingsStore] in store.current },
-        storage: storage)
+        storage: storage,
+        thinkExecution: thinkExecution)
     var agentController: AgentSessionController {
         agentSessions.ensureSelectedController()
     }
@@ -1297,7 +1302,7 @@ final class AppState: ObservableObject {
                             throw TextEngineError.unavailable("LokalBot is shutting down.")
                         }
                         let engineSettings = self.settings
-                        let engine = try await self.pipeline.makeTextEngine(
+                        let engine = try await self.thinkExecution.makeTextEngine(
                             engineSettings,
                             priority: .background,
                             purpose: "dreaming")

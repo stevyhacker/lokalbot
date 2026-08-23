@@ -779,7 +779,7 @@ struct ModelsView: View {
         testResult = nil
         defer { testing = false }
         do {
-            let engine = try await app.pipeline.makeTextEngine(
+            let engine = try await app.thinkExecution.makeTextEngine(
                 app.settings,
                 priority: .interactive,
                 purpose: "model test")

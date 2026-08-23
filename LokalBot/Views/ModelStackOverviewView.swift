@@ -143,7 +143,7 @@ struct ModelStackOverviewView<Configuration: View>: View {
                 toggle(stackRole)
             }
             .controlSize(.small)
-            .accessibilityIdentifier("models.stack.change.\(stackRole.rawValue)")
+            .accessibilityIdentifier(changeButtonIdentifier(for: stackRole))
         }
         .padding(.vertical, 8)
     }
@@ -154,6 +154,13 @@ struct ModelStackOverviewView<Configuration: View>: View {
         } else {
             expandedRoles.insert(role)
         }
+    }
+
+    private func changeButtonIdentifier(for role: ModelRole) -> String {
+        // Keep the established UI automation contract while the product term
+        // and domain role use the clearer Autocomplete name.
+        let suffix = role == .autocomplete ? "type" : role.rawValue
+        return "models.stack.change.\(suffix)"
     }
 
     private var presets: some View {
@@ -265,7 +272,7 @@ struct ModelStackOverviewView<Configuration: View>: View {
         }
 
         do {
-            let engine = try await app.pipeline.makeTextEngine(
+            let engine = try await app.thinkExecution.makeTextEngine(
                 app.settings, priority: .interactive, purpose: "model stack smoke test")
             _ = try await engine.generate(
                 system: PromptTemplates.connectivityTestSystem,

@@ -259,8 +259,8 @@ struct HeadlessCommandRunner {
                 let service = DreamService(
                     storageRoot: app.storage.rootURL,
                     makeEngine: {
-                        let settings = await app.settings
-                        let engine = try await app.pipeline.makeTextEngine(
+                        let settings = app.settings
+                        let engine = try await app.thinkExecution.makeTextEngine(
                             settings, purpose: "dreaming")
                         return (engine, DreamInferenceProvenance(settings: settings))
                     })
@@ -287,7 +287,7 @@ struct HeadlessCommandRunner {
         Task { @MainActor in
             do {
                 app.searchIndex.reindexAll(app.meetings, storage: app.storage)
-                let engine = try await app.pipeline.makeTextEngine(app.settings)
+                let engine = try await app.thinkExecution.makeTextEngine(app.settings)
                 let tools = MeetingChatTools(
                     meetings: { [weak app] in app?.meetings ?? [] },
                     storage: app.storage, searchIndex: app.searchIndex, embeddingIndex: app.embeddingIndex,
