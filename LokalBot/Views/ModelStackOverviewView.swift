@@ -1,16 +1,9 @@
 import SwiftUI
 
-enum ModelStackRole: String, Hashable {
-    case transcribe
-    case think
-    case type
-}
-
 struct ModelStackOverviewView<Configuration: View>: View {
     @EnvironmentObject var app: AppState
-    @ObservedObject private var downloads = ModelDownloadManager.shared
 
-    @Binding private var expandedRoles: Set<ModelStackRole>
+    @Binding private var expandedRoles: Set<ModelRole>
     private let configuration: Configuration
 
     @State private var pendingPreset: ModelStackPreset?
@@ -18,7 +11,7 @@ struct ModelStackOverviewView<Configuration: View>: View {
     @State private var smokeResults: [String: String] = [:]
 
     init(
-        expandedRoles: Binding<Set<ModelStackRole>>,
+        expandedRoles: Binding<Set<ModelRole>>,
         @ViewBuilder configuration: () -> Configuration
     ) {
         _expandedRoles = expandedRoles
@@ -29,16 +22,24 @@ struct ModelStackOverviewView<Configuration: View>: View {
         ModelCatalog.entry(id: app.settings.cotypingBuiltInModelID,
                            custom: app.settings.customBuiltInModels)
     }
-    private var snapshot: ModelReadinessSnapshot {
+    private var snapshot: ModelRolesSnapshot {
 #if LOKALBOT_UI_TEST_HOST
         if ProcessInfo.processInfo.environment["LOKALBOT_MODELS_DEMO_READY"] == "1" {
-            return .init(
-                transcriptionReady: true, thinkReady: true, autocompleteReady: true,
-                provenance: .local, storedBytes: 7_900_000_000,
-                availableBytes: 128_000_000_000, activeDownloads: 0, failedDownloads: 0)
+            return ModelRolesSnapshot(
+                readiness: .init(
+                    transcriptionReady: true,
+                    thinkReady: true,
+                    autocompleteReady: true,
+                    provenance: .local,
+                    storedBytes: 7_900_000_000,
+                    availableBytes: 128_000_000_000,
+                    activeDownloads: 0,
+                    failedDownloads: 0),
+                statuses: Dictionary(
+                    uniqueKeysWithValues: ModelRole.allCases.map { ($0, .ready) }))
         }
 #endif
-        return .make(app: app, downloads: downloads)
+        return app.modelRoles.snapshot
     }
 
     var body: some View {
@@ -69,9 +70,9 @@ struct ModelStackOverviewView<Configuration: View>: View {
 
     private var readinessBanner: some View {
         HStack(spacing: 12) {
-            Image(systemName: snapshot.coreReady ? "checkmark.seal.fill" : "arrow.down.circle")
+            Image(systemName: readinessIcon)
                 .font(.title2)
-                .foregroundStyle(snapshot.coreReady ? .green : Brand.teal)
+                .foregroundStyle(readinessColor)
             VStack(alignment: .leading, spacing: 2) {
                 Text(snapshot.headline)
                     .font(WorkspaceTypography.sectionTitle)
@@ -97,7 +98,7 @@ struct ModelStackOverviewView<Configuration: View>: View {
                 role: "Transcribe",
                 model: app.settings.transcriptionModelDisplayName,
                 detail: "Meeting audio to cited transcript",
-                ready: snapshot.transcriptionReady,
+                status: snapshot[.transcribe],
                 result: smokeResults["Transcribe"])
             Divider()
             coreRow(
@@ -106,22 +107,22 @@ struct ModelStackOverviewView<Configuration: View>: View {
                 role: "Think",
                 model: app.settings.thinkModelDisplayName,
                 detail: "Summaries, Ask, outcomes, and Agent",
-                ready: snapshot.thinkReady,
+                status: snapshot[.think],
                 result: smokeResults["Think"])
             Divider()
             coreRow(
                 icon: "text.cursor",
-                stackRole: .type,
+                stackRole: .autocomplete,
                 role: "Autocomplete",
                 model: autocompleteEntry?.displayName ?? "LFM2.5 1.2B Instruct",
                 detail: "Low-latency writing completion",
-                ready: snapshot.autocompleteReady,
+                status: snapshot[.autocomplete],
                 result: smokeResults["Autocomplete"])
         }
     }
 
-    private func coreRow(icon: String, stackRole: ModelStackRole, role: String,
-                         model: String, detail: String, ready: Bool,
+    private func coreRow(icon: String, stackRole: ModelRole, role: String,
+                         model: String, detail: String, status: ModelRoleStatus,
                          result: String?) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon).foregroundStyle(Brand.teal).frame(width: 22)
@@ -133,8 +134,8 @@ struct ModelStackOverviewView<Configuration: View>: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(model).font(WorkspaceTypography.rowTitle).lineLimit(1)
                 HStack(spacing: 5) {
-                    StatusDot(color: ready ? .green : .orange, size: 7)
-                    Text(result ?? (ready ? "Ready" : "Download required"))
+                    StatusDot(color: roleColor(status), size: 7)
+                    Text(result ?? status.label)
                         .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
                 }
             }
@@ -147,7 +148,7 @@ struct ModelStackOverviewView<Configuration: View>: View {
         .padding(.vertical, 8)
     }
 
-    private func toggle(_ role: ModelStackRole) {
+    private func toggle(_ role: ModelRole) {
         if expandedRoles.contains(role) {
             expandedRoles.remove(role)
         } else {
@@ -214,7 +215,32 @@ struct ModelStackOverviewView<Configuration: View>: View {
         app.settings.cotypingBuiltInModelID = preset.autocompleteModelID
         // Shared kickoff also re-checks meetings parked as "waiting for
         // models" once the downloads land.
-        app.startCoreModelDownloads()
+        app.modelRoles.startCoreModelDownloads()
+    }
+
+    private var readinessIcon: String {
+        switch snapshot.primaryActionStatus {
+        case .ready: "checkmark.seal.fill"
+        case .needsAttention: "exclamationmark.triangle.fill"
+        case .downloading, .preparing: "arrow.down.circle.fill"
+        case .unavailable: "arrow.down.circle"
+        }
+    }
+
+    private var readinessColor: Color {
+        switch snapshot.primaryActionStatus {
+        case .ready: .green
+        case .needsAttention: Brand.error
+        case .downloading, .preparing, .unavailable: Brand.teal
+        }
+    }
+
+    private func roleColor(_ status: ModelRoleStatus) -> Color {
+        switch status {
+        case .ready: .green
+        case .needsAttention: Brand.error
+        case .downloading, .preparing, .unavailable: .orange
+        }
     }
 
     private func runSmokeTests() async {

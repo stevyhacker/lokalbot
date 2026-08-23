@@ -12,12 +12,6 @@ struct ModelsView: View {
     @State private var ollamaReachable = false
     @State private var testResult: String?
     @State private var testing = false
-    @State private var preparingTranscriptionModelID: String?
-    @State private var downloadedTranscriptionModelIDs: Set<String> = []
-    @State private var readyTranscriptionModelIDs: Set<String> = []
-    @State private var transcriptionModelErrors: [String: String] = [:]
-    @State private var transcriptionModelProgress: [String: Double] = [:]
-    @State private var transcriptionModelStatus: [String: String] = [:]
     @State private var speechModelDownloaded = false
     @State private var preparingSpeechModel = false
     @State private var speechModelError: String?
@@ -32,7 +26,7 @@ struct ModelsView: View {
     @State private var openAIAPIKeySavedValue = ""
     @State private var didLoadOpenAIAPIKey = false
     @State private var openAIAPIKeySaved = false
-    @State private var expandedRoles: Set<ModelStackRole> = []
+    @State private var expandedRoles: Set<ModelRole> = []
 
     var body: some View {
         ScrollView {
@@ -41,7 +35,7 @@ struct ModelsView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         if expandedRoles.contains(.transcribe) { transcriptionCard }
                         if expandedRoles.contains(.think) { summarizationCard }
-                        if expandedRoles.contains(.type) { cotypingCard }
+                        if expandedRoles.contains(.autocomplete) { cotypingCard }
                     }
                 }
                 ModelMemoryBanner()
@@ -54,12 +48,10 @@ struct ModelsView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .task {
-            refreshTranscriptionDownloads()
             refreshSpeechModel()
             await refreshOllama()
         }
         .onAppear {
-            refreshTranscriptionDownloads()
             refreshSpeechModel()
             if !didLoadOpenAIAPIKey {
                 let savedKey = app.settings.openAIAPIKey
@@ -114,21 +106,22 @@ struct ModelsView: View {
                   subtitle: "Speech → text for meeting audio",
                   cardIdentifier: "models.transcription") {
             ForEach(visibleTranscriptionChoices) { choice in
+                let status = app.modelRoles.transcriptionStatus(for: choice)
                 TranscriptionModelRow(
                     choice: choice,
                     displayName: transcriptionDisplayName(for: choice),
                     blurb: transcriptionBlurb(for: choice),
-                    preparing: preparingTranscriptionModelID == choice.id,
-                    prepareDisabled: preparingTranscriptionModelID != nil,
-                    downloaded: downloadedTranscriptionModelIDs.contains(choice.id),
-                    ready: readyTranscriptionModelIDs.contains(choice.id),
-                    error: transcriptionModelErrors[choice.id],
-                    progress: transcriptionModelProgress[choice.id],
-                    status: transcriptionModelStatus[choice.id]
+                    preparing: status.isWorking,
+                    prepareDisabled: app.modelRoles.isPreparingTranscription,
+                    downloaded: app.modelRoles.downloadedTranscriptionModelIDs.contains(choice.id),
+                    ready: status.isReady,
+                    error: status.errorMessage,
+                    progress: status.progress,
+                    status: status.isWorking ? status.label : nil
                 ) {
-                    Task { await prepareTranscriptionModel(choice) }
+                    app.modelRoles.prepareTranscriptionModel(choice)
                 } delete: {
-                    deleteTranscriptionModel(choice)
+                    app.modelRoles.deleteTranscriptionModel(choice)
                 } configure: {
                     showingGraniteModelPicker = true
                 }
@@ -152,7 +145,7 @@ struct ModelsView: View {
         let visible = TranscriptionModelChoice.allCases.filter { choice in
             !choice.isLegacy
                 || choice == app.settings.transcriptionModel
-                || downloadedTranscriptionModelIDs.contains(choice.id)
+                || app.modelRoles.downloadedTranscriptionModelIDs.contains(choice.id)
         }
         // The recommended engine is the most common thing to change and owns
         // the custom Hugging Face action, so keep it above the alternatives.
@@ -166,9 +159,6 @@ struct ModelsView: View {
             set: { configuration in
                 app.settings.graniteSpeechModel = configuration
                 app.settings.transcriptionModel = .graniteSpeech
-                transcriptionModelErrors[TranscriptionModelChoice.graniteSpeech.id] = nil
-                readyTranscriptionModelIDs.remove(TranscriptionModelChoice.graniteSpeech.id)
-                refreshTranscriptionDownloads()
             })
     }
 
@@ -747,55 +737,8 @@ struct ModelsView: View {
         }
     }
 
-    private func refreshTranscriptionDownloads() {
-        downloadedTranscriptionModelIDs = TranscriptionModelStore.downloadedChoices(
-            graniteConfiguration: app.settings.graniteSpeechModel)
-    }
-
     private func refreshSpeechModel() {
         speechModelDownloaded = KokoroSpeechEngine.isModelDownloaded
-    }
-
-    private func prepareTranscriptionModel(_ choice: TranscriptionModelChoice) async {
-        guard preparingTranscriptionModelID == nil else { return }
-        let id = choice.id
-        preparingTranscriptionModelID = choice.id
-        transcriptionModelErrors[choice.id] = nil
-        transcriptionModelProgress[choice.id] = nil
-        transcriptionModelStatus[choice.id] = "Preparing..."
-        defer {
-            preparingTranscriptionModelID = nil
-            transcriptionModelProgress[id] = nil
-            transcriptionModelStatus[id] = nil
-        }
-        let progressHandler: ModelPreparationProgressHandler = { update in
-            guard preparingTranscriptionModelID == id else { return }
-            transcriptionModelProgress[id] = update.fractionCompleted
-            transcriptionModelStatus[id] = update.status
-        }
-        do {
-            try await app.settings.transcriptionEngine(for: choice)
-                .prepare(progress: progressHandler)
-            downloadedTranscriptionModelIDs.insert(choice.id)
-            readyTranscriptionModelIDs.insert(choice.id)
-            app.modelReadinessDidChange()
-        } catch {
-            transcriptionModelErrors[choice.id] = error.localizedDescription
-        }
-    }
-
-    private func deleteTranscriptionModel(_ choice: TranscriptionModelChoice) {
-        do {
-            try TranscriptionModelStore.delete(
-                choice,
-                graniteConfiguration: app.settings.graniteSpeechModel)
-            downloadedTranscriptionModelIDs.remove(choice.id)
-            readyTranscriptionModelIDs.remove(choice.id)
-            transcriptionModelProgress[choice.id] = nil
-            transcriptionModelStatus[choice.id] = nil
-        } catch {
-            transcriptionModelErrors[choice.id] = error.localizedDescription
-        }
     }
 
     private func prepareSpeechModel() async {

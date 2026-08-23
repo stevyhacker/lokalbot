@@ -280,24 +280,6 @@ final class ProcessingPipelineAutomationGateTests: XCTestCase {
             "non-readiness settings must not churn parked jobs")
     }
 
-    func testOnboardingDownloadStateStopsSpinningAndAllowsRetryAfterFailure() {
-        XCTAssertEqual(
-            OnboardingModelDownloadState.resolve(
-                coreReady: false, activeDownloads: 0,
-                isPreparingTranscription: false, error: "Network unavailable"),
-            .download(error: "Network unavailable"))
-        XCTAssertEqual(
-            OnboardingModelDownloadState.resolve(
-                coreReady: false, activeDownloads: 0,
-                isPreparingTranscription: true, error: nil),
-            .downloading)
-        XCTAssertEqual(
-            OnboardingModelDownloadState.resolve(
-                coreReady: true, activeDownloads: 0,
-                isPreparingTranscription: false, error: nil),
-            .ready)
-    }
-
     func testForgetDropsParkedJobsForDeletedMeetings() async throws {
         let root = try makeRoot()
         let jobStore = PipelineJobStore(

@@ -11,22 +11,6 @@ import CoreGraphics
 @MainActor
 final class AppState: ObservableObject {
 
-    enum CoreModelPreparationState: Equatable {
-        case idle
-        case preparingTranscription
-        case failed(String)
-
-        var isPreparing: Bool {
-            if case .preparingTranscription = self { return true }
-            return false
-        }
-
-        var errorMessage: String? {
-            if case .failed(let message) = self { return message }
-            return nil
-        }
-    }
-
     enum NavSection: Hashable {
         case today, timeline, meetings, type, ask, agent, settings
 
@@ -109,7 +93,6 @@ final class AppState: ObservableObject {
 
     @Published private(set) var meetings: [Meeting] = []
     @Published var lastError: String?
-    @Published private(set) var coreModelPreparationState: CoreModelPreparationState = .idle
     /// A recording or dictation start was refused because microphone access
     /// is denied at the system level. Cleared when the user opens System
     /// Settings from the recovery toast or dismisses it.
@@ -125,10 +108,7 @@ final class AppState: ObservableObject {
         didSet {
             guard settings != oldValue else { return }
             settingsStore.current = settings
-            if ModelReadinessSnapshot.processingReadinessChanged(
-                from: oldValue, to: settings) {
-                processMeetingsWaitingForModels()
-            }
+            modelRoles.settingsDidChange(from: oldValue, to: settings)
             if settings.stopDebounceSeconds != oldValue.stopDebounceSeconds {
                 detector.stopDebounce = settings.stopDebounceSeconds
             }
@@ -437,6 +417,13 @@ final class AppState: ObservableObject {
         storage: storage, jobStore: pipelineJobStore) { [store = settingsStore] in
         store.current
     }
+    /// Canonical state machine for Transcribe, Think, and Autocomplete.
+    private(set) lazy var modelRoles = ModelRoles(
+        settings: { [store = settingsStore] in store.current },
+        storage: storage,
+        onReadinessChanged: { [weak self] in
+            self?.processMeetingsWaitingForModels()
+        })
     /// One Day Digest lifecycle for manual, scheduled, and headless callers.
     /// It owns evidence collection, journal state, freshness, and repair policy.
     private(set) lazy var dayDigest = DayDigestLifecycle(
@@ -574,12 +561,11 @@ final class AppState: ObservableObject {
     private var audioMonitorObserver: AnyCancellable?
     private var audioMonitorChangeForwarder: AnyCancellable?
     private var calendarObserver: AnyCancellable?
-    private var modelDownloadsObserver: AnyCancellable?
+    private var modelRolesObserver: AnyCancellable?
     /// True only on the real interactive launch path (not headless / UI test) —
     /// gates recording notifications and first-run onboarding.
     private var interactive = false
     private var terminationCleanupTask: Task<Void, Never>?
-    private var coreModelPreparationTask: (id: UUID, task: Task<Void, Never>)?
     /// Serializes cotyping model lifecycle transitions. A disable must finish
     /// unloading both runtimes before a rapid re-enable can prewarm a fresh
     /// model, otherwise the old and new routes can overlap in memory.
@@ -723,14 +709,9 @@ final class AppState: ObservableObject {
         calendarObserver = calendar.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
-        // A finished model download may unblock meetings parked as "waiting
-        // for models" — re-check whenever the active download set drains.
-        modelDownloadsObserver = ModelDownloadManager.shared.$progress
-            .map(\.isEmpty)
-            .removeDuplicates()
-            .dropFirst()
-            .filter { $0 }
-            .sink { [weak self] _ in self?.modelReadinessDidChange() }
+        modelRolesObserver = modelRoles.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
         pipeline.onArtifactsWritten = { [weak self] meeting in
             guard let self else { return }
             self.outcomeIndex.refresh(meeting: meeting)
@@ -1146,66 +1127,6 @@ final class AppState: ObservableObject {
     /// from this path.
     func processMeetingsWaitingForModels() {
         pipeline.retryJobsWaitingForModels()
-    }
-
-    /// A model became available outside settings persistence (for example an
-    /// engine-specific transcription download). Refresh AppState-derived UI
-    /// and give every parked processing job another readiness check.
-    func modelReadinessDidChange() {
-        objectWillChange.send()
-        processMeetingsWaitingForModels()
-    }
-
-    /// Start downloads for every missing core model of the current selection:
-    /// GGUFs (Think, Autocomplete) through the shared download manager and
-    /// the Transcribe model through its engine. Used by onboarding and the
-    /// Models presets so the first meeting processes the moment it ends
-    /// instead of parking on missing models.
-    func startCoreModelDownloads() {
-        let snapshot = settings
-        var ids = [snapshot.cotypingBuiltInModelID]
-        if snapshot.summarizerBackend == .builtIn { ids.append(snapshot.builtInModelID) }
-        for id in ids {
-            guard let entry = ModelCatalog.entry(id: id, custom: snapshot.customBuiltInModels),
-                  ModelCatalog.localURL(for: entry, storage: storage) == nil else { continue }
-            ModelDownloadManager.shared.download(entry, storage: storage)
-        }
-        guard !ModelReadinessSnapshot.transcriptionReady(snapshot) else {
-            coreModelPreparationTask?.task.cancel()
-            coreModelPreparationTask = nil
-            coreModelPreparationState = .idle
-            return
-        }
-
-        coreModelPreparationTask?.task.cancel()
-        let id = UUID()
-        coreModelPreparationState = .preparingTranscription
-        let task = Task { [weak self] in
-            guard let self else { return }
-            let failure: String?
-            do {
-                try await snapshot.transcriptionEngine().prepare()
-                failure = nil
-            } catch is CancellationError {
-                return
-            } catch {
-                failure = "Could not prepare \(snapshot.transcriptionModel.displayName): "
-                    + error.localizedDescription
-            }
-            guard self.coreModelPreparationTask?.id == id else { return }
-            self.coreModelPreparationTask = nil
-            if let failure {
-                self.coreModelPreparationState = .failed(failure)
-                self.lastError = failure
-            } else {
-                self.coreModelPreparationState = .idle
-            }
-            // GGUF completions re-check through the download observer; the
-            // Transcribe engine downloads outside the manager, so re-check
-            // here as well.
-            self.modelReadinessDidChange()
-        }
-        coreModelPreparationTask = (id, task)
     }
 
     func saveTranscript(_ transcript: Transcript, for meeting: Meeting) throws {
