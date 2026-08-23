@@ -442,6 +442,33 @@ final class MeetingDetector {
         return bestOutputAudioProcess(for: app, in: processes)
     }
 
+    /// The process to attach the capture tap to.
+    ///
+    /// Detection asks whether the app is producing output *right now*; capture
+    /// only needs a process that *can* produce it — a tap on a momentarily
+    /// silent process simply records nothing until audio starts. Falling back
+    /// to the host PID is not an option: Teams' main process owns no Core Audio
+    /// object at all, so `AudioHardwarePropertyTranslatePIDToProcessObject`
+    /// fails and the tap is refused with `processNotFound` whenever the meeting
+    /// happens to be quiet at the moment recording starts.
+    static func captureTargetProcess(for app: DetectedApp,
+                                     in processes: [AudioProcess]) -> AudioProcess? {
+        let namespace = processes.filter { process in
+            guard let bundleID = process.bundleID else { return false }
+            return audioBundleID(bundleID, belongsTo: app.bundleID)
+        }
+        // Siblings before the host, for the same reason the browser branch
+        // prefers helpers: the host is the process least likely to own audio —
+        // for Teams it owns no Core Audio object at all.
+        return bestOutputAudioProcess(for: app, in: processes)
+            ?? namespace.first { $0.bundleID != app.bundleID }
+            ?? namespace.first
+    }
+
+    static func currentCaptureTargetProcess(for app: DetectedApp) -> AudioProcess? {
+        captureTargetProcess(for: app, in: currentAudioProcesses())
+    }
+
     static func currentAudioProcesses(now: Date = Date()) -> [AudioProcess] {
         processSnapshotLock.lock()
         if let processSnapshot,

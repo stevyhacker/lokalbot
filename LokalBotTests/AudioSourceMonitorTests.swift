@@ -161,6 +161,72 @@ final class AudioSourceMonitorTests: XCTestCase {
             moduleHost.id)
     }
 
+    /// Measured on a real Teams call: `translatePIDToProcessObject` fails for
+    /// the Teams host PID because that process owns no Core Audio object. When
+    /// the meeting is momentarily quiet no sibling is `isRunningOutput` either,
+    /// so a capture lookup that requires current output resolves to nothing and
+    /// the tap is refused. Capture must therefore accept a silent-but-present
+    /// process in the namespace — the tap records once audio starts.
+    func testCaptureTargetFallsBackToASilentProcessInTheNamespace() {
+        let host = AudioProcess(id: 100,
+                                name: "Microsoft Teams",
+                                bundleID: "com.microsoft.teams2",
+                                objectID: AudioObjectID(100),
+                                isRunningOutput: false)
+        let quietModuleHost = AudioProcess(id: 300,
+                                           name: "Microsoft Teams ModuleHost",
+                                           bundleID: "com.microsoft.teams2.modulehost",
+                                           objectID: AudioObjectID(300),
+                                           isRunningOutput: false)
+        let app = MeetingDetector.DetectedApp(name: "Teams",
+                                              bundleID: "com.microsoft.teams2",
+                                              pid: host.id)
+
+        // Detection correctly reports "not producing output right now"...
+        XCTAssertNil(MeetingDetector.bestOutputAudioProcess(
+            for: app, in: [host, quietModuleHost]))
+        // ...but capture still has somewhere to attach.
+        XCTAssertEqual(
+            MeetingDetector.captureTargetProcess(for: app, in: [host, quietModuleHost])?.id,
+            quietModuleHost.id)
+    }
+
+    /// A process that *is* producing output still wins over a silent sibling.
+    func testCaptureTargetPrefersTheProcessThatIsActuallyEmitting() {
+        let quiet = AudioProcess(id: 300,
+                                 name: "Microsoft Teams ModuleHost",
+                                 bundleID: "com.microsoft.teams2.modulehost",
+                                 objectID: AudioObjectID(300),
+                                 isRunningOutput: false)
+        let emitting = AudioProcess(id: 400,
+                                    name: "Microsoft Teams WebView",
+                                    bundleID: "com.microsoft.teams2.helper",
+                                    objectID: AudioObjectID(400),
+                                    isRunningOutput: true)
+        let app = MeetingDetector.DetectedApp(name: "Teams",
+                                              bundleID: "com.microsoft.teams2",
+                                              pid: 100)
+
+        XCTAssertEqual(
+            MeetingDetector.captureTargetProcess(for: app, in: [quiet, emitting])?.id,
+            emitting.id)
+    }
+
+    /// Capture must not attach to an unrelated app just because nothing of the
+    /// meeting app is running.
+    func testCaptureTargetIgnoresUnrelatedProcesses() {
+        let unrelated = AudioProcess(id: 500,
+                                     name: "Music",
+                                     bundleID: "com.apple.Music",
+                                     objectID: AudioObjectID(500),
+                                     isRunningOutput: true)
+        let app = MeetingDetector.DetectedApp(name: "Teams",
+                                              bundleID: "com.microsoft.teams2",
+                                              pid: 100)
+
+        XCTAssertNil(MeetingDetector.captureTargetProcess(for: app, in: [unrelated]))
+    }
+
     /// The namespace rule must not swallow a *different* app whose bundle id
     /// merely starts with the same characters.
     func testNamespaceMatchDoesNotSpanUnrelatedBundles() {

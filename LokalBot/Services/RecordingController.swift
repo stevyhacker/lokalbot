@@ -270,7 +270,7 @@ final class RecordingController: ObservableObject {
                 try Task.checkCancellation()
 
                 if let detectedApp {
-                    let captureProcess = MeetingDetector.currentOutputAudioProcess(for: detectedApp)
+                    let captureProcess = MeetingDetector.currentCaptureTargetProcess(for: detectedApp)
                     let pid = captureProcess?.id ?? detectedApp.pid
                     do {
                         try systemRecorder.start(
