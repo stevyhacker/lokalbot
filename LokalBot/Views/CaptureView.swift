@@ -295,7 +295,7 @@ struct TimelineContentView: View {
             clearMeetingSelectionOutsideSelectedDay()
         }
         .onAppear(perform: consumePendingScreenMoment)
-        .onChange(of: app.pendingScreenSnapshotID) { consumePendingScreenMoment() }
+        .onChange(of: app.navigationHandoff.revision) { consumePendingScreenMoment() }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 TrackingPauseButton(sampler: app.sampler, presentation: .toolbar)
@@ -311,8 +311,7 @@ struct TimelineContentView: View {
     }
 
     private func consumePendingScreenMoment() {
-        guard let snapshotID = app.pendingScreenSnapshotID else { return }
-        defer { app.pendingScreenSnapshotID = nil }
+        guard let snapshotID = app.navigationHandoff.consumeScreenSnapshot() else { return }
         guard let screenshot = app.activityStore.screenshot(id: snapshotID) else {
             app.lastError = "That captured screen is no longer available."
             return

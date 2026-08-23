@@ -49,13 +49,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    struct AgentLaunchContext: Equatable {
-        var title: String
-        var prompt: String
-        var meetingID: Meeting.ID?
-        var actionID: String?
-    }
-
     /// Which tab the Settings surface shows (spec §2.5 — Settings absorbs
     /// Models as a tab strip). Session-sticky like TypeTab.
     enum SettingsTab: String, CaseIterable {
@@ -213,8 +206,7 @@ final class AppState: ObservableObject {
             || old.dreamingFirstEligibleDayKey != new.dreamingFirstEligibleDayKey
     }
 
-    // Navigation (main window): sidebar section, selected meeting, and a
-    // pending "jump to timestamp" handed from search to the detail player.
+    // Navigation (main window): sidebar section and selected meeting.
     @Published var navSection: NavSection = .today
     private static let typeTabDefaultsKey = "lokalbotv3.type.selectedTab"
     private static var navigationDefaults: UserDefaults {
@@ -233,29 +225,13 @@ final class AppState: ObservableObject {
     /// switch back to Ask before presenting their content.
     @Published var askMode: AskMode = .ask
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []
-    @Published var pendingSeek: TimeInterval?
-    /// A screen-memory deep link waiting for Timeline's shared capture model.
-    /// Search, assistant citations, and Quick Recall set this before switching
-    /// sections; Timeline consumes it once its content column is mounted.
-    @Published var pendingScreenSnapshotID: Int64?
-
-    /// A query handed to the Ask section by another surface (⌘K palette).
-    /// AskView consumes and clears it on appear/change.
-    @Published var askPrefill: String?
-
-    /// True when an explicitly ask-labelled handoff should send immediately,
-    /// rather than merely placing text in Ask's search field.
-    @Published var askSubmitRequested = false
 
     /// A day handed to the Ask section (the old Timeline "Ask" tab, spec
     /// §2.2): rendered as a removable chip, and prepended to escalated
     /// queries so the assistant scopes its answer to that day.
     @Published var askDayScope: Date?
-    /// Screens explicitly attached from Timeline to the next Ask turn.
-    @Published var askScreenContextIDs: [Int64] = []
-    /// Contextual handoffs only prefill Agent. The subprocess starts after the
-    /// user reviews the prompt and explicitly chooses Send.
-    @Published var agentLaunchContext: AgentLaunchContext?
+    /// Atomic, destination-scoped payloads for cross-surface navigation.
+    private(set) lazy var navigationHandoff = NavigationHandoff()
 
     /// Navigate to the Type section with a specific tab preselected.
     func openType(_ tab: TypeTab) {
@@ -273,15 +249,16 @@ final class AppState: ObservableObject {
     /// scoping it to a day (Timeline's "Ask about this day").
     func openAsk(query: String = "", dayScope: Date? = nil,
                  screenSnapshotIDs: [Int64] = [], submit: Bool = false) {
-        askPrefill = query.isEmpty ? nil : query
-        askDayScope = dayScope
-        askScreenContextIDs = screenSnapshotIDs
-        askSubmitRequested = submit
+        navigationHandoff.stageAsk(
+            query: query,
+            dayScope: dayScope,
+            screenSnapshotIDs: screenSnapshotIDs,
+            submit: submit)
         navSection = .ask
     }
 
     func openAgent(_ context: AgentLaunchContext? = nil) {
-        agentLaunchContext = context
+        navigationHandoff.stageAgent(context)
         if let prompt = context?.prompt {
             agentSessions.ensureSelectedController().draft = prompt
         }
@@ -290,7 +267,8 @@ final class AppState: ObservableObject {
 
     /// Open one meeting in the Meetings section — the deep-link target
     /// for search hits, menu-bar recents, and palette recents.
-    func openMeeting(_ id: Meeting.ID) {
+    func openMeeting(_ id: Meeting.ID, seek: TimeInterval? = nil) {
+        navigationHandoff.stageMeeting(id, seek: seek)
         selectedMeetingIDs = [id]
         navSection = .meetings
     }
@@ -562,6 +540,7 @@ final class AppState: ObservableObject {
     private var audioMonitorChangeForwarder: AnyCancellable?
     private var calendarObserver: AnyCancellable?
     private var modelRolesObserver: AnyCancellable?
+    private var navigationHandoffObserver: AnyCancellable?
     /// True only on the real interactive launch path (not headless / UI test) —
     /// gates recording notifications and first-run onboarding.
     private var interactive = false
@@ -710,6 +689,9 @@ final class AppState: ObservableObject {
             self?.objectWillChange.send()
         }
         modelRolesObserver = modelRoles.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
+        navigationHandoffObserver = navigationHandoff.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
         pipeline.onArtifactsWritten = { [weak self] meeting in
@@ -1389,15 +1371,14 @@ final class AppState: ObservableObject {
 
     /// Search hit → open the meeting; transcript hits seek the player.
     func openSearchHit(_ hit: SearchIndex.Hit) {
-        if hit.kind == .segment {
-            pendingSeek = hit.start
-        }
-        openMeeting(hit.meetingID)
+        openMeeting(
+            hit.meetingID,
+            seek: hit.kind == .segment ? hit.start : nil)
     }
 
     /// Screen search/citation hit → open Timeline at the exact captured frame.
     func openScreenSnapshot(_ snapshotID: Int64) {
-        pendingScreenSnapshotID = snapshotID
+        navigationHandoff.stageScreenSnapshot(snapshotID)
         selectedMeetingIDs = []
         navSection = .timeline
     }
@@ -1405,10 +1386,7 @@ final class AppState: ObservableObject {
     /// Chat citation marker → open the cited meeting; timed markers seek the player.
     func openCitation(_ citation: ChatCitation) {
         guard let meeting = ((try? SessionLookup.find(id: citation.meetingID, in: meetings)) ?? nil) else { return }
-        if let seconds = citation.seconds {
-            pendingSeek = seconds
-        }
-        openMeeting(meeting.id)
+        openMeeting(meeting.id, seek: citation.seconds)
     }
 
     /// Permanently removes meetings: audio folder, list entry, both indexes.

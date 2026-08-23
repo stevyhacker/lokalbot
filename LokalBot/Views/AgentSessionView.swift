@@ -138,7 +138,7 @@ struct AgentSessionView: View {
                 Text(emptyStateDetail)
                     .workspaceTextRole(.trust)
             }
-            if let context = app.agentLaunchContext {
+            if let context = app.navigationHandoff.agentContext {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Selected outcome").font(WorkspaceTypography.metadataEmphasis)
                         .foregroundStyle(.secondary)
@@ -460,7 +460,7 @@ struct AgentSessionView: View {
             }
             guard canSend else { return }
             controller.draft = ""
-            app.agentLaunchContext = nil
+            app.navigationHandoff.consumeAgentContext()
             await controller.send(prompt: text)
         }
     }
