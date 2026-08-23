@@ -105,6 +105,93 @@ final class AudioSourceMonitorTests: XCTestCase {
             helper.id)
     }
 
+    /// Electron meeting apps (Teams, Slack, Webex) emit call audio from a
+    /// helper process exactly as Chromium browsers do, and ``audioBundleID``
+    /// already models that `<host>.helper` relationship for every host — not
+    /// just the browser/Zoom special cases. The capture lookup must honour it
+    /// outside those branches too: when it does not, `hasOutputAudio` is false,
+    /// the detector never surfaces the app, and `RecordingController` skips the
+    /// process tap entirely — the meeting silently records mic-only.
+    func testNativeAppCaptureFallsBackToHelperProcess() {
+        let host = AudioProcess(id: 100,
+                                name: "Microsoft Teams",
+                                bundleID: "com.microsoft.teams2",
+                                objectID: AudioObjectID(100),
+                                isRunningOutput: false)
+        let helper = AudioProcess(id: 200,
+                                  name: "Microsoft Teams Helper",
+                                  bundleID: "com.microsoft.teams2.helper",
+                                  objectID: AudioObjectID(200),
+                                  isRunningOutput: true)
+        let app = MeetingDetector.DetectedApp(name: "Teams",
+                                              bundleID: "com.microsoft.teams2",
+                                              pid: host.id)
+
+        XCTAssertTrue(MeetingDetector.audioBundleID(
+            "com.microsoft.teams2.helper", belongsTo: "com.microsoft.teams2"))
+        XCTAssertEqual(MeetingDetector.bestOutputAudioProcess(for: app, in: [host, helper])?.id,
+                       helper.id)
+    }
+
+    /// Measured on a real Teams call: audio comes from `<host>.helper` (the
+    /// WebView) *and* `<host>.modulehost`, and the WebView is running output
+    /// only part of the time. Matching just `.helper` therefore still loses the
+    /// tap most of the time, so the whole `<host>.` namespace has to count —
+    /// the same rule the `us.zoom.xos.` branch already applies.
+    func testNativeAppCaptureAcceptsAnyBundleInTheHostNamespace() {
+        XCTAssertTrue(MeetingDetector.audioBundleID(
+            "com.microsoft.teams2.modulehost", belongsTo: "com.microsoft.teams2"))
+
+        let host = AudioProcess(id: 100,
+                                name: "Microsoft Teams",
+                                bundleID: "com.microsoft.teams2",
+                                objectID: AudioObjectID(100),
+                                isRunningOutput: false)
+        let moduleHost = AudioProcess(id: 300,
+                                      name: "Microsoft Teams ModuleHost",
+                                      bundleID: "com.microsoft.teams2.modulehost",
+                                      objectID: AudioObjectID(300),
+                                      isRunningOutput: true)
+        let app = MeetingDetector.DetectedApp(name: "Teams",
+                                              bundleID: "com.microsoft.teams2",
+                                              pid: host.id)
+
+        XCTAssertEqual(
+            MeetingDetector.bestOutputAudioProcess(for: app, in: [host, moduleHost])?.id,
+            moduleHost.id)
+    }
+
+    /// The namespace rule must not swallow a *different* app whose bundle id
+    /// merely starts with the same characters.
+    func testNamespaceMatchDoesNotSpanUnrelatedBundles() {
+        XCTAssertFalse(MeetingDetector.audioBundleID(
+            "com.microsoft.teams2evil", belongsTo: "com.microsoft.teams2"))
+        XCTAssertFalse(MeetingDetector.audioBundleID(
+            "com.microsoft.teamsother", belongsTo: "com.microsoft.teams2"))
+    }
+
+    /// The helper fallback must stay a *fallback*: when the host process itself
+    /// is producing output it remains the capture target, so apps that work
+    /// today are unaffected.
+    func testNativeAppCapturePrefersHostWhenItIsProducingOutput() {
+        let host = AudioProcess(id: 100,
+                                name: "Microsoft Teams",
+                                bundleID: "com.microsoft.teams2",
+                                objectID: AudioObjectID(100),
+                                isRunningOutput: true)
+        let helper = AudioProcess(id: 200,
+                                  name: "Microsoft Teams Helper",
+                                  bundleID: "com.microsoft.teams2.helper",
+                                  objectID: AudioObjectID(200),
+                                  isRunningOutput: true)
+        let app = MeetingDetector.DetectedApp(name: "Teams",
+                                              bundleID: "com.microsoft.teams2",
+                                              pid: host.id)
+
+        XCTAssertEqual(MeetingDetector.bestOutputAudioProcess(for: app, in: [host, helper])?.id,
+                       host.id)
+    }
+
     /// Unknown apps stay eligible so a genuinely-new meeting tool is still
     /// surfaced via the monitor's fallback candidate path.
     func testUnknownAppIsNotExcluded() {

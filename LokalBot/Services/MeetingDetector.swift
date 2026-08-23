@@ -399,7 +399,12 @@ final class MeetingDetector {
                 || bundle == "us.zoom.cpthost"
                 || bundle.hasPrefix("us.zoom.xos.")
         }
-        return bundle == host || bundle.hasPrefix("\(host).helper")
+        // Any bundle inside the host's own namespace is that app's audio.
+        // Teams alone emits call audio from `<host>.helper` (WebView) *and*
+        // `<host>.modulehost`, so matching only `.helper` misses the process
+        // that is usually the one running. This mirrors the `us.zoom.xos.`
+        // prefix rule above rather than enumerating every suffix Microsoft ships.
+        return bundle == host || bundle.hasPrefix("\(host).")
     }
 
     static func bestOutputAudioProcess(for app: DetectedApp,
@@ -417,8 +422,19 @@ final class MeetingDetector {
                 ?? matches.first { $0.id == app.pid }
                 ?? matches.first
         }
+        // Electron meeting apps (Teams, Slack, Webex) route call audio through
+        // helper processes just as Chromium browsers do. `audioBundleID` already
+        // models that `<host>.helper` relationship for every host, so honour it
+        // here as a fallback — without it `hasOutputAudio` stays false, the
+        // detector never surfaces the app, and the process tap is skipped
+        // entirely, leaving the meeting recorded mic-only. The host keeps
+        // precedence so apps whose main process emits audio are unaffected.
         return processes.first { $0.id == app.pid && $0.isRunningOutput }
             ?? processes.first { $0.isRunningOutput && $0.bundleID == app.bundleID }
+            ?? processes.first { process in
+                guard process.isRunningOutput, let bundleID = process.bundleID else { return false }
+                return audioBundleID(bundleID, belongsTo: app.bundleID)
+            }
     }
 
     static func currentOutputAudioProcess(for app: DetectedApp) -> AudioProcess? {
