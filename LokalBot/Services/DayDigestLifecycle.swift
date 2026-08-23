@@ -114,8 +114,12 @@ final class DayDigestLifecycle {
     }
 
     func latestEvidenceAt(for day: Date) -> Date? {
-        let meetingEnd = meetings(for: day).compactMap(\.endedAt).max()
-        return [latestActivityEvidenceAt(day), meetingEnd]
+        let finishedMeetings = meetings(for: day, includeInProgress: false)
+        let meetingEnd = finishedMeetings.compactMap(\.endedAt).max()
+        let meetingArtifactWrite = finishedMeetings
+            .compactMap(latestArtifactWriteAt(for:))
+            .max()
+        return [latestActivityEvidenceAt(day), meetingEnd, meetingArtifactWrite]
             .compactMap { $0 }
             .max()
     }
@@ -143,8 +147,7 @@ final class DayDigestLifecycle {
             configuration,
             digestModifiedAt: { [weak self] day in
                 guard let self else { return nil }
-                return DayDigestGenerationMetadataStore.completedAt(
-                    for: self.journalURL(for: day))
+                return self.automaticCompletionAt(for: day)
             },
             latestEvidenceAt: { [weak self] day in
                 self?.latestEvidenceAt(for: day)
@@ -176,5 +179,33 @@ final class DayDigestLifecycle {
             blocks: blocks(day),
             meetings: meetings(for: day, includeInProgress: false),
             screenContexts: screenContexts(day))
+    }
+
+    /// Summaries and outcomes are produced after a meeting ends, and both are
+    /// consumed by `ProcessingPipeline.generateDayDigest`. Their writes must
+    /// therefore advance the evidence watermark even though the meeting's
+    /// `endedAt` value is unchanged.
+    private func latestArtifactWriteAt(for meeting: Meeting) -> Date? {
+        let folder = storageRoot.appendingPathComponent(
+            meeting.relativePath,
+            isDirectory: true)
+        return DayDigestMeetingArtifacts.latestModifiedAt(in: folder)
+    }
+
+    /// Preserve the scheduler's once-per-evening policy for ordinary activity,
+    /// but invalidate its completion marker when a digest predates meeting
+    /// artifacts it actually consumes. This makes the next quiet tick repair
+    /// the journal without regenerating it for every later activity sample.
+    private func automaticCompletionAt(for day: Date) -> Date? {
+        let completedAt = DayDigestGenerationMetadataStore.completedAt(
+            for: journalURL(for: day))
+        guard let completedAt else { return nil }
+        let latestArtifactWrite = meetings(for: day, includeInProgress: false)
+            .compactMap(latestArtifactWriteAt(for:))
+            .max()
+        guard let latestArtifactWrite, latestArtifactWrite > completedAt else {
+            return completedAt
+        }
+        return nil
     }
 }

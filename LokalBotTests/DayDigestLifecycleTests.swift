@@ -105,6 +105,178 @@ final class DayDigestLifecycleTests: XCTestCase {
         XCTAssertEqual(receivedScreens, [screen])
     }
 
+    func testSummaryWrittenAfterDigestAdvancesEvidenceAndMarksSnapshotStale() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("day-digest-lifecycle-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let day = try date("2026-08-23T12:00:00Z")
+        let meeting = try finishedMeeting()
+        let folder = root.appendingPathComponent(meeting.relativePath, isDirectory: true)
+        let journal = root.appendingPathComponent("journal/2026-08-23.md")
+        try FileManager.default.createDirectory(
+            at: folder,
+            withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: journal.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        try "## Day summary\n\nInitial digest.".write(
+            to: journal,
+            atomically: true,
+            encoding: .utf8)
+        let digestAt = try date("2026-08-23T10:00:00Z")
+        try FileManager.default.setAttributes(
+            [.modificationDate: digestAt],
+            ofItemAtPath: journal.path)
+
+        let lifecycle = makeLifecycle(
+            root: root,
+            meetings: { [meeting] },
+            latestActivityEvidenceAt: { _ in nil })
+        XCTAssertFalse(lifecycle.snapshot(for: day).isStale)
+
+        let summary = folder.appendingPathComponent("summary.md")
+        try "## TL;DR\n\nArchitecture shipped.".write(
+            to: summary,
+            atomically: true,
+            encoding: .utf8)
+        let summaryAt = try date("2026-08-23T10:05:00Z")
+        try FileManager.default.setAttributes(
+            [.modificationDate: summaryAt],
+            ofItemAtPath: summary.path)
+
+        let snapshot = lifecycle.snapshot(for: day)
+        XCTAssertEqual(snapshot.latestEvidenceAt, summaryAt)
+        XCTAssertTrue(snapshot.isStale)
+    }
+
+    func testOutcomesWrittenAfterDigestMakeAutomaticGenerationRepairIt() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("day-digest-lifecycle-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let day = try date("2026-08-23T12:00:00Z")
+        let now = try date("2026-08-23T19:00:00Z")
+        let meeting = try finishedMeeting()
+        let folder = root.appendingPathComponent(meeting.relativePath, isDirectory: true)
+        let journal = root.appendingPathComponent("journal/2026-08-23.md")
+        try FileManager.default.createDirectory(
+            at: folder,
+            withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: journal.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        try "## Day summary\n\nInitial digest.".write(
+            to: journal,
+            atomically: true,
+            encoding: .utf8)
+        let digestAt = try date("2026-08-23T18:01:00Z")
+        try FileManager.default.setAttributes(
+            [.modificationDate: digestAt],
+            ofItemAtPath: journal.path)
+
+        try MeetingOutcomes(decisions: ["Ship the lifecycle."]).write(to: folder)
+        let outcomes = folder.appendingPathComponent(MeetingOutcomes.fileName)
+        let outcomesAt = try date("2026-08-23T18:05:00Z")
+        try FileManager.default.setAttributes(
+            [.modificationDate: outcomesAt],
+            ofItemAtPath: outcomes.path)
+
+        let generated = expectation(description: "stale digest repaired")
+        let scheduler = DayDigestScheduler(calendar: calendar, now: { now })
+        let lifecycle = DayDigestLifecycle(
+            storageRoot: root,
+            calendar: calendar,
+            scheduler: scheduler,
+            blocks: { _ in [] },
+            screenContexts: { _ in [] },
+            meetings: { [meeting] },
+            latestActivityEvidenceAt: { _ in nil },
+            settings: AppSettings.init,
+            generator: { generatedDay, _, receivedMeetings, _, _ in
+                XCTAssertEqual(DreamDay.key(for: generatedDay, calendar: self.calendar),
+                               "2026-08-23")
+                XCTAssertEqual(receivedMeetings, [meeting])
+                generated.fulfill()
+                return DayDigestGenerationResult(
+                    text: "repaired",
+                    url: journal,
+                    quality: .complete)
+            })
+        let snapshot = lifecycle.snapshot(for: day)
+        XCTAssertEqual(snapshot.latestEvidenceAt, outcomesAt)
+        XCTAssertTrue(snapshot.isStale)
+
+        lifecycle.configureAutomaticGeneration(
+            .init(enabled: true, hour: 18),
+            canRun: { true },
+            onError: { XCTFail($0) })
+        await fulfillment(of: [generated], timeout: 2)
+        lifecycle.stopAutomaticGeneration()
+    }
+
+    func testArtifactWrittenAfterYesterdayFinalizationReopensAutomaticRepair() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("day-digest-lifecycle-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let day = try date("2026-08-23T12:00:00Z")
+        let now = try date("2026-08-24T08:00:00Z")
+        let meeting = try finishedMeeting()
+        let folder = root.appendingPathComponent(meeting.relativePath, isDirectory: true)
+        let journal = root.appendingPathComponent("journal/2026-08-23.md")
+        try FileManager.default.createDirectory(
+            at: folder,
+            withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: journal.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        try "## Day summary\n\nFinalized digest.".write(
+            to: journal,
+            atomically: true,
+            encoding: .utf8)
+        let finalizedAt = try date("2026-08-24T00:05:00Z")
+        try FileManager.default.setAttributes(
+            [.modificationDate: finalizedAt],
+            ofItemAtPath: journal.path)
+
+        let summary = folder.appendingPathComponent("summary.md")
+        try "## TL;DR\n\nRecovered after finalization.".write(
+            to: summary,
+            atomically: true,
+            encoding: .utf8)
+        let summaryAt = try date("2026-08-24T00:10:00Z")
+        try FileManager.default.setAttributes(
+            [.modificationDate: summaryAt],
+            ofItemAtPath: summary.path)
+
+        let generated = expectation(description: "finalized digest repaired")
+        let scheduler = DayDigestScheduler(calendar: calendar, now: { now })
+        let lifecycle = DayDigestLifecycle(
+            storageRoot: root,
+            calendar: calendar,
+            scheduler: scheduler,
+            blocks: { _ in [] },
+            screenContexts: { _ in [] },
+            meetings: { [meeting] },
+            latestActivityEvidenceAt: { _ in nil },
+            settings: AppSettings.init,
+            generator: { generatedDay, _, _, _, _ in
+                XCTAssertEqual(DreamDay.key(for: generatedDay, calendar: self.calendar),
+                               "2026-08-23")
+                generated.fulfill()
+                return DayDigestGenerationResult(
+                    text: "repaired",
+                    url: journal,
+                    quality: .complete)
+            })
+        XCTAssertTrue(lifecycle.snapshot(for: day).isStale)
+
+        lifecycle.configureAutomaticGeneration(
+            .init(enabled: true, hour: 18),
+            canRun: { true },
+            onError: { XCTFail($0) })
+        await fulfillment(of: [generated], timeout: 2)
+        lifecycle.stopAutomaticGeneration()
+    }
+
     func testHeadlessOutputKeepsJournalPathAtStablePosition() throws {
         let day = try date("2026-08-23T12:00:00Z")
         let result = DayDigestGenerationResult(
@@ -125,6 +297,7 @@ final class DayDigestLifecycleTests: XCTestCase {
 
     private func makeLifecycle(
         root: URL,
+        meetings: @escaping () -> [Meeting] = { [] },
         latestActivityEvidenceAt: @escaping (Date) -> Date?
     ) -> DayDigestLifecycle {
         DayDigestLifecycle(
@@ -132,7 +305,7 @@ final class DayDigestLifecycleTests: XCTestCase {
             calendar: calendar,
             blocks: { _ in [] },
             screenContexts: { _ in [] },
-            meetings: { [] },
+            meetings: meetings,
             latestActivityEvidenceAt: latestActivityEvidenceAt,
             settings: AppSettings.init,
             generator: { day, _, _, _, _ in
@@ -142,5 +315,15 @@ final class DayDigestLifecycleTests: XCTestCase {
                         "journal/\(DreamDay.key(for: day)).md"),
                     quality: .complete)
             })
+    }
+
+    private func finishedMeeting() throws -> Meeting {
+        Meeting(
+            id: UUID(),
+            title: "Architecture",
+            appName: "Meet",
+            startedAt: try date("2026-08-23T09:00:00Z"),
+            endedAt: try date("2026-08-23T09:30:00Z"),
+            relativePath: "meetings/architecture")
     }
 }

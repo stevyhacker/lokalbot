@@ -648,7 +648,7 @@ struct ModelsView: View {
                     ProgressView(value: fraction).frame(width: 70)
                     Button("Cancel") { downloads.cancel(entry) }.controlSize(.mini)
                 } else if available {
-                    Button("Delete") { downloads.delete(entry, storage: app.storage) }
+                    Button("Delete") { app.modelRoles.deleteGGUFModel(entry) }
                         .controlSize(.mini)
                 } else {
                     Button("Download") { downloads.download(entry, storage: app.storage) }

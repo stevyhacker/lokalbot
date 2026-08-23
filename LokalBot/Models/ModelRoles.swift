@@ -103,6 +103,7 @@ final class ModelRoles: ObservableObject {
         TranscriptionModelChoice,
         ModelPreparationProgressHandler?
     ) async throws -> Void
+    typealias DownloadedTranscriptionModels = @MainActor (AppSettings) -> Set<String>
 
     @Published private(set) var downloadProgress: [String: Double]
     @Published private(set) var downloadErrors: [String: String]
@@ -114,6 +115,7 @@ final class ModelRoles: ObservableObject {
     private let storage: StorageManager
     private let downloads: ModelDownloadManager
     private let prepareTranscription: PrepareTranscription
+    private let downloadedTranscriptionModels: DownloadedTranscriptionModels
     private let onReadinessChanged: () -> Void
     private var downloadObserver: AnyCancellable?
     private var preparationTask: (id: String, token: UUID, task: Task<Void, Never>)?
@@ -123,6 +125,7 @@ final class ModelRoles: ObservableObject {
         storage: StorageManager,
         downloads: ModelDownloadManager? = nil,
         prepareTranscription: PrepareTranscription? = nil,
+        downloadedTranscriptionModels: DownloadedTranscriptionModels? = nil,
         onReadinessChanged: @escaping () -> Void
     ) {
         let downloads = downloads ?? ModelDownloadManager.shared
@@ -133,6 +136,10 @@ final class ModelRoles: ObservableObject {
         self.downloadErrors = downloads.errors
         self.prepareTranscription = prepareTranscription ?? { settings, choice, progress in
             try await settings.transcriptionEngine(for: choice).prepare(progress: progress)
+        }
+        self.downloadedTranscriptionModels = downloadedTranscriptionModels ?? { settings in
+            TranscriptionModelStore.downloadedChoices(
+                graniteConfiguration: settings.graniteSpeechModel)
         }
         self.onReadinessChanged = onReadinessChanged
         downloadObserver = downloads.$progress
@@ -150,15 +157,20 @@ final class ModelRoles: ObservableObject {
 
     var snapshot: ModelRolesSnapshot {
         let settings = settings()
-        let readiness = ModelReadinessSnapshot.make(
+        let downloadedTranscriptionModelIDs = downloadedTranscriptionModels(settings)
+        var readiness = ModelReadinessSnapshot.make(
             settings: settings,
             storage: storage,
             activeDownloads: downloadProgress.count,
             failedDownloads: downloadErrors.values.filter { !$0.isEmpty }.count)
+        readiness.transcriptionReady = downloadedTranscriptionModelIDs.contains(
+            settings.transcriptionModel.id)
         return ModelRolesSnapshot(
             readiness: readiness,
             statuses: [
-                .transcribe: transcriptionStatus(for: settings.transcriptionModel),
+                .transcribe: transcriptionStatus(
+                    for: settings.transcriptionModel,
+                    downloadedIDs: downloadedTranscriptionModelIDs),
                 .think: ggufStatus(
                     ready: readiness.thinkReady,
                     id: settings.summarizerBackend == .builtIn
@@ -170,27 +182,42 @@ final class ModelRoles: ObservableObject {
     }
 
     var downloadedTranscriptionModelIDs: Set<String> {
-        TranscriptionModelStore.downloadedChoices(
-            graniteConfiguration: settings().graniteSpeechModel)
+        downloadedTranscriptionModels(settings())
     }
 
     var isPreparingTranscription: Bool { preparationTask != nil }
 
     func transcriptionStatus(for choice: TranscriptionModelChoice) -> ModelRoleStatus {
+        transcriptionStatus(for: choice, downloadedIDs: downloadedTranscriptionModelIDs)
+    }
+
+    private func transcriptionStatus(
+        for choice: TranscriptionModelChoice,
+        downloadedIDs: Set<String>
+    ) -> ModelRoleStatus {
         if let preparation = transcriptionPreparations[choice.id] {
             return .preparing(progress: preparation.progress, label: preparation.label)
         }
         if let error = transcriptionErrors[choice.id], !error.isEmpty {
             return .needsAttention(error)
         }
-        return downloadedTranscriptionModelIDs.contains(choice.id) ? .ready : .unavailable
+        return downloadedIDs.contains(choice.id) ? .ready : .unavailable
     }
 
     func settingsDidChange(from old: AppSettings, to new: AppSettings) {
         guard ModelReadinessSnapshot.processingReadinessChanged(from: old, to: new)
                 || old.cotypingBuiltInModelID != new.cotypingBuiltInModelID else { return }
-        if old.transcriptionModel != new.transcriptionModel
-            || old.graniteSpeechModel != new.graniteSpeechModel {
+        let selectionChanged = old.transcriptionModel != new.transcriptionModel
+        let graniteConfigurationChanged = old.graniteSpeechModel != new.graniteSpeechModel
+        if graniteConfigurationChanged {
+            transcriptionErrors[TranscriptionModelChoice.graniteSpeech.id] = nil
+        }
+        let changedAwayFromActiveSelection = selectionChanged
+            && preparationTask?.id == old.transcriptionModel.id
+            && preparationTask?.id != new.transcriptionModel.id
+        let invalidatedActiveGranitePreparation = graniteConfigurationChanged
+            && preparationTask?.id == TranscriptionModelChoice.graniteSpeech.id
+        if changedAwayFromActiveSelection || invalidatedActiveGranitePreparation {
             cancelPreparation()
         }
         revision &+= 1
@@ -213,12 +240,21 @@ final class ModelRoles: ObservableObject {
                 ModelCatalog.localURL(for: entry, storage: storage) == nil else { continue }
             downloads.download(entry, storage: storage)
         }
-        if ModelReadinessSnapshot.transcriptionReady(settings) {
-            cancelPreparation()
+        let selectedTranscriptionID = settings.transcriptionModel.id
+        let transcriptionIsDownloaded = downloadedTranscriptionModels(settings)
+            .contains(selectedTranscriptionID)
+        let transcriptionHasError = transcriptionErrors[selectedTranscriptionID]
+            .map { !$0.isEmpty } ?? false
+        if transcriptionIsDownloaded && !transcriptionHasError {
             readinessDidChange()
         } else {
             prepareTranscriptionModel(settings.transcriptionModel)
         }
+    }
+
+    func deleteGGUFModel(_ entry: ModelCatalog.Entry) {
+        downloads.delete(entry, storage: storage)
+        readinessDidChange()
     }
 
     func prepareTranscriptionModel(_ choice: TranscriptionModelChoice) {

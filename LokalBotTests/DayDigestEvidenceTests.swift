@@ -165,7 +165,8 @@ final class DayDigestEvidenceTests: XCTestCase {
             startedAt: time(15),
             endedAt: time(15, 30),
             sourceSummary: "Reviewed launch status.",
-            outcomes: "Decision: ship after verification.")
+            outcomes: "Decision: ship after verification.",
+            artifactModifiedAt: nil)
         let evidence = DayDigestEvidence.build(
             day: day,
             blocks: blocks,
@@ -409,7 +410,8 @@ final class DayDigestEvidenceTests: XCTestCase {
             startedAt: time(9, 8),
             endedAt: time(9, 9),
             sourceSummary: "## TL;DR\nKept the critical meeting detail visible.",
-            outcomes: "Decision: retain the meeting evidence.")
+            outcomes: "Decision: retain the meeting evidence.",
+            artifactModifiedAt: nil)
         let evidence = DayDigestEvidence.build(
             day: day,
             blocks: blocks,
@@ -736,7 +738,8 @@ final class DayDigestEvidenceTests: XCTestCase {
             startedAt: time(10),
             endedAt: time(10, 30),
             sourceSummary: "## TL;DR\nReviewed deployment progress and open bugs.",
-            outcomes: "Decision: keep the current deployment tool.")
+            outcomes: "Decision: keep the current deployment tool.",
+            artifactModifiedAt: nil)
         let evidence = DayDigestEvidence.build(
             day: day,
             blocks: [],
@@ -784,6 +787,53 @@ final class DayDigestEvidenceTests: XCTestCase {
             generatedAt: time(19))
         XCTAssertEqual(repaired.degradedAttemptCount, 0)
         XCTAssertNotNil(DayDigestGenerationMetadataStore.completedAt(for: journal))
+    }
+
+    func testNewMeetingArtifactResetsExhaustedDegradedRepairBudget() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let journal = directory.appendingPathComponent("2026-08-20.md")
+        try "digest".write(to: journal, atomically: true, encoding: .utf8)
+        let meetingEnd = time(17)
+
+        for attempt in 1...DayDigestGenerationMetadataStore.maximumDegradedAttempts {
+            _ = try DayDigestGenerationMetadataStore.record(
+                quality: .fallback,
+                evidenceLatestAt: meetingEnd,
+                for: journal,
+                generatedAt: time(18, attempt))
+        }
+        XCTAssertNotNil(DayDigestGenerationMetadataStore.completedAt(for: journal))
+
+        let artifactModifiedAt = time(17, 30)
+        let evidence = DayDigestEvidence.build(
+            day: day,
+            blocks: [],
+            screenContexts: [],
+            meetings: [DayDigestMeetingEvidence(
+                id: UUID(),
+                title: "Architecture sync",
+                app: "Meet",
+                startedAt: time(16),
+                endedAt: meetingEnd,
+                sourceSummary: "Recovered architecture decisions.",
+                outcomes: "Decision: ship.",
+                artifactModifiedAt: artifactModifiedAt)],
+            calendar: calendar)
+        XCTAssertEqual(evidence.latestEvidenceAt, artifactModifiedAt)
+
+        let reopened = try DayDigestGenerationMetadataStore.record(
+            quality: .fallback,
+            evidenceLatestAt: evidence.latestEvidenceAt,
+            for: journal,
+            generatedAt: time(19))
+
+        XCTAssertEqual(reopened.degradedAttemptCount, 1)
+        XCTAssertNil(DayDigestGenerationMetadataStore.completedAt(for: journal))
     }
 
     func testInvalidFocusOutputFallsBackToNamedActivityWithoutAppMetadata() async throws {

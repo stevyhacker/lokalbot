@@ -833,7 +833,8 @@ final class ProcessingPipeline: ObservableObject {
                 startedAt: meeting.startedAt,
                 endedAt: endedAt,
                 sourceSummary: sourceSummary,
-                outcomes: outcomes)
+                outcomes: outcomes,
+                artifactModifiedAt: DayDigestMeetingArtifacts.latestModifiedAt(in: folder))
         }
     }
 

@@ -136,7 +136,7 @@ sqlite3 -cmd ".timeout 5000" "$ROOT/lokalbotv3.sqlite" \
   "INSERT INTO ocr_fts (text, ts, app) VALUES ('Working through the Project Zephyrus migration runbook: rollback steps, feature flags, and the on-call rota for the cutover.', $NOW, 'Safari');" 2>/dev/null
 sqlite3 -cmd ".timeout 5000" "$ROOT/lokalbotv3.sqlite" \
   "INSERT INTO activity_blocks (app, title, start, end) VALUES ('Safari', 'Internal wiki', $((NOW-600)), $NOW);" 2>/dev/null
-OUT=$("$BIN" --digest today 2>/dev/null | tail -1)
+OUT=$("$BIN" --digest 2>/dev/null | tail -1)
 JOURNAL="${OUT#*: }"; JOURNAL="${JOURNAL%% (*}"
 if [[ "$OUT" == *"--digest: /"* && -s "$JOURNAL" ]]; then
   grep -qi "zephyrus" "$JOURNAL" \
