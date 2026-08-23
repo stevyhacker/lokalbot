@@ -53,7 +53,13 @@ final class RecordingController: ObservableObject {
     private let audioMonitor: AudioSourceMonitor
     private let pipeline: ProcessingPipeline
     /// Surfaces user-facing problems (feeds `AppState.lastError`).
-    private let onError: (String) -> Void
+    /// Exposed so the presenter can withdraw exactly this message and never a
+    /// newer, unrelated one.
+    static let silentSystemAudioMessage =
+        "System audio capture is silent; LokalBot is keeping the microphone "
+        + "recording and will reattach if the meeting audio process changes."
+    /// `nil` withdraws ``silentSystemAudioMessage`` if it is still showing.
+    private let onError: (String?) -> Void
     private let onMicPermissionDenied: () -> Void
     /// A finished meeting leaves the controller here; the app inserts it into
     /// the library list.
@@ -104,7 +110,7 @@ final class RecordingController: ObservableObject {
          audioMonitor: AudioSourceMonitor,
          pipeline: ProcessingPipeline,
          isInteractive: @escaping () -> Bool,
-         onError: @escaping (String) -> Void,
+         onError: @escaping (String?) -> Void,
          onMicPermissionDenied: @escaping () -> Void = {},
          onMeetingFinished: @escaping (Meeting) -> Void) {
         self.storage = storage
@@ -577,6 +583,18 @@ final class RecordingController: ObservableObject {
         guard elapsed >= Self.systemAudioInitialGrace else { return }
 
         let health = systemRecorder.captureHealth()
+        // Audio that arrives after the warning resolves it. Without this the
+        // banner latches for the whole recording and keeps claiming the capture
+        // is silent while a system track is being written — indistinguishable
+        // from the genuine "tap attached to a process that never emits" case
+        // the warning exists for.
+        if didWarnAboutSilentSystemAudio,
+           health.audibleDuration >= AudioFileInspector.minimumTranscribableDuration {
+            didWarnAboutSilentSystemAudio = false
+            onError(nil)
+            lokalbotLog(
+                "system audio recovered audible=\(String(format: "%.2fs", health.audibleDuration))")
+        }
         let silentFor = health.lastAudibleWriteAt.map { now.timeIntervalSince($0) } ?? elapsed
         guard silentFor >= Self.systemAudioSilentGrace else { return }
 
@@ -706,7 +724,7 @@ final class RecordingController: ObservableObject {
         lokalbotLog(
             "system audio silent elapsed=\(String(format: "%.2fs", elapsed)) captured=\(String(format: "%.2fs", captured)) audible=\(String(format: "%.2fs", audible)) rms=\(String(format: "%.6f", rms)) peakRMS=\(String(format: "%.6f", peakRMS))")
         if audible < AudioFileInspector.minimumTranscribableDuration {
-            onError("System audio capture is silent; LokalBot is keeping the microphone recording and will reattach if the meeting audio process changes.")
+            onError(Self.silentSystemAudioMessage)
         }
     }
 
