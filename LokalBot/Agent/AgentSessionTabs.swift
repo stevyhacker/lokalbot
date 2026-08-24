@@ -20,9 +20,17 @@ final class AgentSessionTabs: ObservableObject {
     private let makeController: @MainActor () -> AgentSessionController
     private var nextNumber: Int
 
-    convenience init(settings: @escaping () -> AppSettings, storage: StorageManager) {
+    convenience init(
+        settings: @escaping () -> AppSettings,
+        storage: StorageManager,
+        thinkExecution: ThinkExecution? = nil
+    ) {
+        let execution = thinkExecution ?? ThinkExecution(storage: storage)
         self.init {
-            AgentSessionController(settings: settings, storage: storage)
+            AgentSessionController(
+                settings: settings,
+                storage: storage,
+                thinkExecution: execution)
         }
     }
 

@@ -111,15 +111,18 @@ struct ModelReadinessSnapshot: Equatable, Sendable {
         }.reduce(Int64(0)) { $0 + Int64($1.sizeBytes ?? 0) }
     }
 
-    @MainActor
-    static func make(app: AppState, downloads: ModelDownloadManager) -> Self {
-        let settings = app.settings
+    static func make(
+        settings: AppSettings,
+        storage: StorageManager,
+        activeDownloads: Int,
+        failedDownloads: Int
+    ) -> Self {
         let transcriptionReady = transcriptionReady(settings)
-        let thinkReady = thinkReady(settings, storage: app.storage)
-        let autocompleteReady = autocompleteReady(settings, storage: app.storage)
+        let thinkReady = thinkReady(settings, storage: storage)
+        let autocompleteReady = autocompleteReady(settings, storage: storage)
         let provenance: Provenance = settings.summarizerBackend == .builtIn
             ? .local : .externalThink(settings.summarizerBackend.displayName)
-        let modelsFolder = app.storage.rootURL.appendingPathComponent("models", isDirectory: true)
+        let modelsFolder = storage.rootURL.appendingPathComponent("models", isDirectory: true)
         return Self(
             transcriptionReady: transcriptionReady,
             thinkReady: thinkReady,
@@ -127,8 +130,8 @@ struct ModelReadinessSnapshot: Equatable, Sendable {
             provenance: provenance,
             storedBytes: directoryBytes(modelsFolder),
             availableBytes: DiskSpacePrecheck.availableBytes(at: modelsFolder),
-            activeDownloads: downloads.progress.count,
-            failedDownloads: downloads.errors.values.filter { !$0.isEmpty }.count)
+            activeDownloads: activeDownloads,
+            failedDownloads: failedDownloads)
     }
 
     private static func directoryBytes(_ root: URL) -> Int64 {

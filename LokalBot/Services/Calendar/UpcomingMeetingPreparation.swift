@@ -585,7 +585,7 @@ final class UpcomingMeetingPreparationModel: ObservableObject {
             if generatingSignature == signature { generatingSignature = nil }
         }
         do {
-            let engine = try await app.pipeline.makeTextEngine(
+            let engine = try await app.thinkExecution.makeTextEngine(
                 app.settings,
                 priority: .background,
                 purpose: "pre-meeting brief")

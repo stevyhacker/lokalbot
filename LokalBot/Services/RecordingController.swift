@@ -455,7 +455,7 @@ final class RecordingController: ObservableObject {
             let started = Date()
             lokalbotLog("summary prewarm start model=\(config.builtInModelID) reason=\(reason)")
             do {
-                try await self?.pipeline.prepareBuiltInModel(config)
+                try await self?.pipeline.thinkExecution.prepareBuiltInModel(config)
                 let elapsed = Date().timeIntervalSince(started)
                 lokalbotLog(
                     "summary prewarm ready model=\(config.builtInModelID) elapsed=\(String(format: "%.2fs", elapsed))")

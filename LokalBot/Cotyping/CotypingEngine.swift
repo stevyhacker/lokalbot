@@ -130,7 +130,7 @@ extension CotypingCompleting {
 @MainActor
 final class CotypingEngine: CotypingCompleting {
     /// Resolves the active `TextEngine`. In production this is
-    /// `ProcessingPipeline.makeTextEngine(settings)`, which also boots the
+    /// `ThinkExecution.makeTextEngine(settings)`, which also boots the
     /// built-in llama-server with the selected model on first use.
     private let makeEngine: () async throws -> TextEngine
     private let stopRuntime: () async -> Void

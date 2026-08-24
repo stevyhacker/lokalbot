@@ -16,7 +16,7 @@ struct DreamService {
 
     var storageRoot: URL
     /// Resolved per-dream so backend/model changes apply to the next night;
-    /// same seam as chat/dictation (`ProcessingPipeline.makeTextEngine`).
+    /// same seam as chat/dictation (`ThinkExecution.makeTextEngine`).
     var makeEngine: () async throws -> EngineSelection
     var now: () -> Date = Date.init
 
