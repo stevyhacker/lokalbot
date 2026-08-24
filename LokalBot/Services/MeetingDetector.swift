@@ -313,12 +313,21 @@ final class MeetingDetector {
         DispatchQueue.main.asyncAfter(deadline: .now() + debounce, execute: work)
     }
 
+    /// Which running bundles count as native meeting apps, in priority order.
+    /// Split out from `NSRunningApplication` so the choice is testable.
+    static func meetingAppCandidates(bundleIDs: [(bundleID: String, pid: pid_t)]) -> [DetectedApp] {
+        bundleIDs.compactMap { entry in
+            guard let name = knownApps[entry.bundleID] else { return nil }
+            return DetectedApp(name: name, bundleID: entry.bundleID, pid: entry.pid)
+        }
+    }
+
     private static func nativeMeetingApp(in running: [NSRunningApplication],
                                          requireAudio: Bool = false) -> DetectedApp? {
-        let candidates = running.compactMap { app -> DetectedApp? in
-            guard let bid = app.bundleIdentifier, let name = knownApps[bid] else { return nil }
-            return DetectedApp(name: name, bundleID: bid, pid: app.processIdentifier)
-        }
+        let candidates = meetingAppCandidates(bundleIDs: running.compactMap { app in
+            guard let bid = app.bundleIdentifier else { return nil }
+            return (bundleID: bid, pid: app.processIdentifier)
+        })
         guard requireAudio else { return candidates.first }
         let active = candidates.filter { hasAudio(for: $0) }
         guard !active.isEmpty else { return nil }
@@ -457,12 +466,65 @@ final class MeetingDetector {
             guard let bundleID = process.bundleID else { return false }
             return audioBundleID(bundleID, belongsTo: app.bundleID)
         }
-        // Siblings before the host, for the same reason the browser branch
-        // prefers helpers: the host is the process least likely to own audio —
-        // for Teams it owns no Core Audio object at all.
-        return bestOutputAudioProcess(for: app, in: processes)
-            ?? namespace.first { $0.bundleID != app.bundleID }
-            ?? namespace.first
+        // A process emitting right now is the answer, and worth remembering:
+        // it is the only moment we learn which sibling of this app actually
+        // carries call audio.
+        if let emitting = bestOutputAudioProcess(for: app, in: processes) {
+            rememberCaptureTarget(emitting.id, for: app.bundleID)
+            return emitting
+        }
+        // Nothing is emitting. Core Audio specifies no order for the process
+        // list, so picking the first sibling would tap a different one from
+        // one call to the next — and with several Teams or browser helpers
+        // alive, usually one that never carries call audio. Prefer the process
+        // this app was last seen emitting from.
+        if let remembered = rememberedCaptureTarget(for: app.bundleID),
+           let process = namespace.first(where: { $0.id == remembered }) {
+            return process
+        }
+        // Still nothing known: siblings before the host, for the same reason
+        // the browser branch prefers helpers — the host is the process least
+        // likely to own audio, and for Teams it owns no Core Audio object at
+        // all. Lowest PID within each group so the choice is at least stable
+        // across the retries the watchdog makes.
+        let siblings = namespace.filter { $0.bundleID != app.bundleID }
+        return siblings.min { $0.id < $1.id } ?? namespace.min { $0.id < $1.id }
+    }
+
+    /// The PID each app was last seen emitting from. Small and per-bundle: it
+    /// only has to survive between a quiet start and the watchdog's next look.
+    private static var lastEmittingCaptureTargets: [String: pid_t] = [:]
+
+    private static func rememberCaptureTarget(_ pid: pid_t, for bundleID: String) {
+        processSnapshotLock.lock()
+        lastEmittingCaptureTargets[bundleID] = pid
+        processSnapshotLock.unlock()
+    }
+
+    private static func rememberedCaptureTarget(for bundleID: String) -> pid_t? {
+        processSnapshotLock.lock()
+        defer { processSnapshotLock.unlock() }
+        return lastEmittingCaptureTargets[bundleID]
+    }
+
+    /// Clears what capture learned about which sibling carries audio. For
+    /// tests, so one case cannot leak its choice into the next.
+    static func resetCaptureTargetMemory() {
+        processSnapshotLock.lock()
+        lastEmittingCaptureTargets.removeAll()
+        processSnapshotLock.unlock()
+    }
+
+    /// A running native meeting app to capture from when nothing was detected.
+    /// Deliberately does *not* require current output: a recording started by
+    /// hand routinely begins before the remote side says anything, and a tap on
+    /// a silent process records nothing until audio arrives rather than
+    /// failing. Without this the manual path creates no system target at all,
+    /// so remote speech arriving later cannot trigger watchdog recovery either.
+    static func captureCandidateApp(
+        in running: [NSRunningApplication] = NSWorkspace.shared.runningApplications
+    ) -> DetectedApp? {
+        nativeMeetingApp(in: running, requireAudio: false)
     }
 
     static func currentCaptureTargetProcess(for app: DetectedApp) -> AudioProcess? {

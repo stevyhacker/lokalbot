@@ -269,9 +269,15 @@ final class RecordingController: ObservableObject {
                 startRecordingHealthWatchdog()
                 try Task.checkCancellation()
 
-                if let detectedApp {
-                    let captureProcess = MeetingDetector.currentCaptureTargetProcess(for: detectedApp)
-                    let pid = captureProcess?.id ?? detectedApp.pid
+                // A recording started by hand has no detected app, but a
+                // meeting app is often running all the same — and without a
+                // system target here, remote speech arriving later cannot
+                // trigger watchdog recovery either. Falls back to a running
+                // native meeting app; nil when there is genuinely none, which
+                // keeps a plain voice memo mic-only as before.
+                if let captureApp = detectedApp ?? MeetingDetector.captureCandidateApp() {
+                    let captureProcess = MeetingDetector.currentCaptureTargetProcess(for: captureApp)
+                    let pid = captureProcess?.id ?? captureApp.pid
                     do {
                         try systemRecorder.start(
                             capturingPID: pid,
@@ -280,17 +286,25 @@ final class RecordingController: ObservableObject {
                                 .appendingPathComponent(AudioPreviewTee.systemFileName))
                         meeting.hasSystemTrack = true
                         systemAudioTarget = SystemAudioTarget(
-                            bundleID: detectedApp.bundleID,
+                            bundleID: captureApp.bundleID,
                             pid: pid)
-                        if pid != detectedApp.pid || captureProcess?.bundleID != detectedApp.bundleID {
+                        if pid != captureApp.pid || captureProcess?.bundleID != captureApp.bundleID {
                             lokalbotLog(
-                                "system audio capture resolved detectedPID=\(detectedApp.pid) capturePID=\(pid) captureBundle=\(captureProcess?.bundleID ?? "unknown") hostBundle=\(detectedApp.bundleID)")
+                                "system audio capture resolved detectedPID=\(captureApp.pid) capturePID=\(pid) captureBundle=\(captureProcess?.bundleID ?? "unknown") hostBundle=\(captureApp.bundleID)")
                         }
-                        lokalbotLog("system audio tap started pid=\(pid) bundle=\(detectedApp.bundleID)")
+                        lokalbotLog(
+                            "system audio tap started pid=\(pid) bundle=\(captureApp.bundleID) detected=\(detectedApp != nil)")
                     } catch {
-                        // Degrade gracefully: mic-only recording.
-                        onError("System audio tap failed (\(error.localizedDescription)) — recording mic only.")
-                        lokalbotLog("system audio tap FAILED: \(error.localizedDescription)")
+                        // Degrade gracefully: mic-only recording. Only worth
+                        // telling the user about when a meeting was actually
+                        // detected — on a hand-started voice memo the app was
+                        // merely running nearby and no system track was asked
+                        // for, so a banner would be noise.
+                        if detectedApp != nil {
+                            onError("System audio tap failed (\(error.localizedDescription)) — recording mic only.")
+                        }
+                        lokalbotLog(
+                            "system audio tap FAILED detected=\(detectedApp != nil): \(error.localizedDescription)")
                     }
                 }
                 try Task.checkCancellation()
