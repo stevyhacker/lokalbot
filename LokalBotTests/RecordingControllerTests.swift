@@ -63,4 +63,28 @@ final class RecordingControllerTests: XCTestCase {
         XCTAssertFalse(controller.isRecording)
         XCTAssertNil(controller.currentMeeting)
     }
+
+    // MARK: - Silent system audio advisory
+
+    /// The advisory exists for a tap attached to a process that never emits,
+    /// so a capture that stayed silent must keep it. Anything that did deliver
+    /// a usable track takes it back — including at `stop()`, since the watchdog
+    /// tick that would otherwise notice may never come.
+    func testWithdrawsSilentSystemAudioWarningOnlyOnceATrackExists() {
+        let audible = AudioFileInspector.minimumTranscribableDuration
+
+        XCTAssertTrue(RecordingController.shouldWithdrawSilentSystemAudioWarning(
+            hasWarned: true, audibleDuration: audible))
+        XCTAssertTrue(RecordingController.shouldWithdrawSilentSystemAudioWarning(
+            hasWarned: true, audibleDuration: audible * 10))
+
+        XCTAssertFalse(RecordingController.shouldWithdrawSilentSystemAudioWarning(
+            hasWarned: true, audibleDuration: 0))
+        XCTAssertFalse(RecordingController.shouldWithdrawSilentSystemAudioWarning(
+            hasWarned: true, audibleDuration: audible / 2))
+
+        // Nothing to take back when nothing was ever shown.
+        XCTAssertFalse(RecordingController.shouldWithdrawSilentSystemAudioWarning(
+            hasWarned: false, audibleDuration: audible * 10))
+    }
 }

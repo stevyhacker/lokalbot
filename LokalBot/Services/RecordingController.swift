@@ -337,6 +337,11 @@ final class RecordingController: ObservableObject {
         guard isRecording, var meeting = currentMeeting else { return }
         systemAudioHandoffTask?.cancel()
         systemAudioHandoffTask = nil
+        // Before the watchdog goes away: it is the only thing that notices
+        // recovery, so a meeting ending between the arrival of audio and the
+        // next tick would leave the advisory standing over a recording that
+        // does have a system track.
+        withdrawSilentSystemAudioWarningIfRecovered()
         stopRecordingHealthWatchdog()
         micRecorder.stop()
         systemRecorder.stop()
@@ -583,18 +588,7 @@ final class RecordingController: ObservableObject {
         guard elapsed >= Self.systemAudioInitialGrace else { return }
 
         let health = systemRecorder.captureHealth()
-        // Audio that arrives after the warning resolves it. Without this the
-        // banner latches for the whole recording and keeps claiming the capture
-        // is silent while a system track is being written — indistinguishable
-        // from the genuine "tap attached to a process that never emits" case
-        // the warning exists for.
-        if didWarnAboutSilentSystemAudio,
-           health.audibleDuration >= AudioFileInspector.minimumTranscribableDuration {
-            didWarnAboutSilentSystemAudio = false
-            onError(nil)
-            lokalbotLog(
-                "system audio recovered audible=\(String(format: "%.2fs", health.audibleDuration))")
-        }
+        withdrawSilentSystemAudioWarningIfRecovered(health: health)
         let silentFor = health.lastAudibleWriteAt.map { now.timeIntervalSince($0) } ?? elapsed
         guard silentFor >= Self.systemAudioSilentGrace else { return }
 
@@ -715,6 +709,33 @@ final class RecordingController: ObservableObject {
             onError("Could not switch system audio capture to \(app.name); microphone recording is continuing.")
             lokalbotLog("system audio meeting handoff FAILED: \(error.localizedDescription)")
         }
+    }
+
+    /// Takes back the silent-capture advisory once a system track has in fact
+    /// been written. Without it the banner latches for the whole recording and
+    /// keeps claiming the capture is silent — indistinguishable from the
+    /// genuine "tap attached to a process that never emits" case the warning
+    /// exists for. Only a capture that stayed silent keeps its warning.
+    /// The rule itself, kept pure so it is testable without a live capture.
+    static func shouldWithdrawSilentSystemAudioWarning(
+        hasWarned: Bool, audibleDuration: TimeInterval) -> Bool {
+        hasWarned && audibleDuration >= AudioFileInspector.minimumTranscribableDuration
+    }
+
+    @discardableResult
+    private func withdrawSilentSystemAudioWarningIfRecovered(
+        health: SystemAudioRecorder.CaptureHealth? = nil) -> Bool {
+        guard didWarnAboutSilentSystemAudio else { return false }
+        let health = health ?? systemRecorder.captureHealth()
+        guard Self.shouldWithdrawSilentSystemAudioWarning(
+            hasWarned: didWarnAboutSilentSystemAudio,
+            audibleDuration: health.audibleDuration)
+        else { return false }
+        didWarnAboutSilentSystemAudio = false
+        onError(nil)
+        lokalbotLog(
+            "system audio recovered audible=\(String(format: "%.2fs", health.audibleDuration))")
+        return true
     }
 
     private func warnOnceAboutSilentSystemAudio(elapsed: TimeInterval, captured: TimeInterval,
