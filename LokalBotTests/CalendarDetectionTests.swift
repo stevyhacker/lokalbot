@@ -288,6 +288,35 @@ final class CalendarDetectionTests: XCTestCase {
             bundleID: "us.zoom.xos", calendarBacked: false))
     }
 
+    func testTeamsLaunchBlipDoesNotStartRecordingBeforeConfirmationWindow() {
+        XCTAssertTrue(MeetingDetector.requiresSustainedAudioForStart(
+            bundleID: "com.microsoft.teams2", calendarBacked: false))
+        let firstSeen = Date()
+        XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(
+            firstSeenAt: firstSeen,
+            now: firstSeen.addingTimeInterval(3),
+            window: MeetingDetector.nativeAudioConfirmationWindow))
+        XCTAssertTrue(MeetingMatcher.sustainedAudioConfirmed(
+            firstSeenAt: firstSeen,
+            now: firstSeen.addingTimeInterval(MeetingDetector.nativeAudioConfirmationWindow),
+            window: MeetingDetector.nativeAudioConfirmationWindow))
+    }
+
+    func testSustainedAudioIsNotRequiredForDedicatedOrCalendarBackedStarts() {
+        XCTAssertFalse(MeetingDetector.requiresSustainedAudioForStart(
+            bundleID: "us.zoom.xos", calendarBacked: false))
+        XCTAssertFalse(MeetingDetector.requiresSustainedAudioForStart(
+            bundleID: "com.microsoft.teams2", calendarBacked: true))
+        // Browsers carry their own title/calendar gate and never wait here.
+        XCTAssertFalse(MeetingDetector.requiresSustainedAudioForStart(
+            bundleID: "com.google.Chrome", calendarBacked: false))
+    }
+
+    func testSustainedAudioIsUnconfirmedBeforeAnyAudioWasSeen() {
+        XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(
+            firstSeenAt: nil, now: Date(), window: 10))
+    }
+
     func testAudioMonitorRequiresCalendarForBroadCommunicationApps() {
         XCTAssertFalse(MeetingDetector.shouldAutoRecordNativeAudioMonitor(
             bundleID: "com.tinyspeck.slackmacgap", calendarBacked: false))

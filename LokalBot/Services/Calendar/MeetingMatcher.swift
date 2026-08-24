@@ -33,6 +33,16 @@ enum MeetingMatcher {
         return titleMatchesMarker || (calendarBacked && hasOutputAudio)
     }
 
+    /// Whether a start candidate that needs confirmation has been producing
+    /// audio long enough to count as a meeting. `firstSeenAt` is when its audio
+    /// was first observed; nil means nothing has been observed yet.
+    static func sustainedAudioConfirmed(firstSeenAt: Date?,
+                                        now: Date,
+                                        window: TimeInterval) -> Bool {
+        guard let firstSeenAt else { return false }
+        return now.timeIntervalSince(firstSeenAt) >= window
+    }
+
     static func confidence(hasApp: Bool, hasCalendar: Bool) -> MeetingDetectionContext.Confidence {
         switch (hasApp, hasCalendar) {
         case (true, true): return .high

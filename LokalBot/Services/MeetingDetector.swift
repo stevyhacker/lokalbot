@@ -32,8 +32,9 @@ final class MeetingDetector {
     /// Native bundles whose newly-started output is a strong meeting signal on
     /// its own. Broader communication apps (Slack/Teams/FaceTime) can make short
     /// non-meeting sounds, so the audio monitor only auto-records those when an
-    /// active calendar meeting backs the signal; otherwise the slower detector
-    /// poll or the banner can handle them.
+    /// active calendar meeting backs the signal; the detector still picks them
+    /// up on its own, but only once their audio has lasted
+    /// `nativeAudioConfirmationWindow` (see `requiresSustainedAudioForStart`).
     private static let highConfidenceNativeAudioBundles: Set<String> = [
         "us.zoom.xos",
         "com.webex.meetingmanager",
@@ -42,6 +43,21 @@ final class MeetingDetector {
 
     static func shouldAutoRecordNativeAudioMonitor(bundleID: String, calendarBacked: Bool) -> Bool {
         highConfidenceNativeAudioBundles.contains(bundleID) || calendarBacked
+    }
+
+    /// How long a broad communication app's audio must persist before it counts
+    /// as a meeting start. Merely launching Teams opens an output stream (and
+    /// a message ding does the same); that blip used to start a recording the
+    /// stop debounce then ended half a minute later.
+    static let nativeAudioConfirmationWindow: TimeInterval = 5
+
+    /// Whether this app's audio must survive `nativeAudioConfirmationWindow`
+    /// before a recording starts. Dedicated conferencing bundles and
+    /// calendar-backed starts stay instant, and browsers are gated by their own
+    /// title/calendar rules, so they never wait here.
+    static func requiresSustainedAudioForStart(bundleID: String, calendarBacked: Bool) -> Bool {
+        guard knownApps[bundleID] != nil else { return false }
+        return !shouldAutoRecordNativeAudioMonitor(bundleID: bundleID, calendarBacked: calendarBacked)
     }
 
     /// Browsers whose focused-window title we inspect for web meetings
@@ -71,6 +87,10 @@ final class MeetingDetector {
     private var activeCalendarEvent: CalendarMeetingCandidate?
     private var timer: Timer?
     private var pendingStop: DispatchWorkItem?
+    /// The start candidate still waiting out `nativeAudioConfirmationWindow`,
+    /// and when its audio was first seen.
+    private var pendingStart: (bundleID: String, firstSeen: Date)?
+    private var pendingStartRecheck: DispatchWorkItem?
     private var workspaceObservers: [NSObjectProtocol] = []
 
     private var micListener: AudioObjectPropertyListenerBlock?
@@ -112,6 +132,7 @@ final class MeetingDetector {
         timer = nil
         pendingStop?.cancel()
         pendingStop = nil
+        clearPendingStart()
         let center = NSWorkspace.shared.notificationCenter
         for observer in workspaceObservers { center.removeObserver(observer) }
         workspaceObservers.removeAll()
@@ -269,17 +290,60 @@ final class MeetingDetector {
             appAudioActive: false,
             calendarBackedBrowserWithAudio: calendarBackedBrowserWithAudio)
 
-        if inMeeting, let app = runningMeetingApp {
-            pendingStop?.cancel()
-            pendingStop = nil
-            activeApp = app
-            activeCalendarEvent = calendarEvent
-            onMeetingStarted?(MeetingDetectionContext(
-                detectedApp: app,
-                calendarEvent: calendarEvent,
-                confidence: MeetingMatcher.confidence(hasApp: true, hasCalendar: calendarEvent != nil),
-                reason: "detector"))
+        guard inMeeting, let app = runningMeetingApp else {
+            clearPendingStart()
+            return
         }
+        guard startConfirmed(app: app, calendarBacked: calendarEvent != nil, now: now) else { return }
+        clearPendingStart()
+        pendingStop?.cancel()
+        pendingStop = nil
+        activeApp = app
+        activeCalendarEvent = calendarEvent
+        onMeetingStarted?(MeetingDetectionContext(
+            detectedApp: app,
+            calendarEvent: calendarEvent,
+            confidence: MeetingMatcher.confidence(hasApp: true, hasCalendar: calendarEvent != nil),
+            reason: "detector"))
+    }
+
+    /// Tracks how long the start candidate's audio has been continuously
+    /// present and answers whether it may start a recording yet. Candidates
+    /// that need no confirmation answer true on their first tick.
+    private func startConfirmed(app: DetectedApp, calendarBacked: Bool, now: Date) -> Bool {
+        guard Self.requiresSustainedAudioForStart(
+            bundleID: app.bundleID, calendarBacked: calendarBacked) else { return true }
+        if pendingStart?.bundleID != app.bundleID {
+            pendingStart = (app.bundleID, now)
+        }
+        let firstSeen = pendingStart?.firstSeen
+        if MeetingMatcher.sustainedAudioConfirmed(
+            firstSeenAt: firstSeen, now: now, window: Self.nativeAudioConfirmationWindow) {
+            return true
+        }
+        // Ticks are event-driven plus a slow safety poll, so a real meeting
+        // would otherwise wait for the next poll boundary instead of starting
+        // the moment the window closes.
+        let elapsed = firstSeen.map { now.timeIntervalSince($0) } ?? 0
+        scheduleStartConfirmationRecheck(after: Self.nativeAudioConfirmationWindow - elapsed)
+        return false
+    }
+
+    private func scheduleStartConfirmationRecheck(after delay: TimeInterval) {
+        guard pendingStartRecheck == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingStartRecheck = nil
+            self.tick()
+        }
+        pendingStartRecheck = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(delay, 0.25), execute: work)
+    }
+
+    private func clearPendingStart() {
+        pendingStart = nil
+        pendingStartRecheck?.cancel()
+        pendingStartRecheck = nil
     }
 
     private static func detectRunningMeetingApp(
