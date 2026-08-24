@@ -331,7 +331,10 @@ final class ProcessingPipeline: ObservableObject {
                 let bleed = SpeakerBleedFilter.filter(transcript)
                 transcript = bleed.transcript
                 if bleed.changed {
-                    lokalbotLog("transcript speaker bleed removedSegments=\(bleed.removedSegments)")
+                    lokalbotLog(
+                        "transcript speaker bleed removedSegments=\(bleed.removedSegments) "
+                            + "trimmedSegments=\(bleed.trimmedSegments) "
+                            + "removedWords=\(bleed.removedWords)")
                 }
                 if config.multiSpeakerDiarization,
                    MeetingAudioFiles.transcribableURL(for: .system, in: folder) != nil {

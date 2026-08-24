@@ -1,7 +1,7 @@
 import Foundation
 
-/// Drops microphone segments that are only the *other* side of the call leaking
-/// back in through the speakers.
+/// Removes the *other* side of the call where it leaks back into the
+/// microphone through the speakers.
 ///
 /// LokalBot records the raw input device, so the meeting app's own echo
 /// cancellation never applies to our mic track: whenever the user is on
@@ -10,9 +10,19 @@ import Foundation
 ///
 /// The discriminator is timing, not text alone. Acoustic echo is effectively
 /// simultaneous with the sound that caused it, while a person genuinely
-/// repeating what was just said speaks *afterwards*. Requiring a large temporal
-/// overlap therefore separates the two cases that similar wording alone cannot,
-/// which is what keeps a real "yes, exactly what you said" from being deleted.
+/// repeating what was just said speaks *afterwards*. Requiring temporal
+/// overlap therefore separates the two cases that similar wording alone
+/// cannot, which is what keeps a real "yes, exactly what you said" alive.
+///
+/// Echo rarely fills a whole mic segment, though. The two tracks are
+/// transcribed independently, so their segment boundaries fall in different
+/// places and a single mic segment routinely carries an echoed opening
+/// followed by the user's own words — measured on a real 49-minute meeting,
+/// mixed segments outnumbered pure ones. Dropping whole segments therefore
+/// either loses real speech or keeps the echo. This filter instead locates the
+/// longest run of words the remote side said at the same moment and trims just
+/// that run when it sits at a segment edge; a segment left with nothing is
+/// dropped, which is the pure-echo case falling out of the same rule.
 ///
 /// Runs before diarization, while speakers are still the raw track labels.
 enum SpeakerBleedFilter {
@@ -20,49 +30,220 @@ enum SpeakerBleedFilter {
     struct Result {
         var transcript: Transcript
         var removedSegments: Int
+        var trimmedSegments: Int
+        var removedWords: Int
 
-        var changed: Bool { removedSegments > 0 }
+        var changed: Bool { removedSegments > 0 || trimmedSegments > 0 }
     }
 
-    /// Fraction of the shorter segment that must overlap in time.
-    static let minimumTimeOverlap = 0.5
-    /// Fraction of the shorter segment's words that must also appear in the other.
-    static let minimumTextSimilarity = 0.8
-    /// Below this, wording is too generic to judge ("ja", "genau", "okay").
-    static let minimumWordCount = 4
+    /// Fraction of the shorter segment that must overlap in time before the
+    /// two are compared at all. Lower than a "same utterance" test would need
+    /// because a long remote turn overlaps only part of a short mic segment.
+    static let minimumTimeOverlap = 0.3
+    /// Words a shared run needs before it counts as echo rather than as two
+    /// people reaching for the same common phrase.
+    static let minimumRunLength = 3
+    /// A segment trimmed below this is echo throughout and is dropped.
+    static let minimumRemainder = 3
+    /// Echo can sit at both ends of one segment, and ASR splits a run around a
+    /// misheard word; a few passes catch those without unbounded chewing.
+    static let maximumTrimPasses = 3
+    /// Stray words the ASR tacks onto an echo ("ja", a clipped article) may
+    /// precede or follow the run and are trimmed with it.
+    static let edgeSlack = 1
 
     static func filter(_ transcript: Transcript) -> Result {
         let remote = transcript.segments.filter { canonical($0.speaker) == "them" }
-        guard !remote.isEmpty else { return Result(transcript: transcript, removedSegments: 0) }
+        guard !remote.isEmpty else {
+            return Result(transcript: transcript, removedSegments: 0,
+                          trimmedSegments: 0, removedWords: 0)
+        }
 
         var kept: [Transcript.Segment] = []
         var removed = 0
+        var trimmed = 0
+        var removedWords = 0
+
         for segment in transcript.segments {
-            if canonical(segment.speaker) == "me",
-               remote.contains(where: { isEcho(of: $0, in: segment) }) {
-                removed += 1
+            guard canonical(segment.speaker) == "me" else {
+                kept.append(segment)
                 continue
             }
-            kept.append(segment)
+            let partners = remote.filter { timeOverlap(segment, $0) >= minimumTimeOverlap }
+            guard !partners.isEmpty else {
+                kept.append(segment)
+                continue
+            }
+            let outcome = stripEcho(from: segment.text,
+                                    heardIn: partners.map(\.text))
+            removedWords += outcome.removedWords
+            switch outcome.remainder {
+            case .none:
+                removed += 1
+            case .unchanged:
+                kept.append(segment)
+            case .trimmed(let text):
+                var cleaned = segment
+                cleaned.text = text
+                kept.append(cleaned)
+                trimmed += 1
+            }
         }
-        guard removed > 0 else { return Result(transcript: transcript, removedSegments: 0) }
+
+        guard removed > 0 || trimmed > 0 else {
+            return Result(transcript: transcript, removedSegments: 0,
+                          trimmedSegments: 0, removedWords: 0)
+        }
         var cleaned = transcript
         cleaned.segments = kept
-        return Result(transcript: cleaned, removedSegments: removed)
+        return Result(transcript: cleaned, removedSegments: removed,
+                      trimmedSegments: trimmed, removedWords: removedWords)
     }
 
-    /// Whether `candidate` (a mic segment) is the speaker bleed of `source`
-    /// (a system segment): overlapping in time *and* saying the same thing.
-    private static func isEcho(of source: Transcript.Segment,
-                               in candidate: Transcript.Segment) -> Bool {
-        let candidateWords = words(in: candidate.text)
-        let sourceWords = words(in: source.text)
-        guard candidateWords.count >= minimumWordCount,
-              sourceWords.count >= minimumWordCount,
-              timeOverlap(candidate, source) >= minimumTimeOverlap,
-              textSimilarity(candidateWords, sourceWords) >= minimumTextSimilarity
-        else { return false }
+    // MARK: - Trimming
+
+    enum Remainder: Equatable {
+        /// Nothing of the segment survives — it was echo throughout.
+        case none
+        /// No echo run found at an edge; the segment stands as recorded.
+        case unchanged
+        /// What is left after the echoed edges were cut away.
+        case trimmed(String)
+    }
+
+    struct StripOutcome: Equatable {
+        var remainder: Remainder
+        var removedWords: Int
+    }
+
+    /// Cuts the runs of `text` that one of `sources` said at the same time.
+    /// Pure, so the edge rules are testable without segments or timings.
+    static func stripEcho(from text: String, heardIn sources: [String]) -> StripOutcome {
+        let original = tokens(in: text)
+        guard !original.isEmpty else {
+            return StripOutcome(remainder: .unchanged, removedWords: 0)
+        }
+        let sourceWords = sources.map { tokens(in: $0).map(\.word) }
+        var current = original
+        var removedWords = 0
+
+        for _ in 0..<maximumTrimPasses {
+            let words = current.map(\.word)
+            var best = SharedRun(length: 0, start: 0, end: 0)
+            for source in sourceWords {
+                let run = longestSharedRun(words, source)
+                if run.length > best.length { best = run }
+            }
+            guard best.length >= minimumRunLength else { break }
+            // Only edge runs are cut. An echo in the middle of a segment would
+            // mean the user spoke both before and after it, and stitching the
+            // two halves together would invent a sentence neither said.
+            if best.start <= edgeSlack {
+                current = Array(current[best.end...])
+            } else if best.end >= current.count - edgeSlack {
+                current = Array(current[..<best.start])
+            } else {
+                break
+            }
+            removedWords += best.length
+            if current.isEmpty { break }
+        }
+
+        if current.count == original.count {
+            return StripOutcome(remainder: .unchanged, removedWords: 0)
+        }
+        guard current.count >= minimumRemainder,
+              let first = current.first, let last = current.last else {
+            return StripOutcome(remainder: .none, removedWords: removedWords)
+        }
+        let slice = String(text[first.range.lowerBound..<last.range.upperBound])
+        return StripOutcome(remainder: .trimmed(Transcript.normalizedText(slice)),
+                            removedWords: removedWords)
+    }
+
+    struct SharedRun: Equatable {
+        var length: Int
+        /// Index of the first shared word in the left-hand side.
+        var start: Int
+        /// One past the last shared word in the left-hand side.
+        var end: Int
+    }
+
+    /// Longest run of consecutive words both sides share, comparing words
+    /// loosely (see `wordsMatch`). Positions refer to `lhs`.
+    static func longestSharedRun(_ lhs: [String], _ rhs: [String]) -> SharedRun {
+        var best = SharedRun(length: 0, start: 0, end: 0)
+        guard !lhs.isEmpty, !rhs.isEmpty else { return best }
+        var previous = [Int](repeating: 0, count: rhs.count + 1)
+        for i in 1...lhs.count {
+            var current = [Int](repeating: 0, count: rhs.count + 1)
+            for j in 1...rhs.count where wordsMatch(lhs[i - 1], rhs[j - 1]) {
+                current[j] = previous[j - 1] + 1
+                if current[j] > best.length {
+                    best = SharedRun(length: current[j], start: i - current[j], end: i)
+                }
+            }
+            previous = current
+        }
+        return best
+    }
+
+    /// Whether two words are the same word. The tracks are transcribed by two
+    /// independent passes over different audio, so the same spoken word comes
+    /// back slightly different — "Wim"/"Bim", "reinbasta"/"reinbasteln" — and
+    /// exact equality misses most real echo. One edit is allowed from three
+    /// characters up, where a single letter no longer changes the word.
+    static func wordsMatch(_ lhs: String, _ rhs: String) -> Bool {
+        if lhs == rhs { return true }
+        let left = Array(lhs), right = Array(rhs)
+        guard Swift.min(left.count, right.count) >= 3,
+              abs(left.count - right.count) <= 1 else { return false }
+        return differsByAtMostOneEdit(left, right)
+    }
+
+    /// Single-edit check by walking both sides once, rather than a full edit
+    /// distance we would immediately threshold anyway.
+    private static func differsByAtMostOneEdit(_ lhs: [Character], _ rhs: [Character]) -> Bool {
+        let (shorter, longer) = lhs.count <= rhs.count ? (lhs, rhs) : (rhs, lhs)
+        var i = 0, j = 0
+        var edited = false
+        while i < shorter.count, j < longer.count {
+            if shorter[i] == longer[j] {
+                i += 1; j += 1
+                continue
+            }
+            if edited { return false }
+            edited = true
+            if shorter.count == longer.count { i += 1 }
+            j += 1
+        }
         return true
+    }
+
+    // MARK: - Tokens, timing
+
+    struct Token: Equatable {
+        var word: String
+        var range: Range<String.Index>
+    }
+
+    /// Words with their place in the original text, so a trimmed segment can be
+    /// sliced out of it and keep its punctuation and capitalization.
+    static func tokens(in text: String) -> [Token] {
+        var tokens: [Token] = []
+        var index = text.startIndex
+        while index < text.endIndex {
+            guard text[index].isLetter || text[index].isNumber else {
+                index = text.index(after: index)
+                continue
+            }
+            let start = index
+            while index < text.endIndex, text[index].isLetter || text[index].isNumber {
+                index = text.index(after: index)
+            }
+            tokens.append(Token(word: text[start..<index].lowercased(), range: start..<index))
+        }
+        return tokens
     }
 
     /// Overlap as a fraction of the shorter segment, so a brief echo inside a
@@ -75,25 +256,8 @@ enum SpeakerBleedFilter {
         return Swift.min(1, overlap / shorter)
     }
 
-    /// Multiset word overlap against the shorter side. Echo is rarely a
-    /// character-perfect copy — ASR clips the start, adds stray punctuation —
-    /// so this tolerates partial capture without matching unrelated sentences.
-    static func textSimilarity(_ lhs: [String], _ rhs: [String]) -> Double {
-        guard !lhs.isEmpty, !rhs.isEmpty else { return 0 }
-        var remaining: [String: Int] = [:]
-        for word in rhs { remaining[word, default: 0] += 1 }
-        var shared = 0
-        for word in lhs where (remaining[word] ?? 0) > 0 {
-            remaining[word]! -= 1
-            shared += 1
-        }
-        return Double(shared) / Double(Swift.min(lhs.count, rhs.count))
-    }
-
     static func words(in text: String) -> [String] {
-        text.lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty }
+        tokens(in: text).map(\.word)
     }
 
     private static func canonical(_ speaker: String) -> String {

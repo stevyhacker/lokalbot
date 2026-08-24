@@ -41,6 +41,76 @@ final class SpeakerBleedFilterTests: XCTestCase {
 
     /// The case the filter must never break: agreeing by repeating what was
     /// just said. Same words, but *after* the remote turn rather than during it.
+    /// The common shape on a real call: the mic segment opens with echo of the
+    /// remote turn and continues with the user's own words. Dropping it loses
+    /// real speech, keeping it doubles the remote voice — only the echoed part
+    /// may go.
+    func testTrimsEchoedOpeningAndKeepsTheUsersOwnWords() {
+        let input = transcript([
+            segment("them", 10.0, 20.0,
+                    "aber ich weiß nicht ob das für heute angedacht war"),
+            segment("me", 11.0, 22.0,
+                    "aber ich weiß nicht ob das für heute angedacht war. "
+                        + "Das sollte mit denen abgestimmt sein die gefehlt haben"),
+        ])
+
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertEqual(result.removedSegments, 0)
+        XCTAssertEqual(result.trimmedSegments, 1)
+        XCTAssertEqual(result.transcript.segments.count, 2)
+        XCTAssertEqual(result.transcript.segments.first(where: { $0.speaker == "me" })?.text,
+                       "Das sollte mit denen abgestimmt sein die gefehlt haben")
+    }
+
+    /// Echo at the tail is the mirror case and must trim the same way.
+    func testTrimsEchoedEnding() {
+        let input = transcript([
+            segment("me", 5.0, 12.0,
+                    "das kann ich noch nicht sagen, wir verschieben das Release auf Donnerstag"),
+            segment("them", 6.0, 12.0, "wir verschieben das Release auf Donnerstag"),
+        ])
+
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertEqual(result.trimmedSegments, 1)
+        XCTAssertEqual(result.transcript.segments.first?.text, "das kann ich noch nicht sagen")
+    }
+
+    /// Two independent ASR passes over different audio spell the same word
+    /// differently. Exact word equality missed most real echo, so a single
+    /// edit still counts as the same word.
+    func testMatchesWordsTheTwoTracksTranscribedDifferently() {
+        XCTAssertTrue(SpeakerBleedFilter.wordsMatch("wim", "bim"))
+        XCTAssertTrue(SpeakerBleedFilter.wordsMatch("nachmittags", "nachmittag"))
+        XCTAssertFalse(SpeakerBleedFilter.wordsMatch("und", "an"))
+        XCTAssertFalse(SpeakerBleedFilter.wordsMatch("budget", "termin"))
+    }
+
+    /// Echo in the middle would mean the user spoke both before and after it;
+    /// stitching the halves together would invent a sentence neither said.
+    func testKeepsSegmentWhoseSharedRunSitsInTheMiddle() {
+        let input = transcript([
+            segment("them", 0.0, 10.0, "auf nächsten Donnerstag verschoben"),
+            segment("me", 0.0, 10.0,
+                    "ich hatte das anders verstanden auf nächsten Donnerstag verschoben "
+                        + "steht so aber nicht im Protokoll drin"),
+        ])
+
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertEqual(result.trimmedSegments, 0)
+        XCTAssertEqual(result.removedSegments, 0)
+    }
+
+    func testLongestSharedRunReportsItsPositionInTheLeftHandSide() {
+        let run = SpeakerBleedFilter.longestSharedRun(
+            ["also", "wir", "treffen", "uns", "am", "montag"],
+            ["wir", "treffen", "uns", "später"])
+
+        XCTAssertEqual(run, .init(length: 3, start: 1, end: 4))
+    }
+
     func testKeepsGenuineRepetitionThatFollowsTheRemoteTurn() {
         let line = "wir verschieben das Release auf nächsten Donnerstag"
         let input = transcript([
@@ -119,12 +189,15 @@ final class SpeakerBleedFilterTests: XCTestCase {
         XCTAssertEqual(SpeakerBleedFilter.timeOverlap(disjoint, long), 0)
     }
 
-    func testTextSimilarityToleratesPartialCapture() {
+    /// ASR clips the start and end of an echo, so the mic side is usually a
+    /// fragment of the remote turn rather than a copy of it.
+    func testRecognizesAPartiallyCapturedEcho() {
         let full = SpeakerBleedFilter.words(in: "wir treffen uns morgen um zehn im großen Raum")
         let clipped = SpeakerBleedFilter.words(in: "uns morgen um zehn im großen")
-        XCTAssertEqual(SpeakerBleedFilter.textSimilarity(clipped, full), 1.0, accuracy: 0.001)
+        XCTAssertEqual(SpeakerBleedFilter.longestSharedRun(clipped, full).length, clipped.count)
 
         let unrelated = SpeakerBleedFilter.words(in: "das Budget ist bereits vollständig verplant")
-        XCTAssertLessThan(SpeakerBleedFilter.textSimilarity(unrelated, full), 0.3)
+        XCTAssertLessThan(SpeakerBleedFilter.longestSharedRun(unrelated, full).length,
+                          SpeakerBleedFilter.minimumRunLength)
     }
 }
