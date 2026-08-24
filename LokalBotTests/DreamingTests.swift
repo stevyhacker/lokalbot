@@ -206,6 +206,31 @@ final class DreamingTests: XCTestCase {
         scheduler.stop()
     }
 
+    @MainActor
+    func testManualDreamRunsWhenAutomationIsDisabledAndBypassesScheduleGates() async throws {
+        let current = try date("2026-07-19T12:00:00Z")
+        let scheduler = DreamScheduler(calendar: calendar, now: { current })
+        let started = expectation(description: "manual dream started")
+        var dreamedDayKey: String?
+
+        scheduler.configure(
+            .init(enabled: false, hour: 23, firstEligibleDayKey: ""),
+            hasReport: { _ in true },
+            canRun: { false },
+            dream: { target in
+                dreamedDayKey = target.dayKey
+                started.fulfill()
+            },
+            onError: { XCTFail($0) })
+
+        scheduler.dreamNow()
+
+        await fulfillment(of: [started], timeout: 5)
+        while scheduler.isDreaming { await Task.yield() }
+        XCTAssertEqual(dreamedDayKey, "2026-07-18")
+        scheduler.stop()
+    }
+
     func testDreamingActivationBoundaryDefaultsAndRoundTrips() throws {
         let defaults = AppSettings()
         XCTAssertTrue(defaults.dreamingEnabled)
@@ -854,6 +879,37 @@ final class DreamingTests: XCTestCase {
             report,
             referenceDate: try date("2026-07-19T08:00:00Z"),
             calendar: calendar))
+    }
+
+    func testTodayRetryIsLimitedToCurrentModelFailureFallbacks() throws {
+        let referenceDate = try date("2026-07-19T08:00:00Z")
+        var report = DreamReport(
+            day: "2026-07-18",
+            generatedAt: try date("2026-07-19T04:01:00Z"),
+            engineName: nil,
+            fallbackReason: .engineUnavailable,
+            narrative: "Evidence only.")
+
+        XCTAssertTrue(TodayDreamSelection.isRetryableFailure(
+            report, referenceDate: referenceDate, calendar: calendar))
+        report.fallbackReason = .unparseableResponse
+        XCTAssertTrue(TodayDreamSelection.isRetryableFailure(
+            report, referenceDate: referenceDate, calendar: calendar))
+        report.fallbackReason = nil // Legacy evidence-only report.
+        XCTAssertTrue(TodayDreamSelection.isRetryableFailure(
+            report, referenceDate: referenceDate, calendar: calendar))
+
+        report.fallbackReason = .emptyDay
+        XCTAssertFalse(TodayDreamSelection.isRetryableFailure(
+            report, referenceDate: referenceDate, calendar: calendar))
+        report.fallbackReason = .engineUnavailable
+        report.engineName = "Built-in — Test"
+        XCTAssertFalse(TodayDreamSelection.isRetryableFailure(
+            report, referenceDate: referenceDate, calendar: calendar))
+        report.engineName = nil
+        report.day = "2026-07-17"
+        XCTAssertFalse(TodayDreamSelection.isRetryableFailure(
+            report, referenceDate: referenceDate, calendar: calendar))
     }
 
     func testPrioritiesHeadingFramesStaleBriefsByTheirDay() throws {

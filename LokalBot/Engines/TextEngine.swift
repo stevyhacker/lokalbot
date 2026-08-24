@@ -517,6 +517,7 @@ struct OpenAICompatibleEngine: TextEngine {
                 dialect: chatDialect,
                 error: error,
                 usedFallback: openRouterReasoning == .highEffort,
+                requestedSchema: schema != nil,
                 requestedReasoningBudget: options?.reasoningBudgetTokens)
             else { throw error }
             lokalbotLog("openrouter reasoning fallback effort=high model=\(model)")
@@ -722,11 +723,12 @@ struct OpenAICompatibleEngine: TextEngine {
         dialect: ChatCompletionDialect,
         error: Error,
         usedFallback: Bool,
+        requestedSchema: Bool,
         requestedReasoningBudget: Int?
     ) -> Bool {
         guard dialect == .openRouter,
               !usedFallback,
-              requestedReasoningBudget != nil,
+              requestedSchema || requestedReasoningBudget != nil,
               case .httpStatus(let code, let detail, _) = error as? TextEngineError,
               code == 404
         else { return false }
