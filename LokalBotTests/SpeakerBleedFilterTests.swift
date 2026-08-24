@@ -200,4 +200,83 @@ final class SpeakerBleedFilterTests: XCTestCase {
         XCTAssertLessThan(SpeakerBleedFilter.longestSharedRun(unrelated, full).length,
                           SpeakerBleedFilter.minimumRunLength)
     }
+
+    // MARK: - Scripts written without spaces
+
+    /// Chinese and Japanese put no spaces between words, so splitting on
+    /// non-alphanumerics alone would hand the filter one token per sentence and
+    /// no run could ever be long enough to judge. Korean is spaced and must
+    /// keep word tokens.
+    func testTokenizesUnspacedScriptsPerCharacter() {
+        let mandarin = SpeakerBleedFilter.tokens(in: "我们下周开会")
+        XCTAssertEqual(mandarin.count, 6)
+        XCTAssertTrue(mandarin.allSatisfy(\.isIdeographic))
+
+        let japanese = SpeakerBleedFilter.tokens(in: "会議は月曜日です")
+        XCTAssertEqual(japanese.count, 8)
+
+        let korean = SpeakerBleedFilter.tokens(in: "우리는 다음 주에 만나기로")
+        XCTAssertEqual(korean.count, 4)
+        XCTAssertFalse(korean.contains { $0.isIdeographic })
+    }
+
+    /// The case that fails without per-character tokens: two tracks carrying
+    /// the identical Mandarin sentence at the identical moment.
+    func testRemovesMandarinEchoOfTheRemoteTurn() {
+        let line = "我们下周一开会讨论这个项目的进度"
+        let input = transcript([
+            segment("them", 10.0, 20.0, line),
+            segment("me", 10.0, 20.0, line),
+        ])
+
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertEqual(result.removedSegments, 1)
+        XCTAssertEqual(result.transcript.segments.map(\.speaker), ["them"])
+    }
+
+    /// Trimming works the same way in an unspaced script: the echoed opening
+    /// goes, the user's own reply stays.
+    func testTrimsMandarinEchoAndKeepsTheReply() {
+        let echoed = "我们下周一开会讨论这个项目的进度"
+        let input = transcript([
+            segment("them", 10.0, 20.0, echoed),
+            segment("me", 10.0, 22.0, echoed + "，好的我知道了"),
+        ])
+
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertEqual(result.removedSegments, 0)
+        XCTAssertEqual(result.trimmedSegments, 1)
+        XCTAssertEqual(result.transcript.segments.last?.text, "好的我知道了")
+    }
+
+    /// A character token carries far less meaning than a word, so the run bar
+    /// is higher — a four-character courtesy overlapping in time is not echo
+    /// evidence, exactly as "ja genau" is not.
+    func testKeepsShortMandarinOverlap() {
+        let input = transcript([
+            segment("them", 3.0, 6.0, "好的谢谢"),
+            segment("me", 3.2, 5.8, "好的谢谢"),
+        ])
+
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertEqual(result.removedSegments, 0)
+        XCTAssertEqual(result.trimmedSegments, 0)
+    }
+
+    func testRunLengthBarFollowsTheScriptTheRunIsWrittenIn() {
+        let mandarin = SpeakerBleedFilter.tokens(in: "我们下周开会")
+        XCTAssertEqual(
+            SpeakerBleedFilter.requiredRunLength(
+                for: mandarin, run: .init(length: 6, start: 0, end: 6)),
+            SpeakerBleedFilter.minimumIdeographicRunLength)
+
+        let german = SpeakerBleedFilter.tokens(in: "wir treffen uns am Montag")
+        XCTAssertEqual(
+            SpeakerBleedFilter.requiredRunLength(
+                for: german, run: .init(length: 3, start: 0, end: 3)),
+            SpeakerBleedFilter.minimumRunLength)
+    }
 }

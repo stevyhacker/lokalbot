@@ -43,6 +43,12 @@ enum SpeakerBleedFilter {
     /// Words a shared run needs before it counts as echo rather than as two
     /// people reaching for the same common phrase.
     static let minimumRunLength = 3
+    /// The same bar for scripts written without spaces, where a token is one
+    /// character rather than one word. Chinese averages well under two
+    /// characters per word, so this is about as much language as
+    /// `minimumRunLength` words are — three characters would be a single word
+    /// and would collide by chance far too often.
+    static let minimumIdeographicRunLength = 6
     /// A segment trimmed below this is echo throughout and is dropped.
     static let minimumRemainder = 3
     /// Echo can sit at both ends of one segment, and ASR splits a run around a
@@ -134,7 +140,7 @@ enum SpeakerBleedFilter {
                 let run = longestSharedRun(words, source)
                 if run.length > best.length { best = run }
             }
-            guard best.length >= minimumRunLength else { break }
+            guard best.length >= requiredRunLength(for: current, run: best) else { break }
             // Only edge runs are cut. An echo in the middle of a segment would
             // mean the user spoke both before and after it, and stitching the
             // two halves together would invent a sentence neither said.
@@ -188,6 +194,18 @@ enum SpeakerBleedFilter {
         return best
     }
 
+    /// How long `run` must be to count as echo: runs written in an unspaced
+    /// script are measured in characters, everything else in words. Decided by
+    /// majority so a run that mixes the two (a Latin product name inside a
+    /// Chinese sentence) still uses the threshold of the script it mostly is.
+    static func requiredRunLength(for tokens: [Token], run: SharedRun) -> Int {
+        guard run.length > 0, run.end <= tokens.count else { return minimumRunLength }
+        let ideographic = tokens[run.start..<run.end].reduce(into: 0) { count, token in
+            if token.isIdeographic { count += 1 }
+        }
+        return ideographic * 2 >= run.length ? minimumIdeographicRunLength : minimumRunLength
+    }
+
     /// Whether two words are the same word. The tracks are transcribed by two
     /// independent passes over different audio, so the same spoken word comes
     /// back slightly different — "Wim"/"Bim", "reinbasta"/"reinbasteln" — and
@@ -225,6 +243,26 @@ enum SpeakerBleedFilter {
     struct Token: Equatable {
         var word: String
         var range: Range<String.Index>
+        /// Set for tokens that are a single character of an unspaced script.
+        var isIdeographic = false
+    }
+
+    /// Chinese and Japanese are written without spaces between words. Whether a
+    /// character belongs to one of those scripts decides how the text is cut
+    /// into tokens — Korean is deliberately absent, because Hangul is spaced
+    /// and tokenizes like a Latin script.
+    static func isIdeographic(_ character: Character) -> Bool {
+        guard let scalar = character.unicodeScalars.first else { return false }
+        switch scalar.value {
+        case 0x3040...0x30FF,    // Hiragana and Katakana
+             0x3400...0x4DBF,    // CJK Unified Ideographs Extension A
+             0x4E00...0x9FFF,    // CJK Unified Ideographs
+             0xF900...0xFAFF,    // CJK Compatibility Ideographs
+             0x20000...0x2FA1F:  // Extension B and beyond
+            return true
+        default:
+            return false
+        }
     }
 
     /// Words with their place in the original text, so a trimmed segment can be
@@ -237,8 +275,23 @@ enum SpeakerBleedFilter {
                 index = text.index(after: index)
                 continue
             }
+            // An unspaced script has no word boundaries to split on, so a whole
+            // Mandarin sentence would arrive as one token and no run could ever
+            // reach `minimumRunLength`. Emitting each character separately makes
+            // the run search a character n-gram match, which is the comparison
+            // those scripts need.
+            if isIdeographic(text[index]) {
+                let next = text.index(after: index)
+                tokens.append(Token(word: String(text[index]).lowercased(),
+                                    range: index..<next,
+                                    isIdeographic: true))
+                index = next
+                continue
+            }
             let start = index
-            while index < text.endIndex, text[index].isLetter || text[index].isNumber {
+            while index < text.endIndex,
+                  text[index].isLetter || text[index].isNumber,
+                  !isIdeographic(text[index]) {
                 index = text.index(after: index)
             }
             tokens.append(Token(word: text[start..<index].lowercased(), range: start..<index))
