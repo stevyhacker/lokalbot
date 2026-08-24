@@ -1,3 +1,4 @@
+import CoreAudio
 import XCTest
 @testable import LokalBot
 
@@ -433,4 +434,69 @@ private final class FakeCalendarProvider: CalendarEventProviding {
     }
 
     func meetingCandidates(now: Date) -> [CalendarMeetingCandidate] { candidates }
+
+    // MARK: - Streams that are open for the app's whole lifetime
+
+    /// Measured with Teams launched and idle, 20 samples over 20 s: modulehost
+    /// reported isRunningOutput and isRunningInput true in 20/20 while every
+    /// helper reported false. A process in that state cannot be evidence of a
+    /// call, so the start decision must not read it.
+    func testAlwaysOpenStreamsCarryNoMeetingSignal() {
+        XCTAssertFalse(MeetingDetector.carriesMeetingSignal(
+            bundleID: "com.microsoft.teams2.modulehost"))
+        XCTAssertFalse(MeetingDetector.carriesMeetingSignal(
+            bundleID: "com.microsoft.teams2.MODULEHOST"))
+
+        XCTAssertTrue(MeetingDetector.carriesMeetingSignal(
+            bundleID: "com.microsoft.teams2.helper"))
+        XCTAssertTrue(MeetingDetector.carriesMeetingSignal(bundleID: "com.microsoft.teams2"))
+        // An unknown process is judged by the rest of the rules, not silently
+        // dropped here.
+        XCTAssertTrue(MeetingDetector.carriesMeetingSignal(bundleID: nil))
+    }
+
+    /// Even when it is the very process the app was detected as, an
+    /// always-open stream must not answer "this app has output right now".
+    func testAlwaysOpenStreamIsNotChosenAsTheOutputSignal() {
+        let moduleHost = AudioProcess(id: 500,
+                                      name: "Microsoft Teams ModuleHost",
+                                      bundleID: "com.microsoft.teams2.modulehost",
+                                      objectID: AudioObjectID(500),
+                                      isRunningOutput: true)
+        let app = MeetingDetector.DetectedApp(name: "Teams",
+                                              bundleID: "com.microsoft.teams2",
+                                              pid: moduleHost.id)
+
+        XCTAssertNil(MeetingDetector.bestOutputAudioProcess(for: app, in: [moduleHost]))
+
+        // The host's own stream still counts.
+        let host = AudioProcess(id: 501,
+                                name: "Microsoft Teams",
+                                bundleID: "com.microsoft.teams2",
+                                objectID: AudioObjectID(501),
+                                isRunningOutput: true)
+        XCTAssertEqual(
+            MeetingDetector.bestOutputAudioProcess(for: app, in: [moduleHost, host])?.id,
+            host.id)
+    }
+
+    /// The window only has to cover sound a threshold can actually rule out.
+    /// Reconstructed against the 15 s stop debounce, the short false starts in
+    /// the log ran 0.2 s, 7.6 s and 10.8 s.
+    func testConfirmationWindowCoversTheShortObservedFalseStarts() {
+        let window = MeetingDetector.nativeAudioConfirmationWindow
+        let start = Date(timeIntervalSince1970: 0)
+
+        for observed in [0.2, 7.6, 10.8] where observed < window {
+            XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(
+                firstSeenAt: start,
+                now: start.addingTimeInterval(observed),
+                window: window),
+                "a \(observed)s stream must not confirm a start")
+        }
+        XCTAssertTrue(MeetingMatcher.sustainedAudioConfirmed(
+            firstSeenAt: start,
+            now: start.addingTimeInterval(window),
+            window: window))
+    }
 }

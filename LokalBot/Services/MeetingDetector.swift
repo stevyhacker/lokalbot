@@ -46,10 +46,43 @@ final class MeetingDetector {
     }
 
     /// How long a broad communication app's audio must persist before it counts
-    /// as a meeting start. Merely launching Teams opens an output stream (and
-    /// a message ding does the same); that blip used to start a recording the
-    /// stop debounce then ended half a minute later.
-    static let nativeAudioConfirmationWindow: TimeInterval = 5
+    /// as a meeting start. A message ding or a launch blip opens an output
+    /// stream just as a call does; that blip used to start a recording the stop
+    /// debounce then ended half a minute later.
+    ///
+    /// Ten seconds because that is the top of the range the sound this can
+    /// actually rule out occupies: reconstructed against the 15 s stop
+    /// debounce, the short false starts in the log ran 0.2 s, 7.6 s and 10.8 s.
+    /// It deliberately does not try to cover the two longer ones (21.1 s and
+    /// 48.9 s) — those were an output stream held open while emitting digital
+    /// silence (`peakRMS=0.000000` throughout), which no threshold separates
+    /// from a real call without also refusing to record one. That case is a
+    /// detection-side defect rather than a timing one; see the note on
+    /// `alwaysOpenAudioBundles`.
+    static let nativeAudioConfirmationWindow: TimeInterval = 10
+
+    /// Bundles inside a meeting app's namespace that hold their Core Audio
+    /// streams open for the app's whole lifetime, so their state carries no
+    /// information about whether a call is running.
+    ///
+    /// Measured with Teams launched and idle, 20 samples over 20 s:
+    /// `com.microsoft.teams2.modulehost` reported `isRunningOutput` *and*
+    /// `isRunningInput` true in 20/20, while all three
+    /// `com.microsoft.teams2.helper` processes reported false in 60/60. Any
+    /// detection rule that matches the whole namespace therefore sees Teams as
+    /// permanently in a meeting, and neither a longer window nor the microphone
+    /// can tell the two apart. Capture must still be free to tap these — a tap
+    /// on a silent process simply records nothing until audio starts — so this
+    /// belongs to the detection question alone.
+    static let alwaysOpenAudioBundles: Set<String> = [
+        "com.microsoft.teams2.modulehost",
+    ]
+
+    /// Whether an audio process says anything about a call being under way.
+    static func carriesMeetingSignal(bundleID: String?) -> Bool {
+        guard let bundleID else { return true }
+        return !alwaysOpenAudioBundles.contains(bundleID.lowercased())
+    }
 
     /// Whether this app's audio must survive `nativeAudioConfirmationWindow`
     /// before a recording starts. Dedicated conferencing bundles and
@@ -470,7 +503,8 @@ final class MeetingDetector {
                                        in processes: [AudioProcess]) -> AudioProcess? {
         if browsers.contains(app.bundleID) || app.bundleID == "us.zoom.xos" {
             let matches = processes.filter { process in
-                guard process.isRunningOutput, let bundleID = process.bundleID else { return false }
+                guard process.isRunningOutput, let bundleID = process.bundleID,
+                      carriesMeetingSignal(bundleID: bundleID) else { return false }
                 return audioBundleID(bundleID, belongsTo: app.bundleID)
             }
             // Chrome/Edge/Safari often emit meeting audio from helper processes,
@@ -481,8 +515,11 @@ final class MeetingDetector {
                 ?? matches.first { $0.id == app.pid }
                 ?? matches.first
         }
-        return processes.first { $0.id == app.pid && $0.isRunningOutput }
-            ?? processes.first { $0.isRunningOutput && $0.bundleID == app.bundleID }
+        return processes.first {
+            $0.id == app.pid && $0.isRunningOutput && carriesMeetingSignal(bundleID: $0.bundleID)
+        } ?? processes.first {
+            $0.isRunningOutput && $0.bundleID == app.bundleID
+        }
     }
 
     static func currentOutputAudioProcess(for app: DetectedApp) -> AudioProcess? {
