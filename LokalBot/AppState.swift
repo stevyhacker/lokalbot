@@ -1128,7 +1128,8 @@ final class AppState: ObservableObject {
     /// succeeded, Retry fixes only summarization; missing transcripts still run
     /// the complete pipeline. User-initiated work may download missing models.
     func retryProcessing(_ meeting: Meeting) {
-        let work = ProcessingPipeline.retryWork(for: meeting, storage: storage)
+        let work = ProcessingPipeline.retryWork(
+            for: meeting, storage: storage, autoSummarize: settings.autoSummarize)
         reprocess(meeting, transcribe: work.transcribe, summarize: work.summarize)
     }
 

@@ -91,15 +91,26 @@ final class ProcessingPipeline: ObservableObject {
     /// A completed transcript is the durable boundary between the expensive
     /// ASR stage and summarization. Row-level Retry can safely resume after it
     /// instead of re-transcribing audio that already succeeded.
+    ///
+    /// Retry repeats the work the meeting was enqueued for, so it follows
+    /// `autoSummarize`: someone who records transcript-only never asked for a
+    /// summary, and Retry hardcoding one produced a surprise summarization run
+    /// after a failed transcribe-only attempt.
     nonisolated static func retryWork(
         for meeting: Meeting,
-        storage: StorageManager
+        storage: StorageManager,
+        autoSummarize: Bool
     ) -> RetryWork {
         let transcriptURL = meeting.folderURL(in: storage)
             .appendingPathComponent("transcript.json")
+        let needsTranscript = !FileManager.default.fileExists(atPath: transcriptURL.path)
+        // With summaries off and a transcript already on disk there is no
+        // later stage left to resume, and a Retry that requests nothing would
+        // just clear the badge. Re-run ASR — the only work such a library
+        // has — rather than quietly turning Retry into "summarize".
         return RetryWork(
-            transcribe: !FileManager.default.fileExists(atPath: transcriptURL.path),
-            summarize: true)
+            transcribe: needsTranscript || !autoSummarize,
+            summarize: autoSummarize)
     }
 
     /// Injectable model-readiness checks so unit tests can exercise the
@@ -153,21 +164,53 @@ final class ProcessingPipeline: ObservableObject {
         self.automationReadiness = automationReadiness
     }
 
+    /// One job's requested work, and how a fresh enqueue combines with work
+    /// already queued or parked for the same meeting.
+    struct Work: Equatable {
+        var transcribe: Bool
+        var summarize: Bool
+    }
+
+    /// Transcription merges by OR — it is the prerequisite for everything
+    /// downstream, so a pending one must never be dropped. Summarization does
+    /// not: it is the discretionary half, and OR-ing it let a queued job
+    /// silently upgrade an explicit "Transcribe" click into "Transcribe &
+    /// Summarize". A user-initiated enqueue states the summary intent
+    /// outright and the older job defers to it; automatic work still merges,
+    /// so a parked summary survives an auto re-enqueue. Pure, so the
+    /// escalation rule is testable without a live queue.
+    nonisolated static func merged(pending: Work, incoming: Work,
+                                   origin: JobOrigin) -> Work {
+        Work(
+            transcribe: pending.transcribe || incoming.transcribe,
+            summarize: origin == .userInitiated
+                ? incoming.summarize
+                : pending.summarize || incoming.summarize)
+    }
+
     func enqueue(_ meeting: Meeting, transcribe: Bool = true, summarize: Bool = true,
                  origin: JobOrigin = .userInitiated) {
         // A fresh enqueue supersedes a parked waiting-for-models job: merge its
         // requested work so the new attempt (and its origin) covers both.
-        var transcribe = transcribe
-        var summarize = summarize
+        var work = Work(transcribe: transcribe, summarize: summarize)
         if let waitingIndex = waitingForModelsJobs.firstIndex(
             where: { $0.meeting.id == meeting.id }) {
             let waiting = waitingForModelsJobs.remove(at: waitingIndex)
-            transcribe = transcribe || waiting.transcribe
-            summarize = summarize || waiting.summarize
+            work = Self.merged(
+                pending: .init(transcribe: waiting.transcribe, summarize: waiting.summarize),
+                incoming: work,
+                origin: origin)
         }
+        let transcribe = work.transcribe
+        let summarize = work.summarize
         if let index = queue.firstIndex(where: { $0.meeting.id == meeting.id }) {
-            let mergedTranscribe = queue[index].transcribe || transcribe
-            let mergedSummarize = queue[index].summarize || summarize
+            let coalesced = Self.merged(
+                pending: .init(transcribe: queue[index].transcribe,
+                               summarize: queue[index].summarize),
+                incoming: work,
+                origin: origin)
+            let mergedTranscribe = coalesced.transcribe
+            let mergedSummarize = coalesced.summarize
             if let jobStore,
                !jobStore.enqueue(
                     meetingID: meeting.id,
@@ -180,7 +223,9 @@ final class ProcessingPipeline: ObservableObject {
             queue[index].summarize = mergedSummarize
             queue[index].resumed = false
             if origin == .userInitiated { queue[index].origin = .userInitiated }
-            lokalbotLog("pipeline coalesced queued meeting=\(meeting.id)")
+            lokalbotLog(
+                "pipeline coalesced queued meeting=\(meeting.id) "
+                    + "transcribe=\(mergedTranscribe) summarize=\(mergedSummarize)")
             return
         }
         guard activeMeetingID != meeting.id else {
@@ -195,6 +240,9 @@ final class ProcessingPipeline: ObservableObject {
         }
         queue.append(Job(meeting: meeting, transcribe: transcribe, summarize: summarize,
                          origin: origin))
+        lokalbotLog(
+            "pipeline enqueued meeting=\(meeting.id) transcribe=\(transcribe) "
+                + "summarize=\(summarize) origin=\(origin == .userInitiated ? "user" : "auto")")
         stages[meeting.id] = .queued
         drain()
     }

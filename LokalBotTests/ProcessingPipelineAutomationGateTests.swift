@@ -132,6 +132,42 @@ final class ProcessingPipelineAutomationGateTests: XCTestCase {
                        "the parked copy must not linger after an explicit retry")
     }
 
+    /// Pressing "Transcribe" must stay transcribe-only even when a job for the
+    /// same meeting is already queued or parked asking for a summary.
+    func testUserInitiatedEnqueueDoesNotInheritAQueuedSummary() {
+        let pending = ProcessingPipeline.Work(transcribe: true, summarize: true)
+
+        let user = ProcessingPipeline.merged(
+            pending: pending,
+            incoming: .init(transcribe: true, summarize: false),
+            origin: .userInitiated)
+
+        XCTAssertEqual(user, .init(transcribe: true, summarize: false))
+    }
+
+    /// The opposite direction still merges: automatic re-enqueues (launch
+    /// resume, a model finishing its download) must not drop a parked summary.
+    func testAutomaticEnqueueStillMergesPendingWork() {
+        let automatic = ProcessingPipeline.merged(
+            pending: .init(transcribe: false, summarize: true),
+            incoming: .init(transcribe: true, summarize: false),
+            origin: .automatic)
+
+        XCTAssertEqual(automatic, .init(transcribe: true, summarize: true))
+    }
+
+    /// Transcription is the prerequisite for everything downstream, so it
+    /// merges by OR regardless of who asked: "Re-summarize" on a meeting whose
+    /// transcript is still queued must not cancel that transcription.
+    func testTranscriptionIsNeverDroppedByAUserChoice() {
+        let work = ProcessingPipeline.merged(
+            pending: .init(transcribe: true, summarize: false),
+            incoming: .init(transcribe: false, summarize: true),
+            origin: .userInitiated)
+
+        XCTAssertEqual(work, .init(transcribe: true, summarize: true))
+    }
+
     func testRetryWorkResumesAfterExistingTranscript() throws {
         let root = try makeRoot()
         let storage = StorageManager(rootURL: root)
@@ -140,7 +176,8 @@ final class ProcessingPipelineAutomationGateTests: XCTestCase {
 
         let missingTranscript = ProcessingPipeline.retryWork(
             for: meeting,
-            storage: storage)
+            storage: storage,
+            autoSummarize: true)
         XCTAssertEqual(
             missingTranscript,
             .init(transcribe: true, summarize: true))
@@ -153,10 +190,32 @@ final class ProcessingPipelineAutomationGateTests: XCTestCase {
 
         let existingTranscript = ProcessingPipeline.retryWork(
             for: meeting,
-            storage: storage)
+            storage: storage,
+            autoSummarize: true)
         XCTAssertEqual(
             existingTranscript,
             .init(transcribe: false, summarize: true))
+    }
+
+    /// Retry must never invent a summarization run for a library that records
+    /// transcripts only — it re-runs ASR instead.
+    func testRetryWorkNeverSummarizesWhenAutoSummarizeIsOff() throws {
+        let root = try makeRoot()
+        let storage = StorageManager(rootURL: root)
+        let meeting = makeMeeting()
+        let folder = meeting.folderURL(in: storage)
+        try FileManager.default.createDirectory(
+            at: folder,
+            withIntermediateDirectories: true)
+        try Data("{}".utf8).write(
+            to: folder.appendingPathComponent("transcript.json"))
+
+        let work = ProcessingPipeline.retryWork(
+            for: meeting,
+            storage: storage,
+            autoSummarize: false)
+
+        XCTAssertEqual(work, .init(transcribe: true, summarize: false))
     }
 
     func testAutomaticSummaryParksButKeepsExistingTranscript() async throws {
