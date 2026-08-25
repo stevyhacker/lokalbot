@@ -7,7 +7,7 @@ import Foundation
 @MainActor
 final class ProcessingPipeline: ObservableObject {
 
-    typealias BuiltInModelPreparer = (ModelCatalog.Entry, StorageManager) async throws -> URL
+    typealias BuiltInModelPreparer = ThinkExecution.BuiltInModelPreparer
 
     enum Stage: Equatable {
         case queued
@@ -119,7 +119,7 @@ final class ProcessingPipeline: ObservableObject {
 
     private let storage: StorageManager
     private let settings: () -> AppSettings
-    private let builtInModelPreparer: BuiltInModelPreparer
+    let thinkExecution: ThinkExecution
     private let automationReadiness: AutomationReadiness
     /// In-memory work list; `jobStore` mirrors it on disk so a crash mid-queue
     /// loses nothing — see `resumePending(meetings:)`.
@@ -139,6 +139,7 @@ final class ProcessingPipeline: ObservableObject {
 
     init(storage: StorageManager, jobStore: PipelineJobStore? = nil,
          settings: @escaping () -> AppSettings,
+         thinkExecution: ThinkExecution? = nil,
          builtInModelPreparer: @escaping BuiltInModelPreparer = { entry, storage in
              try await ModelDownloadManager.shared.ensureAvailable(entry, storage: storage)
          },
@@ -146,7 +147,9 @@ final class ProcessingPipeline: ObservableObject {
         self.storage = storage
         self.jobStore = jobStore
         self.settings = settings
-        self.builtInModelPreparer = builtInModelPreparer
+        self.thinkExecution = thinkExecution ?? ThinkExecution(
+            storage: storage,
+            builtInModelPreparer: builtInModelPreparer)
         self.automationReadiness = automationReadiness
     }
 
@@ -383,7 +386,7 @@ final class ProcessingPipeline: ObservableObject {
                 }
                 if config.summarizerBackend == .builtIn {
                     stages[meeting.id] = .preparingSummaryModel
-                    _ = try await prepareBuiltInModel(config)
+                    _ = try await thinkExecution.prepareBuiltInModel(config)
                 }
                 stages[meeting.id] = .summarizing
                 var transcript = try loadTranscript(from: folder)
@@ -417,17 +420,10 @@ final class ProcessingPipeline: ObservableObject {
                     do {
                         summary = try await summarize(transcript, meeting: meeting, config: config)
                     } catch {
-                        // The built-in engine has already health-checked,
-                        // relaunched, and replayed once inside LeasedTextEngine.
-                        // Do not turn one exhausted recovery into four process
-                        // starts through this provider-level retry as well.
-                        if config.summarizerBackend == .builtIn,
-                           let engineError = error as? TextEngineError,
-                           case .serverUnreachable = engineError {
-                            throw error
-                        }
-                        guard let delay = TextEngineRetryPolicy.delay(
-                            for: error, attempt: 0) else { throw error }
+                        guard let delay = thinkExecution.retryDelay(
+                            for: error,
+                            settings: config,
+                            attempt: 0) else { throw error }
                         // One bounded retry for transient network, rate-limit,
                         // or server failures. Deterministic 4xx/schema/payload
                         // failures surface immediately instead of doubling work.
@@ -664,7 +660,7 @@ final class ProcessingPipeline: ObservableObject {
     private func summarize(_ transcript: Transcript, meeting: Meeting,
                            config: AppSettings) async throws -> String {
         let started = Date()
-        let engine = try await makeTextEngine(config)
+        let engine = try await thinkExecution.makeTextEngine(config)
         let wordCount = transcript.languageDetectionText
             .split(whereSeparator: { $0.isWhitespace }).count
         // Resolve `.matchTranscript` against raw spoken text now so both the
@@ -718,7 +714,7 @@ final class ProcessingPipeline: ObservableObject {
                                  config: AppSettings) async {
         do {
             try Task.checkCancellation()
-            let engine = try await makeTextEngine(config)
+            let engine = try await thinkExecution.makeTextEngine(config)
             let userSpeakerLabel = transcript.displaySpeaker(for: "me")
             let output = try await engine.generate(
                 system: OutcomesExtractor.systemPrompt(userSpeakerLabel: userSpeakerLabel),
@@ -784,7 +780,9 @@ final class ProcessingPipeline: ObservableObject {
         } else {
             do {
                 try Task.checkCancellation()
-                let engine = try await makeTextEngine(config, purpose: "day digest")
+                let engine = try await thinkExecution.makeTextEngine(
+                    config,
+                    purpose: "day digest")
                 overview = try await generateDayOverview(
                     evidence: evidence,
                     engine: engine,
@@ -845,7 +843,8 @@ final class ProcessingPipeline: ObservableObject {
                 startedAt: meeting.startedAt,
                 endedAt: endedAt,
                 sourceSummary: sourceSummary,
-                outcomes: outcomes)
+                outcomes: outcomes,
+                artifactModifiedAt: DayDigestMeetingArtifacts.latestModifiedAt(in: folder))
         }
     }
 
@@ -872,88 +871,12 @@ final class ProcessingPipeline: ObservableObject {
         return lines.joined(separator: "\n")
     }
 
-    func makeTextEngine(_ config: AppSettings, server: LlamaServer = .shared,
-                        priority: InferencePriority = .background,
-                        purpose: String = "summary",
-                        broker: InferenceBroker = .shared) async throws -> TextEngine {
-        switch config.summarizerBackend {
-        case .builtIn:
-            guard let entry = ModelCatalog.entry(id: config.builtInModelID,
-                                                 custom: config.customBuiltInModels)
-                    ?? ModelCatalog.entry(id: ModelCatalog.recommendedSummarizationID) else {
-                throw PipelineError.badServerURL
-            }
-            let modelURL = try await prepareBuiltInModel(config)
-            let authenticationToken = await server.authenticationToken()
-            let engine = OpenAICompatibleEngine(
-                baseURL: server.baseURL,
-                model: entry.id,
-                apiKey: authenticationToken,
-                extraBody: MainLLMRuntimePolicy.requestOverrides(for: entry.id),
-                chatDialect: .llamaServer,
-                defaultThinkingBudgetTokens:
-                    MainLLMRuntimePolicy.highReasoningBudgetTokens,
-                displayNameOverride: "Built-in — \(entry.displayName)")
-            guard let role = InferenceRole(serverPort: server.port) else {
-                // A LlamaServer outside the broker's three roles (never true
-                // today) keeps the legacy boot-at-creation path.
-                try await server.ensureRunning(modelAt: modelURL)
-                return engine
-            }
-            // The server boots on the first generate call, under a lease that
-            // pins it for the duration of each request.
-            return LeasedTextEngine(base: engine, broker: broker, role: role,
-                                    modelURL: modelURL, priority: priority,
-                                    purpose: purpose)
-        case .appleIntelligence:
-            if case .unavailable(let reason) = FoundationModelAvailability.current() {
-                throw TextEngineError.unavailable(reason)
-            }
-            return AppleIntelligenceEngine()
-        case .ollama:
-            guard let url = URL(string: config.ollamaBaseURL) else { throw PipelineError.badServerURL }
-            try InferenceEndpointPolicy.validate(
-                url, approvedOrigins: config.approvedRemoteInferenceOrigins)
-            var model = config.ollamaModel
-            if model.isEmpty {
-                // Zero-config: a running Ollama with any model just works.
-                model = await OllamaEngine.listModels(baseURL: url).first ?? ""
-            }
-            return OllamaEngine(baseURL: url, model: model)
-        case .openAICompatible:
-            guard let url = URL(string: config.openAIBaseURL) else { throw PipelineError.badServerURL }
-            try InferenceEndpointPolicy.validate(
-                url, approvedOrigins: config.approvedRemoteInferenceOrigins)
-            return OpenAICompatibleEngine(
-                baseURL: url,
-                model: config.openAIModel,
-                apiKey: config.openAIAPIKey,
-                chatDialect: .inferred(from: url))
-        }
-    }
-
-    /// Ensure the selected built-in model is present before the first request.
-    /// `ModelDownloadManager` coalesces UI/prewarm/pipeline callers onto one
-    /// download, so the first recap waits for preparation instead of failing.
-    @discardableResult
-    func prepareBuiltInModel(_ config: AppSettings) async throws -> URL {
-        guard let entry = ModelCatalog.entry(id: config.builtInModelID,
-                                             custom: config.customBuiltInModels)
-                ?? ModelCatalog.entry(id: ModelCatalog.recommendedSummarizationID) else {
-            throw PipelineError.badServerURL
-        }
-        // The preparer also validates legacy on-disk models. Bypassing it for a
-        // GGUF header match would skip the newly pinned SHA-256 digest.
-        return try await builtInModelPreparer(entry, storage)
-    }
-
     enum PipelineError: LocalizedError {
-        case noAudio, noTranscript, badServerURL
+        case noAudio, noTranscript
         var errorDescription: String? {
             switch self {
             case .noAudio: "No audio tracks found in the meeting folder."
             case .noTranscript: "No transcript yet — transcribe the meeting first."
-            case .badServerURL: "Invalid LLM server URL in Settings → Models."
             }
         }
     }

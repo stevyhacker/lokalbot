@@ -32,6 +32,7 @@ final class AgentSessionController: ObservableObject {
     private let runtimeRoot: URL
     private let sessionsDirectory: URL
     private let broker: InferenceBroker
+    private let thinkExecution: ThinkExecution
     private let makeTransport: ((PiLaunchPlan) async throws -> PiLineTransport)?
     private let accessGate: AgentAccessGate
 
@@ -63,6 +64,7 @@ final class AgentSessionController: ObservableObject {
          runtimeRoot: URL = AgentRuntimeLayout.defaultRoot,
          sessionsDirectory: URL = AgentRuntimeLayout.sessionsDirectory,
          broker: InferenceBroker = .shared,
+         thinkExecution: ThinkExecution? = nil,
          accessGate: AgentAccessGate? = nil,
          makeTransport: ((PiLaunchPlan) async throws -> PiLineTransport)? = nil) {
         self.settings = settings
@@ -70,6 +72,7 @@ final class AgentSessionController: ObservableObject {
         self.runtimeRoot = runtimeRoot
         self.sessionsDirectory = sessionsDirectory
         self.broker = broker
+        self.thinkExecution = thinkExecution ?? ThinkExecution(storage: storage)
         self.accessGate = accessGate ?? AgentAccessGate(root: storage.rootURL)
         self.makeTransport = makeTransport
         self.workspace = storage.rootURL
@@ -321,30 +324,12 @@ final class AgentSessionController: ObservableObject {
     // MARK: - Endpoint + plan
 
     private func resolveEndpoint() async throws -> AgentLLMEndpoint {
-        switch AgentLLMEndpointResolver.resolve(settings: settings()) {
-        case .ready(let endpoint):
-            return endpoint
-        case .builtIn(let modelID):
-            guard let entry = ModelCatalog.entry(id: modelID, custom: settings().customBuiltInModels)
-                    ?? ModelCatalog.entry(id: modelID) else {
-                throw StartError.modelConfiguration("The built-in model isn't downloaded yet. Download it under Settings → Models.")
-            }
-            guard let modelURL = await ModelDownloadManager.shared.verifiedExistingURL(
-                entry, storage: storage) else {
-                throw StartError.modelConfiguration("The built-in model isn't downloaded yet. Download it under Settings → Models.")
-            }
-            releaseLLMLease()
-            llmLease = try await broker.lease(.mainLLM, model: modelURL,
-                                              priority: .interactive,
-                                              purpose: "agent session")
-            let authenticationToken = await LlamaServer.shared.authenticationToken()
-            return AgentLLMEndpoint(baseURL: LlamaServer.shared.baseURL,
-                                    model: entry.id,
-                                    contextTokens: AgentLLMEndpoint.defaultContextTokens,
-                                    apiKey: authenticationToken)
-        case .unsupported(let reason):
-            throw StartError.modelConfiguration(reason)
-        }
+        releaseLLMLease()
+        let connection = try await thinkExecution.prepareAgentConnection(
+            settings: settings(),
+            broker: broker)
+        llmLease = connection.lease
+        return connection.endpoint
     }
 
     private func makePlan(endpoint: AgentLLMEndpoint, capabilityToken: String?) -> PiLaunchPlan {
@@ -498,7 +483,7 @@ final class AgentSessionController: ObservableObject {
         revokeAccessCapability()
         releaseLLMLease()
         state = .failed(Self.message(for: error))
-        if case StartError.modelConfiguration = error {
+        if case ThinkExecutionError.agentConfiguration = error {
             recoveryAction = .openModels
         } else {
             recoveryAction = .restart
@@ -664,11 +649,9 @@ final class AgentSessionController: ObservableObject {
         }
     }
 
-    enum StartError: Error { case modelConfiguration(String) }
-
     private static func message(for error: Error) -> String {
         switch error {
-        case StartError.modelConfiguration(let reason): return reason
+        case ThinkExecutionError.agentConfiguration(let reason): return reason
         case PiProcessError.executableNotFound:
             return "The agent runtime isn't installed. Enable Agent Mode to download it."
         case PiRPCError.transportClosed:

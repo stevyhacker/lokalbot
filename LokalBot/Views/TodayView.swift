@@ -227,11 +227,33 @@ struct TodayView: View {
 
     @ViewBuilder private func dreamInferenceNotice(_ dream: DreamReport) -> some View {
         if dream.isFallback {
-            Label(
-                dream.provenanceDescription + " Dream again from Settings → Recording.",
-                systemImage: "exclamationmark.triangle")
-                .font(.caption)
-                .foregroundStyle(Brand.error)
+            HStack(alignment: .center, spacing: 12) {
+                Label(dream.provenanceDescription, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(Brand.error)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if TodayDreamSelection.isRetryableFailure(
+                    dream, referenceDate: model.day
+                ) {
+                    Button {
+                        app.dreamNow()
+                    } label: {
+                        if app.dreaming.isDreaming {
+                            LoadingStateLabel("Dreaming…", font: .caption)
+                        } else {
+                            Label("Dream again", systemImage: "arrow.clockwise")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .fixedSize()
+                    .disabled(app.dreaming.isDreaming || !app.libraryReady)
+                    .help(app.libraryReady
+                          ? "Retry yesterday's dream with the configured Main LLM"
+                          : "Preparing your meeting library")
+                    .accessibilityIdentifier("today.dream.retry")
+                }
+            }
         } else if dream.inferenceProvenance?.location == .remote {
             Label("Generated using approved remote inference", systemImage: "network")
                 .font(.caption)
@@ -460,6 +482,19 @@ enum TodayDreamSelection {
     ) -> Bool {
         let yesterday = DreamScheduler.previousDay(of: referenceDate, calendar: calendar)
         return report.day == DreamDay.key(for: yesterday, calendar: calendar)
+    }
+
+    /// Only a current evidence-only brief caused by model generation deserves
+    /// an inline retry. Empty days have nothing to regenerate, and retrying an
+    /// older card would silently replace yesterday's report instead.
+    static func isRetryableFailure(
+        _ report: DreamReport,
+        referenceDate: Date,
+        calendar: Calendar = .current
+    ) -> Bool {
+        guard report.isFallback,
+              report.fallbackReason != .emptyDay else { return false }
+        return isCurrent(report, referenceDate: referenceDate, calendar: calendar)
     }
 
     /// A brief from yesterday earns "Priorities for today"; anything older is

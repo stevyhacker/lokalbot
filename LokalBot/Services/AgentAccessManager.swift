@@ -128,7 +128,7 @@ final class AgentAccessManager: ObservableObject {
         settings: AppSettings,
         storage: StorageManager
     ) async -> ResolvedBuiltInModel {
-        switch AgentLLMEndpointResolver.resolve(settings: settings) {
+        switch ThinkExecution.agentResolution(settings: settings) {
         case .builtIn(let modelID):
             guard let entry = ModelCatalog.entry(
                 id: modelID,

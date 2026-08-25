@@ -169,13 +169,12 @@ final class DreamScheduler: ObservableObject {
         start(target: target, advancesScanCursor: true)
     }
 
-    /// Manual run from Settings: ignores the hour, the existing report (the
-    /// day is re-dreamed and its files replaced), and the downtime gate — the
-    /// user explicitly asked. Still one dream at a time.
+    /// Manual run from a user action: ignores whether overnight automation is
+    /// enabled, the hour, the existing report (the day is re-dreamed and its
+    /// files replaced), and the downtime gate. Still one dream at a time.
     func dreamNow() {
         guard dreamTask == nil,
-              let configuration,
-              configuration.enabled,
+              configuration != nil,
               dream != nil else { return }
         let calendar = calendarSnapshot()
         let day = Self.previousDay(of: now(), calendar: calendar)
