@@ -580,7 +580,11 @@ final class AppState: ObservableObject {
     private var indexCleanupTasks: [Meeting.ID: (token: UUID, task: Task<Void, Never>)] = [:]
     private var deletedMeetingIDs: Set<Meeting.ID> = []
     @Published private(set) var libraryReady = false
-    private var pendingRecordingStart: (context: MeetingDetectionContext?, source: String)?
+    private var pendingRecordingStart: (
+        context: MeetingDetectionContext?,
+        source: String,
+        systemAudioPolicy: RecordingSystemAudioPolicy
+    )?
     private lazy var searchIndexWorkQueue = SearchIndexWorkQueue(
         databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"),
         rootURL: storage.rootURL)
@@ -589,18 +593,25 @@ final class AppState: ObservableObject {
     var isRecording: Bool { recording.isRecording }
     var currentMeeting: Meeting? { recording.currentMeeting }
 
-    func startRecording(context: MeetingDetectionContext? = nil, source: String = "ui") {
+    func startRecording(
+        context: MeetingDetectionContext? = nil,
+        source: String = "ui",
+        systemAudioPolicy: RecordingSystemAudioPolicy = .meetingAppWhenAvailable
+    ) {
         RecordingNotifier.shared.invalidateMeetingDetections()
         guard !dictation.isStarting, !dictation.state.isWorking else {
             lastError = "Finish or cancel dictation before starting a meeting recording."
             return
         }
         guard libraryReady else {
-            pendingRecordingStart = (context, source)
+            pendingRecordingStart = (context, source, systemAudioPolicy)
             lastError = "Preparing your meeting library; recording will start when it is ready."
             return
         }
-        recording.start(context: context, source: source)
+        recording.start(
+            context: context,
+            source: source,
+            systemAudioPolicy: systemAudioPolicy)
     }
 
     func stopRecording(process: Bool = true) {
@@ -875,7 +886,10 @@ final class AppState: ObservableObject {
             if let pending = self.pendingRecordingStart {
                 self.pendingRecordingStart = nil
                 self.lastError = nil
-                self.startRecording(context: pending.context, source: pending.source)
+                self.startRecording(
+                    context: pending.context,
+                    source: pending.source,
+                    systemAudioPolicy: pending.systemAudioPolicy)
             }
         }
     }

@@ -40,6 +40,9 @@ final class SystemAudioRecorder {
     private var tapFormat: AVAudioFormat?
     private var outputURL: URL?
     private var framesWritten: AVAudioFramePosition = 0
+    /// Frames delivered by the current tap only. Recovery padding deliberately
+    /// does not advance this counter, so zero identifies a dead attachment.
+    private var framesSinceAttach: AVAudioFramePosition = 0
     private var audibleFramesWritten: AVAudioFramePosition = 0
     private var recordingSampleRate: Double = 0
     private var lastAudioWriteAt: Date?
@@ -75,6 +78,7 @@ final class SystemAudioRecorder {
     struct CaptureHealth {
         let duration: TimeInterval
         let audibleDuration: TimeInterval
+        let framesSinceAttach: AVAudioFramePosition
         let lastAudioWriteAt: Date?
         let lastAudibleWriteAt: Date?
         let capturedPID: pid_t
@@ -97,6 +101,7 @@ final class SystemAudioRecorder {
             let startedInstant = ContinuousClock.now
             ioQueue.sync {
                 framesWritten = 0
+                framesSinceAttach = 0
                 audibleFramesWritten = 0
                 recordingSampleRate = 0
                 lastAudioWriteAt = nil
@@ -130,6 +135,7 @@ final class SystemAudioRecorder {
             throw RecorderError.processNotFound
         }
         teardownTap()
+        ioQueue.sync { framesSinceAttach = 0 }
         do {
             try appendRecoverySilence(
                 until: ContinuousClock.now,
@@ -155,6 +161,7 @@ final class SystemAudioRecorder {
                 : 0
             return CaptureHealth(duration: duration,
                                  audibleDuration: audibleDuration,
+                                 framesSinceAttach: framesSinceAttach,
                                  lastAudioWriteAt: lastAudioWriteAt,
                                  lastAudibleWriteAt: lastAudibleWriteAt,
                                  capturedPID: capturedPID,
@@ -261,6 +268,7 @@ final class SystemAudioRecorder {
                     let now = Date()
                     let nowInstant = ContinuousClock.now
                     self.framesWritten += AVAudioFramePosition(copy.frameLength)
+                    self.framesSinceAttach += AVAudioFramePosition(copy.frameLength)
                     self.lastAudioWriteAt = now
                     self.lastAudioWriteInstant = nowInstant
                     self.lastRMSLevel = rmsLevel
@@ -346,6 +354,7 @@ final class SystemAudioRecorder {
         capturedPID = 0
         ioQueue.sync {
             framesWritten = 0
+            framesSinceAttach = 0
             audibleFramesWritten = 0
             recordingSampleRate = 0
             lastAudioWriteAt = nil

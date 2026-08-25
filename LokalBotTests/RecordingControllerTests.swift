@@ -23,6 +23,13 @@ final class RecordingControllerTests: XCTestCase {
             onMeetingFinished: { _ in XCTFail("no meeting should finish") })
     }
 
+    private var teamsApp: MeetingDetector.DetectedApp {
+        MeetingDetector.DetectedApp(
+            name: "Teams",
+            bundleID: "com.microsoft.teams2",
+            pid: 100)
+    }
+
     func testStartsIdleWithZeroElapsedTimer() {
         let controller = makeController()
 
@@ -62,5 +69,58 @@ final class RecordingControllerTests: XCTestCase {
 
         XCTAssertFalse(controller.isRecording)
         XCTAssertNil(controller.currentMeeting)
+    }
+
+    func testMicrophoneOnlyPolicyNeverResolvesASystemAudioApp() {
+        var fallbackWasCalled = false
+
+        let app = RecordingSystemAudioPolicy.microphoneOnly.captureApp(
+            detectedApp: teamsApp,
+            fallback: {
+                fallbackWasCalled = true
+                return teamsApp
+            })
+
+        XCTAssertNil(app)
+        XCTAssertFalse(fallbackWasCalled)
+        XCTAssertEqual(HeadlessCommandRunner.recordSystemAudioPolicy, .microphoneOnly)
+    }
+
+    func testMeetingAudioPolicyUsesFallbackOnlyWhenNoAppWasDetected() {
+        var fallbackCalls = 0
+        let policy = RecordingSystemAudioPolicy.meetingAppWhenAvailable
+
+        XCTAssertEqual(policy.captureApp(
+            detectedApp: teamsApp,
+            fallback: {
+                fallbackCalls += 1
+                return nil
+            }), teamsApp)
+        XCTAssertEqual(fallbackCalls, 0)
+
+        XCTAssertEqual(policy.captureApp(
+            detectedApp: nil,
+            fallback: {
+                fallbackCalls += 1
+                return teamsApp
+            }), teamsApp)
+        XCTAssertEqual(fallbackCalls, 1)
+    }
+
+    func testZeroBufferAttachmentExcludesCurrentPIDFromRecovery() {
+        XCTAssertEqual(SystemAudioRecoveryCandidatePolicy.excludedPID(
+            currentPID: 200,
+            framesSinceAttach: 0), 200)
+        XCTAssertNil(SystemAudioRecoveryCandidatePolicy.excludedPID(
+            currentPID: 200,
+            framesSinceAttach: 1))
+        XCTAssertTrue(SystemAudioRecoveryCandidatePolicy.shouldRetrySamePID(
+            framesSinceAttach: 0,
+            audibleDuration: 30,
+            minimumAudibleDuration: 1))
+        XCTAssertFalse(SystemAudioRecoveryCandidatePolicy.shouldRetrySamePID(
+            framesSinceAttach: 1,
+            audibleDuration: 30,
+            minimumAudibleDuration: 1))
     }
 }

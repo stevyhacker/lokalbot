@@ -133,14 +133,14 @@ final class AudioSourceMonitorTests: XCTestCase {
                        helper.id)
     }
 
-    /// Measured on a real Teams call: audio comes from `<host>.helper` (the
-    /// WebView) *and* `<host>.modulehost`, and the WebView is running output
-    /// only part of the time. Matching just `.helper` therefore still loses the
-    /// tap most of the time, so the whole `<host>.` namespace has to count —
-    /// the same rule the `us.zoom.xos.` branch already applies.
-    func testNativeAppCaptureAcceptsAnyBundleInTheHostNamespace() {
+    /// Teams' modulehost keeps its stream open even while Teams is idle. That
+    /// makes it a useful tap target but unusable as evidence that a call exists.
+    func testAlwaysOpenNamespaceProcessIsCaptureOnly() {
+        MeetingDetector.resetCaptureTargetMemory()
         XCTAssertTrue(MeetingDetector.audioBundleID(
             "com.microsoft.teams2.modulehost", belongsTo: "com.microsoft.teams2"))
+        XCTAssertFalse(MeetingDetector.carriesMeetingSignal(
+            bundleID: "com.microsoft.teams2.modulehost"))
 
         let host = AudioProcess(id: 100,
                                 name: "Microsoft Teams",
@@ -156,9 +156,9 @@ final class AudioSourceMonitorTests: XCTestCase {
                                               bundleID: "com.microsoft.teams2",
                                               pid: host.id)
 
-        XCTAssertEqual(
-            MeetingDetector.bestOutputAudioProcess(for: app, in: [host, moduleHost])?.id,
-            moduleHost.id)
+        XCTAssertNil(MeetingDetector.bestOutputAudioProcess(for: app, in: [host, moduleHost]))
+        XCTAssertEqual(MeetingDetector.captureTargetProcess(
+            for: app, in: [host, moduleHost])?.id, moduleHost.id)
     }
 
     /// Measured on a real Teams call: `translatePIDToProcessObject` fails for
@@ -191,13 +191,14 @@ final class AudioSourceMonitorTests: XCTestCase {
             quietModuleHost.id)
     }
 
-    /// A process that *is* producing output still wins over a silent sibling.
+    /// A process carrying a real meeting signal still wins over an always-open
+    /// sibling that is valid for capture but ignored by detection.
     func testCaptureTargetPrefersTheProcessThatIsActuallyEmitting() {
-        let quiet = AudioProcess(id: 300,
-                                 name: "Microsoft Teams ModuleHost",
-                                 bundleID: "com.microsoft.teams2.modulehost",
-                                 objectID: AudioObjectID(300),
-                                 isRunningOutput: false)
+        let alwaysOpen = AudioProcess(id: 300,
+                                      name: "Microsoft Teams ModuleHost",
+                                      bundleID: "com.microsoft.teams2.modulehost",
+                                      objectID: AudioObjectID(300),
+                                      isRunningOutput: true)
         let emitting = AudioProcess(id: 400,
                                     name: "Microsoft Teams WebView",
                                     bundleID: "com.microsoft.teams2.helper",
@@ -208,7 +209,7 @@ final class AudioSourceMonitorTests: XCTestCase {
                                               pid: 100)
 
         XCTAssertEqual(
-            MeetingDetector.captureTargetProcess(for: app, in: [quiet, emitting])?.id,
+            MeetingDetector.captureTargetProcess(for: app, in: [alwaysOpen, emitting])?.id,
             emitting.id)
     }
 
@@ -225,6 +226,38 @@ final class AudioSourceMonitorTests: XCTestCase {
                                               pid: 100)
 
         XCTAssertNil(MeetingDetector.captureTargetProcess(for: app, in: [unrelated]))
+    }
+
+    /// A tap that delivered zero buffers must not be selected again on the
+    /// recovery pass; another process in the namespace gets a chance instead.
+    func testCaptureTargetCanExcludeADeadCurrentProcessForRecovery() {
+        MeetingDetector.resetCaptureTargetMemory()
+        let dead = AudioProcess(id: 200,
+                                name: "Microsoft Teams WebView",
+                                bundleID: "com.microsoft.teams2.helper",
+                                objectID: AudioObjectID(200),
+                                isRunningOutput: false)
+        let replacement = AudioProcess(id: 300,
+                                       name: "Microsoft Teams WebView",
+                                       bundleID: "com.microsoft.teams2.helper",
+                                       objectID: AudioObjectID(300),
+                                       isRunningOutput: false)
+        let app = MeetingDetector.DetectedApp(name: "Teams",
+                                              bundleID: "com.microsoft.teams2",
+                                              pid: 100)
+
+        XCTAssertEqual(MeetingDetector.captureTargetProcess(
+            for: app, in: [replacement, dead])?.id, dead.id)
+        XCTAssertEqual(MeetingDetector.captureTargetProcess(
+            for: app,
+            in: [replacement, dead],
+            excludingPID: dead.id)?.id, replacement.id)
+        XCTAssertNil(MeetingDetector.captureTargetProcess(
+            for: app,
+            in: [dead],
+            excludingPID: dead.id))
+        XCTAssertEqual(MeetingDetector.captureTargetProcess(
+            for: app, in: [dead])?.id, dead.id)
     }
 
     /// The namespace rule must not swallow a *different* app whose bundle id

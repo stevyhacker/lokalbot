@@ -17,6 +17,40 @@ struct SystemAudioSamePIDRetryBudget: Equatable {
     }
 }
 
+enum RecordingSystemAudioPolicy: Equatable {
+    case microphoneOnly
+    case meetingAppWhenAvailable
+
+    func captureApp(
+        detectedApp: MeetingDetector.DetectedApp?,
+        fallback: () -> MeetingDetector.DetectedApp?
+    ) -> MeetingDetector.DetectedApp? {
+        switch self {
+        case .microphoneOnly:
+            return nil
+        case .meetingAppWhenAvailable:
+            return detectedApp ?? fallback()
+        }
+    }
+}
+
+enum SystemAudioRecoveryCandidatePolicy {
+    static func excludedPID(
+        currentPID: pid_t,
+        framesSinceAttach: Int64
+    ) -> pid_t? {
+        framesSinceAttach == 0 ? currentPID : nil
+    }
+
+    static func shouldRetrySamePID(
+        framesSinceAttach: Int64,
+        audibleDuration: TimeInterval,
+        minimumAudibleDuration: TimeInterval
+    ) -> Bool {
+        framesSinceAttach == 0 || audibleDuration < minimumAudibleDuration
+    }
+}
+
 struct RecordingMemoryHealthSnapshot: Equatable, Sendable {
     var isRecording: Bool
     var microphoneStatus: String
@@ -202,7 +236,11 @@ final class RecordingController: ObservableObject {
 
     // MARK: - Start / stop
 
-    func start(context: MeetingDetectionContext? = nil, source: String = "ui") {
+    func start(
+        context: MeetingDetectionContext? = nil,
+        source: String = "ui",
+        systemAudioPolicy: RecordingSystemAudioPolicy
+    ) {
         guard case .idle = status, startTask == nil else { return }
         let detectedApp = context?.detectedApp
         let calendarEvent = context?.calendarEvent
@@ -269,13 +307,14 @@ final class RecordingController: ObservableObject {
                 startRecordingHealthWatchdog()
                 try Task.checkCancellation()
 
-                // A recording started by hand has no detected app, but a
-                // meeting app is often running all the same — and without a
-                // system target here, remote speech arriving later cannot
-                // trigger watchdog recovery either. Falls back to a running
-                // native meeting app; nil when there is genuinely none, which
-                // keeps a plain voice memo mic-only as before.
-                if let captureApp = detectedApp ?? MeetingDetector.captureCandidateApp() {
+                // Meeting-intent callers may fall back to a running native app
+                // before it emits audio, giving the watchdog a target to repair.
+                // Mic-only callers never evaluate that fallback, so headless
+                // voice recording cannot silently widen its capture scope.
+                if let captureApp = systemAudioPolicy.captureApp(
+                    detectedApp: detectedApp,
+                    fallback: { MeetingDetector.captureCandidateApp() }
+                ) {
                     let captureProcess = MeetingDetector.currentCaptureTargetProcess(for: captureApp)
                     let pid = captureProcess?.id ?? captureApp.pid
                     do {
@@ -411,7 +450,10 @@ final class RecordingController: ObservableObject {
         lokalbotLog(
             "calendar handoff split old=\(currentMeeting.calendarEventID ?? "?") new=\(nextEventID)")
         stop()
-        start(context: context, source: "calendar-handoff")
+        start(
+            context: context,
+            source: "calendar-handoff",
+            systemAudioPolicy: .meetingAppWhenAvailable)
     }
 
     private func cleanupCancelledStart(created: Meeting?) {
@@ -599,7 +641,19 @@ final class RecordingController: ObservableObject {
             return
         }
 
-        guard let candidate = currentSystemAudioCandidate(for: target) else {
+        let excludedPID = SystemAudioRecoveryCandidatePolicy.excludedPID(
+            currentPID: target.pid,
+            framesSinceAttach: health.framesSinceAttach)
+        let alternativeCandidate = currentSystemAudioCandidate(
+            for: target,
+            excludingPID: excludedPID)
+        // Rebuilding a tap on the same PID is still useful when that is the
+        // only process left: the process may have opened its stream after the
+        // original tap was created. Same-PID retries remain budgeted below.
+        let candidate = alternativeCandidate ?? (excludedPID == nil
+            ? nil
+            : currentSystemAudioCandidate(for: target))
+        guard let candidate else {
             warnOnceAboutSilentSystemAudio(elapsed: elapsed, captured: health.duration,
                                            audible: health.audibleDuration,
                                            rms: health.lastRMSLevel,
@@ -610,7 +664,10 @@ final class RecordingController: ObservableObject {
         // If the tap has never delivered audio, retry even on the same PID.
         // Once samples exist, reattach only when Core Audio reports a different
         // active process for the same meeting app/browser family.
-        let shouldRetrySamePID = health.audibleDuration < AudioFileInspector.minimumTranscribableDuration
+        let shouldRetrySamePID = SystemAudioRecoveryCandidatePolicy.shouldRetrySamePID(
+            framesSinceAttach: health.framesSinceAttach,
+            audibleDuration: health.audibleDuration,
+            minimumAudibleDuration: AudioFileInspector.minimumTranscribableDuration)
         let isSamePIDRetry = candidate.id == target.pid && shouldRetrySamePID
         guard candidate.id != target.pid || shouldRetrySamePID else {
             warnOnceAboutSilentSystemAudio(elapsed: elapsed, captured: health.duration,
@@ -640,7 +697,14 @@ final class RecordingController: ObservableObject {
             }
             didWarnAboutSilentSystemAudio = false
             lokalbotLog(
-                "system audio reattached oldPID=\(previousPID) newPID=\(candidate.id) bundle=\(candidate.bundleID ?? "unknown") captured=\(String(format: "%.2fs", health.duration)) audible=\(String(format: "%.2fs", health.audibleDuration)) silentFor=\(String(format: "%.2fs", silentFor)) rms=\(String(format: "%.6f", health.lastRMSLevel)) peakRMS=\(String(format: "%.6f", health.peakRMSLevel))")
+                "system audio reattached oldPID=\(previousPID) newPID=\(candidate.id) "
+                    + "bundle=\(candidate.bundleID ?? "unknown") "
+                    + "framesSinceAttach=\(health.framesSinceAttach) "
+                    + "captured=\(String(format: "%.2fs", health.duration)) "
+                    + "audible=\(String(format: "%.2fs", health.audibleDuration)) "
+                    + "silentFor=\(String(format: "%.2fs", silentFor)) "
+                    + "rms=\(String(format: "%.6f", health.lastRMSLevel)) "
+                    + "peakRMS=\(String(format: "%.6f", health.peakRMSLevel))")
         } catch {
             lastSystemAudioReattachAt = now
             onError("System audio capture was interrupted (\(error.localizedDescription)); still recording microphone.")
@@ -648,11 +712,16 @@ final class RecordingController: ObservableObject {
         }
     }
 
-    private func currentSystemAudioCandidate(for target: SystemAudioTarget) -> AudioProcess? {
-        MeetingDetector.currentOutputAudioProcess(for: MeetingDetector.DetectedApp(
-            name: target.bundleID,
-            bundleID: target.bundleID,
-            pid: target.pid))
+    private func currentSystemAudioCandidate(
+        for target: SystemAudioTarget,
+        excludingPID: pid_t? = nil
+    ) -> AudioProcess? {
+        MeetingDetector.currentCaptureTargetProcess(
+            for: MeetingDetector.DetectedApp(
+                name: target.bundleID,
+                bundleID: target.bundleID,
+                pid: target.pid),
+            excludingPID: excludingPID)
     }
 
     /// Helper processes routinely exit during a live browser/Zoom meeting.
@@ -670,8 +739,10 @@ final class RecordingController: ObservableObject {
                 guard self.isRecording, var target = self.systemAudioTarget,
                       target.pid == terminatedPID else { return }
                 MeetingDetector.invalidateAudioProcessSnapshot()
-                guard let candidate = self.currentSystemAudioCandidate(for: target),
-                      candidate.id != terminatedPID else { continue }
+                guard let candidate = self.currentSystemAudioCandidate(
+                    for: target,
+                    excludingPID: terminatedPID
+                ) else { continue }
                 do {
                     try self.systemRecorder.reattach(capturingPID: candidate.id)
                     target.pid = candidate.id
@@ -696,7 +767,7 @@ final class RecordingController: ObservableObject {
     private func retargetSystemAudio(to app: MeetingDetector.DetectedApp) {
         guard isRecording else { return }
         MeetingDetector.invalidateAudioProcessSnapshot()
-        guard let candidate = MeetingDetector.currentOutputAudioProcess(for: app) else { return }
+        guard let candidate = MeetingDetector.currentCaptureTargetProcess(for: app) else { return }
         if systemAudioTarget?.bundleID == app.bundleID,
            systemAudioTarget?.pid == candidate.id { return }
         do {

@@ -102,6 +102,8 @@ enum DreamDayArgumentError: LocalizedError, Equatable {
 /// paths as the UI, no window required.
 @MainActor
 struct HeadlessCommandRunner {
+    static let recordSystemAudioPolicy: RecordingSystemAudioPolicy = .microphoneOnly
+
     let app: AppState
 
     func run(_ command: HeadlessCommand) {
@@ -155,7 +157,10 @@ struct HeadlessCommandRunner {
             print("LokalBot --record: SKIP (microphone not granted)")
             exit(3)
         }
-        app.startRecording(context: nil, source: "headless")
+        app.startRecording(
+            context: nil,
+            source: "headless",
+            systemAudioPolicy: Self.recordSystemAudioPolicy)
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(seconds))
             guard app.isRecording else {
