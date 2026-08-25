@@ -289,18 +289,19 @@ final class CalendarDetectionTests: XCTestCase {
             bundleID: "us.zoom.xos", calendarBacked: false))
     }
 
-    func testTeamsLaunchBlipDoesNotStartRecordingBeforeConfirmationWindow() {
+    func testTeamsLaunchBlipDoesNotConfirmBeforeMinimumDuration() {
         XCTAssertTrue(MeetingDetector.requiresSustainedAudioForStart(
             bundleID: "com.microsoft.teams2", calendarBacked: false))
         let firstSeen = Date()
         XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(
             firstSeenAt: firstSeen,
-            now: firstSeen.addingTimeInterval(3),
-            window: MeetingDetector.nativeAudioConfirmationWindow))
+            now: firstSeen.addingTimeInterval(10.8),
+            minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration))
         XCTAssertTrue(MeetingMatcher.sustainedAudioConfirmed(
             firstSeenAt: firstSeen,
-            now: firstSeen.addingTimeInterval(MeetingDetector.nativeAudioConfirmationWindow),
-            window: MeetingDetector.nativeAudioConfirmationWindow))
+            now: firstSeen.addingTimeInterval(
+                MeetingDetector.nativeAudioMinimumConfirmationDuration),
+            minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration))
     }
 
     func testSustainedAudioIsNotRequiredForDedicatedOrCalendarBackedStarts() {
@@ -315,7 +316,9 @@ final class CalendarDetectionTests: XCTestCase {
 
     func testSustainedAudioIsUnconfirmedBeforeAnyAudioWasSeen() {
         XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(
-            firstSeenAt: nil, now: Date(), window: 10))
+            firstSeenAt: nil,
+            now: Date(),
+            minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration))
     }
 
     func testAudioMonitorRequiresCalendarForBroadCommunicationApps() {
@@ -416,24 +419,6 @@ final class CalendarDetectionTests: XCTestCase {
         XCTAssertNil(object["meetingURL"])
         XCTAssertNil(object["participantNameHints"])
     }
-}
-
-/// In-memory `CalendarEventProviding` for the matching tests — canned status
-/// and candidates, no EventKit.
-private final class FakeCalendarProvider: CalendarEventProviding {
-    let authorizationStatus: CalendarAuthorizationStatus
-    private let candidates: [CalendarMeetingCandidate]
-
-    init(status: CalendarAuthorizationStatus, candidates: [CalendarMeetingCandidate]) {
-        self.authorizationStatus = status
-        self.candidates = candidates
-    }
-
-    func requestAccess(_ completion: @escaping (Bool) -> Void) {
-        completion(authorizationStatus == .fullAccess)
-    }
-
-    func meetingCandidates(now: Date) -> [CalendarMeetingCandidate] { candidates }
 
     // MARK: - Streams that are open for the app's whole lifetime
 
@@ -455,9 +440,9 @@ private final class FakeCalendarProvider: CalendarEventProviding {
         XCTAssertTrue(MeetingDetector.carriesMeetingSignal(bundleID: nil))
     }
 
-    /// Even when it is the very process the app was detected as, an
-    /// always-open stream must not answer "this app has output right now".
-    func testAlwaysOpenStreamIsNotChosenAsTheOutputSignal() {
+    /// An always-open stream is not evidence that a meeting is running, but it
+    /// remains a valid capture target once another signal starts the recording.
+    func testAlwaysOpenStreamIsDetectionOnlyButRemainsCaptureCandidate() {
         let moduleHost = AudioProcess(id: 500,
                                       name: "Microsoft Teams ModuleHost",
                                       bundleID: "com.microsoft.teams2.modulehost",
@@ -468,8 +453,11 @@ private final class FakeCalendarProvider: CalendarEventProviding {
                                               pid: moduleHost.id)
 
         XCTAssertNil(MeetingDetector.bestOutputAudioProcess(for: app, in: [moduleHost]))
+        XCTAssertEqual(
+            MeetingDetector.bestCaptureAudioProcess(for: app, in: [moduleHost])?.id,
+            moduleHost.id)
 
-        // The host's own stream still counts.
+        // The host's own stream is still valid detection evidence.
         let host = AudioProcess(id: 501,
                                 name: "Microsoft Teams",
                                 bundleID: "com.microsoft.teams2",
@@ -480,23 +468,45 @@ private final class FakeCalendarProvider: CalendarEventProviding {
             host.id)
     }
 
-    /// The window only has to cover sound a threshold can actually rule out.
-    /// Reconstructed against the 15 s stop debounce, the short false starts in
-    /// the log ran 0.2 s, 7.6 s and 10.8 s.
-    func testConfirmationWindowCoversTheShortObservedFalseStarts() {
-        let window = MeetingDetector.nativeAudioConfirmationWindow
+    /// Every measured short false start is below the inclusive confirmation
+    /// boundary; a real candidate confirms exactly at that boundary.
+    func testConfirmationDurationRejectsObservedFalseStartsAndIsInclusive() {
+        let minimumDuration = MeetingDetector.nativeAudioMinimumConfirmationDuration
         let start = Date(timeIntervalSince1970: 0)
 
-        for observed in [0.2, 7.6, 10.8] where observed < window {
+        XCTAssertGreaterThan(minimumDuration, 10.8)
+        for observed in [0.2, 7.6, 10.8] {
             XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(
                 firstSeenAt: start,
                 now: start.addingTimeInterval(observed),
-                window: window),
+                minimumDuration: minimumDuration),
                 "a \(observed)s stream must not confirm a start")
         }
+        XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(
+            firstSeenAt: start,
+            now: start.addingTimeInterval(minimumDuration - 0.001),
+            minimumDuration: minimumDuration))
         XCTAssertTrue(MeetingMatcher.sustainedAudioConfirmed(
             firstSeenAt: start,
-            now: start.addingTimeInterval(window),
-            window: window))
+            now: start.addingTimeInterval(minimumDuration),
+            minimumDuration: minimumDuration))
     }
+}
+
+/// In-memory `CalendarEventProviding` for the matching tests — canned status
+/// and candidates, no EventKit.
+private final class FakeCalendarProvider: CalendarEventProviding {
+    let authorizationStatus: CalendarAuthorizationStatus
+    private let candidates: [CalendarMeetingCandidate]
+
+    init(status: CalendarAuthorizationStatus, candidates: [CalendarMeetingCandidate]) {
+        self.authorizationStatus = status
+        self.candidates = candidates
+    }
+
+    func requestAccess(_ completion: @escaping (Bool) -> Void) {
+        completion(authorizationStatus == .fullAccess)
+    }
+
+    func meetingCandidates(now: Date) -> [CalendarMeetingCandidate] { candidates }
 }
