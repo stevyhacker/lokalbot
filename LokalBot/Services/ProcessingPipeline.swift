@@ -328,6 +328,16 @@ final class ProcessingPipeline: ObservableObject {
                 stages[meeting.id] = .transcribing
                 var transcript = try await transcribeTracks(meeting: meeting, folder: folder,
                                                             engine: engine, config: config)
+                // Before diarization, while speakers are still the raw track
+                // labels: drop mic segments that are only the remote voice
+                // leaking back in through the speakers.
+                let bleed = SpeakerBleedFilter.filter(transcript)
+                transcript = bleed.transcript
+                if bleed.changed {
+                    lokalbotLog(
+                        "transcript speaker bleed removedSegments=\(bleed.removedSegments) "
+                            + "removedWords=\(bleed.removedWords)")
+                }
                 if config.multiSpeakerDiarization,
                    MeetingAudioFiles.transcribableURL(for: .system, in: folder) != nil {
                     stages[meeting.id] = .preparingDiarizationModel
