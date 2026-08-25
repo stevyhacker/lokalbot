@@ -1,19 +1,6 @@
 import SwiftUI
 import AppKit
 
-enum OnboardingModelDownloadState: Equatable {
-    case ready
-    case downloading
-    case download(error: String?)
-
-    static func resolve(coreReady: Bool, activeDownloads: Int,
-                        isPreparingTranscription: Bool, error: String?) -> Self {
-        if coreReady { return .ready }
-        if activeDownloads > 0 || isPreparingTranscription { return .downloading }
-        return .download(error: error)
-    }
-}
-
 /// First-run onboarding and permission repair.
 ///
 /// The structure mirrors CoTabby's polished setup flow while staying native to
@@ -46,7 +33,6 @@ struct OnboardingView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var app: AppState
     @StateObject private var permissions = PermissionManager.shared
-    @ObservedObject private var downloads = ModelDownloadManager.shared
     @State private var step: WelcomeStep = .welcome
     @State private var navigatesForward = true
 
@@ -356,7 +342,7 @@ private extension OnboardingView {
     }
 
     var modelsPage: some View {
-        let snapshot = ModelReadinessSnapshot.make(app: app, downloads: downloads)
+        let snapshot = app.modelRoles.snapshot
         return VStack(spacing: WorkspaceMetric.sectionGap) {
             OnboardingStepHeader(
                 systemImage: "square.stack.3d.up",
@@ -370,21 +356,21 @@ private extension OnboardingView {
                     systemImage: "waveform",
                     role: "Transcribe",
                     model: app.settings.transcriptionModelDisplayName,
-                    ready: snapshot.transcriptionReady)
+                    ready: snapshot[.transcribe].isReady)
                 .onboardingReveal(1)
 
                 OnboardingModelRow(
                     systemImage: "brain",
                     role: "Think",
                     model: onboardingThinkModelName,
-                    ready: snapshot.thinkReady)
+                    ready: snapshot[.think].isReady)
                 .onboardingReveal(2)
 
                 OnboardingModelRow(
                     systemImage: "text.cursor",
                     role: "Autocomplete",
                     model: onboardingAutocompleteModelName,
-                    ready: snapshot.autocompleteReady)
+                    ready: snapshot[.autocomplete].isReady)
                 .onboardingReveal(3)
             }
 
@@ -402,13 +388,8 @@ private extension OnboardingView {
     }
 
     @ViewBuilder
-    private func modelDownloadAction(_ snapshot: ModelReadinessSnapshot) -> some View {
-        switch OnboardingModelDownloadState.resolve(
-            coreReady: snapshot.coreReady,
-            activeDownloads: snapshot.activeDownloads,
-            isPreparingTranscription: app.coreModelPreparationState.isPreparing,
-            error: modelDownloadError
-        ) {
+    private func modelDownloadAction(_ snapshot: ModelRolesSnapshot) -> some View {
+        switch snapshot.primaryActionStatus {
         case .ready:
             HStack(spacing: 7) {
                 Image(systemName: "checkmark.circle.fill")
@@ -416,40 +397,34 @@ private extension OnboardingView {
                 Text("Ready on this Mac")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
             }
-        case .downloading:
+        case .downloading, .preparing:
             LoadingStateLabel(
-                modelDownloadProgressLabel,
+                snapshot.primaryActionStatus.label,
                 font: .system(size: 13, weight: .medium, design: .rounded))
-        case .download(let error):
+        case .needsAttention(let error):
             VStack(spacing: 8) {
-                if let error {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(Brand.error)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Button(error == nil ? modelDownloadButtonTitle(snapshot) : "Retry model downloads") {
-                    app.startCoreModelDownloads()
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(Brand.error)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Retry model downloads") {
+                    app.modelRoles.startCoreModelDownloads()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Brand.teal)
                 .controlSize(.large)
                 .accessibilityIdentifier("onboarding.downloadModels")
             }
+        case .unavailable:
+            Button(modelDownloadButtonTitle(snapshot)) {
+                app.modelRoles.startCoreModelDownloads()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Brand.teal)
+            .controlSize(.large)
+            .accessibilityIdentifier("onboarding.downloadModels")
         }
-    }
-
-    private var modelDownloadError: String? {
-        if let error = app.coreModelPreparationState.errorMessage { return error }
-        var ids = [app.settings.cotypingBuiltInModelID]
-        if app.settings.summarizerBackend == .builtIn {
-            ids.append(app.settings.builtInModelID)
-        }
-        for id in ids {
-            if let error = downloads.errors[id], !error.isEmpty { return error }
-        }
-        return nil
     }
 
     private var onboardingThinkModelName: String {
@@ -463,23 +438,16 @@ private extension OnboardingView {
             ?? "LFM2.5 1.2B Instruct"
     }
 
-    private func modelDownloadButtonTitle(_ snapshot: ModelReadinessSnapshot) -> String {
+    private func modelDownloadButtonTitle(_ snapshot: ModelRolesSnapshot) -> String {
         let ggufBytes = ModelReadinessSnapshot.missingCoreModelBytes(
             app.settings, storage: app.storage)
         guard ggufBytes > 0 else { return "Download models" }
         let size = ByteCountFormatter.string(fromByteCount: ggufBytes, countStyle: .file)
         // The Transcribe model downloads through its engine and has no exact
         // byte count here — say so instead of pretending the total is exact.
-        return snapshot.transcriptionReady
+        return snapshot[.transcribe].isReady
             ? "Download models (\(size))"
             : "Download models (\(size) + speech model)"
-    }
-
-    private var modelDownloadProgressLabel: String {
-        let active = downloads.progress.values
-        guard !active.isEmpty else { return "Preparing speech model…" }
-        let percent = Int((active.reduce(0, +) / Double(active.count)) * 100)
-        return "Downloading models… \(percent)%"
     }
 
     var permissionPage: some View {

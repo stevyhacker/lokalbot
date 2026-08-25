@@ -21,6 +21,21 @@ struct DayDigestMeetingEvidence: Equatable, Sendable {
     var endedAt: Date
     var sourceSummary: String
     var outcomes: String
+    /// Latest write among the summary/outcomes files consumed for this meeting.
+    /// It is evidence even when the meeting's own end time is unchanged.
+    var artifactModifiedAt: Date?
+}
+
+enum DayDigestMeetingArtifacts {
+    static let fileNames = ["summary.md", MeetingOutcomes.fileName]
+
+    static func latestModifiedAt(in folder: URL) -> Date? {
+        fileNames.compactMap { name -> Date? in
+            let url = folder.appendingPathComponent(name)
+            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+            return attributes?[.modificationDate] as? Date
+        }.max()
+    }
 }
 
 /// One deterministic slice of the day that receives a substantive-work
@@ -63,7 +78,8 @@ struct DayDigestEvidence: Equatable, Sendable {
         let activityEnd = activities.map(\.end).max()
         let contextCapture = standaloneContexts.map(\.capturedAt).max()
         let meetingEnd = meetings.map(\.endedAt).max()
-        return [activityEnd, contextCapture, meetingEnd]
+        let meetingArtifact = meetings.compactMap(\.artifactModifiedAt).max()
+        return [activityEnd, contextCapture, meetingEnd, meetingArtifact]
             .compactMap { $0 }
             .max()
     }

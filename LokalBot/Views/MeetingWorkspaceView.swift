@@ -212,12 +212,7 @@ private struct MeetingWorkspaceDetail: View {
             }
 #endif
         }
-        .onChange(of: app.pendingSeek) { _, value in
-            guard let value else { return }
-            app.pendingSeek = nil
-            transcriptExpanded = true
-            player.play(at: value)
-        }
+        .onChange(of: app.navigationHandoff.revision) { consumeMeetingSeek() }
         .sheet(item: $correction) { draft in
             ActionCorrectionSheet(draft: draft) { text, owner, due in
                 _ = app.outcomeIndex.correctAction(
@@ -306,8 +301,11 @@ private struct MeetingWorkspaceDetail: View {
         speakerNameHints = app.speakerNameHints(for: meeting)
         player.load(folder: folder, hasSystemTrack: meeting.hasSystemTrack)
         app.outcomeIndex.refresh(meeting: meeting)
-        if let seek = app.pendingSeek {
-            app.pendingSeek = nil
+        consumeMeetingSeek()
+    }
+
+    private func consumeMeetingSeek() {
+        if let seek = app.navigationHandoff.consumeMeetingSeek(for: meeting.id) {
             transcriptExpanded = true
             player.play(at: seek)
         }

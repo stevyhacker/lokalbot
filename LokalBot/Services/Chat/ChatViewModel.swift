@@ -168,7 +168,7 @@ final class ChatStore {
 
 /// Drives the Chat section: owns the message list and runs `ChatAgent` against
 /// the same `TextEngine` the summariser uses (resolved lazily per send via
-/// `ProcessingPipeline.makeTextEngine`, so it always reflects the current
+/// `ThinkExecution.makeTextEngine`, so it always reflects the current
 /// Settings → Models choice and boots the built-in server on first use).
 @MainActor
 final class ChatViewModel: ObservableObject {
