@@ -63,4 +63,44 @@ final class RecordingControllerTests: XCTestCase {
         XCTAssertFalse(controller.isRecording)
         XCTAssertNil(controller.currentMeeting)
     }
+
+    // MARK: - Silent system audio advisory
+
+    /// The advisory exists for a tap attached to a process that never emits,
+    /// so a capture that stayed silent must keep it. Anything that did deliver
+    /// a usable track takes it back — including at `stop()`, since the watchdog
+    /// tick that would otherwise notice may never come.
+    func testWithdrawsSilentSystemAudioWarningOnlyOnceATrackExists() {
+        let audible = AudioFileInspector.minimumTranscribableDuration
+
+        XCTAssertTrue(RecordingController.shouldWithdrawSilentSystemAudioWarning(
+            hasWarned: true, audibleDuration: audible))
+        XCTAssertTrue(RecordingController.shouldWithdrawSilentSystemAudioWarning(
+            hasWarned: true, audibleDuration: audible * 10))
+
+        XCTAssertFalse(RecordingController.shouldWithdrawSilentSystemAudioWarning(
+            hasWarned: true, audibleDuration: 0))
+        XCTAssertFalse(RecordingController.shouldWithdrawSilentSystemAudioWarning(
+            hasWarned: true, audibleDuration: audible / 2))
+
+        // Nothing to take back when nothing was ever shown.
+        XCTAssertFalse(RecordingController.shouldWithdrawSilentSystemAudioWarning(
+            hasWarned: false, audibleDuration: audible * 10))
+    }
+
+    /// A reattach withdraws the warning for the failed target and leaves the
+    /// replacement eligible to warn again if it also stays silent.
+    func testSilentSystemAudioWarningWarnReattachWarnTransition() {
+        var warning = SilentSystemAudioWarningState()
+
+        XCTAssertTrue(warning.present())
+        XCTAssertTrue(warning.isPresented)
+        XCTAssertFalse(warning.present(), "the same target must warn only once")
+
+        XCTAssertTrue(warning.withdraw(), "reattach must withdraw the visible warning")
+        XCTAssertFalse(warning.isPresented)
+        XCTAssertFalse(warning.withdraw(), "withdrawal must be idempotent")
+
+        XCTAssertTrue(warning.present(), "a silent replacement may surface a fresh warning")
+    }
 }
