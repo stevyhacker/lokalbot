@@ -251,13 +251,29 @@ final class AudioSourceMonitorTests: XCTestCase {
         XCTAssertEqual(MeetingDetector.captureTargetProcess(
             for: app,
             in: [replacement, dead],
-            excludingPID: dead.id)?.id, replacement.id)
+            excluding: [dead.id])?.id, replacement.id)
         XCTAssertNil(MeetingDetector.captureTargetProcess(
             for: app,
             in: [dead],
-            excludingPID: dead.id))
+            excluding: [dead.id]))
         XCTAssertEqual(MeetingDetector.captureTargetProcess(
             for: app, in: [dead])?.id, dead.id)
+
+        // More than one process can be ruled out within a single recording:
+        // every tap that delivered nothing stays excluded, not just the last.
+        let third = AudioProcess(id: 400,
+                                 name: "Microsoft Teams WebView",
+                                 bundleID: "com.microsoft.teams2.helper",
+                                 objectID: AudioObjectID(400),
+                                 isRunningOutput: false)
+        XCTAssertEqual(MeetingDetector.captureTargetProcess(
+            for: app,
+            in: [replacement, dead, third],
+            excluding: [dead.id, replacement.id])?.id, third.id)
+        XCTAssertNil(MeetingDetector.captureTargetProcess(
+            for: app,
+            in: [replacement, dead, third],
+            excluding: [dead.id, replacement.id, third.id]))
     }
 
     /// The namespace rule must not swallow a *different* app whose bundle id
@@ -364,5 +380,76 @@ final class AudioSourceMonitorTests: XCTestCase {
         XCTAssertTrue(MeetingDetector.meetingAppCandidates(bundleIDs: [
             (bundleID: "com.apple.Music", pid: 10),
         ]).isEmpty)
+    }
+
+    // MARK: - Continuing a meeting that is already under way
+
+    /// The same stream that may not *start* a recording must be able to keep one
+    /// alive. Teams routes call audio through a `helper` whose `isRunningOutput`
+    /// drops in the pauses between sentences; with `modulehost` read as no
+    /// signal at all the app looks audio-free mid-call, and the stop debounce
+    /// ended four real meetings 18–37 s in on 2026-08-25.
+    ///
+    /// Starting off an ambiguous stream invents a meeting; stopping off one
+    /// discards the meeting the user is in. Only the second is unrecoverable,
+    /// so the continue lookup takes the weaker evidence.
+    func testContinueAcceptsAnAlwaysOpenStreamThatMayNotStartARecording() {
+        let host = AudioProcess(id: 100,
+                                name: "Microsoft Teams",
+                                bundleID: "com.microsoft.teams2",
+                                objectID: AudioObjectID(100),
+                                isRunningOutput: false)
+        let moduleHost = AudioProcess(id: 300,
+                                      name: "Microsoft Teams ModuleHost",
+                                      bundleID: "com.microsoft.teams2.modulehost",
+                                      objectID: AudioObjectID(300),
+                                      isRunningOutput: true)
+        let app = MeetingDetector.DetectedApp(name: "Teams",
+                                              bundleID: "com.microsoft.teams2",
+                                              pid: host.id)
+
+        XCTAssertNil(MeetingDetector.bestOutputAudioProcess(for: app, in: [host, moduleHost]),
+                     "starting must not read an always-open stream as a call")
+        XCTAssertEqual(
+            MeetingDetector.bestContinuingAudioProcess(for: app, in: [host, moduleHost])?.id,
+            moduleHost.id,
+            "continuing must, or a pause between sentences ends the meeting")
+    }
+
+    /// The leniency is scoped to the namespace, not to silence in general: with
+    /// nothing emitting anywhere, continuing finds no audio either and the stop
+    /// debounce still gets to end the meeting when the call really is over.
+    func testContinueStillReportsNoAudioWhenNothingIsEmitting() {
+        let host = AudioProcess(id: 100,
+                                name: "Microsoft Teams",
+                                bundleID: "com.microsoft.teams2",
+                                objectID: AudioObjectID(100),
+                                isRunningOutput: false)
+        let quietModuleHost = AudioProcess(id: 300,
+                                           name: "Microsoft Teams ModuleHost",
+                                           bundleID: "com.microsoft.teams2.modulehost",
+                                           objectID: AudioObjectID(300),
+                                           isRunningOutput: false)
+        let app = MeetingDetector.DetectedApp(name: "Teams",
+                                              bundleID: "com.microsoft.teams2",
+                                              pid: host.id)
+
+        XCTAssertNil(MeetingDetector.bestContinuingAudioProcess(
+            for: app, in: [host, quietModuleHost]))
+    }
+
+    /// Continuing does not widen the namespace either — a lookalike bundle id
+    /// outside the app is still not this app's audio.
+    func testContinueDoesNotAcceptALookalikeBundle() {
+        let impostor = AudioProcess(id: 300,
+                                    name: "Not Teams",
+                                    bundleID: "com.microsoft.teams2evil.modulehost",
+                                    objectID: AudioObjectID(300),
+                                    isRunningOutput: true)
+        let app = MeetingDetector.DetectedApp(name: "Teams",
+                                              bundleID: "com.microsoft.teams2",
+                                              pid: 100)
+
+        XCTAssertNil(MeetingDetector.bestContinuingAudioProcess(for: app, in: [impostor]))
     }
 }

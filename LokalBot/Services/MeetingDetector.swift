@@ -248,7 +248,7 @@ final class MeetingDetector {
 
         if let currentApp = activeApp {
             let continuingApp = Self.continuingApp(currentApp, in: running)
-            let appAudioActive = continuingApp.map { Self.hasAudio(for: $0) } ?? false
+            let appAudioActive = continuingApp.map { Self.hasContinuingAudio(for: $0) } ?? false
             let isBrowserApp = continuingApp.map { Self.browsers.contains($0.bundleID) } ?? false
             let calendarBackedBrowserWithAudio = isBrowserApp
                 && calendarEnabled
@@ -575,9 +575,35 @@ final class MeetingDetector {
         captureTargetProcess(for: app, in: processes)
     }
 
+    /// Best output process that is evidence a meeting is *still under way* —
+    /// the same ranking as ``bestOutputAudioProcess(for:in:)`` with the
+    /// always-open bundles admitted.
+    ///
+    /// Starting and continuing carry opposite costs. A start read from an
+    /// ambiguous stream invents a meeting nobody was in; a stop read from one
+    /// throws away the meeting the user is sitting in, and that cannot be
+    /// undone. So the weaker evidence is right here and wrong for a start.
+    ///
+    /// This is not hypothetical: Teams routes call audio through a `helper`
+    /// whose `isRunningOutput` drops in the pauses between sentences, leaving
+    /// only `modulehost` open. With `modulehost` read as no signal at all the
+    /// app looks audio-free mid-call, and the stop debounce ended four real
+    /// meetings 18–37 s in on 2026-08-25.
+    ///
+    /// The leniency stays scoped to the app's namespace, so a call that really
+    /// is over still reports no audio and the debounce still gets to end it.
+    static func bestContinuingAudioProcess(for app: DetectedApp,
+                                           in processes: [AudioProcess]) -> AudioProcess? {
+        rankedOutputAudioProcess(for: app, in: processes)
+    }
+
     static func currentOutputAudioProcess(for app: DetectedApp) -> AudioProcess? {
         let processes = currentAudioProcesses()
         return bestOutputAudioProcess(for: app, in: processes)
+    }
+
+    static func currentContinuingAudioProcess(for app: DetectedApp) -> AudioProcess? {
+        bestContinuingAudioProcess(for: app, in: currentAudioProcesses())
     }
 
     /// The process to attach the capture tap to.
@@ -589,10 +615,15 @@ final class MeetingDetector {
     /// object at all, so `AudioHardwarePropertyTranslatePIDToProcessObject`
     /// fails and the tap is refused with `processNotFound` whenever the meeting
     /// happens to be quiet at the moment recording starts.
+    ///
+    /// `excluding` is a set rather than one PID because a recording can rule out
+    /// more than one process: a tap that delivered nothing stays ruled out for
+    /// the rest of the session, and with several siblings alive the watchdog
+    /// otherwise hands back a process it already found empty.
     static func captureTargetProcess(for app: DetectedApp,
                                      in processes: [AudioProcess],
-                                     excludingPID: pid_t? = nil) -> AudioProcess? {
-        let available = processes.filter { $0.id != excludingPID }
+                                     excluding excludedPIDs: Set<pid_t> = []) -> AudioProcess? {
+        let available = processes.filter { !excludedPIDs.contains($0.id) }
         let namespace = available.filter { process in
             guard let bundleID = process.bundleID else { return false }
             return audioBundleID(bundleID, belongsTo: app.bundleID)
@@ -667,12 +698,12 @@ final class MeetingDetector {
 
     static func currentCaptureTargetProcess(
         for app: DetectedApp,
-        excludingPID: pid_t? = nil
+        excluding excludedPIDs: Set<pid_t> = []
     ) -> AudioProcess? {
         captureTargetProcess(
             for: app,
             in: currentAudioProcesses(),
-            excludingPID: excludingPID)
+            excluding: excludedPIDs)
     }
 
     /// Compatibility entry point for callers that only need the default
@@ -719,10 +750,22 @@ final class MeetingDetector {
     }
 
     /// The meeting app's own audio activity — output, or (native apps only)
-    /// input. Used for the *continue* decision so it reflects the app rather
-    /// than our recorder's hold on the default input device.
+    /// input. Reflects the app rather than our recorder's hold on the default
+    /// input device.
+    ///
+    /// This is the *start* question, so it reads only streams that are evidence
+    /// of a call. Deciding whether one is still running is
+    /// ``hasContinuingAudio(for:)``.
     private static func hasAudio(for app: DetectedApp) -> Bool {
         hasOutputAudio(for: app) || hasInputAudio(for: app)
+    }
+
+    /// The same activity, judged for a meeting already under way: an always-open
+    /// stream in the app's namespace counts here, because ending a live session
+    /// needs the opposite burden of proof from opening one. See
+    /// ``bestContinuingAudioProcess(for:in:)``.
+    private static func hasContinuingAudio(for app: DetectedApp) -> Bool {
+        currentContinuingAudioProcess(for: app) != nil || hasInputAudio(for: app)
     }
 
     private static func hasInputAudio(for app: DetectedApp) -> Bool {
