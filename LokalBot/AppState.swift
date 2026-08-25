@@ -424,7 +424,16 @@ final class AppState: ObservableObject {
         audioMonitor: audioMonitor,
         pipeline: pipeline,
         isInteractive: { [weak self] in self?.interactive ?? false },
-        onError: { [weak self] message in self?.lastError = message },
+        onError: { [weak self] message in
+            guard let message else {
+                // Withdraw only the silent-capture advisory, never a newer error.
+                if self?.lastError == RecordingController.silentSystemAudioMessage {
+                    self?.lastError = nil
+                }
+                return
+            }
+            self?.lastError = message
+        },
         onMicPermissionDenied: { [weak self] in self?.micRecoveryNeeded = true },
         onMeetingFinished: { [weak self] meeting in self?.meetings.insert(meeting, at: 0) })
     /// Press-and-speak composition. Every dictation is treated as a writing
