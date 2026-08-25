@@ -474,6 +474,7 @@ final class CalendarDetectionTests: XCTestCase {
         let minimumDuration = MeetingDetector.nativeAudioMinimumConfirmationDuration
         let start = Date(timeIntervalSince1970: 0)
 
+        XCTAssertEqual(minimumDuration, 12)
         XCTAssertGreaterThan(minimumDuration, 10.8)
         for observed in [0.2, 7.6, 10.8] {
             XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(

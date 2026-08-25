@@ -418,12 +418,21 @@ final class MeetingDetector {
         DispatchQueue.main.asyncAfter(deadline: .now() + debounce, execute: work)
     }
 
+    /// Which running bundles count as native meeting apps, in priority order.
+    /// Split out from `NSRunningApplication` so the choice is testable.
+    static func meetingAppCandidates(bundleIDs: [(bundleID: String, pid: pid_t)]) -> [DetectedApp] {
+        bundleIDs.compactMap { entry in
+            guard let name = knownApps[entry.bundleID] else { return nil }
+            return DetectedApp(name: name, bundleID: entry.bundleID, pid: entry.pid)
+        }
+    }
+
     private static func nativeMeetingApp(in running: [NSRunningApplication],
                                          requireAudio: Bool = false) -> DetectedApp? {
-        let candidates = running.compactMap { app -> DetectedApp? in
-            guard let bid = app.bundleIdentifier, let name = knownApps[bid] else { return nil }
-            return DetectedApp(name: name, bundleID: bid, pid: app.processIdentifier)
-        }
+        let candidates = meetingAppCandidates(bundleIDs: running.compactMap { app in
+            guard let bid = app.bundleIdentifier else { return nil }
+            return (bundleID: bid, pid: app.processIdentifier)
+        })
         guard requireAudio else { return candidates.first }
         let active = candidates.filter { hasAudio(for: $0) }
         guard !active.isEmpty else { return nil }
@@ -504,13 +513,17 @@ final class MeetingDetector {
                 || bundle == "us.zoom.cpthost"
                 || bundle.hasPrefix("us.zoom.xos.")
         }
-        return bundle == host || bundle.hasPrefix("\(host).helper")
+        // Any bundle inside the host's own namespace is that app's audio.
+        // Teams alone emits call audio from `<host>.helper` (WebView) *and*
+        // `<host>.modulehost`, so matching only `.helper` misses the process
+        // that is usually the one running. This mirrors the `us.zoom.xos.`
+        // prefix rule above rather than enumerating every suffix Microsoft ships.
+        return bundle == host || bundle.hasPrefix("\(host).")
     }
 
-    /// Ranks output processes inside an app family without deciding whether
-    /// their stream is evidence that a meeting is under way. Capture uses this
-    /// unfiltered ranking because an always-open stream can still be the right
-    /// process to tap even though detection must ignore it.
+    /// Ranks an already-vetted set of output processes inside an app family.
+    /// Detection supplies only processes that carry meeting signal; capture
+    /// adds its broader open-stream and silent-process fallbacks separately.
     private static func rankedOutputAudioProcess(for app: DetectedApp,
                                                  in processes: [AudioProcess]) -> AudioProcess? {
         if browsers.contains(app.bundleID) || app.bundleID == "us.zoom.xos" {
@@ -526,10 +539,20 @@ final class MeetingDetector {
                 ?? matches.first { $0.id == app.pid }
                 ?? matches.first
         }
+        // Electron meeting apps (Teams, Slack, Webex) route call audio through
+        // helper processes just as Chromium browsers do. `audioBundleID` already
+        // models that `<host>.helper` relationship for every host, so honour it
+        // here as a fallback — without it `hasOutputAudio` stays false, the
+        // detector never surfaces the app, and the process tap is skipped
+        // entirely, leaving the meeting recorded mic-only. The host keeps
+        // precedence so apps whose main process emits audio are unaffected.
         return processes.first {
             $0.id == app.pid && $0.isRunningOutput
         } ?? processes.first {
             $0.isRunningOutput && $0.bundleID == app.bundleID
+        } ?? processes.first { process in
+            guard process.isRunningOutput, let bundleID = process.bundleID else { return false }
+            return audioBundleID(bundleID, belongsTo: app.bundleID)
         }
     }
 
@@ -543,12 +566,13 @@ final class MeetingDetector {
             in: processes.filter { carriesMeetingSignal(bundleID: $0.bundleID) })
     }
 
-    /// Best currently-emitting process to tap, including always-open streams
-    /// that carry no detection signal. PR #43's broader silent-process fallback
-    /// must preserve this separation when the branches are integrated.
+    /// Canonical capture selection, including always-open streams plus the
+    /// remembered and stable silent-process fallbacks. Keeping this entry point
+    /// aligned with ``captureTargetProcess`` prevents detection-only ranking
+    /// from leaking back into capture callers.
     static func bestCaptureAudioProcess(for app: DetectedApp,
                                         in processes: [AudioProcess]) -> AudioProcess? {
-        rankedOutputAudioProcess(for: app, in: processes)
+        captureTargetProcess(for: app, in: processes)
     }
 
     static func currentOutputAudioProcess(for app: DetectedApp) -> AudioProcess? {
@@ -556,9 +580,106 @@ final class MeetingDetector {
         return bestOutputAudioProcess(for: app, in: processes)
     }
 
+    /// The process to attach the capture tap to.
+    ///
+    /// Detection asks whether the app is producing output *right now*; capture
+    /// only needs a process that *can* produce it — a tap on a momentarily
+    /// silent process simply records nothing until audio starts. Falling back
+    /// to the host PID is not an option: Teams' main process owns no Core Audio
+    /// object at all, so `AudioHardwarePropertyTranslatePIDToProcessObject`
+    /// fails and the tap is refused with `processNotFound` whenever the meeting
+    /// happens to be quiet at the moment recording starts.
+    static func captureTargetProcess(for app: DetectedApp,
+                                     in processes: [AudioProcess],
+                                     excludingPID: pid_t? = nil) -> AudioProcess? {
+        let available = processes.filter { $0.id != excludingPID }
+        let namespace = available.filter { process in
+            guard let bundleID = process.bundleID else { return false }
+            return audioBundleID(bundleID, belongsTo: app.bundleID)
+        }
+        // A process emitting right now is the answer, and worth remembering:
+        // it is the only moment we learn which sibling of this app actually
+        // carries call audio.
+        if let emitting = bestOutputAudioProcess(for: app, in: available) {
+            rememberCaptureTarget(emitting.id, for: app.bundleID)
+            return emitting
+        }
+        // An always-open stream is intentionally excluded from meeting
+        // detection, but it is preferable to a streamless helper for capture:
+        // Core Audio will deliver silent buffers now and call audio later.
+        if let openStream = namespace.filter(\.isRunningOutput).min(by: { $0.id < $1.id }) {
+            rememberCaptureTarget(openStream.id, for: app.bundleID)
+            return openStream
+        }
+        // Nothing is emitting. Core Audio specifies no order for the process
+        // list, so picking the first sibling would tap a different one from
+        // one call to the next — and with several Teams or browser helpers
+        // alive, usually one that never carries call audio. Prefer the process
+        // this app was last seen emitting from.
+        if let remembered = rememberedCaptureTarget(for: app.bundleID),
+           let process = namespace.first(where: { $0.id == remembered }) {
+            return process
+        }
+        // Still nothing known: siblings before the host, for the same reason
+        // the browser branch prefers helpers — the host is the process least
+        // likely to own audio, and for Teams it owns no Core Audio object at
+        // all. Lowest PID within each group so the choice is at least stable
+        // across the retries the watchdog makes.
+        let siblings = namespace.filter { $0.bundleID != app.bundleID }
+        return siblings.min { $0.id < $1.id } ?? namespace.min { $0.id < $1.id }
+    }
+
+    /// The PID each app was last seen emitting from. Small and per-bundle: it
+    /// only has to survive between a quiet start and the watchdog's next look.
+    private static var lastEmittingCaptureTargets: [String: pid_t] = [:]
+
+    private static func rememberCaptureTarget(_ pid: pid_t, for bundleID: String) {
+        processSnapshotLock.lock()
+        lastEmittingCaptureTargets[bundleID] = pid
+        processSnapshotLock.unlock()
+    }
+
+    private static func rememberedCaptureTarget(for bundleID: String) -> pid_t? {
+        processSnapshotLock.lock()
+        defer { processSnapshotLock.unlock() }
+        return lastEmittingCaptureTargets[bundleID]
+    }
+
+    /// Clears what capture learned about which sibling carries audio. For
+    /// tests, so one case cannot leak its choice into the next.
+    static func resetCaptureTargetMemory() {
+        processSnapshotLock.lock()
+        lastEmittingCaptureTargets.removeAll()
+        processSnapshotLock.unlock()
+    }
+
+    /// A running native meeting app to capture from when nothing was detected.
+    /// Deliberately does *not* require current output: a recording started by
+    /// hand routinely begins before the remote side says anything, and a tap on
+    /// a silent process records nothing until audio arrives rather than
+    /// failing. Without this the manual path creates no system target at all,
+    /// so remote speech arriving later cannot trigger watchdog recovery either.
+    static func captureCandidateApp(
+        in running: [NSRunningApplication] = NSWorkspace.shared.runningApplications
+    ) -> DetectedApp? {
+        nativeMeetingApp(in: running, requireAudio: false)
+    }
+
+    static func currentCaptureTargetProcess(
+        for app: DetectedApp,
+        excludingPID: pid_t? = nil
+    ) -> AudioProcess? {
+        captureTargetProcess(
+            for: app,
+            in: currentAudioProcesses(),
+            excludingPID: excludingPID)
+    }
+
+    /// Compatibility entry point for callers that only need the default
+    /// capture target. Recovery uses ``currentCaptureTargetProcess`` directly
+    /// so it can exclude a dead attachment.
     static func currentCaptureAudioProcess(for app: DetectedApp) -> AudioProcess? {
-        let processes = currentAudioProcesses()
-        return bestCaptureAudioProcess(for: app, in: processes)
+        currentCaptureTargetProcess(for: app)
     }
 
     static func currentAudioProcesses(now: Date = Date()) -> [AudioProcess] {
