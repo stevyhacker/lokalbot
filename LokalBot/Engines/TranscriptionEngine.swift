@@ -306,7 +306,8 @@ actor ParakeetEngine: TranscriptionEngine {
         let trimmed = Transcript.normalizedText(text)
         guard !trimmed.isEmpty else { return [] }
         return [Transcript.Segment(start: 0, end: duration, speaker: speaker,
-                                   text: trimmed, confidence: nil)]
+                                   text: trimmed, confidence: nil,
+                                   timingPrecision: .coarse)]
     }
 
     /// Groups token timings into sentence-ish segments: split on silence
@@ -317,7 +318,8 @@ actor ParakeetEngine: TranscriptionEngine {
             let text = Transcript.normalizedText(result.text)
             guard !text.isEmpty else { return [] }
             return [Transcript.Segment(start: 0, end: result.duration, speaker: speaker,
-                                       text: text, confidence: Double(result.confidence))]
+                                       text: text, confidence: Double(result.confidence),
+                                       timingPrecision: .coarse)]
         }
 
         var out: [Transcript.Segment] = []
@@ -332,7 +334,8 @@ actor ParakeetEngine: TranscriptionEngine {
             if !text.isEmpty {
                 let conf = current.map { Double($0.confidence) }.reduce(0, +) / Double(current.count)
                 out.append(.init(start: first.startTime, end: last.endTime,
-                                 speaker: speaker, text: text, confidence: conf))
+                                 speaker: speaker, text: text, confidence: conf,
+                                 timingPrecision: .token))
             }
             current = []
             currentLength = 0
@@ -428,7 +431,8 @@ actor WhisperEngine: TranscriptionEngine {
             Transcript.Segment(start: TimeInterval(seg.start), end: TimeInterval(seg.end),
                                speaker: "speaker",
                                text: Transcript.normalizedText(seg.text),
-                               confidence: nil)
+                               confidence: nil,
+                               timingPrecision: .span)
         }.filter { !$0.text.isEmpty }
         return Transcript(segments: segments, engine: "whisper-large-v3-turbo (WhisperKit)")
     }

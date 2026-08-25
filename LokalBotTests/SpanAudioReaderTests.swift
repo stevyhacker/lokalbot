@@ -97,6 +97,16 @@ final class SpanAudioReaderTests: XCTestCase {
                        [SpeechSpan(start: 3, end: 90)])
     }
 
+    func testSplitPreservesTimingPrecision() {
+        let spans = SpeechActivity.split(
+            start: 3,
+            end: 8,
+            maxSegmentSeconds: nil,
+            timingPrecision: .span)
+
+        XCTAssertEqual(spans, [SpeechSpan(start: 3, end: 8, timingPrecision: .span)])
+    }
+
     func testSplitOfEmptyOrInvertedRangeIsEmpty() {
         XCTAssertTrue(SpeechActivity.split(start: 5, end: 5, maxSegmentSeconds: 14).isEmpty)
         XCTAssertTrue(SpeechActivity.split(start: 9, end: 5, maxSegmentSeconds: nil).isEmpty)
@@ -110,9 +120,9 @@ final class SpanAudioReaderTests: XCTestCase {
         try OnnxTranscriptionEngine.writeWav([Float](repeating: 0.1, count: rate), to: url)
 
         let spans = [
-            SpeechSpan(start: 0.0, end: 0.25),
-            SpeechSpan(start: 0.25, end: 0.5),
-            SpeechSpan(start: 0.5, end: 0.5),
+            SpeechSpan(start: 0.0, end: 0.25, timingPrecision: .span),
+            SpeechSpan(start: 0.25, end: 0.5, timingPrecision: .span),
+            SpeechSpan(start: 0.5, end: 0.5, timingPrecision: .span),
         ]
         var transcribedIndexes: [Int] = []
         let segments = try await SpanTranscription.segments(in: url, spans: spans) { samples, index in
@@ -125,7 +135,8 @@ final class SpanAudioReaderTests: XCTestCase {
                        "the zero-width span must be skipped without calling the engine")
         XCTAssertEqual(segments, [
             Transcript.Segment(start: 0.0, end: 0.25, speaker: "speaker",
-                               text: "hello there", confidence: nil),
+                               text: "hello there", confidence: nil,
+                               timingPrecision: .span),
         ], "whitespace-only text must not become a segment; kept text is normalized")
     }
 
@@ -136,7 +147,8 @@ final class SpanAudioReaderTests: XCTestCase {
         let segments = SpanTranscription.segments(pairing: spans, with: ["one", "   "])
         XCTAssertEqual(segments, [
             Transcript.Segment(start: 0, end: 1, speaker: "speaker",
-                               text: "one", confidence: nil),
+                               text: "one", confidence: nil,
+                               timingPrecision: .coarse),
         ], "empty texts and spans past the batch's result count are dropped")
     }
 }

@@ -333,7 +333,6 @@ final class ProcessingPipeline: ObservableObject {
                 if bleed.changed {
                     lokalbotLog(
                         "transcript speaker bleed removedSegments=\(bleed.removedSegments) "
-                            + "trimmedSegments=\(bleed.trimmedSegments) "
                             + "removedWords=\(bleed.removedWords)")
                 }
                 if config.multiSpeakerDiarization,

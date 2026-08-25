@@ -8,6 +8,16 @@ import FluidAudio
 struct SpeechSpan: Sendable, Equatable {
     let start: TimeInterval
     let end: TimeInterval
+    /// Fallback windows are deliberately marked coarse so downstream code
+    /// cannot mistake a whole-track/fixed-window timestamp for an utterance.
+    let timingPrecision: Transcript.Segment.TimingPrecision
+
+    init(start: TimeInterval, end: TimeInterval,
+         timingPrecision: Transcript.Segment.TimingPrecision = .coarse) {
+        self.start = start
+        self.end = end
+        self.timingPrecision = timingPrecision
+    }
 }
 
 /// Shared VAD-split → timestamped-span pipeline for the engines that
@@ -42,7 +52,8 @@ extension SpeechActivity {
             guard segment.endTime > start else { continue }
             spans.append(contentsOf: Self.split(
                 start: start, end: segment.endTime,
-                maxSegmentSeconds: maxSegmentSeconds))
+                maxSegmentSeconds: maxSegmentSeconds,
+                timingPrecision: .span))
         }
         return spans.isEmpty ? nil : spans
     }
@@ -50,7 +61,9 @@ extension SpeechActivity {
     /// Pure ≤N-second splitting on the time axis. Internal (not private) so
     /// the boundary arithmetic is unit-testable without audio files.
     static func split(start: TimeInterval, end: TimeInterval,
-                      maxSegmentSeconds: Double?) -> [SpeechSpan] {
+                      maxSegmentSeconds: Double?,
+                      timingPrecision: Transcript.Segment.TimingPrecision = .coarse
+    ) -> [SpeechSpan] {
         guard end > start else { return [] }
         let minLength = 1.0 / Double(spanSampleRate)
         let maxLength = maxSegmentSeconds.map { max($0, minLength) } ?? (end - start)
@@ -58,7 +71,8 @@ extension SpeechActivity {
         var cursor = start
         while cursor < end {
             let next = min(cursor + maxLength, end)
-            spans.append(.init(start: cursor, end: next))
+            spans.append(.init(start: cursor, end: next,
+                               timingPrecision: timingPrecision))
             cursor = next
         }
         return spans
@@ -91,7 +105,8 @@ enum SpanTranscription {
             let normalized = Transcript.normalizedText(try await transcribe(samples, index))
             guard !normalized.isEmpty else { continue }
             segments.append(.init(start: span.start, end: span.end,
-                                  speaker: speaker, text: normalized, confidence: nil))
+                                  speaker: speaker, text: normalized, confidence: nil,
+                                  timingPrecision: span.timingPrecision))
         }
         return segments
     }
@@ -106,7 +121,8 @@ enum SpanTranscription {
             let normalized = Transcript.normalizedText(text)
             guard !normalized.isEmpty else { return nil }
             return .init(start: span.start, end: span.end,
-                         speaker: speaker, text: normalized, confidence: nil)
+                         speaker: speaker, text: normalized, confidence: nil,
+                         timingPrecision: span.timingPrecision)
         }
     }
 }

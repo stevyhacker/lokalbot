@@ -8,11 +8,27 @@ import Foundation
 /// fill it in, but it's just a data shape — no engine dependency.
 struct Transcript: Codable {
     struct Segment: Codable, Equatable {
+        enum TimingPrecision: String, Codable, Sendable {
+            /// The text covers a fallback window or whole track; its words are
+            /// not localized closely enough to support destructive filtering.
+            case coarse
+            /// The text was transcribed from a VAD/ASR speech span with real
+            /// start and end boundaries.
+            case span
+            /// The boundaries were derived from timestamped ASR tokens.
+            case token
+
+            var isBleedFilterSafe: Bool { self == .span || self == .token }
+        }
+
         var start: TimeInterval
         var end: TimeInterval
         var speaker: String      // "me" | "them" | diarized label
         var text: String
         var confidence: Double?
+        /// Optional keeps older persisted transcripts source-compatible. A
+        /// missing value is unknown and therefore never used for deletion.
+        var timingPrecision: TimingPrecision?
     }
 
     /// A compact, timestamp-anchored turn used only for model prompts. The

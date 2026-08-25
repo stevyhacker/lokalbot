@@ -1,163 +1,169 @@
 import XCTest
 @testable import LokalBot
 
-/// Speaker bleed: with the user on speakers rather than headphones, the remote
-/// voice reaches the microphone too and is transcribed a second time as `me`.
-/// The filter must remove those echoes without touching a real reply — the
-/// separating signal is timing, since an echo is simultaneous with its source
-/// while a person repeating something speaks afterwards.
 final class SpeakerBleedFilterTests: XCTestCase {
 
-    private func segment(_ speaker: String, _ start: TimeInterval, _ end: TimeInterval,
-                         _ text: String) -> Transcript.Segment {
-        Transcript.Segment(start: start, end: end, speaker: speaker, text: text, confidence: nil)
+    private func segment(
+        _ speaker: String,
+        _ start: TimeInterval,
+        _ end: TimeInterval,
+        _ text: String,
+        confidence: Double? = nil,
+        timing: Transcript.Segment.TimingPrecision? = .span
+    ) -> Transcript.Segment {
+        Transcript.Segment(
+            start: start,
+            end: end,
+            speaker: speaker,
+            text: text,
+            confidence: confidence,
+            timingPrecision: timing)
     }
 
     private func transcript(_ segments: [Transcript.Segment]) -> Transcript {
         Transcript(segments: segments, engine: "test")
     }
 
-    /// Verbatim from a real Teams test call recorded on built-in speakers: the
-    /// bot's prompt appears once as `them` and once as `me`, the latter with the
-    /// leading-punctuation artifact ASR tends to add to clipped echo.
-    func testRemovesRealWorldSpeakerBleed() {
+    func testRemovesOnlyACompleteCotimedSpeakerBleedSpan() {
         let prompt = "Wenn Sie mit der Qualität der Nachricht zufrieden sind, haben Sie Teams "
             + "richtig konfiguriert. Wenn nicht, überprüfen Sie die Einstellung Ihres Gerätes "
             + "und versuchen Sie es erneut"
         let input = transcript([
-            segment("me", 1.0, 4.0, "1, 2, 5, 5"),
-            segment("me", 5.0, 17.0, ". " + prompt + "."),
-            segment("them", 5.0, 17.0, prompt),
+            segment("me", 1, 4, "1, 2, 5, 5"),
+            segment("me", 5, 17, ". " + prompt + "."),
+            segment("them", 5, 17, prompt),
         ])
 
         let result = SpeakerBleedFilter.filter(input)
 
         XCTAssertEqual(result.removedSegments, 1)
-        XCTAssertEqual(result.transcript.segments.count, 2)
         XCTAssertEqual(result.transcript.segments.map(\.speaker), ["me", "them"])
-        // The user's own words survive.
         XCTAssertEqual(result.transcript.segments.first?.text, "1, 2, 5, 5")
+        XCTAssertEqual(result.transcript.segments.last?.text, prompt)
     }
 
-    /// The case the filter must never break: agreeing by repeating what was
-    /// just said. Same words, but *after* the remote turn rather than during it.
-    /// The common shape on a real call: the mic segment opens with echo of the
-    /// remote turn and continues with the user's own words. Dropping it loses
-    /// real speech, keeping it doubles the remote voice — only the echoed part
-    /// may go.
-    func testTrimsEchoedOpeningAndKeepsTheUsersOwnWords() {
+    func testPreservesMixedEchoAndReplyExactlyInsteadOfPartiallyTrimming() {
+        let remote = segment(
+            "them", 10, 20,
+            "aber ich weiß nicht ob das für heute angedacht war")
+        let mic = segment(
+            "me", 11, 22,
+            "aber ich weiß nicht ob das für heute angedacht war. "
+                + "Das sollte mit denen abgestimmt sein die gefehlt haben",
+            confidence: 0.73)
+        let input = transcript([remote, mic])
+
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertFalse(result.changed)
+        XCTAssertEqual(result.transcript.segments, input.segments)
+        XCTAssertEqual(result.transcript.segments.last?.start, 11)
+        XCTAssertEqual(result.transcript.segments.last?.end, 22)
+        XCTAssertEqual(result.transcript.segments.last?.confidence, 0.73)
+    }
+
+    func testPreservesShortGenuineReplyAfterEcho() {
+        let echoed = "we will move the release to Thursday"
+        let mic = segment("me", 10, 22, echoed + " yes absolutely")
         let input = transcript([
-            segment("them", 10.0, 20.0,
-                    "aber ich weiß nicht ob das für heute angedacht war"),
-            segment("me", 11.0, 22.0,
-                    "aber ich weiß nicht ob das für heute angedacht war. "
-                        + "Das sollte mit denen abgestimmt sein die gefehlt haben"),
+            segment("them", 10, 20, echoed),
+            mic,
         ])
 
         let result = SpeakerBleedFilter.filter(input)
 
-        XCTAssertEqual(result.removedSegments, 0)
-        XCTAssertEqual(result.trimmedSegments, 1)
+        XCTAssertFalse(result.changed)
+        XCTAssertEqual(result.transcript.segments.last, mic)
+    }
+
+    func testPreservesLegitimateOneWordPrefix() {
+        let echoed = "we should postpone the product launch"
+        let mic = segment("me", 10, 20, "Absolutely " + echoed)
+        let input = transcript([
+            segment("them", 10, 20, echoed),
+            mic,
+        ])
+
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertFalse(result.changed)
+        XCTAssertEqual(result.transcript.segments.last, mic)
+    }
+
+    func testPreservesPhraseRepeatedLaterInsideOverlappingLongSegments() {
+        let phrase = "we should postpone the product launch"
+        let remote = phrase + " while we review the remaining engineering and legal risks"
+        let mic = segment("me", 18, 22, phrase)
+        let input = transcript([
+            // The shared phrase is at the beginning of this long remote span.
+            segment("them", 0, 20, remote),
+            // The local speaker genuinely repeats it near the end.
+            mic,
+        ])
+
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertFalse(result.changed)
+        XCTAssertEqual(result.transcript.segments.last, mic)
+    }
+
+    func testPreservesIdenticalTextWhenOnlyCoarseTimingExists() {
+        let line = "we will review the launch plan tomorrow"
+        let input = transcript([
+            segment("them", 0, 10, line, timing: .coarse),
+            segment("me", 0, 10, line, timing: .coarse),
+        ])
+
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertFalse(result.changed)
+        XCTAssertEqual(result.transcript.segments, input.segments)
+    }
+
+    func testPreservesLegacySegmentsWithUnknownTimingPrecision() {
+        let line = "we will review the launch plan tomorrow"
+        let input = transcript([
+            segment("them", 0, 10, line, timing: nil),
+            segment("me", 0, 10, line, timing: nil),
+        ])
+
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertFalse(result.changed)
+        XCTAssertEqual(result.transcript.segments, input.segments)
+    }
+
+    func testSegmentOverlapAloneDoesNotProveCotiming() {
+        let line = "we should postpone the product launch"
+        let mic = segment("me", 8, 12, line)
+        let input = transcript([
+            segment("them", 0, 10, line),
+            mic,
+        ])
+
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertFalse(result.changed)
+        XCTAssertEqual(result.transcript.segments.last, mic)
+    }
+
+    func testPreservesShortContractionAcknowledgement() {
+        let input = transcript([
+            segment("them", 3, 6, "That's right"),
+            segment("me", 3.1, 5.9, "That's right"),
+        ])
+
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertFalse(result.changed)
         XCTAssertEqual(result.transcript.segments.count, 2)
-        XCTAssertEqual(result.transcript.segments.first(where: { $0.speaker == "me" })?.text,
-                       "Das sollte mit denen abgestimmt sein die gefehlt haben")
+        XCTAssertEqual(SpeakerBleedFilter.comparisonTokens(in: "That's right")?.count, 2)
     }
 
-    /// Echo at the tail is the mirror case and must trim the same way.
-    func testTrimsEchoedEnding() {
+    func testPreservesSemanticallyDifferentOneEditWord() {
         let input = transcript([
-            segment("me", 5.0, 12.0,
-                    "das kann ich noch nicht sagen, wir verschieben das Release auf Donnerstag"),
-            segment("them", 6.0, 12.0, "wir verschieben das Release auf Donnerstag"),
-        ])
-
-        let result = SpeakerBleedFilter.filter(input)
-
-        XCTAssertEqual(result.trimmedSegments, 1)
-        XCTAssertEqual(result.transcript.segments.first?.text, "das kann ich noch nicht sagen")
-    }
-
-    /// Two independent ASR passes over different audio spell the same word
-    /// differently. Exact word equality missed most real echo, so a single
-    /// edit still counts as the same word.
-    func testMatchesWordsTheTwoTracksTranscribedDifferently() {
-        XCTAssertTrue(SpeakerBleedFilter.wordsMatch("wim", "bim"))
-        XCTAssertTrue(SpeakerBleedFilter.wordsMatch("nachmittags", "nachmittag"))
-        XCTAssertFalse(SpeakerBleedFilter.wordsMatch("und", "an"))
-        XCTAssertFalse(SpeakerBleedFilter.wordsMatch("budget", "termin"))
-    }
-
-    /// Echo in the middle would mean the user spoke both before and after it;
-    /// stitching the halves together would invent a sentence neither said.
-    func testKeepsSegmentWhoseSharedRunSitsInTheMiddle() {
-        let input = transcript([
-            segment("them", 0.0, 10.0, "auf nächsten Donnerstag verschoben"),
-            segment("me", 0.0, 10.0,
-                    "ich hatte das anders verstanden auf nächsten Donnerstag verschoben "
-                        + "steht so aber nicht im Protokoll drin"),
-        ])
-
-        let result = SpeakerBleedFilter.filter(input)
-
-        XCTAssertEqual(result.trimmedSegments, 0)
-        XCTAssertEqual(result.removedSegments, 0)
-    }
-
-    func testLongestSharedRunReportsItsPositionInTheLeftHandSide() {
-        let run = SpeakerBleedFilter.longestSharedRun(
-            ["also", "wir", "treffen", "uns", "am", "montag"],
-            ["wir", "treffen", "uns", "später"])
-
-        XCTAssertEqual(run, .init(length: 3, start: 1, end: 4))
-    }
-
-    func testKeepsGenuineRepetitionThatFollowsTheRemoteTurn() {
-        let line = "wir verschieben das Release auf nächsten Donnerstag"
-        let input = transcript([
-            segment("them", 10.0, 14.0, line),
-            segment("me", 14.5, 18.0, line + ", genau"),
-        ])
-
-        let result = SpeakerBleedFilter.filter(input)
-
-        XCTAssertEqual(result.removedSegments, 0)
-        XCTAssertEqual(result.transcript.segments.count, 2)
-    }
-
-    /// Short generic utterances are too common to judge by wording, so they are
-    /// never removed even when they overlap.
-    func testKeepsShortOverlappingAcknowledgements() {
-        let input = transcript([
-            segment("them", 3.0, 6.0, "ja genau"),
-            segment("me", 3.2, 5.8, "ja genau"),
-        ])
-
-        let result = SpeakerBleedFilter.filter(input)
-
-        XCTAssertEqual(result.removedSegments, 0)
-    }
-
-    /// Overlapping in time but saying something different — both people talking
-    /// at once — must survive.
-    func testKeepsSimultaneousButDifferentSpeech() {
-        let input = transcript([
-            segment("them", 20.0, 26.0,
-                    "ich schicke dir die Auswertung nachher noch per Mail zu"),
-            segment("me", 20.5, 25.0,
-                    "können wir den Termin am Freitag um eine Stunde vorziehen"),
-        ])
-
-        let result = SpeakerBleedFilter.filter(input)
-
-        XCTAssertEqual(result.removedSegments, 0)
-    }
-
-    /// A mic-only recording (no system track) must pass through untouched —
-    /// with nothing to compare against, nothing can be an echo.
-    func testMicOnlyTranscriptIsUnchanged() {
-        let input = transcript([
-            segment("me", 0.0, 4.0, "das hier ist eine ganz normale Aufnahme ohne Gegenstelle"),
-            segment("me", 4.0, 8.0, "das hier ist eine ganz normale Aufnahme ohne Gegenstelle"),
+            segment("them", 3, 8, "we can ship the build"),
+            segment("me", 3, 8, "we can skip the build"),
         ])
 
         let result = SpeakerBleedFilter.filter(input)
@@ -166,67 +172,87 @@ final class SpeakerBleedFilterTests: XCTestCase {
         XCTAssertEqual(result.transcript.segments.count, 2)
     }
 
-    /// Only the microphone side is ever dropped: the system track is the clean
-    /// source of the remote voice and must survive intact.
-    func testNeverRemovesTheRemoteTrack() {
-        let line = "das Protokoll liegt im geteilten Ordner bereit für alle"
+    func testKeepsGenuineRepetitionAfterTheRemoteTurn() {
+        let line = "we will move the release to next Thursday"
         let input = transcript([
-            segment("me", 2.0, 8.0, line),
-            segment("them", 2.0, 8.0, line),
+            segment("them", 10, 14, line),
+            segment("me", 14.5, 18.5, line),
         ])
 
         let result = SpeakerBleedFilter.filter(input)
 
-        XCTAssertEqual(result.transcript.segments.map(\.speaker), ["them"])
+        XCTAssertFalse(result.changed)
+        XCTAssertEqual(result.transcript.segments.count, 2)
     }
 
-    func testTimeOverlapIsMeasuredAgainstTheShorterSegment() {
-        let long = segment("them", 0.0, 20.0, "x")
-        let short = segment("me", 9.0, 11.0, "x")
-        XCTAssertEqual(SpeakerBleedFilter.timeOverlap(short, long), 1.0, accuracy: 0.001)
+    func testNeverRemovesTheRemoteTrack() {
+        let line = "the protocol is ready in the shared folder"
+        let remote = segment("them", 2, 8, line, confidence: 0.91, timing: .token)
+        let input = transcript([
+            segment("me", 2, 8, line, timing: .token),
+            remote,
+        ])
 
-        let disjoint = segment("me", 30.0, 32.0, "x")
-        XCTAssertEqual(SpeakerBleedFilter.timeOverlap(disjoint, long), 0)
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertEqual(result.removedSegments, 1)
+        XCTAssertEqual(result.transcript.segments, [remote])
     }
 
-    /// ASR clips the start and end of an echo, so the mic side is usually a
-    /// fragment of the remote turn rather than a copy of it.
-    func testRecognizesAPartiallyCapturedEcho() {
-        let full = SpeakerBleedFilter.words(in: "wir treffen uns morgen um zehn im großen Raum")
-        let clipped = SpeakerBleedFilter.words(in: "uns morgen um zehn im großen")
-        XCTAssertEqual(SpeakerBleedFilter.longestSharedRun(clipped, full).length, clipped.count)
+    func testMicOnlyTranscriptIsUnchanged() {
+        let input = transcript([
+            segment("me", 0, 4, "this is a normal recording with no remote track"),
+            segment("me", 4, 8, "this remains completely local microphone speech"),
+        ])
 
-        let unrelated = SpeakerBleedFilter.words(in: "das Budget ist bereits vollständig verplant")
-        XCTAssertLessThan(SpeakerBleedFilter.longestSharedRun(unrelated, full).length,
-                          SpeakerBleedFilter.minimumRunLength)
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertFalse(result.changed)
+        XCTAssertEqual(result.transcript.segments, input.segments)
     }
 
-    // MARK: - Scripts written without spaces
+    func testRequiresBothSpanBoundariesToAlign() {
+        let line = "we should postpone the product launch"
+        let remote = segment("them", 10, 20, line)
+        let aligned = segment("me", 10.2, 20.2, line)
+        let shiftedEnd = segment("me", 10.2, 22, line)
 
-    /// Chinese and Japanese put no spaces between words, so splitting on
-    /// non-alphanumerics alone would hand the filter one token per sentence and
-    /// no run could ever be long enough to judge. Korean is spaced and must
-    /// keep word tokens.
-    func testTokenizesUnspacedScriptsPerCharacter() {
-        let mandarin = SpeakerBleedFilter.tokens(in: "我们下周开会")
-        XCTAssertEqual(mandarin.count, 6)
-        XCTAssertTrue(mandarin.allSatisfy(\.isIdeographic))
-
-        let japanese = SpeakerBleedFilter.tokens(in: "会議は月曜日です")
-        XCTAssertEqual(japanese.count, 8)
-
-        let korean = SpeakerBleedFilter.tokens(in: "우리는 다음 주에 만나기로")
-        XCTAssertEqual(korean.count, 4)
-        XCTAssertFalse(korean.contains { $0.isIdeographic })
+        XCTAssertTrue(SpeakerBleedFilter.spansAreAligned(aligned, remote))
+        XCTAssertFalse(SpeakerBleedFilter.spansAreAligned(shiftedEnd, remote))
     }
 
-    /// The case that fails without per-character tokens: two tracks carrying
-    /// the identical Mandarin sentence at the identical moment.
-    func testRemovesMandarinEchoOfTheRemoteTurn() {
+    func testLongPreciselyLabelledSpanIsStillTooCoarseForDeletion() {
+        let line = "we should postpone the product launch"
+        let input = transcript([
+            segment("them", 0, 30, line, timing: .token),
+            segment("me", 0, 30, line, timing: .token),
+        ])
+
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertFalse(result.changed)
+        XCTAssertEqual(result.transcript.segments, input.segments)
+    }
+
+    // MARK: - Unicode and work bounds
+
+    func testTokenizesUnspacedScriptsPerCharacterAndCoversModernRanges() {
+        let mandarin = SpeakerBleedFilter.comparisonTokens(in: "我们下周开会")
+        XCTAssertEqual(mandarin?.count, 6)
+        XCTAssertTrue(mandarin?.allSatisfy(\.isIdeographic) == true)
+
+        let japanese = SpeakerBleedFilter.comparisonTokens(in: "会議は月曜日です")
+        XCTAssertEqual(japanese?.count, 8)
+
+        XCTAssertTrue(SpeakerBleedFilter.isIdeographic("𰀀")) // Extension G
+        XCTAssertTrue(SpeakerBleedFilter.isIdeographic("ｶ")) // Halfwidth Katakana
+    }
+
+    func testRemovesCompleteCotimedMandarinEcho() {
         let line = "我们下周一开会讨论这个项目的进度"
         let input = transcript([
-            segment("them", 10.0, 20.0, line),
-            segment("me", 10.0, 20.0, line),
+            segment("them", 10, 20, line, timing: .token),
+            segment("me", 10, 20, line, timing: .token),
         ])
 
         let result = SpeakerBleedFilter.filter(input)
@@ -235,48 +261,91 @@ final class SpeakerBleedFilterTests: XCTestCase {
         XCTAssertEqual(result.transcript.segments.map(\.speaker), ["them"])
     }
 
-    /// Trimming works the same way in an unspaced script: the echoed opening
-    /// goes, the user's own reply stays.
-    func testTrimsMandarinEchoAndKeepsTheReply() {
+    func testPreservesMandarinEchoPlusReplyWithOriginalTimestamps() {
         let echoed = "我们下周一开会讨论这个项目的进度"
+        let mic = segment("me", 10, 22, echoed + "，好的我知道了", confidence: 0.81)
         let input = transcript([
-            segment("them", 10.0, 20.0, echoed),
-            segment("me", 10.0, 22.0, echoed + "，好的我知道了"),
+            segment("them", 10, 20, echoed),
+            mic,
         ])
 
         let result = SpeakerBleedFilter.filter(input)
 
-        XCTAssertEqual(result.removedSegments, 0)
-        XCTAssertEqual(result.trimmedSegments, 1)
-        XCTAssertEqual(result.transcript.segments.last?.text, "好的我知道了")
+        XCTAssertFalse(result.changed)
+        XCTAssertEqual(result.transcript.segments.last, mic)
     }
 
-    /// A character token carries far less meaning than a word, so the run bar
-    /// is higher — a four-character courtesy overlapping in time is not echo
-    /// evidence, exactly as "ja genau" is not.
     func testKeepsShortMandarinOverlap() {
         let input = transcript([
-            segment("them", 3.0, 6.0, "好的谢谢"),
-            segment("me", 3.2, 5.8, "好的谢谢"),
+            segment("them", 3, 6, "好的谢谢"),
+            segment("me", 3, 6, "好的谢谢"),
         ])
 
         let result = SpeakerBleedFilter.filter(input)
 
-        XCTAssertEqual(result.removedSegments, 0)
-        XCTAssertEqual(result.trimmedSegments, 0)
+        XCTAssertFalse(result.changed)
+        XCTAssertEqual(result.transcript.segments.count, 2)
     }
 
-    func testRunLengthBarFollowsTheScriptTheRunIsWrittenIn() {
-        let mandarin = SpeakerBleedFilter.tokens(in: "我们下周开会")
-        XCTAssertEqual(
-            SpeakerBleedFilter.requiredRunLength(
-                for: mandarin, run: .init(length: 6, start: 0, end: 6)),
-            SpeakerBleedFilter.minimumIdeographicRunLength)
+    func testOversizedCJKInputIsSkippedBeforeComparisonCanGrow() {
+        let line = String(
+            repeating: "会",
+            count: SpeakerBleedFilter.maximumComparableTokenCount + 1)
+        XCTAssertNil(SpeakerBleedFilter.comparisonTokens(in: line))
+        let input = transcript([
+            segment("them", 0, 10, line, timing: .token),
+            segment("me", 0, 10, line, timing: .token),
+        ])
 
-        let german = SpeakerBleedFilter.tokens(in: "wir treffen uns am Montag")
-        XCTAssertEqual(
-            SpeakerBleedFilter.requiredRunLength(
-                for: german, run: .init(length: 3, start: 0, end: 3)),
-            SpeakerBleedFilter.minimumRunLength)
+        let result = SpeakerBleedFilter.filter(input)
+
+        XCTAssertFalse(result.changed)
+        XCTAssertEqual(result.transcript.segments, input.segments)
+    }
+
+    func testOversizedTextIsSkippedAfterOnlyABoundedPrefix() {
+        let line = String(
+            repeating: "a",
+            count: SpeakerBleedFilter.maximumComparableTextBytes + 1)
+        XCTAssertNil(SpeakerBleedFilter.comparisonTokens(in: line))
+    }
+
+    func testCrowdedCandidateWindowIsConservativelySkipped() {
+        let matching = "we should postpone the product launch"
+        var segments = (0...SpeakerBleedFilter.maximumCandidateSegments).map { index in
+            segment("them", 10, 20, index == 0
+                    ? matching
+                    : "remote alternative number \(index) has enough words")
+        }
+        let mic = segment("me", 10, 20, matching)
+        segments.append(mic)
+
+        let result = SpeakerBleedFilter.filter(transcript(segments))
+
+        XCTAssertFalse(result.changed)
+        XCTAssertEqual(result.transcript.segments.last, mic)
+    }
+
+    // MARK: - Persistence compatibility
+
+    func testLegacySegmentWithoutTimingMetadataDecodesAsUnknown() throws {
+        let data = Data(
+            #"{"start":1,"end":2,"speaker":"me","text":"hello","confidence":null}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Transcript.Segment.self, from: data)
+
+        XCTAssertNil(decoded.timingPrecision)
+    }
+
+    func testTimingPrecisionRoundTrips() throws {
+        let original = segment(
+            "me", 1, 2, "four words with timing", timing: .token)
+
+        let decoded = try JSONDecoder().decode(
+            Transcript.Segment.self,
+            from: JSONEncoder().encode(original))
+
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.timingPrecision, .token)
     }
 }
