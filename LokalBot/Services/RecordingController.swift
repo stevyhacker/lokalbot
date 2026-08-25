@@ -17,6 +17,29 @@ struct SystemAudioSamePIDRetryBudget: Equatable {
     }
 }
 
+/// Tracks whether the silent-system-audio advisory is currently presented.
+/// Returning a Bool from each transition lets the controller emit UI updates
+/// exactly once while keeping the state machine independently testable.
+struct SilentSystemAudioWarningState: Equatable {
+    private(set) var isPresented = false
+
+    mutating func present() -> Bool {
+        guard !isPresented else { return false }
+        isPresented = true
+        return true
+    }
+
+    mutating func withdraw() -> Bool {
+        guard isPresented else { return false }
+        isPresented = false
+        return true
+    }
+
+    mutating func reset() {
+        isPresented = false
+    }
+}
+
 struct RecordingMemoryHealthSnapshot: Equatable, Sendable {
     var isRecording: Bool
     var microphoneStatus: String
@@ -80,7 +103,7 @@ final class RecordingController: ObservableObject {
     private var lastMicRestartAt: Date?
     private var didWarnAboutMicCaptureStall = false
     private var lastSystemAudioReattachAt: Date?
-    private var didWarnAboutSilentSystemAudio = false
+    private var silentSystemAudioWarning = SilentSystemAudioWarningState()
     private var samePIDSystemAudioRetryBudget = SystemAudioSamePIDRetryBudget()
     private static let recordingHealthWatchdogInterval: TimeInterval = 5
     private static let micCaptureInitialGrace: TimeInterval = 8
@@ -513,7 +536,7 @@ final class RecordingController: ObservableObject {
         lastMicRestartAt = nil
         didWarnAboutMicCaptureStall = false
         lastSystemAudioReattachAt = nil
-        didWarnAboutSilentSystemAudio = false
+        silentSystemAudioWarning.reset()
         samePIDSystemAudioRetryBudget.reset()
         recordingHealthWatchdog = Timer.publish(
             every: Self.recordingHealthWatchdogInterval,
@@ -532,7 +555,7 @@ final class RecordingController: ObservableObject {
         lastMicRestartAt = nil
         didWarnAboutMicCaptureStall = false
         lastSystemAudioReattachAt = nil
-        didWarnAboutSilentSystemAudio = false
+        silentSystemAudioWarning.reset()
         samePIDSystemAudioRetryBudget.reset()
     }
 
@@ -636,7 +659,7 @@ final class RecordingController: ObservableObject {
             } else {
                 samePIDSystemAudioRetryBudget.reset()
             }
-            didWarnAboutSilentSystemAudio = false
+            withdrawSilentSystemAudioWarning()
             lokalbotLog(
                 "system audio reattached oldPID=\(previousPID) newPID=\(candidate.id) bundle=\(candidate.bundleID ?? "unknown") captured=\(String(format: "%.2fs", health.duration)) audible=\(String(format: "%.2fs", health.audibleDuration)) silentFor=\(String(format: "%.2fs", silentFor)) rms=\(String(format: "%.6f", health.lastRMSLevel)) peakRMS=\(String(format: "%.6f", health.peakRMSLevel))")
         } catch {
@@ -676,7 +699,7 @@ final class RecordingController: ObservableObject {
                     self.systemAudioTarget = target
                     self.lastSystemAudioReattachAt = Date()
                     self.samePIDSystemAudioRetryBudget.reset()
-                    self.didWarnAboutSilentSystemAudio = false
+                    self.withdrawSilentSystemAudioWarning()
                     lokalbotLog(
                         "system audio helper handoff oldPID=\(terminatedPID) newPID=\(candidate.id) bundle=\(candidate.bundleID ?? "unknown")")
                     self.systemAudioHandoffTask = nil
@@ -702,7 +725,7 @@ final class RecordingController: ObservableObject {
             systemAudioTarget = SystemAudioTarget(bundleID: app.bundleID, pid: candidate.id)
             lastSystemAudioReattachAt = Date()
             samePIDSystemAudioRetryBudget.reset()
-            didWarnAboutSilentSystemAudio = false
+            withdrawSilentSystemAudioWarning()
             lokalbotLog(
                 "system audio meeting handoff app=\(app.bundleID) pid=\(candidate.id)")
         } catch {
@@ -725,28 +748,35 @@ final class RecordingController: ObservableObject {
     @discardableResult
     private func withdrawSilentSystemAudioWarningIfRecovered(
         health: SystemAudioRecorder.CaptureHealth? = nil) -> Bool {
-        guard didWarnAboutSilentSystemAudio else { return false }
+        guard silentSystemAudioWarning.isPresented else { return false }
         let health = health ?? systemRecorder.captureHealth()
         guard Self.shouldWithdrawSilentSystemAudioWarning(
-            hasWarned: didWarnAboutSilentSystemAudio,
+            hasWarned: silentSystemAudioWarning.isPresented,
             audibleDuration: health.audibleDuration)
         else { return false }
-        didWarnAboutSilentSystemAudio = false
-        onError(nil)
+        withdrawSilentSystemAudioWarning()
         lokalbotLog(
             "system audio recovered audible=\(String(format: "%.2fs", health.audibleDuration))")
         return true
     }
 
+    /// A successful reattach starts a new capture attempt. Withdraw the
+    /// advisory for the failed target now; if the replacement is also silent,
+    /// the watchdog can present a fresh warning after its grace period.
+    private func withdrawSilentSystemAudioWarning() {
+        guard silentSystemAudioWarning.withdraw() else { return }
+        onError(nil)
+    }
+
     private func warnOnceAboutSilentSystemAudio(elapsed: TimeInterval, captured: TimeInterval,
                                                 audible: TimeInterval, rms: Float, peakRMS: Float) {
-        guard !didWarnAboutSilentSystemAudio, elapsed >= 30 else { return }
-        didWarnAboutSilentSystemAudio = true
+        guard elapsed >= 30,
+              audible < AudioFileInspector.minimumTranscribableDuration,
+              silentSystemAudioWarning.present()
+        else { return }
         lokalbotLog(
             "system audio silent elapsed=\(String(format: "%.2fs", elapsed)) captured=\(String(format: "%.2fs", captured)) audible=\(String(format: "%.2fs", audible)) rms=\(String(format: "%.6f", rms)) peakRMS=\(String(format: "%.6f", peakRMS))")
-        if audible < AudioFileInspector.minimumTranscribableDuration {
-            onError(Self.silentSystemAudioMessage)
-        }
+        onError(Self.silentSystemAudioMessage)
     }
 
     private static func formatAudioDuration(_ duration: TimeInterval?) -> String {

@@ -87,4 +87,20 @@ final class RecordingControllerTests: XCTestCase {
         XCTAssertFalse(RecordingController.shouldWithdrawSilentSystemAudioWarning(
             hasWarned: false, audibleDuration: audible * 10))
     }
+
+    /// A reattach withdraws the warning for the failed target and leaves the
+    /// replacement eligible to warn again if it also stays silent.
+    func testSilentSystemAudioWarningWarnReattachWarnTransition() {
+        var warning = SilentSystemAudioWarningState()
+
+        XCTAssertTrue(warning.present())
+        XCTAssertTrue(warning.isPresented)
+        XCTAssertFalse(warning.present(), "the same target must warn only once")
+
+        XCTAssertTrue(warning.withdraw(), "reattach must withdraw the visible warning")
+        XCTAssertFalse(warning.isPresented)
+        XCTAssertFalse(warning.withdraw(), "withdrawal must be idempotent")
+
+        XCTAssertTrue(warning.present(), "a silent replacement may surface a fresh warning")
+    }
 }
