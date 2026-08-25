@@ -1,3 +1,4 @@
+import CoreAudio
 import XCTest
 @testable import LokalBot
 
@@ -288,6 +289,38 @@ final class CalendarDetectionTests: XCTestCase {
             bundleID: "us.zoom.xos", calendarBacked: false))
     }
 
+    func testTeamsLaunchBlipDoesNotConfirmBeforeMinimumDuration() {
+        XCTAssertTrue(MeetingDetector.requiresSustainedAudioForStart(
+            bundleID: "com.microsoft.teams2", calendarBacked: false))
+        let firstSeen = Date()
+        XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(
+            firstSeenAt: firstSeen,
+            now: firstSeen.addingTimeInterval(10.8),
+            minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration))
+        XCTAssertTrue(MeetingMatcher.sustainedAudioConfirmed(
+            firstSeenAt: firstSeen,
+            now: firstSeen.addingTimeInterval(
+                MeetingDetector.nativeAudioMinimumConfirmationDuration),
+            minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration))
+    }
+
+    func testSustainedAudioIsNotRequiredForDedicatedOrCalendarBackedStarts() {
+        XCTAssertFalse(MeetingDetector.requiresSustainedAudioForStart(
+            bundleID: "us.zoom.xos", calendarBacked: false))
+        XCTAssertFalse(MeetingDetector.requiresSustainedAudioForStart(
+            bundleID: "com.microsoft.teams2", calendarBacked: true))
+        // Browsers carry their own title/calendar gate and never wait here.
+        XCTAssertFalse(MeetingDetector.requiresSustainedAudioForStart(
+            bundleID: "com.google.Chrome", calendarBacked: false))
+    }
+
+    func testSustainedAudioIsUnconfirmedBeforeAnyAudioWasSeen() {
+        XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(
+            firstSeenAt: nil,
+            now: Date(),
+            minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration))
+    }
+
     func testAudioMonitorRequiresCalendarForBroadCommunicationApps() {
         XCTAssertFalse(MeetingDetector.shouldAutoRecordNativeAudioMonitor(
             bundleID: "com.tinyspeck.slackmacgap", calendarBacked: false))
@@ -385,6 +418,78 @@ final class CalendarDetectionTests: XCTestCase {
         XCTAssertNil(object["calendarEventID"])
         XCTAssertNil(object["meetingURL"])
         XCTAssertNil(object["participantNameHints"])
+    }
+
+    // MARK: - Streams that are open for the app's whole lifetime
+
+    /// Measured with Teams launched and idle, 20 samples over 20 s: modulehost
+    /// reported isRunningOutput and isRunningInput true in 20/20 while every
+    /// helper reported false. A process in that state cannot be evidence of a
+    /// call, so the start decision must not read it.
+    func testAlwaysOpenStreamsCarryNoMeetingSignal() {
+        XCTAssertFalse(MeetingDetector.carriesMeetingSignal(
+            bundleID: "com.microsoft.teams2.modulehost"))
+        XCTAssertFalse(MeetingDetector.carriesMeetingSignal(
+            bundleID: "com.microsoft.teams2.MODULEHOST"))
+
+        XCTAssertTrue(MeetingDetector.carriesMeetingSignal(
+            bundleID: "com.microsoft.teams2.helper"))
+        XCTAssertTrue(MeetingDetector.carriesMeetingSignal(bundleID: "com.microsoft.teams2"))
+        // An unknown process is judged by the rest of the rules, not silently
+        // dropped here.
+        XCTAssertTrue(MeetingDetector.carriesMeetingSignal(bundleID: nil))
+    }
+
+    /// An always-open stream is not evidence that a meeting is running, but it
+    /// remains a valid capture target once another signal starts the recording.
+    func testAlwaysOpenStreamIsDetectionOnlyButRemainsCaptureCandidate() {
+        let moduleHost = AudioProcess(id: 500,
+                                      name: "Microsoft Teams ModuleHost",
+                                      bundleID: "com.microsoft.teams2.modulehost",
+                                      objectID: AudioObjectID(500),
+                                      isRunningOutput: true)
+        let app = MeetingDetector.DetectedApp(name: "Teams",
+                                              bundleID: "com.microsoft.teams2",
+                                              pid: moduleHost.id)
+
+        XCTAssertNil(MeetingDetector.bestOutputAudioProcess(for: app, in: [moduleHost]))
+        XCTAssertEqual(
+            MeetingDetector.bestCaptureAudioProcess(for: app, in: [moduleHost])?.id,
+            moduleHost.id)
+
+        // The host's own stream is still valid detection evidence.
+        let host = AudioProcess(id: 501,
+                                name: "Microsoft Teams",
+                                bundleID: "com.microsoft.teams2",
+                                objectID: AudioObjectID(501),
+                                isRunningOutput: true)
+        XCTAssertEqual(
+            MeetingDetector.bestOutputAudioProcess(for: app, in: [moduleHost, host])?.id,
+            host.id)
+    }
+
+    /// Every measured short false start is below the inclusive confirmation
+    /// boundary; a real candidate confirms exactly at that boundary.
+    func testConfirmationDurationRejectsObservedFalseStartsAndIsInclusive() {
+        let minimumDuration = MeetingDetector.nativeAudioMinimumConfirmationDuration
+        let start = Date(timeIntervalSince1970: 0)
+
+        XCTAssertGreaterThan(minimumDuration, 10.8)
+        for observed in [0.2, 7.6, 10.8] {
+            XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(
+                firstSeenAt: start,
+                now: start.addingTimeInterval(observed),
+                minimumDuration: minimumDuration),
+                "a \(observed)s stream must not confirm a start")
+        }
+        XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(
+            firstSeenAt: start,
+            now: start.addingTimeInterval(minimumDuration - 0.001),
+            minimumDuration: minimumDuration))
+        XCTAssertTrue(MeetingMatcher.sustainedAudioConfirmed(
+            firstSeenAt: start,
+            now: start.addingTimeInterval(minimumDuration),
+            minimumDuration: minimumDuration))
     }
 }
 

@@ -299,7 +299,7 @@ final class RecordingController: ObservableObject {
                 try Task.checkCancellation()
 
                 if let detectedApp {
-                    let captureProcess = MeetingDetector.currentOutputAudioProcess(for: detectedApp)
+                    let captureProcess = MeetingDetector.currentCaptureAudioProcess(for: detectedApp)
                     let pid = captureProcess?.id ?? detectedApp.pid
                     do {
                         try systemRecorder.start(
@@ -670,7 +670,7 @@ final class RecordingController: ObservableObject {
     }
 
     private func currentSystemAudioCandidate(for target: SystemAudioTarget) -> AudioProcess? {
-        MeetingDetector.currentOutputAudioProcess(for: MeetingDetector.DetectedApp(
+        MeetingDetector.currentCaptureAudioProcess(for: MeetingDetector.DetectedApp(
             name: target.bundleID,
             bundleID: target.bundleID,
             pid: target.pid))
@@ -717,7 +717,7 @@ final class RecordingController: ObservableObject {
     private func retargetSystemAudio(to app: MeetingDetector.DetectedApp) {
         guard isRecording else { return }
         MeetingDetector.invalidateAudioProcessSnapshot()
-        guard let candidate = MeetingDetector.currentOutputAudioProcess(for: app) else { return }
+        guard let candidate = MeetingDetector.currentCaptureAudioProcess(for: app) else { return }
         if systemAudioTarget?.bundleID == app.bundleID,
            systemAudioTarget?.pid == candidate.id { return }
         do {
