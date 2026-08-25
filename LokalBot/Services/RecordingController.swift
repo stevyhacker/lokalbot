@@ -43,13 +43,6 @@ enum RecordingSystemAudioPolicy: Equatable {
 }
 
 enum SystemAudioRecoveryCandidatePolicy {
-    static func excludedPID(
-        currentPID: pid_t,
-        framesSinceAttach: Int64
-    ) -> pid_t? {
-        framesSinceAttach == 0 ? currentPID : nil
-    }
-
     static func shouldRetrySamePID(
         framesSinceAttach: Int64,
         audibleDuration: TimeInterval,
@@ -57,6 +50,66 @@ enum SystemAudioRecoveryCandidatePolicy {
     ) -> Bool {
         framesSinceAttach == 0 || audibleDuration < minimumAudibleDuration
     }
+}
+
+/// What the watchdog has learned about the processes it tapped during one
+/// recording. Two facts, both earned rather than assumed.
+///
+/// A tap that has written audible audio *of its own* is pointed at the process
+/// the call comes out of, and is worth being patient with. A tap that has not
+/// delivered one buffer since it attached is pointed at a process with no open
+/// output stream; no amount of waiting turns that into audio, and nothing
+/// should send the tap back there.
+///
+/// Excluding only the tap in hand is not enough, because the exclusion lasts
+/// one tick. Measured on a real call (log, 2026-08-25 10:36–10:57) the watchdog
+/// alternated between two Teams siblings every 10–15 s for 21 minutes: an
+/// ordinary pause moved the tap off the process carrying audio onto a helper
+/// that delivered nothing, the empty helper moved it straight back, and the
+/// audible total grew 28 s in those 21 minutes because each swap discards the
+/// audio in flight.
+struct SystemAudioTapLedger: Equatable {
+    /// The tap known to carry this call's audio, if one has proved itself.
+    private(set) var provenPID: pid_t?
+    /// Taps that delivered nothing at all while attached.
+    private(set) var retiredPIDs: Set<pid_t> = []
+    /// The session's audible total when the current tap attached. `CaptureHealth`
+    /// counts the whole file, so only growth past this mark belongs to this
+    /// attachment — without the mark, a tap inherits its predecessor's proof.
+    private var audibleAtAttach: TimeInterval = 0
+
+    mutating func attached(to pid: pid_t, audibleDuration: TimeInterval) {
+        audibleAtAttach = audibleDuration
+        // Teams reuses its processes; a fresh attachment gets a fresh hearing.
+        retiredPIDs.remove(pid)
+    }
+
+    /// Whether the current attachment has written audible audio itself.
+    func hasProvedItself(audibleDuration: TimeInterval, minimum: TimeInterval) -> Bool {
+        audibleDuration - audibleAtAttach >= minimum
+    }
+
+    mutating func observe(pid: pid_t, audibleDuration: TimeInterval, minimum: TimeInterval) {
+        guard hasProvedItself(audibleDuration: audibleDuration, minimum: minimum) else { return }
+        provenPID = pid
+    }
+
+    /// Retires a tap that delivered nothing. A PID that had proved itself on an
+    /// earlier attachment loses that standing: whatever it carried then, it is
+    /// carrying nothing now.
+    mutating func retire(_ pid: pid_t) {
+        retiredPIDs.insert(pid)
+        if provenPID == pid { provenPID = nil }
+    }
+
+    /// How long this tap may stay quiet before the watchdog goes looking.
+    func silenceGrace(for pid: pid_t,
+                      ordinary: TimeInterval,
+                      proven: TimeInterval) -> TimeInterval {
+        pid == provenPID ? proven : ordinary
+    }
+
+    mutating func reset() { self = SystemAudioTapLedger() }
 }
 
 /// Tracks whether the silent-system-audio advisory is currently presented.
@@ -143,12 +196,24 @@ final class RecordingController: ObservableObject {
     private var lastSystemAudioReattachAt: Date?
     private var silentSystemAudioWarning = SilentSystemAudioWarningState()
     private var samePIDSystemAudioRetryBudget = SystemAudioSamePIDRetryBudget()
+    private var systemAudioTapLedger = SystemAudioTapLedger()
     private static let recordingHealthWatchdogInterval: TimeInterval = 5
     private static let micCaptureInitialGrace: TimeInterval = 8
     private static let micCaptureStallGrace: TimeInterval = 15
     private static let micCaptureRestartCooldown: TimeInterval = 10
     private static let systemAudioInitialGrace: TimeInterval = 8
     private static let systemAudioSilentGrace: TimeInterval = 8
+    /// The same wait, for a tap that has already written audible audio of its
+    /// own. Eight seconds is a pause between two sentences, so on a proven tap
+    /// that threshold measures the conversation rather than the capture.
+    ///
+    /// Ninety seconds is a judgement, not a measurement: comfortably longer
+    /// than a meeting goes quiet while someone reads or shares a screen, and
+    /// short enough to still find the audio inside a couple of minutes if it
+    /// really did move. `retiredPIDs` is what stops the churn; this only keeps
+    /// a working tap from being disturbed for nothing. The microphone keeps
+    /// recording throughout either way.
+    private static let provenSystemAudioSilentGrace: TimeInterval = 90
     private static let systemAudioReattachCooldown: TimeInterval = 10
     /// Calendar event id + stop time of the last calendar-backed recording, so
     /// the same scheduled meeting can't immediately re-record (helper-PID churn,
@@ -360,6 +425,7 @@ final class RecordingController: ObservableObject {
                         systemAudioTarget = SystemAudioTarget(
                             bundleID: captureApp.bundleID,
                             pid: pid)
+                        systemAudioTapLedger.attached(to: pid, audibleDuration: 0)
                         if pid != captureApp.pid || captureProcess?.bundleID != captureApp.bundleID {
                             lokalbotLog(
                                 "system audio capture resolved detectedPID=\(captureApp.pid) capturePID=\(pid) captureBundle=\(captureProcess?.bundleID ?? "unknown") hostBundle=\(captureApp.bundleID)")
@@ -601,6 +667,7 @@ final class RecordingController: ObservableObject {
         didWarnAboutMicCaptureStall = false
         lastSystemAudioReattachAt = nil
         samePIDSystemAudioRetryBudget.reset()
+        systemAudioTapLedger.reset()
         recordingHealthWatchdog = Timer.publish(
             every: Self.recordingHealthWatchdogInterval,
             on: .main,
@@ -619,6 +686,7 @@ final class RecordingController: ObservableObject {
         didWarnAboutMicCaptureStall = false
         lastSystemAudioReattachAt = nil
         samePIDSystemAudioRetryBudget.reset()
+        systemAudioTapLedger.reset()
     }
 
     private func checkMicCapture() {
@@ -674,26 +742,43 @@ final class RecordingController: ObservableObject {
 
         let health = systemRecorder.captureHealth()
         withdrawSilentSystemAudioWarningIfRecovered(health: health)
+        systemAudioTapLedger.observe(pid: target.pid,
+                                     audibleDuration: health.audibleDuration,
+                                     minimum: AudioFileInspector.minimumTranscribableDuration)
         let silentFor = health.lastAudibleWriteAt.map { now.timeIntervalSince($0) } ?? elapsed
-        guard silentFor >= Self.systemAudioSilentGrace else { return }
+        // Silence is the question this watchdog cannot answer on its own: a
+        // meeting between two sentences and a tap on the wrong process look
+        // identical from here. A tap that has written audible audio has already
+        // answered it, and gets to sit out an ordinary pause.
+        let silenceGrace = systemAudioTapLedger.silenceGrace(
+            for: target.pid,
+            ordinary: Self.systemAudioSilentGrace,
+            proven: Self.provenSystemAudioSilentGrace)
+        guard silentFor >= silenceGrace else { return }
 
         if let lastSystemAudioReattachAt,
            now.timeIntervalSince(lastSystemAudioReattachAt) < Self.systemAudioReattachCooldown {
             return
         }
 
-        let excludedPID = SystemAudioRecoveryCandidatePolicy.excludedPID(
-            currentPID: target.pid,
-            framesSinceAttach: health.framesSinceAttach)
+        // A tap that has not delivered a single buffer since it attached is not
+        // quiet: it is pointed at a process with no open output stream. Retire
+        // it — and look past everything retired earlier in this recording, not
+        // just the tap in hand, or the watchdog keeps rediscovering the same
+        // empty sibling and swapping back onto it.
+        if health.framesSinceAttach == 0 {
+            systemAudioTapLedger.retire(target.pid)
+        }
         let alternativeCandidate = currentSystemAudioCandidate(
             for: target,
-            excludingPID: excludedPID)
+            excluding: systemAudioTapLedger.retiredPIDs)
         // Rebuilding a tap on the same PID is still useful when that is the
         // only process left: the process may have opened its stream after the
         // original tap was created. Same-PID retries remain budgeted below.
-        let candidate = alternativeCandidate ?? (excludedPID == nil
-            ? nil
-            : currentSystemAudioCandidate(for: target))
+        let candidate = alternativeCandidate
+            ?? (systemAudioTapLedger.retiredPIDs.isEmpty
+                ? nil
+                : currentSystemAudioCandidate(for: target))
         guard let candidate else {
             warnOnceAboutSilentSystemAudio(elapsed: elapsed, captured: health.duration,
                                            audible: health.audibleDuration,
@@ -730,6 +815,8 @@ final class RecordingController: ObservableObject {
             let previousPID = target.pid
             target.pid = candidate.id
             systemAudioTarget = target
+            systemAudioTapLedger.attached(to: candidate.id,
+                                          audibleDuration: health.audibleDuration)
             lastSystemAudioReattachAt = now
             if !isSamePIDRetry {
                 samePIDSystemAudioRetryBudget.reset()
@@ -753,14 +840,14 @@ final class RecordingController: ObservableObject {
 
     private func currentSystemAudioCandidate(
         for target: SystemAudioTarget,
-        excludingPID: pid_t? = nil
+        excluding excludedPIDs: Set<pid_t> = []
     ) -> AudioProcess? {
         MeetingDetector.currentCaptureTargetProcess(
             for: MeetingDetector.DetectedApp(
                 name: target.bundleID,
                 bundleID: target.bundleID,
                 pid: target.pid),
-            excludingPID: excludingPID)
+            excluding: excludedPIDs)
     }
 
     /// Helper processes routinely exit during a live browser/Zoom meeting.
@@ -780,12 +867,15 @@ final class RecordingController: ObservableObject {
                 MeetingDetector.invalidateAudioProcessSnapshot()
                 guard let candidate = self.currentSystemAudioCandidate(
                     for: target,
-                    excludingPID: terminatedPID
+                    excluding: [terminatedPID]
                 ) else { continue }
                 do {
                     try self.systemRecorder.reattach(capturingPID: candidate.id)
                     target.pid = candidate.id
                     self.systemAudioTarget = target
+                    self.systemAudioTapLedger.attached(
+                        to: candidate.id,
+                        audibleDuration: self.systemRecorder.captureHealth().audibleDuration)
                     self.lastSystemAudioReattachAt = Date()
                     self.samePIDSystemAudioRetryBudget.reset()
                     self.withdrawSilentSystemAudioWarning()
@@ -812,6 +902,9 @@ final class RecordingController: ObservableObject {
         do {
             try systemRecorder.reattach(capturingPID: candidate.id)
             systemAudioTarget = SystemAudioTarget(bundleID: app.bundleID, pid: candidate.id)
+            systemAudioTapLedger.attached(
+                to: candidate.id,
+                audibleDuration: systemRecorder.captureHealth().audibleDuration)
             lastSystemAudioReattachAt = Date()
             samePIDSystemAudioRetryBudget.reset()
             withdrawSilentSystemAudioWarning()
