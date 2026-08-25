@@ -11,22 +11,6 @@ import CoreGraphics
 @MainActor
 final class AppState: ObservableObject {
 
-    enum CoreModelPreparationState: Equatable {
-        case idle
-        case preparingTranscription
-        case failed(String)
-
-        var isPreparing: Bool {
-            if case .preparingTranscription = self { return true }
-            return false
-        }
-
-        var errorMessage: String? {
-            if case .failed(let message) = self { return message }
-            return nil
-        }
-    }
-
     enum NavSection: Hashable {
         case today, timeline, meetings, type, ask, agent, settings
 
@@ -63,13 +47,6 @@ final class AppState: ObservableObject {
             default: return nil
             }
         }
-    }
-
-    struct AgentLaunchContext: Equatable {
-        var title: String
-        var prompt: String
-        var meetingID: Meeting.ID?
-        var actionID: String?
     }
 
     /// Which tab the Settings surface shows (spec §2.5 — Settings absorbs
@@ -109,7 +86,6 @@ final class AppState: ObservableObject {
 
     @Published private(set) var meetings: [Meeting] = []
     @Published var lastError: String?
-    @Published private(set) var coreModelPreparationState: CoreModelPreparationState = .idle
     /// A recording or dictation start was refused because microphone access
     /// is denied at the system level. Cleared when the user opens System
     /// Settings from the recovery toast or dismisses it.
@@ -125,10 +101,7 @@ final class AppState: ObservableObject {
         didSet {
             guard settings != oldValue else { return }
             settingsStore.current = settings
-            if ModelReadinessSnapshot.processingReadinessChanged(
-                from: oldValue, to: settings) {
-                processMeetingsWaitingForModels()
-            }
+            modelRoles.settingsDidChange(from: oldValue, to: settings)
             if settings.stopDebounceSeconds != oldValue.stopDebounceSeconds {
                 detector.stopDebounce = settings.stopDebounceSeconds
             }
@@ -233,8 +206,7 @@ final class AppState: ObservableObject {
             || old.dreamingFirstEligibleDayKey != new.dreamingFirstEligibleDayKey
     }
 
-    // Navigation (main window): sidebar section, selected meeting, and a
-    // pending "jump to timestamp" handed from search to the detail player.
+    // Navigation (main window): sidebar section and selected meeting.
     @Published var navSection: NavSection = .today
     private static let typeTabDefaultsKey = "lokalbotv3.type.selectedTab"
     private static var navigationDefaults: UserDefaults {
@@ -253,29 +225,13 @@ final class AppState: ObservableObject {
     /// switch back to Ask before presenting their content.
     @Published var askMode: AskMode = .ask
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []
-    @Published var pendingSeek: TimeInterval?
-    /// A screen-memory deep link waiting for Timeline's shared capture model.
-    /// Search, assistant citations, and Quick Recall set this before switching
-    /// sections; Timeline consumes it once its content column is mounted.
-    @Published var pendingScreenSnapshotID: Int64?
-
-    /// A query handed to the Ask section by another surface (⌘K palette).
-    /// AskView consumes and clears it on appear/change.
-    @Published var askPrefill: String?
-
-    /// True when an explicitly ask-labelled handoff should send immediately,
-    /// rather than merely placing text in Ask's search field.
-    @Published var askSubmitRequested = false
 
     /// A day handed to the Ask section (the old Timeline "Ask" tab, spec
     /// §2.2): rendered as a removable chip, and prepended to escalated
     /// queries so the assistant scopes its answer to that day.
     @Published var askDayScope: Date?
-    /// Screens explicitly attached from Timeline to the next Ask turn.
-    @Published var askScreenContextIDs: [Int64] = []
-    /// Contextual handoffs only prefill Agent. The subprocess starts after the
-    /// user reviews the prompt and explicitly chooses Send.
-    @Published var agentLaunchContext: AgentLaunchContext?
+    /// Atomic, destination-scoped payloads for cross-surface navigation.
+    private(set) lazy var navigationHandoff = NavigationHandoff()
 
     /// Navigate to the Type section with a specific tab preselected.
     func openType(_ tab: TypeTab) {
@@ -293,15 +249,16 @@ final class AppState: ObservableObject {
     /// scoping it to a day (Timeline's "Ask about this day").
     func openAsk(query: String = "", dayScope: Date? = nil,
                  screenSnapshotIDs: [Int64] = [], submit: Bool = false) {
-        askPrefill = query.isEmpty ? nil : query
-        askDayScope = dayScope
-        askScreenContextIDs = screenSnapshotIDs
-        askSubmitRequested = submit
+        navigationHandoff.stageAsk(
+            query: query,
+            dayScope: dayScope,
+            screenSnapshotIDs: screenSnapshotIDs,
+            submit: submit)
         navSection = .ask
     }
 
     func openAgent(_ context: AgentLaunchContext? = nil) {
-        agentLaunchContext = context
+        navigationHandoff.stageAgent(context)
         if let prompt = context?.prompt {
             agentSessions.ensureSelectedController().draft = prompt
         }
@@ -310,7 +267,8 @@ final class AppState: ObservableObject {
 
     /// Open one meeting in the Meetings section — the deep-link target
     /// for search hits, menu-bar recents, and palette recents.
-    func openMeeting(_ id: Meeting.ID) {
+    func openMeeting(_ id: Meeting.ID, seek: TimeInterval? = nil) {
+        navigationHandoff.stageMeeting(id, seek: seek)
         selectedMeetingIDs = [id]
         navSection = .meetings
     }
@@ -356,7 +314,6 @@ final class AppState: ObservableObject {
         return controller
     }()
     private let dailyMemoryExportScheduler = DailyMemoryExportScheduler()
-    private let dayDigestScheduler = DayDigestScheduler()
     private(set) lazy var memoryRoutines = MemoryRoutineScheduler(
         storageRoot: storage.rootURL,
         databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"),
@@ -434,10 +391,32 @@ final class AppState: ObservableObject {
     }
     private(set) lazy var pipelineJobStore = PipelineJobStore(
         databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"))
+    /// Backend selection, preparation, privacy policy, leases, and recovery
+    /// for every feature that uses LokalBot's Think role.
+    private(set) lazy var thinkExecution = ThinkExecution(storage: storage)
     private(set) lazy var pipeline = ProcessingPipeline(
-        storage: storage, jobStore: pipelineJobStore) { [store = settingsStore] in
-        store.current
-    }
+        storage: storage,
+        jobStore: pipelineJobStore,
+        settings: { [store = settingsStore] in store.current },
+        thinkExecution: thinkExecution)
+    /// Canonical state machine for Transcribe, Think, and Autocomplete.
+    private(set) lazy var modelRoles = ModelRoles(
+        settings: { [store = settingsStore] in store.current },
+        storage: storage,
+        onReadinessChanged: { [weak self] in
+            self?.processMeetingsWaitingForModels()
+        })
+    /// One Day Digest lifecycle for manual, scheduled, and headless callers.
+    /// It owns evidence collection, journal state, freshness, and repair policy.
+    private(set) lazy var dayDigest = DayDigestLifecycle(
+        storage: storage,
+        activityStore: activityStore,
+        pipeline: pipeline,
+        meetings: { [weak self] in
+            guard let self else { return [] }
+            return (self.currentMeeting.map { [$0] } ?? []) + self.meetings
+        },
+        settings: { [store = settingsStore] in store.current })
     /// Meeting-recording lifecycle: recorders, watchdog, timer tick, prewarm.
     private(set) lazy var recording = RecordingController(
         storage: storage,
@@ -445,7 +424,16 @@ final class AppState: ObservableObject {
         audioMonitor: audioMonitor,
         pipeline: pipeline,
         isInteractive: { [weak self] in self?.interactive ?? false },
-        onError: { [weak self] message in self?.lastError = message },
+        onError: { [weak self] message in
+            guard let message else {
+                // Withdraw only the silent-capture advisory, never a newer error.
+                if self?.lastError == RecordingController.silentSystemAudioMessage {
+                    self?.lastError = nil
+                }
+                return
+            }
+            self?.lastError = message
+        },
         onMicPermissionDenied: { [weak self] in self?.micRecoveryNeeded = true },
         onMeetingFinished: { [weak self] meeting in self?.meetings.insert(meeting, at: 0) })
     /// Press-and-speak composition. Every dictation is treated as a writing
@@ -460,7 +448,7 @@ final class AppState: ObservableObject {
                 throw TextEngineError.unavailable("LokalBot is shutting down.")
             }
             let config = self.settingsStore.current.dictationCompositionTextEngineSettings
-            return try await self.pipeline.makeTextEngine(
+            return try await self.thinkExecution.makeTextEngine(
                 config,
                 priority: .interactive,
                 purpose: "dictation compose")
@@ -487,7 +475,7 @@ final class AppState: ObservableObject {
         http: CotypingEngine(
             makeEngine: { [weak self] in
                 guard let self else { throw TextEngineError.unavailable("LokalBot is shutting down.") }
-                return try await self.pipeline.makeTextEngine(
+                return try await self.thinkExecution.makeTextEngine(
                     self.settings.cotypingTextEngineSettings,
                     server: .cotyping,
                     priority: .interactive,
@@ -526,7 +514,7 @@ final class AppState: ObservableObject {
     private(set) lazy var chat = ChatViewModel(
         makeEngine: { [weak self] in
             guard let self else { throw TextEngineError.unavailable("LokalBot is shutting down.") }
-            return try await self.pipeline.makeTextEngine(
+            return try await self.thinkExecution.makeTextEngine(
                 self.settings,
                 priority: .interactive,
                 purpose: "chat")
@@ -551,7 +539,8 @@ final class AppState: ObservableObject {
     let agentInstaller = AgentRuntimeInstaller()
     private(set) lazy var agentSessions = AgentSessionTabs(
         settings: { [store = settingsStore] in store.current },
-        storage: storage)
+        storage: storage,
+        thinkExecution: thinkExecution)
     var agentController: AgentSessionController {
         agentSessions.ensureSelectedController()
     }
@@ -564,12 +553,12 @@ final class AppState: ObservableObject {
     private var audioMonitorObserver: AnyCancellable?
     private var audioMonitorChangeForwarder: AnyCancellable?
     private var calendarObserver: AnyCancellable?
-    private var modelDownloadsObserver: AnyCancellable?
+    private var modelRolesObserver: AnyCancellable?
+    private var navigationHandoffObserver: AnyCancellable?
     /// True only on the real interactive launch path (not headless / UI test) —
     /// gates recording notifications and first-run onboarding.
     private var interactive = false
     private var terminationCleanupTask: Task<Void, Never>?
-    private var coreModelPreparationTask: (id: UUID, task: Task<Void, Never>)?
     /// Serializes cotyping model lifecycle transitions. A disable must finish
     /// unloading both runtimes before a rapid re-enable can prewarm a fresh
     /// model, otherwise the old and new routes can overlap in memory.
@@ -724,14 +713,12 @@ final class AppState: ObservableObject {
         calendarObserver = calendar.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
-        // A finished model download may unblock meetings parked as "waiting
-        // for models" — re-check whenever the active download set drains.
-        modelDownloadsObserver = ModelDownloadManager.shared.$progress
-            .map(\.isEmpty)
-            .removeDuplicates()
-            .dropFirst()
-            .filter { $0 }
-            .sink { [weak self] _ in self?.modelReadinessDidChange() }
+        modelRolesObserver = modelRoles.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
+        navigationHandoffObserver = navigationHandoff.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
         pipeline.onArtifactsWritten = { [weak self] meeting in
             guard let self else { return }
             self.outcomeIndex.refresh(meeting: meeting)
@@ -1152,66 +1139,6 @@ final class AppState: ObservableObject {
         pipeline.retryJobsWaitingForModels()
     }
 
-    /// A model became available outside settings persistence (for example an
-    /// engine-specific transcription download). Refresh AppState-derived UI
-    /// and give every parked processing job another readiness check.
-    func modelReadinessDidChange() {
-        objectWillChange.send()
-        processMeetingsWaitingForModels()
-    }
-
-    /// Start downloads for every missing core model of the current selection:
-    /// GGUFs (Think, Autocomplete) through the shared download manager and
-    /// the Transcribe model through its engine. Used by onboarding and the
-    /// Models presets so the first meeting processes the moment it ends
-    /// instead of parking on missing models.
-    func startCoreModelDownloads() {
-        let snapshot = settings
-        var ids = [snapshot.cotypingBuiltInModelID]
-        if snapshot.summarizerBackend == .builtIn { ids.append(snapshot.builtInModelID) }
-        for id in ids {
-            guard let entry = ModelCatalog.entry(id: id, custom: snapshot.customBuiltInModels),
-                  ModelCatalog.localURL(for: entry, storage: storage) == nil else { continue }
-            ModelDownloadManager.shared.download(entry, storage: storage)
-        }
-        guard !ModelReadinessSnapshot.transcriptionReady(snapshot) else {
-            coreModelPreparationTask?.task.cancel()
-            coreModelPreparationTask = nil
-            coreModelPreparationState = .idle
-            return
-        }
-
-        coreModelPreparationTask?.task.cancel()
-        let id = UUID()
-        coreModelPreparationState = .preparingTranscription
-        let task = Task { [weak self] in
-            guard let self else { return }
-            let failure: String?
-            do {
-                try await snapshot.transcriptionEngine().prepare()
-                failure = nil
-            } catch is CancellationError {
-                return
-            } catch {
-                failure = "Could not prepare \(snapshot.transcriptionModel.displayName): "
-                    + error.localizedDescription
-            }
-            guard self.coreModelPreparationTask?.id == id else { return }
-            self.coreModelPreparationTask = nil
-            if let failure {
-                self.coreModelPreparationState = .failed(failure)
-                self.lastError = failure
-            } else {
-                self.coreModelPreparationState = .idle
-            }
-            // GGUF completions re-check through the download observer; the
-            // Transcribe engine downloads outside the manager, so re-check
-            // here as well.
-            self.modelReadinessDidChange()
-        }
-        coreModelPreparationTask = (id, task)
-    }
-
     func saveTranscript(_ transcript: Transcript, for meeting: Meeting) throws {
         try pipeline.saveTranscript(transcript, for: meeting)
         reindexSearchInBackground(meeting)
@@ -1282,26 +1209,10 @@ final class AppState: ObservableObject {
 
     func applyDayDigestSetting() {
         let snapshot = settings
-        let storageRoot = storage.rootURL
-        dayDigestScheduler.configure(
+        dayDigest.configureAutomaticGeneration(
             DayDigestScheduler.Configuration(
                 enabled: snapshot.dayDigestAutoEnabled,
                 hour: snapshot.dayDigestHour),
-            digestModifiedAt: { day in
-                let name = DreamDay.key(for: day)
-                let url = storageRoot.appendingPathComponent("journal/\(name).md")
-                return DayDigestGenerationMetadataStore.completedAt(for: url)
-            },
-            latestEvidenceAt: { [weak self] day in
-                guard let self else { return nil }
-                let meetingEnd = self.meetings
-                    .filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }
-                    .compactMap(\.endedAt)
-                    .max()
-                return [self.activityStore.latestEvidenceAt(on: day), meetingEnd]
-                    .compactMap { $0 }
-                    .max()
-            },
             canRun: { [weak self] in
                 guard let self, self.libraryReady else { return false }
                 // Scheduled background work never triggers a model download —
@@ -1321,25 +1232,6 @@ final class AppState: ObservableObject {
                     && !self.dictation.state.isWorking
                     && !cotypingGenerating
                     && !self.pipeline.hasActiveWork
-            },
-            generate: { [weak self] day in
-                guard let self else {
-                    throw TextEngineError.unavailable("LokalBot is shutting down.")
-                }
-                let blocks = self.activityStore.blocks(on: day)
-                let finished = self.meetings.filter {
-                    Calendar.current.isDate($0.startedAt, inSameDayAs: day)
-                        && $0.endedAt != nil
-                }
-                let screenContexts = self.activityStore.screenContexts(on: day)
-                guard !blocks.isEmpty || !finished.isEmpty || !screenContexts.isEmpty else {
-                    return .deferred
-                }
-                let result = try await self.pipeline.generateDayDigest(
-                    for: day, blocks: blocks, meetings: finished,
-                    screenContexts: screenContexts,
-                    config: self.settings)
-                return result.quality.needsRepair ? .needsRepair : .completed
             },
             onError: { [weak self] message in
                 self?.lastError = message
@@ -1433,7 +1325,7 @@ final class AppState: ObservableObject {
                             throw TextEngineError.unavailable("LokalBot is shutting down.")
                         }
                         let engineSettings = self.settings
-                        let engine = try await self.pipeline.makeTextEngine(
+                        let engine = try await self.thinkExecution.makeTextEngine(
                             engineSettings,
                             priority: .background,
                             purpose: "dreaming")
@@ -1507,15 +1399,14 @@ final class AppState: ObservableObject {
 
     /// Search hit → open the meeting; transcript hits seek the player.
     func openSearchHit(_ hit: SearchIndex.Hit) {
-        if hit.kind == .segment {
-            pendingSeek = hit.start
-        }
-        openMeeting(hit.meetingID)
+        openMeeting(
+            hit.meetingID,
+            seek: hit.kind == .segment ? hit.start : nil)
     }
 
     /// Screen search/citation hit → open Timeline at the exact captured frame.
     func openScreenSnapshot(_ snapshotID: Int64) {
-        pendingScreenSnapshotID = snapshotID
+        navigationHandoff.stageScreenSnapshot(snapshotID)
         selectedMeetingIDs = []
         navSection = .timeline
     }
@@ -1523,10 +1414,7 @@ final class AppState: ObservableObject {
     /// Chat citation marker → open the cited meeting; timed markers seek the player.
     func openCitation(_ citation: ChatCitation) {
         guard let meeting = ((try? SessionLookup.find(id: citation.meetingID, in: meetings)) ?? nil) else { return }
-        if let seconds = citation.seconds {
-            pendingSeek = seconds
-        }
-        openMeeting(meeting.id)
+        openMeeting(meeting.id, seek: citation.seconds)
     }
 
     /// Permanently removes meetings: audio folder, list entry, both indexes.

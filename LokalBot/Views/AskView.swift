@@ -51,9 +51,7 @@ private struct AskContent: View {
         .onChange(of: facet) { runSearch() }
         .onChange(of: screenDateScope) { runSearch() }
         .onChange(of: selectedScreenApp) { runSearch() }
-        .onChange(of: app.askPrefill) { consumePrefill() }
-        .onChange(of: app.askScreenContextIDs) { consumeScreenContext() }
-        .onChange(of: app.askSubmitRequested) { consumeSubmitRequest() }
+        .onChange(of: app.navigationHandoff.revision) { consumeNavigationHandoff() }
         .onChange(of: model.currentID) {
             // A saved conversation selection is an explicit mode switch. An
             // old search query must not keep masking the selected transcript.
@@ -62,9 +60,7 @@ private struct AskContent: View {
         }
         .onAppear {
             matchByMeaning = app.settings.semanticSearchEnabled
-            consumePrefill()
-            consumeScreenContext()
-            consumeSubmitRequest()
+            consumeNavigationHandoff()
             inputFocused = true
             #if LOKALBOT_UI_TEST_HOST
             if query.isEmpty,
@@ -76,33 +72,20 @@ private struct AskContent: View {
         }
     }
 
-    private func consumePrefill() {
-        guard let prefill = app.askPrefill else { return }
-        mode = .ask
-        query = prefill
-        app.askPrefill = nil
-    }
-
-    private func consumeScreenContext() {
-        guard !app.askScreenContextIDs.isEmpty else { return }
-        for snapshotID in app.askScreenContextIDs {
+    private func consumeNavigationHandoff() {
+        guard let handoff = app.navigationHandoff.consumeAsk() else { return }
+        app.askDayScope = handoff.dayScope
+        if handoff.query != nil || handoff.submit { mode = .ask }
+        if let handedQuery = handoff.query {
+            query = handedQuery
+        }
+        for snapshotID in handoff.screenSnapshotIDs {
             guard !pinnedScreens.contains(where: { $0.snapshotID == snapshotID }),
                   let screenshot = app.activityStore.screenshot(id: snapshotID) else { continue }
             let ocr = app.activityStore.ocrText(snapshotID: snapshotID) ?? ""
             pinnedScreens.append(ScreenAskContext(screenshot: screenshot, ocrText: ocr))
         }
-        app.askScreenContextIDs = []
-    }
-
-    private func consumeSubmitRequest() {
-        guard app.askSubmitRequested else { return }
-        // Consume all handoff state in one pass. SwiftUI may coalesce the
-        // individual @Published updates from `openAsk`, so this remains
-        // ordering-independent even when Ask is already visible.
-        consumePrefill()
-        consumeScreenContext()
-        app.askSubmitRequested = false
-        escalate()
+        if handoff.submit { escalate() }
     }
 
     // MARK: - Input + facets
@@ -585,8 +568,9 @@ private struct AskContent: View {
                                       snippet: hit.text)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
-                                    if hit.start > 0 { app.pendingSeek = hit.start }
-                                    app.openMeeting(hit.meetingID)
+                                    app.openMeeting(
+                                        hit.meetingID,
+                                        seek: hit.start > 0 ? hit.start : nil)
                                 }
                                 .accessibilityIdentifier("search.hit.semantic.\(hit.meetingID.uuidString)")
                         }

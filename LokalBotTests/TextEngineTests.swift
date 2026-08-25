@@ -269,6 +269,38 @@ final class TextEngineTests: XCTestCase {
         XCTAssertNil(body["temperature"])
     }
 
+    func testOpenRouterSchemaOnlyFallbackDropsStructuredRequirements() throws {
+        let engine = OpenAICompatibleEngine(
+            baseURL: URL(string: "https://openrouter.ai/api/v1")!,
+            model: "stealth/ox-alpha",
+            apiKey: "test-token",
+            chatDialect: .openRouter)
+        let schema: [String: Any] = [
+            "type": "object",
+            "properties": ["answer": ["type": "string"]],
+            "required": ["answer"],
+            "additionalProperties": false,
+        ]
+
+        let request = try engine.makeChatRequest(
+            system: "system",
+            prompt: "prompt",
+            context: [],
+            schema: schema,
+            options: nil,
+            openRouterReasoning: .highEffort)
+        let data = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let reasoning = try XCTUnwrap(body["reasoning"] as? [String: Any])
+        let provider = try XCTUnwrap(body["provider"] as? [String: Any])
+
+        XCTAssertEqual(reasoning["effort"] as? String, "high")
+        XCTAssertNil(body["response_format"])
+        XCTAssertEqual(provider["data_collection"] as? String, "deny")
+        XCTAssertNil(provider["require_parameters"])
+    }
+
     func testOpenRouterParameterMismatchTriggersHighReasoningFallbackOnce() {
         let mismatch = TextEngineError.httpStatus(
             code: 404,
@@ -281,22 +313,33 @@ final class TextEngineTests: XCTestCase {
 
         XCTAssertTrue(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
             dialect: .openRouter, error: mismatch, usedFallback: false,
+            requestedSchema: false,
             requestedReasoningBudget: 256))
         XCTAssertTrue(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
             dialect: .openRouter, error: mismatch, usedFallback: false,
+            requestedSchema: false,
             requestedReasoningBudget: 0),
                        "effort:none retries also need the high-reasoning fallback")
+        XCTAssertTrue(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+            dialect: .openRouter, error: mismatch, usedFallback: false,
+            requestedSchema: true,
+            requestedReasoningBudget: nil),
+                       "schema-only callers such as Dreaming need the compatibility fallback")
         XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
             dialect: .openRouter, error: mismatch, usedFallback: true,
+            requestedSchema: true,
             requestedReasoningBudget: 256))
         XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
             dialect: .openRouter, error: missingModel, usedFallback: false,
+            requestedSchema: true,
             requestedReasoningBudget: 256))
         XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
             dialect: .generic, error: mismatch, usedFallback: false,
+            requestedSchema: true,
             requestedReasoningBudget: 256))
         XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
             dialect: .openRouter, error: mismatch, usedFallback: false,
+            requestedSchema: false,
             requestedReasoningBudget: nil))
     }
 

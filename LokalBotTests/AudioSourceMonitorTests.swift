@@ -61,7 +61,7 @@ final class AudioSourceMonitorTests: XCTestCase {
                                               bundleID: "com.google.Chrome",
                                               pid: host.id)
 
-        XCTAssertEqual(MeetingDetector.bestOutputAudioProcess(for: app, in: [host, helper])?.id,
+        XCTAssertEqual(MeetingDetector.bestCaptureAudioProcess(for: app, in: [host, helper])?.id,
                        helper.id)
     }
 
@@ -80,7 +80,7 @@ final class AudioSourceMonitorTests: XCTestCase {
                                               bundleID: "com.google.Chrome",
                                               pid: helper.id)
 
-        XCTAssertEqual(MeetingDetector.bestOutputAudioProcess(for: app, in: [otherHelper, helper])?.id,
+        XCTAssertEqual(MeetingDetector.bestCaptureAudioProcess(for: app, in: [otherHelper, helper])?.id,
                        helper.id)
     }
 
@@ -101,7 +101,7 @@ final class AudioSourceMonitorTests: XCTestCase {
         XCTAssertTrue(MeetingDetector.audioBundleID(
             "us.zoom.CptHost", belongsTo: "us.zoom.xos"))
         XCTAssertEqual(
-            MeetingDetector.bestOutputAudioProcess(for: app, in: [host, helper])?.id,
+            MeetingDetector.bestCaptureAudioProcess(for: app, in: [host, helper])?.id,
             helper.id)
     }
 

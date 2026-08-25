@@ -97,6 +97,18 @@ enum DreamDayArgumentError: LocalizedError, Equatable {
     }
 }
 
+enum DayDigestCLIOutput {
+    static func render(
+        result: DayDigestGenerationResult,
+        modelID: String,
+        day: Date
+    ) -> String {
+        "LokalBot --digest: \(result.url.path) "
+            + "(\(result.text.count) chars; model=\(modelID); "
+            + "day=\(DreamDay.key(for: day)))"
+    }
+}
+
 /// Executes headless subcommands against the app's real subsystems (pipeline,
 /// indexes, recorder). Test hooks for CI and `Scripts/e2e.sh` — the same code
 /// paths as the UI, no window required.
@@ -217,18 +229,11 @@ struct HeadlessCommandRunner {
                     config.builtInModelID = modelID
                     config.dayDigestCustomPrompt = ""
                 }
-                let todays = app.meetings.filter {
-                    Calendar.current.isDate($0.startedAt, inSameDayAs: day)
-                        && $0.endedAt != nil
-                }
-                let result = try await app.pipeline.generateDayDigest(
-                    for: day, blocks: app.activityStore.blocks(on: day),
-                    meetings: todays,
-                    screenContexts: app.activityStore.screenContexts(on: day),
-                    config: config)
-                print("LokalBot --digest: model=\(config.builtInModelID) "
-                      + "day=\(DreamDay.key(for: day)) \(result.url.path) "
-                      + "(\(result.text.count) chars)")
+                let result = try await app.dayDigest.generate(for: day, settings: config)
+                print(DayDigestCLIOutput.render(
+                    result: result,
+                    modelID: config.builtInModelID,
+                    day: day))
                 await LlamaServer.shared.stop()
                 exit(0)
             } catch {
@@ -259,8 +264,8 @@ struct HeadlessCommandRunner {
                 let service = DreamService(
                     storageRoot: app.storage.rootURL,
                     makeEngine: {
-                        let settings = await app.settings
-                        let engine = try await app.pipeline.makeTextEngine(
+                        let settings = app.settings
+                        let engine = try await app.thinkExecution.makeTextEngine(
                             settings, purpose: "dreaming")
                         return (engine, DreamInferenceProvenance(settings: settings))
                     })
@@ -287,7 +292,7 @@ struct HeadlessCommandRunner {
         Task { @MainActor in
             do {
                 app.searchIndex.reindexAll(app.meetings, storage: app.storage)
-                let engine = try await app.pipeline.makeTextEngine(app.settings)
+                let engine = try await app.thinkExecution.makeTextEngine(app.settings)
                 let tools = MeetingChatTools(
                     meetings: { [weak app] in app?.meetings ?? [] },
                     storage: app.storage, searchIndex: app.searchIndex, embeddingIndex: app.embeddingIndex,

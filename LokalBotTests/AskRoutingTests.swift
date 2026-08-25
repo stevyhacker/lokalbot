@@ -39,10 +39,12 @@ final class AskRoutingTests: XCTestCase {
             screenSnapshotIDs: [42],
             submit: true)
 
+        let handoff = app.navigationHandoff.consumeAsk()
         XCTAssertEqual(app.navSection, .ask)
-        XCTAssertEqual(app.askPrefill, "What was I looking at?")
-        XCTAssertEqual(app.askScreenContextIDs, [42])
-        XCTAssertTrue(app.askSubmitRequested)
+        XCTAssertEqual(handoff?.query, "What was I looking at?")
+        XCTAssertEqual(handoff?.screenSnapshotIDs, [42])
+        XCTAssertTrue(handoff?.submit == true)
+        XCTAssertNil(app.navigationHandoff.consumeAsk())
     }
 
     func testTodayOnlyScopeForcesCurrentDayAndHidesAmbientLibrary() async {

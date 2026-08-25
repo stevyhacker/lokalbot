@@ -68,8 +68,7 @@ struct OutcomeOverviewActionRow: View {
                     }
                     if let citation = reference.action.citations.first {
                         EvidencePill(citation: citation) {
-                            app.pendingSeek = citation.start
-                            app.openMeeting(reference.meetingID)
+                            app.openMeeting(reference.meetingID, seek: citation.start)
                         }
                     }
                 }

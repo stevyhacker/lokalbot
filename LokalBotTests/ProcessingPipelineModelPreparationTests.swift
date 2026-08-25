@@ -74,8 +74,8 @@ final class ProcessingPipelineModelPreparationTests: XCTestCase {
                 return url
             })
 
-        _ = try await pipeline.makeTextEngine(settings)
-        _ = try await pipeline.makeTextEngine(settings)
+        _ = try await pipeline.thinkExecution.makeTextEngine(settings)
+        _ = try await pipeline.thinkExecution.makeTextEngine(settings)
 
         XCTAssertEqual(preparationCount, 1,
                        "first use downloads once; later summaries reuse the validated model")

@@ -33,6 +33,17 @@ enum MeetingMatcher {
         return titleMatchesMarker || (calendarBacked && hasOutputAudio)
     }
 
+    /// Whether a start candidate has produced audio for at least the required
+    /// duration. The boundary is inclusive: exactly `minimumDuration` confirms
+    /// the start, anything shorter does not. `firstSeenAt == nil` means no audio
+    /// has been observed yet.
+    static func sustainedAudioConfirmed(firstSeenAt: Date?,
+                                        now: Date,
+                                        minimumDuration: TimeInterval) -> Bool {
+        guard let firstSeenAt, minimumDuration >= 0 else { return false }
+        return now.timeIntervalSince(firstSeenAt) >= minimumDuration
+    }
+
     static func confidence(hasApp: Bool, hasCalendar: Bool) -> MeetingDetectionContext.Confidence {
         switch (hasApp, hasCalendar) {
         case (true, true): return .high
