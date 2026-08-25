@@ -16,39 +16,68 @@ final class AgentApprovalPolicyTests: XCTestCase {
 
     func testGatedToolAsksByDefault() {
         let policy = AgentApprovalPolicy()
+        let root = workspace.path
+        XCTAssertEqual(verdict(policy, tool: "read", path: "/private/notes.txt",
+                               requestWorkspace: root), .ask)
         XCTAssertEqual(verdict(policy, tool: "bash"), .ask)
         XCTAssertEqual(verdict(policy, tool: "write"), .ask)
         XCTAssertEqual(verdict(policy, tool: "edit"), .ask)
     }
 
-    func testAutoApproveAllowsOnlyFileChanges() {
+    func testApproveReadsAllowsOnlyReadsFromSelectedWorkspace() {
         var policy = AgentApprovalPolicy()
-        policy.autoApproveFileChanges = true
+        policy.mode = .approveReads
         let root = workspace.path
+        XCTAssertEqual(verdict(policy, tool: "read", path: "/private/notes.txt",
+                               requestWorkspace: root), .allow)
+        XCTAssertEqual(verdict(policy, tool: "READ", requestWorkspace: root), .allow)
         XCTAssertEqual(verdict(policy, tool: "bash", path: "\(root)/script.sh",
                                requestWorkspace: root), .ask)
         XCTAssertEqual(verdict(policy, tool: "write", path: "\(root)/note.txt",
-                               requestWorkspace: root), .allow)
-        XCTAssertEqual(verdict(policy, tool: "edit", path: "\(root)/nested/note.txt",
-                               requestWorkspace: root), .allow)
+                               requestWorkspace: root), .ask)
+        XCTAssertEqual(verdict(policy, tool: "read", path: "/private/notes.txt",
+                               requestWorkspace: "/private/other-workspace"), .ask)
         XCTAssertEqual(verdict(policy, tool: "unknown", path: "\(root)/note.txt",
                                requestWorkspace: root), .ask)
     }
 
-    func testPrivacySensitiveToolsAlwaysAsk() {
+    func testApproveReadsAndEditsAllowsFileCallsButNotShell() {
         var policy = AgentApprovalPolicy()
-        policy.autoApproveFileChanges = true
+        policy.mode = .approveReadsAndEdits
         let root = workspace.path
-        policy.allowForSession(
-            tool: "read", path: "/private/notes.txt", requestWorkspace: root,
-            selectedWorkspace: workspace)
-        policy.allowForSession(
-            tool: "bash", path: nil, requestWorkspace: root,
-            selectedWorkspace: workspace)
+        XCTAssertEqual(verdict(policy, tool: "read", path: "/private/notes.txt",
+                               requestWorkspace: root), .allow)
+        XCTAssertEqual(verdict(policy, tool: "write", path: "/private/outside.txt",
+                               requestWorkspace: root), .allow)
+        XCTAssertEqual(verdict(policy, tool: "edit", requestWorkspace: root), .allow)
+        XCTAssertEqual(verdict(policy, tool: "bash", requestWorkspace: root), .ask)
+        XCTAssertEqual(verdict(policy, tool: "write", path: "\(root)/note.txt",
+                               requestWorkspace: "/private/other-workspace"), .ask)
+    }
+
+    func testFullAccessAllowsKnownGatedToolsFromSelectedWorkspace() {
+        var policy = AgentApprovalPolicy()
+        policy.mode = .fullAccess
+        let root = workspace.path
+        for tool in ["read", "write", "edit", "bash", "BASH"] {
+            XCTAssertEqual(verdict(policy, tool: tool, requestWorkspace: root), .allow, tool)
+        }
+        XCTAssertEqual(verdict(policy, tool: "unknown", requestWorkspace: root), .ask)
+        XCTAssertEqual(verdict(policy, tool: "bash",
+                               requestWorkspace: "/private/other-workspace"), .ask)
+    }
+
+    func testAutomationAllowsOnlyWorkspaceFileChanges() {
+        var policy = AgentApprovalPolicy()
+        policy.approveWorkspaceFileChangesForAutomation()
+        let root = workspace.path
+        XCTAssertEqual(verdict(policy, tool: "write", path: "\(root)/note.txt",
+                               requestWorkspace: root), .allow)
+        XCTAssertEqual(verdict(policy, tool: "edit", path: "\(root)/nested/note.txt",
+                               requestWorkspace: root), .allow)
         XCTAssertEqual(verdict(policy, tool: "read", path: "/private/notes.txt",
                                requestWorkspace: root), .ask)
         XCTAssertEqual(verdict(policy, tool: "bash", requestWorkspace: root), .ask)
-        XCTAssertEqual(verdict(policy, tool: "BASH", requestWorkspace: root), .ask)
     }
 
     func testSessionAllowanceIsPerTool() {
@@ -63,29 +92,24 @@ final class AgentApprovalPolicyTests: XCTestCase {
                                requestWorkspace: root), .ask)
     }
 
-    func testResetSessionClearsAllowances() {
+    func testResetSessionClearsAllowancesAndAutomationButKeepsMode() {
         var policy = AgentApprovalPolicy()
+        policy.mode = .approveReads
         let root = workspace.path
         policy.allowForSession(
             tool: "write", path: "\(root)/one.txt", requestWorkspace: root,
             selectedWorkspace: workspace)
+        policy.approveWorkspaceFileChangesForAutomation()
         policy.resetSession()
         XCTAssertEqual(verdict(policy, tool: "write", path: "\(root)/two.txt",
                                requestWorkspace: root), .ask)
-    }
-
-    func testResetSessionKeepsAutoApproveToggle() {
-        var policy = AgentApprovalPolicy()
-        policy.autoApproveFileChanges = true
-        policy.resetSession()
-        let root = workspace.path
-        XCTAssertEqual(verdict(policy, tool: "write", path: "\(root)/note.txt",
+        XCTAssertEqual(verdict(policy, tool: "read", path: "/private/notes.txt",
                                requestWorkspace: root), .allow)
     }
 
-    func testOutsideMissingAndMismatchedPathsNeverInheritApproval() {
+    func testOutsideMissingAndMismatchedPathsNeverInheritAutomationApproval() {
         var policy = AgentApprovalPolicy()
-        policy.autoApproveFileChanges = true
+        policy.approveWorkspaceFileChangesForAutomation()
         let root = workspace.path
         XCTAssertEqual(verdict(policy, tool: "write", requestWorkspace: root), .ask)
         XCTAssertEqual(verdict(policy, tool: "write", path: "/private/outside.txt",
@@ -107,7 +131,7 @@ final class AgentApprovalPolicyTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: parent) }
 
         var policy = AgentApprovalPolicy()
-        policy.autoApproveFileChanges = true
+        policy.approveWorkspaceFileChangesForAutomation()
         XCTAssertEqual(
             policy.verdict(
                 tool: "write",

@@ -9,6 +9,7 @@ enum PiCommand: Equatable {
     case newSession(id: String)
     case getState(id: String)
     case getMessages(id: String)
+    case getSessionStats(id: String)
     case uiConfirmResponse(requestID: String, confirmed: Bool)
     case uiCancelResponse(requestID: String)
 
@@ -28,6 +29,8 @@ enum PiCommand: Equatable {
             dict = ["type": "get_state", "id": id]
         case .getMessages(let id):
             dict = ["type": "get_messages", "id": id]
+        case .getSessionStats(let id):
+            dict = ["type": "get_session_stats", "id": id]
         case .uiConfirmResponse(let requestID, let confirmed):
             dict = ["type": "extension_ui_response", "id": requestID, "confirmed": confirmed]
         case .uiCancelResponse(let requestID):

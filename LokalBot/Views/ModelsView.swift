@@ -11,6 +11,8 @@ struct ModelsView: View {
     @State private var ollamaModels: [String] = []
     @State private var ollamaReachable = false
     @State private var testResult: String?
+    @State private var testFailure: GenerationTestFailurePresentation?
+    @State private var showingTestFailure = false
     @State private var testing = false
     @State private var speechModelDownloaded = false
     @State private var preparingSpeechModel = false
@@ -258,9 +260,28 @@ struct ModelsView: View {
                     Task { await testGeneration() }
                 }
                 .disabled(testing)
+                .accessibilityIdentifier("models.generationTest")
+                .popover(isPresented: $showingTestFailure, arrowEdge: .bottom) {
+                    if let testFailure {
+                        GenerationTestFailurePopover(failure: testFailure)
+                    }
+                }
                 if let testResult {
                     Text(testResult).font(.caption).foregroundStyle(.secondary)
                         .lineLimit(2)
+                }
+                if let testFailure {
+                    Button {
+                        showingTestFailure = true
+                    } label: {
+                        Label(testFailure.inlineTitle,
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Brand.error)
+                    .help("View the error and recovery steps")
+                    .accessibilityIdentifier("models.generationTest.issue")
                 }
             }
         }
@@ -777,6 +798,8 @@ struct ModelsView: View {
     func testGeneration() async {
         testing = true
         testResult = nil
+        testFailure = nil
+        showingTestFailure = false
         defer { testing = false }
         do {
             let engine = try await app.thinkExecution.makeTextEngine(
@@ -789,7 +812,12 @@ struct ModelsView: View {
                 context: [])
             testResult = "✓ " + reply.prefix(120)
         } catch {
-            testResult = "✗ \(error.localizedDescription)"
+            let isOpenAICompatible = app.settings.summarizerBackend == .openAICompatible
+            testFailure = GenerationTestFailurePresentation(
+                error: error,
+                baseURL: isOpenAICompatible ? app.settings.openAIBaseURL : nil,
+                model: isOpenAICompatible ? app.settings.openAIModel : nil)
+            showingTestFailure = true
         }
     }
 }

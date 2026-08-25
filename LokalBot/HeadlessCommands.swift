@@ -335,7 +335,7 @@ struct HeadlessCommandRunner {
                 exit(3)
             }
             let controller = app.agentController
-            controller.autoApproveSession = true
+            controller.approveWorkspaceFileChangesForAutomation()
             await controller.start()
             if case .failed(let reason) = controller.state {
                 print("LokalBot --agent: FAILED to start — \(reason)")

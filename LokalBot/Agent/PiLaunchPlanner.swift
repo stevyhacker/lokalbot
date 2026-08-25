@@ -29,6 +29,7 @@ enum PiLaunchPlanner {
                      helpersDirectory: URL?,
                      agentAccessCapability: String? = nil,
                      continuePreviousSession: Bool = false,
+                     specificSession: URL? = nil,
                      baseEnvironment: [String: String] = ProcessInfo.processInfo.environment) -> PiLaunchPlan {
         var arguments = [
             piCLI.path,
@@ -38,7 +39,9 @@ enum PiLaunchPlanner {
             "--no-extensions", "-e", extensionDirectory.path,
             "--no-skills",
         ]
-        if continuePreviousSession {
+        if let specificSession {
+            arguments += ["--session", specificSession.path]
+        } else if continuePreviousSession {
             arguments.append("--continue")
         }
         if let skillDirectory {
