@@ -355,11 +355,20 @@ struct SettingsView: View {
 
     @ViewBuilder private var processingSection: some View {
             if shows("Processing", ["transcribe", "transcription", "summarize", "summary",
-                                    "automatic", "auto", "after meeting", "model", "models", "engine"]) {
+                                    "automatic", "auto", "after meeting", "model", "models", "engine",
+                                    "echo", "echo cancellation", "speakers", "headphones",
+                                    "microphone mode", "voice isolation"]) {
                 Section("Processing") {
                     Toggle("Transcribe automatically after each meeting", isOn: $app.settings.autoTranscribe)
                     Toggle("Summarize automatically after transcription", isOn: $app.settings.autoSummarize)
                     Text("Choose transcription and main LLM models in the Models tab.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Divider()
+                    Toggle("Remove the other side from your microphone track",
+                           isOn: $app.settings.echoCancellation)
+                    Text("On speakers the other side reaches your microphone too and gets transcribed a second time as you. Subtracts the system-audio track before transcription — including for meetings already recorded. No effect on headphones.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text("Needs the microphone mode for LokalBot itself set to Standard (Control Center → microphone icon → LokalBot's row) — macOS Voice Isolation removes the very echo this looks for. The meeting app can stay on Voice Isolation; the mode is set per app, not on the microphone.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
