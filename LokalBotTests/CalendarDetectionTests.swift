@@ -314,6 +314,98 @@ final class CalendarDetectionTests: XCTestCase {
             bundleID: "com.google.Chrome", calendarBacked: false))
     }
 
+    /// `detectRunningMeetingApp` requires fresh output audio, so a candidate
+    /// lost that signal entirely — not just its elapsed time — every time the
+    /// remote side paused to listen rather than talk. Real log, 2026-08-26: six
+    /// consecutive attempts on a live Teams call each failed after 4.2-12.7 s,
+    /// two of them past the 12 s window itself. A gap this short is
+    /// conversational rhythm, not the call ending, and must not restart the
+    /// window.
+    func testABriefPauseInTheRemoteSideDoesNotAbandonTheWindow() {
+        let firstSeen = Date()
+        let lastAudioSeenAt = firstSeen.addingTimeInterval(3)
+        let now = lastAudioSeenAt.addingTimeInterval(4)  // a 4 s quiet turn
+
+        XCTAssertEqual(
+            MeetingMatcher.startConfirmationGapOutcome(
+                firstSeenAt: firstSeen, lastAudioSeenAt: lastAudioSeenAt, now: now,
+                gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance,
+                minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration),
+            .stillWaiting)
+    }
+
+    /// Silence past the gap tolerance is what `nativeAudioMinimumConfirmationDuration`
+    /// itself already guards against for a single blip — a candidate that never
+    /// recurs must still be abandoned, gap-tolerant or not.
+    func testSilenceLongerThanTheGapToleranceAbandonsTheCandidate() {
+        let firstSeen = Date()
+        let lastAudioSeenAt = firstSeen.addingTimeInterval(1)
+        let now = lastAudioSeenAt.addingTimeInterval(
+            MeetingDetector.nativeAudioConfirmationGapTolerance + 0.1)
+
+        XCTAssertEqual(
+            MeetingMatcher.startConfirmationGapOutcome(
+                firstSeenAt: firstSeen, lastAudioSeenAt: lastAudioSeenAt, now: now,
+                gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance,
+                minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration),
+            .abandoned)
+    }
+
+    /// The two anomalous log lines — "lost the audio... after=12.3s" and
+    /// "after=12.7s" — show the total span already past the window at the
+    /// exact instant the tick found no fresh audio. A bridged gap must confirm
+    /// immediately in that case rather than waiting for evidence that both
+    /// sides have already provided.
+    func testATotalSpanPastTheWindowConfirmsEvenMidGap() {
+        let firstSeen = Date()
+        let lastAudioSeenAt = firstSeen.addingTimeInterval(11)
+        let now = firstSeen.addingTimeInterval(
+            MeetingDetector.nativeAudioMinimumConfirmationDuration + 0.3)
+
+        XCTAssertEqual(
+            MeetingMatcher.startConfirmationGapOutcome(
+                firstSeenAt: firstSeen, lastAudioSeenAt: lastAudioSeenAt, now: now,
+                gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance,
+                minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration),
+            .confirmed)
+    }
+
+    /// The tolerance only ever bridges a gap in evidence that already exists;
+    /// it cannot manufacture evidence on its own. A single blip (a
+    /// notification ding) followed by real silence for the rest of the window
+    /// must still be abandoned — the exact case
+    /// `nativeAudioMinimumConfirmationDuration` was introduced to guard
+    /// against, and this tolerance must not reopen it.
+    func testAnIsolatedBlipCannotCoastToConfirmationOnToleranceAlone() {
+        let firstSeen = Date()
+        let lastAudioSeenAt = firstSeen.addingTimeInterval(0.5)  // one brief blip
+        let now = firstSeen.addingTimeInterval(
+            MeetingDetector.nativeAudioMinimumConfirmationDuration + 1)
+
+        XCTAssertEqual(
+            MeetingMatcher.startConfirmationGapOutcome(
+                firstSeenAt: firstSeen, lastAudioSeenAt: lastAudioSeenAt, now: now,
+                gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance,
+                minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration),
+            .abandoned)
+    }
+
+    /// The gap boundary is inclusive, matching `sustainedAudioConfirmed`'s own
+    /// inclusive boundary.
+    func testGapToleranceBoundaryIsInclusive() {
+        let firstSeen = Date()
+        let lastAudioSeenAt = firstSeen
+        let now = lastAudioSeenAt.addingTimeInterval(
+            MeetingDetector.nativeAudioConfirmationGapTolerance)
+
+        XCTAssertNotEqual(
+            MeetingMatcher.startConfirmationGapOutcome(
+                firstSeenAt: firstSeen, lastAudioSeenAt: lastAudioSeenAt, now: now,
+                gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance,
+                minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration),
+            .abandoned)
+    }
+
     func testSustainedAudioIsUnconfirmedBeforeAnyAudioWasSeen() {
         XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(
             firstSeenAt: nil,

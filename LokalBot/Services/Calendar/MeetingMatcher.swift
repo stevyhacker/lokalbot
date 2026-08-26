@@ -44,6 +44,41 @@ enum MeetingMatcher {
         return now.timeIntervalSince(firstSeenAt) >= minimumDuration
     }
 
+    /// What a start candidate's silence means when it has no fresh audio
+    /// evidence on this particular tick.
+    ///
+    /// Detection asks "is the app making sound right now", so a candidate mid
+    /// confirmation loses that signal every time the remote side stops talking
+    /// to listen — an ordinary conversational rhythm, not evidence the call
+    /// ended. `abandoned` only once the *gap itself* has run past tolerance,
+    /// not the instant evidence is briefly missing.
+    enum StartConfirmationGapOutcome: Equatable {
+        /// The gap has run too long; this candidate should be dropped.
+        case abandoned
+        /// Still within tolerance, but the window overall is not done yet.
+        case stillWaiting
+        /// The gap is within tolerance, and the total span already covers the
+        /// window — confirmed despite the current instant being quiet, so a
+        /// bridged gap doesn't delay the start past when a live tick would
+        /// have.
+        case confirmed
+    }
+
+    /// `firstSeenAt`/`lastAudioSeenAt` describe one candidate's whole history:
+    /// when its audio was first observed, and when it was last observed. Pure,
+    /// so the boundary cases don't need a live app or Core Audio to test.
+    static func startConfirmationGapOutcome(firstSeenAt: Date,
+                                            lastAudioSeenAt: Date,
+                                            now: Date,
+                                            gapTolerance: TimeInterval,
+                                            minimumDuration: TimeInterval) -> StartConfirmationGapOutcome {
+        guard now.timeIntervalSince(lastAudioSeenAt) <= gapTolerance else { return .abandoned }
+        if sustainedAudioConfirmed(firstSeenAt: firstSeenAt, now: now, minimumDuration: minimumDuration) {
+            return .confirmed
+        }
+        return .stillWaiting
+    }
+
     static func confidence(hasApp: Bool, hasCalendar: Bool) -> MeetingDetectionContext.Confidence {
         switch (hasApp, hasCalendar) {
         case (true, true): return .high
