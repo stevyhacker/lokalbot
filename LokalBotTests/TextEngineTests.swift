@@ -209,6 +209,28 @@ final class TextEngineTests: XCTestCase {
         XCTAssertNil(body["reasoning"])
     }
 
+    func testOpenRouterCanFollowAccountDataPolicy() throws {
+        let engine = OpenAICompatibleEngine(
+            baseURL: URL(string: "https://openrouter.ai/api/v1")!,
+            model: "deepseek/example-model",
+            apiKey: "test-token",
+            chatDialect: .openRouter,
+            openRouterDataPolicy: .accountPolicy)
+
+        let request = try engine.makeChatRequest(
+            system: "system",
+            prompt: "prompt",
+            context: [],
+            schema: nil,
+            options: nil)
+        let data = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let provider = try XCTUnwrap(body["provider"] as? [String: Any])
+
+        XCTAssertEqual(provider["data_collection"] as? String, "allow")
+    }
+
     func testOpenRouterHighReasoningFallbackUsesEffortHigh() throws {
         let engine = OpenAICompatibleEngine(
             baseURL: URL(string: "https://openrouter.ai/api/v1")!,

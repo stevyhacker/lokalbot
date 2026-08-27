@@ -40,4 +40,20 @@ final class ThinkExecutionTests: XCTestCase {
             attempt: 1,
             jitter: 0))
     }
+
+    func testOpenRouterAccountPolicyFlowsIntoTextEngine() async throws {
+        let execution = ThinkExecution(storage: StorageManager())
+        var settings = AppSettings()
+        settings.summarizerBackend = .openAICompatible
+        settings.openAIBaseURL = "https://openrouter.ai/api/v1"
+        settings.openAIModel = "deepseek/example-model"
+        settings.approvedRemoteInferenceOrigins = ["https://openrouter.ai"]
+        settings.openRouterDataPolicy = .accountPolicy
+
+        let engine = try await execution.makeTextEngine(settings)
+        let openRouterEngine = try XCTUnwrap(engine as? OpenAICompatibleEngine)
+
+        XCTAssertEqual(openRouterEngine.chatDialect, .openRouter)
+        XCTAssertEqual(openRouterEngine.openRouterDataPolicy, .accountPolicy)
+    }
 }

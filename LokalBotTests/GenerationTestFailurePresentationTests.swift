@@ -2,7 +2,7 @@ import XCTest
 @testable import LokalBot
 
 final class GenerationTestFailurePresentationTests: XCTestCase {
-    func testOpenRouterDataPolicyFailureProvidesPrivacyRecovery() throws {
+    func testPrivateOpenRouterPolicyExplainsLocalRestriction() throws {
         let error = TextEngineError.httpStatus(
             code: 404,
             detail: "No endpoints found matching your data policy (Paid model training). "
@@ -15,14 +15,37 @@ final class GenerationTestFailurePresentationTests: XCTestCase {
             model: "deepseek/deepseek-v4-flash-vision-exp")
 
         XCTAssertEqual(presentation.kind, .openRouterDataPolicy)
-        XCTAssertEqual(presentation.title, "OpenRouter privacy settings block this model")
+        XCTAssertEqual(presentation.title, "No private endpoint for this model")
         XCTAssertTrue(presentation.explanation.contains("deepseek-v4-flash-vision-exp"))
-        XCTAssertTrue(presentation.recovery.contains("Paid model training"))
-        XCTAssertTrue(presentation.privacyNote?.contains("training disabled") == true)
+        XCTAssertTrue(presentation.explanation.contains("LokalBot restricts OpenRouter"))
+        XCTAssertTrue(presentation.recovery.contains("Provider data use"))
+        XCTAssertTrue(presentation.privacyNote?.contains("recommended") == true)
+        XCTAssertNil(presentation.actionTitle)
+        XCTAssertNil(presentation.actionURL)
+        XCTAssertTrue(presentation.technicalDetails.contains("HTTP 404"))
+    }
+
+    func testAccountOpenRouterPolicyLinksToEffectivePolicySettings() throws {
+        let error = TextEngineError.httpStatus(
+            code: 404,
+            detail: "No endpoints found matching your data policy (Paid model training). "
+                + "Configure: https://openrouter.ai/settings/privacy",
+            retryAfter: nil)
+
+        let presentation = GenerationTestFailurePresentation(
+            error: error,
+            baseURL: "https://openrouter.ai/api/v1",
+            model: "deepseek/deepseek-v4-flash-vision-exp",
+            openRouterDataPolicy: .accountPolicy)
+
+        XCTAssertEqual(presentation.kind, .openRouterDataPolicy)
+        XCTAssertEqual(presentation.title, "OpenRouter still blocks this model")
+        XCTAssertTrue(presentation.explanation.contains("following your OpenRouter policy"))
+        XCTAssertTrue(presentation.recovery.contains("guardrail"))
+        XCTAssertTrue(presentation.privacyNote?.contains("cannot read") == true)
         XCTAssertEqual(
             presentation.actionURL,
             URL(string: "https://openrouter.ai/settings/privacy"))
-        XCTAssertTrue(presentation.technicalDetails.contains("HTTP 404"))
     }
 
     func testDataPolicyTextFromAnotherServerDoesNotCreateOpenRouterLink() {

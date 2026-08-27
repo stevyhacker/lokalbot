@@ -461,6 +461,7 @@ struct OpenAICompatibleEngine: TextEngine {
     /// Extra top-level request fields for server-specific compatibility.
     var extraBody: [String: Any] = [:]
     var chatDialect: ChatCompletionDialect = .generic
+    var openRouterDataPolicy: OpenRouterDataPolicy = .privateOnly
     /// llama-server's request-level thinking ceiling. Kept nil for generic
     /// external endpoints that may not understand this extension.
     var defaultThinkingBudgetTokens: Int?
@@ -584,7 +585,9 @@ struct OpenAICompatibleEngine: TextEngine {
             model: model,
             openRouterReasoning: openRouterReasoning)
         if chatDialect == .openRouter {
-            var provider: [String: Any] = ["data_collection": "deny"]
+            var provider: [String: Any] = [
+                "data_collection": openRouterDataPolicy.providerDataCollectionValue,
+            ]
             if openRouterReasoning != .highEffort,
                schema != nil || (options?.reasoningBudgetTokens ?? 0) > 0 {
                 provider["require_parameters"] = true
