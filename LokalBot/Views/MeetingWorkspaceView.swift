@@ -171,12 +171,6 @@ private struct MeetingWorkspaceDetail: View {
             player.stop()
             stopSpeech(clearError: false)
         }
-        .background {
-            // The meeting workspace owns this shortcut, so route the native
-            // key equivalent from its AppKit view hierarchy instead of racing
-            // the global Edit > Find item for Command-F.
-            MeetingFindKeyEquivalentBridge(onFind: presentSearch)
-        }
         .meetingProcessingToolbar(app: app, meeting: meeting)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -1561,49 +1555,24 @@ private struct WorkspaceSpeakerRenameSheet: View {
     ) -> some View {
         let assignedElsewhere = assignedCalendarIdentityIDs.contains(candidate.id)
             && candidate.id != draft.currentCalendarIdentityID
-        let accessibilityLabel = calendarCandidateAccessibilityLabel(
+        let label = calendarCandidateAccessibilityLabel(
             candidate,
             assignedElsewhere: assignedElsewhere)
-        return Button {
+        let symbol = selectedCalendarIdentityID == candidate.id
+            ? "checkmark.circle.fill"
+            : "person.crop.circle"
+        return Button(label, systemImage: symbol) {
             selectCalendarCandidate(candidate)
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: selectedCalendarIdentityID == candidate.id
-                      ? "checkmark.circle.fill"
-                      : "person.crop.circle")
-                    .foregroundStyle(selectedCalendarIdentityID == candidate.id
-                                     ? Color.accentColor
-                                     : Color.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(candidate.name ?? "Name unavailable")
-                        .foregroundStyle(.primary)
-                    if let email = candidate.emailAddress {
-                        Text(email)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-                if assignedElsewhere {
-                    Text("Assigned")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .contentShape(Rectangle())
         }
+        .accessibilityIdentifier("speaker.rename.calendarCandidate.\(index)")
         .buttonStyle(.plain)
+        .foregroundStyle(selectedCalendarIdentityID == candidate.id
+                         ? Color.accentColor
+                         : Color.primary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .padding(.vertical, 3)
         .disabled(assignedElsewhere)
-        // SwiftUI can place modifiers from a custom plain-button label on a
-        // child text node. Supply an explicit semantic Button so assistive
-        // clients receive the correct role, label, identifier, and action.
-        .accessibilityRepresentation {
-            Button(accessibilityLabel) {
-                selectCalendarCandidate(candidate)
-            }
-            .disabled(assignedElsewhere)
-            .accessibilityIdentifier("speaker.rename.calendarCandidate.\(index)")
-        }
     }
 
     private func selectCalendarCandidate(_ candidate: CalendarParticipantIdentity) {

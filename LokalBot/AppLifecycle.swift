@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import LaunchAtLogin
 
 /// Whether this launch should come up menu-bar-only (accessory: no Dock icon,
@@ -19,10 +20,12 @@ func lokalbotLaunchesMenuBarOnly() -> Bool {
 /// Bridges AppKit launch + window lifecycle into the menu-bar-only experience.
 /// SwiftUI alone can't suppress the launch window on macOS 14, so the Dock /
 /// activation policy is driven from here.
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @MainActor static var appState: AppState?
 
     private var uiTestWindow: NSWindow?
+    private weak var meetingFindMenuItem: NSMenuItem?
+    private var meetingFindAvailability: AnyCancellable?
     private var terminationCleanupStarted = false
     private var terminationCleanupFinished = false
 
@@ -44,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// → show the Dock icon + app menu for full window UX; nothing open → fall
     /// back to a pure menu-bar accessory.
     func applicationDidFinishLaunching(_ notification: Notification) {
+        scheduleMeetingFindMenuInstallation()
         if AppState.isUITesting {
             NSApp.setActivationPolicy(.regular)
             let app = Self.appState ?? AppState()
@@ -80,6 +84,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.async { DockPolicy.sync() }
             }
         }
+    }
+
+    /// Install one explicit Edit-menu key equivalent rather than relying on a
+    /// SwiftUI scene command. The UI-test host owns an AppKit window outside a
+    /// SwiftUI scene, while production still shares the same AppKit main menu;
+    /// using that common boundary keeps Command-F identical in both processes.
+    private func scheduleMeetingFindMenuInstallation() {
+        for delay: Double in [0, 0.1, 0.5] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.installMeetingFindMenuItemIfNeeded()
+            }
+        }
+    }
+
+    @MainActor
+    private func installMeetingFindMenuItemIfNeeded() {
+        if let meetingFindMenuItem, meetingFindMenuItem.menu != nil { return }
+        guard let mainMenu = NSApp.mainMenu,
+              let app = Self.appState,
+              let item = MeetingFindMenuItemInstaller.install(
+                in: mainMenu,
+                target: self,
+                action: #selector(findInMeeting(_:))) else { return }
+
+        meetingFindMenuItem = item
+        meetingFindAvailability = Publishers.CombineLatest3(
+            app.$navSection,
+            app.$selectedMeetingIDs,
+            app.$meetings)
+            .map { [weak app] _, _, _ in app?.canSearchSelectedMeeting == true }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak item] isAvailable in
+                item?.isEnabled = isAvailable
+            }
+    }
+
+    @MainActor @objc private func findInMeeting(_ sender: NSMenuItem) {
+        Self.appState?.requestSelectedMeetingSearch()
+    }
+
+    @MainActor
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard menuItem.identifier == MeetingFindMenuItemInstaller.identifier else {
+            return true
+        }
+        return Self.appState?.canSearchSelectedMeeting == true
     }
 
     /// Reopening the app (Finder/Launchpad relaunch, Dock click) brings the main
