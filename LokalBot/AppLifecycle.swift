@@ -23,7 +23,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static var appState: AppState?
 
     private var uiTestWindow: NSWindow?
-    private var meetingFindKeyMonitor: Any?
     private var terminationCleanupStarted = false
     private var terminationCleanupFinished = false
 
@@ -45,7 +44,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// → show the Dock icon + app menu for full window UX; nothing open → fall
     /// back to a pure menu-bar accessory.
     func applicationDidFinishLaunching(_ notification: Notification) {
-        installMeetingFindKeyMonitor()
         if AppState.isUITesting {
             NSApp.setActivationPolicy(.regular)
             let app = Self.appState ?? AppState()
@@ -81,60 +79,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // re-evaluate on the next tick once it's actually gone.
                 DispatchQueue.main.async { DockPolicy.sync() }
             }
-        }
-    }
-
-    /// SwiftUI owns the visible Edit-menu command in production. The dedicated
-    /// UI-test host creates its window directly in AppKit, so that scene command
-    /// is not attached there. Route only a plain Command-F from LokalBot's main
-    /// content window, leaving text fields and every other window on AppKit's
-    /// normal responder chain.
-    private func installMeetingFindKeyMonitor() {
-        guard meetingFindKeyMonitor == nil else { return }
-        meetingFindKeyMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: .keyDown
-        ) { [weak self] event in
-            // AppKit invokes local event monitors on the application main
-            // thread, but the closure is not actor-annotated in its API.
-            let handled = MainActor.assumeIsolated { () -> Bool in
-                guard !event.isARepeat,
-                      event.charactersIgnoringModifiers?.lowercased() == "f",
-                      event.modifierFlags.intersection(
-                        [.command, .option, .control, .shift]) == .command,
-                      let self,
-                      let app = Self.appState,
-                      app.canSearchSelectedMeeting else {
-                    return false
-                }
-
-                let isMeetingWindow: Bool
-                if AppState.isUITesting {
-                    // Hosted XCUITest can deliver the key equivalent between
-                    // its explicit window's key/main transitions. Visibility
-                    // is the stable ownership boundary in that process.
-                    isMeetingWindow = self.uiTestWindow?.isVisible == true
-                } else if let keyWindow = NSApp.keyWindow {
-                    isMeetingWindow = self.isMainWindow(keyWindow)
-                } else {
-                    isMeetingWindow = false
-                }
-                guard isMeetingWindow else { return false }
-
-                app.requestSelectedMeetingSearch()
-                return true
-            }
-            return handled ? nil : event
-        }
-    }
-
-    @MainActor
-    private func isMainWindow(_ window: NSWindow) -> Bool {
-        window === WindowAccess.visibleMainWindow(in: NSApp)
-    }
-
-    deinit {
-        if let meetingFindKeyMonitor {
-            NSEvent.removeMonitor(meetingFindKeyMonitor)
         }
     }
 
@@ -199,11 +143,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 width: min(1180, max(900, visible.width - 40)),
                 height: min(740, max(620, visible.height - 40)))
         }
-        let window = NSWindow(
+        let window = MeetingFindWindow(
             contentRect: NSRect(origin: .zero, size: contentSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false)
+        window.meetingFindAction = { [weak app] in
+            guard let app, app.canSearchSelectedMeeting else { return false }
+            app.requestSelectedMeetingSearch()
+            return true
+        }
         window.title = showsOnboarding ? "Welcome to LokalBot" : (showsQuickRecall ? "Ask" : "LokalBot")
         if showsQuickRecall {
             window.titleVisibility = .hidden
@@ -398,6 +347,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.activate(ignoringOtherApps: true)
             }
         }
+    }
+}
+
+/// The UI-test host owns an explicit AppKit window rather than a SwiftUI
+/// `Window` scene, so scene commands are intentionally absent there. Handle
+/// the meeting-local key equivalent at the same window boundary AppKit uses
+/// for synthesized and physical keyboard events. Production keeps its visible
+/// Edit-menu command in `LokalBotApp`.
+final class MeetingFindWindow: NSWindow {
+    var meetingFindAction: (() -> Bool)?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if Self.isMeetingFindKeyEquivalent(event),
+           meetingFindAction?() == true {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    static func isMeetingFindKeyEquivalent(_ event: NSEvent) -> Bool {
+        !event.isARepeat
+            && event.charactersIgnoringModifiers?.lowercased() == "f"
+            && event.modifierFlags.intersection(
+                [.command, .option, .control, .shift]) == .command
     }
 }
 

@@ -15,6 +15,7 @@ final class CalendarCandidateButtonTests: XCTestCase {
             isEnabled: true,
             action: { selected = true })
 
+        XCTAssertTrue(button.isAccessibilityElement())
         XCTAssertEqual(button.accessibilityRole(), .button)
         XCTAssertEqual(
             button.accessibilityIdentifier(),
