@@ -142,8 +142,8 @@ targetTemplates:
       properties:
         CFBundleDisplayName: LokalBot
         CFBundleIconFile: AppIcon
-        CFBundleShortVersionString: "0.6.2"
-        CFBundleVersion: "26"
+        CFBundleShortVersionString: "0.7.0"
+        CFBundleVersion: "27"
         NSMicrophoneUsageDescription: >-
           LokalBot records your side of meetings from the microphone.
           Audio stays on this Mac; transcript text is sent off-device only if
