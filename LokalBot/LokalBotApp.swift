@@ -71,7 +71,10 @@ struct LokalBotApp: App {
                     WindowAccess.shared.open("quick-recall")
                 }
             }
-            CommandGroup(after: .textEditing) {
+            // Place the meeting-local Find command before macOS's standard
+            // text-editing Find item so its identical ⌘F key equivalent wins
+            // while a completed meeting is selected.
+            CommandGroup(before: .textEditing) {
                 Button("Find in Meeting…") {
                     app.requestSelectedMeetingSearch()
                 }

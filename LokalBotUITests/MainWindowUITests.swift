@@ -617,10 +617,12 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(remoteSpeaker.waitForExistence(timeout: 3))
         remoteSpeaker.click()
 
-        let candidate = identified("speaker.rename.calendarCandidate.0")
+        let candidate = app.buttons["speaker.rename.calendarCandidate.0"]
         XCTAssertTrue(candidate.waitForExistence(timeout: 3))
-        XCTAssertTrue(candidate.label.contains("Ana Petrović"))
-        XCTAssertTrue(candidate.label.contains("ana@example.com"))
+        XCTAssertTrue(candidate.label.contains("Ana Petrović"),
+                      "calendar candidate name missing from button label: \(candidate.label)")
+        XCTAssertTrue(candidate.label.contains("ana@example.com"),
+                      "calendar candidate email missing from button label: \(candidate.label)")
         candidate.click()
 
         let name = app.textFields["speaker.rename.name"]
