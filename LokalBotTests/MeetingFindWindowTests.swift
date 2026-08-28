@@ -4,6 +4,13 @@ import XCTest
 
 @MainActor
 final class MeetingFindWindowTests: XCTestCase {
+    func testConfiguredPrincipalClassOwnsApplicationEventDispatch() {
+        XCTAssertEqual(
+            Bundle.main.object(forInfoDictionaryKey: "NSPrincipalClass") as? String,
+            "LokalBotApplication")
+        XCTAssertTrue(Bundle.main.principalClass === LokalBotApplication.self)
+    }
+
     func testPlainCommandFInvokesMeetingFindActionThroughWindowEventDispatch() throws {
         let window = MeetingFindWindow(
             contentRect: NSRect(x: 0, y: 0, width: 200, height: 120),

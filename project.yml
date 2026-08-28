@@ -142,6 +142,7 @@ targetTemplates:
       properties:
         CFBundleDisplayName: LokalBot
         CFBundleIconFile: AppIcon
+        NSPrincipalClass: LokalBotApplication
         CFBundleShortVersionString: "0.7.0"
         CFBundleVersion: "27"
         NSMicrophoneUsageDescription: >-

@@ -1,6 +1,31 @@
 import SwiftUI
 import LaunchAtLogin
 
+/// Owns app-level keyboard dispatch before AppKit falls back to the main menu.
+/// This is intentionally narrow: the only intercepted event is plain Command-F
+/// while LokalBot's meeting window is active. Text fields, sheets, auxiliary
+/// windows, and every other shortcut continue through AppKit unchanged.
+@objc(LokalBotApplication)
+final class LokalBotApplication: NSApplication {
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown,
+           MeetingFindWindow.isMeetingFindKeyEquivalent(event),
+           let app = AppDelegate.appState,
+           app.canSearchSelectedMeeting,
+           ownsMeetingWindow(event.window ?? keyWindow) {
+            app.requestSelectedMeetingSearch()
+            return
+        }
+        super.sendEvent(event)
+    }
+
+    private func ownsMeetingWindow(_ window: NSWindow?) -> Bool {
+        guard let window, window.attachedSheet == nil else { return false }
+        if window is MeetingFindWindow { return true }
+        return window === WindowAccess.visibleMainWindow(in: self)
+    }
+}
+
 /// Whether this launch should come up menu-bar-only (accessory: no Dock icon,
 /// no window). Computed identically in the pre-launch entry point (to disable
 /// window restoration before AppKit reads the flag) and in the app delegate (to

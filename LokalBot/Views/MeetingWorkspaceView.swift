@@ -1558,17 +1558,23 @@ private struct WorkspaceSpeakerRenameSheet: View {
         let label = calendarCandidateAccessibilityLabel(
             candidate,
             assignedElsewhere: assignedElsewhere)
-        let symbol = selectedCalendarIdentityID == candidate.id
-            ? "checkmark.circle.fill"
-            : "person.crop.circle"
-        return CalendarCandidateButton(
-            title: label,
-            systemImageName: symbol,
-            accessibilityIdentifier: "speaker.rename.calendarCandidate.\(index)",
-            isSelected: selectedCalendarIdentityID == candidate.id,
-            isEnabled: !assignedElsewhere,
-            action: { selectCalendarCandidate(candidate) })
-            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+        return Button {
+            selectCalendarCandidate(candidate)
+        } label: {
+            Label(
+                label,
+                systemImage: selectedCalendarIdentityID == candidate.id
+                    ? "checkmark.circle.fill"
+                    : "person.crop.circle")
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        // A standard SwiftUI bordered button supplies the native AXButton
+        // role. Custom plain labels and NSViewRepresentable roots can be
+        // flattened by SwiftUI when presented inside a sheet.
+        .buttonStyle(.bordered)
+        .tint(selectedCalendarIdentityID == candidate.id ? .accentColor : nil)
+        .disabled(assignedElsewhere)
+        .accessibilityIdentifier("speaker.rename.calendarCandidate.\(index)")
     }
 
     private func selectCalendarCandidate(_ candidate: CalendarParticipantIdentity) {
