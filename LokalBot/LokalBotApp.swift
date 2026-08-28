@@ -71,6 +71,13 @@ struct LokalBotApp: App {
                     WindowAccess.shared.open("quick-recall")
                 }
             }
+            CommandGroup(before: .textEditing) {
+                Button("Find in Meeting…") {
+                    app.requestSelectedMeetingSearch()
+                }
+                .keyboardShortcut("f", modifiers: .command)
+                .disabled(!app.canSearchSelectedMeeting)
+            }
             // Deleting the Settings scene removes the automatic ⌘, — reclaim
             // it so the shortcut lands on the one in-window Settings home.
             CommandGroup(replacing: .appSettings) {

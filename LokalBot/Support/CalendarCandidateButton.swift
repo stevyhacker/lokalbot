@@ -43,12 +43,14 @@ final class CalendarCandidateButtonControl: NSButton {
         imagePosition = .imageLeading
         alignment = .left
         lineBreakMode = .byTruncatingTail
+        setAccessibilityRole(.button)
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         target = self
         action = #selector(activate(_:))
+        setAccessibilityRole(.button)
     }
 
     func update(
