@@ -23,7 +23,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static var appState: AppState?
 
     private var uiTestWindow: NSWindow?
-    private var meetingFindKeyMonitor: Any?
     private var terminationCleanupStarted = false
     private var terminationCleanupFinished = false
 
@@ -45,7 +44,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// → show the Dock icon + app menu for full window UX; nothing open → fall
     /// back to a pure menu-bar accessory.
     func applicationDidFinishLaunching(_ notification: Notification) {
-        installMeetingFindKeyMonitor()
         if AppState.isUITesting {
             NSApp.setActivationPolicy(.regular)
             let app = Self.appState ?? AppState()
@@ -81,49 +79,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // re-evaluate on the next tick once it's actually gone.
                 DispatchQueue.main.async { DockPolicy.sync() }
             }
-        }
-    }
-
-    /// SwiftUI scene commands are not installed on the explicit AppKit window
-    /// used by the UI-test host, and AppKit's built-in text Find command can
-    /// otherwise win the same key equivalent in production. Intercept only a
-    /// plain Command-F delivered to the main window, then leave every other
-    /// window and text-system shortcut on the normal responder chain.
-    private func installMeetingFindKeyMonitor() {
-        guard meetingFindKeyMonitor == nil else { return }
-        meetingFindKeyMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: .keyDown
-        ) { [weak self] event in
-            // AppKit invokes local event monitors on the application main
-            // thread, but the closure is not actor-annotated in its API.
-            let handled = MainActor.assumeIsolated { () -> Bool in
-                guard !event.isARepeat,
-                      event.charactersIgnoringModifiers?.lowercased() == "f",
-                      event.modifierFlags.intersection(
-                        [.command, .option, .control, .shift]) == .command,
-                      let self,
-                      let keyWindow = NSApp.keyWindow,
-                      self.isMainWindow(keyWindow),
-                      let app = Self.appState,
-                      app.canSearchSelectedMeeting else {
-                    return false
-                }
-                app.requestSelectedMeetingSearch()
-                return true
-            }
-            return handled ? nil : event
-        }
-    }
-
-    @MainActor
-    private func isMainWindow(_ window: NSWindow) -> Bool {
-        window === uiTestWindow
-            || window === WindowAccess.visibleMainWindow(in: NSApp)
-    }
-
-    deinit {
-        if let meetingFindKeyMonitor {
-            NSEvent.removeMonitor(meetingFindKeyMonitor)
         }
     }
 

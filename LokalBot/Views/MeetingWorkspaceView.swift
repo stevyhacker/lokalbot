@@ -171,6 +171,12 @@ private struct MeetingWorkspaceDetail: View {
             player.stop()
             stopSpeech(clearError: false)
         }
+        .background {
+            // The meeting workspace owns this shortcut, so route the native
+            // key equivalent from its AppKit view hierarchy instead of racing
+            // the global Edit > Find item for Command-F.
+            MeetingFindKeyEquivalentBridge(onFind: presentSearch)
+        }
         .meetingProcessingToolbar(app: app, meeting: meeting)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -1555,9 +1561,11 @@ private struct WorkspaceSpeakerRenameSheet: View {
     ) -> some View {
         let assignedElsewhere = assignedCalendarIdentityIDs.contains(candidate.id)
             && candidate.id != draft.currentCalendarIdentityID
+        let accessibilityLabel = calendarCandidateAccessibilityLabel(
+            candidate,
+            assignedElsewhere: assignedElsewhere)
         return Button {
-            selectedCalendarIdentityID = candidate.id
-            name = candidate.name ?? ""
+            selectCalendarCandidate(candidate)
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: selectedCalendarIdentityID == candidate.id
@@ -1586,15 +1594,21 @@ private struct WorkspaceSpeakerRenameSheet: View {
         }
         .buttonStyle(.plain)
         .disabled(assignedElsewhere)
-        // Keep the visual name/email stack as one native button in the AX
-        // tree. Without this, SwiftUI can attach the identifier to a child
-        // text node, so keyboard and assistive clients cannot address the row
-        // as the control that performs the selection.
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(calendarCandidateAccessibilityLabel(
-            candidate,
-            assignedElsewhere: assignedElsewhere))
-        .accessibilityIdentifier("speaker.rename.calendarCandidate.\(index)")
+        // SwiftUI can place modifiers from a custom plain-button label on a
+        // child text node. Supply an explicit semantic Button so assistive
+        // clients receive the correct role, label, identifier, and action.
+        .accessibilityRepresentation {
+            Button(accessibilityLabel) {
+                selectCalendarCandidate(candidate)
+            }
+            .disabled(assignedElsewhere)
+            .accessibilityIdentifier("speaker.rename.calendarCandidate.\(index)")
+        }
+    }
+
+    private func selectCalendarCandidate(_ candidate: CalendarParticipantIdentity) {
+        selectedCalendarIdentityID = candidate.id
+        name = candidate.name ?? ""
     }
 
     private func calendarCandidateAccessibilityLabel(
