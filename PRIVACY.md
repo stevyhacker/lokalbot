@@ -12,7 +12,8 @@ calendar events, or usage history.
 LokalBot can store the following under its Application Support directory:
 
 - meeting microphone and system-audio tracks;
-- transcripts, summaries, notes, search indexes, and meeting metadata;
+- transcripts, summaries, notes, search indexes, and meeting metadata,
+  including attendee names and emails for calendar-matched meetings;
 - downloaded transcription, embedding, speech, and language models;
 - permission-gated app/window activity history;
 - permission-gated visible screen text and encrypted screenshots;
@@ -60,7 +61,9 @@ LokalBot asks only for permissions needed by enabled features. macOS does not
 grant optional permissions until you approve them:
 
 - Microphone and system audio for recording meetings.
-- Calendar access for meeting detection and titles.
+- Calendar access for meeting detection, titles, and local speaker-name
+  suggestions. Attendee emails remain in meeting metadata, are deleted with
+  the meeting, and are never added to transcripts, exports, or model prompts.
 - Accessibility for browser-meeting detection, Autocomplete (the Cotyping
   engine), dictation insertion, visible-text context, and approved agent
   interaction.

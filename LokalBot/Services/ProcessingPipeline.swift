@@ -351,7 +351,8 @@ final class ProcessingPipeline: ObservableObject {
                         modelsPrepared: true)
                 }
                 transcript = SpeakerAutoNamer.applyingAliases(
-                    to: transcript, participantNames: meeting.participantNameHints ?? [])
+                    to: transcript,
+                    participants: meeting.resolvedCalendarParticipantIdentities)
                 let mergedSanitization = TranscriptSanitizer.sanitize(transcript)
                 transcript = mergedSanitization.transcript
                 if mergedSanitization.changed {

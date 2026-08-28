@@ -51,6 +51,7 @@ private struct MeetingWorkspaceDetail: View {
     @State private var correction: ActionCorrectionDraft?
     @State private var speakerRenameDraft: WorkspaceSpeakerRenameDraft?
     @State private var speakerNameHints: [String] = []
+    @State private var calendarSpeakerCandidates: [CalendarParticipantIdentity] = []
     @State private var exportError: String?
     @State private var speechError: String?
     @State private var isExportingAudio = false
@@ -278,8 +279,20 @@ private struct MeetingWorkspaceDetail: View {
             WorkspaceSpeakerRenameSheet(
                 draft: draft,
                 hints: speakerNameHints,
-                onSave: { saveSpeakerAlias($0, for: draft.speaker) },
-                onReset: { saveSpeakerAlias(nil, for: draft.speaker) },
+                calendarCandidates: calendarCandidates(for: draft.speaker),
+                assignedCalendarIdentityIDs: assignedCalendarIdentityIDs,
+                onSave: { name, identityID in
+                    saveSpeakerAlias(
+                        name,
+                        calendarIdentityID: identityID,
+                        for: draft.speaker)
+                },
+                onReset: {
+                    saveSpeakerAlias(
+                        nil,
+                        calendarIdentityID: nil,
+                        for: draft.speaker)
+                },
                 onCancel: { speakerRenameDraft = nil })
         }
         .onDisappear {
@@ -453,6 +466,7 @@ private struct MeetingWorkspaceDetail: View {
         notes = MeetingNotes.load(from: folder)
         transcript = try? app.pipeline.loadTranscript(from: folder)
         speakerNameHints = app.speakerNameHints(for: meeting)
+        calendarSpeakerCandidates = meeting.resolvedCalendarParticipantIdentities
         player.load(folder: folder, hasSystemTrack: meeting.hasSystemTrack)
         app.outcomeIndex.refresh(meeting: meeting)
         consumeMeetingSeek()
@@ -481,12 +495,32 @@ private struct MeetingWorkspaceDetail: View {
         speakerRenameDraft = WorkspaceSpeakerRenameDraft(
             speaker: speaker,
             defaultName: Transcript.defaultSpeakerName(for: speaker),
-            currentName: transcript.displaySpeaker(for: speaker))
+            currentName: transcript.displaySpeaker(for: speaker),
+            currentCalendarIdentityID: transcript.calendarIdentityID(for: speaker))
     }
 
-    private func saveSpeakerAlias(_ alias: String?, for speaker: String) {
+    private var assignedCalendarIdentityIDs: Set<String> {
+        Set(transcript?.speakerCalendarIdentityIDs.values.map { $0 } ?? [])
+    }
+
+    private func calendarCandidates(
+        for speaker: String
+    ) -> [CalendarParticipantIdentity] {
+        Transcript.canonicalSpeakerKey(speaker) == "me"
+            ? []
+            : calendarSpeakerCandidates
+    }
+
+    private func saveSpeakerAlias(
+        _ alias: String?,
+        calendarIdentityID: String?,
+        for speaker: String
+    ) {
         guard var updated = transcript else { return }
-        updated.setSpeakerAlias(alias, for: speaker)
+        updated.setSpeakerAlias(
+            alias,
+            for: speaker,
+            calendarIdentityID: calendarIdentityID)
         do {
             try app.saveTranscript(updated, for: meeting)
             transcript = updated
@@ -977,30 +1011,40 @@ private struct WorkspaceSpeakerRenameDraft: Identifiable {
     let speaker: String
     let defaultName: String
     let currentName: String
+    let currentCalendarIdentityID: String?
 }
 
 private struct WorkspaceSpeakerRenameSheet: View {
     let draft: WorkspaceSpeakerRenameDraft
     let hints: [String]
-    let onSave: (String) -> Void
+    let calendarCandidates: [CalendarParticipantIdentity]
+    let assignedCalendarIdentityIDs: Set<String>
+    let onSave: (String, String?) -> Void
     let onReset: () -> Void
     let onCancel: () -> Void
 
     @State private var name: String
+    @State private var selectedCalendarIdentityID: String?
 
     init(
         draft: WorkspaceSpeakerRenameDraft,
         hints: [String],
-        onSave: @escaping (String) -> Void,
+        calendarCandidates: [CalendarParticipantIdentity],
+        assignedCalendarIdentityIDs: Set<String>,
+        onSave: @escaping (String, String?) -> Void,
         onReset: @escaping () -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.draft = draft
         self.hints = hints
+        self.calendarCandidates = calendarCandidates
+        self.assignedCalendarIdentityIDs = assignedCalendarIdentityIDs
         self.onSave = onSave
         self.onReset = onReset
         self.onCancel = onCancel
         _name = State(initialValue: draft.currentName)
+        _selectedCalendarIdentityID = State(
+            initialValue: draft.currentCalendarIdentityID)
     }
 
     var body: some View {
@@ -1008,12 +1052,40 @@ private struct WorkspaceSpeakerRenameSheet: View {
             Text("Rename Speaker").font(.headline)
             TextField("Speaker name", text: $name)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("speaker.rename.name")
 
-            if !hints.isEmpty {
+            if !calendarCandidates.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Calendar attendees")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    ForEach(Array(calendarCandidates.enumerated()), id: \.element.id) { index, candidate in
+                        calendarCandidateRow(candidate, index: index)
+                    }
+
+                    Text("Email addresses stay in this meeting's local metadata and are shown only to distinguish attendees.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .background(
+                    .quaternary.opacity(0.22),
+                    in: RoundedRectangle(cornerRadius: 8))
+            }
+
+            if !otherHints.isEmpty {
+                Text("Other suggestions")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(hints, id: \.self) { hint in
-                            Button(hint) { name = hint }
+                        ForEach(otherHints, id: \.self) { hint in
+                            Button(hint) {
+                                name = hint
+                                selectedCalendarIdentityID = nil
+                            }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
                         }
@@ -1025,12 +1097,64 @@ private struct WorkspaceSpeakerRenameSheet: View {
                 Button("Reset to \(draft.defaultName)", action: onReset)
                 Spacer()
                 Button("Cancel", action: onCancel)
-                Button("Save") { onSave(name) }
+                Button("Save") { onSave(name, selectedCalendarIdentityID) }
                     .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("speaker.rename.save")
             }
         }
         .padding(18)
-        .frame(width: 380)
+        .frame(width: 440)
+    }
+
+    private var otherHints: [String] {
+        let calendarNames = Set(calendarCandidates.compactMap(\.name).map(normalizedName))
+        return hints.filter { !calendarNames.contains(normalizedName($0)) }
+    }
+
+    private func calendarCandidateRow(
+        _ candidate: CalendarParticipantIdentity,
+        index: Int
+    ) -> some View {
+        let assignedElsewhere = assignedCalendarIdentityIDs.contains(candidate.id)
+            && candidate.id != draft.currentCalendarIdentityID
+        return Button {
+            selectedCalendarIdentityID = candidate.id
+            name = candidate.name ?? ""
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: selectedCalendarIdentityID == candidate.id
+                      ? "checkmark.circle.fill"
+                      : "person.crop.circle")
+                    .foregroundStyle(selectedCalendarIdentityID == candidate.id
+                                     ? Color.accentColor
+                                     : Color.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(candidate.name ?? "Name unavailable")
+                        .foregroundStyle(.primary)
+                    if let email = candidate.emailAddress {
+                        Text(email)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                if assignedElsewhere {
+                    Text("Assigned")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(assignedElsewhere)
+        .accessibilityIdentifier("speaker.rename.calendarCandidate.\(index)")
+    }
+
+    private func normalizedName(_ value: String) -> String {
+        value.folding(
+            options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+            locale: .current)
     }
 }
 

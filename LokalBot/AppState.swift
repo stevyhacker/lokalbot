@@ -1155,7 +1155,7 @@ final class AppState: ObservableObject {
         if end <= meeting.startedAt { end = fallbackEnd }
         let ocr = activityStore.ocrText(from: meeting.startedAt, to: end, maxChars: 12_000)
         return SpeakerNameHintExtractor.hints(
-            calendarNames: meeting.participantNameHints ?? [],
+            calendarNames: meeting.resolvedCalendarParticipantIdentities.compactMap(\.name),
             ocrText: ocr)
     }
 

@@ -339,7 +339,7 @@ struct SettingsView: View {
                                 app.calendar.requestAccess { _ in }
                             }
                         }
-                    Text("Reads your Mac Calendar (including Google/Exchange accounts synced into it) to confirm meetings — so a Google Meet in your browser is caught even when its window title is generic.")
+                    Text("Reads your Mac Calendar (including synced Google/Exchange accounts) to confirm meetings and suggest attendee names when labeling speakers. Attendee emails stay in local meeting metadata and are used only to distinguish candidates.")
                         .font(.caption).foregroundStyle(.secondary)
                     if app.settings.calendarDetectionEnabled {
                         Toggle("Use calendar titles for recordings", isOn: $app.settings.useCalendarTitles)

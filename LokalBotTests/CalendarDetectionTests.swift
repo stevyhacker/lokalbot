@@ -381,6 +381,7 @@ final class CalendarDetectionTests: XCTestCase {
         XCTAssertNil(meeting.scheduledStartAt)
         XCTAssertNil(meeting.meetingURL)
         XCTAssertNil(meeting.participantNameHints)
+        XCTAssertNil(meeting.calendarParticipantIdentities)
     }
 
     /// Calendar provenance round-trips through the same ISO-8601 codec
@@ -398,6 +399,12 @@ final class CalendarDetectionTests: XCTestCase {
         meeting.scheduledEndAt = Date(timeIntervalSince1970: 1_700_003_600)
         meeting.meetingURL = URL(string: "https://meet.google.com/abc-defg-hij")
         meeting.participantNameHints = ["Ana", "Stevan"]
+        meeting.calendarParticipantIdentities = [
+            try XCTUnwrap(CalendarParticipantIdentity(
+                id: "ana-calendar-id",
+                name: "Ana",
+                emailAddress: "ana@example.com")),
+        ]
 
         let (encoder, decoder) = iso()
         let decoded = try decoder.decode(Meeting.self, from: encoder.encode(meeting))
@@ -418,6 +425,7 @@ final class CalendarDetectionTests: XCTestCase {
         XCTAssertNil(object["calendarEventID"])
         XCTAssertNil(object["meetingURL"])
         XCTAssertNil(object["participantNameHints"])
+        XCTAssertNil(object["calendarParticipantIdentities"])
     }
 
     // MARK: - Streams that are open for the app's whole lifetime

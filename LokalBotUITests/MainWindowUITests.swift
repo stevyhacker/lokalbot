@@ -601,6 +601,36 @@ final class MainWindowUITests: XCTestCase {
                       "first transcript segment text missing")
     }
 
+    /// Calendar attendees are explicit choices for remote diarization labels;
+    /// email disambiguates the local choice but never becomes the alias.
+    func testSpeakerRenameOffersCalendarAttendeeIdentities() {
+        openLibrary()
+        selectMeeting(fixture.designReview)
+
+        let disclosure = identified("meeting.transcriptDisclosure")
+        UITestHarness.scrollTo(disclosure, in: app)
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 4))
+        disclosure.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).click()
+
+        let remoteSpeaker = app.buttons["transcript.segment.1.speaker"]
+        UITestHarness.scrollTo(remoteSpeaker, in: app)
+        XCTAssertTrue(remoteSpeaker.waitForExistence(timeout: 3))
+        remoteSpeaker.click()
+
+        let candidate = identified("speaker.rename.calendarCandidate.0")
+        XCTAssertTrue(candidate.waitForExistence(timeout: 3))
+        XCTAssertTrue(candidate.label.contains("Ana Petrović"))
+        XCTAssertTrue(candidate.label.contains("ana@example.com"))
+        candidate.click()
+
+        let name = app.textFields["speaker.rename.name"]
+        XCTAssertEqual(name.value as? String, "Ana Petrović")
+        identified("speaker.rename.save").click()
+        XCTAssertTrue(UITestHarness.waitUntil {
+            self.app.buttons["transcript.segment.1.speaker"].label.contains("Ana Petrović")
+        }, "calendar attendee was not saved as the speaker alias")
+    }
+
     /// Frequent processing actions stay direct, while copy/export and speech
     /// utilities remain available in one clearly labelled overflow.
     func testMeetingProcessingActionsAreDirectToolbarButtons() {

@@ -145,15 +145,25 @@ struct Transcript: Codable {
     /// Per-meeting display-name overrides keyed by the stable speaker label
     /// stored on each segment, e.g. "them 2" -> "Ana".
     var speakerAliases: [String: String]
+    /// Opaque calendar-participant IDs selected for speaker aliases. Email
+    /// addresses remain in meeting metadata and never enter the transcript.
+    var speakerCalendarIdentityIDs: [String: String]
 
-    init(segments: [Segment], engine: String, speakerAliases: [String: String] = [:]) {
+    init(
+        segments: [Segment],
+        engine: String,
+        speakerAliases: [String: String] = [:],
+        speakerCalendarIdentityIDs: [String: String] = [:]
+    ) {
         self.segments = segments
         self.engine = engine
         self.speakerAliases = Self.normalizedAliases(speakerAliases)
+        self.speakerCalendarIdentityIDs = Self.normalizedIdentityAssignments(
+            speakerCalendarIdentityIDs)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case segments, engine, speakerAliases
+        case segments, engine, speakerAliases, speakerCalendarIdentityIDs
     }
 
     init(from decoder: Decoder) throws {
@@ -162,6 +172,10 @@ struct Transcript: Codable {
         engine = try container.decode(String.self, forKey: .engine)
         let decodedAliases = try container.decodeIfPresent([String: String].self, forKey: .speakerAliases) ?? [:]
         speakerAliases = Self.normalizedAliases(decodedAliases)
+        let decodedIdentityIDs = try container.decodeIfPresent(
+            [String: String].self,
+            forKey: .speakerCalendarIdentityIDs) ?? [:]
+        speakerCalendarIdentityIDs = Self.normalizedIdentityAssignments(decodedIdentityIDs)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -170,6 +184,11 @@ struct Transcript: Codable {
         try container.encode(engine, forKey: .engine)
         if !speakerAliases.isEmpty {
             try container.encode(speakerAliases, forKey: .speakerAliases)
+        }
+        if !speakerCalendarIdentityIDs.isEmpty {
+            try container.encode(
+                speakerCalendarIdentityIDs,
+                forKey: .speakerCalendarIdentityIDs)
         }
     }
 
@@ -289,20 +308,34 @@ struct Transcript: Codable {
         speakerAliases[Self.canonicalSpeakerKey(speaker)] ?? Self.defaultSpeakerName(for: speaker)
     }
 
-    mutating func setSpeakerAlias(_ alias: String?, for speaker: String) {
+    mutating func setSpeakerAlias(
+        _ alias: String?,
+        for speaker: String,
+        calendarIdentityID: String? = nil
+    ) {
         let key = Self.canonicalSpeakerKey(speaker)
         guard !key.isEmpty else { return }
         guard let alias = Self.normalizedAlias(alias ?? ""),
               alias.caseInsensitiveCompare(Self.defaultSpeakerName(for: speaker)) != .orderedSame
         else {
             speakerAliases.removeValue(forKey: key)
+            speakerCalendarIdentityIDs.removeValue(forKey: key)
             return
         }
         speakerAliases[key] = alias
+        if let identityID = Self.normalizedIdentityID(calendarIdentityID ?? "") {
+            speakerCalendarIdentityIDs[key] = identityID
+        } else {
+            speakerCalendarIdentityIDs.removeValue(forKey: key)
+        }
     }
 
     func speakerAlias(for speaker: String) -> String? {
         speakerAliases[Self.canonicalSpeakerKey(speaker)]
+    }
+
+    func calendarIdentityID(for speaker: String) -> String? {
+        speakerCalendarIdentityIDs[Self.canonicalSpeakerKey(speaker)]
     }
 
     static func defaultSpeakerName(for speaker: String) -> String {
@@ -326,6 +359,25 @@ struct Transcript: Codable {
             options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return collapsed.isEmpty ? nil : collapsed
+    }
+
+    private static func normalizedIdentityAssignments(
+        _ assignments: [String: String]
+    ) -> [String: String] {
+        var result: [String: String] = [:]
+        for (speaker, identityID) in assignments {
+            let key = canonicalSpeakerKey(speaker)
+            guard !key.isEmpty, let identityID = normalizedIdentityID(identityID) else {
+                continue
+            }
+            result[key] = identityID
+        }
+        return result
+    }
+
+    private static func normalizedIdentityID(_ identityID: String) -> String? {
+        let trimmed = identityID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func normalizedAliases(_ aliases: [String: String]) -> [String: String] {

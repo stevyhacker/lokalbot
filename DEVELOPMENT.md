@@ -27,7 +27,7 @@ Engines (Settings → Models; CoreML/MLX, in-process, Neural Engine/Metal):
 
 Models auto-download on first use (Hugging Face; the ONNX specialists fetch sherpa-onnx archives from GitHub) and are cached under Application Support.
 
-- **Speaker attribution:** mic track = **Me**, system track = **Them**, merged by timestamp into `transcript.json` + `transcript.md`. When calendar detection matches the meeting to an event, the remote speaker is named from the invite's attendees instead of "Them".
+- **Speaker attribution:** mic track = **Me**, system track = **Them**, merged by timestamp into `transcript.json` + `transcript.md`. When calendar detection matches the meeting to an event, one unambiguous remote speaker is named automatically; multi-speaker meetings offer explicit attendee choices. Calendar emails distinguish candidates in local metadata but never enter transcripts or prompts.
 - **Neural diarization:** Settings → Recording → "Split 'Them' by speaker" runs FluidAudio's offline pyannote-community-1 pipeline on `system.m4a` after transcription and relabels segments "Them 1 / Them 2 / …" (threshold 0.70, step ratio 0.15, min segment 0.3 s). Enabled by default; first run downloads ~100 MB of CoreML models.
 
 ## Summarization & notes
