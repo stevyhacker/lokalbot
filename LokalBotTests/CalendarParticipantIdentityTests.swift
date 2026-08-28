@@ -44,4 +44,32 @@ final class CalendarParticipantIdentityTests: XCTestCase {
 
         XCTAssertEqual(first.map(\.id), second.map(\.id))
     }
+
+    func testMeetingMetadataRoundTripsStructuredCalendarIdentities() throws {
+        var meeting = Meeting(
+            id: UUID(),
+            title: "Design review",
+            appName: "Zoom",
+            startedAt: Date(timeIntervalSince1970: 1_000),
+            endedAt: Date(timeIntervalSince1970: 2_000),
+            relativePath: "meetings/2026/08/28-design-review")
+        meeting.calendarParticipantIdentities = [try XCTUnwrap(
+            CalendarParticipantIdentity(
+                id: "fixture-ana",
+                name: "Ana Petrović",
+                emailAddress: "ana@example.com"))]
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(Meeting.self, from: encoder.encode(meeting))
+
+        XCTAssertEqual(decoded.resolvedCalendarParticipantIdentities, [
+            try XCTUnwrap(CalendarParticipantIdentity(
+                id: "fixture-ana",
+                name: "Ana Petrović",
+                emailAddress: "ana@example.com")),
+        ])
+    }
 }

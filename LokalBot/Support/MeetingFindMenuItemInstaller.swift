@@ -14,7 +14,7 @@ enum MeetingFindMenuItemInstaller {
         action: Selector
     ) -> NSMenuItem? {
         if let existing = existingItem(in: mainMenu) { return existing }
-        guard let editMenu = editMenu(in: mainMenu) else { return nil }
+        let editMenu = editMenu(in: mainMenu)
 
         let item = NSMenuItem(
             title: "Find in Meeting…",
@@ -42,13 +42,25 @@ enum MeetingFindMenuItemInstaller {
         return nil
     }
 
-    private static func editMenu(in mainMenu: NSMenu) -> NSMenu? {
+    private static func editMenu(in mainMenu: NSMenu) -> NSMenu {
         if let edit = mainMenu.items.first(where: { $0.title == "Edit" })?.submenu {
             return edit
         }
-        return mainMenu.items.compactMap(\.submenu).first { submenu in
+        if let edit = mainMenu.items.compactMap(\.submenu).first(where: { submenu in
             submenu.items.contains(where: isCommandF)
+        }) {
+            return edit
         }
+
+        // The dedicated UI-test host creates its window directly in AppKit,
+        // so SwiftUI may not synthesize scene menus. Give that process the same
+        // native Edit boundary production uses instead of adding a test-only
+        // keyboard monitor.
+        let edit = NSMenu(title: "Edit")
+        let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        editItem.submenu = edit
+        mainMenu.insertItem(editItem, at: min(1, mainMenu.numberOfItems))
+        return edit
     }
 
     private static func isCommandF(_ item: NSMenuItem) -> Bool {

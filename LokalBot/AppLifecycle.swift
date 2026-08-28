@@ -101,8 +101,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @MainActor
     private func installMeetingFindMenuItemIfNeeded() {
         if let meetingFindMenuItem, meetingFindMenuItem.menu != nil { return }
-        guard let mainMenu = NSApp.mainMenu,
-              let app = Self.appState,
+        let mainMenu: NSMenu
+        if let existing = NSApp.mainMenu {
+            mainMenu = existing
+        } else {
+            mainMenu = NSMenu(title: "Main Menu")
+            NSApp.mainMenu = mainMenu
+        }
+        guard let app = Self.appState,
               let item = MeetingFindMenuItemInstaller.install(
                 in: mainMenu,
                 target: self,

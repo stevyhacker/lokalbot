@@ -668,6 +668,15 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["detail.title"].waitForExistence(timeout: 4))
         XCTAssertTrue(identified("toolbar.meetingSearch").exists)
 
+        let editMenu = app.menuBars.menuBarItems["Edit"]
+        XCTAssertTrue(editMenu.waitForExistence(timeout: 3), "Edit menu missing")
+        editMenu.click()
+        let findItem = app.menuItems["Find in Meeting…"]
+        XCTAssertTrue(findItem.waitForExistence(timeout: 3),
+                      "native meeting Find command missing")
+        XCTAssertTrue(findItem.isEnabled, "native meeting Find command was disabled")
+        app.typeKey(.escape, modifierFlags: [])
+
         app.typeKey("f", modifierFlags: .command)
         let field = app.textFields["meeting.search.field"]
         XCTAssertTrue(field.waitForExistence(timeout: 3), "Command-F did not open meeting find")

@@ -42,11 +42,17 @@ final class MeetingFindMenuItemInstallerTests: XCTestCase {
         }.count, 1)
     }
 
-    func testReturnsNilWithoutAnEditOrFindMenu() {
-        let item = MeetingFindMenuItemInstaller.install(
-            in: NSMenu(title: "Main"),
+    func testCreatesEditMenuWhenSceneCommandsAreUnavailable() throws {
+        let mainMenu = NSMenu(title: "Main")
+        let item = try XCTUnwrap(MeetingFindMenuItemInstaller.install(
+            in: mainMenu,
             target: NSObject(),
-            action: NSSelectorFromString("findInMeeting:"))
-        XCTAssertNil(item)
+            action: NSSelectorFromString("findInMeeting:")))
+
+        let edit = try XCTUnwrap(mainMenu.items.first {
+            $0.title == "Edit"
+        }?.submenu)
+        XCTAssertTrue(edit.items.first === item)
+        XCTAssertEqual(item.identifier, MeetingFindMenuItemInstaller.identifier)
     }
 }

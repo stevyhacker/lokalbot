@@ -1561,18 +1561,14 @@ private struct WorkspaceSpeakerRenameSheet: View {
         let symbol = selectedCalendarIdentityID == candidate.id
             ? "checkmark.circle.fill"
             : "person.crop.circle"
-        return Button(label, systemImage: symbol) {
-            selectCalendarCandidate(candidate)
-        }
-        .accessibilityIdentifier("speaker.rename.calendarCandidate.\(index)")
-        .buttonStyle(.plain)
-        .foregroundStyle(selectedCalendarIdentityID == candidate.id
-                         ? Color.accentColor
-                         : Color.primary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .padding(.vertical, 3)
-        .disabled(assignedElsewhere)
+        return CalendarCandidateButton(
+            title: label,
+            systemImageName: symbol,
+            accessibilityIdentifier: "speaker.rename.calendarCandidate.\(index)",
+            isSelected: selectedCalendarIdentityID == candidate.id,
+            isEnabled: !assignedElsewhere,
+            action: { selectCalendarCandidate(candidate) })
+            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
     }
 
     private func selectCalendarCandidate(_ candidate: CalendarParticipantIdentity) {
