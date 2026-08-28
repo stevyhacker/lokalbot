@@ -87,6 +87,21 @@ final class MainWindowUITests: XCTestCase {
             .waitForExistence(timeout: 5), "sidebar did not return")
     }
 
+    /// The command palette uses one AppKit field-editor path. A printable key
+    /// must update its query exactly once rather than also travelling through
+    /// the palette's navigation-key handler.
+    func testCommandPaletteDoesNotDuplicateTypedCharacters() {
+        app.typeKey("k", modifierFlags: .command)
+        let field = app.textFields["palette.input"]
+        XCTAssertTrue(field.waitForExistence(timeout: 4), "command palette input missing")
+
+        field.click()
+        field.typeText("AI tooling")
+
+        XCTAssertEqual(field.value as? String, "AI tooling")
+        app.typeKey(.escape, modifierFlags: [])
+    }
+
     /// The native toolbar item must do real work in both directions. This
     /// guards the recent split-view stabilization against a control that is
     /// present but detached from NavigationSplitView's column visibility.
