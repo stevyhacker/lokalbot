@@ -629,6 +629,9 @@ private struct MeetingWorkspaceDetail: View {
         transcript = try? app.pipeline.loadTranscript(from: folder)
         speakerNameHints = app.speakerNameHints(for: meeting)
         calendarSpeakerCandidates = meeting.resolvedCalendarParticipantIdentities
+        uiTestDiagnosticLog(
+            "meeting.load id=\(meeting.id) "
+                + "calendarCandidates=\(calendarSpeakerCandidates.count)")
         player.load(folder: folder, hasSystemTrack: meeting.hasSystemTrack)
         app.outcomeIndex.refresh(meeting: meeting)
         consumeMeetingSeek()
@@ -654,6 +657,10 @@ private struct MeetingWorkspaceDetail: View {
 
     private func beginRenameSpeaker(_ speaker: String) {
         guard let transcript else { return }
+        uiTestDiagnosticLog(
+            "beginRenameSpeaker speaker=\(speaker) "
+                + "calendarCandidates=\(calendarSpeakerCandidates.count) "
+                + "meetingCandidates=\(meeting.resolvedCalendarParticipantIdentities.count)")
         speakerRenameDraft = WorkspaceSpeakerRenameDraft(
             speaker: speaker,
             defaultName: Transcript.defaultSpeakerName(for: speaker),

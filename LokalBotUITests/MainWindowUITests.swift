@@ -16,7 +16,10 @@ final class MainWindowUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         fixture = try SyntheticFixture.plant()
-        let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "MainWindow")
+        let launch = try UITestHarness.launch(
+            storageRoot: fixture.root,
+            suitePrefix: "MainWindow",
+            environment: ["LOKALBOT_UI_TEST_DIAGNOSTICS": "1"])
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
         // Wait until the main window has rendered Today's header —
@@ -617,8 +620,14 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(remoteSpeaker.waitForExistence(timeout: 3))
         remoteSpeaker.click()
 
-        let candidate = app.buttons["speaker.rename.calendarCandidate.0"]
-        XCTAssertTrue(candidate.waitForExistence(timeout: 3))
+        let candidate = identified("speaker.rename.calendarCandidate.0")
+        XCTAssertTrue(
+            candidate.waitForExistence(timeout: 3),
+            "calendar candidate missing from sheet AX tree:\n\(app.sheets.firstMatch.debugDescription)")
+        XCTAssertEqual(
+            candidate.elementType,
+            .button,
+            "calendar candidate must be an AXButton: \(candidate.debugDescription)")
         XCTAssertTrue(candidate.label.contains("Ana Petrović"),
                       "calendar candidate name missing from button label: \(candidate.label)")
         XCTAssertTrue(candidate.label.contains("ana@example.com"),
@@ -670,7 +679,9 @@ final class MainWindowUITests: XCTestCase {
 
         app.typeKey("f", modifierFlags: .command)
         let field = app.textFields["meeting.search.field"]
-        XCTAssertTrue(field.waitForExistence(timeout: 3), "Command-F did not open meeting find")
+        XCTAssertTrue(
+            field.waitForExistence(timeout: 3),
+            "Command-F did not open meeting find. Menu tree:\n\(app.menuBars.debugDescription)")
         XCTAssertFalse(app.staticTexts["meeting.search.status"].exists,
                        "empty search repeated the field's scope label")
         field.typeText("failover")

@@ -1,6 +1,18 @@
 import SwiftUI
 import LaunchAtLogin
 
+/// Opt-in diagnostics for the dedicated hosted UI-test process. Production
+/// targets compile this to a no-op, and the UI-test host emits nothing unless
+/// the launch explicitly sets `LOKALBOT_UI_TEST_DIAGNOSTICS=1`.
+func uiTestDiagnosticLog(_ message: @autoclosure () -> String) {
+#if LOKALBOT_UI_TEST_HOST
+    guard ProcessInfo.processInfo.environment["LOKALBOT_UI_TEST_DIAGNOSTICS"] == "1" else {
+        return
+    }
+    print("[LokalBot UI diagnostics] \(message())")
+#endif
+}
+
 /// Owns app-level keyboard dispatch before AppKit falls back to the main menu.
 /// This is intentionally narrow: the only intercepted event is plain Command-F
 /// while LokalBot's meeting window is active. Text fields, sheets, auxiliary
@@ -8,6 +20,17 @@ import LaunchAtLogin
 @objc(LokalBotApplication)
 final class LokalBotApplication: NSApplication {
     override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown,
+           event.charactersIgnoringModifiers?.lowercased() == "f",
+           event.modifierFlags.contains(.command) {
+            uiTestDiagnosticLog(
+                "application.sendEvent class=\(NSStringFromClass(type(of: self))) "
+                    + "window=\(event.window.map { NSStringFromClass(type(of: $0)) } ?? "nil") "
+                    + "keyWindow=\(keyWindow.map { NSStringFromClass(type(of: $0)) } ?? "nil") "
+                    + "canSearch=\(AppDelegate.appState?.canSearchSelectedMeeting == true) "
+                    + "characters=\(event.charactersIgnoringModifiers ?? "nil") "
+                    + "flags=\(event.modifierFlags.rawValue)")
+        }
         if event.type == .keyDown,
            MeetingFindWindow.isMeetingFindKeyEquivalent(event),
            let app = AppDelegate.appState,
@@ -70,6 +93,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// back to a pure menu-bar accessory.
     func applicationDidFinishLaunching(_ notification: Notification) {
         if AppState.isUITesting {
+            uiTestDiagnosticLog(
+                "didFinishLaunching application=\(NSStringFromClass(type(of: NSApp!))) "
+                    + "principal=\(Bundle.main.principalClass.map(NSStringFromClass) ?? "nil")")
             NSApp.setActivationPolicy(.regular)
             let app = Self.appState ?? AppState()
             Self.appState = app
@@ -384,6 +410,13 @@ final class MeetingFindWindow: NSWindow {
     var meetingFindAction: (() -> Bool)?
 
     override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown,
+           event.charactersIgnoringModifiers?.lowercased() == "f",
+           event.modifierFlags.contains(.command) {
+            uiTestDiagnosticLog(
+                "window.sendEvent window=\(NSStringFromClass(type(of: self))) "
+                    + "canHandle=\(Self.isMeetingFindKeyEquivalent(event))")
+        }
         // `XCUIApplication.typeKey` and physical keyboard input arrive here as
         // key-down events. `performKeyEquivalent` is still needed for AppKit's
         // menu/responder traversal, but NSWindow does not route every key-down
@@ -397,6 +430,12 @@ final class MeetingFindWindow: NSWindow {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.charactersIgnoringModifiers?.lowercased() == "f",
+           event.modifierFlags.contains(.command) {
+            uiTestDiagnosticLog(
+                "window.performKeyEquivalent window=\(NSStringFromClass(type(of: self))) "
+                    + "canHandle=\(Self.isMeetingFindKeyEquivalent(event))")
+        }
         if Self.isMeetingFindKeyEquivalent(event),
            meetingFindAction?() == true {
             return true
