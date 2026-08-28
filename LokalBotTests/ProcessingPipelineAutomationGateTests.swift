@@ -55,6 +55,19 @@ final class ProcessingPipelineAutomationGateTests: XCTestCase {
         XCTAssertFalse(ProcessingPipeline.Stage.queued.isWaitingForModels)
     }
 
+    func testHeadlessSummaryOnlyKeepsTheExistingTranscript() throws {
+        let folder = URL(fileURLWithPath: "/tmp/example-meeting", isDirectory: true)
+
+        XCTAssertEqual(
+            HeadlessCommand.parse([
+                "LokalBot", "--process", folder.path, "--summary-only",
+            ]),
+            .process(folder: folder, transcribe: false, summarize: true))
+        XCTAssertEqual(
+            HeadlessCommand.parse(["LokalBot", "--process", folder.path]),
+            .process(folder: folder, transcribe: true, summarize: true))
+    }
+
     func testAutomaticJobParksWithoutBurningAttemptsWhenModelMissing() async throws {
         let root = try makeRoot()
         let jobStore = PipelineJobStore(

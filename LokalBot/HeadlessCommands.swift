@@ -10,7 +10,7 @@ import AppKit
 /// main run loop for audio, timers, and screen capture); each schedules its
 /// work and calls `exit()` when done.
 enum HeadlessCommand: Equatable {
-    case process(folder: URL, summarize: Bool)
+    case process(folder: URL, transcribe: Bool, summarize: Bool)
     case search(query: String)
     case record(seconds: Int)
     case shotTest
@@ -25,8 +25,10 @@ enum HeadlessCommand: Equatable {
 
     static func parse(_ args: [String]) -> HeadlessCommand? {
         if let flag = args.firstIndex(of: "--process"), args.count > flag + 1 {
-            return .process(folder: URL(fileURLWithPath: args[flag + 1], isDirectory: true),
-                            summarize: !args.contains("--no-summary"))
+            return .process(
+                folder: URL(fileURLWithPath: args[flag + 1], isDirectory: true),
+                transcribe: !args.contains("--summary-only"),
+                summarize: !args.contains("--no-summary"))
         }
         if let flag = args.firstIndex(of: "--search"), args.count > flag + 1 {
             return .search(query: args[flag + 1])
@@ -120,7 +122,8 @@ struct HeadlessCommandRunner {
 
     func run(_ command: HeadlessCommand) {
         switch command {
-        case .process(let folder, let summarize): runProcess(folder: folder, summarize: summarize)
+        case .process(let folder, let transcribe, let summarize):
+            runProcess(folder: folder, transcribe: transcribe, summarize: summarize)
         case .search(let query): runSearch(query: query)
         case .record(let seconds): runRecord(seconds: seconds)
         case .shotTest: runShotTest()
@@ -133,8 +136,10 @@ struct HeadlessCommandRunner {
     }
 
     /// `LokalBot --process <meeting folder>`: run the pipeline headless and
-    /// exit. Lets the pipeline be exercised (and CI-tested) without the UI.
-    private func runProcess(folder: URL, summarize: Bool) {
+    /// exit. Add `--summary-only` to keep the current transcript, matching the
+    /// Re-summarize button. Lets the pipeline be exercised (and CI-tested)
+    /// without the UI.
+    private func runProcess(folder: URL, transcribe: Bool, summarize: Bool) {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         guard let data = try? Data(contentsOf: folder.appendingPathComponent("meta.json")),
@@ -142,7 +147,7 @@ struct HeadlessCommandRunner {
             print("LokalBot --process: no readable meta.json in \(folder.path)")
             exit(2)
         }
-        app.pipeline.enqueue(decoded, transcribe: true, summarize: summarize)
+        app.pipeline.enqueue(decoded, transcribe: transcribe, summarize: summarize)
         // Poll the pipeline until the job leaves the stage table, then exit.
         Task { @MainActor in
             while true {

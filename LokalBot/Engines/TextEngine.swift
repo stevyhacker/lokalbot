@@ -720,8 +720,10 @@ struct OpenAICompatibleEngine: TextEngine {
         }
     }
 
-    /// True when an OpenRouter 404 means the requested reasoning/schema
-    /// parameters have no matching endpoint, so one high-effort retry is allowed.
+    /// True when OpenRouter rejects the requested reasoning/schema combination,
+    /// so one high-effort retry without strict structured-output requirements is
+    /// allowed. Some always-reasoning models report this as a parameter-routing
+    /// 404; others return a 400 when `effort: none` is explicit.
     nonisolated static func shouldFallbackToHighReasoning(
         dialect: ChatCompletionDialect,
         error: Error,
@@ -732,11 +734,16 @@ struct OpenAICompatibleEngine: TextEngine {
         guard dialect == .openRouter,
               !usedFallback,
               requestedSchema || requestedReasoningBudget != nil,
-              case .httpStatus(let code, let detail, _) = error as? TextEngineError,
-              code == 404
+              case .httpStatus(let code, let detail, _) = error as? TextEngineError
         else { return false }
-        return detail.localizedCaseInsensitiveContains(
-            "no endpoints found that can handle the requested parameters")
+
+        if code == 404 {
+            return detail.localizedCaseInsensitiveContains(
+                "no endpoints found that can handle the requested parameters")
+        }
+        guard code == 400, requestedReasoningBudget == 0 else { return false }
+        return detail.localizedCaseInsensitiveContains("reasoning is mandatory")
+            && detail.localizedCaseInsensitiveContains("cannot be disabled")
     }
 
     nonisolated static func supportsOpenAIReasoningEffort(model: String) -> Bool {

@@ -136,7 +136,7 @@ private struct MeetingWorkspaceDetail: View {
                                     HStack(alignment: .firstTextBaseline, spacing: 10) {
                                         Image(systemName: "checkmark")
                                             .foregroundStyle(Brand.teal)
-                                        Text(decision.text)
+                                        Text(decision.displayText)
                                             .font(WorkspaceTypography.body)
                                             .frame(maxWidth: .infinity, alignment: .leading)
                                             .textSelection(.enabled)

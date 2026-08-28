@@ -365,6 +365,36 @@ final class TextEngineTests: XCTestCase {
             requestedReasoningBudget: nil))
     }
 
+    func testOpenRouterMandatoryReasoningErrorTriggersHighReasoningFallbackOnce() {
+        let mandatory = TextEngineError.httpStatus(
+            code: 400,
+            detail: "Reasoning is mandatory for this endpoint and cannot be disabled.",
+            retryAfter: nil)
+        let unrelated = TextEngineError.httpStatus(
+            code: 400, detail: "Invalid JSON schema", retryAfter: nil)
+
+        XCTAssertTrue(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+            dialect: .openRouter, error: mandatory, usedFallback: false,
+            requestedSchema: true,
+            requestedReasoningBudget: 0))
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+            dialect: .openRouter, error: mandatory, usedFallback: true,
+            requestedSchema: true,
+            requestedReasoningBudget: 0))
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+            dialect: .openRouter, error: mandatory, usedFallback: false,
+            requestedSchema: true,
+            requestedReasoningBudget: 256))
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+            dialect: .generic, error: mandatory, usedFallback: false,
+            requestedSchema: true,
+            requestedReasoningBudget: 0))
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+            dialect: .openRouter, error: unrelated, usedFallback: false,
+            requestedSchema: true,
+            requestedReasoningBudget: 0))
+    }
+
     func testOpenRouterCanDisableReasoningForStructuredRetry() throws {
         let engine = OpenAICompatibleEngine(
             baseURL: URL(string: "https://openrouter.ai/api/v1")!,

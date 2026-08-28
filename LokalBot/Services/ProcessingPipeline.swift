@@ -401,18 +401,33 @@ final class ProcessingPipeline: ObservableObject {
                             + "\(sanitization.removedCharacters)")
                 }
                 // The default built-in server supports continuous batching.
-                // For a short transcript, outcomes and summary are independent
-                // reads of the same source, so overlap their generation instead
-                // of paying two serial full-prefill passes. Long transcripts
-                // still wait because outcomes intentionally consume the summary.
+                // A single-pass outcomes extraction is independent of the
+                // summary, so overlap those two reads of the transcript. Long
+                // outcomes scans stay serial to bound local model pressure.
+                let outcomeContext = MeetingNotes.promptContext(in: folder)
+                let outcomeUserLabel = transcript.displaySpeaker(for: "me")
+                let outcomeContextTokens = MeetingSummaryGenerator.contextTokenLimit(
+                    for: config.summarizerBackend)
+                let outcomeLanguage = SummaryLanguage.resolvedForTranscript(
+                    config.summaryLanguage,
+                    transcript: transcript)
                 let concurrentOutcomes = Self.shouldExtractOutcomesConcurrently(
-                    transcriptCharacterCount: transcript.markdown.count,
+                    canUseSinglePass: MeetingOutcomesGenerator.canUseSinglePass(
+                        transcript: transcript,
+                        userSpeakerLabel: outcomeUserLabel,
+                        context: outcomeContext,
+                        contextTokens: outcomeContextTokens,
+                        outputLanguage: outcomeLanguage),
                     backend: config.summarizerBackend)
-                let outcomesTask: Task<Void, Never>? = concurrentOutcomes
+                let outcomesTask: Task<MeetingOutcomes?, Never>? = concurrentOutcomes
                     ? Task { [weak self] in
-                        await self?.extractOutcomes(
-                            transcript: transcript, summary: "", meetingID: meeting.id,
-                            folder: folder, config: config)
+                        guard let self else { return nil }
+                        return await self.extractOutcomes(
+                            transcript: transcript,
+                            meetingID: meeting.id,
+                            folder: folder,
+                            config: config,
+                            context: outcomeContext)
                     }
                     : nil
                 let summary: String
@@ -441,12 +456,30 @@ final class ProcessingPipeline: ObservableObject {
                 try summary.data(using: .utf8)?.write(
                     to: folder.appendingPathComponent("summary.md"), options: .atomic)
                 MeetingSummaryGenerator.removeCheckpoint(in: folder)
+                let extractedOutcomes: MeetingOutcomes?
                 if let outcomesTask {
-                    await outcomesTask.value
+                    extractedOutcomes = await outcomesTask.value
                 } else {
-                    await extractOutcomes(transcript: transcript, summary: summary,
-                                          meetingID: meeting.id, folder: folder, config: config)
+                    extractedOutcomes = await extractOutcomes(
+                        transcript: transcript,
+                        meetingID: meeting.id,
+                        folder: folder,
+                        config: config,
+                        context: outcomeContext)
                 }
+                // The grounded artifact is the only authority for outcome
+                // sections. On a non-fatal extraction failure, mirror the
+                // last successful artifact (or an empty one) so the summary
+                // can never disagree with the cards beside it.
+                let authoritativeOutcomes = extractedOutcomes
+                    ?? MeetingOutcomes.load(from: folder)
+                    ?? MeetingOutcomes()
+                let synchronizedSummary = MeetingSummaryOutcomeSynchronizer.synchronize(
+                    summary,
+                    outcomes: authoritativeOutcomes,
+                    template: config.noteTemplate)
+                try synchronizedSummary.data(using: .utf8)?.write(
+                    to: folder.appendingPathComponent("summary.md"), options: .atomic)
             }
             if let jobStore, !jobStore.markCompleted(meetingID: meeting.id) {
                 stages[meeting.id] = .failed(
@@ -650,11 +683,11 @@ final class ProcessingPipeline: ObservableObject {
     // MARK: - Summarization
 
     nonisolated static func shouldExtractOutcomesConcurrently(
-        transcriptCharacterCount: Int,
+        canUseSinglePass: Bool,
         backend: AppSettings.SummarizerBackend
     ) -> Bool {
         backend == .builtIn
-            && transcriptCharacterCount <= OutcomesExtractor.transcriptCharacterLimit
+            && canUseSinglePass
     }
 
     private func summarize(_ transcript: Transcript, meeting: Meeting,
@@ -706,31 +739,32 @@ final class ProcessingPipeline: ObservableObject {
         return header + body + "\n"
     }
 
-    /// Outcomes ride behind the summary: same engine, schema-constrained where
-    /// the backend supports it (see `OutcomesExtractor`). Failure is non-fatal
-    /// — outcomes are an enhancement, never a gate on the meeting artifacts.
-    private func extractOutcomes(transcript: Transcript, summary: String,
-                                 meetingID: Meeting.ID, folder: URL,
-                                 config: AppSettings) async {
+    /// Outcomes scan the complete transcript through bounded, cited chunks.
+    /// Failure is non-fatal and never overwrites the last successful artifact.
+    private func extractOutcomes(
+        transcript: Transcript,
+        meetingID: Meeting.ID,
+        folder: URL,
+        config: AppSettings,
+        context: [String]
+    ) async -> MeetingOutcomes? {
         do {
             try Task.checkCancellation()
             let engine = try await thinkExecution.makeTextEngine(config)
             let userSpeakerLabel = transcript.displaySpeaker(for: "me")
-            let output = try await engine.generate(
-                system: OutcomesExtractor.systemPrompt(userSpeakerLabel: userSpeakerLabel),
-                prompt: OutcomesExtractor.prompt(transcript: transcript, summary: summary),
-                context: MeetingNotes.promptContext(in: folder),
-                schema: OutcomesExtractor.schema)
-            try Task.checkCancellation()
-            guard let outcomes = OutcomesExtractor.parse(
-                output,
+            let outputLanguage = SummaryLanguage.resolvedForTranscript(
+                config.summaryLanguage,
+                transcript: transcript)
+            let outcomes = try await MeetingOutcomesGenerator.generate(
+                transcript: transcript,
+                engine: engine,
                 userSpeakerLabel: userSpeakerLabel,
-                sourceSegments: transcript.segmentSourceMap,
+                context: context,
+                contextTokens: MeetingSummaryGenerator.contextTokenLimit(
+                    for: config.summarizerBackend),
                 meetingID: meetingID,
-                requireEvidence: true) else {
-                lokalbotLog("outcomes extraction unparseable, skipping")
-                return
-            }
+                checkpointURL: MeetingOutcomesGenerator.checkpointURL(in: folder),
+                outputLanguage: outputLanguage)
             try Task.checkCancellation()
             let previous = MeetingOutcomes.load(from: folder)
             let previousState = MeetingOutcomeStore.loadState(from: folder)
@@ -740,18 +774,23 @@ final class ProcessingPipeline: ObservableObject {
                     previousState, from: previous, to: outcomes)
                 try MeetingOutcomeStore.writeState(reconciled, to: folder)
             }
+            MeetingOutcomesGenerator.removeCheckpoint(in: folder)
+            return outcomes
         } catch {
             lokalbotLog("outcomes extraction failed error=\(error.localizedDescription)")
+            return nil
         }
     }
 
     /// Cancellation is cooperative; some inference backends may not return
     /// immediately. A failed summary must not let its sibling outcomes task
     /// outlive the job and race a retry's artifact writes.
-    nonisolated static func cancelAndWaitForOutcomes(_ task: Task<Void, Never>?) async {
+    nonisolated static func cancelAndWaitForOutcomes<Success: Sendable>(
+        _ task: Task<Success, Never>?
+    ) async {
         guard let task else { return }
         task.cancel()
-        await task.value
+        _ = await task.value
     }
 
     /// Day digest (M4/M6) — shared by the Timeline UI, scheduler, and
