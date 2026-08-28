@@ -1586,6 +1586,11 @@ private struct WorkspaceSpeakerRenameSheet: View {
         }
         .buttonStyle(.plain)
         .disabled(assignedElsewhere)
+        // Keep the visual name/email stack as one native button in the AX
+        // tree. Without this, SwiftUI can attach the identifier to a child
+        // text node, so keyboard and assistive clients cannot address the row
+        // as the control that performs the selection.
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(calendarCandidateAccessibilityLabel(
             candidate,
             assignedElsewhere: assignedElsewhere))
