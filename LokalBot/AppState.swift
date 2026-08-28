@@ -225,6 +225,7 @@ final class AppState: ObservableObject {
     /// switch back to Ask before presenting their content.
     @Published var askMode: AskMode = .ask
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []
+    @Published private(set) var meetingPageSearchRequestRevision = 0
 
     /// A day handed to the Ask section (the old Timeline "Ask" tab, spec
     /// §2.2): rendered as a removable chip, and prepended to escalated
@@ -271,6 +272,15 @@ final class AppState: ObservableObject {
         navigationHandoff.stageMeeting(id, seek: seek)
         selectedMeetingIDs = [id]
         navSection = .meetings
+    }
+
+    var canSearchSelectedMeeting: Bool {
+        navSection == .meetings && selectedMeeting?.endedAt != nil
+    }
+
+    func requestSelectedMeetingSearch() {
+        guard canSearchSelectedMeeting else { return }
+        meetingPageSearchRequestRevision &+= 1
     }
 
     func selectDefaultMeetingIfNeeded() {

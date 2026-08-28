@@ -132,6 +132,10 @@ private struct MeetingWorkspaceDetail: View {
 #endif
         }
         .onChange(of: app.navigationHandoff.revision) { consumeMeetingSeek() }
+        .onChange(of: app.meetingPageSearchRequestRevision) {
+            guard app.selectedMeeting?.id == meeting.id else { return }
+            presentSearch()
+        }
         .sheet(item: $correction) { draft in
             ActionCorrectionSheet(draft: draft) { text, owner, due in
                 _ = app.outcomeIndex.correctAction(
@@ -167,9 +171,6 @@ private struct MeetingWorkspaceDetail: View {
             player.stop()
             stopSpeech(clearError: false)
         }
-        .focusedSceneValue(
-            \.meetingPageSearchAction,
-            MeetingPageSearchAction(perform: presentSearch))
         .meetingProcessingToolbar(app: app, meeting: meeting)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -1585,7 +1586,23 @@ private struct WorkspaceSpeakerRenameSheet: View {
         }
         .buttonStyle(.plain)
         .disabled(assignedElsewhere)
+        .accessibilityLabel(calendarCandidateAccessibilityLabel(
+            candidate,
+            assignedElsewhere: assignedElsewhere))
         .accessibilityIdentifier("speaker.rename.calendarCandidate.\(index)")
+    }
+
+    private func calendarCandidateAccessibilityLabel(
+        _ candidate: CalendarParticipantIdentity,
+        assignedElsewhere: Bool
+    ) -> String {
+        [
+            candidate.name ?? "Name unavailable",
+            candidate.emailAddress,
+            assignedElsewhere ? "Assigned" : nil,
+        ]
+        .compactMap { $0 }
+        .joined(separator: ", ")
     }
 
     private func normalizedName(_ value: String) -> String {

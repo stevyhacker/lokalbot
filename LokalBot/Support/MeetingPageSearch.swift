@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 
 /// One searchable occurrence on a meeting detail page. Locations are stable
 /// scroll targets; the source list supplied by the workspace defines reading
@@ -161,27 +160,5 @@ enum MeetingPageSearch {
         for index in ranges(in: text, query: query).indices {
             result.append(.init(location: location, occurrenceIndex: index))
         }
-    }
-}
-
-/// Routes the app-level Find command to the meeting detail in the focused
-/// window. Other sections leave the command disabled instead of receiving a
-/// global notification intended for a different window.
-struct MeetingPageSearchAction {
-    let perform: () -> Void
-
-    func callAsFunction() {
-        perform()
-    }
-}
-
-private struct MeetingPageSearchActionKey: FocusedValueKey {
-    typealias Value = MeetingPageSearchAction
-}
-
-extension FocusedValues {
-    var meetingPageSearchAction: MeetingPageSearchAction? {
-        get { self[MeetingPageSearchActionKey.self] }
-        set { self[MeetingPageSearchActionKey.self] = newValue }
     }
 }

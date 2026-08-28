@@ -27,7 +27,6 @@ enum LokalBotMain {
 struct LokalBotApp: App {
     @StateObject private var app: AppState
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @FocusedValue(\.meetingPageSearchAction) private var meetingPageSearchAction
 
     init() {
         let appState = AppState()
@@ -74,10 +73,10 @@ struct LokalBotApp: App {
             }
             CommandGroup(after: .textEditing) {
                 Button("Find in Meeting…") {
-                    meetingPageSearchAction?()
+                    app.requestSelectedMeetingSearch()
                 }
                 .keyboardShortcut("f", modifiers: .command)
-                .disabled(meetingPageSearchAction == nil)
+                .disabled(!app.canSearchSelectedMeeting)
             }
             // Deleting the Settings scene removes the automatic ⌘, — reclaim
             // it so the shortcut lands on the one in-window Settings home.

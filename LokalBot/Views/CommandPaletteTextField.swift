@@ -104,13 +104,36 @@ struct CommandPaletteTextField: NSViewRepresentable {
 }
 
 final class PaletteTextField: NSTextField {
-    func requestFocus() {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        requestFocus()
+    }
+
+    func requestFocus(remainingAttempts: Int = 3) {
         DispatchQueue.main.async { [weak self] in
-            guard let self, let window else { return }
+            guard let self else { return }
+            guard let window else {
+                if remainingAttempts > 0 {
+                    requestFocus(remainingAttempts: remainingAttempts - 1)
+                }
+                return
+            }
             if let editor = currentEditor(), window.firstResponder === editor {
                 return
             }
-            window.makeFirstResponder(self)
+            if !window.isKeyWindow {
+                window.makeKeyAndOrderFront(nil)
+            }
+            guard window.makeFirstResponder(self) else {
+                if remainingAttempts > 0 {
+                    requestFocus(remainingAttempts: remainingAttempts - 1)
+                }
+                return
+            }
+            // NSTextField delegates editing to the window's field editor.
+            // Starting that editing session makes the AX text field report
+            // keyboard focus as soon as the palette becomes key.
+            selectText(nil)
         }
     }
 }
