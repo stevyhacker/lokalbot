@@ -13,13 +13,51 @@ struct CalendarCandidateButton: NSViewRepresentable {
     let isEnabled: Bool
     let action: () -> Void
 
-    func makeNSView(context: Context) -> CalendarCandidateButtonControl {
-        CalendarCandidateButtonControl()
+    func makeNSView(context: Context) -> CalendarCandidateButtonContainer {
+        CalendarCandidateButtonContainer()
     }
 
     func updateNSView(
-        _ button: CalendarCandidateButtonControl,
+        _ container: CalendarCandidateButtonContainer,
         context: Context
+    ) {
+        container.update(
+            title: title,
+            systemImageName: systemImageName,
+            accessibilityIdentifier: accessibilityIdentifier,
+            isSelected: isSelected,
+            isEnabled: isEnabled,
+            action: action)
+    }
+}
+
+/// SwiftUI treats the root view returned by `NSViewRepresentable` as its own
+/// accessibility boundary. Keep that root non-accessible and explicitly vend
+/// the actionable native child so AX clients see one real button in sheets.
+final class CalendarCandidateButtonContainer: NSView {
+    let button = CalendarCandidateButtonControl()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configure()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configure()
+    }
+
+    override var intrinsicContentSize: NSSize {
+        button.intrinsicContentSize
+    }
+
+    func update(
+        title: String,
+        systemImageName: String,
+        accessibilityIdentifier: String,
+        isSelected: Bool,
+        isEnabled: Bool,
+        action: @escaping () -> Void
     ) {
         button.update(
             title: title,
@@ -28,6 +66,20 @@ struct CalendarCandidateButton: NSViewRepresentable {
             isSelected: isSelected,
             isEnabled: isEnabled,
             action: action)
+        invalidateIntrinsicContentSize()
+    }
+
+    private func configure() {
+        setAccessibilityElement(false)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(button)
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(equalTo: leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: trailingAnchor),
+            button.topAnchor.constraint(equalTo: topAnchor),
+            button.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        setAccessibilityChildren([button])
     }
 }
 

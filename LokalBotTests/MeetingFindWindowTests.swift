@@ -4,7 +4,25 @@ import XCTest
 
 @MainActor
 final class MeetingFindWindowTests: XCTestCase {
-    func testPlainCommandFInvokesMeetingFindAction() throws {
+    func testPlainCommandFInvokesMeetingFindActionThroughWindowEventDispatch() throws {
+        let window = MeetingFindWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 200, height: 120),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false)
+        var invocationCount = 0
+        window.meetingFindAction = {
+            invocationCount += 1
+            return true
+        }
+
+        let event = try XCTUnwrap(keyEvent(characters: "f", modifiers: .command))
+
+        window.sendEvent(event)
+        XCTAssertEqual(invocationCount, 1)
+    }
+
+    func testPlainCommandFInvokesMeetingFindActionThroughKeyEquivalent() throws {
         let window = MeetingFindWindow(
             contentRect: NSRect(x: 0, y: 0, width: 200, height: 120),
             styleMask: [.titled],

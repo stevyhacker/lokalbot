@@ -358,6 +358,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 final class MeetingFindWindow: NSWindow {
     var meetingFindAction: (() -> Bool)?
 
+    override func sendEvent(_ event: NSEvent) {
+        // `XCUIApplication.typeKey` and physical keyboard input arrive here as
+        // key-down events. `performKeyEquivalent` is still needed for AppKit's
+        // menu/responder traversal, but NSWindow does not route every key-down
+        // through that method before dispatching it to the first responder.
+        if event.type == .keyDown,
+           Self.isMeetingFindKeyEquivalent(event),
+           meetingFindAction?() == true {
+            return
+        }
+        super.sendEvent(event)
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if Self.isMeetingFindKeyEquivalent(event),
            meetingFindAction?() == true {

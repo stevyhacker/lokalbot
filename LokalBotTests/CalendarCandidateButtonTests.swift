@@ -4,10 +4,10 @@ import XCTest
 
 @MainActor
 final class CalendarCandidateButtonTests: XCTestCase {
-    func testNativeControlExposesOneButtonAndInvokesSelection() {
-        let button = CalendarCandidateButtonControl()
+    func testRepresentableContainerVendsOneNativeButtonAndInvokesSelection() {
+        let container = CalendarCandidateButtonContainer()
         var selected = false
-        button.update(
+        container.update(
             title: "Ana Petrović, ana@example.com",
             systemImageName: "person.crop.circle",
             accessibilityIdentifier: "speaker.rename.calendarCandidate.0",
@@ -15,6 +15,10 @@ final class CalendarCandidateButtonTests: XCTestCase {
             isEnabled: true,
             action: { selected = true })
 
+        let button = container.button
+        XCTAssertFalse(container.isAccessibilityElement())
+        XCTAssertEqual(container.accessibilityChildren()?.count, 1)
+        XCTAssertTrue(container.accessibilityChildren()?.first as? NSButton === button)
         XCTAssertTrue(button.isAccessibilityElement())
         XCTAssertEqual(button.accessibilityRole(), .button)
         XCTAssertEqual(
