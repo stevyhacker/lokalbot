@@ -134,6 +134,9 @@ private struct MeetingWorkspaceDetail: View {
         .onChange(of: app.navigationHandoff.revision) { consumeMeetingSeek() }
         .onChange(of: app.meetingPageSearchRequestRevision) {
             guard app.selectedMeeting?.id == meeting.id else { return }
+            uiTestDiagnosticLog(
+                "meeting.search receive revision="
+                    + "\(app.meetingPageSearchRequestRevision) id=\(meeting.id)")
             presentSearch()
         }
         .sheet(item: $correction) { draft in
@@ -1357,8 +1360,12 @@ private struct TranscriptEvidenceList: View {
                                         field: .speaker))
                                     .font(.caption.bold())
                                     .frame(width: 72, alignment: .leading)
+                                    .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
+                            // Borderless preserves the compact transcript look
+                            // while giving AppKit a native, reliable control hit
+                            // path inside the scrolling evidence list.
+                            .buttonStyle(.borderless)
                             .help("Rename speaker")
                             .accessibilityIdentifier("transcript.segment.\(index).speaker")
                             SearchHighlightedText(

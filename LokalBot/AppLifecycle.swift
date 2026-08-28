@@ -13,42 +13,6 @@ func uiTestDiagnosticLog(_ message: @autoclosure () -> String) {
 #endif
 }
 
-/// Owns app-level keyboard dispatch before AppKit falls back to the main menu.
-/// This is intentionally narrow: the only intercepted event is plain Command-F
-/// while LokalBot's meeting window is active. Text fields, sheets, auxiliary
-/// windows, and every other shortcut continue through AppKit unchanged.
-@objc(LokalBotApplication)
-final class LokalBotApplication: NSApplication {
-    override func sendEvent(_ event: NSEvent) {
-        if event.type == .keyDown,
-           event.charactersIgnoringModifiers?.lowercased() == "f",
-           event.modifierFlags.contains(.command) {
-            uiTestDiagnosticLog(
-                "application.sendEvent class=\(NSStringFromClass(type(of: self))) "
-                    + "window=\(event.window.map { NSStringFromClass(type(of: $0)) } ?? "nil") "
-                    + "keyWindow=\(keyWindow.map { NSStringFromClass(type(of: $0)) } ?? "nil") "
-                    + "canSearch=\(AppDelegate.appState?.canSearchSelectedMeeting == true) "
-                    + "characters=\(event.charactersIgnoringModifiers ?? "nil") "
-                    + "flags=\(event.modifierFlags.rawValue)")
-        }
-        if event.type == .keyDown,
-           MeetingFindWindow.isMeetingFindKeyEquivalent(event),
-           let app = AppDelegate.appState,
-           app.canSearchSelectedMeeting,
-           ownsMeetingWindow(event.window ?? keyWindow) {
-            app.requestSelectedMeetingSearch()
-            return
-        }
-        super.sendEvent(event)
-    }
-
-    private func ownsMeetingWindow(_ window: NSWindow?) -> Bool {
-        guard let window, window.attachedSheet == nil else { return false }
-        if window is MeetingFindWindow { return true }
-        return window === WindowAccess.visibleMainWindow(in: self)
-    }
-}
-
 /// Whether this launch should come up menu-bar-only (accessory: no Dock icon,
 /// no window). Computed identically in the pre-launch entry point (to disable
 /// window restoration before AppKit reads the flag) and in the app delegate (to
@@ -201,7 +165,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false)
         window.meetingFindAction = { [weak app] in
             guard let app, app.canSearchSelectedMeeting else { return false }
-            app.requestSelectedMeetingSearch()
+            // AppKit invokes key-equivalent handling inside its event dispatch.
+            // Let that dispatch unwind before publishing the SwiftUI request;
+            // otherwise the host can consume Command-F without invalidating the
+            // meeting detail's state on macOS 15.
+            let revision = app.meetingPageSearchRequestRevision
+            uiTestDiagnosticLog("meetingFindAction schedule revision=\(revision)")
+            DispatchQueue.main.async { [weak app] in
+                guard let app else { return }
+                app.requestSelectedMeetingSearch()
+                uiTestDiagnosticLog(
+                    "meetingFindAction publish revision="
+                        + "\(app.meetingPageSearchRequestRevision)")
+            }
             return true
         }
         window.title = showsOnboarding ? "Welcome to LokalBot" : (showsQuickRecall ? "Ask" : "LokalBot")
