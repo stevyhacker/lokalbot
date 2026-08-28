@@ -612,6 +612,31 @@ final class MainWindowUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
     }
 
+    /// Command-F and the visible toolbar action share one meeting-local find
+    /// surface. Matches move from summary prose into collapsed transcript
+    /// evidence without switching to the library-wide Ask search.
+    func testMeetingFindSearchesSummaryAndTranscript() {
+        openLibrary()
+        selectMeeting(fixture.designReview)
+        XCTAssertTrue(app.staticTexts["detail.title"].waitForExistence(timeout: 4))
+        XCTAssertTrue(identified("toolbar.meetingSearch").exists)
+
+        app.typeKey("f", modifierFlags: .command)
+        let field = app.textFields["meeting.search.field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 3), "Command-F did not open meeting find")
+        field.typeText("failover")
+
+        let status = app.staticTexts["meeting.search.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 3))
+        XCTAssertEqual(status.value as? String, "1 of 3 · Summary")
+
+        identified("meeting.search.next").click()
+        identified("meeting.search.next").click()
+        XCTAssertEqual(status.value as? String, "3 of 3 · Transcript")
+        XCTAssertTrue(app.staticTexts["transcript.segment.3.text"]
+            .waitForExistence(timeout: 3), "transcript match did not expand its evidence")
+    }
+
     // MARK: - Ask
 
     /// FTS5-backed search reindexes on every launch — typing a term that

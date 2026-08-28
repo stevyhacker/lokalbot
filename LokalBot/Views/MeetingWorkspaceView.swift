@@ -40,6 +40,7 @@ struct MeetingLibraryDetailView: View {
 
 private struct MeetingWorkspaceDetail: View {
     @EnvironmentObject var app: AppState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let meeting: Meeting
 
     @StateObject private var player = MeetingPlayer()
@@ -57,6 +58,12 @@ private struct MeetingWorkspaceDetail: View {
     @State private var isReadingSummary = false
     @State private var speechPlayer: AVAudioPlayer?
     @State private var speechTask: Task<Void, Never>?
+    @State private var isSearchPresented = false
+    @State private var searchQuery = ""
+    @State private var searchMatches: [MeetingPageSearchMatch] = []
+    @State private var selectedSearchMatchIndex = 0
+    @State private var searchContentRevision = 0
+    @FocusState private var searchFieldFocused: Bool
 
     private var folder: URL { meeting.folderURL(in: app.storage) }
     private var projection: MeetingOutcomeProjection? { app.outcomeIndex.projection(for: meeting.id) }
@@ -69,139 +76,182 @@ private struct MeetingWorkspaceDetail: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
-                MeetingWorkspaceHeader(meeting: meeting)
-
-                if player.isLoaded { MeetingAudioBar(player: player, folder: folder) }
-                if let stage = app.pipeline.stages[meeting.id] {
-                    HStack(spacing: 10) {
-                        Label(stage.label, systemImage: stageIcon(stage))
-                            .font(.callout)
-                            .foregroundStyle(stage.isFailure ? Brand.error : .secondary)
-                        if stage.isFailure {
-                            Button("Retry") { app.retryProcessing(meeting) }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                .accessibilityIdentifier("meeting.workspace.retry")
-                        } else if stage.isWaitingForModels {
-                            Button("Download & process") { app.retryProcessing(meeting) }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                .accessibilityIdentifier("meeting.workspace.downloadProcess")
-                        }
-                    }
-                }
-                if let exportError {
-                    Label(exportError, systemImage: "exclamationmark.triangle")
-                        .font(.callout).foregroundStyle(Brand.error)
-                }
-                if let speechError {
-                    Label(speechError, systemImage: "speaker.slash")
-                        .font(.callout).foregroundStyle(Brand.error)
+        ScrollViewReader { scrollProxy in
+            VStack(spacing: 0) {
+                if isSearchPresented {
+                    MeetingPageSearchBar(
+                        query: $searchQuery,
+                        fieldFocused: $searchFieldFocused,
+                        statusText: searchStatusText,
+                        hasMatches: !searchMatches.isEmpty,
+                        onPrevious: { moveSearch(by: -1, using: scrollProxy) },
+                        onNext: { moveSearch(by: 1, using: scrollProxy) },
+                        onClose: dismissSearch)
+                    .padding(.horizontal, WorkspaceMetric.pagePadding)
+                    .padding(.vertical, 10)
+                    Divider()
                 }
 
-                if !captureTranscriptOnly {
-                    WorkspaceSection(title: "Action items", icon: "checklist") {
-                        if let actions = projection?.actionReferences, !actions.isEmpty {
-                            VStack(spacing: 0) {
-                                ForEach(actions) { reference in
-                                    OutcomeActionRow(
-                                        reference: reference,
-                                        onStatus: { status in
-                                            _ = app.outcomeIndex.setStatus(
-                                                status,
-                                                actionID: reference.action.id,
-                                                meetingID: meeting.id)
-                                        },
-                                        onCorrect: {
-                                            correction = ActionCorrectionDraft(reference: reference)
-                                        },
-                                        onEvidence: { citation in
-                                            transcriptExpanded = true
-                                            player.play(at: citation.start)
-                                        })
-                                    if reference.id != actions.last?.id { Divider() }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
+                        MeetingWorkspaceHeader(meeting: meeting)
+
+                        if player.isLoaded { MeetingAudioBar(player: player, folder: folder) }
+                        if let stage = app.pipeline.stages[meeting.id] {
+                            HStack(spacing: 10) {
+                                Label(stage.label, systemImage: stageIcon(stage))
+                                    .font(.callout)
+                                    .foregroundStyle(stage.isFailure ? Brand.error : .secondary)
+                                if stage.isFailure {
+                                    Button("Retry") { app.retryProcessing(meeting) }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                        .accessibilityIdentifier("meeting.workspace.retry")
+                                } else if stage.isWaitingForModels {
+                                    Button("Download & process") { app.retryProcessing(meeting) }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                        .accessibilityIdentifier("meeting.workspace.downloadProcess")
                                 }
                             }
-                        } else {
-                            EmptyWorkspaceRow(text: "No action items were extracted from this meeting.")
                         }
-                    }
+                        if let exportError {
+                            Label(exportError, systemImage: "exclamationmark.triangle")
+                                .font(.callout).foregroundStyle(Brand.error)
+                        }
+                        if let speechError {
+                            Label(speechError, systemImage: "speaker.slash")
+                                .font(.callout).foregroundStyle(Brand.error)
+                        }
 
-                    WorkspaceSection(title: "Decisions", icon: "checkmark.seal") {
-                        if let decisions = projection?.outcomes.decisionRecords, !decisions.isEmpty {
-                            VStack(alignment: .leading, spacing: 12) {
-                                ForEach(decisions) { decision in
-                                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                                        Image(systemName: "checkmark")
-                                            .foregroundStyle(Brand.teal)
-                                        Text(decision.displayText)
-                                            .font(WorkspaceTypography.body)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .textSelection(.enabled)
-                                        if let citation = decision.citations.first {
-                                            EvidencePill(citation: citation) {
-                                                transcriptExpanded = true
-                                                player.play(at: citation.start)
+                        if !captureTranscriptOnly {
+                            WorkspaceSection(title: "Action items", icon: "checklist") {
+                                if let actions = projection?.actionReferences, !actions.isEmpty {
+                                    VStack(spacing: 0) {
+                                        ForEach(actions) { reference in
+                                            OutcomeActionRow(
+                                                reference: reference,
+                                                onStatus: { status in
+                                                    _ = app.outcomeIndex.setStatus(
+                                                        status,
+                                                        actionID: reference.action.id,
+                                                        meetingID: meeting.id)
+                                                },
+                                                onCorrect: {
+                                                    correction = ActionCorrectionDraft(
+                                                        reference: reference)
+                                                },
+                                                onEvidence: { citation in
+                                                    transcriptExpanded = true
+                                                    player.play(at: citation.start)
+                                                })
+                                            if reference.id != actions.last?.id { Divider() }
+                                        }
+                                    }
+                                } else {
+                                    EmptyWorkspaceRow(
+                                        text: "No action items were extracted from this meeting.")
+                                }
+                            }
+
+                            WorkspaceSection(title: "Decisions", icon: "checkmark.seal") {
+                                if let decisions = projection?.outcomes.decisionRecords,
+                                   !decisions.isEmpty {
+                                    VStack(alignment: .leading, spacing: 12) {
+                                        ForEach(decisions) { decision in
+                                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                                Image(systemName: "checkmark")
+                                                    .foregroundStyle(Brand.teal)
+                                                Text(decision.displayText)
+                                                    .font(WorkspaceTypography.body)
+                                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                                    .textSelection(.enabled)
+                                                if let citation = decision.citations.first {
+                                                    EvidencePill(citation: citation) {
+                                                        transcriptExpanded = true
+                                                        player.play(at: citation.start)
+                                                    }
+                                                }
                                             }
                                         }
                                     }
+                                } else {
+                                    EmptyWorkspaceRow(text: "No cited decisions were extracted.")
                                 }
                             }
-                        } else {
-                            EmptyWorkspaceRow(text: "No cited decisions were extracted.")
-                        }
-                    }
 
-                    WorkspaceSection(title: "Summary", icon: "text.alignleft") {
-                        if notes?.isEmpty == false || summary?.isEmpty == false {
-                            VStack(alignment: .leading, spacing: 14) {
-                                if let notes, !notes.isEmpty {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Label("Your notes", systemImage: "square.and.pencil")
-                                            .font(WorkspaceTypography.metadataEmphasis)
-                                            .foregroundStyle(.secondary)
-                                        SelectableDigestText(notes)
+                            WorkspaceSection(title: "Summary", icon: "text.alignleft") {
+                                if notes?.isEmpty == false || summary?.isEmpty == false {
+                                    VStack(alignment: .leading, spacing: 14) {
+                                        if let notes, !notes.isEmpty {
+                                            VStack(alignment: .leading, spacing: 6) {
+                                                Label(
+                                                    "Your notes",
+                                                    systemImage: "square.and.pencil")
+                                                .font(WorkspaceTypography.metadataEmphasis)
+                                                .foregroundStyle(.secondary)
+                                                SelectableDigestText(
+                                                    notes,
+                                                    searchQuery: visibleSearchQuery,
+                                                    activeMatchIndex: activeOccurrence(at: .notes))
+                                                .id(MeetingPageSearchMatch.Location.notes)
+                                            }
+                                            .padding(12)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .background(
+                                                .quaternary.opacity(0.24),
+                                                in: RoundedRectangle(
+                                                    cornerRadius: Brand.Radius.control))
+                                            .accessibilityIdentifier("detail.notes")
+                                        }
+                                        if let summary, !summary.isEmpty {
+                                            let parts = SummaryPresentation.split(summary)
+                                            if !parts.metadata.isEmpty {
+                                                SummaryMetadataRow(items: parts.metadata)
+                                            }
+                                            SelectableDigestText(
+                                                parts.body,
+                                                searchQuery: visibleSearchQuery,
+                                                activeMatchIndex: activeOccurrence(at: .summary))
+                                            .id(MeetingPageSearchMatch.Location.summary)
+                                        }
                                     }
-                                    .padding(12)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(.quaternary.opacity(0.24),
-                                                in: RoundedRectangle(cornerRadius: Brand.Radius.control))
-                                    .accessibilityIdentifier("detail.notes")
-                                }
-                                if let summary, !summary.isEmpty {
-                                    let parts = SummaryPresentation.split(summary)
-                                    if !parts.metadata.isEmpty {
-                                        SummaryMetadataRow(items: parts.metadata)
-                                    }
-                                    SelectableDigestText(parts.body)
+                                    .workspaceReadingWidth()
+                                } else {
+                                    EmptyWorkspaceRow(text: "No summary yet.")
                                 }
                             }
-                            .workspaceReadingWidth()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
-                            EmptyWorkspaceRow(text: "No summary yet.")
+                            .accessibilityIdentifier("meeting.summary")
+                        }
+
+                        WorkspaceDisclosure(
+                            isExpanded: $transcriptExpanded,
+                            identifier: "meeting.transcriptDisclosure") {
+                            TranscriptEvidenceList(
+                                transcript: transcript,
+                                player: player,
+                                searchQuery: visibleSearchQuery,
+                                activeMatch: activeSearchMatch,
+                                onRenameSpeaker: { beginRenameSpeaker($0) })
+                        } label: {
+                            Label("Transcript", systemImage: "text.bubble")
+                                .font(WorkspaceTypography.sectionTitle)
                         }
                     }
-                    .accessibilityIdentifier("meeting.summary")
-                }
-
-                WorkspaceDisclosure(
-                    isExpanded: $transcriptExpanded,
-                    identifier: "meeting.transcriptDisclosure") {
-                    TranscriptEvidenceList(
-                        transcript: transcript,
-                        player: player,
-                        onRenameSpeaker: { beginRenameSpeaker($0) })
-                } label: {
-                    Label("Transcript", systemImage: "text.bubble")
-                        .font(WorkspaceTypography.sectionTitle)
+                    .padding(WorkspaceMetric.pagePadding)
+                    .frame(maxWidth: WorkspaceMetric.contentMaxWidth, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .top)
                 }
             }
-            .padding(WorkspaceMetric.pagePadding)
-            .frame(maxWidth: WorkspaceMetric.contentMaxWidth, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .top)
+            .onChange(of: searchQuery) {
+                updateSearch(using: scrollProxy)
+            }
+            .onChange(of: searchContentRevision) {
+                if isSearchPresented {
+                    updateSearch(using: scrollProxy)
+                }
+            }
         }
         .navigationTitle(meeting.displayTitle)
         .task(id: meeting.id) {
@@ -236,8 +286,18 @@ private struct MeetingWorkspaceDetail: View {
             player.stop()
             stopSpeech(clearError: false)
         }
+        .focusedSceneValue(
+            \.meetingPageSearchAction,
+            MeetingPageSearchAction(perform: presentSearch))
         .meetingProcessingToolbar(app: app, meeting: meeting)
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: presentSearch) {
+                    Label("Find in Meeting", systemImage: "magnifyingglass")
+                }
+                .help("Find in summary and transcript (⌘F)")
+                .accessibilityIdentifier("toolbar.meetingSearch")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Button(isReadingSummary ? "Stop spoken summary" : "Read summary aloud") {
@@ -294,6 +354,100 @@ private struct MeetingWorkspaceDetail: View {
         return "sparkles"
     }
 
+    private var visibleSearchQuery: String {
+        isSearchPresented ? searchQuery : ""
+    }
+
+    private var activeSearchMatch: MeetingPageSearchMatch? {
+        guard isSearchPresented,
+              searchMatches.indices.contains(selectedSearchMatchIndex) else { return nil }
+        return searchMatches[selectedSearchMatchIndex]
+    }
+
+    private var searchStatusText: String {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return "Summary + transcript" }
+        guard let match = activeSearchMatch else { return "No matches" }
+        return "\(selectedSearchMatchIndex + 1) of \(searchMatches.count) · "
+            + match.location.sectionLabel
+    }
+
+    private func activeOccurrence(
+        at location: MeetingPageSearchMatch.Location
+    ) -> Int? {
+        guard let match = activeSearchMatch, match.location == location else { return nil }
+        return match.occurrenceIndex
+    }
+
+    private func presentSearch() {
+        isSearchPresented = true
+        DispatchQueue.main.async {
+            searchFieldFocused = true
+        }
+    }
+
+    private func dismissSearch() {
+        isSearchPresented = false
+        searchFieldFocused = false
+        searchQuery = ""
+        searchMatches = []
+        selectedSearchMatchIndex = 0
+    }
+
+    private func updateSearch(using scrollProxy: ScrollViewProxy) {
+        let notesText = captureTranscriptOnly ? nil : notes.map {
+            SelectableDigestText.searchableText(from: $0)
+        }
+        let summaryText = captureTranscriptOnly ? nil : summary.map {
+            SelectableDigestText.searchableText(
+                from: SummaryPresentation.split($0).body)
+        }
+        let matches = MeetingPageSearch.matches(
+            query: searchQuery,
+            notesText: notesText,
+            summaryText: summaryText,
+            transcript: transcript)
+        searchMatches = matches
+        selectedSearchMatchIndex = 0
+        if let first = matches.first {
+            reveal(first, using: scrollProxy)
+        }
+    }
+
+    private func moveSearch(by offset: Int, using scrollProxy: ScrollViewProxy) {
+        guard !searchMatches.isEmpty else { return }
+        selectedSearchMatchIndex = (
+            selectedSearchMatchIndex + offset + searchMatches.count
+        ) % searchMatches.count
+        reveal(searchMatches[selectedSearchMatchIndex], using: scrollProxy)
+    }
+
+    private func reveal(
+        _ match: MeetingPageSearchMatch,
+        using scrollProxy: ScrollViewProxy
+    ) {
+        let needsTranscriptLayout: Bool
+        if case .transcript = match.location {
+            needsTranscriptLayout = !transcriptExpanded
+            transcriptExpanded = true
+        } else {
+            needsTranscriptLayout = false
+        }
+
+        let scroll = {
+            withAnimation(WorkspaceMotion.animation(
+                .autoScroll,
+                reduceMotion: reduceMotion)) {
+                scrollProxy.scrollTo(match.location, anchor: .center)
+            }
+        }
+        if needsTranscriptLayout {
+            DispatchQueue.main.async(execute: scroll)
+        } else {
+            scroll()
+        }
+    }
+
     private func load() {
         summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8)
         notes = MeetingNotes.load(from: folder)
@@ -302,6 +456,7 @@ private struct MeetingWorkspaceDetail: View {
         player.load(folder: folder, hasSystemTrack: meeting.hasSystemTrack)
         app.outcomeIndex.refresh(meeting: meeting)
         consumeMeetingSeek()
+        searchContentRevision += 1
     }
 
     private func consumeMeetingSeek() {
@@ -428,6 +583,81 @@ private struct MeetingWorkspaceDetail: View {
         speechPlayer = nil
         isReadingSummary = false
         if clearError { speechError = nil }
+    }
+}
+
+private struct MeetingPageSearchBar: View {
+    @Binding var query: String
+    @FocusState.Binding var fieldFocused: Bool
+    let statusText: String
+    let hasMatches: Bool
+    let onPrevious: () -> Void
+    let onNext: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+
+            TextField("Search summary and transcript", text: $query)
+                .textFieldStyle(.plain)
+                .focused($fieldFocused)
+                .onSubmit(onNext)
+                .accessibilityIdentifier("meeting.search.field")
+
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Clear search")
+                .accessibilityIdentifier("meeting.search.clear")
+            }
+
+            Text(statusText)
+                .font(WorkspaceTypography.metadata)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
+                .accessibilityIdentifier("meeting.search.status")
+
+            Divider().frame(height: 18)
+
+            Button(action: onPrevious) {
+                Image(systemName: "chevron.up")
+            }
+            .buttonStyle(.plain)
+            .disabled(!hasMatches)
+            .help("Previous match")
+            .accessibilityIdentifier("meeting.search.previous")
+
+            Button(action: onNext) {
+                Image(systemName: "chevron.down")
+            }
+            .buttonStyle(.plain)
+            .disabled(!hasMatches)
+            .help("Next match")
+            .accessibilityIdentifier("meeting.search.next")
+
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
+            .help("Close search")
+            .accessibilityIdentifier("meeting.search.close")
+        }
+        .font(WorkspaceTypography.control)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .workspaceControl()
+        .frame(maxWidth: 720)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .accessibilityIdentifier("meeting.search.bar")
     }
 }
 
@@ -608,6 +838,8 @@ private struct ActionCorrectionSheet: View {
 private struct TranscriptEvidenceList: View {
     let transcript: Transcript?
     @ObservedObject var player: MeetingPlayer
+    let searchQuery: String
+    let activeMatch: MeetingPageSearchMatch?
     let onRenameSpeaker: (String) -> Void
 
     var body: some View {
@@ -659,7 +891,10 @@ private struct TranscriptEvidenceList: View {
                             .buttonStyle(.plain)
                             .help("Rename speaker")
                             .accessibilityIdentifier("transcript.segment.\(index).speaker")
-                            Text(segment.displayText)
+                            SearchHighlightedText(
+                                segment.displayText,
+                                query: searchQuery,
+                                activeMatchIndex: activeOccurrence(for: index))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .textSelection(.enabled)
                                 .help("Select text and press Command-C to copy")
@@ -671,6 +906,7 @@ private struct TranscriptEvidenceList: View {
                             isActive(segment)
                                 ? Brand.teal.opacity(0.10) : Color.clear,
                             in: RoundedRectangle(cornerRadius: 6))
+                        .id(MeetingPageSearchMatch.Location.transcript(segmentIndex: index))
                     }
                 }
             }
@@ -682,6 +918,13 @@ private struct TranscriptEvidenceList: View {
     private func isActive(_ segment: Transcript.Segment) -> Bool {
         player.currentTime >= segment.start
             && player.currentTime < max(segment.end, segment.start + 0.5)
+    }
+
+    private func activeOccurrence(for segmentIndex: Int) -> Int? {
+        guard activeMatch?.location == .transcript(segmentIndex: segmentIndex) else {
+            return nil
+        }
+        return activeMatch?.occurrenceIndex
     }
 }
 
