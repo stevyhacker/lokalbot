@@ -56,13 +56,24 @@ enum SummaryPresentation {
 /// One quiet, wrapping metadata line for a generated summary's provenance.
 struct SummaryMetadataRow: View {
     let items: [SummaryPresentation.MetadataItem]
+    var searchQuery = ""
+    var activeMatchIndex: Int?
 
     var body: some View {
-        Text(items.map { "\($0.label) \($0.value)" }.joined(separator: "  ·  "))
+        SearchHighlightedText(
+            Self.displayText(for: items),
+            query: searchQuery,
+            activeMatchIndex: activeMatchIndex)
             .font(WorkspaceTypography.metadata)
             .foregroundStyle(.secondary)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("summary.metadata")
+    }
+
+    static func displayText(
+        for items: [SummaryPresentation.MetadataItem]
+    ) -> String {
+        items.map { "\($0.label) \($0.value)" }.joined(separator: "  ·  ")
     }
 }

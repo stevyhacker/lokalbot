@@ -263,7 +263,7 @@ private struct ExpandableDigestSummary: View {
     @State private var collapsedHeight: CGFloat = 0
 
     private var showsControl: Bool {
-        truncatedByLayout || DayDigestTaskSummaryExpansion.needsControl(text)
+        truncatedByLayout
     }
 
     var body: some View {
@@ -316,8 +316,10 @@ private struct ExpandableDigestSummary: View {
     }
 
     private func refreshTruncation() {
-        guard !expanded, fullHeight > 0, collapsedHeight > 0 else { return }
-        truncatedByLayout = fullHeight > collapsedHeight + 1
+        guard !expanded else { return }
+        truncatedByLayout = DayDigestTaskSummaryExpansion.hasRenderedOverflow(
+            fullHeight: fullHeight,
+            collapsedHeight: collapsedHeight)
     }
 }
 

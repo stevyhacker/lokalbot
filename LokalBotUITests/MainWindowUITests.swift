@@ -657,10 +657,10 @@ final class MainWindowUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
     }
 
-    /// Command-F and the visible toolbar action share one meeting-local find
-    /// surface. Matches move from summary prose into collapsed transcript
-    /// evidence without switching to the library-wide Ask search.
-    func testMeetingFindSearchesSummaryAndTranscript() {
+    /// Command-F and the visible toolbar action search every visible meeting
+    /// content node. Matches move through outcomes and summary prose into
+    /// collapsed transcript evidence without switching to library-wide Ask.
+    func testMeetingFindSearchesAllVisibleContent() {
         openLibrary()
         selectMeeting(fixture.designReview)
         XCTAssertTrue(app.staticTexts["detail.title"].waitForExistence(timeout: 4))
@@ -669,17 +669,34 @@ final class MainWindowUITests: XCTestCase {
         app.typeKey("f", modifierFlags: .command)
         let field = app.textFields["meeting.search.field"]
         XCTAssertTrue(field.waitForExistence(timeout: 3), "Command-F did not open meeting find")
+        XCTAssertFalse(app.staticTexts["meeting.search.status"].exists,
+                       "empty search repeated the field's scope label")
         field.typeText("failover")
 
         let status = app.staticTexts["meeting.search.status"]
         XCTAssertTrue(status.waitForExistence(timeout: 3))
-        XCTAssertEqual(status.value as? String, "1 of 3 · Summary")
+        XCTAssertEqual(status.value as? String, "1 of 4 · Action items")
 
         identified("meeting.search.next").click()
         identified("meeting.search.next").click()
-        XCTAssertEqual(status.value as? String, "3 of 3 · Transcript")
+        identified("meeting.search.next").click()
+        XCTAssertEqual(status.value as? String, "4 of 4 · Transcript")
         XCTAssertTrue(app.staticTexts["transcript.segment.3.text"]
             .waitForExistence(timeout: 3), "transcript match did not expand its evidence")
+
+        field.click()
+        field.typeKey("a", modifierFlags: .command)
+        field.typeText("Adopt Redis for caching")
+        XCTAssertTrue(UITestHarness.waitUntil {
+            status.value as? String == "1 of 2 · Decisions"
+        }, "decision card text was not included before its summary duplicate")
+
+        field.click()
+        field.typeKey("a", modifierFlags: .command)
+        field.typeText("Zoom")
+        XCTAssertTrue(UITestHarness.waitUntil {
+            status.value as? String == "1 of 1 · Meeting details"
+        }, "meeting header metadata was not searchable")
     }
 
     // MARK: - Ask
