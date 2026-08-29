@@ -63,7 +63,6 @@ private struct MeetingWorkspaceDetail: View {
     @State private var searchMatches: [MeetingPageSearchMatch] = []
     @State private var selectedSearchMatchIndex = 0
     @State private var searchContentRevision = 0
-    @FocusState private var searchFieldFocused: Bool
 
     private var folder: URL { meeting.folderURL(in: app.storage) }
     private var projection: MeetingOutcomeProjection? { app.outcomeIndex.projection(for: meeting.id) }
@@ -81,7 +80,7 @@ private struct MeetingWorkspaceDetail: View {
                 if isSearchPresented {
                     MeetingPageSearchBar(
                         query: $searchQuery,
-                        fieldFocused: $searchFieldFocused,
+                        focusRequest: app.meetingPageSearchRequestRevision,
                         statusText: searchStatusText,
                         hasMatches: !searchMatches.isEmpty,
                         onPrevious: { moveSearch(by: -1, using: scrollProxy) },
@@ -136,9 +135,6 @@ private struct MeetingWorkspaceDetail: View {
             uiTestDiagnosticLog(
                 "meeting.search receive revision="
                     + "\(app.meetingPageSearchRequestRevision) id=\(meeting.id)")
-            DispatchQueue.main.async {
-                searchFieldFocused = true
-            }
         }
         .sheet(item: $correction) { draft in
             ActionCorrectionSheet(draft: draft) { text, owner, due in
@@ -462,14 +458,10 @@ private struct MeetingWorkspaceDetail: View {
 
     private func presentSearch() {
         app.requestSelectedMeetingSearch()
-        DispatchQueue.main.async {
-            searchFieldFocused = true
-        }
     }
 
     private func dismissSearch() {
         app.dismissMeetingSearch(for: meeting.id)
-        searchFieldFocused = false
         searchQuery = ""
         searchMatches = []
         selectedSearchMatchIndex = 0
@@ -878,7 +870,7 @@ private struct MeetingSummaryWorkspaceContent: View {
 
 private struct MeetingPageSearchBar: View {
     @Binding var query: String
-    @FocusState.Binding var fieldFocused: Bool
+    let focusRequest: Int
     let statusText: String?
     let hasMatches: Bool
     let onPrevious: () -> Void
@@ -890,11 +882,13 @@ private struct MeetingPageSearchBar: View {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
 
-            TextField("Search this meeting", text: $query)
-                .textFieldStyle(.plain)
-                .focused($fieldFocused)
-                .onSubmit(onNext)
-                .accessibilityIdentifier("meeting.search.field")
+            MeetingSearchTextField(
+                text: $query,
+                focusRequest: focusRequest,
+                onSubmit: onNext,
+                onCancel: onClose)
+                .frame(maxWidth: .infinity)
+                .frame(height: 20)
 
             if !query.isEmpty {
                 Button {
@@ -952,6 +946,7 @@ private struct MeetingPageSearchBar: View {
         .workspaceControl()
         .frame(maxWidth: 720)
         .frame(maxWidth: .infinity, alignment: .trailing)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("meeting.search.bar")
     }
 }

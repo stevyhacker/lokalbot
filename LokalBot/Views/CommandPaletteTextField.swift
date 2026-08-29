@@ -17,8 +17,8 @@ struct CommandPaletteTextField: NSViewRepresentable {
         Coordinator(parent: self)
     }
 
-    func makeNSView(context: Context) -> PaletteTextField {
-        let field = PaletteTextField()
+    func makeNSView(context: Context) -> FocusOwningTextField {
+        let field = FocusOwningTextField()
         field.delegate = context.coordinator
         field.stringValue = text
         field.placeholderString = "Type a command or search meetings…"
@@ -28,13 +28,14 @@ struct CommandPaletteTextField: NSViewRepresentable {
         field.font = .systemFont(ofSize: 15)
         field.lineBreakMode = .byTruncatingTail
         field.cell?.usesSingleLineMode = true
+        field.identifier = NSUserInterfaceItemIdentifier("palette.input")
         field.setAccessibilityIdentifier("palette.input")
         field.setAccessibilityLabel("Command palette input")
         field.requestFocus()
         return field
     }
 
-    func updateNSView(_ field: PaletteTextField, context: Context) {
+    func updateNSView(_ field: FocusOwningTextField, context: Context) {
         context.coordinator.update(parent: self)
         if field.stringValue != text {
             field.stringValue = text
@@ -103,37 +104,69 @@ struct CommandPaletteTextField: NSViewRepresentable {
     }
 }
 
-final class PaletteTextField: NSTextField {
+/// An AppKit editor can enter the view tree before a newly opened SwiftUI
+/// window becomes active or key. Keep focus acquisition with the native
+/// control and retry across that short scene transition instead of relying on
+/// a single next-run-loop `makeFirstResponder` call.
+final class FocusOwningTextField: NSTextField {
+    private var focusRequestToken = 0
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         requestFocus()
     }
 
-    func requestFocus(remainingAttempts: Int = 3) {
-        DispatchQueue.main.async { [weak self] in
+    func requestFocus() {
+        focusRequestToken &+= 1
+        attemptFocus(token: focusRequestToken, attempt: 0)
+    }
+
+    private func attemptFocus(token: Int, attempt: Int) {
+        let delay = attempt == 0 ? 0 : min(0.05 * Double(attempt), 0.2)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
+            guard token == focusRequestToken else { return }
             guard let window else {
-                if remainingAttempts > 0 {
-                    requestFocus(remainingAttempts: remainingAttempts - 1)
-                }
+                retryFocus(token: token, after: attempt)
                 return
             }
-            if let editor = currentEditor(), window.firstResponder === editor {
+            if let editor = currentEditor(),
+               window.firstResponder === editor,
+               NSApp.isActive,
+               window.isKeyWindow {
                 return
             }
-            if !window.isKeyWindow {
-                window.makeKeyAndOrderFront(nil)
+
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+            if window.canBecomeMain {
+                window.makeMain()
+            }
+
+            guard NSApp.isActive, window.isKeyWindow else {
+                retryFocus(token: token, after: attempt)
+                return
             }
             guard window.makeFirstResponder(self) else {
-                if remainingAttempts > 0 {
-                    requestFocus(remainingAttempts: remainingAttempts - 1)
-                }
+                retryFocus(token: token, after: attempt)
                 return
             }
             // NSTextField delegates editing to the window's field editor.
             // Starting that editing session makes the AX text field report
-            // keyboard focus as soon as the palette becomes key.
+            // keyboard focus as soon as its containing window becomes key.
             selectText(nil)
+            uiTestDiagnosticLog(
+                "text field focus acquired id=\(identifier?.rawValue ?? "unknown")")
         }
+    }
+
+    private func retryFocus(token: Int, after attempt: Int) {
+        guard attempt < 6 else {
+            uiTestDiagnosticLog(
+                "text field focus failed id=\(identifier?.rawValue ?? "unknown")")
+            return
+        }
+        attemptFocus(token: token, attempt: attempt + 1)
     }
 }
