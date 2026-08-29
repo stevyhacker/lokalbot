@@ -225,6 +225,10 @@ final class AppState: ObservableObject {
     /// switch back to Ask before presenting their content.
     @Published var askMode: AskMode = .ask
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []
+    /// The meeting whose page-level find bar is visible. Keeping presentation
+    /// in shared observable state makes menu/AppKit requests and the rendered
+    /// NavigationSplitView consume one source of truth.
+    @Published private(set) var presentedMeetingSearchID: Meeting.ID?
     @Published private(set) var meetingPageSearchRequestRevision = 0
 
     /// A day handed to the Ask section (the old Timeline "Ask" tab, spec
@@ -279,8 +283,14 @@ final class AppState: ObservableObject {
     }
 
     func requestSelectedMeetingSearch() {
-        guard canSearchSelectedMeeting else { return }
+        guard canSearchSelectedMeeting, let meeting = selectedMeeting else { return }
+        presentedMeetingSearchID = meeting.id
         meetingPageSearchRequestRevision &+= 1
+    }
+
+    func dismissMeetingSearch(for meetingID: Meeting.ID) {
+        guard presentedMeetingSearchID == meetingID else { return }
+        presentedMeetingSearchID = nil
     }
 
     func selectDefaultMeetingIfNeeded() {

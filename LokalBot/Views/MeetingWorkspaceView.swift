@@ -59,7 +59,6 @@ private struct MeetingWorkspaceDetail: View {
     @State private var isReadingSummary = false
     @State private var speechPlayer: AVAudioPlayer?
     @State private var speechTask: Task<Void, Never>?
-    @State private var isSearchPresented = false
     @State private var searchQuery = ""
     @State private var searchMatches: [MeetingPageSearchMatch] = []
     @State private var selectedSearchMatchIndex = 0
@@ -133,11 +132,13 @@ private struct MeetingWorkspaceDetail: View {
         }
         .onChange(of: app.navigationHandoff.revision) { consumeMeetingSeek() }
         .onChange(of: app.meetingPageSearchRequestRevision) {
-            guard app.selectedMeeting?.id == meeting.id else { return }
+            guard app.presentedMeetingSearchID == meeting.id else { return }
             uiTestDiagnosticLog(
                 "meeting.search receive revision="
                     + "\(app.meetingPageSearchRequestRevision) id=\(meeting.id)")
-            presentSearch()
+            DispatchQueue.main.async {
+                searchFieldFocused = true
+            }
         }
         .sheet(item: $correction) { draft in
             ActionCorrectionSheet(draft: draft) { text, owner, due in
@@ -434,6 +435,10 @@ private struct MeetingWorkspaceDetail: View {
         isSearchPresented ? searchQuery : ""
     }
 
+    private var isSearchPresented: Bool {
+        app.presentedMeetingSearchID == meeting.id
+    }
+
     private var activeSearchMatch: MeetingPageSearchMatch? {
         guard isSearchPresented,
               searchMatches.indices.contains(selectedSearchMatchIndex) else { return nil }
@@ -456,14 +461,14 @@ private struct MeetingWorkspaceDetail: View {
     }
 
     private func presentSearch() {
-        isSearchPresented = true
+        app.requestSelectedMeetingSearch()
         DispatchQueue.main.async {
             searchFieldFocused = true
         }
     }
 
     private func dismissSearch() {
-        isSearchPresented = false
+        app.dismissMeetingSearch(for: meeting.id)
         searchFieldFocused = false
         searchQuery = ""
         searchMatches = []
@@ -938,6 +943,9 @@ private struct MeetingPageSearchBar: View {
             .help("Close search")
             .accessibilityIdentifier("meeting.search.close")
         }
+        .onAppear {
+            uiTestDiagnosticLog("meeting.search bar appear")
+        }
         .font(WorkspaceTypography.control)
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -1345,29 +1353,20 @@ private struct TranscriptEvidenceList: View {
                             .buttonStyle(.plain)
                             .help("Play from \(Transcript.stamp(segment.start))")
                             .accessibilityIdentifier("transcript.segment.\(index).play")
-                            Button {
-                                onRenameSpeaker(segment.speaker)
-                            } label: {
-                                SearchHighlightedText(
-                                    transcript.displaySpeaker(for: segment.speaker),
-                                    query: searchQuery,
-                                    activeMatchIndex: activeOccurrence(
-                                        at: .transcript(
-                                            segmentIndex: index,
-                                            field: .speaker)))
-                                    .id(MeetingPageSearchMatch.Location.transcript(
+                            TranscriptSpeakerButton(
+                                title: transcript.displaySpeaker(for: segment.speaker),
+                                query: searchQuery,
+                                activeMatchIndex: activeOccurrence(
+                                    at: .transcript(
                                         segmentIndex: index,
-                                        field: .speaker))
-                                    .font(.caption.bold())
-                                    .frame(width: 72, alignment: .leading)
-                                    .contentShape(Rectangle())
-                            }
-                            // Borderless preserves the compact transcript look
-                            // while giving AppKit a native, reliable control hit
-                            // path inside the scrolling evidence list.
-                            .buttonStyle(.borderless)
-                            .help("Rename speaker")
-                            .accessibilityIdentifier("transcript.segment.\(index).speaker")
+                                        field: .speaker)),
+                                identifier: "transcript.segment.\(index).speaker") {
+                                    onRenameSpeaker(segment.speaker)
+                                }
+                                .id(MeetingPageSearchMatch.Location.transcript(
+                                    segmentIndex: index,
+                                    field: .speaker))
+                                .frame(width: 72, height: 20, alignment: .leading)
                             SearchHighlightedText(
                                 segment.displayText,
                                 query: searchQuery,
@@ -1556,6 +1555,10 @@ private struct WorkspaceSpeakerRenameSheet: View {
         }
         .padding(18)
         .frame(width: 440)
+        .onAppear {
+            uiTestDiagnosticLog(
+                "speaker.rename sheet appear candidates=\(calendarCandidates.count)")
+        }
     }
 
     private var otherHints: [String] {
