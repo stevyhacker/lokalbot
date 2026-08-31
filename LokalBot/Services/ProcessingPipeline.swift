@@ -97,29 +97,42 @@ final class ProcessingPipeline: ObservableObject {
         var summarize: Bool
     }
 
-    /// A completed transcript is the durable boundary between the expensive
-    /// ASR stage and summarization. Row-level Retry can safely resume after it
-    /// instead of re-transcribing audio that already succeeded.
-    ///
-    /// Retry repeats the work the meeting was enqueued for, so it follows
-    /// `autoSummarize`: someone who records transcript-only never asked for a
-    /// summary, and Retry hardcoding one produced a surprise summarization run
-    /// after a failed transcribe-only attempt.
-    nonisolated static func retryWork(
-        for meeting: Meeting,
-        storage: StorageManager,
-        autoSummarize: Bool
-    ) -> RetryWork {
+    /// Resume the exact durable request from its latest completed artifact.
+    /// Failed rows retain their explicit/automatic summary provenance, even
+    /// after they exhaust the launch-resume attempt budget. Only jobs from an
+    /// older build with no durable row fall back to the current setting.
+    func retryWork(for meeting: Meeting, autoSummarize: Bool) -> RetryWork {
         let transcriptURL = meeting.folderURL(in: storage)
             .appendingPathComponent("transcript.json")
-        let needsTranscript = !FileManager.default.fileExists(atPath: transcriptURL.path)
-        // With summaries off and a transcript already on disk there is no
-        // later stage left to resume, and a Retry that requests nothing would
-        // just clear the badge. Re-run ASR — the only work such a library
-        // has — rather than quietly turning Retry into "summarize".
+        return Self.retryWork(
+            hasTranscript: FileManager.default.fileExists(atPath: transcriptURL.path),
+            autoSummarize: autoSummarize,
+            persistedJob: jobStore?.job(meetingID: meeting.id))
+    }
+
+    nonisolated static func retryWork(
+        hasTranscript: Bool,
+        autoSummarize: Bool,
+        persistedJob: PipelineJobStore.PendingJob?
+    ) -> RetryWork {
+        guard let persistedJob else {
+            // With no saved intent, never overwrite a completed transcript.
+            // The explicit Process menu remains available for a deliberate
+            // re-transcription.
+            return RetryWork(
+                transcribe: !hasTranscript,
+                summarize: autoSummarize)
+        }
+        let resumed = resumedWork(
+            pending: Work(
+                transcribe: persistedJob.transcribe,
+                summarize: persistedJob.summarize),
+            summaryFollowsSetting: persistedJob.summaryFollowsSetting,
+            autoSummarize: autoSummarize,
+            hasTranscript: hasTranscript)
         return RetryWork(
-            transcribe: needsTranscript || !autoSummarize,
-            summarize: autoSummarize)
+            transcribe: resumed.transcribe,
+            summarize: resumed.summarize)
     }
 
     /// Injectable model-readiness checks so unit tests can exercise the

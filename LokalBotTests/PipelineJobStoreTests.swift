@@ -119,6 +119,27 @@ final class PipelineJobStoreTests: XCTestCase {
         XCTAssertTrue(store.pendingJobs().isEmpty)
     }
 
+    func testExactJobIntentRemainsReadableAfterAttemptCap() throws {
+        let store = makeStore()
+        let id = UUID()
+        store.enqueue(
+            meetingID: id,
+            transcribe: true,
+            summarize: true,
+            summaryFollowsSetting: false)
+        for _ in 0..<PipelineJobStore.maxAutoResumeAttempts {
+            store.markStarted(meetingID: id)
+        }
+
+        let job = try XCTUnwrap(store.job(meetingID: id))
+
+        XCTAssertEqual(job.meetingID, id)
+        XCTAssertTrue(job.transcribe)
+        XCTAssertTrue(job.summarize)
+        XCTAssertFalse(job.summaryFollowsSetting)
+        XCTAssertEqual(job.attempts, PipelineJobStore.maxAutoResumeAttempts)
+    }
+
     /// An explicit user retry is a fresh decision — it resets the crash-loop
     /// counter instead of staying parked forever.
     func testExplicitReenqueueResetsAttempts() {

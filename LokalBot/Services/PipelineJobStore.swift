@@ -14,7 +14,7 @@ import SQLite3
 /// forever.
 final class PipelineJobStore {
 
-    struct PendingJob {
+    struct PendingJob: Equatable {
         let meetingID: UUID
         let transcribe: Bool
         let summarize: Bool
@@ -202,6 +202,33 @@ final class PipelineJobStore {
         } catch {
             lokalbotLog("pipeline queue read failed: \(error.localizedDescription)")
             return []
+        }
+    }
+
+    /// Read one durable intent regardless of its automatic-resume attempt
+    /// count. An explicit Retry must recover even a parked job's exact scope
+    /// before `enqueue` resets that row.
+    func job(meetingID: UUID) -> PendingJob? {
+        do {
+            return try requiredDatabase().queryChecked("""
+                SELECT meeting_id, transcribe, summarize,
+                       summary_follows_setting, attempts
+                FROM pipeline_jobs
+                WHERE meeting_id = ?1
+                LIMIT 1
+                """, bind: [meetingID.uuidString]) { statement -> PendingJob? in
+                guard let text = sqlite3_column_text(statement, 0),
+                      let id = UUID(uuidString: String(cString: text)) else { return nil }
+                return PendingJob(
+                    meetingID: id,
+                    transcribe: sqlite3_column_int64(statement, 1) != 0,
+                    summarize: sqlite3_column_int64(statement, 2) != 0,
+                    summaryFollowsSetting: sqlite3_column_int64(statement, 3) != 0,
+                    attempts: Int(sqlite3_column_int64(statement, 4)))
+            }.first
+        } catch {
+            lokalbotLog("pipeline queue job read failed: \(error.localizedDescription)")
+            return nil
         }
     }
 

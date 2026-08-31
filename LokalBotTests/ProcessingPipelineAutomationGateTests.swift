@@ -309,9 +309,9 @@ final class ProcessingPipelineAutomationGateTests: XCTestCase {
         let folder = meeting.folderURL(in: storage)
 
         let missingTranscript = ProcessingPipeline.retryWork(
-            for: meeting,
-            storage: storage,
-            autoSummarize: true)
+            hasTranscript: false,
+            autoSummarize: true,
+            persistedJob: nil)
         XCTAssertEqual(
             missingTranscript,
             .init(transcribe: true, summarize: true))
@@ -323,31 +323,63 @@ final class ProcessingPipelineAutomationGateTests: XCTestCase {
             to: folder.appendingPathComponent("transcript.json"))
 
         let existingTranscript = ProcessingPipeline.retryWork(
-            for: meeting,
-            storage: storage,
-            autoSummarize: true)
+            hasTranscript: true,
+            autoSummarize: true,
+            persistedJob: nil)
         XCTAssertEqual(
             existingTranscript,
             .init(transcribe: false, summarize: true))
     }
 
-    /// Retry must never invent a summarization run for a library that records
-    /// transcripts only — it re-runs ASR instead.
-    func testRetryWorkNeverSummarizesWhenAutoSummarizeIsOff() throws {
+    /// With no durable intent, Retry must not destroy a completed transcript
+    /// merely to avoid becoming a no-op.
+    func testRetryWorkDoesNotOverwriteTranscriptWhenAutoSummarizeIsOff() {
+        let work = ProcessingPipeline.retryWork(
+            hasTranscript: true,
+            autoSummarize: false,
+            persistedJob: nil)
+
+        XCTAssertEqual(work, .init(transcribe: false, summarize: false))
+    }
+
+    func testRetryWorkUsesPersistedExplicitSummaryIntent() throws {
         let root = try makeRoot()
         let storage = StorageManager(rootURL: root)
+        let jobStore = PipelineJobStore(
+            databaseURL: root.appendingPathComponent("test.sqlite"))
+        let readiness = ReadinessBox()
+        let pipeline = makePipeline(root: root, jobStore: jobStore, readiness: readiness)
         let meeting = makeMeeting()
         let folder = meeting.folderURL(in: storage)
-        try FileManager.default.createDirectory(
-            at: folder,
-            withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try Data("{}".utf8).write(
             to: folder.appendingPathComponent("transcript.json"))
+        jobStore.enqueue(
+            meetingID: meeting.id,
+            transcribe: true,
+            summarize: true,
+            summaryFollowsSetting: false)
 
-        let work = ProcessingPipeline.retryWork(
-            for: meeting,
-            storage: storage,
-            autoSummarize: false)
+        let work = pipeline.retryWork(for: meeting, autoSummarize: false)
+
+        XCTAssertEqual(work, .init(transcribe: false, summarize: true),
+                       "completed ASR resumes the explicitly requested summary")
+    }
+
+    func testRetryWorkDoesNotInventSummaryForPersistedTranscriptOnlyJob() throws {
+        let root = try makeRoot()
+        let jobStore = PipelineJobStore(
+            databaseURL: root.appendingPathComponent("test.sqlite"))
+        let readiness = ReadinessBox()
+        let pipeline = makePipeline(root: root, jobStore: jobStore, readiness: readiness)
+        let meeting = makeMeeting()
+        jobStore.enqueue(
+            meetingID: meeting.id,
+            transcribe: true,
+            summarize: false,
+            summaryFollowsSetting: false)
+
+        let work = pipeline.retryWork(for: meeting, autoSummarize: true)
 
         XCTAssertEqual(work, .init(transcribe: true, summarize: false))
     }
