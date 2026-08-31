@@ -37,6 +37,25 @@ final class StorageManagerTests: XCTestCase {
         XCTAssertThrowsError(try StorageManager(rootURL: root).loadMeetingLibrary())
     }
 
+    func testUnavailableRootRecoversOnSameInstanceAfterBlockerIsRemoved() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StorageManagerTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("not a directory".utf8).write(to: root)
+        let storage = StorageManager(rootURL: root)
+
+        XCTAssertThrowsError(try storage.loadMeetingLibrary())
+        try FileManager.default.removeItem(at: root)
+
+        let load = try storage.loadMeetingLibrary()
+        XCTAssertTrue(load.meetings.isEmpty)
+        XCTAssertTrue(load.issues.isEmpty)
+
+        let meeting = try storage.createMeetingFolder(title: "Recovered", appName: "Tests")
+        let metadata = meeting.folderURL(in: storage).appendingPathComponent("meta.json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: metadata.path))
+    }
+
     func testLoadKeepsValidMeetingsAndReportsCorruptMetadata() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("StorageManagerTests-\(UUID().uuidString)", isDirectory: true)

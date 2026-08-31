@@ -41,6 +41,42 @@ final class TranscriptionModelStoreTests: XCTestCase {
         XCTAssertTrue(TranscriptionModelStore.isDownloaded(.qwenASR17B, environment: environment))
     }
 
+    func testLegacyWhisperCacheIsRecognizedAndMigratedToApplicationSupport() throws {
+        let (root, environment) = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let legacyRoot = try XCTUnwrap(environment.legacyWhisperKitRepoRoot)
+        let legacyModel = try writeWhisperModel(in: legacyRoot)
+
+        XCTAssertTrue(TranscriptionModelStore.isDownloaded(
+            .whisperLarge,
+            environment: environment))
+
+        try TranscriptionModelStore.migrateLegacyWhisperKitModels(environment: environment)
+
+        let migrated = environment.whisperKitRepoRoot.appendingPathComponent(
+            legacyModel.lastPathComponent,
+            isDirectory: true)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: migrated.appendingPathComponent("config.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyModel.path))
+    }
+
+    func testWhisperMigrationDoesNotReplaceACompleteDestination() throws {
+        let (root, environment) = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let legacyRoot = try XCTUnwrap(environment.legacyWhisperKitRepoRoot)
+        let legacyModel = try writeWhisperModel(in: legacyRoot)
+        let destination = try writeWhisperModel(in: environment.whisperKitRepoRoot)
+        let marker = destination.appendingPathComponent("keep-me")
+        try writeEmptyFile(marker)
+
+        try TranscriptionModelStore.migrateLegacyWhisperKitModels(environment: environment)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: legacyModel.appendingPathComponent("config.json").path))
+    }
+
     func testCustomGraniteQuantizationUsesItsConfiguredFiles() throws {
         let (root, environment) = try makeEnvironment()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -99,7 +135,15 @@ final class TranscriptionModelStoreTests: XCTestCase {
             appSupport: root.appendingPathComponent("app-support", isDirectory: true),
             fluidAudioRoot: root.appendingPathComponent("fluidaudio", isDirectory: true),
             fluidAudioModelsRoot: root.appendingPathComponent("fluidaudio-models", isDirectory: true),
-            whisperKitRepoRoot: root.appendingPathComponent("whisperkit-coreml", isDirectory: true))
+            whisperKitDownloadRoot: root.appendingPathComponent(
+                "app-support/whisperkit",
+                isDirectory: true),
+            whisperKitRepoRoot: root.appendingPathComponent(
+                "app-support/whisperkit/models/argmaxinc/whisperkit-coreml",
+                isDirectory: true),
+            legacyWhisperKitRepoRoot: root.appendingPathComponent(
+                "documents/huggingface/models/argmaxinc/whisperkit-coreml",
+                isDirectory: true))
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return (root, environment)
     }
@@ -147,11 +191,17 @@ final class TranscriptionModelStoreTests: XCTestCase {
     }
 
     private func writeWhisperModel(in environment: TranscriptionModelStore.Environment) throws {
-        let directory = environment.whisperKitRepoRoot
+        _ = try writeWhisperModel(in: environment.whisperKitRepoRoot)
+    }
+
+    @discardableResult
+    private func writeWhisperModel(in repository: URL) throws -> URL {
+        let directory = repository
             .appendingPathComponent("openai_whisper-large-v3-v20240930_turbo", isDirectory: true)
         for fileName in ["config.json", "AudioEncoder.mlmodelc", "MelSpectrogram.mlmodelc", "TextDecoder.mlmodelc"] {
             try writeEmptyFile(directory.appendingPathComponent(fileName))
         }
+        return directory
     }
 
     private func writeOnnxModel(folderName: String, in environment: TranscriptionModelStore.Environment) throws {

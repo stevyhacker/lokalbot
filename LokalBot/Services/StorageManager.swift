@@ -34,7 +34,7 @@ private enum StorageManagerError: LocalizedError, Sendable {
 final class StorageManager {
 
     let rootURL: URL
-    private let preparationError: StorageManagerError?
+    private var preparationError: StorageManagerError?
 
     init(rootURL: URL = AppDirectories.libraryRoot) {
         // UI-test isolation hook: when the env var points at a directory,
@@ -218,7 +218,19 @@ final class StorageManager {
     }
 
     private func ensureReady() throws {
-        if let preparationError { throw preparationError }
+        guard preparationError != nil else { return }
+        do {
+            try FileManager.default.createDirectory(
+                at: rootURL.appendingPathComponent("meetings"),
+                withIntermediateDirectories: true)
+            preparationError = nil
+        } catch {
+            let currentError = StorageManagerError.unavailable(
+                path: rootURL.path,
+                detail: error.localizedDescription)
+            preparationError = currentError
+            throw currentError
+        }
     }
 
     static func slugify(_ s: String) -> String {

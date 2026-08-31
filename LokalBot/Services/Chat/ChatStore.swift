@@ -66,7 +66,9 @@ final class ChatStore {
             includingPropertiesForKeys: nil
         )
         let encryptedFiles = files.filter { $0.pathExtension == "enc" }
-        let key = encryptedFiles.isEmpty ? nil : try encryptionKey()
+        let keyResult: Result<SymmetricKey, Error>? = encryptedFiles.isEmpty
+            ? nil
+            : Result { try encryptionKey() }
         var conversations: [Conversation] = []
         var issues: [ChatLoadResult.Issue] = []
 
@@ -74,7 +76,8 @@ final class ChatStore {
             switch file.pathExtension {
             case "enc":
                 do {
-                    guard let key else { throw ChatStoreError.missingSealedRepresentation }
+                    guard let keyResult else { throw ChatStoreError.missingSealedRepresentation }
+                    let key = try keyResult.get()
                     conversations.append(try loadEncrypted(file, using: key))
                 } catch {
                     issues.append(issue(for: file, error: error))

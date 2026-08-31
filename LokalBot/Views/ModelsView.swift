@@ -142,6 +142,16 @@ struct ModelsView: View {
                 }
             }
             .frame(maxWidth: 320)
+            TextField(
+                "Names, acronyms, and domain vocabulary",
+                text: $app.settings.transcriptionPrompt,
+                axis: .vertical)
+                .lineLimit(2...4)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("models.transcriptionPrompt")
+            Text("Optional context for Whisper and Qwen3-ASR, such as participant names, product terms, and preferred spelling. It stays on this Mac.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Text("Runs fully on-device with Core ML, MLX, ONNX, or llama.cpp. Models fetch from Hugging Face on first use — or use Download to cache and warm one up.")
                 .font(.caption).foregroundStyle(.secondary)
         }

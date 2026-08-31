@@ -151,15 +151,43 @@ final class ChatStoreTests: XCTestCase {
         XCTAssertEqual(load.issues.map(\.file), ["corrupt.json.enc"])
     }
 
-    func testEncryptionKeyFailureIsSurfaced() throws {
+    func testEncryptionKeyFailureIsReportedPerEncryptedFileAndStillBlocksSave() throws {
         let conversation = Conversation(title: "saved", messages: [ChatMessage(role: .user, text: "hi")])
         try makeStore().save(conversation)
+        let keyError = CocoaError(.fileReadNoPermission)
+        let failing = ChatStore(rootURL: root, encryptionKey: {
+            throw keyError
+        })
+
+        let load = try failing.loadAll()
+
+        XCTAssertTrue(load.conversations.isEmpty)
+        XCTAssertEqual(load.issues.map(\.file), ["\(conversation.id.uuidString).json.enc"])
+        XCTAssertEqual(load.issues.first?.detail, keyError.localizedDescription)
+        XCTAssertThrowsError(try failing.save(conversation))
+    }
+
+    func testEncryptionKeyFailureDoesNotHideLegacyPlaintext() throws {
+        let encrypted = Conversation(title: "encrypted", messages: [ChatMessage(role: .user, text: "sealed")])
+        try makeStore().save(encrypted)
+
+        let legacy = Conversation(title: "legacy", messages: [ChatMessage(role: .user, text: "plaintext")])
+        let legacyURL = root.appendingPathComponent("chats/\(legacy.id.uuidString).json")
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(legacy).write(to: legacyURL)
+
         let failing = ChatStore(rootURL: root, encryptionKey: {
             throw CocoaError(.fileReadNoPermission)
         })
+        let load = try failing.loadAll()
 
-        XCTAssertThrowsError(try failing.loadAll())
-        XCTAssertThrowsError(try failing.save(conversation))
+        XCTAssertEqual(load.conversations.map(\.id), [legacy.id])
+        XCTAssertEqual(
+            Set(load.issues.map(\.file)),
+            Set(["\(encrypted.id.uuidString).json.enc", "\(legacy.id.uuidString).json"])
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyURL.path))
     }
 
     func testUnavailableDirectoryIsSurfaced() throws {

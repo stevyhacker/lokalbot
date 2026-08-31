@@ -344,7 +344,8 @@ final class LiveMeetingTranscriber: ObservableObject {
         let config = settings()
         let transcript = try await config.transcriptionEngine().transcribe(
             audio: prepared.url,
-            language: config.transcriptionLanguage.code)
+            language: config.transcriptionLanguage.code,
+            prompt: config.transcriptionPrompt)
         try Task.checkCancellation()
         guard generation == session else { return nil }
         hasTranscribedOnce = true

@@ -325,11 +325,7 @@ final class MicRecorder {
             throw RecorderError.unsupportedInputFormat
         }
 
-        let settings = Self.fileSettings(for: url, recordingFormat: recordingFormat)
-        let newFile = try AVAudioFile(forWriting: url,
-                                      settings: settings,
-                                      commonFormat: recordingFormat.commonFormat,
-                                      interleaved: recordingFormat.isInterleaved)
+        let newFile = try Self.makeRecordingFile(at: url, recordingFormat: recordingFormat)
         let newPreviewTee = previewURL.flatMap {
             AudioPreviewTee(url: $0, sourceFormat: recordingFormat)
         }
@@ -573,6 +569,38 @@ final class MicRecorder {
         self.configChangeObserver = nil
     }
 
+    /// Opens the capture file, stepping down the bitrate ladder if the encoder
+    /// refuses. A rejected bitrate used to surface as "Could not start
+    /// recording" with a raw Core Audio code, which told the user nothing and
+    /// cost them the meeting.
+    static func makeRecordingFile(at url: URL,
+                                  recordingFormat: AVAudioFormat) throws -> AVAudioFile {
+        var settings = fileSettings(for: url, recordingFormat: recordingFormat)
+        guard settings[AVEncoderBitRateKey] != nil else {
+            return try AVAudioFile(forWriting: url, settings: settings,
+                                   commonFormat: recordingFormat.commonFormat,
+                                   interleaved: recordingFormat.isInterleaved)
+        }
+        var lastError: Error?
+        for bitRate in aacBitRateLadder(forSampleRate: recordingFormat.sampleRate) {
+            settings[AVEncoderBitRateKey] = bitRate
+            do {
+                let file = try AVAudioFile(forWriting: url, settings: settings,
+                                           commonFormat: recordingFormat.commonFormat,
+                                           interleaved: recordingFormat.isInterleaved)
+                if bitRate != aacBitRate(forSampleRate: recordingFormat.sampleRate) {
+                    lokalbotLog(
+                        "mic recording file fell back to \(bitRate) bit/s at "
+                            + "\(Int(recordingFormat.sampleRate)) Hz")
+                }
+                return file
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? RecorderError.unsupportedInputFormat
+    }
+
     // AVAudioFile requires this heterogeneous settings dictionary.
     private static func fileSettings(for url: URL, recordingFormat: AVAudioFormat) -> [String: Any] { // swiftlint:disable:this no_dynamic_any
         if url.pathExtension.lowercased() == "caf" {
@@ -590,8 +618,47 @@ final class MicRecorder {
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: recordingFormat.sampleRate,
             AVNumberOfChannelsKey: Int(recordingFormat.channelCount),
-            AVEncoderBitRateKey: 64_000,
+            AVEncoderBitRateKey: aacBitRate(forSampleRate: recordingFormat.sampleRate),
         ]
+    }
+
+    /// AAC bitrates the encoder will accept, by sample rate.
+    ///
+    /// The rate is not ours to choose: it is whatever the input device runs at,
+    /// and a Bluetooth headset in HFP mode runs at 16 kHz. A fixed 64 kbit/s is
+    /// out of range there, so `AVAudioFile(forWriting:)` threw `!dat`
+    /// (560226676) and the meeting did not record at all. Measured against the
+    /// encoder, mono:
+    ///
+    ///     rate     64k  48k  32k  24k
+    ///      8000     ✗    ✗    ✗    ✓
+    ///     16000     ✗    ✓    ✓    ✓
+    ///     22050     ✓    ✓    ✓    ✓
+    ///     44100     ✓    ✓    ✓    ✗
+    ///     48000     ✓    ✓    ✓    ✗
+    ///
+    /// So the constraint runs both ways and no single value covers the range.
+    /// These tiers sit inside every accepted row, leaving headroom above the
+    /// minimum rather than hugging the edge — speech at 16 kHz has nothing to
+    /// gain from the last few kbit anyway.
+    static func aacBitRate(forSampleRate sampleRate: Double) -> Int {
+        switch sampleRate {
+        case ..<12_000: 24_000
+        case ..<22_050: 32_000
+        default: 64_000
+        }
+    }
+
+    /// Bitrates to try, best first, descending. The tiers above are measured,
+    /// but only on the rates a Mac actually offers; a device that lands between
+    /// them should still record at a lower bitrate rather than not at all.
+    ///
+    /// Strictly descending, because the failures are one-directional at each
+    /// end: at 8 kHz everything above 24 kbit/s is refused, so retrying upwards
+    /// would trade one rejection for another.
+    static func aacBitRateLadder(forSampleRate sampleRate: Double) -> [Int] {
+        let start = aacBitRate(forSampleRate: sampleRate)
+        return [64_000, 48_000, 32_000, 24_000].filter { $0 <= start }
     }
 
     /// Posted asynchronously when the audio device changes. The engine has

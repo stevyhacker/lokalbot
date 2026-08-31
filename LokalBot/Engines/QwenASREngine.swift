@@ -85,6 +85,10 @@ actor QwenASREngine: TranscriptionEngine {
     }
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
+        try await transcribe(audio: url, language: language, prompt: nil)
+    }
+
+    func transcribe(audio url: URL, language: String?, prompt: String?) async throws -> Transcript {
         activeUses += 1
         defer { finishIdleTrackedUse(&activeUses, idleTimer: idle) }
         try await prepare()
@@ -98,7 +102,8 @@ actor QwenASREngine: TranscriptionEngine {
                 audio: samples,
                 sampleRate: Self.sampleRate,
                 language: Self.qwenLanguage(language),
-                maxTokens: Self.maxTokens(for: samples.count))
+                maxTokens: Self.maxTokens(for: samples.count),
+                context: TranscriptionPrompt.normalized(prompt))
         }
         let elapsed = Date().timeIntervalSince(started)
         let duration = spans.last?.end ?? 0

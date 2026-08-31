@@ -130,6 +130,7 @@ struct AppSettings: Codable, Equatable {
     /// retain immutable revision and checksum metadata.
     var graniteSpeechModel = GraniteSpeechModelConfiguration.defaultModel
     var transcriptionLanguage: TranscriptionLanguage = .auto
+    var transcriptionPrompt: String = ""
     var autoTranscribe: Bool = true
     var autoSummarize: Bool = true
     var speechVoice: KokoroVoice = .heart
@@ -561,6 +562,30 @@ struct AppSettings: Codable, Equatable {
         return s
     }
 
+    // MARK: - Echo cancellation
+
+    /// Subtract the system-audio track from the microphone track before
+    /// transcription, using an adaptive filter. Works on meetings already
+    /// recorded, at the cost of a codec generation: both tracks are AAC by
+    /// then. Harmless with headphones — with no echo to find, the filter
+    /// converges to silence and the original track is used instead.
+    ///
+    /// Requires the microphone mode for the recording app to be Standard
+    /// (Control Center → microphone icon → the app's own row). macOS Voice
+    /// Isolation processes the input nonlinearly before this ever sees it,
+    /// which breaks the assumption an adaptive filter depends on — measured,
+    /// echo return loss drops from ~17 dB to ~3 dB with Isolation on, the
+    /// latter indistinguishable from noise. A call's *other* participants can
+    /// still get Voice Isolation: it is set per capturing app, not on the
+    /// microphone itself, so setting the meeting app to Isolation and this
+    /// app to Standard gets both — isolated audio on the call, a genuine echo
+    /// signal for this filter to remove.
+    ///
+    /// Off by default while the filter is new: it rewrites the microphone
+    /// track every transcription takes as input, so a bad pass is not
+    /// something the user can see went wrong.
+    var echoCancellation: Bool = false
+
     /// UserDefaults key for the encoded settings blob. Internal (not private)
     /// so `DataMigration` can copy a prior install's settings under it.
     static let key = "lokalbotv3.settings"
@@ -578,6 +603,7 @@ struct AppSettings: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case meetingSettingsVersion
+        case echoCancellation
         case autoRecordMode
         case stopDebounceSeconds
         case calendarDetectionEnabled
@@ -588,6 +614,7 @@ struct AppSettings: Codable, Equatable {
         case graniteSpeechModel
         case transcriptionLanguage
         case languageHint // legacy key used by builds before typed language selection
+        case transcriptionPrompt
         case autoTranscribe
         case autoSummarize
         case speechVoice
@@ -724,6 +751,7 @@ struct AppSettings: Codable, Equatable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(Self.currentMeetingSettingsVersion, forKey: .meetingSettingsVersion)
+        try c.encode(echoCancellation, forKey: .echoCancellation)
         try c.encode(autoRecordMode, forKey: .autoRecordMode)
         try c.encode(
             Self.migratedStopDebounceSeconds(
@@ -737,6 +765,7 @@ struct AppSettings: Codable, Equatable {
         try c.encode(transcriptionModel, forKey: .transcriptionModel)
         try c.encode(graniteSpeechModel, forKey: .graniteSpeechModel)
         try c.encode(transcriptionLanguage, forKey: .transcriptionLanguage)
+        try c.encode(transcriptionPrompt, forKey: .transcriptionPrompt)
         try c.encode(autoTranscribe, forKey: .autoTranscribe)
         try c.encode(autoSummarize, forKey: .autoSummarize)
         try c.encode(speechVoice, forKey: .speechVoice)
@@ -845,6 +874,7 @@ struct AppSettings: Codable, Equatable {
             }
         }
         let meetingSettingsVersion = decode(.meetingSettingsVersion, 0)
+        echoCancellation = decode(.echoCancellation, defaults.echoCancellation)
         autoRecordMode = decode(.autoRecordMode, defaults.autoRecordMode)
         stopDebounceSeconds = Self.migratedStopDebounceSeconds(
             decode(.stopDebounceSeconds, defaults.stopDebounceSeconds),
@@ -862,6 +892,7 @@ struct AppSettings: Codable, Equatable {
         } else {
             transcriptionLanguage = defaults.transcriptionLanguage
         }
+        transcriptionPrompt = decode(.transcriptionPrompt, defaults.transcriptionPrompt)
         autoTranscribe = decode(.autoTranscribe, defaults.autoTranscribe)
         autoSummarize = decode(.autoSummarize, defaults.autoSummarize)
         speechVoice = decode(.speechVoice, defaults.speechVoice)
