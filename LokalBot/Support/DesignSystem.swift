@@ -432,6 +432,64 @@ struct LoadingStateLabel: View {
     }
 }
 
+// MARK: - Inline issues
+
+/// A persistent in-flow failure with one local recovery or dismissal action.
+/// This keeps storage and artifact errors visually consistent without turning
+/// them into transient toasts that can disappear before the user responds.
+struct InlineIssueView: View {
+    enum ActionStyle {
+        case link
+        case bordered
+    }
+
+    let message: String
+    let systemImage: String
+    let actionTitle: String
+    var font: Font
+    var actionStyle: ActionStyle
+    let action: () -> Void
+
+    init(
+        _ message: String,
+        systemImage: String = "exclamationmark.triangle.fill",
+        actionTitle: String,
+        font: Font = WorkspaceTypography.metadata,
+        actionStyle: ActionStyle = .link,
+        action: @escaping () -> Void
+    ) {
+        self.message = message
+        self.systemImage = systemImage
+        self.actionTitle = actionTitle
+        self.font = font
+        self.actionStyle = actionStyle
+        self.action = action
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Label(message, systemImage: systemImage)
+                .foregroundStyle(Brand.error)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            actionButton
+        }
+        .font(font)
+    }
+
+    @ViewBuilder
+    private var actionButton: some View {
+        switch actionStyle {
+        case .link:
+            Button(actionTitle, action: action)
+                .buttonStyle(.link)
+        case .bordered:
+            Button(actionTitle, action: action)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+    }
+}
+
 // MARK: - Error toast
 
 /// The one transient-error presentation: a dismissible material capsule pinned

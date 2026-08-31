@@ -1,0 +1,23 @@
+arguments:
+  - -project
+  - LokalBot.xcodeproj
+  - -scheme
+  - LokalBot
+  - -destination
+  - platform=macOS
+  - -skip-testing:LokalBotUITests
+  - -only-testing:LokalBotTests/FileSystemSupportTests
+  - -disableAutomaticPackageResolution
+  - CODE_SIGNING_ALLOWED=NO
+  - test
+# The wrapper refuses local execution before Xcode can launch an unsigned app
+# test host and display Keychain dialogs. GitHub Actions exports CI=true.
+executable: Scripts/ci-mutation-xcodebuild.sh
+exclude:
+  - Vendor
+  - LokalBotUITests
+  - .build
+excludeCalls:
+  - lokalbotLog
+coverageThreshold: 0
+mutationTestTimeout: 120

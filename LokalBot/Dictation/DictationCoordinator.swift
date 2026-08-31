@@ -5,32 +5,6 @@ import Foundation
 
 @MainActor
 final class DictationCoordinator: ObservableObject {
-    enum State: Equatable {
-        case idle
-        case recording(startedAt: Date)
-        case transcribing(startedAt: Date)
-        case composing(startedAt: Date)
-
-        var isRecording: Bool {
-            if case .recording = self { true } else { false }
-        }
-
-        var isWorking: Bool {
-            switch self {
-            case .idle: false
-            case .recording, .transcribing, .composing: true
-            }
-        }
-
-        var label: String {
-            switch self {
-            case .idle: "Ready"
-            case .recording: "Recording"
-            case .transcribing: "Transcribing"
-            case .composing: "Composing"
-            }
-        }
-    }
 
     @Published private(set) var state: State = .idle
     @Published private(set) var isStarting = false
@@ -39,16 +13,16 @@ final class DictationCoordinator: ObservableObject {
     @Published private(set) var lastTranscript: String?
     @Published private(set) var lastComposedText: String?
     @Published private(set) var lastEngine: String?
-    @Published private(set) var liveTranscript = DictationLiveTranscript()
-    @Published private(set) var livePreviewStatus = ""
-    @Published private(set) var isLivePreviewWorking = false
-    @Published private(set) var isLivePreviewEnabled = false
+    @Published var liveTranscript = DictationLiveTranscript()
+    @Published var livePreviewStatus = ""
+    @Published var isLivePreviewWorking = false
+    @Published var isLivePreviewEnabled = false
     @Published private(set) var captureStatus = ""
     @Published private(set) var modelPreparationStatus: String?
     @Published private(set) var modelPreparationProgress: Double?
     @Published private(set) var modelPreparationError: String?
 
-    private let storageRoot: URL
+    let storageRoot: URL
     private let settingsProvider: () -> AppSettings
     private let makeTextEngine: () async throws -> TextEngine
     private let screenContextProvider:
@@ -58,7 +32,7 @@ final class DictationCoordinator: ObservableObject {
     private let onError: (String) -> Void
     private let onMicPermissionDenied: () -> Void
     private let focusSnapshotExecutor: DictationFocusSnapshotExecutor
-    private let recorder = MicRecorder()
+    let recorder = MicRecorder()
     private let inputMonitor = DictationInputMonitor()
     private let overlay = DictationOverlayController()
     private lazy var inserter = CotypingInserter()
@@ -66,12 +40,12 @@ final class DictationCoordinator: ObservableObject {
     private var prewarmTask: Task<Void, Never>?
     private var startTask: Task<Void, Never>?
     private var startTaskGeneration: Int?
-    private var livePreviewTask: Task<Void, Never>?
+    var livePreviewTask: Task<Void, Never>?
     /// Every preview and authoritative pass joins this chain. A cancelled
     /// decoder that does not cooperate immediately therefore remains owned and
     /// cannot overlap the shared model runtime with the next dictation.
-    private var asrHandoffTask: Task<Void, Never>?
-    private var livePreviewTaskID = 0
+    var asrHandoffTask: Task<Void, Never>?
+    var livePreviewTaskID = 0
     private var transcribeTask: Task<Void, Never>?
     private var screenContextTask: Task<DictationScreenContext?, Never>?
     private var mediaCleanupTask: Task<Void, Never>?
@@ -87,7 +61,7 @@ final class DictationCoordinator: ObservableObject {
     private var pausedMediaSession: MediaPlaybackController.PauseSession?
     private var deliveryTarget: DictationDeliveryTarget?
     private var pendingFinishSource: String?
-    private var generation = 0
+    var generation = 0
 
     init(
         storageRoot: URL,
@@ -280,106 +254,134 @@ final class DictationCoordinator: ObservableObject {
         resetModelPreparation()
         resetLivePreview()
         refreshOverlay()
-        let pendingMediaCleanup = mediaCleanupTask
+        let request = StartRequest(
+            startedAt: startedAt,
+            session: session,
+            source: source,
+            outputMode: outputMode,
+            focusCaptureTask: focusCaptureTask,
+            pendingMediaCleanup: mediaCleanupTask)
         startTask = Task { [weak self] in
-            guard let self else { return }
-            var keepScreenContext = false
-            defer {
-                focusCaptureTask.cancel()
-                if !keepScreenContext {
-                    self.discardScreenContext()
-                }
-                if self.startTaskGeneration == session {
-                    self.startTask = nil
-                    self.startTaskGeneration = nil
-                    if self.isStarting {
-                        self.isStarting = false
-                        self.refreshOverlay()
-                    }
-                }
-            }
-            guard await MicRecorder.requestPermission() else {
-                guard self.generation == session, !Task.isCancelled else { return }
-                self.onMicPermissionDenied()
-                return
-            }
-            let focusCapture = await focusCaptureTask.value
-            let capturedDeliveryTarget = Self.deliveryTarget(
-                for: outputMode, capture: focusCapture)
-            // An earlier cancel may still be restoring the exact players it
-            // paused. Finish that bounded transition before taking a new media
-            // snapshot, otherwise its late resume could interrupt this capture.
-            if let pendingMediaCleanup { await pendingMediaCleanup.value }
-            guard self.generation == session, !Task.isCancelled else { return }
-            self.deliveryTarget = capturedDeliveryTarget
-            var localMediaSession: MediaPlaybackController.PauseSession?
-            var candidateAudioURL: URL?
-            do {
-                let audioURL = try self.nextAudioURL(startedAt: startedAt)
-                candidateAudioURL = audioURL
-                let pausedMedia = await MediaPlaybackController.pauseActiveMediaPlayers(
-                    reason: "dictation")
-                localMediaSession = pausedMedia
-                if !pausedMedia.isEmpty {
-                    try await Task.sleep(for: .milliseconds(250))
-                }
-                guard self.generation == session, !Task.isCancelled else {
-                    await MediaPlaybackController.resume(pausedMedia, reason: "cancelled dictation start")
-                    return
-                }
-                try await self.startRecorder(writingTo: audioURL)
-                try Task.checkCancellation()
-                guard self.generation == session else { throw CancellationError() }
-                self.pausedMediaSession = pausedMedia
-                localMediaSession = nil
-                self.activeAudioURL = audioURL
-                self.state = .recording(startedAt: startedAt)
-                keepScreenContext = true
-                self.startTick()
-                let config = self.settingsProvider()
-                self.isLivePreviewEnabled = config.dictationShowOverlay && config.dictationLivePreview
-                self.livePreviewStatus = self.isLivePreviewEnabled ? "Listening" : ""
-                self.refreshOverlay()
-                self.prewarmSelectedModel(reason: source)
-                self.startLivePreviewIfNeeded(audioURL: audioURL, config: config, generation: session)
-                lokalbotLog("dictation recording started source=\(source)")
-                if let pendingFinishSource = self.pendingFinishSource {
-                    self.pendingFinishSource = nil
-                    self.isStarting = false
-                    self.finishRecordingAndTranscribe(source: pendingFinishSource)
-                }
-            } catch is CancellationError {
-                if let localMediaSession {
-                    await MediaPlaybackController.resume(
-                        localMediaSession, reason: "cancelled dictation start")
-                } else {
-                    await self.resumePausedMedia(reason: "cancelled dictation start")
-                }
-                self.recorder.stop()
-                if let candidateAudioURL {
-                    try? FileManager.default.removeItem(at: candidateAudioURL)
-                }
-                self.activeAudioURL = nil
-            } catch {
-                if let localMediaSession {
-                    await MediaPlaybackController.resume(
-                        localMediaSession, reason: "failed dictation start")
-                } else {
-                    await self.resumePausedMedia(reason: "failed dictation start")
-                }
-                let message = "Could not start dictation: \(error.localizedDescription)"
-                self.onError(message)
-                lokalbotLog("dictation start FAILED source=\(source): \(error.localizedDescription)")
-                if let candidateAudioURL {
-                    try? FileManager.default.removeItem(at: candidateAudioURL)
-                }
-                self.activeAudioURL = nil
-                self.state = .idle
-                self.stopTick()
-                self.resetLivePreview()
-                self.refreshOverlay()
-            }
+            await self?.performStart(request)
         }
+    }
+
+    private struct StartRequest {
+        let startedAt: Date
+        let session: Int
+        let source: String
+        let outputMode: DictationOutputMode
+        let focusCaptureTask: Task<DictationFocusCaptureResult, Never>
+        let pendingMediaCleanup: Task<Void, Never>?
+    }
+
+    private struct RecordingStartResources {
+        let audioURL: URL
+        let pausedMedia: MediaPlaybackController.PauseSession
+    }
+
+    private func performStart(_ request: StartRequest) async {
+        var keepScreenContext = false
+        defer { finishStart(request, keepScreenContext: keepScreenContext) }
+        guard await MicRecorder.requestPermission() else {
+            guard generation == request.session, !Task.isCancelled else { return }
+            onMicPermissionDenied()
+            return
+        }
+        let focusCapture = await request.focusCaptureTask.value
+        let target = Self.deliveryTarget(for: request.outputMode, capture: focusCapture)
+        if let pendingMediaCleanup = request.pendingMediaCleanup {
+            await pendingMediaCleanup.value
+        }
+        guard generation == request.session, !Task.isCancelled else { return }
+        deliveryTarget = target
+        do {
+            let resources = try await recordingStartResources(for: request)
+            activateRecording(resources, request: request)
+            keepScreenContext = true
+        } catch is CancellationError {
+            recorder.stop()
+            activeAudioURL = nil
+        } catch {
+            handleStartFailure(error, source: request.source)
+        }
+    }
+
+    private func finishStart(_ request: StartRequest, keepScreenContext: Bool) {
+        request.focusCaptureTask.cancel()
+        if !keepScreenContext { discardScreenContext() }
+        guard startTaskGeneration == request.session else { return }
+        startTask = nil
+        startTaskGeneration = nil
+        if isStarting {
+            isStarting = false
+            refreshOverlay()
+        }
+    }
+
+    private func recordingStartResources(
+        for request: StartRequest
+    ) async throws -> RecordingStartResources {
+        let audioURL = try nextAudioURL(startedAt: request.startedAt)
+        let pausedMedia = await MediaPlaybackController.pauseActiveMediaPlayers(
+            reason: "dictation")
+        do {
+            if !pausedMedia.isEmpty {
+                try await Task.sleep(for: .milliseconds(250))
+            }
+            guard generation == request.session, !Task.isCancelled else {
+                throw CancellationError()
+            }
+            try await startRecorder(writingTo: audioURL)
+            try Task.checkCancellation()
+            guard generation == request.session else { throw CancellationError() }
+            return .init(audioURL: audioURL, pausedMedia: pausedMedia)
+        } catch {
+            let reason = error is CancellationError
+                ? "cancelled dictation start" : "failed dictation start"
+            await MediaPlaybackController.resume(pausedMedia, reason: reason)
+            recorder.stop()
+            try? FileManager.default.removeItem(at: audioURL)
+            throw error
+        }
+    }
+
+    private func activateRecording(
+        _ resources: RecordingStartResources,
+        request: StartRequest
+    ) {
+        pausedMediaSession = resources.pausedMedia
+        activeAudioURL = resources.audioURL
+        state = .recording(startedAt: request.startedAt)
+        startTick()
+        let config = settingsProvider()
+        isLivePreviewEnabled = config.dictationShowOverlay && config.dictationLivePreview
+        livePreviewStatus = isLivePreviewEnabled ? "Listening" : ""
+        refreshOverlay()
+        prewarmSelectedModel(reason: request.source)
+        startLivePreviewIfNeeded(
+            audioURL: resources.audioURL,
+            config: config,
+            generation: request.session)
+        lokalbotLog("dictation recording started source=\(request.source)")
+        finishPendingStartIfNeeded()
+    }
+
+    private func finishPendingStartIfNeeded() {
+        guard let source = pendingFinishSource else { return }
+        pendingFinishSource = nil
+        isStarting = false
+        finishRecordingAndTranscribe(source: source)
+    }
+
+    private func handleStartFailure(_ error: Error, source: String) {
+        onError("Could not start dictation: \(error.localizedDescription)")
+        lokalbotLog("dictation start FAILED source=\(source): \(error.localizedDescription)")
+        activeAudioURL = nil
+        state = .idle
+        stopTick()
+        resetLivePreview()
+        refreshOverlay()
     }
 
     func finishRecordingAndTranscribe(source: String = "ui") {
@@ -472,107 +474,35 @@ final class DictationCoordinator: ObservableObject {
         let config = settingsProvider()
         let choice = config.transcriptionModel
         let engine = config.transcriptionEngine()
-        beginModelPreparation()
-        do {
-            try await engine.prepare { [weak self] update in
-                self?.receiveModelPreparation(update, generation: session)
-            }
-            try Task.checkCancellation()
-            guard generation == session else { return }
-            resetModelPreparation()
-        } catch is CancellationError {
-            guard generation == session else { return }
-            complete()
+        switch await prepareTranscriptionEngine(
+            engine,
+            choice: choice,
+            audioURL: audioURL,
+            startedAt: startedAt,
+            source: source,
+            session: session
+        ) {
+        case .ready:
+            break
+        case .cancelled:
             return
-        } catch {
-            guard generation == session else { return }
+        case .retry:
             preserveAudioForRetry = true
-            pendingTranscriptionRetry = .init(
-                audioURL: audioURL,
-                startedAt: startedAt,
-                source: source,
-                generation: session)
-            modelPreparationStatus = nil
-            modelPreparationProgress = nil
-            modelPreparationError = Self.modelPreparationFailureMessage
-            onError("Dictation is paused while its speech model needs attention. Choose Retry in the dictation panel.")
-            lokalbotLog(
-                "dictation model preparation FAILED model=\(choice.rawValue): "
-                    + error.localizedDescription)
-            refreshOverlay()
             return
         }
         do {
-            let transcript = try await transcribeSerialized(audioURL, config: config)
-            try Task.checkCancellation()
-            guard generation == session else { return }
-
-            let spokenText = Transcript.normalizedText(
-                transcript.segments.map(\.displayText).joined(separator: " "))
-            guard !spokenText.isEmpty else {
-                completeWithMessage("No speech detected.")
-                return
-            }
-
-            lastTranscript = spokenText
-            if isLivePreviewEnabled {
-                liveTranscript = .init(committed: spokenText, tentative: "")
-            }
-            state = .composing(startedAt: startedAt)
-            if isLivePreviewEnabled {
-                livePreviewStatus = "Composing"
-            }
-            refreshOverlay()
-
-            let contextTask = screenContextTask
-            screenContextTask = nil
-            let screenContext: DictationScreenContext?
-            if let contextTask {
-                screenContext = await contextTask.value
-            } else {
-                screenContext = nil
-            }
-            try Task.checkCancellation()
-            guard generation == session else { return }
-
-            let engine = try await makeTextEngine()
-            let prompt = DictationComposePrompt.userPrompt(
-                spokenText: spokenText,
-                context: screenContext,
-                profile: DictationComposeProfile(
-                    personalization: config.cotypingPersonalization))
-            let rawOutput = try await engine.generate(
-                system: DictationComposePrompt.system,
-                prompt: prompt,
-                context: [])
-            try Task.checkCancellation()
-            guard generation == session else { return }
-
-            let text = DictationComposePrompt.normalizedOutput(rawOutput)
-            guard !text.isEmpty else { throw DictationComposeError.emptyOutput }
-            lastComposedText = text
-            lastEngine = "\(transcript.engine) → \(engine.displayName)"
-            switch await deliver(
-                text,
-                mode: config.dictationOutputMode,
-                generation: session
-            ) {
-            case .inserted, .copied:
-                break
-            case .focusChanged:
-                onError("Dictation finished after focus moved, so the text was copied to the clipboard instead of being inserted into another app.")
-            case .failed:
-                onError("Dictation finished, but LokalBot could not insert the text. It was copied to the clipboard.")
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
-            case .cancelled:
-                return
-            }
+            guard let result = try await composeDictation(
+                audioURL: audioURL,
+                startedAt: startedAt,
+                config: config,
+                session: session
+            ) else { return }
+            guard await deliver(result.text, config: config, session: session) else { return }
             complete()
             lokalbotLog(
-                "dictation composed source=\(source) chars=\(text.count) "
-                    + "asr=\(transcript.engine) llm=\(engine.displayName) "
-                    + "screenChars=\(screenContext?.visibleText.count ?? 0)")
+                "dictation composed source=\(source) chars=\(result.text.count) "
+                    + "asr=\(result.transcriptionEngine) llm=\(result.textEngine) "
+                    + "screenChars=\(result.screenCharacterCount)")
         } catch is CancellationError {
             guard generation == session else { return }
             complete()
@@ -585,6 +515,181 @@ final class DictationCoordinator: ObservableObject {
                 prefix = "Dictation failed"
             }
             completeWithMessage("\(prefix): \(error.localizedDescription)")
+        }
+    }
+
+    private enum ModelPreparationOutcome {
+        case ready
+        case cancelled
+        case retry
+    }
+
+    private struct ComposedDictation {
+        let text: String
+        let transcriptionEngine: String
+        let textEngine: String
+        let screenCharacterCount: Int
+    }
+
+    private func prepareTranscriptionEngine(
+        _ engine: any TranscriptionEngine,
+        choice: TranscriptionModelChoice,
+        audioURL: URL,
+        startedAt: Date,
+        source: String,
+        session: Int
+    ) async -> ModelPreparationOutcome {
+        beginModelPreparation()
+        do {
+            try await engine.prepare { [weak self] update in
+                self?.receiveModelPreparation(update, generation: session)
+            }
+            try Task.checkCancellation()
+            guard generation == session else { return .cancelled }
+            resetModelPreparation()
+            return .ready
+        } catch is CancellationError {
+            guard generation == session else { return .cancelled }
+            complete()
+            return .cancelled
+        } catch {
+            guard generation == session else { return .cancelled }
+            parkTranscriptionRetry(
+                audioURL: audioURL,
+                startedAt: startedAt,
+                source: source,
+                session: session,
+                choice: choice,
+                error: error)
+            return .retry
+        }
+    }
+
+    private func parkTranscriptionRetry(
+        audioURL: URL,
+        startedAt: Date,
+        source: String,
+        session: Int,
+        choice: TranscriptionModelChoice,
+        error: Error
+    ) {
+        pendingTranscriptionRetry = .init(
+            audioURL: audioURL,
+            startedAt: startedAt,
+            source: source,
+            generation: session)
+        modelPreparationStatus = nil
+        modelPreparationProgress = nil
+        modelPreparationError = Self.modelPreparationFailureMessage
+        onError(
+            "Dictation is paused while its speech model needs attention. "
+                + "Choose Retry in the dictation panel.")
+        lokalbotLog(
+            "dictation model preparation FAILED model=\(choice.rawValue): "
+                + error.localizedDescription)
+        refreshOverlay()
+    }
+
+    private func composeDictation(
+        audioURL: URL,
+        startedAt: Date,
+        config: AppSettings,
+        session: Int
+    ) async throws -> ComposedDictation? {
+        let transcript = try await transcribeSerialized(audioURL, config: config)
+        try ensureActive(session)
+        let spokenText = Transcript.normalizedText(
+            transcript.segments.map(\.displayText).joined(separator: " "))
+        guard !spokenText.isEmpty else {
+            completeWithMessage("No speech detected.")
+            return nil
+        }
+        beginComposing(spokenText, startedAt: startedAt)
+        let screenContext = await takeScreenContext()
+        try ensureActive(session)
+        let textEngine = try await makeTextEngine()
+        let text = try await generateComposedText(
+            spokenText: spokenText,
+            screenContext: screenContext,
+            config: config,
+            engine: textEngine)
+        try ensureActive(session)
+        lastComposedText = text
+        lastEngine = "\(transcript.engine) → \(textEngine.displayName)"
+        return .init(
+            text: text,
+            transcriptionEngine: transcript.engine,
+            textEngine: textEngine.displayName,
+            screenCharacterCount: screenContext?.visibleText.count ?? 0)
+    }
+
+    private func ensureActive(_ session: Int) throws {
+        try Task.checkCancellation()
+        guard generation == session else { throw CancellationError() }
+    }
+
+    private func beginComposing(_ spokenText: String, startedAt: Date) {
+        lastTranscript = spokenText
+        if isLivePreviewEnabled {
+            liveTranscript = .init(committed: spokenText, tentative: "")
+            livePreviewStatus = "Composing"
+        }
+        state = .composing(startedAt: startedAt)
+        refreshOverlay()
+    }
+
+    private func takeScreenContext() async -> DictationScreenContext? {
+        let task = screenContextTask
+        screenContextTask = nil
+        return await task?.value
+    }
+
+    private func generateComposedText(
+        spokenText: String,
+        screenContext: DictationScreenContext?,
+        config: AppSettings,
+        engine: TextEngine
+    ) async throws -> String {
+        let prompt = DictationComposePrompt.userPrompt(
+            spokenText: spokenText,
+            context: screenContext,
+            profile: DictationComposeProfile(
+                personalization: config.cotypingPersonalization))
+        let output = try await engine.generate(
+            system: DictationComposePrompt.system,
+            prompt: prompt,
+            context: [])
+        let text = DictationComposePrompt.normalizedOutput(output)
+        guard !text.isEmpty else { throw DictationComposeError.emptyOutput }
+        return text
+    }
+
+    private func deliver(
+        _ text: String,
+        config: AppSettings,
+        session: Int
+    ) async -> Bool {
+        switch await deliver(
+            text,
+            mode: config.dictationOutputMode,
+            generation: session
+        ) {
+        case .inserted, .copied:
+            return true
+        case .focusChanged:
+            onError(
+                "Dictation finished after focus moved, so the text was copied "
+                    + "to the clipboard instead of being inserted into another app.")
+            return true
+        case .failed:
+            onError(
+                "Dictation finished, but LokalBot could not insert the text. "
+                    + "It was copied to the clipboard.")
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            return true
+        case .cancelled:
+            return false
         }
     }
 
@@ -672,12 +777,6 @@ final class DictationCoordinator: ObservableObject {
         screenContextTask = nil
     }
 
-    private func resumePausedMedia(reason: String) async {
-        guard let pausedMediaSession else { return }
-        self.pausedMediaSession = nil
-        await MediaPlaybackController.resume(pausedMediaSession, reason: reason)
-    }
-
     @discardableResult
     private func scheduleMediaResume(
         _ session: MediaPlaybackController.PauseSession,
@@ -721,7 +820,7 @@ final class DictationCoordinator: ObservableObject {
         refreshOverlay()
     }
 
-    private static func transcribe(_ audioURL: URL, config: AppSettings) async throws -> Transcript {
+    static func transcribe(_ audioURL: URL, config: AppSettings) async throws -> Transcript {
         guard let duration = AudioFileInspector.duration(at: audioURL),
               duration >= AudioFileInspector.minimumTranscribableDuration else {
             throw DictationError.noAudio
@@ -732,268 +831,6 @@ final class DictationCoordinator: ObservableObject {
         return try await config.transcriptionEngine().transcribe(
             audio: audioURL,
             language: config.transcriptionLanguage.code)
-    }
-
-    private func transcribeSerialized(
-        _ audioURL: URL,
-        config: AppSettings
-    ) async throws -> Transcript {
-        let precedingTask = asrHandoffTask
-        let result = DictationASRResultBox()
-        let task = Task {
-            if let precedingTask { await precedingTask.value }
-            do {
-                try Task.checkCancellation()
-                result.store(.success(try await Self.transcribe(audioURL, config: config)))
-            } catch {
-                result.store(.failure(error))
-            }
-        }
-        asrHandoffTask = task
-        await withTaskCancellationHandler {
-            await task.value
-        } onCancel: {
-            task.cancel()
-        }
-        return try result.resolve()
-    }
-
-    private func startLivePreviewIfNeeded(
-        audioURL: URL,
-        config: AppSettings,
-        generation session: Int
-    ) {
-        guard config.dictationShowOverlay, config.dictationLivePreview else { return }
-        livePreviewTaskID += 1
-        let taskID = livePreviewTaskID
-        livePreviewTask?.cancel()
-        let task = Task { [weak self] in
-            guard !Task.isCancelled else { return }
-            await self?.runLivePreviewLoop(
-                audioURL: audioURL,
-                config: config,
-                generation: session,
-                taskID: taskID)
-        }
-        livePreviewTask = task
-    }
-
-    private func runLivePreviewLoop(
-        audioURL: URL,
-        config: AppSettings,
-        generation session: Int,
-        taskID: Int
-    ) async {
-        defer {
-            if generation == session, livePreviewTaskID == taskID {
-                livePreviewTask = nil
-                isLivePreviewWorking = false
-            }
-        }
-        var lastPreviewedDuration: TimeInterval = 0
-        var accumulatedPreviewText = ""
-        do {
-            try await Task.sleep(for: .milliseconds(1_200))
-            while !Task.isCancelled {
-                guard generation == session,
-                      livePreviewTaskID == taskID,
-                      state.isRecording else { return }
-                let duration = recorder.captureHealth().duration
-                let minimumAdvance = duration < 10 ? 1.25 : 2.0
-                guard duration >= 1.25,
-                      duration - lastPreviewedDuration >= minimumAdvance else {
-                    try await Task.sleep(for: .milliseconds(450))
-                    continue
-                }
-
-                do {
-                    let window = try await Self.makeIncrementalLivePreviewWindow(
-                        from: audioURL,
-                        storageRoot: storageRoot,
-                        previousEnd: lastPreviewedDuration)
-                    defer { try? FileManager.default.removeItem(at: window.url) }
-                    try Task.checkCancellation()
-                    guard generation == session,
-                          livePreviewTaskID == taskID,
-                          state.isRecording else { return }
-
-                    isLivePreviewWorking = true
-                    livePreviewStatus = liveTranscript.isEmpty ? "Listening" : "Updating"
-                    refreshOverlay()
-
-                    do {
-                        let transcript = try await transcribeSerialized(window.url, config: config)
-                        try Task.checkCancellation()
-                        guard generation == session, livePreviewTaskID == taskID else { return }
-                        let text = Transcript.normalizedText(
-                            transcript.segments.map(\.displayText).joined(separator: " "))
-                        lastPreviewedDuration = window.endTime
-                        if !text.isEmpty {
-                            // While the overlap still reaches the recording's
-                            // beginning, this window is the complete prefix and
-                            // can replace the earlier preview outright.
-                            accumulatedPreviewText = window.startTime == 0
-                                ? text
-                                : DictationPreviewTextStitcher.stitch(
-                                    previous: accumulatedPreviewText,
-                                    incoming: text)
-                            liveTranscript = DictationLiveTranscript.preview(
-                                from: accumulatedPreviewText)
-                            livePreviewStatus = "Live"
-                            refreshOverlay()
-                        }
-                    } catch DictationError.noAudio {
-                        // A valid snapshot can still be a fraction shorter than
-                        // the recorder's health counter. Advance past that tiny
-                        // silent/short window rather than retrying it forever.
-                        lastPreviewedDuration = window.endTime
-                    } catch DictationError.noSpeech {
-                        lastPreviewedDuration = window.endTime
-                    }
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    if generation == session, livePreviewTaskID == taskID {
-                        livePreviewStatus = liveTranscript.isEmpty ? "Listening" : "Live"
-                        lokalbotLog("dictation live preview skipped: \(error.localizedDescription)")
-                    }
-                }
-                guard generation == session,
-                      livePreviewTaskID == taskID,
-                      state.isRecording else { return }
-                isLivePreviewWorking = false
-                refreshOverlay()
-                try await Task.sleep(
-                    for: .milliseconds(Int(Self.livePreviewInterval(after: duration) * 1_000)))
-            }
-        } catch is CancellationError {
-            if generation == session, livePreviewTaskID == taskID {
-                isLivePreviewWorking = false
-            }
-        } catch {
-            if generation == session, livePreviewTaskID == taskID {
-                isLivePreviewWorking = false
-                lokalbotLog("dictation live preview stopped: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    private func cancelLivePreview(reset: Bool) {
-        livePreviewTaskID += 1
-        livePreviewTask?.cancel()
-        livePreviewTask = nil
-        isLivePreviewWorking = false
-        if reset {
-            resetLivePreview()
-        }
-    }
-
-    private func resetLivePreview() {
-        liveTranscript = DictationLiveTranscript()
-        livePreviewStatus = ""
-        isLivePreviewWorking = false
-        isLivePreviewEnabled = false
-    }
-
-    private static func livePreviewInterval(after duration: TimeInterval) -> TimeInterval {
-        min(4.0, max(1.4, duration / 8.0))
-    }
-
-    nonisolated static let previewScratchDirectoryName = "dictation-previews"
-
-    nonisolated static func sweepOrphanedPreviewFiles(storageRoot: URL) {
-        try? FileManager.default.removeItem(at: storageRoot.appendingPathComponent(
-            previewScratchDirectoryName, isDirectory: true))
-    }
-
-    private struct IncrementalLivePreviewWindow: Sendable {
-        let url: URL
-        let startTime: TimeInterval
-        let endTime: TimeInterval
-    }
-
-    /// Opens the append-safe CAF at its current length and materializes only the
-    /// unprocessed suffix plus a short overlap. This keeps preview I/O bounded
-    /// as dictation grows instead of copying the full recording on every pass.
-    private static func makeIncrementalLivePreviewWindow(
-        from audioURL: URL,
-        storageRoot: URL,
-        previousEnd: TimeInterval
-    ) async throws -> IncrementalLivePreviewWindow {
-        try await Task.detached(priority: .userInitiated) {
-            try makeIncrementalLivePreviewWindowSynchronously(
-                from: audioURL,
-                storageRoot: storageRoot,
-                previousEnd: previousEnd)
-        }.value
-    }
-
-    private nonisolated static func makeIncrementalLivePreviewWindowSynchronously(
-        from audioURL: URL,
-        storageRoot: URL,
-        previousEnd: TimeInterval
-    ) throws -> IncrementalLivePreviewWindow {
-        let reader = try AVAudioFile(forReading: audioURL)
-        let format = reader.processingFormat
-        guard format.sampleRate > 0 else { throw DictationError.noAudio }
-        let currentEnd = Double(reader.length) / format.sampleRate
-        guard let range = DictationPreviewWindowPlanner.range(
-            previousEnd: previousEnd,
-            currentEnd: currentEnd) else {
-            throw DictationError.noAudio
-        }
-
-        guard let frameBounds = DictationPreviewWindowPlanner.frameBounds(
-            for: range,
-            sampleRate: format.sampleRate,
-            totalFrameCount: Int64(reader.length)) else {
-            throw DictationError.noAudio
-        }
-        let startFrame = AVAudioFramePosition(frameBounds.lowerBound)
-        let endFrame = AVAudioFramePosition(frameBounds.upperBound)
-
-        let scratch = storageRoot.appendingPathComponent(
-            previewScratchDirectoryName, isDirectory: true)
-        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
-        let ext = audioURL.pathExtension.isEmpty ? "caf" : audioURL.pathExtension
-        let windowURL = scratch.appendingPathComponent(
-            "dictation-live-window-\(UUID().uuidString).\(ext)")
-        var keepWindow = false
-        defer {
-            if !keepWindow { try? FileManager.default.removeItem(at: windowURL) }
-        }
-
-        reader.framePosition = startFrame
-        do {
-            let writer = try AVAudioFile(
-                forWriting: windowURL,
-                settings: reader.fileFormat.settings,
-                commonFormat: format.commonFormat,
-                interleaved: format.isInterleaved)
-            let bufferCapacity: AVAudioFrameCount = 16_384
-            guard let buffer = AVAudioPCMBuffer(
-                pcmFormat: format,
-                frameCapacity: bufferCapacity) else {
-                throw DictationError.noAudio
-            }
-            var remaining = endFrame - startFrame
-            var written: AVAudioFramePosition = 0
-            while remaining > 0 {
-                let requested = AVAudioFrameCount(min(
-                    remaining,
-                    AVAudioFramePosition(bufferCapacity)))
-                try reader.read(into: buffer, frameCount: requested)
-                guard buffer.frameLength > 0 else { break }
-                try writer.write(from: buffer)
-                let count = AVAudioFramePosition(buffer.frameLength)
-                remaining -= count
-                written += count
-            }
-            guard written > 0 else { throw DictationError.noAudio }
-        }
-
-        keepWindow = true
-        return .init(url: windowURL, startTime: range.start, endTime: range.end)
     }
 
     private func startRecorder(writingTo audioURL: URL) async throws {
@@ -1133,38 +970,7 @@ final class DictationCoordinator: ObservableObject {
         }
     }
 
-    private func refreshOverlay() {
+    func refreshOverlay() {
         overlay.update(for: self, visible: settingsProvider().dictationShowOverlay)
-    }
-}
-
-private final class DictationASRResultBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var result: Result<Transcript, Error>?
-
-    func store(_ result: Result<Transcript, Error>) {
-        lock.lock()
-        self.result = result
-        lock.unlock()
-    }
-
-    func resolve() throws -> Transcript {
-        lock.lock()
-        let result = self.result
-        lock.unlock()
-        guard let result else { throw CancellationError() }
-        return try result.get()
-    }
-}
-
-private enum DictationError: LocalizedError {
-    case noAudio
-    case noSpeech
-
-    var errorDescription: String? {
-        switch self {
-        case .noAudio: "Recording was too short to transcribe."
-        case .noSpeech: "No speech detected."
-        }
     }
 }

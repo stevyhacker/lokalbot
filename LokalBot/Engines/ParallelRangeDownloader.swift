@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// Downloads large static files through parallel HTTP byte ranges, falling
@@ -130,8 +129,7 @@ enum ParallelRangeDownloader {
     /// Stable per-URL name for resume state, so a retried download finds its
     /// earlier partial file no matter how it was initiated.
     static func stashName(for url: URL) -> String {
-        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
-        return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+        SHA256Digest.hex(of: url.absoluteString, prefixByteCount: 8)
     }
 
     /// Where the resumable partial for `url` lives inside `stashDirectory`.

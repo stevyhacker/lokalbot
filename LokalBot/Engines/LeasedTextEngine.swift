@@ -28,7 +28,7 @@ struct LeasedTextEngine: TextEngine {
     }
 
     func generate(system: String, prompt: String, context: [String],
-                  schema: [String: Any]) async throws -> String {
+                  schema: JSONObject) async throws -> String {
         try await withManagedRecovery {
             try await base.generate(system: system, prompt: prompt, context: context,
                                     schema: schema)
@@ -36,7 +36,7 @@ struct LeasedTextEngine: TextEngine {
     }
 
     func generate(system: String, prompt: String, context: [String],
-                  schema: [String: Any],
+                  schema: JSONObject,
                   options: TextGenerationOptions) async throws -> String {
         try await withManagedRecovery {
             try await base.generate(system: system, prompt: prompt, context: context,

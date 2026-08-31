@@ -3,6 +3,12 @@ import Combine
 import AVFoundation
 import CoreGraphics
 
+enum MeetingLibraryLoadOutcome: Sendable {
+    case loaded(MeetingLibraryLoad)
+    case failed(String)
+    case cancelled
+}
+
 /// Central app state (the "coordinator" from the design doc §6): dependency
 /// wiring, the meeting library, navigation, and the detection→recording glue.
 /// The recording lifecycle itself lives in `RecordingController`; headless
@@ -84,8 +90,13 @@ final class AppState: ObservableObject {
     /// read by `AppDelegate` to keep the first run windowed.
     nonisolated static let onboardingShownKey = "lokalbotv3.onboarding.shown"
 
-    @Published private(set) var meetings: [Meeting] = []
+    @Published var meetings: [Meeting] = []
+
+    func removeMeetingsFromLibrary(_ ids: Set<Meeting.ID>) {
+        meetings.removeAll { ids.contains($0.id) }
+    }
     @Published var lastError: String?
+    @Published var libraryLoadError: String?
     /// A recording or dictation start was refused because microphone access
     /// is denied at the system level. Cleared when the user opens System
     /// Settings from the recovery toast or dismisses it.
@@ -99,56 +110,73 @@ final class AppState: ObservableObject {
     /// subsystems that apply settings live.
     @Published var settings: AppSettings {
         didSet {
-            guard settings != oldValue else { return }
-            settingsStore.current = settings
-            modelRoles.settingsDidChange(from: oldValue, to: settings)
-            if settings.stopDebounceSeconds != oldValue.stopDebounceSeconds {
-                detector.stopDebounce = settings.stopDebounceSeconds
-            }
-            if settings.calendarDetectionEnabled != oldValue.calendarDetectionEnabled {
-                detector.calendarEnabled = settings.calendarDetectionEnabled
-            }
-            if settings.requireCalendarForBrowser != oldValue.requireCalendarForBrowser {
-                detector.requireCalendarForBrowser = settings.requireCalendarForBrowser
-            }
-            if interactive {
-                if Self.dictationLifecycleChanged(from: oldValue, to: settings) {
-                    dictation.applySettings()
-                }
-                if settings.cotypingEnabled != oldValue.cotypingEnabled {
-                    cotyping.applySettings()
-                    if !settings.cotypingEnabled {
-                        scheduleCotypingRuntimeUnload()
-                    }
-                }
-                if Self.cotypingRuntimeChanged(from: oldValue, to: settings) {
-                    scheduleCotypingPrewarm()
-                }
-                if settings.quickRecallEnabled != oldValue.quickRecallEnabled {
-                    applyQuickRecallSetting()
-                }
-                if ScreenshotRetentionSchedule.requiresImmediatePrune(
-                    previousDays: oldValue.retentionDays,
-                    currentDays: settings.retentionDays
-                ) {
-                    screenshots.pruneOldScreenshots()
-                }
-                if Self.dailyMemoryExportChanged(from: oldValue, to: settings) {
-                    applyDailyMemoryExportSetting()
-                }
-                if Self.dayDigestChanged(from: oldValue, to: settings) {
-                    applyDayDigestSetting()
-                }
-                if Self.screenContextChanged(from: oldValue, to: settings) {
-                    applyTrackingSetting()
-                }
-                if Self.memoryRoutinesChanged(from: oldValue, to: settings) {
-                    applyMemoryRoutineSetting()
-                }
-                if Self.dreamingChanged(from: oldValue, to: settings) {
-                    applyDreamingSetting()
-                }
-            }
+            applySettingsChange(from: oldValue)
+        }
+    }
+
+    private func applySettingsChange(from old: AppSettings) {
+        guard settings != old else { return }
+        settingsStore.current = settings
+        modelRoles.settingsDidChange(from: old, to: settings)
+        applyDetectorSettingsChange(from: old)
+        guard interactive else { return }
+        applyInteractiveSettingsChange(from: old)
+    }
+
+    private func applyDetectorSettingsChange(from old: AppSettings) {
+        if settings.stopDebounceSeconds != old.stopDebounceSeconds {
+            detector.stopDebounce = settings.stopDebounceSeconds
+        }
+        if settings.calendarDetectionEnabled != old.calendarDetectionEnabled {
+            detector.calendarEnabled = settings.calendarDetectionEnabled
+        }
+        if settings.requireCalendarForBrowser != old.requireCalendarForBrowser {
+            detector.requireCalendarForBrowser = settings.requireCalendarForBrowser
+        }
+    }
+
+    private func applyInteractiveSettingsChange(from old: AppSettings) {
+        applyTypingSettingsChange(from: old)
+        if settings.quickRecallEnabled != old.quickRecallEnabled {
+            applyQuickRecallSetting()
+        }
+        if ScreenshotRetentionSchedule.requiresImmediatePrune(
+            previousDays: old.retentionDays,
+            currentDays: settings.retentionDays
+        ) {
+            screenshots.pruneOldScreenshots()
+        }
+        applyScheduledSettingsChange(from: old)
+    }
+
+    private func applyTypingSettingsChange(from old: AppSettings) {
+        if Self.dictationLifecycleChanged(from: old, to: settings) {
+            dictation.applySettings()
+        }
+        if settings.cotypingEnabled != old.cotypingEnabled {
+            cotyping.applySettings()
+            if !settings.cotypingEnabled { scheduleCotypingRuntimeUnload() }
+        }
+        if Self.cotypingRuntimeChanged(from: old, to: settings) {
+            scheduleCotypingPrewarm()
+        }
+    }
+
+    private func applyScheduledSettingsChange(from old: AppSettings) {
+        if Self.dailyMemoryExportChanged(from: old, to: settings) {
+            applyDailyMemoryExportSetting()
+        }
+        if Self.dayDigestChanged(from: old, to: settings) {
+            applyDayDigestSetting()
+        }
+        if Self.screenContextChanged(from: old, to: settings) {
+            applyTrackingSetting()
+        }
+        if Self.memoryRoutinesChanged(from: old, to: settings) {
+            applyMemoryRoutineSetting()
+        }
+        if Self.dreamingChanged(from: old, to: settings) {
+            applyDreamingSetting()
         }
     }
 
@@ -333,24 +361,22 @@ final class AppState: ObservableObject {
         controller.onInvoke = { WindowAccess.shared.open("quick-recall") }
         return controller
     }()
-    private let dailyMemoryExportScheduler = DailyMemoryExportScheduler()
+
+    var backgroundAutomationIsIdle: Bool {
+        !recording.isRecording
+            && !recording.isStarting
+            && !dictation.isStarting
+            && !dictation.state.isWorking
+            && !cotyping.state.isGenerating
+            && !pipeline.hasActiveWork
+    }
+
+    let dailyMemoryExportScheduler = DailyMemoryExportScheduler()
     private(set) lazy var memoryRoutines = MemoryRoutineScheduler(
         storageRoot: storage.rootURL,
         databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"),
         canRun: { [weak self] in
-            guard let self else { return false }
-            let cotypingGenerating: Bool
-            if case .generating = self.cotyping.state {
-                cotypingGenerating = true
-            } else {
-                cotypingGenerating = false
-            }
-            return !self.recording.isRecording
-                && !self.recording.isStarting
-                && !self.dictation.isStarting
-                && !self.dictation.state.isWorking
-                && !cotypingGenerating
-                && !self.pipeline.hasActiveWork
+            self?.backgroundAutomationIsIdle ?? false
         })
     /// Overnight dreaming: the scheduler is observed by Settings (progress /
     /// last-run), the store is read by Today, and `latestDreamReport` lets an
@@ -359,20 +385,21 @@ final class AppState: ObservableObject {
     /// Settings' user-managed pin controls. The store remains the source of
     /// truth; mutations reload it before saving to avoid stale-view writes.
     @Published private(set) var dreamMemory: DreamMemory?
-    private var dreamObserver: AnyCancellable?
+
+    func updateDreamMemory(_ value: DreamMemory?) {
+        dreamMemory = value
+    }
     private(set) lazy var dreamStore = DreamStore(root: storage.rootURL)
     private(set) lazy var dreaming: DreamScheduler = {
         let scheduler = DreamScheduler()
-        dreamObserver = scheduler.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }
+        invalidationBridge.observe(scheduler.objectWillChange)
         return scheduler
     }()
     /// Read-only calendar access (EventKit): confirms meetings and titles
     /// recordings. Concrete type so the settings UI observes its permission
     /// state; handed to the detector as the `CalendarEventProviding` seam.
     let calendar = EventKitCalendarEventProvider()
-    private var cachedSearchIndex: SearchIndex?
+    var cachedSearchIndex: SearchIndex?
     var searchIndex: SearchIndex {
         if let cachedSearchIndex { return cachedSearchIndex }
         let created = SearchIndex(
@@ -384,7 +411,7 @@ final class AppState: ObservableObject {
     private(set) lazy var activityStore = ActivityStore(
         databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"))
     private(set) lazy var sampler = ActivitySampler(store: activityStore)
-    private var cachedEmbeddingIndex: EmbeddingIndex?
+    var cachedEmbeddingIndex: EmbeddingIndex?
     var embeddingIndex: EmbeddingIndex {
         if let cachedEmbeddingIndex { return cachedEmbeddingIndex }
         let created = EmbeddingIndex(
@@ -550,7 +577,7 @@ final class AppState: ObservableObject {
         workMemory: { [weak self] in
             guard let self else { return "" }
             return ChatPrompt.workMemoryContext(
-                memory: (try? self.dreamStore.loadMemory()) ?? nil,
+                memory: try? self.dreamStore.loadMemory(),
                 dreamingEnabled: self.settings.dreamingEnabled)
         })
 
@@ -565,36 +592,31 @@ final class AppState: ObservableObject {
         agentSessions.ensureSelectedController()
     }
 
-    private var pipelineObserver: AnyCancellable?
-    private var outcomeObserver: AnyCancellable?
-    private var dictationObserver: AnyCancellable?
-    private var recordingObserver: AnyCancellable?
     private var recordingStatusObserver: AnyCancellable?
     private var audioMonitorObserver: AnyCancellable?
-    private var audioMonitorChangeForwarder: AnyCancellable?
-    private var calendarObserver: AnyCancellable?
-    private var modelRolesObserver: AnyCancellable?
-    private var navigationHandoffObserver: AnyCancellable?
+    private lazy var invalidationBridge = AppStateInvalidationBridge { [weak self] in
+        self?.objectWillChange.send()
+    }
     /// True only on the real interactive launch path (not headless / UI test) —
     /// gates recording notifications and first-run onboarding.
-    private var interactive = false
-    private var terminationCleanupTask: Task<Void, Never>?
+    var interactive = false
+    var terminationCleanupTask: Task<Void, Never>?
     /// Serializes cotyping model lifecycle transitions. A disable must finish
     /// unloading both runtimes before a rapid re-enable can prewarm a fresh
     /// model, otherwise the old and new routes can overlap in memory.
-    private var cotypingRuntimeTask: Task<Void, Never>?
-    private var cotypingRuntimeTaskID: UUID?
-    private var libraryLoadTask: Task<Void, Never>?
-    private var embeddingIndexTasks: [Meeting.ID: (token: UUID, task: Task<Void, Never>)] = [:]
-    private var indexCleanupTasks: [Meeting.ID: (token: UUID, task: Task<Void, Never>)] = [:]
-    private var deletedMeetingIDs: Set<Meeting.ID> = []
-    @Published private(set) var libraryReady = false
-    private var pendingRecordingStart: (
+    var cotypingRuntimeTask: Task<Void, Never>?
+    var cotypingRuntimeTaskID: UUID?
+    var libraryLoadTask: Task<Void, Never>?
+    var embeddingIndexTasks: [Meeting.ID: (token: UUID, task: Task<Void, Never>)] = [:]
+    var indexCleanupTasks: [Meeting.ID: (token: UUID, task: Task<Void, Never>)] = [:]
+    var deletedMeetingIDs: Set<Meeting.ID> = []
+    @Published var libraryReady = false
+    var pendingRecordingStart: (
         context: MeetingDetectionContext?,
         source: String,
         systemAudioPolicy: RecordingSystemAudioPolicy
     )?
-    private lazy var searchIndexWorkQueue = SearchIndexWorkQueue(
+    lazy var searchIndexWorkQueue = SearchIndexWorkQueue(
         databaseURL: storage.rootURL.appendingPathComponent("lokalbotv3.sqlite"),
         rootURL: storage.rootURL)
 
@@ -613,6 +635,11 @@ final class AppState: ObservableObject {
             return
         }
         guard libraryReady else {
+            if let libraryLoadError {
+                pendingRecordingStart = nil
+                lastError = libraryLoadError
+                return
+            }
             pendingRecordingStart = (context, source, systemAudioPolicy)
             lastError = "Preparing your meeting library; recording will start when it is ready."
             return
@@ -658,116 +685,16 @@ final class AppState: ObservableObject {
     init() {
         AppLog.bootstrap()
         settings = settingsStore.current
-        if let raw = Self.navigationDefaults.string(forKey: Self.typeTabDefaultsKey),
-           let stored = TypeTab(rawValue: raw) {
-            typeTab = stored
-        } else {
-            // Existing installs retain Dictation; genuinely new installs lead
-            // with the approved Autocomplete experience.
-            typeTab = Self.navigationDefaults.bool(forKey: Self.onboardingShownKey)
-                ? .dictation : .cotyping
-        }
+        typeTab = Self.initialTypeTab()
         if Self.isUnitTesting { return }
-        // Settings corruption is a privacy event, not a cosmetic one: a field
-        // like screenshot capture silently resetting to its default changes
-        // what the app records. Say exactly what fell back.
-        if !settings.corruptedSettingsKeys.isEmpty {
-            let keys = settings.corruptedSettingsKeys.joined(separator: ", ")
-            lokalbotLog("settings decode fell back to defaults for: \(keys)")
-            lastError = settings.corruptedSettingsKeys == [AppSettings.wholeStoreCorruptionMarker]
-                ? "Saved settings could not be read and were reset to defaults. Review Settings — especially Privacy and Recording."
-                : "Some saved settings could not be read and were reset to defaults (\(keys)). Review them in Settings."
-        }
+        reportStartupNotices()
         let headlessCommand = HeadlessCommand.requested
         let needsSynchronousLibrary = headlessCommand != nil || Self.isUITesting
-        if needsSynchronousLibrary {
-            meetings = storage.loadMeetings()
-            libraryReady = true
-            outcomeIndex.refresh(meetings: meetings)
-        }
+        if needsSynchronousLibrary { loadLibrarySynchronously() }
         LiveMeetingTranscriber.sweepOrphanedSnapshots(storageRoot: storage.rootURL)
-        // Views observe AppState only; forward pipeline / recording /
-        // audio-monitor / calendar change notifications so MainWindowView
-        // refreshes when those sub-ObservableObjects publish.
-        pipelineObserver = pipeline.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }
-        outcomeObserver = outcomeIndex.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }
-        dictationObserver = Publishers.MergeMany([
-            dictation.$state.dropFirst().map { _ in () }.eraseToAnyPublisher(),
-            dictation.$isStarting.dropFirst().map { _ in () }.eraseToAnyPublisher(),
-            dictation.$isShortcutMonitoringActive.dropFirst().map { _ in () }.eraseToAnyPublisher(),
-            dictation.$lastTranscript.dropFirst().map { _ in () }.eraseToAnyPublisher(),
-            dictation.$lastComposedText.dropFirst().map { _ in () }.eraseToAnyPublisher(),
-            dictation.$lastEngine.dropFirst().map { _ in () }.eraseToAnyPublisher(),
-        ]).sink { [weak self] in
-            self?.objectWillChange.send()
-        }
-        // Forward lifecycle changes, but not RecordingController's one-second
-        // `now` tick. Timer labels observe the controller directly; rebroadcasting
-        // that tick through AppState invalidated the entire window hierarchy.
-        recordingObserver = Publishers.CombineLatest(
-            recording.$status,
-            recording.$currentMeeting
-        ).dropFirst().sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
-        // React to recording start/stop (and calendar-handoff splits, which
-        // change the meeting ID mid-recording): pause cotyping and run the
-        // live transcriber against the active meeting folder.
-        recordingStatusObserver = recording.$status
-            .map { status -> UUID? in
-                if case .recording(let meetingID) = status { return meetingID }
-                return nil
-            }
-            .removeDuplicates()
-            .dropFirst()
-            .sink { [weak self] meetingID in
-                self?.meetingRecordingStateDidChange(active: meetingID != nil)
-            }
-        audioMonitorChangeForwarder = audioMonitor.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }
-        calendarObserver = calendar.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }
-        modelRolesObserver = modelRoles.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }
-        navigationHandoffObserver = navigationHandoff.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }
-        pipeline.onArtifactsWritten = { [weak self] meeting in
-            guard let self else { return }
-            self.outcomeIndex.refresh(meeting: meeting)
-            self.reindexSearchInBackground(meeting)
-            if self.settings.semanticSearchEnabled {
-                self.reindexEmbeddingInBackground(meeting)
-            }
-            self.memoryRoutines.tick()
-            // A parked/failed recovery job may complete after dreaming already
-            // wrote that day's durable marker. Invalidate the generated brief
-            // so the next quiet tick incorporates the recovered artifacts.
-            let calendar = Calendar.current
-            let dayKey = DreamDay.key(for: meeting.startedAt, calendar: calendar)
-            let reportURL = self.dreamStore.reportJSONURL(forDayKey: dayKey)
-            let activationKey = self.settings.dreamingFirstEligibleDayKey ?? dayKey
-            if self.settings.dreamingEnabled,
-               dayKey >= activationKey,
-               FileManager.default.fileExists(atPath: reportURL.path) {
-                do {
-                    try self.dreamStore.invalidateReport(forDayKey: dayKey)
-                } catch {
-                    self.lastError = "Could not refresh the dream for \(dayKey): "
-                        + error.localizedDescription
-                }
-                self.latestDreamReport = self.dreamStore.latestReport()
-                self.dreaming.reconsiderReports()
-            }
-        }
-        if needsSynchronousLibrary {
+        configureInvalidationObservers()
+        configureArtifactCallback()
+        if needsSynchronousLibrary && libraryReady {
             searchIndex.reindexAll(meetings, storage: storage)
         }
         if let command = headlessCommand {
@@ -778,684 +705,210 @@ final class AppState: ObservableObject {
         // session — bail out before any subsystem reaches for the mic, the
         // process list, or the network.
         if Self.isUITesting { return }
+        startInteractiveRuntime()
+    }
+
+    private static func initialTypeTab() -> TypeTab {
+        if let raw = navigationDefaults.string(forKey: typeTabDefaultsKey),
+           let stored = TypeTab(rawValue: raw) {
+            return stored
+        }
+        // Existing installs retain Dictation; genuinely new installs lead
+        // with the approved Autocomplete experience.
+        return navigationDefaults.bool(forKey: onboardingShownKey)
+            ? .dictation : .cotyping
+    }
+
+    private func reportStartupNotices() {
+        reportCorruptedSettings()
+        if let migrationNotice = DataMigration.consumeFailureNotice() {
+            lastError = migrationNotice
+        }
+    }
+
+    private func reportCorruptedSettings() {
+        // Settings corruption is a privacy event: silently resetting a field
+        // such as screenshot capture changes what the app records.
+        guard !settings.corruptedSettingsKeys.isEmpty else { return }
+        let keys = settings.corruptedSettingsKeys.joined(separator: ", ")
+        lokalbotLog("settings decode fell back to defaults for: \(keys)")
+        lastError = settings.corruptedSettingsKeys == [AppSettings.wholeStoreCorruptionMarker]
+            ? "Saved settings could not be read and were reset to defaults. Review Settings — especially Privacy and Recording."
+            : "Some saved settings could not be read and were reset to defaults (\(keys)). Review them in Settings."
+    }
+
+    private func loadLibrarySynchronously() {
+        do {
+            let load = try storage.loadMeetingLibrary()
+            meetings = load.meetings
+            libraryReady = true
+            applyLibraryIssues(load.issues)
+            outcomeIndex.refresh(meetings: meetings)
+        } catch {
+            handleLibraryLoadFailure(error.localizedDescription)
+        }
+    }
+
+    private func configureInvalidationObservers() {
+        // Views observe AppState only; forward meaningful child changes.
+        invalidationBridge.observe(pipeline.objectWillChange)
+        invalidationBridge.observe(outcomeIndex.objectWillChange)
+        invalidationBridge.observe(dictationInvalidations)
+        invalidationBridge.observe(recordingLifecycleInvalidations)
+        recordingStatusObserver = recording.$status
+            .map(Self.activeMeetingID)
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] meetingID in
+                self?.meetingRecordingStateDidChange(active: meetingID != nil)
+            }
+        invalidationBridge.observe(audioMonitor.objectWillChange)
+        invalidationBridge.observe(calendar.objectWillChange)
+        invalidationBridge.observe(modelRoles.objectWillChange)
+        invalidationBridge.observe(navigationHandoff.objectWillChange)
+    }
+
+    private var dictationInvalidations: AnyPublisher<Void, Never> {
+        Publishers.MergeMany([
+            dictation.$state.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            dictation.$isStarting.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            dictation.$isShortcutMonitoringActive.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            dictation.$lastTranscript.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            dictation.$lastComposedText.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            dictation.$lastEngine.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        ]).eraseToAnyPublisher()
+    }
+
+    private var recordingLifecycleInvalidations: AnyPublisher<Void, Never> {
+        // Exclude RecordingController's one-second clock; timer labels observe
+        // it directly and do not need to invalidate the whole window.
+        Publishers.CombineLatest(recording.$status, recording.$currentMeeting)
+            .dropFirst()
+            .map { _ in () }
+            .eraseToAnyPublisher()
+    }
+
+    private static func activeMeetingID(from status: RecordingController.Status) -> UUID? {
+        if case .recording(let meetingID) = status { return meetingID }
+        return nil
+    }
+
+    private func configureArtifactCallback() {
+        pipeline.onArtifactsWritten = { [weak self] meeting in
+            self?.artifactsWereWritten(for: meeting)
+        }
+    }
+
+    private func artifactsWereWritten(for meeting: Meeting) {
+        outcomeIndex.refresh(meeting: meeting)
+        reindexSearchInBackground(meeting)
+        if settings.semanticSearchEnabled { reindexEmbeddingInBackground(meeting) }
+        memoryRoutines.tick()
+        invalidateDreamIfNeeded(for: meeting)
+    }
+
+    private func invalidateDreamIfNeeded(for meeting: Meeting) {
+        // A parked recovery job can finish after dreaming wrote that day's
+        // report. Remove the marker so the next quiet tick includes it.
+        let dayKey = DreamDay.key(for: meeting.startedAt, calendar: .current)
+        let reportURL = dreamStore.reportJSONURL(forDayKey: dayKey)
+        let activationKey = settings.dreamingFirstEligibleDayKey ?? dayKey
+        guard settings.dreamingEnabled,
+              dayKey >= activationKey,
+              FileManager.default.fileExists(atPath: reportURL.path) else { return }
+        do {
+            try dreamStore.invalidateReport(forDayKey: dayKey)
+        } catch {
+            lastError = "Could not refresh the dream for \(dayKey): "
+                + error.localizedDescription
+        }
+        latestDreamReport = dreamStore.latestReport()
+        dreaming.reconsiderReports()
+    }
+
+    private func startInteractiveRuntime() {
         interactive = true
         RecordingNotifier.shared.bootstrap()
         applyTrackingSetting()
-        // Crash recovery: re-enqueue any meeting whose processing never
-        // finished — a quit or crash mid-transcription used to lose the job.
-        detector.onMeetingStarted = { [weak self] context in
-            guard let self else { return }
-            switch self.settings.autoRecordMode {
-            case .automatic: self.startRecording(context: context, source: "detector")
-            case .ask: self.notifyMeetingDetected(context)
-            case .manual: RecordingNotifier.shared.invalidateMeetingDetections()
-            }
-        }
-        detector.onMeetingSwitched = { [weak self] context in
-            guard let self else { return }
-            switch self.settings.autoRecordMode {
-            case .automatic:
-                RecordingNotifier.shared.invalidateMeetingDetections()
-                self.recording.splitForCalendarHandoff(context)
-            case .ask:
-                if self.recording.isRecording || self.recording.isStarting {
-                    RecordingNotifier.shared.invalidateMeetingDetections()
-                } else {
-                    self.notifyMeetingDetected(context)
-                }
-            case .manual:
-                RecordingNotifier.shared.invalidateMeetingDetections()
-            }
-        }
-        detector.onMeetingEnded = { [weak self] in
-            RecordingNotifier.shared.invalidateMeetingDetections()
-            self?.stopRecording()
-        }
+        configureDetectorCallbacks()
         detector.stopDebounce = settings.stopDebounceSeconds
         detector.calendar = calendar
         detector.calendarEnabled = settings.calendarDetectionEnabled
         detector.requireCalendarForBrowser = settings.requireCalendarForBrowser
-        // The mic-in-use signal misses meetings with a muted mic. The audio
-        // monitor is the complementary "a meeting app just started producing
-        // audio output" signal. In automatic mode it records recognised
-        // meeting sources; other candidates expire silently.
-        audioMonitor.start()
-        audioMonitorObserver = audioMonitor.$detectedProcess
-            .compactMap { $0 }
-            .sink { [weak self] process in self?.audioMonitorDetected(process) }
-        detector.start()
-        // Start Sparkle (silent background check). No-op on dev builds and
-        // until the appcast feed URL + public key are configured (RELEASING.md).
-        AppUpdateManager.shared.start()
-        // Resume the wake watcher when the Privacy marker was left enabled.
-        agentAccess.start()
-        screenMemoryAccess.start()
-        applyQuickRecallSetting()
-        applyDailyMemoryExportSetting()
-        applyDayDigestSetting()
-        applyMemoryRoutineSetting()
-        applyDreamingSetting()
-        // First-run check. A genuinely-new user with missing permissions gets
-        // onboarding (windowed — see AppDelegate); the flag persists only when
-        // they explicitly finish or defer the wizard (OnboardingView footer),
-        // so quitting mid-wizard re-opens it next launch. Fully-permissioned
-        // installs that predate the flag are recognised as established right
-        // away and start menu-bar-only next launch.
-        if !UserDefaults.standard.bool(forKey: Self.onboardingShownKey) {
-            if PermissionManager.shared.allGranted {
-                UserDefaults.standard.set(true, forKey: Self.onboardingShownKey)
-            } else {
-                WindowAccess.shared.open("onboarding")
-            }
-        }
-        // Bring optional system-wide automation up if the user left it enabled
-        // and the grants are in place; otherwise it parks itself.
+        startInteractiveServices()
+        applyStartupSettings()
+        showOnboardingIfNeeded()
         dictation.applySettings()
         cotyping.applySettings()
         if settings.cotypingEnabled { scheduleCotypingPrewarm() }
         loadLibraryInBackground()
     }
 
-    /// Large meeting libraries can take seconds to enumerate, repair, duration-
-    /// probe, and FTS-index. Do that work on a utility executor and publish one
-    /// sorted snapshot when ready instead of blocking the first app window.
-    private func loadLibraryInBackground() {
-        libraryLoadTask?.cancel()
-        let rootURL = storage.rootURL
-        libraryLoadTask = Task { @MainActor [weak self] in
-            let worker = Task.detached(priority: .utility) {
-                guard !Task.isCancelled else { return [Meeting]() }
-                let workerStorage = StorageManager(rootURL: rootURL)
-                return workerStorage.loadMeetings()
+    private func configureDetectorCallbacks() {
+        detector.onMeetingStarted = { [weak self] context in
+            self?.meetingDetectorStarted(context)
+        }
+        detector.onMeetingSwitched = { [weak self] context in
+            self?.meetingDetectorSwitched(context)
+        }
+        detector.onMeetingEnded = { [weak self] in
+            RecordingNotifier.shared.invalidateMeetingDetections()
+            self?.stopRecording()
+        }
+    }
+
+    private func meetingDetectorStarted(_ context: MeetingDetectionContext) {
+        switch settings.autoRecordMode {
+        case .automatic: startRecording(context: context, source: "detector")
+        case .ask: notifyMeetingDetected(context)
+        case .manual: RecordingNotifier.shared.invalidateMeetingDetections()
+        }
+    }
+
+    private func meetingDetectorSwitched(_ context: MeetingDetectionContext) {
+        switch settings.autoRecordMode {
+        case .automatic:
+            RecordingNotifier.shared.invalidateMeetingDetections()
+            recording.splitForCalendarHandoff(context)
+        case .ask:
+            if recording.isRecording || recording.isStarting {
+                RecordingNotifier.shared.invalidateMeetingDetections()
+            } else {
+                notifyMeetingDetected(context)
             }
-            let loaded = await withTaskCancellationHandler {
-                await worker.value
-            } onCancel: {
-                worker.cancel()
-            }
-            guard let self, !Task.isCancelled else { return }
-
-            var byID = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
-            // Preserve meetings created while the background scan was running.
-            for meeting in self.meetings { byID[meeting.id] = meeting }
-            let merged = byID.values.sorted { $0.startedAt > $1.startedAt }
-            self.meetings = merged
-            self.libraryReady = true
-            self.outcomeIndex.refresh(meetings: merged)
-            self.pipeline.resumePending(meetings: merged)
-            // Dreaming was deliberately gated while launch recovery rebuilt
-            // the library and durable processing queue. Re-check immediately;
-            // pending pipeline work will keep the downtime gate closed until a
-            // later timer tick.
-            self.dreaming.tick()
-            self.reindexLibraryInBackground(merged)
-            self.libraryLoadTask = nil
-            if let pending = self.pendingRecordingStart {
-                self.pendingRecordingStart = nil
-                self.lastError = nil
-                self.startRecording(
-                    context: pending.context,
-                    source: pending.source,
-                    systemAudioPolicy: pending.systemAudioPolicy)
-            }
+        case .manual:
+            RecordingNotifier.shared.invalidateMeetingDetections()
         }
     }
 
-    private func reindexLibraryInBackground(_ meetings: [Meeting]) {
-        let worker = searchIndexWorkQueue
-        Task { await worker.enqueue(meetings) }
+    private func startInteractiveServices() {
+        // Audio output complements the mic-in-use meeting signal, including
+        // meetings where the local microphone is muted.
+        audioMonitor.start()
+        audioMonitorObserver = audioMonitor.$detectedProcess
+            .compactMap { $0 }
+            .sink { [weak self] process in self?.audioMonitorDetected(process) }
+        detector.start()
+        AppUpdateManager.shared.start()
+        agentAccess.start()
+        screenMemoryAccess.start()
     }
 
-    private func reindexSearchInBackground(_ meeting: Meeting) {
-        let worker = searchIndexWorkQueue
-        Task { await worker.enqueue(meeting) }
+    private func applyStartupSettings() {
+        applyQuickRecallSetting()
+        applyDailyMemoryExportSetting()
+        applyDayDigestSetting()
+        applyMemoryRoutineSetting()
+        applyDreamingSetting()
     }
 
-    private func reindexEmbeddingInBackground(_ meeting: Meeting) {
-        embeddingIndexTasks.removeValue(forKey: meeting.id)?.task.cancel()
-        let token = UUID()
-        let task = Task { @MainActor [weak self] in
-            guard let self, !Task.isCancelled else { return }
-            try? await self.embeddingIndex.index(meeting)
-            guard self.embeddingIndexTasks[meeting.id]?.token == token else { return }
-            self.embeddingIndexTasks.removeValue(forKey: meeting.id)
-        }
-        embeddingIndexTasks[meeting.id] = (token, task)
-    }
-
-    /// Index rows are reconstructible, but a failed SQLite cleanup must not
-    /// become permanent once the meeting folder disappears. Retry both stores
-    /// with bounded backoff for the rest of the session; durable tombstones and
-    /// each index's startup reconciliation cover interruption or app exit.
-    private func scheduleIndexCleanup(_ meetingID: Meeting.ID) {
-        indexCleanupTasks.removeValue(forKey: meetingID)?.task.cancel()
-        let token = UUID()
-        let worker = searchIndexWorkQueue
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            var embeddingClean = false
-            var searchClean = false
-            var attempt = 0
-
-            while !Task.isCancelled {
-                let result = await worker.remove(meetingID)
-                embeddingClean = embeddingClean || result.embedding
-                searchClean = searchClean || result.search
-                guard !Task.isCancelled,
-                      self.indexCleanupTasks[meetingID]?.token == token else { return }
-                if embeddingClean && searchClean {
-                    self.indexCleanupTasks.removeValue(forKey: meetingID)
-                    return
-                }
-
-                attempt += 1
-                if attempt.isMultiple(of: 4) {
-                    let reconciled = await worker.reconcileDeletedMeetings()
-                    embeddingClean = embeddingClean || reconciled.embedding
-                    searchClean = searchClean || reconciled.search
-                }
-                let delayMilliseconds = min(30_000, 250 * (1 << min(attempt, 7)))
-                try? await Task.sleep(for: .milliseconds(delayMilliseconds))
-            }
-        }
-        indexCleanupTasks[meetingID] = (token, task)
-    }
-
-    private enum CotypingRuntimeOperation {
-        case unload
-        case prewarm
-    }
-
-    private func scheduleCotypingRuntimeUnload() {
-        scheduleCotypingRuntimeOperation(.unload)
-    }
-
-    private func scheduleCotypingPrewarm() {
-        scheduleCotypingRuntimeOperation(.prewarm)
-    }
-
-    /// Queue lifecycle changes instead of launching independent tasks. An
-    /// unload intentionally runs even if a later operation cancels its task:
-    /// the later operation awaits it before loading another model.
-    private func scheduleCotypingRuntimeOperation(_ operation: CotypingRuntimeOperation) {
-        let previous = cotypingRuntimeTask
-        previous?.cancel()
-        let taskID = UUID()
-        cotypingRuntimeTaskID = taskID
-        cotypingRuntimeTask = Task { @MainActor [weak self] in
-            if let previous { await previous.value }
-            guard let self else { return }
-            defer {
-                if self.cotypingRuntimeTaskID == taskID {
-                    self.cotypingRuntimeTask = nil
-                    self.cotypingRuntimeTaskID = nil
-                }
-            }
-            switch operation {
-            case .unload:
-                await self.cotypingEngine.unload()
-            case .prewarm:
-                guard !Task.isCancelled, self.settings.cotypingEnabled else { return }
-                await self.cotypingEngine.prewarm()
-            }
-        }
-    }
-
-    func prepareForTermination() async {
-        if let terminationCleanupTask {
-            await terminationCleanupTask.value
-            return
-        }
-        let task = Task { @MainActor in
-            interactive = false
-            settingsStore.flush()
-            let pendingCotypingRuntimeTask = self.cotypingRuntimeTask
-            pendingCotypingRuntimeTask?.cancel()
-            await pendingCotypingRuntimeTask?.value
-            self.cotypingRuntimeTask = nil
-            cotypingRuntimeTaskID = nil
-            libraryLoadTask?.cancel()
-            libraryLoadTask = nil
-            for entry in embeddingIndexTasks.values { entry.task.cancel() }
-            embeddingIndexTasks.removeAll()
-            for entry in indexCleanupTasks.values { entry.task.cancel() }
-            indexCleanupTasks.removeAll()
-            await searchIndexWorkQueue.stop()
-            pendingRecordingStart = nil
-            recording.prepareForTermination()
-            detector.stop()
-            audioMonitor.stop()
-            sampler.stop()
-            screenshots.stop()
-            quickRecallHotKey.stop()
-            dailyMemoryExportScheduler.stop()
-            memoryRoutines.stop()
-            dreaming.stop()
-            chat.stop()
-            dictation.stop()
-            cotyping.stop()
-            await cotypingLearning.flushPersistence()
-            await CotypingStatsStore.shared.flushPersistence()
-            await agentSessions.shutdownAll()
-            await cotypingEngine.unload()
-            await LlamaServer.shared.stop()
-            await LlamaServer.embedder.stop()
-            await LlamaServer.cotyping.stop()
-            await GraniteSpeechEngine.shared.shutdown()
-        }
-        terminationCleanupTask = task
-        await task.value
-    }
-
-    // MARK: - Detection → recording glue
-
-    /// Builds a detection context for a user-initiated recording on `detectedApp`
-    /// (nil → manual), folding in the active calendar event when calendar
-    /// detection is enabled and authorized — so menu and command entry points
-    /// get calendar titling too.
-    func recordingContext(for detectedApp: MeetingDetector.DetectedApp?) -> MeetingDetectionContext? {
-        guard let detectedApp else { return nil }
-        let event = (settings.calendarDetectionEnabled && calendar.hasAccess)
-            ? calendar.activeCandidate(now: Date()) : nil
-        return MeetingDetectionContext(
-            detectedApp: detectedApp,
-            calendarEvent: event,
-            confidence: MeetingMatcher.confidence(hasApp: true, hasCalendar: event != nil),
-            reason: "user")
-    }
-
-    /// A user can explicitly start the scheduled event from Today's upcoming
-    /// meeting card before automatic detection fires. Attach the calendar
-    /// metadata immediately; capture system audio too when a matching meeting
-    /// app is already visible, otherwise RecordingController safely records
-    /// the microphone when no meeting app is visible yet.
-    func recordingContext(for calendarEvent: CalendarMeetingCandidate) -> MeetingDetectionContext {
-        let detectedApp = detector.activeApp ?? MeetingDetector.visibleBrowserMeeting()
-        return MeetingDetectionContext(
-            detectedApp: detectedApp,
-            calendarEvent: calendarEvent,
-            confidence: MeetingMatcher.confidence(
-                hasApp: detectedApp != nil,
-                hasCalendar: true),
-            reason: "today-upcoming")
-    }
-
-    /// `AudioSourceMonitor` saw an app newly start producing output. Auto-record
-    /// in automatic mode only for high-confidence native meeting output or a
-    /// verified browser meeting; ignore broader candidates so notification
-    /// sounds cannot start recordings.
-    private func audioMonitorDetected(_ process: AudioProcess) {
-        guard !recording.isRecording, !recording.isStarting else { return }
-        guard settings.autoRecordMode == .automatic, let bundleID = process.bundleID else { return }
-        let calendarEvent = (settings.calendarDetectionEnabled && calendar.hasAccess)
-            ? calendar.activeCandidate(now: Date()) : nil
-        if let name = MeetingDetector.knownApps[bundleID] {
-            guard MeetingDetector.shouldAutoRecordNativeAudioMonitor(
-                bundleID: bundleID,
-                calendarBacked: calendarEvent != nil) else {
-                return
-            }
-            let detected = MeetingDetector.DetectedApp(name: name, bundleID: bundleID, pid: process.id)
-            startRecording(context: detectionContext(detected, calendarEvent), source: "audio-monitor")
-            return
-        }
-        guard let hostBundleID = MeetingDetector.hostBrowserBundleID(forAudioBundleID: bundleID) else { return }
-        // The browser is already producing output (the monitor fired on it), so a
-        // window-title match OR an active calendar meeting link is enough — the
-        // latter catches a generic-title Google Meet the title check misses.
-        let titleMatches = MeetingDetector.visibleBrowserMeeting()?.bundleID == hostBundleID
-        let calendarBacked = calendarEvent?.meetingURL != nil
-        guard MeetingMatcher.browserCountsAsMeeting(
-            titleMatchesMarker: titleMatches, hasOutputAudio: true,
-            calendarBacked: calendarBacked, requireCalendarForBrowser: settings.requireCalendarForBrowser)
-        else { return }
-        let name = NSRunningApplication.runningApplications(withBundleIdentifier: hostBundleID)
-            .first?.localizedName ?? "Browser"
-        let detected = MeetingDetector.DetectedApp(name: name, bundleID: hostBundleID, pid: process.id)
-        startRecording(context: detectionContext(detected, calendarEvent), source: "audio-monitor")
-    }
-
-    private func detectionContext(_ app: MeetingDetector.DetectedApp,
-                                  _ event: CalendarMeetingCandidate?) -> MeetingDetectionContext {
-        MeetingDetectionContext(
-            detectedApp: app, calendarEvent: event,
-            confidence: MeetingMatcher.confidence(hasApp: true, hasCalendar: event != nil),
-            reason: "audio-monitor")
-    }
-
-    private func notifyMeetingDetected(_ context: MeetingDetectionContext) {
-        lastError = nil
-        let title = MeetingMatcher.recordingTitle(
-            calendarTitle: context.calendarEvent?.title,
-            useCalendarTitles: settings.useCalendarTitles,
-            appName: context.detectedApp?.name)
-        RecordingNotifier.shared.meetingDetected(title: title) { [weak self] in
-            guard let self,
-                  self.settings.autoRecordMode == .ask,
-                  !self.recording.isRecording,
-                  !self.recording.isStarting else { return }
-            self.startRecording(context: context, source: "notification")
-        }
-    }
-
-    // MARK: - Library operations
-
-    func reprocess(_ meeting: Meeting, transcribe: Bool, summarize: Bool) {
-        pipeline.enqueue(meeting, transcribe: transcribe, summarize: summarize)
-    }
-
-    /// Resume from the latest durable artifact. If transcription already
-    /// succeeded, Retry fixes only summarization; missing transcripts still run
-    /// the complete pipeline. User-initiated work may download missing models.
-    func retryProcessing(_ meeting: Meeting) {
-        let work = ProcessingPipeline.retryWork(for: meeting, storage: storage)
-        reprocess(meeting, transcribe: work.transcribe, summarize: work.summarize)
-    }
-
-    /// Meetings parked because a model was missing re-enter the queue; jobs
-    /// whose models are still missing simply park again — nothing downloads
-    /// from this path.
-    func processMeetingsWaitingForModels() {
-        pipeline.retryJobsWaitingForModels()
-    }
-
-    func saveTranscript(_ transcript: Transcript, for meeting: Meeting) throws {
-        try pipeline.saveTranscript(transcript, for: meeting)
-        reindexSearchInBackground(meeting)
-        if settings.semanticSearchEnabled {
-            reindexEmbeddingInBackground(meeting)
-        }
-        objectWillChange.send()
-    }
-
-    func speakerNameHints(for meeting: Meeting) -> [String] {
-        let fallbackDuration = max(meeting.recordedDuration ?? 60, 60)
-        let fallbackEnd = meeting.startedAt.addingTimeInterval(fallbackDuration)
-        var end = meeting.endedAt.map { max($0, meeting.startedAt) } ?? fallbackEnd
-        if end <= meeting.startedAt { end = fallbackEnd }
-        let ocr = activityStore.ocrText(from: meeting.startedAt, to: end, maxChars: 12_000)
-        return SpeakerNameHintExtractor.hints(
-            calendarNames: meeting.resolvedCalendarParticipantIdentities.compactMap(\.name),
-            ocrText: ocr)
-    }
-
-    func applyTrackingSetting() {
-        sampler.excludedApps = { [weak self] in self?.settings.excludedAppList ?? [] }
-        if settings.trackingEnabled { sampler.start() } else { sampler.stop() }
-        screenshots.restart()
-    }
-
-    func applyQuickRecallSetting() {
-        let registered = quickRecallHotKey.setEnabled(settings.quickRecallEnabled)
-        if settings.quickRecallEnabled, !registered {
-            settings.quickRecallEnabled = false
-            lastError = "The Ask shortcut could not register \(QuickRecallHotKeyController.shortcutLabel). Another app may already use it."
-        }
-    }
-
-    func applyDailyMemoryExportSetting() {
-        let snapshot = settings
-        let destinationID = snapshot.dailyMemoryExportFolder.isEmpty
-            ? ""
-            : "\(snapshot.dailyMemoryExportFolder)|\(snapshot.dailyMemoryExportFormat.rawValue)"
-        let configuration = DailyMemoryExportScheduler.Configuration(
-            enabled: snapshot.dailyMemoryExportEnabled,
-            hour: snapshot.dailyMemoryExportHour,
-            destinationID: destinationID)
-        let storageRoot = storage.rootURL
-        let destinationPath = snapshot.dailyMemoryExportFolder
-        let exportKind: DailyMemoryExportKind = switch snapshot.dailyMemoryExportFormat {
-        case .markdown: .markdown
-        case .obsidian: .obsidian
-        case .logseq: .logseq
-        }
-        dailyMemoryExportScheduler.configure(configuration) { day in
-            let destination = URL(
-                fileURLWithPath: destinationPath,
-                isDirectory: true)
-            try Task.checkCancellation()
-            let service = DailyMemoryExportService(
-                source: FileDailyMemoryExportSource(root: storageRoot),
-                calendar: .current)
-            _ = try service.export(
-                day: day,
-                configuration: DailyMemoryExportConfiguration(
-                    destinationDirectory: destination,
-                    format: exportKind))
-        } onError: { [weak self] message in
-            self?.lastError = message
-        }
-    }
-
-    func applyDayDigestSetting() {
-        let snapshot = settings
-        dayDigest.configureAutomaticGeneration(
-            DayDigestScheduler.Configuration(
-                enabled: snapshot.dayDigestAutoEnabled,
-                hour: snapshot.dayDigestHour),
-            canRun: { [weak self] in
-                guard let self, self.libraryReady else { return false }
-                // Scheduled background work never triggers a model download —
-                // the digest waits until the Think model is actually on disk
-                // (or a remote backend is configured).
-                guard ModelReadinessSnapshot.thinkReady(self.settings, storage: self.storage)
-                else { return false }
-                let cotypingGenerating: Bool
-                if case .generating = self.cotyping.state {
-                    cotypingGenerating = true
-                } else {
-                    cotypingGenerating = false
-                }
-                return !self.recording.isRecording
-                    && !self.recording.isStarting
-                    && !self.dictation.isStarting
-                    && !self.dictation.state.isWorking
-                    && !cotypingGenerating
-                    && !self.pipeline.hasActiveWork
-            },
-            onError: { [weak self] message in
-                self?.lastError = message
-            })
-    }
-
-    func applyMemoryRoutineSetting() {
-        let snapshot = settings
-        memoryRoutines.configure(MemoryRoutineScheduler.Configuration(
-            enabled: snapshot.memoryRoutinesEnabled,
-            destinationPath: snapshot.memoryRoutineFolder,
-            kinds: snapshot.enabledMemoryRoutines,
-            hour: snapshot.memoryRoutineHour,
-            weekday: snapshot.memoryRoutineWeekday
-        )) { [weak self] message in
-            self?.lastError = message
-        }
-    }
-
-    func applyDreamingSetting() {
-        let snapshot = settings
-
-        // Persist the beginning of each opt-in period. This keeps catch-up
-        // bounded instead of interpreting a first launch as permission to
-        // backfill every historical workday.
-        if snapshot.dreamingEnabled,
-           snapshot.dreamingFirstEligibleDayKey?.isEmpty != false {
-            let calendar = Calendar.current
-            var updated = snapshot
-            updated.dreamingFirstEligibleDayKey = DreamDay.key(
-                for: DreamScheduler.previousDay(of: Date(), calendar: calendar),
-                calendar: calendar)
-            settings = updated
-            return
-        }
-
-        if !snapshot.dreamingEnabled,
-           snapshot.dreamingFirstEligibleDayKey != nil {
-            var updated = snapshot
-            updated.dreamingFirstEligibleDayKey = nil
-            settings = updated
-            return
-        }
-
-        let storageRoot = storage.rootURL
-        dreaming.configure(
-            DreamScheduler.Configuration(
-                enabled: snapshot.dreamingEnabled,
-                hour: snapshot.dreamingHour,
-                firstEligibleDayKey: snapshot.dreamingFirstEligibleDayKey ?? ""),
-            hasReport: { dayKey in
-                DreamStore(root: storageRoot).hasReport(forDayKey: dayKey)
-            },
-            canRun: { [weak self] in
-                guard let self else { return false }
-                guard self.libraryReady else { return false }
-                // Overnight dreaming is background automation: never let it
-                // trigger a model download on a fresh install.
-                guard ModelReadinessSnapshot.thinkReady(self.settings, storage: self.storage)
-                else { return false }
-                let cotypingGenerating: Bool
-                if case .generating = self.cotyping.state {
-                    cotypingGenerating = true
-                } else {
-                    cotypingGenerating = false
-                }
-                let lokalBotIsIdle = !self.recording.isRecording
-                    && !self.recording.isStarting
-                    && !self.dictation.isStarting
-                    && !self.dictation.state.isWorking
-                    && !cotypingGenerating
-                    && !self.pipeline.hasActiveWork
-                guard lokalBotIsIdle else { return false }
-                guard DreamScheduler.powerAllowsDreaming(
-                    isOnBattery: PowerSourceMonitor.currentlyOnBattery(),
-                    isLowPower: ProcessInfo.processInfo.isLowPowerModeEnabled) else {
-                    return false
-                }
-                let userIdleSeconds = CGEventSource.secondsSinceLastEventType(
-                    .combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
-                return DreamScheduler.isSystemIdle(for: userIdleSeconds)
-            },
-            dream: { [weak self] target in
-                guard let self else {
-                    throw TextEngineError.unavailable("LokalBot is shutting down.")
-                }
-                let service = DreamService(
-                    storageRoot: storageRoot,
-                    makeEngine: { [weak self] in
-                        guard let self else {
-                            throw TextEngineError.unavailable("LokalBot is shutting down.")
-                        }
-                        let engineSettings = self.settings
-                        let engine = try await self.thinkExecution.makeTextEngine(
-                            engineSettings,
-                            priority: .background,
-                            purpose: "dreaming")
-                        return (engine, DreamInferenceProvenance(settings: engineSettings))
-                    })
-                let report = try await service.dream(target: target)
-                self.latestDreamReport = report
-                self.refreshDreamMemory()
-            },
-            onError: { [weak self] message in
-                self?.lastError = message
-            })
-    }
-
-    func setDreamingEnabled(_ enabled: Bool) {
-        guard settings.dreamingEnabled != enabled else { return }
-
-        var updated = settings
-        updated.dreamingEnabled = enabled
-        if enabled {
-            let calendar = Calendar.current
-            updated.dreamingFirstEligibleDayKey = DreamDay.key(
-                for: DreamScheduler.previousDay(of: Date(), calendar: calendar),
-                calendar: calendar)
+    private func showOnboardingIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: Self.onboardingShownKey) else { return }
+        if PermissionManager.shared.allGranted {
+            UserDefaults.standard.set(true, forKey: Self.onboardingShownKey)
         } else {
-            updated.dreamingFirstEligibleDayKey = nil
-        }
-        settings = updated
-    }
-
-    func dreamNow() {
-        guard libraryReady else {
-            lastError = "Preparing your meeting library; dreaming will be available when it is ready."
-            return
-        }
-        dreaming.dreamNow()
-    }
-
-    func refreshDreamMemory() {
-        do {
-            dreamMemory = try dreamStore.loadMemory()
-        } catch {
-            dreamMemory = nil
-            lastError = "Could not load dream memory: \(error.localizedDescription)"
+            WindowAccess.shared.open("onboarding")
         }
     }
 
-    func setDreamMemoryPinned(_ pinned: Bool, for entry: DreamMemoryEntry) {
-        guard !dreaming.isDreaming else {
-            lastError = "Wait for the current dream to finish before changing pins."
-            return
-        }
-        do {
-            guard let updated = try dreamStore.setPinned(pinned, for: entry) else {
-                refreshDreamMemory()
-                lastError = "That dream memory item is no longer available."
-                return
-            }
-            dreamMemory = updated
-        } catch {
-            lastError = "Could not update dream memory: \(error.localizedDescription)"
-        }
-    }
-
-    func restartMemoryCapture() {
-        sampler.stop()
-        screenshots.stop()
-        applyTrackingSetting()
-        PermissionManager.shared.refresh()
-    }
-
-    /// Search hit → open the meeting; transcript hits seek the player.
-    func openSearchHit(_ hit: SearchIndex.Hit) {
-        openMeeting(
-            hit.meetingID,
-            seek: hit.kind == .segment ? hit.start : nil)
-    }
-
-    /// Screen search/citation hit → open Timeline at the exact captured frame.
-    func openScreenSnapshot(_ snapshotID: Int64) {
-        navigationHandoff.stageScreenSnapshot(snapshotID)
-        selectedMeetingIDs = []
-        navSection = .timeline
-    }
-
-    /// Chat citation marker → open the cited meeting; timed markers seek the player.
-    func openCitation(_ citation: ChatCitation) {
-        guard let meeting = ((try? SessionLookup.find(id: citation.meetingID, in: meetings)) ?? nil) else { return }
-        openMeeting(meeting.id, seek: citation.seconds)
-    }
-
-    /// Permanently removes meetings: audio folder, list entry, both indexes.
-    func deleteMeetings(_ ids: Set<Meeting.ID>) {
-        var deletedIDs: Set<Meeting.ID> = []
-        for meeting in meetings where ids.contains(meeting.id) {
-            do {
-                try storage.deleteMeeting(meeting)
-                embeddingIndexTasks.removeValue(forKey: meeting.id)?.task.cancel()
-                deletedMeetingIDs.insert(meeting.id)
-                cachedSearchIndex?.noteDeletion(meeting.id)
-                cachedEmbeddingIndex?.noteDeletion(meeting.id)
-                scheduleIndexCleanup(meeting.id)
-                deletedIDs.insert(meeting.id)
-            } catch {
-                lastError = "Could not delete \(meeting.title): \(error.localizedDescription)"
-            }
-        }
-        meetings.removeAll { deletedIDs.contains($0.id) }
-        selectedMeetingIDs.subtract(deletedIDs)
-        pipeline.forget(meetingIDs: deletedIDs)
-        outcomeIndex.refresh(meetings: meetings)
-    }
 }

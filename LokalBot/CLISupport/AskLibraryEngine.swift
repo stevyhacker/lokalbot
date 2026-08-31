@@ -74,6 +74,27 @@ protocol LlamaChatClient {
 }
 
 struct URLSessionLlamaChatClient: LlamaChatClient {
+    private struct CompletionRequest: Encodable {
+        let messages: [[String: String]]
+        let temperature: Double
+        let maxTokens: Int
+
+        enum CodingKeys: String, CodingKey {
+            case messages
+            case temperature
+            case maxTokens = "max_tokens"
+        }
+    }
+
+    private struct CompletionResponse: Decodable {
+        struct Choice: Decodable {
+            struct Message: Decodable { let content: String }
+            let message: Message
+        }
+
+        let choices: [Choice]
+    }
+
     static let mainServerBaseURL = URL(string: "http://127.0.0.1:17872")!
 
     var baseURL = URLSessionLlamaChatClient.mainServerBaseURL
@@ -101,17 +122,15 @@ struct URLSessionLlamaChatClient: LlamaChatClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         LocalLlamaServerAuthentication.apply(to: &request, token: token)
         request.timeoutInterval = 300
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "messages": messages,
-            "temperature": 0.2,
-            "max_tokens": 1024,
-        ] as [String: Any])
+        request.httpBody = try JSONEncoder().encode(CompletionRequest(
+            messages: messages,
+            temperature: 0.2,
+            maxTokens: 1_024))
 
         let (data, _) = try await URLSession.shared.data(for: request)
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = object["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else {
+        guard let content = try JSONDecoder().decode(
+            CompletionResponse.self,
+            from: data).choices.first?.message.content else {
             throw URLError(.cannotParseResponse)
         }
         return content

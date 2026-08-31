@@ -7,27 +7,9 @@ enum TranscriptionLanguage: RawRepresentable, Codable, CaseIterable, Identifiabl
     static let allCases: [TranscriptionLanguage] = [.auto]
         + LanguageCode.transcriptionSupported.map { .language($0) }
 
-    static let en: TranscriptionLanguage = .language(.en)
     static let de: TranscriptionLanguage = .language(.de)
     static let es: TranscriptionLanguage = .language(.es)
     static let fr: TranscriptionLanguage = .language(.fr)
-    static let it: TranscriptionLanguage = .language(.it)
-    static let nl: TranscriptionLanguage = .language(.nl)
-    static let pt: TranscriptionLanguage = .language(.pt)
-    static let pl: TranscriptionLanguage = .language(.pl)
-    static let sv: TranscriptionLanguage = .language(.sv)
-    static let da: TranscriptionLanguage = .language(.da)
-    static let no: TranscriptionLanguage = .language(.no)
-    static let tr: TranscriptionLanguage = .language(.tr)
-    static let ru: TranscriptionLanguage = .language(.ru)
-    static let zh: TranscriptionLanguage = .language(.zh)
-    static let yue: TranscriptionLanguage = .language(.yue)
-    static let ja: TranscriptionLanguage = .language(.ja)
-    static let ko: TranscriptionLanguage = .language(.ko)
-    static let ar: TranscriptionLanguage = .language(.ar)
-    static let hi: TranscriptionLanguage = .language(.hi)
-    static let th: TranscriptionLanguage = .language(.th)
-    static let vi: TranscriptionLanguage = .language(.vi)
 
     var id: String { rawValue }
 

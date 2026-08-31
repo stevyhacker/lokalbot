@@ -30,8 +30,6 @@ actor QwenASREngine: TranscriptionEngine {
     static let compact = QwenASREngine(variant: .compact)
 
     nonisolated var displayName: String { variant.displayName }
-    nonisolated let supportsStreaming = false
-
     private static let sampleRate = 16_000
     private static let maxSegmentSeconds = 15.0
 
@@ -47,12 +45,12 @@ actor QwenASREngine: TranscriptionEngine {
 
     func prepare(progress: ModelPreparationProgressHandler? = nil) async throws {
         if model != nil { return }
-        report(.init(fractionCompleted: 0, status: "Checking..."), to: progress)
+        reportModelPreparation(.init(fractionCompleted: 0, status: "Checking..."), to: progress)
         try await preparation.run { [weak self] in
             guard let self else { return }
             try await self.performPreparation(progress: progress)
         }
-        report(.init(fractionCompleted: 1, status: "Ready"), to: progress)
+        reportModelPreparation(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
     private func performPreparation(progress: ModelPreparationProgressHandler?) async throws {
@@ -88,7 +86,7 @@ actor QwenASREngine: TranscriptionEngine {
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
         activeUses += 1
-        defer { finishUse() }
+        defer { finishIdleTrackedUse(&activeUses, idleTimer: idle) }
         try await prepare()
         guard let model else { throw EngineError.notLoaded }
 
@@ -115,18 +113,6 @@ actor QwenASREngine: TranscriptionEngine {
         await ModelRuntimeRegistry.shared.unregister(
             id: variant == .accuracy ? "transcription:qwen-1.7b" : "transcription:qwen-0.6b"
         )
-    }
-
-    private func finishUse() {
-        activeUses -= 1
-        guard activeUses == 0 else { return }
-        Task { await idle.bump() }
-    }
-
-    private nonisolated func report(_ update: ModelPreparationUpdate,
-                                    to handler: ModelPreparationProgressHandler?) {
-        guard let handler else { return }
-        Task { @MainActor in handler(update) }
     }
 
     private static func cacheRoot() throws -> URL {

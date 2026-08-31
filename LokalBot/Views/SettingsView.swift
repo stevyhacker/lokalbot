@@ -402,14 +402,7 @@ struct SettingsView: View {
                 Section("Day tracking") {
                     Toggle("Track app & window activity", isOn: Binding(
                         get: { app.settings.trackingEnabled },
-                        set: { app.settings.trackingEnabled = $0
-                               if $0 {
-                                   PermissionGuidanceController.shared.requestAccess(
-                                       for: .accessibility)
-                               } else {
-                                   app.settings.screenContextCaptureMode = .activityOnly
-                                   app.settings.screenshotsEnabled = false
-                               } }))
+                        set: setTrackingEnabled))
                     LabeledContent("Window titles") {
                         if ActivitySampler.hasAccessibility {
                             Text("Accessibility granted").foregroundStyle(.secondary)
@@ -422,19 +415,7 @@ struct SettingsView: View {
                     }
                     Picker("Screen context", selection: Binding(
                         get: { app.settings.effectiveScreenContextCaptureMode },
-                        set: { mode in
-                            app.settings.screenContextCaptureMode = mode
-                            app.settings.screenshotsEnabled = mode.capturesPixels
-                            if mode.capturesText {
-                                app.settings.trackingEnabled = true
-                                PermissionGuidanceController.shared.requestAccess(
-                                    for: .accessibility)
-                            }
-                            if mode.capturesPixels {
-                                PermissionGuidanceController.shared.requestAccess(
-                                    for: .screenRecording)
-                            }
-                        })) {
+                        set: setScreenContextMode)) {
                         ForEach(AppSettings.ScreenContextCaptureMode.allCases) { mode in
                             Text(mode.rawValue).tag(mode)
                         }
@@ -492,12 +473,7 @@ struct SettingsView: View {
                     Divider()
                     Toggle("Export a daily memory note", isOn: Binding(
                         get: { app.settings.dailyMemoryExportEnabled },
-                        set: { enabled in
-                            app.settings.dailyMemoryExportEnabled = enabled
-                            if enabled && app.settings.dailyMemoryExportFolder.isEmpty {
-                                chooseDailyExportFolder()
-                            }
-                        }))
+                        set: setDailyMemoryExportEnabled))
                     if app.settings.dailyMemoryExportEnabled {
                         Picker("Format", selection: $app.settings.dailyMemoryExportFormat) {
                             ForEach(AppSettings.DailyMemoryExportFormat.allCases) { format in
@@ -523,6 +499,35 @@ struct SettingsView: View {
                 }
             }
 
+    }
+
+    private func setTrackingEnabled(_ enabled: Bool) {
+        app.settings.trackingEnabled = enabled
+        if enabled {
+            PermissionGuidanceController.shared.requestAccess(for: .accessibility)
+        } else {
+            app.settings.screenContextCaptureMode = .activityOnly
+            app.settings.screenshotsEnabled = false
+        }
+    }
+
+    private func setScreenContextMode(_ mode: AppSettings.ScreenContextCaptureMode) {
+        app.settings.screenContextCaptureMode = mode
+        app.settings.screenshotsEnabled = mode.capturesPixels
+        if mode.capturesText {
+            app.settings.trackingEnabled = true
+            PermissionGuidanceController.shared.requestAccess(for: .accessibility)
+        }
+        if mode.capturesPixels {
+            PermissionGuidanceController.shared.requestAccess(for: .screenRecording)
+        }
+    }
+
+    private func setDailyMemoryExportEnabled(_ enabled: Bool) {
+        app.settings.dailyMemoryExportEnabled = enabled
+        if enabled && app.settings.dailyMemoryExportFolder.isEmpty {
+            chooseDailyExportFolder()
+        }
     }
 
     @ViewBuilder private var routinesSection: some View {
@@ -802,35 +807,17 @@ struct SettingsView: View {
                         }
                         HStack {
                             Button(installer.isInstalled ? "Reinstall…" : "Install for your coding agent…") {
-                                cliMessage = nil
-                                do {
-                                    try installer.install()
-                                    cliMessage = "Installed at \(installer.binLink.path(percentEncoded: false))."
-                                } catch {
-                                    cliMessage = "Install failed: \(error.localizedDescription)"
-                                }
+                                installCLI(using: installer)
                             }
                             .disabled(!installer.isBundleLocationStable)
                             if installer.isInstalled {
                                 Button("Uninstall", role: .destructive) {
-                                    cliMessage = nil
-                                    do {
-                                        try installer.uninstall()
-                                        cliMessage = "Removed lokalbot-cli symlinks."
-                                    } catch {
-                                        cliMessage = "Uninstall failed: \(error.localizedDescription)"
-                                    }
+                                    uninstallCLI(using: installer)
                                 }
                             }
                             if !installer.localBinOnPath {
                                 Button("Add ~/.local/bin to PATH") {
-                                    cliMessage = nil
-                                    do {
-                                        try installer.addLocalBinToPath()
-                                        cliMessage = "Appended to ~/.zshrc — open a new terminal."
-                                    } catch {
-                                        cliMessage = error.localizedDescription
-                                    }
+                                    addCLIToPath(using: installer)
                                 }
                             }
                         }
@@ -843,6 +830,36 @@ struct SettingsView: View {
                 }
             }
 
+    }
+
+    private func installCLI(using installer: LokalBotCLIInstaller) {
+        cliMessage = nil
+        do {
+            try installer.install()
+            cliMessage = "Installed at \(installer.binLink.path(percentEncoded: false))."
+        } catch {
+            cliMessage = "Install failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func uninstallCLI(using installer: LokalBotCLIInstaller) {
+        cliMessage = nil
+        do {
+            try installer.uninstall()
+            cliMessage = "Removed lokalbot-cli symlinks."
+        } catch {
+            cliMessage = "Uninstall failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func addCLIToPath(using installer: LokalBotCLIInstaller) {
+        cliMessage = nil
+        do {
+            try installer.addLocalBinToPath()
+            cliMessage = "Appended to ~/.zshrc — open a new terminal."
+        } catch {
+            cliMessage = error.localizedDescription
+        }
     }
 
     /// Calendar permission state + action for the Meetings section.
@@ -939,48 +956,3 @@ struct SettingsView: View {
 
 /// Observes the nested manager directly so its published marker state keeps
 /// the toggle live without relying on AppState to forward changes.
-private struct AgentAccessToggleRow: View {
-    @ObservedObject var manager: AgentAccessManager
-
-    var body: some View {
-        Group {
-            Toggle(
-                "Allow external agents to read your meeting library",
-                isOn: Binding(
-                    get: { manager.isEnabled },
-                    set: { manager.setEnabled($0) }))
-            Text("Lets MCP clients and the lokalbot-cli skill (Claude, Cursor, …) list, read, and search your meetings, and ask questions answered by your local model — read-only, localhost only. Off by default; while off, agent tools return an error explaining how to enable this.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-}
-
-private struct ScreenMemoryAccessToggleRow: View {
-    @ObservedObject var manager: ScreenMemoryAccessManager
-
-    var body: some View {
-        Group {
-            Toggle(
-                "Allow external agents to read screen memory",
-                isOn: Binding(
-                    get: { manager.isEnabled },
-                    set: { manager.setEnabled($0) }))
-            if manager.isEnabled {
-                Picker("Granted history", selection: Binding(
-                    get: { manager.profile.scope },
-                    set: { manager.setScope($0) })) {
-                    ForEach(ScreenMemoryAccessProfile.Scope.allCases) { scope in
-                        Text(scope.displayName).tag(scope)
-                    }
-                }
-                Text(manager.profile.scope.detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Text("Separately grants scoped, read-only MCP access to captured text and metadata. Decrypted screenshot pixels are never returned, out-of-scope ids appear missing, and meeting access remains independently controlled above.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-}

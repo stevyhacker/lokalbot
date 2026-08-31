@@ -305,7 +305,7 @@ struct HeadlessCommandRunner {
                     settings: { [store = app.settingsStore] in store.current })
                 var agent = ChatAgent(engine: engine, runner: tools)
                 agent.workMemory = ChatPrompt.workMemoryContext(
-                    memory: (try? app.dreamStore.loadMemory()) ?? nil,
+                    memory: try? app.dreamStore.loadMemory(),
                     dreamingEnabled: app.settings.dreamingEnabled)
                 let answer = try await agent.respond(history: [], latest: question) { event in
                     switch event {

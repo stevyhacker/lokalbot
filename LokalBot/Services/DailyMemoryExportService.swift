@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 enum DailyMemoryExportKind: String, Codable, CaseIterable, Sendable {
@@ -250,7 +249,7 @@ struct DailyMemoryExportService {
     }
 
     private static func digest(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        SHA256Digest.hex(of: data)
     }
 
     func render(_ snapshot: DailyMemoryExportSnapshot, format: DailyMemoryExportKind) -> String {
@@ -362,21 +361,14 @@ struct DailyMemoryExportService {
     }
 
     private func displayDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "MMMM d, yyyy"
-        return formatter.string(from: date)
+        LocalDateFormatting.string(
+            from: date,
+            format: "MMMM d, yyyy",
+            calendar: calendar)
     }
 
     private func time(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: date)
+        LocalDateFormatting.time(date, calendar: calendar)
     }
 
     private func duration(_ seconds: TimeInterval) -> String {

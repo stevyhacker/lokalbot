@@ -43,7 +43,7 @@ enum CotypingFullAcceptKey: Int, Codable, Sendable {
 }
 
 /// Which accept key fired — the next chunk (word/phrase) or the whole tail.
-enum CotypingAcceptScope: Sendable {
+enum CotypingAcceptScope: Equatable, Sendable {
     case chunk
     case whole
 }

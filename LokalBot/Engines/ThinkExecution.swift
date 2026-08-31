@@ -104,7 +104,7 @@ final class ThinkExecution {
             return OpenAICompatibleEngine(
                 baseURL: url,
                 model: settings.openAIModel,
-                apiKey: settings.openAIAPIKey,
+                apiKey: try settings.loadOpenAIAPIKey(),
                 chatDialect: .inferred(from: url),
                 openRouterDataPolicy: settings.openRouterDataPolicy)
         }
@@ -243,7 +243,13 @@ final class ThinkExecution {
                 return .unsupported(
                     reason: "Set a model name for the OpenAI-compatible server under Settings → Models.")
             }
-            let key = settings.openAIAPIKey
+            let key: String
+            do {
+                key = try settings.loadOpenAIAPIKey()
+            } catch {
+                return .unsupported(
+                    reason: "The OpenAI-compatible API key could not be read from Keychain. Re-save it under Settings → Models.")
+            }
             return .ready(AgentLLMEndpoint(
                 baseURL: base,
                 model: settings.openAIModel,

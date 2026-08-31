@@ -25,7 +25,6 @@ final class CotypingOverlayController {
         var lineHeight: CGFloat
         var lineCount: Int
         var visibleFrame: CGRect?
-        var inputFrameRect: CGRect?
         var caretIsExact: Bool
         var backgroundLuminance: CGFloat?
     }
@@ -122,7 +121,7 @@ final class CotypingOverlayController {
                 text: text, frame: frame.integral, sourceStyle: style, renderStyle: renderStyle,
                 lineHeight: lineHeight,
                 lineCount: inlineLayout?.lines.count ?? 1,
-                visibleFrame: visible, inputFrameRect: inputFrameRect,
+                visibleFrame: visible,
                 caretIsExact: placement.caretIsExact,
                 backgroundLuminance: cachedLuminance)
         case .mirror:

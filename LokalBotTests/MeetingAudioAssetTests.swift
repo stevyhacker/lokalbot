@@ -3,12 +3,12 @@ import XCTest
 @testable import LokalBot
 
 final class MeetingAudioAssetTests: XCTestCase {
-    func testPrepareUsesBothTracksWhenSystemAudioExists() throws {
+    func testPrepareUsesBothTracksWhenSystemAudioExists() async throws {
         let folder = try temporaryFolder()
         try writeTone(to: folder.appendingPathComponent("mic.m4a"), frequency: 440, duration: 0.25)
         try writeTone(to: folder.appendingPathComponent("system.m4a"), frequency: 660, duration: 0.4)
 
-        let prepared = try MeetingAudioAsset.prepare(folder: folder, hasSystemTrack: true)
+        let prepared = try await MeetingAudioAsset.prepare(folder: folder, hasSystemTrack: true)
 
         XCTAssertEqual(prepared.trackCount, 2)
         XCTAssertEqual(prepared.audioMix.inputParameters.count, 2)

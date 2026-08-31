@@ -52,7 +52,7 @@ final class DreamScheduler: ObservableObject {
     private var hasReport: ((String) -> Bool)?
     private var canRun: () -> Bool = { true }
     private var errorHandler: ((String) -> Void)?
-    private var timer: Timer?
+    private var ticker: WallClockTicker?
     private var dreamTask: Task<Void, Never>?
     private var lastFailure: Date?
     /// In-memory high-water mark for the current calendar snapshot. A launch
@@ -94,21 +94,17 @@ final class DreamScheduler: ObservableObject {
             scanCursorDayKey = nil
             scanCalendar = nil
         }
-        timer?.invalidate()
-        timer = nil
+        ticker?.invalidate()
+        ticker = nil
         guard configuration.enabled else { return }
-        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
+        ticker = WallClockTicker { [weak self] in self?.tick() }
         tick()
     }
 
     func stop() {
         generation &+= 1
-        timer?.invalidate()
-        timer = nil
+        ticker?.invalidate()
+        ticker = nil
         dreamTask?.cancel()
         dreamTask = nil
         isDreaming = false

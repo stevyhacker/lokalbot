@@ -142,6 +142,16 @@ enum ScreenSearchRanker {
 @MainActor
 final class EmbeddingIndex {
 
+    private struct EmbeddingRequest: Encodable {
+        let input: [String]
+        let model: String
+    }
+
+    private struct EmbeddingResponse: Decodable {
+        struct Row: Decodable { let embedding: [Float] }
+        let data: [Row]
+    }
+
     struct Hit: Identifiable, Sendable {
         let id = UUID()
         let meetingID: UUID
@@ -245,6 +255,23 @@ final class EmbeddingIndex {
 
     // MARK: - Indexing
 
+    private struct SourceChunk {
+        let start: TimeInterval
+        let text: String
+    }
+
+    private struct EmbeddedRow {
+        let start: TimeInterval
+        let text: String
+        let vectorData: Data
+    }
+
+    private enum PersistenceDecision {
+        case write
+        case skip
+        case fail
+    }
+
     func reindexAll(_ meetings: [Meeting]) async {
         for meeting in meetings {
             guard !Task.isCancelled else { return }
@@ -258,33 +285,9 @@ final class EmbeddingIndex {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory),
               isDirectory.boolValue else { return }
-        let mtime = ["transcript.json", "summary.md"].compactMap {
-            (try? FileManager.default.attributesOfItem(
-                atPath: folder.appendingPathComponent($0).path))?[.modificationDate] as? Date
-        }.map(\.timeIntervalSince1970).max() ?? 0
+        let mtime = sourceModificationTime(in: folder)
         guard mtime > 0, indexedMtime(meeting.id) ?? -1 < mtime else { return }
-
-        var chunks: [(start: TimeInterval, text: String)] = []
-        if let data = try? Data(contentsOf: folder.appendingPathComponent("transcript.json")),
-           let transcript = try? JSONDecoder().decode(Transcript.self, from: data) {
-            var current = ""
-            var start: TimeInterval = 0
-            for segment in transcript.segments {
-                if current.isEmpty { start = segment.start }
-                current += "\(transcript.displaySpeaker(for: segment.speaker)): \(segment.text)\n"
-                if current.count > 500 {
-                    chunks.append((start, current))
-                    current = ""
-                }
-            }
-            if !current.isEmpty { chunks.append((start, current)) }
-        }
-        if let summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"),
-                                     encoding: .utf8) {
-            for section in summary.components(separatedBy: "\n## ") where section.count > 40 {
-                chunks.append((0, String(section.prefix(700))))
-            }
-        }
+        let chunks = sourceChunks(in: folder)
         guard !chunks.isEmpty else { return }
 
         let vectors = try await Self.embed(chunks.map(\.text), prefix: Self.documentPrefix,
@@ -294,60 +297,136 @@ final class EmbeddingIndex {
             throw TextEngineError.badResponse(
                 "embedding response contained \(vectors.count) vectors for \(chunks.count) chunks")
         }
-        let rows = zip(chunks, vectors).map { chunk, vector in
-            let vectorData = vector.withUnsafeBufferPointer { buffer -> Data in
-                guard let baseAddress = buffer.baseAddress else { return Data() }
-                return Data(bytes: baseAddress, count: buffer.count * MemoryLayout<Float>.stride)
-            }
-            return (start: chunk.start, text: String(chunk.text.prefix(300)), vectorData: vectorData)
-        }
-
+        let rows = embeddedRows(chunks: chunks, vectors: vectors)
         guard let database else { return }
         let meetingID = meeting.id.uuidString
         database.transaction {
-            do {
-                guard try !database.hasRowChecked(
-                    "SELECT 1 FROM deleted_meetings WHERE meeting_id = ?1",
-                    bind: [meetingID]),
-                      FileManager.default.fileExists(atPath: folder.path) else { return true }
-                // Embedding can suspend for minutes. Recheck freshness under
-                // BEGIN IMMEDIATE so an older request cannot replace a newer
-                // snapshot after it finally receives vectors.
-                if let indexed = try database.firstDoubleChecked(
-                    """
-                    SELECT source_mtime FROM embedded_meetings
-                    WHERE meeting_id = ?1 AND model_id = ?2
-                    """, bind: [meetingID, Self.modelID]), indexed >= mtime {
-                    return true
-                }
-            } catch {
-                return false
-            }
-            guard database.run(
-                "DELETE FROM embeddings WHERE meeting_id = ?1",
-                bind: [meetingID]) else { return false }
-            let inserted = database.withStatement(
-                "INSERT INTO embeddings (meeting_id, start, text, vec) VALUES (?1, ?2, ?3, ?4)"
-            ) { statement in
-                for row in rows {
-                    guard database.run(statement, bind: [
-                        meetingID, row.start, row.text, row.vectorData,
-                    ]) else { return false }
-                }
-                return true
-            } ?? false
-            guard inserted else { return false }
-            return database.run(
-                "INSERT OR REPLACE INTO embedded_meetings (meeting_id, source_mtime, model_id) VALUES (?1, ?2, ?3)",
-                bind: [meetingID, mtime, Self.modelID])
+            persist(
+                rows,
+                meetingID: meetingID,
+                folder: folder,
+                sourceModificationTime: mtime,
+                database: database)
         }
     }
 
-    @discardableResult
-    func remove(_ meetingID: UUID) -> Bool {
-        noteDeletion(meetingID)
-        guard let database else { return false }
-        return Self.remove(meetingID, in: database)
+    private func sourceModificationTime(in folder: URL) -> TimeInterval {
+        ["transcript.json", "summary.md"].compactMap {
+            (try? FileManager.default.attributesOfItem(
+                atPath: folder.appendingPathComponent($0).path))?[.modificationDate] as? Date
+        }.map(\.timeIntervalSince1970).max() ?? 0
+    }
+
+    private func sourceChunks(in folder: URL) -> [SourceChunk] {
+        transcriptChunks(in: folder) + summaryChunks(in: folder)
+    }
+
+    private func transcriptChunks(in folder: URL) -> [SourceChunk] {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("transcript.json")),
+              let transcript = try? JSONDecoder().decode(Transcript.self, from: data) else {
+            return []
+        }
+        var chunks: [SourceChunk] = []
+        var text = ""
+        var start: TimeInterval = 0
+        for segment in transcript.segments {
+            if text.isEmpty { start = segment.start }
+            text += "\(transcript.displaySpeaker(for: segment.speaker)): \(segment.text)\n"
+            if text.count > 500 {
+                chunks.append(.init(start: start, text: text))
+                text = ""
+            }
+        }
+        if !text.isEmpty { chunks.append(.init(start: start, text: text)) }
+        return chunks
+    }
+
+    private func summaryChunks(in folder: URL) -> [SourceChunk] {
+        guard let summary = try? String(
+            contentsOf: folder.appendingPathComponent("summary.md"),
+            encoding: .utf8
+        ) else { return [] }
+        return summary.components(separatedBy: "\n## ")
+            .filter { $0.count > 40 }
+            .map { .init(start: 0, text: String($0.prefix(700))) }
+    }
+
+    private func embeddedRows(
+        chunks: [SourceChunk],
+        vectors: [[Float]]
+    ) -> [EmbeddedRow] {
+        zip(chunks, vectors).map { chunk, vector in
+            .init(
+                start: chunk.start,
+                text: String(chunk.text.prefix(300)),
+                vectorData: Self.vectorData(vector))
+        }
+    }
+
+    private func persist(
+        _ rows: [EmbeddedRow],
+        meetingID: String,
+        folder: URL,
+        sourceModificationTime: TimeInterval,
+        database: SQLiteDatabase
+    ) -> Bool {
+        switch persistenceDecision(
+            meetingID: meetingID,
+            folder: folder,
+            sourceModificationTime: sourceModificationTime,
+            database: database
+        ) {
+        case .skip: return true
+        case .fail: return false
+        case .write: break
+        }
+        guard database.run(
+            "DELETE FROM embeddings WHERE meeting_id = ?1",
+            bind: [meetingID]
+        ) else { return false }
+        guard insert(rows, meetingID: meetingID, database: database) else { return false }
+        return database.run(
+            "INSERT OR REPLACE INTO embedded_meetings (meeting_id, source_mtime, model_id) VALUES (?1, ?2, ?3)",
+            bind: [meetingID, sourceModificationTime, Self.modelID])
+    }
+
+    private func persistenceDecision(
+        meetingID: String,
+        folder: URL,
+        sourceModificationTime: TimeInterval,
+        database: SQLiteDatabase
+    ) -> PersistenceDecision {
+        do {
+            guard try !database.hasRowChecked(
+                "SELECT 1 FROM deleted_meetings WHERE meeting_id = ?1",
+                bind: [meetingID]),
+                  FileManager.default.fileExists(atPath: folder.path) else { return .skip }
+            let indexed = try database.firstDoubleChecked(
+                """
+                SELECT source_mtime FROM embedded_meetings
+                WHERE meeting_id = ?1 AND model_id = ?2
+                """,
+                bind: [meetingID, Self.modelID])
+            return indexed.map { $0 < sourceModificationTime ? .write : .skip } ?? .write
+        } catch {
+            return .fail
+        }
+    }
+
+    private func insert(
+        _ rows: [EmbeddedRow],
+        meetingID: String,
+        database: SQLiteDatabase
+    ) -> Bool {
+        database.withStatement(
+            "INSERT INTO embeddings (meeting_id, start, text, vec) VALUES (?1, ?2, ?3, ?4)"
+        ) { statement in
+            rows.allSatisfy { row in
+                database.run(statement, bind: [
+                    meetingID, row.start, row.text, row.vectorData,
+                ])
+            }
+        } ?? false
     }
 
     /// Immediately closes the async rank/delete race without waiting for a
@@ -546,7 +625,7 @@ final class EmbeddingIndex {
         else { return [] }
 
         var conditions = ["embedded.model_id = ?1"]
-        var bindings: [Any] = [Self.modelID]
+        var bindings: [SQLiteBinding] = [Self.modelID]
         if let interval = filter.interval {
             let startParameter = bindings.count + 1
             bindings.append(interval.start.timeIntervalSince1970)
@@ -764,18 +843,15 @@ final class EmbeddingIndex {
             let authenticationToken = await LlamaServer.embedder.authenticationToken()
             request.setValue("Bearer \(authenticationToken)", forHTTPHeaderField: "Authorization")
             request.timeoutInterval = 120
-            request.httpBody = try JSONSerialization.data(withJSONObject: [
-                "input": texts.map { prefix + $0 },
-                "model": Self.modelID,
-            ])
+            request.httpBody = try JSONEncoder().encode(EmbeddingRequest(
+                input: texts.map { prefix + $0 },
+                model: Self.modelID))
             let (data, _) = try await URLSession.shared.data(for: request)
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let rows = json["data"] as? [[String: Any]] else {
+            guard let rows = try? JSONDecoder().decode(EmbeddingResponse.self, from: data).data else {
                 throw TextEngineError.badResponse("unexpected /v1/embeddings payload")
             }
-            return rows.compactMap { row -> [Float]? in
-                guard let values = row["embedding"] as? [Double] else { return nil }
-                let vector = values.map(Float.init)
+            return rows.map { row in
+                let vector = row.embedding
                 let norm = sqrt(vector.reduce(0) { $0 + $1 * $1 })
                 return norm > 0 ? vector.map { $0 / norm } : vector
             }

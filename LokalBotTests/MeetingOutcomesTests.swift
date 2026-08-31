@@ -101,17 +101,17 @@ final class MeetingOutcomesTests: XCTestCase {
     // MARK: - Schema and prompt
 
     func testSchemaSerializesAsJSON() throws {
-        let data = try JSONSerialization.data(withJSONObject: OutcomesExtractor.schema)
-        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        XCTAssertEqual(Set(object["required"] as? [String] ?? []),
+        let data = try JSONValue.encodeObject(OutcomesExtractor.schema)
+        let object = try JSONValue.decodeObject(from: data)
+        XCTAssertEqual(Set(object["required"]?.stringArrayValue ?? []),
                        ["action_items", "decisions", "open_questions"])
-        XCTAssertEqual(object["additionalProperties"] as? Bool, false)
-        let properties = try XCTUnwrap(object["properties"] as? [String: Any])
-        let actionItems = try XCTUnwrap(properties["action_items"] as? [String: Any])
-        let item = try XCTUnwrap(actionItems["items"] as? [String: Any])
-        XCTAssertEqual(Set(item["required"] as? [String] ?? []),
+        XCTAssertEqual(object["additionalProperties"]?.boolValue, false)
+        let properties = try XCTUnwrap(object["properties"]?.objectValue)
+        let actionItems = try XCTUnwrap(properties["action_items"]?.objectValue)
+        let item = try XCTUnwrap(actionItems["items"]?.objectValue)
+        XCTAssertEqual(Set(item["required"]?.stringArrayValue ?? []),
                        ["text", "owner", "due", "for_user", "source_segment_ids"])
-        XCTAssertEqual(item["additionalProperties"] as? Bool, false)
+        XCTAssertEqual(item["additionalProperties"]?.boolValue, false)
         XCTAssertNil(OpenAIStrictSchemaValidator.validationIssue(
             in: OutcomesExtractor.schema))
     }

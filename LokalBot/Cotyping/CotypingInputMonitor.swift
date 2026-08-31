@@ -226,7 +226,7 @@ final class CotypingInputMonitor {
 // MARK: - C event-tap callbacks
 
 private func cotypingObserverCallback(
-    _ proxy: CGEventTapProxy, _ type: CGEventType, _ event: CGEvent,
+    _: CGEventTapProxy, _ type: CGEventType, _ event: CGEvent,
     _ userInfo: UnsafeMutableRawPointer?
 ) -> Unmanaged<CGEvent>? {
     if let userInfo {
@@ -237,7 +237,7 @@ private func cotypingObserverCallback(
 }
 
 private func cotypingAcceptCallback(
-    _ proxy: CGEventTapProxy, _ type: CGEventType, _ event: CGEvent,
+    _: CGEventTapProxy, _ type: CGEventType, _ event: CGEvent,
     _ userInfo: UnsafeMutableRawPointer?
 ) -> Unmanaged<CGEvent>? {
     guard let userInfo else { return Unmanaged.passUnretained(event) }

@@ -229,7 +229,7 @@ final class SearchIndex {
         if kind != nil { sql += " AND kind = ?2" }
         sql += " ORDER BY rank LIMIT \(limit)"
 
-        let values: [Any]
+        let values: [SQLiteBinding]
         if let kind {
             values = [match, kind.rawValue]
         } else {

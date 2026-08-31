@@ -325,7 +325,7 @@ final class PermissionOverlayWindowController: NSWindowController {
             display: true)
     }
 
-    @objc private func displayLinkDidFire(_ displayLink: CADisplayLink) {
+    @objc private func displayLinkDidFire(_: CADisplayLink) {
         stepLaunchAnimation()
     }
 

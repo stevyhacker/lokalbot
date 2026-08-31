@@ -309,6 +309,8 @@ targets:
       - path: LokalBot/Models/CalendarParticipantIdentity.swift
       - path: LokalBot/Models/AppIdentifiers.swift
       - path: LokalBot/Models/AppDirectories.swift
+      - path: LokalBot/Support/SHA256Digest.swift
+      - path: LokalBot/Support/JSONValue.swift
     dependencies:
       - package: ArgumentParser
         product: ArgumentParser

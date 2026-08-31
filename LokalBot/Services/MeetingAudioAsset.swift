@@ -33,7 +33,7 @@ enum MeetingAudioAsset {
         let gain: Float
     }
 
-    static func prepare(folder: URL, hasSystemTrack: Bool) throws -> PreparedAsset {
+    static func prepare(folder: URL, hasSystemTrack: Bool) async throws -> PreparedAsset {
         let sources = existingSources(folder: folder, hasSystemTrack: hasSystemTrack)
         guard !sources.isEmpty else { throw AudioAssetError.noPlayableTracks }
 
@@ -43,13 +43,13 @@ enum MeetingAudioAsset {
 
         for source in sources {
             let asset = AVURLAsset(url: source.url)
-            guard let sourceTrack = asset.tracks(withMediaType: .audio).first,
+            guard let sourceTrack = try await asset.loadTracks(withMediaType: .audio).first,
                   let compositionTrack = composition.addMutableTrack(
                     withMediaType: .audio,
                     preferredTrackID: kCMPersistentTrackID_Invalid
                   ) else { continue }
 
-            let timeRange = sourceTrack.timeRange
+            let timeRange = try await sourceTrack.load(.timeRange)
             let seconds = CMTimeGetSeconds(timeRange.duration)
             guard seconds.isFinite, seconds > 0 else { continue }
 
@@ -78,7 +78,7 @@ enum MeetingAudioAsset {
     }
 
     static func exportMixedRecording(folder: URL, hasSystemTrack: Bool, to outputURL: URL) async throws {
-        let prepared = try prepare(folder: folder, hasSystemTrack: hasSystemTrack)
+        let prepared = try await prepare(folder: folder, hasSystemTrack: hasSystemTrack)
         guard let exporter = AVAssetExportSession(
             asset: prepared.composition,
             presetName: AVAssetExportPresetAppleM4A
@@ -86,32 +86,17 @@ enum MeetingAudioAsset {
             throw AudioAssetError.exportSessionUnavailable
         }
 
-        if FileManager.default.fileExists(atPath: outputURL.path) {
-            try FileManager.default.removeItem(at: outputURL)
-        }
+        try FileSystemSupport.removeIfPresent(outputURL)
 
         exporter.audioMix = prepared.audioMix
-        exporter.outputURL = outputURL
-        exporter.outputFileType = .m4a
         exporter.shouldOptimizeForNetworkUse = true
 
-        try await withCheckedThrowingContinuation { continuation in
-            exporter.exportAsynchronously {
-                switch exporter.status {
-                case .completed:
-                    continuation.resume()
-                case .cancelled:
-                    continuation.resume(throwing: AudioAssetError.exportCancelled)
-                case .failed:
-                    continuation.resume(throwing: AudioAssetError.exportFailed(
-                        exporter.error?.localizedDescription ?? "unknown error"
-                    ))
-                default:
-                    continuation.resume(throwing: AudioAssetError.exportFailed(
-                        exporter.error?.localizedDescription ?? "export did not complete"
-                    ))
-                }
-            }
+        do {
+            try await exporter.export(to: outputURL, as: .m4a)
+        } catch is CancellationError {
+            throw AudioAssetError.exportCancelled
+        } catch {
+            throw AudioAssetError.exportFailed(error.localizedDescription)
         }
     }
 

@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// Stateless client for HuggingFace's public model REST API. Holds one
@@ -184,12 +183,6 @@ struct HFModelSummary: Decodable, Identifiable, Hashable {
     let downloads: Int
     let likes: Int
 
-    init(id: String, downloads: Int, likes: Int) {
-        self.id = id
-        self.downloads = downloads
-        self.likes = likes
-    }
-
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
@@ -252,8 +245,7 @@ struct HFFile: Identifiable, Hashable {
                 character.isLetter || character.isNumber || "-_.".contains(character)
                     ? character : "_"
             }
-        let digest = SHA256.hash(data: Data("\(modelID)/\(id)".utf8))
-            .prefix(6).map { String(format: "%02x", $0) }.joined()
+        let digest = SHA256Digest.hex(of: "\(modelID)/\(id)", prefixByteCount: 6)
         return "hf-\(digest)-\(String(leaf).suffix(180))"
     }
 

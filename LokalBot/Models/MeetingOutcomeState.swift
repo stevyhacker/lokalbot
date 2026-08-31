@@ -74,29 +74,6 @@ struct FollowUpDraft: Codable, Equatable, Sendable {
     var reviewed = false
     var sourceMeetingID: UUID?
 
-    static func seeded(for meeting: Meeting, outcomes: MeetingOutcomes) -> FollowUpDraft {
-        let decisions = outcomes.decisionRecords.prefix(3).map { "- \($0.text)" }
-        let actions = outcomes.actionItems.prefix(5).map { item in
-            let owner = item.owner.map { " -- \($0)" } ?? ""
-            let due = item.due.map { " (\($0))" } ?? ""
-            return "- \(item.text)\(owner)\(due)"
-        }
-        var sections = ["Hi,", "", "Here is the follow-up from \(meeting.displayTitle)."]
-        if !decisions.isEmpty {
-            sections += ["", "Decisions", decisions.joined(separator: "\n")]
-        }
-        if !actions.isEmpty {
-            sections += ["", "Next steps", actions.joined(separator: "\n")]
-        }
-        sections += ["", "Best,"]
-        return FollowUpDraft(
-            subject: "Follow-up: \(meeting.displayTitle)",
-            body: sections.joined(separator: "\n"),
-            seeded: true,
-            reviewed: false,
-            sourceMeetingID: meeting.id)
-    }
-
     init(schemaVersion: Int = currentSchemaVersion, recipient: String = "",
          cc: String = "", subject: String = "", body: String = "",
          updatedAt: Date = Date(), seeded: Bool = true, reviewed: Bool = false,

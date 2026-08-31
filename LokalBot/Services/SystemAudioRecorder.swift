@@ -198,7 +198,8 @@ final class SystemAudioRecorder {
         tapFormat = format
 
         // 4. Private aggregate device that contains (auto-starts) the tap.
-        let aggDescription: [String: Any] = [
+        // CoreAudio requires a heterogeneous aggregate-device dictionary.
+        let aggDescription: [String: Any] = [ // swiftlint:disable:this no_dynamic_any
             kAudioAggregateDeviceNameKey: "LokalBot Tap",
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
             kAudioAggregateDeviceIsPrivateKey: true,
@@ -214,7 +215,8 @@ final class SystemAudioRecorder {
         // 5. Output file (PCM → AAC handled by AVAudioFile). Reattaches keep
         // this writer open so samples already captured remain in the same M4A.
         if file == nil {
-            let settings: [String: Any] = [
+            // AVAudioFile requires its heterogeneous settings dictionary.
+            let settings: [String: Any] = [ // swiftlint:disable:this no_dynamic_any
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: format.sampleRate,
                 AVNumberOfChannelsKey: format.channelCount,
@@ -496,21 +498,6 @@ final class SystemAudioRecorder {
         }
         guard sampleCount > 0 else { return 0 }
         return Float(sqrt(sumSquares / Double(sampleCount)))
-    }
-
-    private static func copyBuffer(_ source: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        guard let destination = AVAudioPCMBuffer(
-            pcmFormat: source.format,
-            frameCapacity: source.frameLength) else { return nil }
-        destination.frameLength = source.frameLength
-        return copyBuffer(source, into: destination) ? destination : nil
-    }
-
-    private static func copyBuffer(
-        _ source: AVAudioPCMBuffer,
-        into destination: AVAudioPCMBuffer
-    ) -> Bool {
-        copyBufferList(source.audioBufferList, into: destination)
     }
 
     private static func copyBufferList(

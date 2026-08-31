@@ -1,95 +1,5 @@
 import Foundation
 
-/// Minimal JSON model for JSON-RPC params, results, and tool schemas.
-/// Codable so a whole response tree encodes in one pass; the literal
-/// conformances keep dispatcher code and tool schemas readable.
-enum JSONValue: Codable, Equatable {
-    case null
-    case bool(Bool)
-    case number(Double)
-    case string(String)
-    case array([JSONValue])
-    case object([String: JSONValue])
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if container.decodeNil() {
-            self = .null
-        } else if let value = try? container.decode(Bool.self) {
-            self = .bool(value)
-        } else if let value = try? container.decode(Double.self) {
-            self = .number(value)
-        } else if let value = try? container.decode(String.self) {
-            self = .string(value)
-        } else if let value = try? container.decode([JSONValue].self) {
-            self = .array(value)
-        } else if let value = try? container.decode([String: JSONValue].self) {
-            self = .object(value)
-        } else {
-            throw DecodingError.dataCorruptedError(
-                in: container,
-                debugDescription: "Not a JSON value")
-        }
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case .null:
-            try container.encodeNil()
-        case .bool(let value):
-            try container.encode(value)
-        case .number(let value):
-            if value == value.rounded(), abs(value) < 1e15 {
-                try container.encode(Int64(value))
-            } else {
-                try container.encode(value)
-            }
-        case .string(let value):
-            try container.encode(value)
-        case .array(let value):
-            try container.encode(value)
-        case .object(let value):
-            try container.encode(value)
-        }
-    }
-
-    var stringValue: String? {
-        if case .string(let value) = self { return value }
-        return nil
-    }
-
-    var intValue: Int? {
-        if case .number(let value) = self,
-           value.isFinite,
-           value.rounded(.towardZero) == value,
-           value >= Double(Int.min),
-           value <= Double(Int.max) {
-            return Int(value)
-        }
-        return nil
-    }
-
-    var objectValue: [String: JSONValue]? {
-        if case .object(let value) = self { return value }
-        return nil
-    }
-
-    subscript(key: String) -> JSONValue? { objectValue?[key] }
-}
-
-extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral,
-    ExpressibleByBooleanLiteral, ExpressibleByArrayLiteral,
-    ExpressibleByDictionaryLiteral, ExpressibleByNilLiteral {
-    init(stringLiteral value: String) { self = .string(value) }
-    init(integerLiteral value: Int) { self = .number(Double(value)) }
-    init(booleanLiteral value: Bool) { self = .bool(value) }
-    init(arrayLiteral elements: JSONValue...) { self = .array(elements) }
-    init(dictionaryLiteral elements: (String, JSONValue)...) {
-        self = .object(Dictionary(uniqueKeysWithValues: elements))
-    }
-    init(nilLiteral: ()) { self = .null }
-}
 
 enum MCPTransportLimits {
     static let maximumRecordBytes = 1_048_576
@@ -125,51 +35,81 @@ struct MCPStdioLineReader {
 
     mutating func next() throws -> Record {
         while true {
-            if discardingOversizedRecord {
-                if let newline = pending.firstIndex(of: 0x0A) {
-                    pending.removeSubrange(pending.startIndex...newline)
-                    discardingOversizedRecord = false
-                    continue
-                }
-                pending.removeAll(keepingCapacity: true)
-                if reachedEOF {
-                    discardingOversizedRecord = false
-                    return .end
-                }
-            } else {
-                if let newline = pending.firstIndex(of: 0x0A) {
-                    let byteCount = pending.distance(from: pending.startIndex, to: newline)
-                    guard byteCount <= maximumRecordBytes else {
-                        pending.removeSubrange(pending.startIndex...newline)
-                        return .oversized
-                    }
-                    var data = pending.prefix(upTo: newline)
-                    pending.removeSubrange(pending.startIndex...newline)
-                    if data.last == 0x0D { data.removeLast() }
-                    return .line(String(decoding: data, as: UTF8.self))
-                }
-
-                if pending.count > maximumRecordBytes {
-                    pending.removeAll(keepingCapacity: true)
-                    discardingOversizedRecord = true
-                    return .oversized
-                }
-
-                if reachedEOF {
-                    guard !pending.isEmpty else { return .end }
-                    var data = pending
-                    pending.removeAll(keepingCapacity: true)
-                    if data.last == 0x0D { data.removeLast() }
-                    return .line(String(decoding: data, as: UTF8.self))
-                }
+            switch nextPendingAction() {
+            case .record(let record):
+                return record
+            case .retry:
+                continue
+            case .read:
+                try readMore()
             }
+        }
+    }
 
-            let chunk = try input.read(upToCount: chunkBytes) ?? Data()
-            if chunk.isEmpty {
-                reachedEOF = true
-            } else {
-                pending.append(chunk)
+    private enum PendingAction {
+        case record(Record)
+        case retry
+        case read
+    }
+
+    private mutating func nextPendingAction() -> PendingAction {
+        discardingOversizedRecord ? oversizedDiscardAction() : bufferedRecordAction()
+    }
+
+    private mutating func oversizedDiscardAction() -> PendingAction {
+        if let newline = pending.firstIndex(of: 0x0A) {
+            pending.removeSubrange(pending.startIndex...newline)
+            discardingOversizedRecord = false
+            return .retry
+        }
+        pending.removeAll(keepingCapacity: true)
+        guard reachedEOF else { return .read }
+        discardingOversizedRecord = false
+        return .record(.end)
+    }
+
+    private mutating func bufferedRecordAction() -> PendingAction {
+        if let newline = pending.firstIndex(of: 0x0A) {
+            let byteCount = pending.distance(from: pending.startIndex, to: newline)
+            guard byteCount <= maximumRecordBytes else {
+                pending.removeSubrange(pending.startIndex...newline)
+                return .record(.oversized)
             }
+            var data = pending.prefix(upTo: newline)
+            pending.removeSubrange(pending.startIndex...newline)
+            trimCarriageReturn(from: &data)
+            return .record(.line(String(decoding: data, as: UTF8.self)))
+        }
+
+        if pending.count > maximumRecordBytes {
+            pending.removeAll(keepingCapacity: true)
+            discardingOversizedRecord = true
+            return .record(.oversized)
+        }
+
+        guard reachedEOF else { return .read }
+        guard !pending.isEmpty else { return .record(.end) }
+        var data = pending
+        pending.removeAll(keepingCapacity: true)
+        trimCarriageReturn(from: &data)
+        return .record(.line(String(decoding: data, as: UTF8.self)))
+    }
+
+    private func trimCarriageReturn<T: RangeReplaceableCollection & BidirectionalCollection>(
+        from data: inout T
+    )
+    where T.Element == UInt8 {
+        if data.last == 0x0D {
+            data.removeLast()
+        }
+    }
+
+    private mutating func readMore() throws {
+        let chunk = try input.read(upToCount: chunkBytes) ?? Data()
+        if chunk.isEmpty {
+            reachedEOF = true
+        } else {
+            pending.append(chunk)
         }
     }
 }

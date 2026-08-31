@@ -78,7 +78,7 @@ final class DataMigrationTests: XCTestCase {
             try Data("db".utf8).write(to: oldDir.appendingPathComponent(name))
         }
 
-        XCTAssertTrue(DataMigration.migrateDataDir(from: oldDir, to: newDir))
+        XCTAssertTrue(try DataMigration.migrateDataDir(from: oldDir, to: newDir))
 
         XCTAssertFalse(fm.fileExists(atPath: oldDir.path), "V2 dir should be moved, not left behind")
         // Library content survives the move.
@@ -99,7 +99,7 @@ final class DataMigrationTests: XCTestCase {
         try fm.createDirectory(at: oldDir, withIntermediateDirectories: true)
         try Data("db".utf8).write(to: oldDir.appendingPathComponent("lokalbotv3.sqlite"))
 
-        XCTAssertTrue(DataMigration.migrateDataDir(from: oldDir, to: newDir, renamesDatabase: false))
+        XCTAssertTrue(try DataMigration.migrateDataDir(from: oldDir, to: newDir, renamesDatabase: false))
 
         XCTAssertFalse(fm.fileExists(atPath: oldDir.path))
         XCTAssertTrue(fm.fileExists(atPath: newDir.appendingPathComponent("lokalbotv3.sqlite").path))
@@ -116,10 +116,10 @@ final class DataMigrationTests: XCTestCase {
         try makeDatabase(at: newDir.appendingPathComponent("lokalbotv3.sqlite"))
         try Data("model".utf8).write(to: oldDir.appendingPathComponent("models/local.gguf"))
 
-        XCTAssertTrue(DataMigration.migrateDataDir(from: oldDir, to: newDir,
-                                                   renamesDatabase: false,
-                                                   mergeIfDestinationExists: true,
-                                                   replacePlaceholderDatabase: true))
+        XCTAssertTrue(try DataMigration.migrateDataDir(from: oldDir, to: newDir,
+                                                       renamesDatabase: false,
+                                                       mergeIfDestinationExists: true,
+                                                       replacePlaceholderDatabase: true))
 
         XCTAssertTrue(fm.fileExists(atPath: newDir.appendingPathComponent("models/local.gguf").path))
         XCTAssertEqual(SQLiteDatabase(url: newDir.appendingPathComponent("lokalbotv3.sqlite"))?
@@ -137,10 +137,10 @@ final class DataMigrationTests: XCTestCase {
         try makeDatabase(at: newDir.appendingPathComponent("lokalbotv3.sqlite"), rows: 1)
         try Data("model".utf8).write(to: oldDir.appendingPathComponent("models/local.gguf"))
 
-        XCTAssertTrue(DataMigration.migrateDataDir(from: oldDir, to: newDir,
-                                                   renamesDatabase: false,
-                                                   mergeIfDestinationExists: true,
-                                                   replacePlaceholderDatabase: true))
+        XCTAssertTrue(try DataMigration.migrateDataDir(from: oldDir, to: newDir,
+                                                       renamesDatabase: false,
+                                                       mergeIfDestinationExists: true,
+                                                       replacePlaceholderDatabase: true))
 
         XCTAssertTrue(fm.fileExists(atPath: newDir.appendingPathComponent("models/local.gguf").path))
         XCTAssertEqual(SQLiteDatabase(url: newDir.appendingPathComponent("lokalbotv3.sqlite"))?
@@ -162,10 +162,10 @@ final class DataMigrationTests: XCTestCase {
                          activityRows: 2,
                          indexedMeetings: 5)
 
-        XCTAssertTrue(DataMigration.migrateDataDir(from: oldDir, to: newDir,
-                                                   renamesDatabase: false,
-                                                   mergeIfDestinationExists: true,
-                                                   replacePlaceholderDatabase: true))
+        XCTAssertTrue(try DataMigration.migrateDataDir(from: oldDir, to: newDir,
+                                                       renamesDatabase: false,
+                                                       mergeIfDestinationExists: true,
+                                                       replacePlaceholderDatabase: true))
 
         let migratedDB = SQLiteDatabase(url: newDir.appendingPathComponent("lokalbotv3.sqlite"))
         XCTAssertEqual(migratedDB?.firstDouble("SELECT COUNT(*) FROM screenshots"), 2)
@@ -181,16 +181,16 @@ final class DataMigrationTests: XCTestCase {
         try fm.createDirectory(at: newDir, withIntermediateDirectories: true)
         try Data("new".utf8).write(to: newDir.appendingPathComponent("keep"))
 
-        XCTAssertFalse(DataMigration.migrateDataDir(from: oldDir, to: newDir),
+        XCTAssertFalse(try DataMigration.migrateDataDir(from: oldDir, to: newDir),
                        "must not clobber an existing V3 library")
         XCTAssertTrue(fm.fileExists(atPath: oldDir.appendingPathComponent("marker").path))
         XCTAssertTrue(fm.fileExists(atPath: newDir.appendingPathComponent("keep").path))
     }
 
-    func testMigrateDataDirIsNoOpWithoutV2Library() {
+    func testMigrateDataDirIsNoOpWithoutV2Library() throws {
         let oldDir = tmp.appendingPathComponent("com.dotenv.LokalBotV2", isDirectory: true)
         let newDir = tmp.appendingPathComponent("me.dotenv.LokalBot", isDirectory: true)
-        XCTAssertFalse(DataMigration.migrateDataDir(from: oldDir, to: newDir))
+        XCTAssertFalse(try DataMigration.migrateDataDir(from: oldDir, to: newDir))
         XCTAssertFalse(FileManager.default.fileExists(atPath: newDir.path))
     }
 
@@ -255,5 +255,49 @@ final class DataMigrationTests: XCTestCase {
             defaults: defaults)
         XCTAssertFalse(defaults.bool(forKey: "lokalbotv3.migratedFromV2"),
                        "migration must not run (or mark itself done) under an XCTest host")
+    }
+
+    func testPerformOnceMarksCompleteOnlyAfterSuccess() throws {
+        let defaults = freshSuite()
+        let flag = "migration.complete"
+
+        XCTAssertThrowsError(try DataMigration.performOnce(flag: flag, defaults: defaults) {
+            throw CocoaError(.fileWriteUnknown)
+        })
+        XCTAssertFalse(defaults.bool(forKey: flag))
+
+        try DataMigration.performOnce(flag: flag, defaults: defaults) {}
+        XCTAssertTrue(defaults.bool(forKey: flag))
+    }
+
+    func testPerformOnceDoesNotRepeatCompletedWork() throws {
+        let defaults = freshSuite()
+        let flag = "migration.complete"
+        var invocationCount = 0
+
+        try DataMigration.performOnce(flag: flag, defaults: defaults) { invocationCount += 1 }
+        try DataMigration.performOnce(flag: flag, defaults: defaults) { invocationCount += 1 }
+
+        XCTAssertEqual(invocationCount, 1)
+    }
+
+    func testFailureNoticeIsConsumedExactlyOnce() {
+        let defaults = freshSuite()
+        defaults.set("Migration will retry.", forKey: DataMigration.failureNoticeKey)
+
+        XCTAssertEqual(DataMigration.consumeFailureNotice(defaults: defaults), "Migration will retry.")
+        XCTAssertNil(DataMigration.consumeFailureNotice(defaults: defaults))
+    }
+
+    func testMigrateDataDirSurfacesMoveFailureAndLeavesSourceForRetry() throws {
+        let oldDir = tmp.appendingPathComponent("old", isDirectory: true)
+        try FileManager.default.createDirectory(at: oldDir, withIntermediateDirectories: true)
+        try Data("keep".utf8).write(to: oldDir.appendingPathComponent("marker"))
+        let blockedParent = tmp.appendingPathComponent("blocked")
+        try Data("not a directory".utf8).write(to: blockedParent)
+        let newDir = blockedParent.appendingPathComponent("new", isDirectory: true)
+
+        XCTAssertThrowsError(try DataMigration.migrateDataDir(from: oldDir, to: newDir))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: oldDir.appendingPathComponent("marker").path))
     }
 }

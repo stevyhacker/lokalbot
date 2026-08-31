@@ -38,33 +38,35 @@ enum LanguageCode: String, Codable, CaseIterable, Identifiable, Hashable, Sendab
         .ru, .ar, .hi, .it, .nl, .tr, .pl, .sv, .da, .no, .nn, .th, .vi,
     ]
 
+    private static let summaryDisplayNames: [LanguageCode: String] = [
+        .en: "English",
+        .zh: "Simplified Chinese (Mandarin)",
+        .zhHant: "Traditional Chinese (Mandarin)",
+        .yue: "Cantonese",
+        .ja: "Japanese",
+        .ko: "Korean",
+        .es: "Spanish",
+        .fr: "French",
+        .de: "German",
+        .pt: "Portuguese (Brazil)",
+        .ptPT: "Portuguese (Portugal)",
+        .ru: "Russian",
+        .ar: "Arabic",
+        .hi: "Hindi",
+        .it: "Italian",
+        .nl: "Dutch",
+        .tr: "Turkish",
+        .pl: "Polish",
+        .sv: "Swedish",
+        .da: "Danish",
+        .no: "Norwegian (Bokmål)",
+        .nn: "Norwegian (Nynorsk)",
+        .th: "Thai",
+        .vi: "Vietnamese",
+    ]
+
     var summaryDisplayName: String {
-        switch self {
-        case .en: return "English"
-        case .zh: return "Simplified Chinese (Mandarin)"
-        case .zhHant: return "Traditional Chinese (Mandarin)"
-        case .yue: return "Cantonese"
-        case .ja: return "Japanese"
-        case .ko: return "Korean"
-        case .es: return "Spanish"
-        case .fr: return "French"
-        case .de: return "German"
-        case .pt: return "Portuguese (Brazil)"
-        case .ptPT: return "Portuguese (Portugal)"
-        case .ru: return "Russian"
-        case .ar: return "Arabic"
-        case .hi: return "Hindi"
-        case .it: return "Italian"
-        case .nl: return "Dutch"
-        case .tr: return "Turkish"
-        case .pl: return "Polish"
-        case .sv: return "Swedish"
-        case .da: return "Danish"
-        case .no: return "Norwegian (Bokmål)"
-        case .nn: return "Norwegian (Nynorsk)"
-        case .th: return "Thai"
-        case .vi: return "Vietnamese"
-        }
+        Self.summaryDisplayNames[self] ?? rawValue
     }
 
     var transcriptionDisplayName: String {

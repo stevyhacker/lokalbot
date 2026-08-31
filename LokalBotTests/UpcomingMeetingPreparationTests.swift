@@ -295,7 +295,7 @@ final class UpcomingMeetingPreparationTests: XCTestCase {
     }
 
     private func loadMeetings() -> [Meeting] {
-        StorageManager(rootURL: root).loadMeetings()
+        (try? StorageManager(rootURL: root).loadMeetingLibrary().meetings) ?? []
     }
 }
 

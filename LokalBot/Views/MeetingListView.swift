@@ -37,6 +37,20 @@ struct MeetingListView: View {
             .background(.bar)
             Divider()
 
+            if let error = app.libraryLoadError {
+                InlineIssueView(
+                    error,
+                    systemImage: "externaldrive.badge.exclamationmark",
+                    actionTitle: "Retry",
+                    actionStyle: .bordered
+                ) {
+                    app.retryLibraryLoad()
+                }
+                .padding(.horizontal, WorkspaceMetric.cardPadding)
+                .padding(.vertical, 8)
+                Divider()
+            }
+
             List(selection: $app.selectedMeetingIDs) {
                 ForEach(groupedMeetings, id: \.label) { group in
                     Section {
@@ -51,7 +65,7 @@ struct MeetingListView: View {
             }
             .accessibilityIdentifier("meeting.list")
             .overlay {
-                if !app.libraryReady {
+                if !app.libraryReady && app.libraryLoadError == nil {
                     LoadingStateLabel(
                         "Loading your meeting library…",
                         font: WorkspaceTypography.body)

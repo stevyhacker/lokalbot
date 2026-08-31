@@ -127,7 +127,8 @@ actor LiveMeetingAudioPreparationWorker {
         format: AVAudioFormat,
         to url: URL
     ) throws {
-        let settings: [String: Any] = [
+        // AVAudioFile requires its heterogeneous settings dictionary.
+        let settings: [String: Any] = [ // swiftlint:disable:this no_dynamic_any
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVSampleRateKey: format.sampleRate,
             AVNumberOfChannelsKey: 1,

@@ -561,18 +561,15 @@ enum CotypingMacro {
     /// Bundled, offline, approximate exchange rates (units per USD). Never reaches
     /// the network — in keeping with LokalBot's strictly-local posture.
     struct CurrencyRateTable {
-        let asOf: String
         private let ratesPerUSD: [String: Double]
 
-        init(asOf: String, ratesPerUSD: [String: Double]) {
-            self.asOf = asOf
+        init(ratesPerUSD: [String: Double]) {
             self.ratesPerUSD = ratesPerUSD
         }
 
         func rate(for code: String) -> Double? { ratesPerUSD[code.uppercased()] }
 
         static let bundled = CurrencyRateTable(
-            asOf: "2026-06",
             ratesPerUSD: [
                 "USD": 1.0, "EUR": 0.92, "GBP": 0.79, "JPY": 151.0, "CAD": 1.36, "AUD": 1.51,
                 "CHF": 0.90, "CNY": 7.24, "INR": 83.4, "MXN": 17.1, "BRL": 5.05, "ZAR": 18.6,

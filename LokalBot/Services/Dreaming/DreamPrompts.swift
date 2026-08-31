@@ -94,18 +94,18 @@ enum DreamPrompts {
     """
 
     /// JSON schema matching `system`'s shape for grammar-constrained backends.
-    static var schema: [String: Any] {
-        let stringList: [String: Any] = ["type": "array", "items": ["type": "string"]]
+    static var schema: JSONObject {
+        let stringList: JSONObject = ["type": "array", "items": ["type": "string"]]
         return [
             "type": "object",
             "additionalProperties": false,
             "properties": [
                 "narrative": ["type": "string"],
-                "attention": stringList,
-                "repeated_work": stringList,
-                "suggested_checks": stringList,
-                "frictions": stringList,
-                "top_actions": stringList,
+                "attention": .object(stringList),
+                "repeated_work": .object(stringList),
+                "suggested_checks": .object(stringList),
+                "frictions": .object(stringList),
+                "top_actions": .object(stringList),
                 "active_projects": [
                     "type": "array",
                     "items": [
@@ -114,7 +114,7 @@ enum DreamPrompts {
                         "properties": [
                             "name": ["type": "string"],
                             "status": ["type": "string"],
-                            "evidence": stringList,
+                            "evidence": .object(stringList),
                         ],
                         "required": ["name", "status", "evidence"],
                     ],
@@ -136,7 +136,7 @@ enum DreamPrompts {
                         "required": ["text", "horizon", "reinforced_today", "expired"],
                     ],
                 ],
-                "recurring_patterns": stringList,
+                "recurring_patterns": .object(stringList),
             ],
             "required": ["narrative", "attention", "repeated_work", "suggested_checks",
                          "frictions", "top_actions", "active_projects", "work_goals",

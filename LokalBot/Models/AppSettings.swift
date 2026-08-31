@@ -124,7 +124,7 @@ struct AppSettings: Codable, Equatable {
 
     // MARK: Models (M2)
 
-    var transcriptionModel: TranscriptionModelChoice = TranscriptionModelChoice.recommended
+    var transcriptionModel = TranscriptionModelChoice.recommended
     /// The GGUF/projector pair used when Granite Speech is selected. Older
     /// settings decode to the pinned Q4 default; custom Hugging Face choices
     /// retain immutable revision and checksum metadata.
@@ -330,13 +330,12 @@ struct AppSettings: Codable, Equatable {
             return model.isEmpty ? summarizerBackend.displayName : model
         }
     }
-    var openAIAPIKey: String {
-        get {
-            KeychainSecrets.string(account: "openai-compatible-api-key") ?? ""
-        }
-        set {
-            KeychainSecrets.setString(newValue, account: "openai-compatible-api-key")
-        }
+    func loadOpenAIAPIKey() throws -> String {
+        try KeychainSecrets.string(account: "openai-compatible-api-key") ?? ""
+    }
+
+    func saveOpenAIAPIKey(_ value: String) throws {
+        try KeychainSecrets.setString(value, account: "openai-compatible-api-key")
     }
 
     // MARK: - Summarisation shape

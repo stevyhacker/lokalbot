@@ -43,13 +43,13 @@ final class LeasedTextEngineTests: XCTestCase {
         }
 
         func generate(system: String, prompt: String, context: [String],
-                      schema: [String: Any]) async throws -> String {
+                      schema: JSONObject) async throws -> String {
             await recorder.record("generate-schema")
             return "schema:\(prompt)"
         }
 
         func generate(system: String, prompt: String, context: [String],
-                      schema: [String: Any],
+                      schema: JSONObject,
                       options: TextGenerationOptions) async throws -> String {
             await recorder.record("generate-schema-options:\(options.maxTokens ?? -1)")
             return "schema-options:\(prompt)"

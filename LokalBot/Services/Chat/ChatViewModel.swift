@@ -1,170 +1,5 @@
 import Combine
 import Foundation
-import CryptoKit
-
-/// One line in the chat transcript. `activity` holds the tool steps the
-/// assistant ran for this turn (shown as chips above its answer). Codable so
-/// conversations persist; `isPending` is transient and never written.
-struct ChatMessage: Identifiable, Equatable, Codable {
-    struct Activity: Identifiable, Equatable, Codable {
-        let id: UUID
-        let tool: String
-        let icon: String
-        var text: String
-        var done: Bool
-
-        init(id: UUID = UUID(), tool: String, icon: String, text: String, done: Bool) {
-            self.id = id; self.tool = tool; self.icon = icon; self.text = text; self.done = done
-        }
-    }
-
-    let id: UUID
-    let role: ChatRole
-    var text: String
-    var activity: [Activity]
-    /// Sources enabled for this specific question. Empty on legacy turns.
-    var sourceScopes: [AskSourceScope]
-    /// The assistant turn is still being generated. Transient — never persisted.
-    var isPending: Bool
-    /// The turn failed (engine unreachable, no model, …) — rendered as an error.
-    var isError: Bool
-
-    init(id: UUID = UUID(), role: ChatRole, text: String,
-         activity: [Activity] = [], sourceScopes: [AskSourceScope] = [],
-         isPending: Bool = false, isError: Bool = false) {
-        self.id = id; self.role = role; self.text = text
-        self.activity = activity; self.sourceScopes = sourceScopes
-        self.isPending = isPending; self.isError = isError
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id, role, text, activity, sourceScopes, isError
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        role = try c.decode(ChatRole.self, forKey: .role)
-        text = try c.decode(String.self, forKey: .text)
-        activity = try c.decodeIfPresent([Activity].self, forKey: .activity) ?? []
-        sourceScopes = try c.decodeIfPresent([AskSourceScope].self, forKey: .sourceScopes) ?? []
-        isError = try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false
-        isPending = false
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(id, forKey: .id)
-        try c.encode(role, forKey: .role)
-        try c.encode(text, forKey: .text)
-        if !activity.isEmpty { try c.encode(activity, forKey: .activity) }
-        if !sourceScopes.isEmpty { try c.encode(sourceScopes, forKey: .sourceScopes) }
-        if isError { try c.encode(isError, forKey: .isError) }
-    }
-}
-
-/// A saved chat conversation — the unit of history persisted to disk.
-struct Conversation: Identifiable, Codable, Equatable {
-    let id: UUID
-    var title: String
-    var createdAt: Date
-    var updatedAt: Date
-    var messages: [ChatMessage]
-
-    init(id: UUID = UUID(), title: String = ChatViewModel.newChatTitle,
-         createdAt: Date = Date(), updatedAt: Date = Date(), messages: [ChatMessage] = []) {
-        self.id = id; self.title = title; self.createdAt = createdAt
-        self.updatedAt = updatedAt; self.messages = messages
-    }
-}
-
-/// Persists chat conversations as one JSON file per conversation under
-/// `<root>/chats/`, mirroring the file-per-document layout used for meetings
-/// and journals. Personal scale: the whole set loads into memory and each
-/// save rewrites a single small file atomically.
-@MainActor
-final class ChatStore {
-    private let dir: URL
-    private let encryptionKey: @MainActor () throws -> SymmetricKey
-
-    init(rootURL: URL, encryptionKey: @escaping @MainActor () throws -> SymmetricKey = {
-        try KeychainSecrets.symmetricKey(account: "chat-key")
-    }) {
-        dir = rootURL.appendingPathComponent("chats", isDirectory: true)
-        self.encryptionKey = encryptionKey
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    }
-
-    private static let encoder: JSONEncoder = {
-        let e = JSONEncoder()
-        e.outputFormatting = [.prettyPrinted, .sortedKeys]
-        e.dateEncodingStrategy = .iso8601
-        return e
-    }()
-    private static let decoder: JSONDecoder = {
-        let d = JSONDecoder()
-        d.dateDecodingStrategy = .iso8601
-        return d
-    }()
-
-    private func fileURL(_ id: UUID) -> URL {
-        dir.appendingPathComponent("\(id.uuidString).json.enc")
-    }
-
-    func loadAll() -> [Conversation] {
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: nil) else { return [] }
-        let key = try? encryptionKey()
-        var result: [Conversation] = []
-        for file in files {
-            switch file.pathExtension {
-            case "enc":
-                guard let key,
-                      let data = try? Data(contentsOf: file),
-                      let box = try? AES.GCM.SealedBox(combined: data),
-                      let plain = try? AES.GCM.open(box, using: key),
-                      let convo = try? Self.decoder.decode(Conversation.self, from: plain)
-                else { continue }
-                result.append(convo)
-            case "json":
-                // Legacy plaintext (pre-encryption): load it, then migrate to a
-                // sealed file — deleting the plaintext only once the encrypted
-                // copy is safely written.
-                guard let data = try? Data(contentsOf: file),
-                      let convo = try? Self.decoder.decode(Conversation.self, from: data)
-                else { continue }
-                result.append(convo)
-                if save(convo) { try? FileManager.default.removeItem(at: file) }
-            default:
-                continue
-            }
-        }
-        return result.sorted { $0.updatedAt > $1.updatedAt }
-    }
-
-    /// Encode → AES-GCM seal (per-install Keychain key) → atomic write. Returns
-    /// whether the sealed file landed, so the migration above never discards
-    /// plaintext before its encrypted replacement exists.
-    @discardableResult
-    func save(_ conversation: Conversation) -> Bool {
-        guard let key = try? encryptionKey(),
-              let data = try? Self.encoder.encode(conversation),
-              let combined = try? AES.GCM.seal(data, using: key).combined else { return false }
-        do {
-            try combined.write(to: fileURL(conversation.id), options: .atomic)
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    func delete(_ id: UUID) {
-        try? FileManager.default.removeItem(at: fileURL(id))
-        // Drop any legacy plaintext that was never migrated.
-        try? FileManager.default.removeItem(
-            at: dir.appendingPathComponent("\(id.uuidString).json"))
-    }
-}
 
 /// Drives the Chat section: owns the message list and runs `ChatAgent` against
 /// the same `TextEngine` the summariser uses (resolved lazily per send via
@@ -184,9 +19,10 @@ final class ChatViewModel: ObservableObject {
     /// All saved conversations, most-recently-updated first (drives the list).
     @Published private(set) var conversations: [Conversation] = []
     /// The conversation currently shown in the transcript.
-    @Published private(set) var currentID: UUID
+    @Published private(set) var currentID = UUID()
+    @Published private(set) var persistenceError: String?
 
-    nonisolated static let newChatTitle = "New chat"
+    nonisolated static let newChatTitle = Conversation.untitledTitle
 
     /// Prompt chips shown on the empty state.
     let suggestions = [
@@ -215,15 +51,27 @@ final class ChatViewModel: ObservableObject {
         self.tools = tools
         self.store = store
         self.workMemory = workMemory
-        let saved = store.loadAll()
-        if let latest = saved.first {
-            conversations = saved
-            currentID = latest.id
-            messages = latest.messages
-        } else {
+        do {
+            let load = try store.loadAll()
+            if let latest = load.conversations.first {
+                conversations = load.conversations
+                currentID = latest.id
+                messages = latest.messages
+            } else {
+                let fresh = Conversation()
+                conversations = [fresh]
+                currentID = fresh.id
+            }
+            if !load.issues.isEmpty {
+                persistenceError = "Loaded chat history, but \(load.issues.count) conversation file"
+                    + (load.issues.count == 1 ? "" : "s") + " could not be read or migrated."
+                load.issues.prefix(10).forEach { lokalbotLog("chat storage issue: \($0.message)") }
+            }
+        } catch {
             let fresh = Conversation()
             conversations = [fresh]
             currentID = fresh.id
+            persistenceError = "Chat history could not be loaded: \(error.localizedDescription)"
         }
     }
 
@@ -300,7 +148,7 @@ final class ChatViewModel: ObservableObject {
     /// Start a new, empty conversation (persisting the current one first).
     func newConversation() {
         stop()
-        persist()
+        guard persist() else { return }
         // Already on an empty conversation? Stay put rather than pile up blanks.
         if messages.isEmpty { return }
         let fresh = Conversation()
@@ -313,7 +161,7 @@ final class ChatViewModel: ObservableObject {
     func select(_ id: UUID) {
         guard id != currentID else { return }
         stop()
-        persist()
+        guard persist() else { return }
         currentID = id
         messages = conversations.first { $0.id == id }?.messages ?? []
     }
@@ -321,7 +169,13 @@ final class ChatViewModel: ObservableObject {
     /// Delete a conversation from disk and the list.
     func delete(_ id: UUID) {
         stop()
-        store.delete(id)
+        do {
+            try store.delete(id)
+            persistenceError = nil
+        } catch {
+            persistenceError = "The conversation was not deleted: \(error.localizedDescription)"
+            return
+        }
         conversations.removeAll { $0.id == id }
         guard id == currentID else { return }
         if let next = conversations.first {
@@ -338,8 +192,9 @@ final class ChatViewModel: ObservableObject {
     /// Fold the live transcript back into its conversation and persist it.
     /// In-flight / empty assistant placeholders are dropped so a half-finished
     /// turn never lands on disk.
-    private func persist() {
-        guard let index = conversations.firstIndex(where: { $0.id == currentID }) else { return }
+    @discardableResult
+    private func persist() -> Bool {
+        guard let index = conversations.firstIndex(where: { $0.id == currentID }) else { return true }
         let clean = messages
             .filter { !($0.role == .assistant && $0.text.isEmpty && !$0.isError) }
             .map { message -> ChatMessage in
@@ -355,7 +210,19 @@ final class ChatViewModel: ObservableObject {
         }
         conversations.remove(at: index)
         conversations.insert(convo, at: 0)
-        if !clean.isEmpty { store.save(convo) }
+        guard !clean.isEmpty else { return true }
+        do {
+            try store.save(convo)
+            persistenceError = nil
+            return true
+        } catch {
+            persistenceError = "The current conversation was not saved: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    func dismissPersistenceError() {
+        persistenceError = nil
     }
 
     /// A one-line conversation title derived from the first user message.

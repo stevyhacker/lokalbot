@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 /// One-shot migrations from previous LokalBot identities to the current app id.
 ///
@@ -22,6 +21,17 @@ import Security
 /// (which migrates) before the CLI is used.
 enum DataMigration {
 
+    private enum MigrationError: LocalizedError {
+        case databaseFileConflict(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .databaseFileConflict(let name):
+                return "Both the old and current database contain \(name); neither file was overwritten."
+            }
+        }
+    }
+
     // MARK: Old identities. Keep these frozen; changing them would strand data.
     private static let oldV2BundleID = "com.dotenv.LokalBotV2"
     private static let oldV2SettingsKey = "lokalbotv2.settings"
@@ -41,6 +51,7 @@ enum DataMigration {
     /// re-prompts for Keychain access) on later launches.
     private static let migratedFromV2Flag = "lokalbotv3.migratedFromV2"
     private static let migratedFromV3Flag = "lokalbot.migratedFromDotenvV3"
+    static let failureNoticeKey = "lokalbot.dataMigration.failureNotice"
 
     /// Migrate old libraries/settings/secrets into the current identity exactly once.
     static func runIfNeeded(environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -62,45 +73,70 @@ enum DataMigration {
         let appSupport = AppDirectories.userApplicationSupport
         let currentDir = AppDirectories.applicationSupport
 
-        migrateFromV3IfNeeded(appSupport: appSupport, currentDir: currentDir, defaults: defaults)
-        migrateFromV2IfNeeded(appSupport: appSupport, currentDir: currentDir, defaults: defaults)
+        do {
+            try migrateFromV3IfNeeded(appSupport: appSupport, currentDir: currentDir, defaults: defaults)
+            try migrateFromV2IfNeeded(appSupport: appSupport, currentDir: currentDir, defaults: defaults)
+            defaults.removeObject(forKey: failureNoticeKey)
+        } catch {
+            let notice = "LokalBot could not finish migrating data from an earlier install. "
+                + "The original data was left in place and migration will retry next launch. "
+                + error.localizedDescription
+            defaults.set(notice, forKey: failureNoticeKey)
+            NSLog("DataMigration: migration incomplete; will retry: \(error)")
+        }
     }
 
-    private static func migrateFromV3IfNeeded(appSupport: URL, currentDir: URL, defaults: UserDefaults) {
-        guard !defaults.bool(forKey: migratedFromV3Flag) else { return }
-        defaults.set(true, forKey: migratedFromV3Flag)
-
-        let moved = migrateDataDir(from: appSupport.appendingPathComponent(oldV3BundleID, isDirectory: true),
-                                   to: currentDir,
-                                   renamesDatabase: false,
-                                   mergeIfDestinationExists: true,
-                                   replacePlaceholderDatabase: true)
-
-        if let old = UserDefaults(suiteName: oldV3BundleID) {
-            migrateSettings(from: old, to: defaults,
-                            settingsKey: AppSettings.key,
-                            onboardingKey: AppState.onboardingShownKey)
-        }
-        migrateKeychain(from: oldV3BundleID, to: AppIdentifiers.bundleID)
-
-        if moved { NSLog("DataMigration: migrated old LokalBotV3 library -> \(AppIdentifiers.bundleID)") }
+    /// Commit a migration marker only after every fallible step succeeds. The
+    /// operation must be idempotent because a later launch retries it after an
+    /// interrupted or failed attempt.
+    static func performOnce(flag: String, defaults: UserDefaults,
+                            operation: () throws -> Void) throws {
+        guard !defaults.bool(forKey: flag) else { return }
+        try operation()
+        defaults.set(true, forKey: flag)
     }
 
-    private static func migrateFromV2IfNeeded(appSupport: URL, currentDir: URL, defaults: UserDefaults) {
-        guard !defaults.bool(forKey: migratedFromV2Flag) else { return }
-        // Mark done up front: a partial migration is better than an infinite
-        // retry loop that re-shows the Keychain-access dialog every launch.
-        defaults.set(true, forKey: migratedFromV2Flag)
+    static func consumeFailureNotice(defaults: UserDefaults = .standard) -> String? {
+        guard let notice = defaults.string(forKey: failureNoticeKey) else { return nil }
+        defaults.removeObject(forKey: failureNoticeKey)
+        return notice
+    }
 
-        let moved = migrateDataDir(from: appSupport.appendingPathComponent(oldV2BundleID, isDirectory: true),
-                                   to: currentDir)
+    private static func migrateFromV3IfNeeded(appSupport: URL, currentDir: URL,
+                                              defaults: UserDefaults) throws {
+        try performOnce(flag: migratedFromV3Flag, defaults: defaults) {
+            let moved = try migrateDataDir(
+                from: appSupport.appendingPathComponent(oldV3BundleID, isDirectory: true),
+                to: currentDir,
+                renamesDatabase: false,
+                mergeIfDestinationExists: true,
+                replacePlaceholderDatabase: true)
 
-        if let old = UserDefaults(suiteName: oldV2BundleID) {
-            migrateSettings(from: old, to: defaults)
+            if let old = UserDefaults(suiteName: oldV3BundleID) {
+                migrateSettings(from: old, to: defaults,
+                                settingsKey: AppSettings.key,
+                                onboardingKey: AppState.onboardingShownKey)
+            }
+            try migrateKeychain(from: oldV3BundleID, to: AppIdentifiers.bundleID)
+
+            if moved { NSLog("DataMigration: migrated old LokalBotV3 library -> \(AppIdentifiers.bundleID)") }
         }
-        migrateKeychain(from: oldV2BundleID, to: AppIdentifiers.bundleID)
+    }
 
-        if moved { NSLog("DataMigration: migrated LokalBotV2 library -> \(AppIdentifiers.bundleID)") }
+    private static func migrateFromV2IfNeeded(appSupport: URL, currentDir: URL,
+                                              defaults: UserDefaults) throws {
+        try performOnce(flag: migratedFromV2Flag, defaults: defaults) {
+            let moved = try migrateDataDir(
+                from: appSupport.appendingPathComponent(oldV2BundleID, isDirectory: true),
+                to: currentDir)
+
+            if let old = UserDefaults(suiteName: oldV2BundleID) {
+                migrateSettings(from: old, to: defaults)
+            }
+            try migrateKeychain(from: oldV2BundleID, to: AppIdentifiers.bundleID)
+
+            if moved { NSLog("DataMigration: migrated LokalBotV2 library -> \(AppIdentifiers.bundleID)") }
+        }
     }
 
     // MARK: - Data directory
@@ -114,119 +150,135 @@ enum DataMigration {
                                renamesDatabase: Bool = true,
                                mergeIfDestinationExists: Bool = false,
                                replacePlaceholderDatabase: Bool = false,
-                               fileManager fm: FileManager = .default) -> Bool {
-        guard fm.fileExists(atPath: oldDir.path) else { return false }
-        if fm.fileExists(atPath: newDir.path) {
+                               fileManager fm: FileManager = .default) throws -> Bool {
+        guard try FileSystemSupport.itemExists(at: oldDir, fileManager: fm) else {
+            // If the directory move succeeded but a V2 database rename did not,
+            // the source no longer exists. Finish the idempotent rename in place.
+            guard renamesDatabase,
+                  try FileSystemSupport.itemExists(at: newDir, fileManager: fm) else {
+                return false
+            }
+            return try renameLegacyDatabaseFiles(in: newDir, fileManager: fm)
+        }
+        if try FileSystemSupport.itemExists(at: newDir, fileManager: fm) {
             guard mergeIfDestinationExists else { return false }
-            return mergeDataDir(from: oldDir, to: newDir,
-                                replacePlaceholderDatabase: replacePlaceholderDatabase,
-                                fileManager: fm)
+            return try mergeDataDir(from: oldDir, to: newDir,
+                                    replacePlaceholderDatabase: replacePlaceholderDatabase,
+                                    fileManager: fm)
         }
-        do {
-            try fm.moveItem(at: oldDir, to: newDir)
-        } catch {
-            return false
-        }
+        try fm.moveItem(at: oldDir, to: newDir)
         guard renamesDatabase else { return true }
-        // The DB filename embeds the version; rename the file and its WAL/SHM
-        // sidecars so the current app opens the existing index instead of a fresh one.
-        let renames = [(oldV2DBName, currentDBName)] + ["-wal", "-shm"].map { (oldV2DBName + $0, currentDBName + $0) }
-        for (old, new) in renames {
-            let src = newDir.appendingPathComponent(old)
-            guard fm.fileExists(atPath: src.path) else { continue }
-            try? fm.moveItem(at: src, to: newDir.appendingPathComponent(new))
-        }
+        _ = try renameLegacyDatabaseFiles(in: newDir, fileManager: fm)
         return true
+    }
+
+    private static func renameLegacyDatabaseFiles(in directory: URL,
+                                                  fileManager fm: FileManager) throws -> Bool {
+        var renamed = false
+        let renames = [(oldV2DBName, currentDBName)] + ["-wal", "-shm"].map {
+            (oldV2DBName + $0, currentDBName + $0)
+        }
+        for (old, new) in renames {
+            let src = directory.appendingPathComponent(old)
+            guard try FileSystemSupport.itemExists(at: src, fileManager: fm) else { continue }
+            let destination = directory.appendingPathComponent(new)
+            guard try FileSystemSupport.itemExists(at: destination, fileManager: fm) == false else {
+                throw MigrationError.databaseFileConflict(new)
+            }
+            try fm.moveItem(at: src, to: destination)
+            renamed = true
+        }
+        return renamed
     }
 
     @discardableResult
     private static func mergeDataDir(from oldDir: URL, to newDir: URL,
                                      replacePlaceholderDatabase: Bool,
-                                     fileManager fm: FileManager) -> Bool {
+                                     fileManager fm: FileManager) throws -> Bool {
         var migrated = false
         if replacePlaceholderDatabase {
-            migrated = replaceCurrentDatabaseIfPlaceholder(from: oldDir, to: newDir, fileManager: fm) || migrated
+            migrated = try replaceCurrentDatabaseIfPlaceholder(
+                from: oldDir, to: newDir, fileManager: fm) || migrated
         }
-        guard let items = try? fm.contentsOfDirectory(at: oldDir,
-                                                      includingPropertiesForKeys: [.isDirectoryKey],
-                                                      options: [.skipsHiddenFiles]) else {
-            return migrated
-        }
+        let items = try fm.contentsOfDirectory(at: oldDir,
+                                               includingPropertiesForKeys: [.isDirectoryKey],
+                                               options: [.skipsHiddenFiles])
         let databaseNames = [currentDBName, currentDBName + "-wal", currentDBName + "-shm"]
         for item in items {
             if replacePlaceholderDatabase && databaseNames.contains(item.lastPathComponent) { continue }
             let destination = newDir.appendingPathComponent(item.lastPathComponent)
-            migrated = mergeItem(from: item, to: destination, fileManager: fm) || migrated
+            migrated = try mergeItem(from: item, to: destination, fileManager: fm) || migrated
         }
         return migrated
     }
 
     @discardableResult
-    private static func mergeItem(from source: URL, to destination: URL, fileManager fm: FileManager) -> Bool {
-        var sourceIsDirectory = ObjCBool(false)
-        guard fm.fileExists(atPath: source.path, isDirectory: &sourceIsDirectory) else { return false }
-
-        var destinationIsDirectory = ObjCBool(false)
-        guard fm.fileExists(atPath: destination.path, isDirectory: &destinationIsDirectory) else {
-            do {
-                try fm.moveItem(at: source, to: destination)
-                return true
-            } catch {
-                return false
-            }
-        }
-
-        guard sourceIsDirectory.boolValue && destinationIsDirectory.boolValue,
-              let children = try? fm.contentsOfDirectory(at: source,
-                                                         includingPropertiesForKeys: [.isDirectoryKey],
-                                                         options: [.skipsHiddenFiles]) else {
+    private static func mergeItem(from source: URL, to destination: URL,
+                                  fileManager fm: FileManager) throws -> Bool {
+        guard let sourceIsDirectory = try FileSystemSupport.itemIsDirectory(
+            at: source,
+            fileManager: fm
+        ) else {
             return false
         }
+        guard let destinationIsDirectory = try FileSystemSupport.itemIsDirectory(
+            at: destination,
+            fileManager: fm
+        ) else {
+            try fm.moveItem(at: source, to: destination)
+            return true
+        }
+
+        guard sourceIsDirectory && destinationIsDirectory else {
+            return false
+        }
+        let children = try fm.contentsOfDirectory(at: source,
+                                                  includingPropertiesForKeys: [.isDirectoryKey],
+                                                  options: [.skipsHiddenFiles])
         var migrated = false
         for child in children {
-            migrated = mergeItem(from: child,
-                                 to: destination.appendingPathComponent(child.lastPathComponent),
-                                 fileManager: fm) || migrated
+            migrated = try mergeItem(
+                from: child,
+                to: destination.appendingPathComponent(child.lastPathComponent),
+                fileManager: fm) || migrated
         }
-        if (try? fm.contentsOfDirectory(atPath: source.path).isEmpty) == true {
-            try? fm.removeItem(at: source)
+        if try fm.contentsOfDirectory(atPath: source.path).isEmpty {
+            try fm.removeItem(at: source)
         }
         return migrated
     }
 
     @discardableResult
     private static func replaceCurrentDatabaseIfPlaceholder(from oldDir: URL, to newDir: URL,
-                                                            fileManager fm: FileManager) -> Bool {
+                                                            fileManager fm: FileManager) throws -> Bool {
         let oldDB = oldDir.appendingPathComponent(currentDBName)
         let newDB = newDir.appendingPathComponent(currentDBName)
-        guard fm.fileExists(atPath: oldDB.path),
-              shouldReplaceCurrentDatabase(oldDB: oldDB, newDB: newDB, fileManager: fm),
-              databaseLooksUseful(oldDB, fileManager: fm) else {
+        guard try FileSystemSupport.itemExists(at: oldDB, fileManager: fm),
+              try shouldReplaceCurrentDatabase(oldDB: oldDB, newDB: newDB, fileManager: fm),
+              try databaseLooksUseful(oldDB, fileManager: fm) else {
             return false
         }
         var migrated = false
         for suffix in ["", "-wal", "-shm"] {
             let old = oldDir.appendingPathComponent(currentDBName + suffix)
-            guard fm.fileExists(atPath: old.path) else { continue }
+            guard try FileSystemSupport.itemExists(at: old, fileManager: fm) else { continue }
             let new = newDir.appendingPathComponent(currentDBName + suffix)
-            try? fm.removeItem(at: new)
-            do {
-                try fm.moveItem(at: old, to: new)
-                migrated = true
-            } catch {
-                return migrated
+            if try FileSystemSupport.itemExists(at: new, fileManager: fm) {
+                try fm.removeItem(at: new)
             }
+            try fm.moveItem(at: old, to: new)
+            migrated = true
         }
         return migrated
     }
 
     private static func shouldReplaceCurrentDatabase(oldDB: URL, newDB: URL,
-                                                     fileManager fm: FileManager) -> Bool {
-        if databaseLooksPlaceholder(newDB, fileManager: fm) { return true }
+                                                     fileManager fm: FileManager) throws -> Bool {
+        if try databaseLooksPlaceholder(newDB, fileManager: fm) { return true }
 
-        let oldSize = fileSize(oldDB, fileManager: fm)
-        let newSize = fileSize(newDB, fileManager: fm)
-        guard newSize <= 512 * 1024,
+        guard let oldSize = try fileSize(oldDB, fileManager: fm),
+              let newSize = try fileSize(newDB, fileManager: fm),
+              newSize <= 512 * 1024,
               oldSize >= max(512 * 1024, newSize * 4) else {
             return false
         }
@@ -240,16 +292,20 @@ enum DataMigration {
         return newActivity <= 10 && oldActivity > 100
     }
 
-    private static func databaseLooksPlaceholder(_ url: URL, fileManager fm: FileManager) -> Bool {
-        guard fm.fileExists(atPath: url.path) else { return true }
+    private static func databaseLooksPlaceholder(_ url: URL,
+                                                 fileManager fm: FileManager) throws -> Bool {
+        guard try FileSystemSupport.itemExists(at: url, fileManager: fm) else { return true }
         if databaseHasUserRows(url) { return false }
-        return fileSize(url, fileManager: fm) <= 128 * 1024
+        guard let size = try fileSize(url, fileManager: fm) else { return false }
+        return size <= 128 * 1024
     }
 
-    private static func databaseLooksUseful(_ url: URL, fileManager fm: FileManager) -> Bool {
-        guard fm.fileExists(atPath: url.path) else { return false }
+    private static func databaseLooksUseful(_ url: URL,
+                                            fileManager fm: FileManager) throws -> Bool {
+        guard try FileSystemSupport.itemExists(at: url, fileManager: fm) else { return false }
         if databaseHasUserRows(url) { return true }
-        return fileSize(url, fileManager: fm) > 128 * 1024
+        guard let size = try fileSize(url, fileManager: fm) else { return false }
+        return size > 128 * 1024
     }
 
     private static func databaseHasUserRows(_ url: URL) -> Bool {
@@ -266,8 +322,14 @@ enum DataMigration {
         SQLiteDatabase(url: url)?.firstDouble("SELECT COUNT(*) FROM \(table)").map(Int.init)
     }
 
-    private static func fileSize(_ url: URL, fileManager fm: FileManager) -> Int {
-        ((try? fm.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.intValue ?? 0
+    private static func fileSize(_ url: URL, fileManager fm: FileManager) throws -> Int? {
+        guard let attributes = try FileSystemSupport.attributesIfPresent(
+            at: url,
+            fileManager: fm
+        ) else {
+            return nil
+        }
+        return (attributes[.size] as? NSNumber)?.intValue
     }
 
     // MARK: - UserDefaults
@@ -293,38 +355,13 @@ enum DataMigration {
     /// read of a V2-created item triggers a one-time macOS "allow access" dialog;
     /// once copied, the V3 app owns its own item and reads it silently. Reads are
     /// non-destructive — the V2 items survive as a fallback.
-    static func migrateKeychain(from oldService: String, to newService: String) {
+    static func migrateKeychain(from oldService: String, to newService: String) throws {
         for account in keychainAccounts {
-            guard readData(service: newService, account: account) == nil,
-                  let data = readData(service: oldService, account: account) else { continue }
-            writeData(data, service: newService, account: account)
-        }
-    }
-
-    private static func baseQuery(service: String, account: String) -> [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-    }
-
-    private static func readData(service: String, account: String) -> Data? {
-        var query = baseQuery(service: service, account: account)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var out: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess else { return nil }
-        return out as? Data
-    }
-
-    private static func writeData(_ data: Data, service: String, account: String) {
-        let query = baseQuery(service: service, account: account)
-        let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if status == errSecItemNotFound {
-            var add = query
-            add[kSecValueData as String] = data
-            SecItemAdd(add as CFDictionary, nil)
+            try KeychainSecrets.copyIfMissing(
+                account: account,
+                fromService: oldService,
+                toService: newService
+            )
         }
     }
 }

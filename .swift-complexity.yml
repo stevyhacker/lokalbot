@@ -1,0 +1,3 @@
+# A threshold of 22 reports functions whose cyclomatic or cognitive complexity
+# is 22 or higher, enforcing the project's strict "< 22" limit.
+defaultThreshold: 22

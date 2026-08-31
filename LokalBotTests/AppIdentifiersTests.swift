@@ -27,7 +27,7 @@ final class AppIdentifiersTests: XCTestCase {
         let deterministic = Data(SHA256.hash(data: Data("lokalbot-ui-test-\(account)".utf8)))
         let originalFlag = UserDefaults.standard.object(forKey: UITestRuntime.enabledKey)
 
-        KeychainSecrets.delete(account: account)
+        try? KeychainSecrets.delete(account: account)
         UserDefaults.standard.set(true, forKey: UITestRuntime.enabledKey)
         defer {
             if let originalFlag {
@@ -35,7 +35,7 @@ final class AppIdentifiersTests: XCTestCase {
             } else {
                 UserDefaults.standard.removeObject(forKey: UITestRuntime.enabledKey)
             }
-            KeychainSecrets.delete(account: account)
+            try? KeychainSecrets.delete(account: account)
         }
 
         let key = try KeychainSecrets.symmetricKey(account: account)

@@ -12,10 +12,6 @@ struct AudioProcess: Identifiable, Equatable, Hashable {
     let objectID: AudioObjectID
     var isRunningOutput: Bool
 
-    var icon: NSImage? {
-        NSRunningApplication(processIdentifier: id)?.icon
-    }
-
     static func == (lhs: AudioProcess, rhs: AudioProcess) -> Bool {
         lhs.objectID == rhs.objectID
     }
