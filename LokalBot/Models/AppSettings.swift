@@ -130,6 +130,7 @@ struct AppSettings: Codable, Equatable {
     /// retain immutable revision and checksum metadata.
     var graniteSpeechModel = GraniteSpeechModelConfiguration.defaultModel
     var transcriptionLanguage: TranscriptionLanguage = .auto
+    var transcriptionPrompt: String = ""
     var autoTranscribe: Bool = true
     var autoSummarize: Bool = true
     var speechVoice: KokoroVoice = .heart
@@ -589,6 +590,7 @@ struct AppSettings: Codable, Equatable {
         case graniteSpeechModel
         case transcriptionLanguage
         case languageHint // legacy key used by builds before typed language selection
+        case transcriptionPrompt
         case autoTranscribe
         case autoSummarize
         case speechVoice
@@ -738,6 +740,7 @@ struct AppSettings: Codable, Equatable {
         try c.encode(transcriptionModel, forKey: .transcriptionModel)
         try c.encode(graniteSpeechModel, forKey: .graniteSpeechModel)
         try c.encode(transcriptionLanguage, forKey: .transcriptionLanguage)
+        try c.encode(transcriptionPrompt, forKey: .transcriptionPrompt)
         try c.encode(autoTranscribe, forKey: .autoTranscribe)
         try c.encode(autoSummarize, forKey: .autoSummarize)
         try c.encode(speechVoice, forKey: .speechVoice)
@@ -863,6 +866,7 @@ struct AppSettings: Codable, Equatable {
         } else {
             transcriptionLanguage = defaults.transcriptionLanguage
         }
+        transcriptionPrompt = decode(.transcriptionPrompt, defaults.transcriptionPrompt)
         autoTranscribe = decode(.autoTranscribe, defaults.autoTranscribe)
         autoSummarize = decode(.autoSummarize, defaults.autoSummarize)
         speechVoice = decode(.speechVoice, defaults.speechVoice)

@@ -2,6 +2,14 @@ import XCTest
 @testable import LokalBot
 
 final class TranscriptionLanguageTests: XCTestCase {
+    func testTranscriptionPromptTrimsWhitespaceAndDropsEmptyValues() {
+        XCTAssertEqual(
+            TranscriptionPrompt.normalized("  LokalBot, QVAC  \n"),
+            "LokalBot, QVAC")
+        XCTAssertNil(TranscriptionPrompt.normalized(" \n\t "))
+        XCTAssertNil(TranscriptionPrompt.normalized(nil))
+    }
+
     func testAutoLanguageHasNoEngineCode() {
         XCTAssertNil(TranscriptionLanguage.auto.code)
     }
