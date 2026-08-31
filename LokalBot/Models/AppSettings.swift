@@ -1,5 +1,21 @@
 import Foundation
 
+enum OpenRouterDataPolicy: String, Codable, CaseIterable, Identifiable, Sendable {
+    case privateOnly
+    case accountPolicy
+
+    var id: String { rawValue }
+
+    /// OpenRouter applies account, API-key, workspace, and guardrail filters
+    /// after this request-level provider preference.
+    var providerDataCollectionValue: String {
+        switch self {
+        case .privateOnly: "deny"
+        case .accountPolicy: "allow"
+        }
+    }
+}
+
 struct AppSettings: Codable, Equatable {
     enum AutoRecordMode: String, Codable, CaseIterable, Identifiable {
         case automatic = "Record automatically"
@@ -114,6 +130,7 @@ struct AppSettings: Codable, Equatable {
     /// retain immutable revision and checksum metadata.
     var graniteSpeechModel = GraniteSpeechModelConfiguration.defaultModel
     var transcriptionLanguage: TranscriptionLanguage = .auto
+    var transcriptionPrompt: String = ""
     var autoTranscribe: Bool = true
     var autoSummarize: Bool = true
     var speechVoice: KokoroVoice = .heart
@@ -271,6 +288,10 @@ struct AppSettings: Codable, Equatable {
     var ollamaModel: String = ""
     var openAIBaseURL: String = "http://localhost:1234/v1"
     var openAIModel: String = ""
+    /// Per-request OpenRouter provider policy. Private routing remains the
+    /// default for both new and migrated installs; following account policy is
+    /// an explicit opt-in because Think requests may contain sensitive context.
+    var openRouterDataPolicy: OpenRouterDataPolicy = .privateOnly
     /// Origins the user explicitly approved for sending transcript, OCR, and
     /// agent context off this Mac. Loopback endpoints never need approval.
     var approvedRemoteInferenceOrigins: [String] = []
@@ -594,6 +615,7 @@ struct AppSettings: Codable, Equatable {
         case graniteSpeechModel
         case transcriptionLanguage
         case languageHint // legacy key used by builds before typed language selection
+        case transcriptionPrompt
         case autoTranscribe
         case autoSummarize
         case speechVoice
@@ -639,6 +661,7 @@ struct AppSettings: Codable, Equatable {
         case ollamaModel
         case openAIBaseURL
         case openAIModel
+        case openRouterDataPolicy
         case approvedRemoteInferenceOrigins
         case noteTemplate
         case summaryLanguage
@@ -743,6 +766,7 @@ struct AppSettings: Codable, Equatable {
         try c.encode(transcriptionModel, forKey: .transcriptionModel)
         try c.encode(graniteSpeechModel, forKey: .graniteSpeechModel)
         try c.encode(transcriptionLanguage, forKey: .transcriptionLanguage)
+        try c.encode(transcriptionPrompt, forKey: .transcriptionPrompt)
         try c.encode(autoTranscribe, forKey: .autoTranscribe)
         try c.encode(autoSummarize, forKey: .autoSummarize)
         try c.encode(speechVoice, forKey: .speechVoice)
@@ -792,6 +816,7 @@ struct AppSettings: Codable, Equatable {
         try c.encode(ollamaModel, forKey: .ollamaModel)
         try c.encode(openAIBaseURL, forKey: .openAIBaseURL)
         try c.encode(openAIModel, forKey: .openAIModel)
+        try c.encode(openRouterDataPolicy, forKey: .openRouterDataPolicy)
         try c.encode(approvedRemoteInferenceOrigins, forKey: .approvedRemoteInferenceOrigins)
         try c.encode(noteTemplate, forKey: .noteTemplate)
         try c.encode(summaryLanguage, forKey: .summaryLanguage)
@@ -868,6 +893,7 @@ struct AppSettings: Codable, Equatable {
         } else {
             transcriptionLanguage = defaults.transcriptionLanguage
         }
+        transcriptionPrompt = decode(.transcriptionPrompt, defaults.transcriptionPrompt)
         autoTranscribe = decode(.autoTranscribe, defaults.autoTranscribe)
         autoSummarize = decode(.autoSummarize, defaults.autoSummarize)
         speechVoice = decode(.speechVoice, defaults.speechVoice)
@@ -924,6 +950,8 @@ struct AppSettings: Codable, Equatable {
         ollamaModel = decode(.ollamaModel, defaults.ollamaModel)
         openAIBaseURL = decode(.openAIBaseURL, defaults.openAIBaseURL)
         openAIModel = decode(.openAIModel, defaults.openAIModel)
+        openRouterDataPolicy = decode(
+            .openRouterDataPolicy, defaults.openRouterDataPolicy)
         approvedRemoteInferenceOrigins = decode(
             .approvedRemoteInferenceOrigins, defaults.approvedRemoteInferenceOrigins)
         noteTemplate = decode(.noteTemplate, defaults.noteTemplate)

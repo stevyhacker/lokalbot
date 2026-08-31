@@ -18,6 +18,16 @@ struct CalendarMeetingCandidate: Equatable, Sendable {
     let meetingURL: URL?
     let sourceCalendarTitle: String?
     var participantNames: [String] = []
+    var participantIdentities: [CalendarParticipantIdentity] = []
+
+    /// Structured identities when the provider supplies them, otherwise a
+    /// backwards-compatible projection of the legacy name-only roster.
+    var resolvedParticipantIdentities: [CalendarParticipantIdentity] {
+        let structured = CalendarParticipantIdentity.normalized(participantIdentities)
+        return structured.isEmpty
+            ? CalendarParticipantIdentity.fromLegacyNames(participantNames)
+            : structured
+    }
 
     /// Grace before an event's scheduled start during which it already counts
     /// as active — a *beat* early (people click Join ~a minute ahead), not a

@@ -126,10 +126,25 @@ protocol TranscriptionEngine {
     var supportsStreaming: Bool { get }
     func prepare(progress: ModelPreparationProgressHandler?) async throws
     func transcribe(audio: URL, language: String?) async throws -> Transcript
+    func transcribe(audio: URL, language: String?, prompt: String?) async throws -> Transcript
 }
 
 extension TranscriptionEngine {
     func prepare() async throws { try await prepare(progress: nil) }
+
+    /// Engines without a prompt API keep their existing behavior. Whisper and
+    /// Qwen override this overload with their native context mechanisms.
+    func transcribe(audio: URL, language: String?, prompt: String?) async throws -> Transcript {
+        try await transcribe(audio: audio, language: language)
+    }
+}
+
+enum TranscriptionPrompt {
+    nonisolated static func normalized(_ prompt: String?) -> String? {
+        guard let prompt else { return nil }
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }
 
 enum TranscriptionEngineError: LocalizedError {
@@ -391,7 +406,19 @@ actor WhisperEngine: TranscriptionEngine {
             id: runtimeID, role: "Transcription", label: "Whisper large-v3 turbo",
             estimatedBytes: estimatedBytes)
         do {
-            let modelFolder = try await WhisperKit.download(variant: modelName) { download in
+            let environment = TranscriptionModelStore.Environment.live
+            do {
+                try TranscriptionModelStore.migrateLegacyWhisperKitModels(
+                    environment: environment)
+            } catch {
+                lokalbotLog(
+                    "whisper cache migration skipped error=\(error.localizedDescription)")
+            }
+            let downloadRoot = environment.whisperKitDownloadRoot
+            let modelFolder = try await WhisperKit.download(
+                variant: modelName,
+                downloadBase: downloadRoot
+            ) { download in
                 reportPreparationUpdate(
                     .init(fractionCompleted: download.fractionCompleted,
                           status: "Downloading..."),
@@ -401,6 +428,7 @@ actor WhisperEngine: TranscriptionEngine {
                                     to: progress)
             pipe = try await WhisperKit(WhisperKitConfig(
                 model: modelName,
+                downloadBase: downloadRoot,
                 modelFolder: modelFolder.path(percentEncoded: false),
                 download: false))
             await ModelRuntimeRegistry.shared.register(
@@ -421,11 +449,21 @@ actor WhisperEngine: TranscriptionEngine {
     }
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
+        try await transcribe(audio: url, language: language, prompt: nil)
+    }
+
+    func transcribe(audio url: URL, language: String?, prompt: String?) async throws -> Transcript {
         activeUses += 1
         defer { finishUse() }
         try await prepare()
         guard let pipe else { throw TranscriptionEngineError.notLoaded }
-        let options = DecodingOptions(language: language, detectLanguage: language == nil)
+        let promptTokens = TranscriptionPrompt.normalized(prompt).flatMap { context in
+            pipe.tokenizer?.encode(text: " " + context)
+        }
+        let options = DecodingOptions(
+            language: language,
+            detectLanguage: language == nil,
+            promptTokens: promptTokens)
         let results = try await pipe.transcribe(audioPath: url.path, decodeOptions: options)
         let segments = results.flatMap(\.segments).map { seg in
             Transcript.Segment(start: TimeInterval(seg.start), end: TimeInterval(seg.end),

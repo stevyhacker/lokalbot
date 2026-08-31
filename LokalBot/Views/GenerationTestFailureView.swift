@@ -16,7 +16,12 @@ struct GenerationTestFailurePresentation: Equatable, Sendable {
     let actionURL: URL?
     let technicalDetails: String
 
-    init(error: Error, baseURL: String?, model: String?) {
+    init(
+        error: Error,
+        baseURL: String?,
+        model: String?,
+        openRouterDataPolicy: OpenRouterDataPolicy = .privateOnly
+    ) {
         let technicalDetails = error.localizedDescription
         let normalizedDetails = technicalDetails.lowercased()
         let host = baseURL.flatMap(URL.init(string:))?.host?.lowercased()
@@ -34,20 +39,31 @@ struct GenerationTestFailurePresentation: Equatable, Sendable {
                 ?? "the selected model"
 
             kind = .openRouterDataPolicy
-            inlineTitle = "OpenRouter needs attention — review issue…"
-            title = "OpenRouter privacy settings block this model"
-            explanation = "OpenRouter couldn't route \(selectedModel) because none of its "
-                + "available endpoints match your current data policy. The server reports "
-                + "that this model requires “Paid model training.”"
-            recovery = "Review OpenRouter's privacy settings. Either allow “Paid model "
-                + "training,” or keep it disabled and choose a model with an endpoint that "
-                + "matches your policy."
-            privacyNote = "For meeting content, the privacy-preserving choice is to keep "
-                + "training disabled and select a compatible model. Allowing training may "
-                + "let the provider use approved transcripts, screen text, and Agent context "
-                + "for model training."
-            actionTitle = "Open OpenRouter Privacy Settings"
-            actionURL = URL(string: "https://openrouter.ai/settings/privacy")
+            switch openRouterDataPolicy {
+            case .privateOnly:
+                inlineTitle = "Private routing unavailable — review options…"
+                title = "No private endpoint for this model"
+                explanation = "LokalBot restricts OpenRouter to providers that do not collect "
+                    + "inference data, but no available endpoint for \(selectedModel) matches "
+                    + "that requirement."
+                recovery = "Keep “Private endpoints only” and choose a compatible model, or "
+                    + "change Provider data use to follow your OpenRouter privacy settings."
+                privacyNote = "Private endpoints only remains recommended for meeting content."
+                actionTitle = nil
+                actionURL = nil
+            case .accountPolicy:
+                inlineTitle = "OpenRouter still blocks this model — review issue…"
+                title = "OpenRouter still blocks this model"
+                explanation = "LokalBot is following your OpenRouter policy, but OpenRouter "
+                    + "couldn't find an allowed endpoint for \(selectedModel)."
+                recovery = "Review the privacy settings and any guardrail assigned to this "
+                    + "account, API key, or workspace, or choose another model."
+                privacyNote = "LokalBot cannot read which OpenRouter policy applies to this "
+                    + "key. Providers allowed by that policy may retain or train on approved "
+                    + "meeting transcripts, screen text, and Agent context."
+                actionTitle = "Open OpenRouter Privacy Settings"
+                actionURL = URL(string: "https://openrouter.ai/settings/privacy")
+            }
         } else {
             kind = .generic
             inlineTitle = "Test failed — review issue…"

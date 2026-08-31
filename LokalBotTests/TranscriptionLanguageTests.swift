@@ -2,6 +2,14 @@ import XCTest
 @testable import LokalBot
 
 final class TranscriptionLanguageTests: XCTestCase {
+    func testTranscriptionPromptTrimsWhitespaceAndDropsEmptyValues() {
+        XCTAssertEqual(
+            TranscriptionPrompt.normalized("  LokalBot, QVAC  \n"),
+            "LokalBot, QVAC")
+        XCTAssertNil(TranscriptionPrompt.normalized(" \n\t "))
+        XCTAssertNil(TranscriptionPrompt.normalized(nil))
+    }
+
     func testAutoLanguageHasNoEngineCode() {
         XCTAssertNil(TranscriptionLanguage.auto.code)
     }
@@ -106,6 +114,21 @@ final class SummaryLanguageTests: XCTestCase {
 }
 
 final class SummaryPromptActionabilityTests: XCTestCase {
+    func testFixedLanguageKeepsCanonicalMarkdownHeadings() {
+        let system = PromptTemplates.systemPrompt(
+            for: .meeting,
+            summaryLanguage: .de)
+        let user = PromptTemplates.userPrompt(
+            transcript: "**[00:00:01] Me:** Ich sende den Entwurf.",
+            template: .meeting,
+            summaryLanguage: .de)
+
+        for prompt in [system, user] {
+            XCTAssertTrue(prompt.contains("do not translate"), prompt)
+            XCTAssertTrue(prompt.contains("Markdown"), prompt)
+        }
+    }
+
     func testEveryNotesTemplateRequiresAnExplicitUserActionabilityPass() {
         for template in NoteTemplate.allCases {
             let prompt = PromptTemplates.systemPrompt(
@@ -119,6 +142,8 @@ final class SummaryPromptActionabilityTests: XCTestCase {
             XCTAssertTrue(prompt.contains("requests or assignments directed to"), template.rawValue)
             XCTAssertTrue(prompt.contains("Write `None`"), template.rawValue)
             XCTAssertTrue(prompt.contains("generic advice"), template.rawValue)
+            XCTAssertTrue(prompt.contains("first person"), template.rawValue)
+            XCTAssertTrue(prompt.contains("Me will"), template.rawValue)
         }
     }
 
@@ -134,5 +159,17 @@ final class SummaryPromptActionabilityTests: XCTestCase {
         XCTAssertTrue(chunk.contains("requests or assignments directed to \"Stevan\""), chunk)
         XCTAssertTrue(chunk.contains("### Me"), chunk)
         XCTAssertTrue(chunk.contains("### Others"), chunk)
+    }
+
+    func testMeetingPromptsKeepTentativeTermsAndActionsOutOfDecisions() {
+        let direct = PromptTemplates.systemPrompt(for: .meeting)
+        let chunk = PromptTemplates.chunkExtractionSystem()
+
+        for prompt in [direct, chunk] {
+            XCTAssertTrue(prompt.contains("explicitly settled"), prompt)
+            XCTAssertTrue(prompt.contains("Tentative terms"), prompt)
+            XCTAssertTrue(prompt.contains("never duplicate"), prompt)
+            XCTAssertTrue(prompt.contains("## Open questions"), prompt)
+        }
     }
 }

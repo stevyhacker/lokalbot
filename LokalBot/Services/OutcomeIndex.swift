@@ -17,7 +17,7 @@ struct MeetingOutcomeProjection: Identifiable, Equatable, Sendable {
                 meetingStartedAt: meeting.startedAt,
                 action: action,
                 status: userState.status,
-                text: userState.textCorrection ?? action.text,
+                text: userState.textCorrection ?? action.displayText,
                 owner: userState.ownerOverride ?? action.owner,
                 due: userState.dueOverride ?? action.due)
         }

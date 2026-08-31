@@ -6,7 +6,9 @@ struct TranscriptionModelStore {
         let appSupport: URL
         let fluidAudioRoot: URL
         let fluidAudioModelsRoot: URL
+        let whisperKitDownloadRoot: URL
         let whisperKitRepoRoot: URL
+        let legacyWhisperKitRepoRoot: URL?
 
         static var live: Environment {
             let fileManager = FileManager.default
@@ -14,7 +16,10 @@ struct TranscriptionModelStore {
             let fluidAudioRoot = AppDirectories.fluidAudioRoot
             let fluidAudioModelsRoot = fluidAudioRoot
                 .appendingPathComponent("Models", isDirectory: true)
-            let whisperKitRepoRoot = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+            let legacyWhisperKitRepoRoot = fileManager.urls(
+                for: .documentDirectory,
+                in: .userDomainMask
+            ).first?
                 .appendingPathComponent("huggingface", isDirectory: true)
                 .appendingPathComponent("models", isDirectory: true)
                 .appendingPathComponent("argmaxinc", isDirectory: true)
@@ -23,9 +28,18 @@ struct TranscriptionModelStore {
                 appSupport: appSupport,
                 fluidAudioRoot: fluidAudioRoot,
                 fluidAudioModelsRoot: fluidAudioModelsRoot,
-                whisperKitRepoRoot: whisperKitRepoRoot)
+                whisperKitDownloadRoot: AppDirectories.whisperKitDownloadRoot,
+                whisperKitRepoRoot: AppDirectories.whisperKitRepoRoot,
+                legacyWhisperKitRepoRoot: legacyWhisperKitRepoRoot)
         }
     }
+
+    private static let whisperRequiredFiles = [
+        "config.json",
+        "AudioEncoder.mlmodelc",
+        "MelSpectrogram.mlmodelc",
+        "TextDecoder.mlmodelc"
+    ]
 
     static func downloadedChoices(
         environment: Environment = .live,
@@ -68,7 +82,7 @@ struct TranscriptionModelStore {
             return whisperModelDirectories(environment: environment).contains { directory in
                 requiredFilesPresent(
                     at: directory,
-                    requiredFiles: ["config.json", "AudioEncoder.mlmodelc", "MelSpectrogram.mlmodelc", "TextDecoder.mlmodelc"])
+                    requiredFiles: whisperRequiredFiles)
             }
         case .cohere:
             return requiredFilesPresent(
@@ -164,8 +178,15 @@ struct TranscriptionModelStore {
     }
 
     private static func whisperModelDirectories(environment: Environment) -> [URL] {
+        let legacy = environment.legacyWhisperKitRepoRoot.map {
+            whisperModelDirectories(at: $0)
+        } ?? []
+        return whisperModelDirectories(at: environment.whisperKitRepoRoot) + legacy
+    }
+
+    private static func whisperModelDirectories(at repository: URL) -> [URL] {
         guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: environment.whisperKitRepoRoot,
+            at: repository,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles])
         else { return [] }
@@ -174,6 +195,49 @@ struct TranscriptionModelStore {
             guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey]),
                   values.isDirectory == true else { return false }
             return url.lastPathComponent.contains("large-v3-v20240930")
+        }
+    }
+
+    /// Move a valid cache created by older builds out of `~/Documents` before
+    /// WhisperKit checks the new Application Support download root. Migration
+    /// is deliberately best-effort at the call site: an MDM-denied legacy
+    /// folder must never prevent a clean download into the correct location.
+    static func migrateLegacyWhisperKitModels(
+        environment: Environment = .live,
+        fileManager: FileManager = .default
+    ) throws {
+        guard let legacyRoot = environment.legacyWhisperKitRepoRoot,
+              legacyRoot.standardizedFileURL != environment.whisperKitRepoRoot.standardizedFileURL
+        else { return }
+
+        for source in whisperModelDirectories(at: legacyRoot)
+        where requiredFilesPresent(at: source, requiredFiles: whisperRequiredFiles) {
+            let destination = environment.whisperKitRepoRoot.appendingPathComponent(
+                source.lastPathComponent,
+                isDirectory: true)
+            if requiredFilesPresent(at: destination, requiredFiles: whisperRequiredFiles) {
+                continue
+            }
+
+            try fileManager.createDirectory(
+                at: environment.whisperKitRepoRoot,
+                withIntermediateDirectories: true)
+            let staging = environment.whisperKitRepoRoot.appendingPathComponent(
+                ".\(source.lastPathComponent).migration-\(UUID().uuidString)",
+                isDirectory: true)
+            defer { try? fileManager.removeItem(at: staging) }
+            try fileManager.copyItem(at: source, to: staging)
+            guard requiredFilesPresent(at: staging, requiredFiles: whisperRequiredFiles) else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            if fileManager.fileExists(atPath: destination.path) {
+                try fileManager.removeItem(at: destination)
+            }
+            try fileManager.moveItem(at: staging, to: destination)
+            // The destination is now complete and recoverable. Removing the
+            // old cache avoids cloud re-upload; a managed provider may deny
+            // deletion, which is harmless and should not undo the migration.
+            try? fileManager.removeItem(at: source)
         }
     }
 
