@@ -44,6 +44,91 @@ enum MeetingMatcher {
         return now.timeIntervalSince(firstSeenAt) >= minimumDuration
     }
 
+    /// The live state for one sustained-audio confirmation window. A generation
+    /// identifies the exact window so a queued recheck cannot act on a newer
+    /// candidate after the old window has been reset.
+    struct StartConfirmationState {
+        struct Window: Equatable {
+            let bundleID: String
+            let firstSeenAt: Date
+            let lastAudioSeenAt: Date
+            let generation: UInt64
+        }
+
+        private(set) var window: Window?
+        private var generation: UInt64 = 0
+
+        /// Records fresh audio and answers whether it began a new window. Audio
+        /// after an expired gap is a new candidate even when the bundle id is
+        /// unchanged; otherwise the abandoned window could confirm immediately.
+        @discardableResult
+        mutating func observeAudio(bundleID: String,
+                                   at now: Date,
+                                   gapTolerance: TimeInterval) -> Bool {
+            if let window,
+               window.bundleID == bundleID,
+               now.timeIntervalSince(window.lastAudioSeenAt) <= gapTolerance {
+                self.window = Window(
+                    bundleID: bundleID,
+                    firstSeenAt: window.firstSeenAt,
+                    lastAudioSeenAt: now,
+                    generation: window.generation)
+                return false
+            }
+
+            generation &+= 1
+            window = Window(
+                bundleID: bundleID,
+                firstSeenAt: now,
+                lastAudioSeenAt: now,
+                generation: generation)
+            return true
+        }
+
+        mutating func clear() {
+            window = nil
+        }
+
+        func acceptsRecheck(for generation: UInt64) -> Bool {
+            window?.generation == generation
+        }
+    }
+
+    /// What a start candidate's silence means when it has no fresh audio
+    /// evidence on this particular tick.
+    ///
+    /// Detection asks "is the app making sound right now", so a candidate mid
+    /// confirmation loses that signal every time the remote side stops talking
+    /// to listen — an ordinary conversational rhythm, not evidence the call
+    /// ended. `abandoned` only once the *gap itself* has run past tolerance,
+    /// not the instant evidence is briefly missing.
+    enum StartConfirmationGapOutcome: Equatable {
+        /// The gap has run too long; this candidate should be dropped.
+        case abandoned
+        /// Still within tolerance, but the window overall is not done yet.
+        case stillWaiting
+        /// The gap is within tolerance, and the total span already covers the
+        /// window — confirmed despite the current instant being quiet, so a
+        /// bridged gap doesn't delay the start past when a live tick would
+        /// have.
+        case confirmed
+    }
+
+    /// `firstSeenAt`/`lastAudioSeenAt` describe one candidate's whole history:
+    /// when its audio was first observed, and when it was last observed. Pure,
+    /// so the boundary cases don't need a live app or Core Audio to test.
+    static func startConfirmationGapOutcome(firstSeenAt: Date,
+                                            lastAudioSeenAt: Date,
+                                            now: Date,
+                                            gapTolerance: TimeInterval,
+                                            minimumDuration: TimeInterval) -> StartConfirmationGapOutcome {
+        guard now.timeIntervalSince(lastAudioSeenAt) <= gapTolerance else { return .abandoned }
+        if sustainedAudioConfirmed(firstSeenAt: firstSeenAt, now: now, minimumDuration: minimumDuration) {
+            return .confirmed
+        }
+        return .stillWaiting
+    }
+
     static func confidence(hasApp: Bool, hasCalendar: Bool) -> MeetingDetectionContext.Confidence {
         switch (hasApp, hasCalendar) {
         case (true, true): return .high
