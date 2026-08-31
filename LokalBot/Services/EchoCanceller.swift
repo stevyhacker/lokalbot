@@ -96,10 +96,11 @@ struct EchoCanceller {
     /// already be aligned (see `EchoDelayEstimator`) and equally long. Filter
     /// state carries across calls, so a long track is streamed in chunks
     /// rather than decoded whole.
-    mutating func process(microphone: [Float], reference: [Float]) -> [Float] {
+    mutating func process(microphone: [Float], reference: [Float]) throws -> [Float] {
         precondition(microphone.count == reference.count,
                      "microphone and reference must be aligned to the same length")
         guard !microphone.isEmpty else { return [] }
+        try Task.checkCancellation()
         let taps = configuration.taps
         let margin = configuration.doubleTalkMargin
         let step = configuration.stepSize
@@ -107,11 +108,12 @@ struct EchoCanceller {
         var predictions = [Float](repeating: 0, count: microphone.count)
         var active = [Bool](repeating: false, count: microphone.count)
 
-        weights.withUnsafeMutableBufferPointer { w in
-            history.withUnsafeMutableBufferPointer { h in
+        try weights.withUnsafeMutableBufferPointer { w in
+            try history.withUnsafeMutableBufferPointer { h in
                 let weightBase = w.baseAddress!
                 let historyBase = h.baseAddress!
                 for n in 0..<microphone.count {
+                    if n.isMultiple(of: 4_096) { try Task.checkCancellation() }
                     head = head == 0 ? taps - 1 : head - 1
                     let x = reference[n]
                     // The slot being overwritten holds the sample leaving the
@@ -149,11 +151,12 @@ struct EchoCanceller {
                 }
             }
         }
-        let suppressed = suppressResidual(output, predictions: predictions)
+        let suppressed = try suppressResidual(output, predictions: predictions)
         // Only score where there was echo to remove. Averaged over silence and
         // the user's own turns instead, the number would say more about who
         // talked than about the filter.
         for n in 0..<suppressed.count where active[n] {
+            if n.isMultiple(of: 4_096) { try Task.checkCancellation() }
             microphoneEnergy += Double(microphone[n]) * Double(microphone[n])
             residualEnergy += Double(suppressed[n]) * Double(suppressed[n])
         }
@@ -170,11 +173,12 @@ struct EchoCanceller {
     /// is silenced; where a lot survived, the user was talking and the frame
     /// passes untouched.
     private mutating func suppressResidual(_ residual: [Float],
-                                           predictions: [Float]) -> [Float] {
+                                           predictions: [Float]) throws -> [Float] {
         let frame = max(1, Int(configuration.suppressionFrame * sampleRate))
         var output = residual
         var index = 0
         while index < residual.count {
+            try Task.checkCancellation()
             let end = min(index + frame, residual.count)
             var predictedEnergy: Float = 0
             var residualEnergy: Float = 0

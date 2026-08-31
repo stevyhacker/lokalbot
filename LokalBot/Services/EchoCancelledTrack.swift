@@ -12,7 +12,7 @@ import Foundation
 /// never do.
 enum EchoCancelledTrack {
 
-    struct Report: Equatable {
+    struct Report: Equatable, Sendable {
         /// How far the microphone lagged the system track.
         var delaySeconds: TimeInterval
         /// Energy removed, in dB. Near zero means there was no echo to find —
@@ -28,19 +28,69 @@ enum EchoCancelledTrack {
     static let probePoints: [Double] = [0.2, 0.5, 0.8]
     static let probeSeconds: TimeInterval = 20
 
+    /// Voice Isolation produced only 2.6-3.1 dB on the recordings used to
+    /// validate this stage, while Standard mode produced at least 12.9 dB.
+    /// Keep a deliberate gap between those ranges: a marginal result is more
+    /// safely transcribed from the untouched microphone track.
+    static let minimumAcceptedEchoReturnLossDB = 6.0
+
     enum StageError: Error {
         case noOverlap
     }
 
-    static func write(microphone: URL, reference: URL, to destination: URL) throws -> Report {
+    /// Runs decode and DSP on a utility executor rather than the caller's
+    /// actor. Cancelling the awaiting task also cancels the worker, whose
+    /// cooperative checks remove any partial destination before returning.
+    static func write(microphone: URL, reference: URL, to destination: URL) async throws -> Report {
+        let worker = Task.detached(priority: .utility) {
+            try writeSynchronously(microphone: microphone,
+                                   reference: reference,
+                                   to: destination)
+        }
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
+    }
+
+    /// Fail open to the original microphone whenever the score is uncertain or
+    /// falls in the known Voice Isolation degradation range.
+    static func shouldUse(_ report: Report) -> Bool {
+        report.echoReturnLossDB.isFinite
+            && report.echoReturnLossDB >= minimumAcceptedEchoReturnLossDB
+    }
+
+    private static func writeSynchronously(
+        microphone: URL,
+        reference: URL,
+        to destination: URL
+    ) throws -> Report {
+        do {
+            return try writeFile(microphone: microphone,
+                                 reference: reference,
+                                 to: destination)
+        } catch {
+            try? FileManager.default.removeItem(at: destination)
+            throw error
+        }
+    }
+
+    private static func writeFile(
+        microphone: URL,
+        reference: URL,
+        to destination: URL
+    ) throws -> Report {
+        try Task.checkCancellation()
         let rate = SpanAudioReader.sampleRate
-        let duration = min(try SpanAudioReader(url: microphone).duration,
-                           try SpanAudioReader(url: reference).duration)
-        guard duration > 1 else { throw StageError.noOverlap }
+        let microphoneDuration = try SpanAudioReader(url: microphone).duration
+        let referenceDuration = try SpanAudioReader(url: reference).duration
+        let overlapDuration = min(microphoneDuration, referenceDuration)
+        guard overlapDuration > 1 else { throw StageError.noOverlap }
 
         let delaySamples = try estimateDelay(microphone: microphone,
                                              reference: reference,
-                                             duration: duration)
+                                             duration: overlapDuration)
         let delaySeconds = Double(delaySamples) / rate
 
         // Fresh readers: the probes above seek forward through the track and
@@ -51,22 +101,28 @@ enum EchoCancelledTrack {
         let writer = try WavWriter(url: destination, sampleRate: Int(rate))
 
         var position: TimeInterval = 0
-        while position < duration {
-            let end = min(position + chunkSeconds, duration)
+        var processedSamples = 0
+        while position < microphoneDuration {
+            try Task.checkCancellation()
+            let end = min(position + chunkSeconds, microphoneDuration)
             let mic = try micReader.samples(from: position, to: end)
             guard !mic.isEmpty else { break }
             let aligned = try alignedReference(referenceReader,
                                                from: position - delaySeconds,
                                                to: end - delaySeconds,
                                                count: mic.count)
-            try writer.append(canceller.process(microphone: mic, reference: aligned))
+            let cancelled = try canceller.process(microphone: mic, reference: aligned)
+            try Task.checkCancellation()
+            try writer.append(cancelled)
+            processedSamples += cancelled.count
             position = end
         }
+        try Task.checkCancellation()
         try writer.finish()
 
         return Report(delaySeconds: delaySeconds,
                       echoReturnLossDB: canceller.echoReturnLossDB,
-                      processedSeconds: position)
+                      processedSeconds: Double(processedSamples) / rate)
     }
 
     /// The reference window for one chunk, zero-padded where it runs off the
@@ -99,10 +155,12 @@ enum EchoCancelledTrack {
         let referenceReader = try SpanAudioReader(url: reference)
         var estimates: [Int] = []
         for point in probePoints {
+            try Task.checkCancellation()
             let start = max(0, min(duration - probeSeconds, duration * point))
             guard start >= 0 else { continue }
             let mic = try micReader.samples(from: start, to: start + probeSeconds)
             let remote = try referenceReader.samples(from: start, to: start + probeSeconds)
+            try Task.checkCancellation()
             guard !mic.isEmpty, !remote.isEmpty else { continue }
             estimates.append(EchoDelayEstimator.delay(microphone: mic, reference: remote,
                                                       sampleRate: SpanAudioReader.sampleRate))
@@ -128,7 +186,8 @@ final class WavWriter {
 
     func append(_ samples: [Float]) throws {
         var data = Data(capacity: samples.count * 2)
-        for sample in samples {
+        for (index, sample) in samples.enumerated() {
+            if index.isMultiple(of: 4_096) { try Task.checkCancellation() }
             let clamped = max(-1, min(1, sample))
             var value = Int16(clamped * 32_767).littleEndian
             withUnsafeBytes(of: &value) { data.append(contentsOf: $0) }

@@ -41,12 +41,12 @@ final class EchoCancellerTests: XCTestCase {
         return (sum / Double(samples.count)).squareRoot()
     }
 
-    func testCancelsAKnownEchoPath() {
+    func testCancelsAKnownEchoPath() throws {
         let reference = noise(Int(sampleRate) * 8)
         let microphone = echo(of: reference, delay: 120)
         var canceller = EchoCanceller()
 
-        let residual = canceller.process(microphone: microphone, reference: reference)
+        let residual = try canceller.process(microphone: microphone, reference: reference)
 
         // Judge the converged tail, not the first pass over an unknown room.
         let tail = Int(sampleRate) * 6
@@ -56,12 +56,12 @@ final class EchoCancellerTests: XCTestCase {
 
     /// Headphones: nothing of the remote audio is in the microphone, and the
     /// filter must leave the user's voice alone rather than fit noise.
-    func testLeavesTheMicrophoneAloneWhenThereIsNoEcho() {
+    func testLeavesTheMicrophoneAloneWhenThereIsNoEcho() throws {
         let reference = noise(Int(sampleRate) * 8, seed: 7)
         let voice = noise(Int(sampleRate) * 8, seed: 99).map { $0 * 0.3 }
         var canceller = EchoCanceller()
 
-        let residual = canceller.process(microphone: voice, reference: reference)
+        let residual = try canceller.process(microphone: voice, reference: reference)
 
         XCTAssertEqual(rms(residual), rms(voice), accuracy: rms(voice) * 0.1)
         XCTAssertLessThan(canceller.echoReturnLossDB, 1)
@@ -70,7 +70,7 @@ final class EchoCancellerTests: XCTestCase {
     /// The user talking over the remote side. Without a double-talk guard the
     /// filter learns to cancel *them*, which is worse than no cancellation —
     /// a first attempt diverged to -17 dB exactly here.
-    func testKeepsTheUsersVoiceThroughDoubleTalk() {
+    func testKeepsTheUsersVoiceThroughDoubleTalk() throws {
         let reference = noise(Int(sampleRate) * 10)
         var microphone = echo(of: reference, delay: 120)
         let voice = noise(Int(sampleRate) * 10, seed: 5).map { $0 * 0.6 }
@@ -78,7 +78,7 @@ final class EchoCancellerTests: XCTestCase {
         for n in talkStart..<microphone.count { microphone[n] += voice[n] }
         var canceller = EchoCanceller()
 
-        let residual = canceller.process(microphone: microphone, reference: reference)
+        let residual = try canceller.process(microphone: microphone, reference: reference)
 
         // The user's own words survive at close to their original level.
         let spoken = Array(residual[talkStart...])
@@ -99,10 +99,78 @@ final class EchoCancellerTests: XCTestCase {
         XCTAssertLessThanOrEqual(delay, Int(0.146 * sampleRate))
     }
 
+    func testAcceptanceRejectsTheKnownVoiceIsolationRange() {
+        func report(_ erle: Double) -> EchoCancelledTrack.Report {
+            .init(delaySeconds: 0.1, echoReturnLossDB: erle, processedSeconds: 60)
+        }
+
+        XCTAssertFalse(EchoCancelledTrack.shouldUse(report(3.1)))
+        XCTAssertFalse(EchoCancelledTrack.shouldUse(report(.nan)))
+        XCTAssertFalse(EchoCancelledTrack.shouldUse(report(.infinity)))
+        XCTAssertTrue(EchoCancelledTrack.shouldUse(report(12.9)))
+    }
+
+    /// Capture paths do not always stop on the same frame. The reference may
+    /// end first, but the cleaned sidecar must retain the microphone's full
+    /// timeline so ASR does not lose the user's closing words.
+    func testShorterReferencePreservesTheWholeMicrophone() async throws {
+        let directory = try temporaryDirectory()
+        let microphoneURL = directory.appendingPathComponent("mic.wav")
+        let referenceURL = directory.appendingPathComponent("system.wav")
+        let outputURL = directory.appendingPathComponent("cancelled.wav")
+        let reference = noise(Int(sampleRate * 1.25), seed: 101).map { $0 * 0.15 }
+        let microphone = noise(Int(sampleRate * 2.25), seed: 202).map { $0 * 0.2 }
+        try OnnxTranscriptionEngine.writeWav(reference, to: referenceURL)
+        try OnnxTranscriptionEngine.writeWav(microphone, to: microphoneURL)
+
+        let report = try await EchoCancelledTrack.write(
+            microphone: microphoneURL,
+            reference: referenceURL,
+            to: outputURL)
+
+        let outputReader = try SpanAudioReader(url: outputURL)
+        let output = try outputReader.samples(from: 0, to: 3)
+        XCTAssertEqual(output.count, microphone.count)
+        XCTAssertEqual(outputReader.duration, 2.25, accuracy: 1 / sampleRate)
+        XCTAssertEqual(report.processedSeconds, 2.25, accuracy: 1 / sampleRate)
+        XCTAssertGreaterThan(rms(Array(output[reference.count...])), 0.01,
+                             "the microphone-only tail must not be replaced with silence")
+    }
+
+    func testWriteCancellationPropagatesAndRemovesPartialDestination() async throws {
+        let directory = try temporaryDirectory()
+        let microphoneURL = directory.appendingPathComponent("mic.wav")
+        let referenceURL = directory.appendingPathComponent("system.wav")
+        let outputURL = directory.appendingPathComponent("partial.wav")
+        let reference = noise(Int(sampleRate * 8), seed: 303).map { $0 * 0.15 }
+        let microphone = echo(of: reference, delay: 120)
+        try OnnxTranscriptionEngine.writeWav(reference, to: referenceURL)
+        try OnnxTranscriptionEngine.writeWav(microphone, to: microphoneURL)
+        try Data("partial".utf8).write(to: outputURL)
+
+        let task = Task {
+            try await EchoCancelledTrack.write(
+                microphone: microphoneURL,
+                reference: referenceURL,
+                to: outputURL)
+        }
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("cancelled echo processing unexpectedly completed")
+        } catch is CancellationError {
+            // Expected.
+        } catch {
+            XCTFail("expected CancellationError, got \(error)")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+    }
+
     /// Runs the whole stage over a real meeting folder when one is pointed at,
     /// so the numbers in the log come from actual audio rather than a model of
     /// it. Skips by default — no fixture, no network, no fixed path.
-    func testRealMeetingFolderIfProvided() throws {
+    func testRealMeetingFolderIfProvided() async throws {
         guard let folder = ProcessInfo.processInfo.environment["LOKALBOT_AEC_FIXTURE"] else {
             throw XCTSkip("set LOKALBOT_AEC_FIXTURE to a meeting folder to run this")
         }
@@ -116,7 +184,7 @@ final class EchoCancellerTests: XCTestCase {
                 .appendingPathComponent("aec-\(UUID().uuidString).wav")
         defer { if keep == nil { try? FileManager.default.removeItem(at: destination) } }
 
-        let report = try EchoCancelledTrack.write(
+        let report = try await EchoCancelledTrack.write(
             microphone: root.appendingPathComponent("mic.m4a"),
             reference: root.appendingPathComponent("system.m4a"),
             to: destination)
@@ -125,5 +193,15 @@ final class EchoCancellerTests: XCTestCase {
                 + "erle=\(report.echoReturnLossDB) dB "
                 + "processed=\(report.processedSeconds) s")
         XCTAssertGreaterThan(report.processedSeconds, 1)
+    }
+
+    private func temporaryDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lokalbot-aec-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        return directory
     }
 }
