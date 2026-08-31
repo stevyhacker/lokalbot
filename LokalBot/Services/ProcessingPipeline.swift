@@ -683,6 +683,45 @@ final class ProcessingPipeline: ObservableObject {
 
     // MARK: - Transcription
 
+    /// The microphone track with the remote side subtracted, or nil to
+    /// transcribe the recording as it is.
+    ///
+    /// Returns nil rather than a marginal copy when the filter found little to
+    /// cancel. The worker runs outside this type's main-actor isolation, while
+    /// cancellation is propagated so a cancelled job never starts ASR anyway.
+    private static func echoCancelledMicrophone(in folder: URL, microphone: URL,
+                                                config: AppSettings) async throws -> URL? {
+        guard config.echoCancellation,
+              let reference = MeetingAudioFiles.transcribableURL(for: .system, in: folder)
+        else { return nil }
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lokalbot-aec-\(UUID().uuidString).wav")
+        do {
+            let started = Date()
+            let report = try await EchoCancelledTrack.write(microphone: microphone,
+                                                            reference: reference,
+                                                            to: destination)
+            let elapsed = Date().timeIntervalSince(started)
+            lokalbotLog(
+                "echo cancellation delay=\(String(format: "%.0fms", report.delaySeconds * 1000)) "
+                    + "erle=\(String(format: "%.1fdB", report.echoReturnLossDB)) "
+                    + "elapsed=\(String(format: "%.1fs", elapsed))")
+            guard EchoCancelledTrack.shouldUse(report) else {
+                lokalbotLog("echo cancellation discarded reason=insufficient-confidence")
+                try? FileManager.default.removeItem(at: destination)
+                return nil
+            }
+            return destination
+        } catch is CancellationError {
+            try? FileManager.default.removeItem(at: destination)
+            throw CancellationError()
+        } catch {
+            lokalbotLog("echo cancellation failed error=\(error.localizedDescription)")
+            try? FileManager.default.removeItem(at: destination)
+            return nil
+        }
+    }
+
     private func transcribeTracks(meeting: Meeting, folder: URL,
                                   engine: TranscriptionEngine, config: AppSettings) async throws -> Transcript {
         let language = config.transcriptionLanguage.code
@@ -707,7 +746,15 @@ final class ProcessingPipeline: ObservableObject {
                     lokalbotLog("transcription track skipped track=\(name) reason=no-readable-audio")
                     continue
                 }
-                if let transcript = try await transcribeTrack(name: name, url: url,
+                let cancelled = track == .mic
+                    ? try await Self.echoCancelledMicrophone(
+                        in: folder, microphone: url, config: config)
+                    : nil
+                defer {
+                    if let cancelled { try? FileManager.default.removeItem(at: cancelled) }
+                }
+                if let transcript = try await transcribeTrack(name: name,
+                                                              url: cancelled ?? url,
                                                               speaker: speaker, engine: engine,
                                                               language: language,
                                                               prompt: config.transcriptionPrompt) {
@@ -716,6 +763,8 @@ final class ProcessingPipeline: ObservableObject {
                     }
                     tracks.append(transcript)
                 }
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 // Keep going: the other track may still succeed, and its
                 // checkpoint means only this track is redone on retry.
