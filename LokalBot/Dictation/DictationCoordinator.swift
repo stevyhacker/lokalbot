@@ -731,7 +731,8 @@ final class DictationCoordinator: ObservableObject {
         }
         return try await config.transcriptionEngine().transcribe(
             audio: audioURL,
-            language: config.transcriptionLanguage.code)
+            language: config.transcriptionLanguage.code,
+            prompt: config.transcriptionPrompt)
     }
 
     private func transcribeSerialized(

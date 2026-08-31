@@ -30,7 +30,67 @@ final class PipelineJobStoreTests: XCTestCase {
         XCTAssertEqual(pending.first?.meetingID, id)
         XCTAssertEqual(pending.first?.transcribe, true)
         XCTAssertEqual(pending.first?.summarize, false)
+        XCTAssertEqual(pending.first?.summaryFollowsSetting, false)
         XCTAssertEqual(pending.first?.attempts, 0)
+    }
+
+    func testAutomaticSummaryPolicyIsPersisted() {
+        let store = makeStore()
+        let id = UUID()
+
+        store.enqueue(
+            meetingID: id,
+            transcribe: true,
+            summarize: true,
+            summaryFollowsSetting: true)
+
+        XCTAssertEqual(store.pendingJobs().first?.summaryFollowsSetting, true)
+    }
+
+    func testUpdatingActiveIntentDoesNotResetAttempts() {
+        let store = makeStore()
+        let id = UUID()
+        store.enqueue(
+            meetingID: id,
+            transcribe: true,
+            summarize: true,
+            summaryFollowsSetting: true)
+        store.markStarted(meetingID: id)
+
+        store.updateIntent(
+            meetingID: id,
+            transcribe: true,
+            summarize: false,
+            summaryFollowsSetting: false)
+
+        let pending = store.pendingJobs().first
+        XCTAssertEqual(pending?.attempts, 1)
+        XCTAssertEqual(pending?.summarize, false)
+        XCTAssertEqual(pending?.summaryFollowsSetting, false)
+    }
+
+    func testLegacyRowsFollowCurrentSummarySettingAfterSchemaMigration() throws {
+        let database = try XCTUnwrap(SQLiteDatabase(url: databaseURL))
+        try database.execute("""
+            CREATE TABLE pipeline_jobs (
+                meeting_id TEXT PRIMARY KEY,
+                transcribe INTEGER NOT NULL,
+                summarize INTEGER NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                enqueued_at REAL NOT NULL
+            );
+            """)
+        let id = UUID()
+        try database.runChecked("""
+            INSERT INTO pipeline_jobs (
+                meeting_id, transcribe, summarize, attempts, enqueued_at
+            ) VALUES (?1, 1, 1, 0, 1)
+            """, bind: [id.uuidString])
+
+        let pending = makeStore().pendingJobs().first
+
+        XCTAssertEqual(pending?.meetingID, id)
+        XCTAssertEqual(pending?.summaryFollowsSetting, true)
     }
 
     func testCompletedJobIsRemoved() {

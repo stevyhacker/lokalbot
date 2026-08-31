@@ -33,6 +33,21 @@ enum AppDirectories {
         userApplicationSupport.appendingPathComponent("FluidAudio", isDirectory: true)
     }
 
+    /// WhisperKit's Hugging Face cache base. Passing this explicitly keeps the
+    /// 1.6 GB Core ML model out of `~/Documents`, which may be redirected to a
+    /// managed cloud provider, and alongside LokalBot's other local runtimes.
+    static var whisperKitDownloadRoot: URL {
+        applicationSupport.appendingPathComponent("whisperkit", isDirectory: true)
+    }
+
+    /// Repository layout created by WhisperKit below `downloadBase`.
+    static var whisperKitRepoRoot: URL {
+        whisperKitDownloadRoot
+            .appendingPathComponent("models", isDirectory: true)
+            .appendingPathComponent("argmaxinc", isDirectory: true)
+            .appendingPathComponent("whisperkit-coreml", isDirectory: true)
+    }
+
     /// The meeting-library root — all user data (meetings, indexes, journal,
     /// logs) lives under it. Honors the `LOKALBOT_STORAGE_ROOT` override so UI
     /// tests, hermetic e2e runs, and the CLI all resolve the same isolated

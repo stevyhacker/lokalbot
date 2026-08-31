@@ -29,6 +29,39 @@ final class ProcessingPipelineAutomationGateTests: XCTestCase {
         var thinkReady = false
     }
 
+    private actor AsyncGate {
+        private var started = false
+        private var released = false
+        private var startWaiters: [CheckedContinuation<Void, Never>] = []
+        private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+        func suspend() async {
+            started = true
+            let waiters = startWaiters
+            startWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+            if !released {
+                await withCheckedContinuation { releaseWaiters.append($0) }
+            }
+        }
+
+        func waitUntilStarted() async {
+            if started { return }
+            await withCheckedContinuation { startWaiters.append($0) }
+        }
+
+        func release() {
+            released = true
+            let waiters = releaseWaiters
+            releaseWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
+    }
+
+    private enum IntentTestError: Error {
+        case stopAfterGate
+    }
+
     private func makePipeline(root: URL,
                               jobStore: PipelineJobStore? = nil,
                               readiness: ReadinessBox) -> ProcessingPipeline {
@@ -179,6 +212,94 @@ final class ProcessingPipelineAutomationGateTests: XCTestCase {
             origin: .userInitiated)
 
         XCTAssertEqual(work, .init(transcribe: true, summarize: true))
+    }
+
+    func testActiveTranscriptionAcceptsAndPersistsNewUserSummaryIntent() async throws {
+        let root = try makeRoot()
+        let jobStore = PipelineJobStore(
+            databaseURL: root.appendingPathComponent("test.sqlite"))
+        let gate = AsyncGate()
+        let pipeline = ProcessingPipeline(
+            storage: StorageManager(rootURL: root),
+            jobStore: jobStore,
+            settings: { AppSettings() },
+            transcriptionStarted: { _ in await gate.suspend() })
+        let meeting = makeMeeting()
+
+        XCTAssertEqual(
+            pipeline.enqueue(meeting, transcribe: true, summarize: true),
+            .enqueued)
+        await gate.waitUntilStarted()
+
+        XCTAssertEqual(
+            pipeline.enqueue(meeting, transcribe: true, summarize: false),
+            .updatedActive)
+        let persisted = try XCTUnwrap(jobStore.pendingJobs().first)
+        XCTAssertFalse(persisted.summarize)
+        XCTAssertFalse(persisted.summaryFollowsSetting)
+        XCTAssertEqual(persisted.attempts, 1)
+
+        await gate.release()
+        await waitUntil { pipeline.stages[meeting.id]?.isFailure == true }
+    }
+
+    func testRequestAfterSummaryStartsReturnsVisibleFeedbackOutcome() async throws {
+        let root = try makeRoot()
+        let storage = StorageManager(rootURL: root)
+        let gate = AsyncGate()
+        let pipeline = ProcessingPipeline(
+            storage: storage,
+            settings: { AppSettings() },
+            builtInModelPreparer: { _, _ in
+                await gate.suspend()
+                throw IntentTestError.stopAfterGate
+            })
+        let meeting = makeMeeting()
+        let folder = meeting.folderURL(in: storage)
+        try FileManager.default.createDirectory(
+            at: folder,
+            withIntermediateDirectories: true)
+        try pipeline.saveTranscript(
+            Transcript(
+                segments: [.init(
+                    start: 0,
+                    end: 1,
+                    speaker: "me",
+                    text: "Status update",
+                    confidence: 1,
+                    timingPrecision: .span)],
+                engine: "test"),
+            for: meeting)
+
+        pipeline.enqueue(meeting, transcribe: false, summarize: true)
+        await gate.waitUntilStarted()
+
+        XCTAssertEqual(
+            pipeline.enqueue(meeting, transcribe: true, summarize: false),
+            .alreadyProcessing)
+
+        await gate.release()
+        await waitUntil { pipeline.stages[meeting.id]?.isFailure == true }
+    }
+
+    func testResumedAutomaticSummaryHonorsCurrentOptOut() {
+        let work = ProcessingPipeline.resumedWork(
+            pending: .init(transcribe: true, summarize: true),
+            summaryFollowsSetting: true,
+            autoSummarize: false,
+            hasTranscript: false)
+
+        XCTAssertEqual(work, .init(transcribe: true, summarize: false))
+    }
+
+    func testResumedExplicitSummarySurvivesCurrentAutoSetting() {
+        let work = ProcessingPipeline.resumedWork(
+            pending: .init(transcribe: false, summarize: true),
+            summaryFollowsSetting: false,
+            autoSummarize: false,
+            hasTranscript: true)
+
+        XCTAssertEqual(work, .init(transcribe: false, summarize: true))
     }
 
     func testRetryWorkResumesAfterExistingTranscript() throws {

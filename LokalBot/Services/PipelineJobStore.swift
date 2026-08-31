@@ -18,6 +18,9 @@ final class PipelineJobStore {
         let meetingID: UUID
         let transcribe: Bool
         let summarize: Bool
+        /// Automatic summary intent follows the current setting when a job is
+        /// restored. Explicit toolbar/headless intent survives unchanged.
+        let summaryFollowsSetting: Bool
         let attempts: Int
     }
 
@@ -38,6 +41,7 @@ final class PipelineJobStore {
                     meeting_id TEXT PRIMARY KEY,
                     transcribe INTEGER NOT NULL,
                     summarize INTEGER NOT NULL,
+                    summary_follows_setting INTEGER NOT NULL DEFAULT 1,
                     attempts INTEGER NOT NULL DEFAULT 0,
                     enqueued_at REAL NOT NULL
                 );
@@ -49,6 +53,13 @@ final class PipelineJobStore {
             if !columns.contains("last_error") {
                 try database.runChecked(
                     "ALTER TABLE pipeline_jobs ADD COLUMN last_error TEXT")
+            }
+            if !columns.contains("summary_follows_setting") {
+                // Rows written by older builds had no provenance. Treat their
+                // summary bit as automatic so a current opt-out takes effect.
+                try database.runChecked(
+                    "ALTER TABLE pipeline_jobs ADD COLUMN "
+                        + "summary_follows_setting INTEGER NOT NULL DEFAULT 1")
             }
         } catch {
             lokalbotLog("pipeline queue initialization failed: \(error.localizedDescription)")
@@ -66,19 +77,51 @@ final class PipelineJobStore {
     /// deliberate retry, not a crash-loop continuation.
     @discardableResult
     func enqueue(meetingID: UUID, transcribe: Bool, summarize: Bool,
+                 summaryFollowsSetting: Bool = false,
                  at date: Date = Date()) -> Bool {
         write("enqueue") { database in
             try database.runChecked("""
-                INSERT INTO pipeline_jobs (meeting_id, transcribe, summarize, attempts, enqueued_at)
-                VALUES (?1, ?2, ?3, 0, ?4)
+                INSERT INTO pipeline_jobs (
+                    meeting_id, transcribe, summarize, summary_follows_setting,
+                    attempts, enqueued_at
+                )
+                VALUES (?1, ?2, ?3, ?4, 0, ?5)
                 ON CONFLICT(meeting_id) DO UPDATE SET
                     transcribe = excluded.transcribe,
                     summarize = excluded.summarize,
+                    summary_follows_setting = excluded.summary_follows_setting,
                     attempts = 0,
                     last_error = NULL,
                     enqueued_at = excluded.enqueued_at
-                """, bind: [meetingID.uuidString, transcribe ? 1 : 0, summarize ? 1 : 0,
-                             date.timeIntervalSince1970])
+                """, bind: [
+                    meetingID.uuidString,
+                    transcribe ? 1 : 0,
+                    summarize ? 1 : 0,
+                    summaryFollowsSetting ? 1 : 0,
+                    date.timeIntervalSince1970
+                ])
+        }
+    }
+
+    /// Update a job that is already running without resetting its crash-loop
+    /// attempt count. This makes an active toolbar choice durable if the app
+    /// quits before the current transcription reaches the summary boundary.
+    @discardableResult
+    func updateIntent(meetingID: UUID, transcribe: Bool, summarize: Bool,
+                      summaryFollowsSetting: Bool) -> Bool {
+        write("update intent") { database in
+            try database.runChecked("""
+                UPDATE pipeline_jobs SET
+                    transcribe = ?2,
+                    summarize = ?3,
+                    summary_follows_setting = ?4
+                WHERE meeting_id = ?1
+                """, bind: [
+                    meetingID.uuidString,
+                    transcribe ? 1 : 0,
+                    summarize ? 1 : 0,
+                    summaryFollowsSetting ? 1 : 0
+                ])
         }
     }
 
@@ -142,7 +185,9 @@ final class PipelineJobStore {
     func pendingJobs() -> [PendingJob] {
         do {
             return try requiredDatabase().queryChecked("""
-                SELECT meeting_id, transcribe, summarize, attempts FROM pipeline_jobs
+                SELECT meeting_id, transcribe, summarize,
+                       summary_follows_setting, attempts
+                FROM pipeline_jobs
                 WHERE attempts < ?1 ORDER BY enqueued_at
                 """, bind: [Self.maxAutoResumeAttempts]) { statement -> PendingJob? in
                 guard let text = sqlite3_column_text(statement, 0),
@@ -150,7 +195,9 @@ final class PipelineJobStore {
                 return PendingJob(meetingID: id,
                                   transcribe: sqlite3_column_int64(statement, 1) != 0,
                                   summarize: sqlite3_column_int64(statement, 2) != 0,
-                                  attempts: Int(sqlite3_column_int64(statement, 3)))
+                                  summaryFollowsSetting:
+                                      sqlite3_column_int64(statement, 3) != 0,
+                                  attempts: Int(sqlite3_column_int64(statement, 4)))
             }
         } catch {
             lokalbotLog("pipeline queue read failed: \(error.localizedDescription)")

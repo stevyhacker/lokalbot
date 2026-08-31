@@ -1141,7 +1141,18 @@ final class AppState: ObservableObject {
     // MARK: - Library operations
 
     func reprocess(_ meeting: Meeting, transcribe: Bool, summarize: Bool) {
-        pipeline.enqueue(meeting, transcribe: transcribe, summarize: summarize)
+        lastError = nil
+        switch pipeline.enqueue(
+            meeting,
+            transcribe: transcribe,
+            summarize: summarize) {
+        case .alreadyProcessing:
+            lastError = "Summary processing has already started for this meeting. Wait for it to finish before choosing a different processing action."
+        case .persistenceFailed:
+            lastError = "LokalBot could not save the updated processing request."
+        case .enqueued, .coalesced, .updatedActive:
+            break
+        }
     }
 
     /// Resume from the latest durable artifact. If transcription already

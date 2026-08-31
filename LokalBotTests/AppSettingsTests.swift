@@ -21,6 +21,26 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertNil(object["languageHint"])
     }
 
+    func testTranscriptionPromptDefaultsEmptyAndRoundTrips() throws {
+        XCTAssertEqual(AppSettings().transcriptionPrompt, "")
+
+        var settings = AppSettings()
+        settings.transcriptionPrompt = "LokalBot, QVAC, Stevan"
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONEncoder().encode(settings))
+
+        XCTAssertEqual(decoded.transcriptionPrompt, "LokalBot, QVAC, Stevan")
+    }
+
+    func testOlderSettingsDefaultToEmptyTranscriptionPrompt() throws {
+        let settings = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data(#"{"autoTranscribe":true}"#.utf8))
+
+        XCTAssertEqual(settings.transcriptionPrompt, "")
+    }
+
     func testMenuBarOnlyDefaultsTrue() {
         XCTAssertTrue(AppSettings().menuBarOnly)
     }
