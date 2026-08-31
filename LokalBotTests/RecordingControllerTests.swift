@@ -109,13 +109,15 @@ final class RecordingControllerTests: XCTestCase {
         XCTAssertEqual(fallbackCalls, 1)
     }
 
+    /// A zero-buffer attachment still takes the current PID out of the running.
+    /// `SystemAudioTapLedger` now holds that decision, because the exclusion has
+    /// to outlive the tick that made it — see the ledger tests below.
     func testZeroBufferAttachmentExcludesCurrentPIDFromRecovery() {
-        XCTAssertEqual(SystemAudioRecoveryCandidatePolicy.excludedPID(
-            currentPID: 200,
-            framesSinceAttach: 0), 200)
-        XCTAssertNil(SystemAudioRecoveryCandidatePolicy.excludedPID(
-            currentPID: 200,
-            framesSinceAttach: 1))
+        var ledger = SystemAudioTapLedger()
+        ledger.attached(to: 200, audibleDuration: 0)
+        ledger.retire(200)
+        XCTAssertEqual(ledger.retiredPIDs, [200])
+
         XCTAssertTrue(SystemAudioRecoveryCandidatePolicy.shouldRetrySamePID(
             framesSinceAttach: 0,
             audibleDuration: 30,
@@ -190,5 +192,111 @@ final class RecordingControllerTests: XCTestCase {
         XCTAssertTrue(warning.isPresented, "stop deliberately preserves a true warning")
         XCTAssertTrue(warning.withdraw(), "the next capture start retires the old warning")
         XCTAssertFalse(warning.isPresented)
+    }
+
+    // MARK: - System audio tap ledger
+
+    private var minimumAudible: TimeInterval { AudioFileInspector.minimumTranscribableDuration }
+
+    /// `CaptureHealth.audibleDuration` counts the whole file, so a tap that
+    /// inherits a healthy total must not inherit the standing that goes with
+    /// it — otherwise the first process the watchdog moves to counts as proven
+    /// before it has written a sample, and earns the long grace for nothing.
+    func testProofIsAttributedToTheTapThatEarnedIt() {
+        var ledger = SystemAudioTapLedger()
+        ledger.attached(to: 8430, audibleDuration: 0)
+        ledger.observe(pid: 8430, audibleDuration: 132.76, minimum: minimumAudible)
+        XCTAssertEqual(ledger.provenPID, 8430)
+
+        // Moving to a sibling carries the session total across untouched.
+        ledger.attached(to: 8449, audibleDuration: 132.76)
+        ledger.observe(pid: 8449, audibleDuration: 132.76, minimum: minimumAudible)
+        XCTAssertEqual(ledger.provenPID, 8430)
+
+        // Only audio this tap wrote itself transfers the standing.
+        ledger.observe(pid: 8449, audibleDuration: 140, minimum: minimumAudible)
+        XCTAssertEqual(ledger.provenPID, 8449)
+    }
+
+    /// Eight seconds of silence is a pause between two sentences. A tap that has
+    /// written audible audio is not the reason for it and stays put; one that
+    /// has proved nothing is still worth moving that quickly.
+    func testProvenTapWaitsOutAnOrdinaryPause() {
+        var ledger = SystemAudioTapLedger()
+        ledger.attached(to: 8430, audibleDuration: 0)
+        XCTAssertEqual(ledger.silenceGrace(for: 8430, ordinary: 8, proven: 90), 8)
+
+        ledger.observe(pid: 8430, audibleDuration: 12, minimum: minimumAudible)
+        XCTAssertEqual(ledger.silenceGrace(for: 8430, ordinary: 8, proven: 90), 90)
+        // The patience is for that tap alone, not for silence in general.
+        XCTAssertEqual(ledger.silenceGrace(for: 8449, ordinary: 8, proven: 90), 8)
+    }
+
+    /// The long grace protects a proven tap only while there is no better
+    /// evidence. If a different helper is actively emitting, recovery should
+    /// use the ordinary threshold and follow the call there.
+    func testProvenTapDoesNotWaitForLongGraceWhenSiblingIsEmitting() {
+        var ledger = SystemAudioTapLedger()
+        ledger.attached(to: 8430, audibleDuration: 0)
+        ledger.observe(pid: 8430, audibleDuration: 12, minimum: minimumAudible)
+
+        XCTAssertEqual(ledger.silenceGrace(
+            for: 8430,
+            ordinary: 8,
+            proven: 90,
+            activelyEmittingAlternative: true), 8)
+        XCTAssertEqual(ledger.silenceGrace(
+            for: 8430,
+            ordinary: 8,
+            proven: 90,
+            activelyEmittingAlternative: false), 90)
+    }
+
+    /// Replays the flap in the log of 2026-08-25 10:36–10:57: modulehost carried
+    /// the call, a helper delivered nothing, and the watchdog swapped between
+    /// them every 10–15 s because each lookup was free to hand back the empty
+    /// one. Excluding only the tap in hand cannot stop that; the exclusion has
+    /// to persist.
+    func testARetiredTapIsNeverHandedBack() {
+        var ledger = SystemAudioTapLedger()
+        ledger.attached(to: 8430, audibleDuration: 0)
+        ledger.observe(pid: 8430, audibleDuration: 132.76, minimum: minimumAudible)
+
+        // One bounce onto the helper, which delivers not a single buffer.
+        ledger.attached(to: 8449, audibleDuration: 132.76)
+        ledger.retire(8449)
+        XCTAssertEqual(ledger.retiredPIDs, [8449])
+        XCTAssertEqual(ledger.provenPID, 8430)
+
+        // Back on modulehost, and the helper stays out of the running.
+        ledger.attached(to: 8430, audibleDuration: 132.76)
+        XCTAssertEqual(ledger.retiredPIDs, [8449])
+    }
+
+    /// A PID that proved itself earlier and now delivers nothing has stopped
+    /// being the answer; standing follows the evidence in both directions.
+    func testRetiringClearsStandingAndAttachingRestoresEligibility() {
+        var ledger = SystemAudioTapLedger()
+        ledger.attached(to: 8430, audibleDuration: 0)
+        ledger.observe(pid: 8430, audibleDuration: 20, minimum: minimumAudible)
+        ledger.retire(8430)
+        XCTAssertNil(ledger.provenPID)
+        XCTAssertEqual(ledger.silenceGrace(for: 8430, ordinary: 8, proven: 90), 8)
+
+        // Teams reuses the process; a fresh attachment gets a fresh hearing.
+        ledger.attached(to: 8430, audibleDuration: 20)
+        XCTAssertTrue(ledger.retiredPIDs.isEmpty)
+    }
+
+    /// Each recording starts with no knowledge of the last one's processes.
+    func testLedgerResetForgetsEverything() {
+        var ledger = SystemAudioTapLedger()
+        ledger.attached(to: 8430, audibleDuration: 0)
+        ledger.observe(pid: 8430, audibleDuration: 20, minimum: minimumAudible)
+        ledger.retire(8449)
+        ledger.reset()
+        XCTAssertEqual(ledger, SystemAudioTapLedger())
+        XCTAssertNil(ledger.provenPID)
+        XCTAssertTrue(ledger.retiredPIDs.isEmpty)
     }
 }
