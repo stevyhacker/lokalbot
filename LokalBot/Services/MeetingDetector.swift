@@ -151,10 +151,10 @@ final class MeetingDetector {
     /// and when it was last seen — the second lets a normal conversational gap
     /// (the remote side listening rather than talking) survive without
     /// restarting the window. See `nativeAudioConfirmationGapTolerance`.
+    private var startConfirmation = MeetingMatcher.StartConfirmationState()
     /// Last logged start-decision state, so the 10 s safety poll does not
     /// repeat the same line forever. Diagnostics only.
     private var lastLoggedStartState: String?
-    private var pendingStart: (bundleID: String, firstSeen: Date, lastAudioSeenAt: Date)?
     private var pendingStartRecheck: DispatchWorkItem?
     private var workspaceObservers: [NSObjectProtocol] = []
 
@@ -367,12 +367,12 @@ final class MeetingDetector {
         // listening rather than talking — the app itself may still be mid-call.
         // A candidate already inside its confirmation window gets a grace
         // period before that silence is read as the call having ended.
-        if let pendingStart,
+        if let pendingStart = startConfirmation.window,
            Self.requiresSustainedAudioForStart(
                bundleID: pendingStart.bundleID, calendarBacked: calendarEvent != nil),
            let app = Self.nativeApp(bundleID: pendingStart.bundleID, in: running) {
             switch MeetingMatcher.startConfirmationGapOutcome(
-                firstSeenAt: pendingStart.firstSeen,
+                firstSeenAt: pendingStart.firstSeenAt,
                 lastAudioSeenAt: pendingStart.lastAudioSeenAt,
                 now: now,
                 gapTolerance: Self.nativeAudioConfirmationGapTolerance,
@@ -382,11 +382,12 @@ final class MeetingDetector {
                 beginMeeting(app: app, calendarEvent: calendarEvent)
                 return
             case .stillWaiting:
-                let elapsed = now.timeIntervalSince(pendingStart.firstSeen)
+                let elapsed = now.timeIntervalSince(pendingStart.firstSeenAt)
                 let gapRemaining = Self.nativeAudioConfirmationGapTolerance
                     - now.timeIntervalSince(pendingStart.lastAudioSeenAt)
                 scheduleStartConfirmationRecheck(
-                    after: min(gapRemaining, Self.nativeAudioMinimumConfirmationDuration - elapsed))
+                    after: min(gapRemaining, Self.nativeAudioMinimumConfirmationDuration - elapsed),
+                    generation: pendingStart.generation)
                 return
             case .abandoned:
                 break
@@ -423,17 +424,19 @@ final class MeetingDetector {
     private func startConfirmed(app: DetectedApp, calendarBacked: Bool, now: Date) -> Bool {
         guard Self.requiresSustainedAudioForStart(
             bundleID: app.bundleID, calendarBacked: calendarBacked) else { return true }
-        if pendingStart?.bundleID != app.bundleID {
-            pendingStart = (app.bundleID, now, now)
+        let startedNewWindow = startConfirmation.observeAudio(
+            bundleID: app.bundleID,
+            at: now,
+            gapTolerance: Self.nativeAudioConfirmationGapTolerance)
+        if startedNewWindow {
+            cancelPendingStartRecheck()
             lokalbotLog(
                 "detector waiting for sustained audio app=\(app.bundleID) "
                     + "needs=\(Int(Self.nativeAudioMinimumConfirmationDuration))s")
-        } else {
-            pendingStart?.lastAudioSeenAt = now
         }
-        let firstSeen = pendingStart?.firstSeen
+        guard let pendingStart = startConfirmation.window else { return false }
         if MeetingMatcher.sustainedAudioConfirmed(
-            firstSeenAt: firstSeen,
+            firstSeenAt: pendingStart.firstSeenAt,
             now: now,
             minimumDuration: Self.nativeAudioMinimumConfirmationDuration) {
             return true
@@ -441,9 +444,10 @@ final class MeetingDetector {
         // Ticks are event-driven plus a slow safety poll, so a real meeting
         // would otherwise wait for the next poll boundary instead of starting
         // the moment the minimum duration elapses.
-        let elapsed = firstSeen.map { now.timeIntervalSince($0) } ?? 0
+        let elapsed = now.timeIntervalSince(pendingStart.firstSeenAt)
         scheduleStartConfirmationRecheck(
-            after: Self.nativeAudioMinimumConfirmationDuration - elapsed)
+            after: Self.nativeAudioMinimumConfirmationDuration - elapsed,
+            generation: pendingStart.generation)
         return false
     }
 
@@ -456,10 +460,13 @@ final class MeetingDetector {
         lokalbotLog(state)
     }
 
-    private func scheduleStartConfirmationRecheck(after delay: TimeInterval) {
-        guard pendingStartRecheck == nil else { return }
+    private func scheduleStartConfirmationRecheck(after delay: TimeInterval,
+                                                  generation: UInt64) {
+        guard startConfirmation.acceptsRecheck(for: generation),
+              pendingStartRecheck == nil else { return }
         let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
+            guard let self,
+                  self.startConfirmation.acceptsRecheck(for: generation) else { return }
             self.pendingStartRecheck = nil
             self.tick()
         }
@@ -471,12 +478,16 @@ final class MeetingDetector {
     /// just started a meeting — that clears the same state but is a success,
     /// not a loss, and must not log as one.
     private func clearPendingStart(loggingLoss: Bool = true) {
-        if loggingLoss, let pendingStart {
+        if loggingLoss, let pendingStart = startConfirmation.window {
             lokalbotLog(
                 "detector lost the audio it was waiting on app=\(pendingStart.bundleID) "
-                    + "after=\(String(format: "%.1fs", Date().timeIntervalSince(pendingStart.firstSeen)))")
+                    + "after=\(String(format: "%.1fs", Date().timeIntervalSince(pendingStart.firstSeenAt)))")
         }
-        pendingStart = nil
+        startConfirmation.clear()
+        cancelPendingStartRecheck()
+    }
+
+    private func cancelPendingStartRecheck() {
         pendingStartRecheck?.cancel()
         pendingStartRecheck = nil
     }

@@ -44,6 +44,56 @@ enum MeetingMatcher {
         return now.timeIntervalSince(firstSeenAt) >= minimumDuration
     }
 
+    /// The live state for one sustained-audio confirmation window. A generation
+    /// identifies the exact window so a queued recheck cannot act on a newer
+    /// candidate after the old window has been reset.
+    struct StartConfirmationState {
+        struct Window: Equatable {
+            let bundleID: String
+            let firstSeenAt: Date
+            let lastAudioSeenAt: Date
+            let generation: UInt64
+        }
+
+        private(set) var window: Window?
+        private var generation: UInt64 = 0
+
+        /// Records fresh audio and answers whether it began a new window. Audio
+        /// after an expired gap is a new candidate even when the bundle id is
+        /// unchanged; otherwise the abandoned window could confirm immediately.
+        @discardableResult
+        mutating func observeAudio(bundleID: String,
+                                   at now: Date,
+                                   gapTolerance: TimeInterval) -> Bool {
+            if let window,
+               window.bundleID == bundleID,
+               now.timeIntervalSince(window.lastAudioSeenAt) <= gapTolerance {
+                self.window = Window(
+                    bundleID: bundleID,
+                    firstSeenAt: window.firstSeenAt,
+                    lastAudioSeenAt: now,
+                    generation: window.generation)
+                return false
+            }
+
+            generation &+= 1
+            window = Window(
+                bundleID: bundleID,
+                firstSeenAt: now,
+                lastAudioSeenAt: now,
+                generation: generation)
+            return true
+        }
+
+        mutating func clear() {
+            window = nil
+        }
+
+        func acceptsRecheck(for generation: UInt64) -> Bool {
+            window?.generation == generation
+        }
+    }
+
     /// What a start candidate's silence means when it has no fresh audio
     /// evidence on this particular tick.
     ///

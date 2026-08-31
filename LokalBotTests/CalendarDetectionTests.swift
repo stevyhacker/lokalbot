@@ -406,6 +406,62 @@ final class CalendarDetectionTests: XCTestCase {
             .abandoned)
     }
 
+    /// A fresh tick cannot revive a window whose last evidence is already past
+    /// tolerance. At this timestamp the old implementation saw a 12-second
+    /// total span and confirmed immediately instead of starting over.
+    func testFreshAudioAfterExpiredGapStartsANewConfirmationWindow() throws {
+        var state = MeetingMatcher.StartConfirmationState()
+        let firstSeen = Date()
+        let lastAudioSeenAt = firstSeen.addingTimeInterval(5)
+        let restartedAt = firstSeen.addingTimeInterval(
+            MeetingDetector.nativeAudioMinimumConfirmationDuration)
+
+        XCTAssertTrue(state.observeAudio(
+            bundleID: "com.microsoft.teams2",
+            at: firstSeen,
+            gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance))
+        XCTAssertFalse(state.observeAudio(
+            bundleID: "com.microsoft.teams2",
+            at: lastAudioSeenAt,
+            gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance))
+        XCTAssertTrue(state.observeAudio(
+            bundleID: "com.microsoft.teams2",
+            at: restartedAt,
+            gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance))
+
+        let restarted = try XCTUnwrap(state.window)
+        XCTAssertEqual(restarted.firstSeenAt, restartedAt)
+        XCTAssertEqual(restarted.lastAudioSeenAt, restartedAt)
+        XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(
+            firstSeenAt: restarted.firstSeenAt,
+            now: restartedAt,
+            minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration))
+    }
+
+    /// Canceling a submitted DispatchWorkItem is not the identity check: if an
+    /// obsolete callback is already queued, its captured generation must no
+    /// longer match the restarted window.
+    func testRestartedConfirmationWindowRejectsStaleRecheck() throws {
+        var state = MeetingMatcher.StartConfirmationState()
+        let firstSeen = Date()
+        state.observeAudio(
+            bundleID: "com.microsoft.teams2",
+            at: firstSeen,
+            gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance)
+        let staleGeneration = try XCTUnwrap(state.window).generation
+
+        state.observeAudio(
+            bundleID: "com.microsoft.teams2",
+            at: firstSeen.addingTimeInterval(
+                MeetingDetector.nativeAudioConfirmationGapTolerance + 0.1),
+            gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance)
+
+        let restartedGeneration = try XCTUnwrap(state.window).generation
+        XCTAssertNotEqual(restartedGeneration, staleGeneration)
+        XCTAssertFalse(state.acceptsRecheck(for: staleGeneration))
+        XCTAssertTrue(state.acceptsRecheck(for: restartedGeneration))
+    }
+
     func testSustainedAudioIsUnconfirmedBeforeAnyAudioWasSeen() {
         XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(
             firstSeenAt: nil,
