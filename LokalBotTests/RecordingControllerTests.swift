@@ -232,6 +232,26 @@ final class RecordingControllerTests: XCTestCase {
         XCTAssertEqual(ledger.silenceGrace(for: 8449, ordinary: 8, proven: 90), 8)
     }
 
+    /// The long grace protects a proven tap only while there is no better
+    /// evidence. If a different helper is actively emitting, recovery should
+    /// use the ordinary threshold and follow the call there.
+    func testProvenTapDoesNotWaitForLongGraceWhenSiblingIsEmitting() {
+        var ledger = SystemAudioTapLedger()
+        ledger.attached(to: 8430, audibleDuration: 0)
+        ledger.observe(pid: 8430, audibleDuration: 12, minimum: minimumAudible)
+
+        XCTAssertEqual(ledger.silenceGrace(
+            for: 8430,
+            ordinary: 8,
+            proven: 90,
+            activelyEmittingAlternative: true), 8)
+        XCTAssertEqual(ledger.silenceGrace(
+            for: 8430,
+            ordinary: 8,
+            proven: 90,
+            activelyEmittingAlternative: false), 90)
+    }
+
     /// Replays the flap in the log of 2026-08-25 10:36–10:57: modulehost carried
     /// the call, a helper delivered nothing, and the watchdog swapped between
     /// them every 10–15 s because each lookup was free to hand back the empty

@@ -384,16 +384,9 @@ final class AudioSourceMonitorTests: XCTestCase {
 
     // MARK: - Continuing a meeting that is already under way
 
-    /// The same stream that may not *start* a recording must be able to keep one
-    /// alive. Teams routes call audio through a `helper` whose `isRunningOutput`
-    /// drops in the pauses between sentences; with `modulehost` read as no
-    /// signal at all the app looks audio-free mid-call, and the stop debounce
-    /// ended four real meetings 18–37 s in on 2026-08-25.
-    ///
-    /// Starting off an ambiguous stream invents a meeting; stopping off one
-    /// discards the meeting the user is in. Only the second is unrecoverable,
-    /// so the continue lookup takes the weaker evidence.
-    func testContinueAcceptsAnAlwaysOpenStreamThatMayNotStartARecording() {
+    /// Teams' modulehost is useful context during a call, but it remains open
+    /// while Teams is idle and therefore cannot be reliable evidence itself.
+    func testAlwaysOpenStreamIsClassifiedSeparatelyFromReliableAudio() {
         let host = AudioProcess(id: 100,
                                 name: "Microsoft Teams",
                                 bundleID: "com.microsoft.teams2",
@@ -411,15 +404,59 @@ final class AudioSourceMonitorTests: XCTestCase {
         XCTAssertNil(MeetingDetector.bestOutputAudioProcess(for: app, in: [host, moduleHost]),
                      "starting must not read an always-open stream as a call")
         XCTAssertEqual(
-            MeetingDetector.bestContinuingAudioProcess(for: app, in: [host, moduleHost])?.id,
-            moduleHost.id,
-            "continuing must, or a pause between sentences ends the meeting")
+            MeetingDetector.bestAlwaysOpenAudioProcess(for: app, in: [host, moduleHost])?.id,
+            moduleHost.id)
     }
 
-    /// The leniency is scoped to the namespace, not to silence in general: with
-    /// nothing emitting anywhere, continuing finds no audio either and the stop
-    /// debounce still gets to end the meeting when the call really is over.
-    func testContinueStillReportsNoAudioWhenNothingIsEmitting() {
+    /// Once reliable call audio has been seen, the always-open stream bridges an
+    /// ordinary speech pause without starting the stop debounce.
+    func testRecentReliableAudioLetsAlwaysOpenStreamBridgeAPause() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        var lease = MeetingContinuationLease()
+
+        XCTAssertTrue(lease.allowsContinuation(
+            reliableAudioActive: true,
+            alwaysOpenAudioActive: true,
+            now: start,
+            grace: MeetingDetector.alwaysOpenAudioContinuationGrace))
+        XCTAssertTrue(lease.allowsContinuation(
+            reliableAudioActive: false,
+            alwaysOpenAudioActive: true,
+            now: start.addingTimeInterval(10),
+            grace: MeetingDetector.alwaysOpenAudioContinuationGrace))
+    }
+
+    /// The same idle modulehost must not keep a finished call alive forever.
+    /// Once recent reliable evidence expires, the detector can begin its normal
+    /// stop debounce even though modulehost still reports running output.
+    func testAlwaysOpenStreamExpiresAfterFiniteContinuationGrace() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let grace = MeetingDetector.alwaysOpenAudioContinuationGrace
+        var lease = MeetingContinuationLease()
+
+        XCTAssertFalse(lease.allowsContinuation(
+            reliableAudioActive: false,
+            alwaysOpenAudioActive: true,
+            now: start,
+            grace: grace), "an always-open stream may not create its own lease")
+        XCTAssertTrue(lease.allowsContinuation(
+            reliableAudioActive: true,
+            alwaysOpenAudioActive: false,
+            now: start,
+            grace: grace))
+        XCTAssertTrue(lease.allowsContinuation(
+            reliableAudioActive: false,
+            alwaysOpenAudioActive: true,
+            now: start.addingTimeInterval(grace),
+            grace: grace), "the finite boundary is inclusive")
+        XCTAssertFalse(lease.allowsContinuation(
+            reliableAudioActive: false,
+            alwaysOpenAudioActive: true,
+            now: start.addingTimeInterval(grace + 0.001),
+            grace: grace))
+    }
+
+    func testAlwaysOpenLookupStillReportsNoAudioWhenNothingIsEmitting() {
         let host = AudioProcess(id: 100,
                                 name: "Microsoft Teams",
                                 bundleID: "com.microsoft.teams2",
@@ -434,13 +471,11 @@ final class AudioSourceMonitorTests: XCTestCase {
                                               bundleID: "com.microsoft.teams2",
                                               pid: host.id)
 
-        XCTAssertNil(MeetingDetector.bestContinuingAudioProcess(
+        XCTAssertNil(MeetingDetector.bestAlwaysOpenAudioProcess(
             for: app, in: [host, quietModuleHost]))
     }
 
-    /// Continuing does not widen the namespace either — a lookalike bundle id
-    /// outside the app is still not this app's audio.
-    func testContinueDoesNotAcceptALookalikeBundle() {
+    func testAlwaysOpenLookupDoesNotAcceptALookalikeBundle() {
         let impostor = AudioProcess(id: 300,
                                     name: "Not Teams",
                                     bundleID: "com.microsoft.teams2evil.modulehost",
@@ -450,6 +485,32 @@ final class AudioSourceMonitorTests: XCTestCase {
                                               bundleID: "com.microsoft.teams2",
                                               pid: 100)
 
-        XCTAssertNil(MeetingDetector.bestContinuingAudioProcess(for: app, in: [impostor]))
+        XCTAssertNil(MeetingDetector.bestAlwaysOpenAudioProcess(for: app, in: [impostor]))
+    }
+
+    /// Capture health can prove the current tap silent while Core Audio still
+    /// reports its stream open. Recovery must be able to exclude that current
+    /// PID and discover a different helper that is actively emitting.
+    func testReliableOutputLookupCanExcludeTheSilentCurrentTap() {
+        let current = AudioProcess(id: 200,
+                                   name: "Current Teams WebView",
+                                   bundleID: "com.microsoft.teams2.helper",
+                                   objectID: AudioObjectID(200),
+                                   isRunningOutput: true)
+        let sibling = AudioProcess(id: 300,
+                                   name: "Emitting Teams WebView",
+                                   bundleID: "com.microsoft.teams2.helper",
+                                   objectID: AudioObjectID(300),
+                                   isRunningOutput: true)
+        let app = MeetingDetector.DetectedApp(name: "Teams",
+                                              bundleID: "com.microsoft.teams2",
+                                              pid: current.id)
+
+        XCTAssertEqual(MeetingDetector.bestOutputAudioProcess(
+            for: app, in: [current, sibling])?.id, current.id)
+        XCTAssertEqual(MeetingDetector.bestOutputAudioProcess(
+            for: app,
+            in: [current, sibling],
+            excluding: [current.id])?.id, sibling.id)
     }
 }

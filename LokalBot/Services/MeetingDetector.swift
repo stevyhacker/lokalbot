@@ -1,6 +1,40 @@
 import AppKit
 import CoreAudio
 
+/// A permanently-open process may bridge a brief gap in otherwise reliable
+/// meeting audio, but it may not become evidence by itself. The detector owns
+/// one lease per active session and renews it only when app audio that can
+/// actually stop is observed.
+struct MeetingContinuationLease: Equatable {
+    private(set) var lastReliableAudioAt: Date?
+
+    mutating func allowsContinuation(
+        reliableAudioActive: Bool,
+        alwaysOpenAudioActive: Bool,
+        now: Date,
+        grace: TimeInterval
+    ) -> Bool {
+        if reliableAudioActive {
+            lastReliableAudioAt = now
+            return true
+        }
+        guard alwaysOpenAudioActive,
+              let lastReliableAudioAt,
+              grace.isFinite,
+              grace >= 0 else { return false }
+        let age = now.timeIntervalSince(lastReliableAudioAt)
+        return age >= 0 && age <= grace
+    }
+
+    mutating func recordReliableAudio(at date: Date) {
+        lastReliableAudioAt = date
+    }
+
+    mutating func reset() {
+        lastReliableAudioAt = nil
+    }
+}
+
 /// Detects meeting start/end by combining two signals (design doc §2.1):
 ///   1. A known meeting app is running.
 ///   2. The default input device (mic) is in use system-wide.
@@ -112,6 +146,11 @@ final class MeetingDetector {
     /// Extra grace before stopping while a calendar-backed meeting is still in
     /// its scheduled window — brief audio drops mid-meeting shouldn't end it.
     static let calendarBackedGrace: TimeInterval = 180
+    /// Teams keeps `modulehost` open while idle, so it can bridge a pause only
+    /// while backed by recent audio from a process whose signal can disappear.
+    /// With the default 15-second stop debounce, the detector remains tolerant
+    /// for about one minute after the last reliable sample, then ends normally.
+    static let alwaysOpenAudioContinuationGrace: TimeInterval = 45
 
     // Calendar-assisted detection, synced from `AppSettings` by `AppState`.
     var calendar: CalendarEventProviding?
@@ -122,6 +161,7 @@ final class MeetingDetector {
     /// The calendar event matched when the current session started — drives the
     /// extended stop grace and is carried into the recording's metadata.
     private var activeCalendarEvent: CalendarMeetingCandidate?
+    private var continuationLease = MeetingContinuationLease()
     private var timer: Timer?
     private var pendingStop: DispatchWorkItem?
     /// The start candidate still waiting out
@@ -171,6 +211,7 @@ final class MeetingDetector {
         pendingStop?.cancel()
         pendingStop = nil
         clearPendingStart()
+        continuationLease.reset()
         let center = NSWorkspace.shared.notificationCenter
         for observer in workspaceObservers { center.removeObserver(observer) }
         workspaceObservers.removeAll()
@@ -248,7 +289,9 @@ final class MeetingDetector {
 
         if let currentApp = activeApp {
             let continuingApp = Self.continuingApp(currentApp, in: running)
-            let appAudioActive = continuingApp.map { Self.hasContinuingAudio(for: $0) } ?? false
+            let appAudioActive = continuingApp.map {
+                hasContinuingAudio(for: $0, now: now)
+            } ?? false
             let isBrowserApp = continuingApp.map { Self.browsers.contains($0.bundleID) } ?? false
             let calendarBackedBrowserWithAudio = isBrowserApp
                 && calendarEnabled
@@ -273,6 +316,7 @@ final class MeetingDetector {
                     let previousApp = activeApp
                     activeApp = replacementApp
                     activeCalendarEvent = calendarEvent
+                    continuationLease.recordReliableAudio(at: now)
                     if previousApp != replacementApp {
                         onMeetingSwitched?(MeetingDetectionContext(
                             detectedApp: replacementApp,
@@ -338,6 +382,7 @@ final class MeetingDetector {
         pendingStop = nil
         activeApp = app
         activeCalendarEvent = calendarEvent
+        continuationLease.recordReliableAudio(at: now)
         onMeetingStarted?(MeetingDetectionContext(
             detectedApp: app,
             calendarEvent: calendarEvent,
@@ -411,6 +456,7 @@ final class MeetingDetector {
             guard let self else { return }
             self.activeApp = nil
             self.activeCalendarEvent = nil
+            self.continuationLease.reset()
             self.pendingStop = nil
             self.onMeetingEnded?()
         }
@@ -560,10 +606,13 @@ final class MeetingDetector {
     /// capture must use ``bestCaptureAudioProcess(for:in:)`` so bundles with
     /// always-open streams remain tappable.
     static func bestOutputAudioProcess(for app: DetectedApp,
-                                       in processes: [AudioProcess]) -> AudioProcess? {
+                                       in processes: [AudioProcess],
+                                       excluding excludedPIDs: Set<pid_t> = []) -> AudioProcess? {
         rankedOutputAudioProcess(
             for: app,
-            in: processes.filter { carriesMeetingSignal(bundleID: $0.bundleID) })
+            in: processes.filter {
+                !excludedPIDs.contains($0.id) && carriesMeetingSignal(bundleID: $0.bundleID)
+            })
     }
 
     /// Canonical capture selection, including always-open streams plus the
@@ -575,35 +624,28 @@ final class MeetingDetector {
         captureTargetProcess(for: app, in: processes)
     }
 
-    /// Best output process that is evidence a meeting is *still under way* —
-    /// the same ranking as ``bestOutputAudioProcess(for:in:)`` with the
-    /// always-open bundles admitted.
-    ///
-    /// Starting and continuing carry opposite costs. A start read from an
-    /// ambiguous stream invents a meeting nobody was in; a stop read from one
-    /// throws away the meeting the user is sitting in, and that cannot be
-    /// undone. So the weaker evidence is right here and wrong for a start.
-    ///
-    /// This is not hypothetical: Teams routes call audio through a `helper`
-    /// whose `isRunningOutput` drops in the pauses between sentences, leaving
-    /// only `modulehost` open. With `modulehost` read as no signal at all the
-    /// app looks audio-free mid-call, and the stop debounce ended four real
-    /// meetings 18–37 s in on 2026-08-25.
-    ///
-    /// The leniency stays scoped to the app's namespace, so a call that really
-    /// is over still reports no audio and the debounce still gets to end it.
-    static func bestContinuingAudioProcess(for app: DetectedApp,
+    /// Best permanently-open stream inside this app's process family. This is
+    /// ambiguous context, never standalone meeting evidence: the active
+    /// detector may use it only while ``MeetingContinuationLease`` is backed by
+    /// recent reliable audio.
+    static func bestAlwaysOpenAudioProcess(for app: DetectedApp,
                                            in processes: [AudioProcess]) -> AudioProcess? {
-        rankedOutputAudioProcess(for: app, in: processes)
+        rankedOutputAudioProcess(
+            for: app,
+            in: processes.filter { process in
+                guard process.isRunningOutput,
+                      let bundleID = process.bundleID,
+                      !carriesMeetingSignal(bundleID: bundleID) else { return false }
+                return audioBundleID(bundleID, belongsTo: app.bundleID)
+            })
     }
 
-    static func currentOutputAudioProcess(for app: DetectedApp) -> AudioProcess? {
+    static func currentOutputAudioProcess(
+        for app: DetectedApp,
+        excluding excludedPIDs: Set<pid_t> = []
+    ) -> AudioProcess? {
         let processes = currentAudioProcesses()
-        return bestOutputAudioProcess(for: app, in: processes)
-    }
-
-    static func currentContinuingAudioProcess(for app: DetectedApp) -> AudioProcess? {
-        bestContinuingAudioProcess(for: app, in: currentAudioProcesses())
+        return bestOutputAudioProcess(for: app, in: processes, excluding: excludedPIDs)
     }
 
     /// The process to attach the capture tap to.
@@ -755,17 +797,28 @@ final class MeetingDetector {
     ///
     /// This is the *start* question, so it reads only streams that are evidence
     /// of a call. Deciding whether one is still running is
-    /// ``hasContinuingAudio(for:)``.
+    /// ``hasContinuingAudio(for:now:)``.
     private static func hasAudio(for app: DetectedApp) -> Bool {
         hasOutputAudio(for: app) || hasInputAudio(for: app)
     }
 
-    /// The same activity, judged for a meeting already under way: an always-open
-    /// stream in the app's namespace counts here, because ending a live session
-    /// needs the opposite burden of proof from opening one. See
-    /// ``bestContinuingAudioProcess(for:in:)``.
-    private static func hasContinuingAudio(for app: DetectedApp) -> Bool {
-        currentContinuingAudioProcess(for: app) != nil || hasInputAudio(for: app)
+    /// Reliable app audio renews the active session's lease. A permanently-open
+    /// stream may bridge a normal speech pause while that lease is recent, but
+    /// once the lease expires it cannot prevent the ordinary stop debounce from
+    /// ending a Teams call whose app remains open.
+    private func hasContinuingAudio(for app: DetectedApp, now: Date) -> Bool {
+        let processes = Self.currentAudioProcesses(now: now)
+        let reliableAudioActive = Self.bestOutputAudioProcess(
+            for: app,
+            in: processes) != nil || Self.hasInputAudio(for: app)
+        let alwaysOpenAudioActive = Self.bestAlwaysOpenAudioProcess(
+            for: app,
+            in: processes) != nil
+        return continuationLease.allowsContinuation(
+            reliableAudioActive: reliableAudioActive,
+            alwaysOpenAudioActive: alwaysOpenAudioActive,
+            now: now,
+            grace: Self.alwaysOpenAudioContinuationGrace)
     }
 
     private static func hasInputAudio(for app: DetectedApp) -> Bool {

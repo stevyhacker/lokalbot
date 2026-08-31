@@ -102,11 +102,15 @@ struct SystemAudioTapLedger: Equatable {
         if provenPID == pid { provenPID = nil }
     }
 
-    /// How long this tap may stay quiet before the watchdog goes looking.
+    /// How long this tap may stay quiet before the watchdog goes looking. A
+    /// proven tap keeps the long grace through ordinary silence, but a different
+    /// process that is actively emitting is direct evidence that the call moved
+    /// and restores the ordinary recovery threshold.
     func silenceGrace(for pid: pid_t,
                       ordinary: TimeInterval,
-                      proven: TimeInterval) -> TimeInterval {
-        pid == provenPID ? proven : ordinary
+                      proven: TimeInterval,
+                      activelyEmittingAlternative: Bool = false) -> TimeInterval {
+        activelyEmittingAlternative || pid != provenPID ? ordinary : proven
     }
 
     mutating func reset() { self = SystemAudioTapLedger() }
@@ -746,14 +750,28 @@ final class RecordingController: ObservableObject {
                                      audibleDuration: health.audibleDuration,
                                      minimum: AudioFileInspector.minimumTranscribableDuration)
         let silentFor = health.lastAudibleWriteAt.map { now.timeIntervalSince($0) } ?? elapsed
+        // Do not enumerate process siblings during sub-threshold fluctuations.
+        guard silentFor >= Self.systemAudioSilentGrace else { return }
+
+        // A proven tap ordinarily stays put for the long grace, but it should
+        // not wait while Core Audio already shows a different process in the
+        // same app family actively emitting. Excluding both the current tap and
+        // session-retired taps makes this a real alternative, not another
+        // selection of the process whose file is currently silent.
+        var emittingExclusions = systemAudioTapLedger.retiredPIDs
+        emittingExclusions.insert(target.pid)
+        let emittingAlternative = currentEmittingSystemAudioCandidate(
+            for: target,
+            excluding: emittingExclusions)
         // Silence is the question this watchdog cannot answer on its own: a
         // meeting between two sentences and a tap on the wrong process look
-        // identical from here. A tap that has written audible audio has already
-        // answered it, and gets to sit out an ordinary pause.
+        // identical from here. A proven tap sits out an ordinary pause unless a
+        // currently-emitting sibling answers the question directly.
         let silenceGrace = systemAudioTapLedger.silenceGrace(
             for: target.pid,
             ordinary: Self.systemAudioSilentGrace,
-            proven: Self.provenSystemAudioSilentGrace)
+            proven: Self.provenSystemAudioSilentGrace,
+            activelyEmittingAlternative: emittingAlternative != nil)
         guard silentFor >= silenceGrace else { return }
 
         if let lastSystemAudioReattachAt,
@@ -769,7 +787,7 @@ final class RecordingController: ObservableObject {
         if health.framesSinceAttach == 0 {
             systemAudioTapLedger.retire(target.pid)
         }
-        let alternativeCandidate = currentSystemAudioCandidate(
+        let alternativeCandidate = emittingAlternative ?? currentSystemAudioCandidate(
             for: target,
             excluding: systemAudioTapLedger.retiredPIDs)
         // Rebuilding a tap on the same PID is still useful when that is the
@@ -843,6 +861,21 @@ final class RecordingController: ObservableObject {
         excluding excludedPIDs: Set<pid_t> = []
     ) -> AudioProcess? {
         MeetingDetector.currentCaptureTargetProcess(
+            for: MeetingDetector.DetectedApp(
+                name: target.bundleID,
+                bundleID: target.bundleID,
+                pid: target.pid),
+            excluding: excludedPIDs)
+    }
+
+    /// A currently-emitting sibling is stronger recovery evidence than a quiet
+    /// capture target. Unlike the broader capture lookup, this never returns an
+    /// always-open or merely-present fallback.
+    private func currentEmittingSystemAudioCandidate(
+        for target: SystemAudioTarget,
+        excluding excludedPIDs: Set<pid_t>
+    ) -> AudioProcess? {
+        MeetingDetector.currentOutputAudioProcess(
             for: MeetingDetector.DetectedApp(
                 name: target.bundleID,
                 bundleID: target.bundleID,
