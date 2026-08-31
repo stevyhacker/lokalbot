@@ -233,7 +233,7 @@ enum UpcomingMeetingPreparationCompiler {
                 (try? String(contentsOf: folder.appendingPathComponent("summary.md"),
                              encoding: .utf8)) ?? "",
                 maxCharacters: 1_600)
-            let priorNames = Set((meeting.participantNameHints ?? [])
+            let priorNames = Set(meeting.resolvedCalendarParticipantIdentities.compactMap(\.name)
                 .map(normalizedPhrase).filter { !$0.isEmpty })
             let directParticipantMatches = eventParticipantNames.intersection(priorNames).count
             let corpusTerms = terms(meeting.title + "\n" + summary)

@@ -42,6 +42,7 @@ final class PiRPCMessagesTests: XCTestCase {
             (.newSession(id: "a"), "new_session"),
             (.getState(id: "a"), "get_state"),
             (.getMessages(id: "a"), "get_messages"),
+            (.getSessionStats(id: "a"), "get_session_stats"),
         ] {
             let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(command.jsonLine.utf8)) as? [String: Any])
             XCTAssertEqual(obj["type"] as? String, type)

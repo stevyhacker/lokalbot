@@ -200,7 +200,8 @@ extension PiCommand {
     var id: String? {
         switch self {
         case .prompt(let id, _, _), .steer(let id, _), .abort(let id),
-             .newSession(let id), .getState(let id), .getMessages(let id):
+             .newSession(let id), .getState(let id), .getMessages(let id),
+             .getSessionStats(let id):
             return id
         case .uiConfirmResponse, .uiCancelResponse:
             return nil   // ui responses correlate to pi's request id, not ours

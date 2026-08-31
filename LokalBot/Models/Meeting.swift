@@ -27,6 +27,17 @@ struct Meeting: Identifiable, Codable, Equatable, Sendable {
     /// Calendar attendee / roster names that can seed speaker rename
     /// suggestions. Optional so older `meta.json` files still decode.
     var participantNameHints: [String]?
+    /// Structured calendar attendees. Email addresses remain in this local
+    /// metadata only; transcript aliases retain opaque participant IDs.
+    var calendarParticipantIdentities: [CalendarParticipantIdentity]?
+
+    var resolvedCalendarParticipantIdentities: [CalendarParticipantIdentity] {
+        let structured = CalendarParticipantIdentity.normalized(
+            calendarParticipantIdentities ?? [])
+        return structured.isEmpty
+            ? CalendarParticipantIdentity.fromLegacyNames(participantNameHints ?? [])
+            : structured
+    }
 
     /// Length of the actual recorded audio (longest track), measured at
     /// finalize. The wall-clock span (`duration`) can exceed what was captured

@@ -15,6 +15,17 @@ final class PiIntegrationTests: XCTestCase {
     }
 
     private func requireRuntime() throws -> URL {
+        if let path = ProcessInfo.processInfo.environment["LOKALBOT_PINNED_RUNTIME_ROOT"],
+           !path.isEmpty {
+            let root = URL(fileURLWithPath: path, isDirectory: true)
+            guard FileManager.default.isExecutableFile(
+                atPath: AgentRuntimeLayout.bunBinary(under: root).path),
+                FileManager.default.fileExists(
+                    atPath: AgentRuntimeLayout.piCLI(under: root).path) else {
+                throw XCTSkip("pinned agent runtime is incomplete at \(path)")
+            }
+            return root
+        }
         let root = AgentRuntimeLayout.defaultRoot
         guard AgentRuntimeLayout.isInstalled(under: root) else {
             throw XCTSkip("agent runtime not installed; enable Agent Mode in the app once")

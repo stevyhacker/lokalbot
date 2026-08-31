@@ -52,6 +52,13 @@ enum SyntheticFixture {
         let hasSystemTrack: Bool
         let transcript: [Segment]
         let summaryMarkdown: String
+        var calendarParticipants: [Participant] = []
+
+        struct Participant {
+            let id: String
+            let name: String
+            let emailAddress: String
+        }
 
         struct Segment {
             let start: TimeInterval
@@ -105,7 +112,13 @@ enum SyntheticFixture {
             ## Action items
             - [ ] Draft the eviction policy document by Thursday (Me).
             - [ ] Benchmark failover latency before committing to cluster mode (Them).
-            """)
+            """,
+            calendarParticipants: [
+                .init(id: "fixture-ana", name: "Ana Petrović",
+                      emailAddress: "ana@example.com"),
+                .init(id: "fixture-marko", name: "Marko Marković",
+                      emailAddress: "marko@example.com"),
+            ])
 
         let standup = Meeting(
             id: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!,
@@ -271,6 +284,25 @@ enum SyntheticFixture {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 
         // meta.json — must round-trip through StorageManager.loadMeetings()
+        let participantNames = meeting.calendarParticipants
+            .map { jsonString($0.name) }
+            .joined(separator: ", ")
+        let participantIdentities = meeting.calendarParticipants.map { participant in
+            """
+              {
+                "emailAddress" : \(jsonString(participant.emailAddress)),
+                "id" : \(jsonString(participant.id)),
+                "name" : \(jsonString(participant.name))
+              }
+            """
+        }.joined(separator: ",\n")
+        let calendarMetadata = meeting.calendarParticipants.isEmpty ? "" : """
+        ,
+          "participantNameHints" : [\(participantNames)],
+          "calendarParticipantIdentities" : [
+        \(participantIdentities)
+          ]
+        """
         let meta = """
         {
           "appName" : "\(meeting.appName)",
@@ -279,7 +311,7 @@ enum SyntheticFixture {
           "id" : "\(meeting.id.uuidString)",
           "relativePath" : "\(meeting.relativePath)",
           "startedAt" : "\(isoFormatter.string(from: meeting.startedAt))",
-          "title" : "\(meeting.title)"
+          "title" : "\(meeting.title)"\(calendarMetadata)
         }
         """
         try meta.write(to: folder.appendingPathComponent("meta.json"),

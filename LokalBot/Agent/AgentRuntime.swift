@@ -37,20 +37,20 @@ struct AgentRuntimeManifest: Equatable, Sendable {
         self.piRuntimeTreeSHA256 = piRuntimeTreeSHA256
     }
 
-    static let bunVersion = "1.3.14"
-    static let piVersion = "0.80.3"
+    static let bunVersion = "1.4.0"
+    static let piVersion = "0.84.3"
 
     static let current = AgentRuntimeManifest(
         bun: AgentRuntimeArtifact(
             name: "Bun \(bunVersion)",
             url: URL(string: "https://github.com/oven-sh/bun/releases/download/bun-v\(bunVersion)/bun-darwin-aarch64.zip")!,
-            sha256: "d8b96221828ad6f97ac7ac0ab7e95872341af763001e8803e8267652c2652620",
+            sha256: "c669e97f6164e1c96e0701748db98dfa77492908cbd8394c7557134a735de381",
             archiveKind: .zip),
-        bunBinarySHA256: "e0c90ec15d33363e6b70713d56bc3b2c7585c17f40a0fe0f8fd9305901d4e233",
-        piCLISHA256: "af302f231437eaf6f37691bce4b34234fcb626bcb5eb3910d4fc3f6519bf78ca",
-        packageJSONSHA256: "de26644ce5bd02d5ab06da79f2c52bb14a1a9ffb2741d6f5b1dbc7fe31c04d51",
-        lockfileSHA256: "2015685bbfa61c88d8351a5e9fb500edf51e605f1fa01102cd9a5a2925014147",
-        piRuntimeTreeSHA256: "44db8e5fdb7ed4aadd24e8df4bf4a6bba4720175656d5ca6879a7e786a59e0de")
+        bunBinarySHA256: "539598c775882420b9d8deb7dc14d845f20f7d26f5600c50ab067dde6ac3f3bf",
+        piCLISHA256: "840d1e8e689ed9e4937bcb00b9a810e02a8567d9afb10a47097f11ca93ea1521",
+        packageJSONSHA256: "d3c39582b26fd2fa4bebad4d30523f7ef00db8e59d93090748e8564b31d48e7f",
+        lockfileSHA256: "6e3e93d5b342d9963c2df0fd5dfaf2e6d318a46cceacd436199ad50b73923d75",
+        piRuntimeTreeSHA256: "521026535d6a6710678e89d4005d3f8f318847ab6065557be2ab54172cbc9701")
 }
 
 struct AgentRuntimeVersionMarker: Codable, Equatable {

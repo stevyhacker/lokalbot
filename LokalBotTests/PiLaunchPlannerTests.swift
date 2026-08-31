@@ -13,7 +13,8 @@ final class PiLaunchPlannerTests: XCTestCase {
                           skill: URL? = URL(fileURLWithPath: "/app/Resources/pi/lokalbot-cli-skill"),
                           helpers: URL? = URL(fileURLWithPath: "/app/Contents/Helpers"),
                           capability: String? = nil,
-                          continuePrevious: Bool = false) -> PiLaunchPlan {
+                          continuePrevious: Bool = false,
+                          specificSession: URL? = nil) -> PiLaunchPlan {
         PiLaunchPlanner.plan(
             bun: URL(fileURLWithPath: "/rt/bun/bun"),
             piCLI: URL(fileURLWithPath: "/rt/pi/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"),
@@ -26,6 +27,7 @@ final class PiLaunchPlannerTests: XCTestCase {
             helpersDirectory: helpers,
             agentAccessCapability: capability,
             continuePreviousSession: continuePrevious,
+            specificSession: specificSession,
             baseEnvironment: ["PATH": "/usr/bin:/bin", "HOME": "/Users/x"])
     }
 
@@ -88,5 +90,14 @@ final class PiLaunchPlannerTests: XCTestCase {
     func testContinueFlagOnlyAppearsForResumeLaunches() {
         XCTAssertFalse(makePlan().arguments.contains("--continue"))
         XCTAssertTrue(makePlan(continuePrevious: true).arguments.contains("--continue"))
+    }
+
+    func testSpecificSessionTakesPrecedenceOverContinue() throws {
+        let session = URL(fileURLWithPath: "/store/agent/sessions/saved.jsonl")
+        let arguments = makePlan(continuePrevious: true, specificSession: session).arguments
+
+        XCTAssertFalse(arguments.contains("--continue"))
+        let sessionIndex = try XCTUnwrap(arguments.firstIndex(of: "--session"))
+        XCTAssertEqual(arguments[sessionIndex + 1], session.path)
     }
 }

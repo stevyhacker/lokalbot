@@ -5,14 +5,26 @@ enum ApprovalScope: Equatable {
     case once, session
 }
 
+/// Session-only approval levels exposed by Agent Mode. Raw values are ordered
+/// from least to most permissive so the UI can confirm only escalations.
+enum AgentApprovalMode: Int, CaseIterable, Identifiable, Equatable {
+    case askBeforeChanges
+    case approveReads
+    case approveReadsAndEdits
+    case fullAccess
+
+    var id: Self { self }
+}
+
 /// Pure approval policy for gated agent tools. The bundled pi extension
 /// raises approval requests for `write`, `edit`, `bash`, and any `read` whose
 /// canonical path escapes the selected workspace. This type
 /// decides whether a raised request can be answered automatically
-/// (file-change toggle, session allowances) or must be shown to the user.
+/// (approval mode, session allowances) or must be shown to the user.
 struct AgentApprovalPolicy: Equatable {
-    var autoApproveFileChanges = false
+    var mode: AgentApprovalMode = .askBeforeChanges
     private(set) var sessionAllowedTools: Set<String> = []
+    private(set) var automationApprovesWorkspaceFileChanges = false
 
     enum Verdict: Equatable { case allow, ask }
 
@@ -22,18 +34,39 @@ struct AgentApprovalPolicy: Equatable {
         requestWorkspace: String?,
         selectedWorkspace: URL
     ) -> Verdict {
-        // A read approval is only raised when pi's canonical path escapes the
-        // selected workspace. Bash can read or transmit arbitrary user files.
-        // Outside/malformed writes are privacy boundaries too. Only a canonical
-        // write/edit path inside the process's selected workspace may inherit a
-        // file-change toggle or a prior per-tool session allowance.
+        let normalizedTool = tool.lowercased()
+
+        // Automatic modes only apply to structured approvals emitted by the
+        // process for this selected workspace. Unknown future tools and stale
+        // or malformed cross-workspace requests remain fail-closed.
+        if Self.isKnownGatedTool(normalizedTool),
+           Self.requestMatchesSelectedWorkspace(
+            requestWorkspace: requestWorkspace,
+            selectedWorkspace: selectedWorkspace) {
+            switch mode {
+            case .askBeforeChanges:
+                break
+            case .approveReads:
+                if normalizedTool == "read" { return .allow }
+            case .approveReadsAndEdits:
+                if normalizedTool == "read" || Self.isFileChange(tool: normalizedTool) {
+                    return .allow
+                }
+            case .fullAccess:
+                return .allow
+            }
+        }
+
+        // An individual "Allow for Session" choice stays narrower than the
+        // global modes: only canonical write/edit paths inside the matching
+        // workspace may inherit it.
         guard Self.canPersistApproval(
             tool: tool,
             path: path,
             requestWorkspace: requestWorkspace,
             selectedWorkspace: selectedWorkspace) else { return .ask }
-        if autoApproveFileChanges { return .allow }
-        if sessionAllowedTools.contains(tool.lowercased()) { return .allow }
+        if automationApprovesWorkspaceFileChanges { return .allow }
+        if sessionAllowedTools.contains(normalizedTool) { return .allow }
         return .ask
     }
 
@@ -49,6 +82,13 @@ struct AgentApprovalPolicy: Equatable {
             requestWorkspace: requestWorkspace,
             selectedWorkspace: selectedWorkspace) else { return }
         sessionAllowedTools.insert(tool.lowercased())
+    }
+
+    /// The headless test harness has no person to click file-change cards. It
+    /// may opt into workspace-contained write/edit calls without inheriting
+    /// the broader read/edit mode exposed in the app.
+    mutating func approveWorkspaceFileChangesForAutomation() {
+        automationApprovesWorkspaceFileChanges = true
     }
 
     static func canPersistApproval(
@@ -70,6 +110,20 @@ struct AgentApprovalPolicy: Equatable {
         let fileComponents = requestedFile.pathComponents
         return fileComponents.count >= rootComponents.count
             && Array(fileComponents.prefix(rootComponents.count)) == rootComponents
+    }
+
+    private static func requestMatchesSelectedWorkspace(
+        requestWorkspace: String?,
+        selectedWorkspace: URL
+    ) -> Bool {
+        guard let requestWorkspace,
+              let requestedRoot = canonicalFileURL(URL(fileURLWithPath: requestWorkspace)),
+              let selectedRoot = canonicalFileURL(selectedWorkspace) else { return false }
+        return requestedRoot.path == selectedRoot.path
+    }
+
+    private static func isKnownGatedTool(_ tool: String) -> Bool {
+        tool == "read" || isFileChange(tool: tool) || tool == "bash"
     }
 
     private static func isFileChange(tool: String) -> Bool {
@@ -98,5 +152,6 @@ struct AgentApprovalPolicy: Equatable {
 
     mutating func resetSession() {
         sessionAllowedTools.removeAll()
+        automationApprovesWorkspaceFileChanges = false
     }
 }

@@ -271,10 +271,109 @@ final class AgentSessionControllerTests: XCTestCase {
         })
     }
 
-    func testOutsideAndMissingWritePathsNeverInheritSessionApproval() async throws {
+    func testReadModeAutoApprovesReadsButStillShowsFileChangesAndShell() async throws {
         let controller = makeController()
         await controller.start()
-        controller.autoApproveSession = true
+        await controller.setApprovalMode(.approveReads)
+        let root = controller.workspace.path
+
+        transport.inject(try approvalEvent(
+            id: "read", tool: "read", workspace: root,
+            path: "/private/notes.txt", content: ""))
+        transport.inject(try approvalEvent(
+            id: "write", tool: "write", workspace: root,
+            path: root + "/note.txt", content: "note"))
+        transport.inject(try approvalEvent(
+            id: "bash", tool: "bash", workspace: root,
+            path: nil, content: ""))
+        try await pump()
+
+        XCTAssertTrue(transport.sentLines.contains {
+            $0.contains(#""id":"read""#) && $0.contains(#""confirmed":true"#)
+        })
+        for id in ["write", "bash"] {
+            XCTAssertTrue(controller.items.contains {
+                if case .approval(let request) = $0 { return request.id == id }
+                return false
+            })
+        }
+    }
+
+    func testReadEditModeAutoApprovesAllFileCallsButStillShowsShell() async throws {
+        let controller = makeController()
+        await controller.start()
+        await controller.setApprovalMode(.approveReadsAndEdits)
+        let root = controller.workspace.path
+
+        for (id, tool, path) in [
+            ("read", "read", "/private/notes.txt"),
+            ("write", "write", "/private/outside.txt"),
+            ("edit", "edit", nil),
+        ] {
+            transport.inject(try approvalEvent(
+                id: id, tool: tool, workspace: root, path: path, content: "change"))
+        }
+        transport.inject(try approvalEvent(
+            id: "bash", tool: "bash", workspace: root, path: nil, content: ""))
+        try await pump()
+
+        for id in ["read", "write", "edit"] {
+            XCTAssertTrue(transport.sentLines.contains {
+                $0.contains("\"id\":\"\(id)\"") && $0.contains(#""confirmed":true"#)
+            }, id)
+        }
+        XCTAssertTrue(controller.items.contains {
+            if case .approval(let request) = $0 { return request.id == "bash" }
+            return false
+        })
+    }
+
+    func testModeChangeResolvesAlreadyPendingRequestsItNowAllows() async throws {
+        let controller = makeController()
+        await controller.start()
+        let root = controller.workspace.path
+
+        transport.inject(try approvalEvent(
+            id: "read", tool: "read", workspace: root,
+            path: "/private/notes.txt", content: ""))
+        transport.inject(try approvalEvent(
+            id: "bash", tool: "bash", workspace: root, path: nil, content: ""))
+        try await pump()
+
+        await controller.setApprovalMode(.approveReads)
+        XCTAssertTrue(transport.sentLines.contains {
+            $0.contains(#""id":"read""#) && $0.contains(#""confirmed":true"#)
+        })
+        XCTAssertTrue(controller.items.contains {
+            if case .approval(let request) = $0 { return request.id == "bash" }
+            return false
+        })
+
+        await controller.setApprovalMode(.fullAccess)
+        XCTAssertTrue(transport.sentLines.contains {
+            $0.contains(#""id":"bash""#) && $0.contains(#""confirmed":true"#)
+        })
+        XCTAssertFalse(controller.items.contains {
+            if case .approval = $0 { return true }
+            return false
+        })
+    }
+
+    func testApprovalModeResetsWhenSessionCloses() async throws {
+        let controller = makeController()
+        await controller.setApprovalMode(.fullAccess)
+        await controller.start()
+        XCTAssertEqual(controller.approvalMode, .fullAccess)
+
+        await controller.shutdown()
+
+        XCTAssertEqual(controller.approvalMode, .askBeforeChanges)
+    }
+
+    func testOutsideAndMissingWritePathsNeverInheritAutomationApproval() async throws {
+        let controller = makeController()
+        await controller.start()
+        controller.approveWorkspaceFileChangesForAutomation()
         let root = controller.workspace.path
 
         transport.inject(try approvalEvent(
@@ -302,7 +401,7 @@ final class AgentSessionControllerTests: XCTestCase {
     func testBashAlwaysRequiresOneTimeApproval() async throws {
         let controller = makeController()
         await controller.start()
-        controller.autoApproveSession = true
+        controller.approveWorkspaceFileChangesForAutomation()
 
         transport.inject(#"{"type":"extension_ui_request","id":"bash1","method":"confirm","title":"lokalbot_tool_approval","message":"{\"tool\":\"bash\",\"workspace\":\"/tmp/project\",\"command\":\"cat ~/.ssh/config\"}"}"#)
         try await pump()
@@ -331,7 +430,7 @@ final class AgentSessionControllerTests: XCTestCase {
     func testOutsideWorkspaceReadAlwaysRequiresOneTimeApproval() async throws {
         let controller = makeController()
         await controller.start()
-        controller.autoApproveSession = true
+        controller.approveWorkspaceFileChangesForAutomation()
 
         transport.inject(#"{"type":"extension_ui_request","id":"read1","method":"confirm","title":"lokalbot_tool_approval","message":"{\"tool\":\"read\",\"workspace\":\"/tmp/project\",\"path\":\"/private/notes.txt\"}"}"#)
         try await pump()
@@ -489,6 +588,70 @@ final class AgentSessionControllerTests: XCTestCase {
         })
         XCTAssertTrue(controller.items.contains {
             if case .assistant(_, "Here are the decisions.", false) = $0 { return true }
+            return false
+        })
+    }
+
+    func testResumeSavedSessionLaunchesExactFileAndWorkspace() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agent-exact-resume-\(UUID().uuidString)", isDirectory: true)
+        let workspace = root.appendingPathComponent("project", isDirectory: true)
+        let sessionFile = root.appendingPathComponent("sessions/saved.jsonl")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: sessionFile.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        try Data().write(to: sessionFile)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let saved = AgentSavedSession(
+            id: sessionFile.path,
+            sessionID: "saved-id",
+            fileURL: sessionFile,
+            workspace: workspace,
+            title: "Saved planning session",
+            createdAt: .distantPast,
+            modifiedAt: .now,
+            messageCount: 2)
+        var settings = AppSettings()
+        settings.summarizerBackend = .openAICompatible
+        settings.openAIBaseURL = "http://127.0.0.1:1234/v1"
+        settings.openAIModel = "resume-test"
+        var transports: [FakeTransport] = []
+        var plans: [PiLaunchPlan] = []
+        let controller = AgentSessionController(
+            settings: { settings },
+            storage: StorageManager(rootURL: root.appendingPathComponent("library")),
+            sessionsDirectory: sessionFile.deletingLastPathComponent(),
+            makeTransport: { plan in
+                plans.append(plan)
+                let transport = FakeTransport()
+                transports.append(transport)
+                return transport
+            })
+
+        let resume = Task { await controller.resumeSavedSession(saved) }
+        for _ in 0..<20 where transports.isEmpty {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let resumedTransport = try XCTUnwrap(transports.first)
+        for _ in 0..<20 where !resumedTransport.sentLines.contains(where: {
+            $0.contains("get_messages")
+        }) {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        resumedTransport.inject(#"{"type":"response","id":"history1","command":"get_messages","success":true,"data":{"messages":[{"role":"user","content":"Continue the plan"},{"role":"assistant","content":"Continuing."}]}}"#)
+        await resume.value
+
+        let plan = try XCTUnwrap(plans.first)
+        let sessionIndex = try XCTUnwrap(plan.arguments.firstIndex(of: "--session"))
+        XCTAssertEqual(plan.arguments[sessionIndex + 1], sessionFile.path)
+        XCTAssertFalse(plan.arguments.contains("--continue"))
+        XCTAssertEqual(plan.workingDirectory, workspace)
+        XCTAssertEqual(controller.activeSessionFile, sessionFile)
+        XCTAssertEqual(controller.sessionTitle, "Saved planning session")
+        XCTAssertTrue(controller.items.contains {
+            if case .notice(_, "Resumed \"Saved planning session\".", false) = $0 { return true }
             return false
         })
     }

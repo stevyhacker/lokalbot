@@ -13,17 +13,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION=v1.12.32  # last compatible release whose ONNX Runtime supports macOS 15.0
+VERSION=v1.13.6
+ONNXRUNTIME_VERSION=v1.24.4  # this release variant reports macOS 14.0, satisfying our 15.0 target
 DEPLOYMENT_TARGET=15.0
-ARTIFACT="sherpa-onnx-$VERSION-osx-arm64-shared.tar.bz2"
+ARTIFACT="sherpa-onnx-$VERSION-onnxruntime-${ONNXRUNTIME_VERSION#v}-osx-arm64-shared.tar.bz2"
 URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/$VERSION/$ARTIFACT"
 # SHA-256 of the release artifact — a GitHub release asset can be replaced in
 # place, so verify before bundling. Recompute when bumping VERSION:
 #   shasum -a 256 <file>
-ARCHIVE_SHA256=f688ab769363f7e71a308c222dbac27e7ffc1f716e9dfa94b53242b70fdba08d
+ARCHIVE_SHA256=0ab4203d8f04dfb86dc182e65105c2e3e36faceacb15aaa577bc064fbbce71f6
 SHERPA_LICENSE_URL="https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/$VERSION/LICENSE"
 SHERPA_LICENSE_SHA256=cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
-ONNXRUNTIME_VERSION=v1.23.2
 ONNXRUNTIME_LICENSE_URL="https://raw.githubusercontent.com/microsoft/onnxruntime/$ONNXRUNTIME_VERSION/LICENSE"
 ONNXRUNTIME_LICENSE_SHA256=2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c
 DEST=Vendor/sherpa-onnx
@@ -68,7 +68,7 @@ verify_sha256 "$tmp/LICENSE.sherpa-onnx" "$SHERPA_LICENSE_SHA256"
 curl -fsSL -o "$tmp/LICENSE.onnxruntime" "$ONNXRUNTIME_LICENSE_URL"
 verify_sha256 "$tmp/LICENSE.onnxruntime" "$ONNXRUNTIME_LICENSE_SHA256"
 tar -xjf "$tmp/sherpa.tar.bz2" -C "$tmp"
-src="$tmp/sherpa-onnx-$VERSION-osx-arm64-shared"
+src="$tmp/${ARTIFACT%.tar.bz2}"
 
 rm -rf "$DEST"
 mkdir -p "$DEST"

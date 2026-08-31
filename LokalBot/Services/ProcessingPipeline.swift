@@ -68,15 +68,24 @@ final class ProcessingPipeline: ObservableObject {
     /// they park as `.waitingForModels` instead. A user-initiated job (Retry,
     /// the Process menu, `--process`) downloads missing models on demand,
     /// because the user just asked for exactly that.
-    enum JobOrigin {
+    enum JobOrigin: Equatable {
         case automatic
         case userInitiated
+    }
+
+    enum EnqueueOutcome: Equatable {
+        case enqueued
+        case coalesced
+        case updatedActive
+        case alreadyProcessing
+        case persistenceFailed
     }
 
     struct Job {
         var meeting: Meeting
         var transcribe: Bool
         var summarize: Bool
+        var summaryFollowsSetting: Bool = false
         /// Re-enqueued from the persisted queue after a crash/quit — keep any
         /// per-track checkpoints instead of starting from scratch.
         var resumed: Bool = false
@@ -88,18 +97,42 @@ final class ProcessingPipeline: ObservableObject {
         var summarize: Bool
     }
 
-    /// A completed transcript is the durable boundary between the expensive
-    /// ASR stage and summarization. Row-level Retry can safely resume after it
-    /// instead of re-transcribing audio that already succeeded.
-    nonisolated static func retryWork(
-        for meeting: Meeting,
-        storage: StorageManager
-    ) -> RetryWork {
+    /// Resume the exact durable request from its latest completed artifact.
+    /// Failed rows retain their explicit/automatic summary provenance, even
+    /// after they exhaust the launch-resume attempt budget. Only jobs from an
+    /// older build with no durable row fall back to the current setting.
+    func retryWork(for meeting: Meeting, autoSummarize: Bool) -> RetryWork {
         let transcriptURL = meeting.folderURL(in: storage)
             .appendingPathComponent("transcript.json")
+        return Self.retryWork(
+            hasTranscript: FileManager.default.fileExists(atPath: transcriptURL.path),
+            autoSummarize: autoSummarize,
+            persistedJob: jobStore?.job(meetingID: meeting.id))
+    }
+
+    nonisolated static func retryWork(
+        hasTranscript: Bool,
+        autoSummarize: Bool,
+        persistedJob: PipelineJobStore.PendingJob?
+    ) -> RetryWork {
+        guard let persistedJob else {
+            // With no saved intent, never overwrite a completed transcript.
+            // The explicit Process menu remains available for a deliberate
+            // re-transcription.
+            return RetryWork(
+                transcribe: !hasTranscript,
+                summarize: autoSummarize)
+        }
+        let resumed = resumedWork(
+            pending: Work(
+                transcribe: persistedJob.transcribe,
+                summarize: persistedJob.summarize),
+            summaryFollowsSetting: persistedJob.summaryFollowsSetting,
+            autoSummarize: autoSummarize,
+            hasTranscript: hasTranscript)
         return RetryWork(
-            transcribe: !FileManager.default.fileExists(atPath: transcriptURL.path),
-            summarize: true)
+            transcribe: resumed.transcribe,
+            summarize: resumed.summarize)
     }
 
     /// Injectable model-readiness checks so unit tests can exercise the
@@ -130,6 +163,14 @@ final class ProcessingPipeline: ObservableObject {
     private var waitingForModelsJobs: [Job] = []
     private var isDraining = false
     private var activeMeetingID: Meeting.ID?
+    private var activeJob: Job?
+    private enum ActivePhase {
+        case transcribing
+        case summarizing
+    }
+    private var activePhase: ActivePhase?
+    /// Optional lifecycle seam for focused queue tests; production leaves it nil.
+    private let transcriptionStarted: ((Meeting.ID) async -> Void)?
     var hasActiveWork: Bool { isDraining || activeMeetingID != nil }
     var hasJobsWaitingForModels: Bool { !waitingForModelsJobs.isEmpty }
     private let diarizer = NeuralDiarizationEngine()
@@ -143,7 +184,8 @@ final class ProcessingPipeline: ObservableObject {
          builtInModelPreparer: @escaping BuiltInModelPreparer = { entry, storage in
              try await ModelDownloadManager.shared.ensureAvailable(entry, storage: storage)
          },
-         automationReadiness: AutomationReadiness = .live) {
+         automationReadiness: AutomationReadiness = .live,
+         transcriptionStarted: ((Meeting.ID) async -> Void)? = nil) {
         self.storage = storage
         self.jobStore = jobStore
         self.settings = settings
@@ -151,52 +193,169 @@ final class ProcessingPipeline: ObservableObject {
             storage: storage,
             builtInModelPreparer: builtInModelPreparer)
         self.automationReadiness = automationReadiness
+        self.transcriptionStarted = transcriptionStarted
     }
 
+    /// One job's requested work, and how a fresh enqueue combines with work
+    /// already queued or parked for the same meeting.
+    struct Work: Equatable {
+        var transcribe: Bool
+        var summarize: Bool
+    }
+
+    /// Transcription merges by OR — it is the prerequisite for everything
+    /// downstream, so a pending one must never be dropped. Summarization does
+    /// not: it is the discretionary half, and OR-ing it let a queued job
+    /// silently upgrade an explicit "Transcribe" click into "Transcribe &
+    /// Summarize". A user-initiated enqueue states the summary intent
+    /// outright and the older job defers to it; automatic work still merges,
+    /// so a parked summary survives an auto re-enqueue. Pure, so the
+    /// escalation rule is testable without a live queue.
+    nonisolated static func merged(pending: Work, incoming: Work,
+                                   origin: JobOrigin) -> Work {
+        Work(
+            transcribe: pending.transcribe || incoming.transcribe,
+            summarize: origin == .userInitiated
+                ? incoming.summarize
+                : pending.summarize || incoming.summarize)
+    }
+
+    /// Whether merged summary work should be cancelled when auto-summarize is
+    /// off at crash-resume time. An explicit summary already waiting remains
+    /// explicit; otherwise automatic work follows the current setting.
+    nonisolated static func mergedSummaryFollowsSetting(
+        pending: Work,
+        pendingFollowsSetting: Bool,
+        incoming: Work,
+        origin: JobOrigin
+    ) -> Bool {
+        if origin == .userInitiated { return false }
+        if pending.summarize, !pendingFollowsSetting { return false }
+        return incoming.summarize || pending.summarize
+    }
+
+    nonisolated static func resumedWork(
+        pending: Work,
+        summaryFollowsSetting: Bool,
+        autoSummarize: Bool,
+        hasTranscript: Bool
+    ) -> Work {
+        Work(
+            transcribe: pending.transcribe && !hasTranscript,
+            summarize: pending.summarize
+                && (!summaryFollowsSetting || autoSummarize))
+    }
+
+    @discardableResult
     func enqueue(_ meeting: Meeting, transcribe: Bool = true, summarize: Bool = true,
-                 origin: JobOrigin = .userInitiated) {
+                 origin: JobOrigin = .userInitiated) -> EnqueueOutcome {
         // A fresh enqueue supersedes a parked waiting-for-models job: merge its
         // requested work so the new attempt (and its origin) covers both.
-        var transcribe = transcribe
-        var summarize = summarize
+        var work = Work(transcribe: transcribe, summarize: summarize)
+        var summaryFollowsSetting = origin == .automatic
         if let waitingIndex = waitingForModelsJobs.firstIndex(
             where: { $0.meeting.id == meeting.id }) {
             let waiting = waitingForModelsJobs.remove(at: waitingIndex)
-            transcribe = transcribe || waiting.transcribe
-            summarize = summarize || waiting.summarize
+            let pending = Work(
+                transcribe: waiting.transcribe,
+                summarize: waiting.summarize)
+            summaryFollowsSetting = Self.mergedSummaryFollowsSetting(
+                pending: pending,
+                pendingFollowsSetting: waiting.summaryFollowsSetting,
+                incoming: work,
+                origin: origin)
+            work = Self.merged(pending: pending, incoming: work, origin: origin)
         }
+        let transcribe = work.transcribe
+        let summarize = work.summarize
         if let index = queue.firstIndex(where: { $0.meeting.id == meeting.id }) {
-            let mergedTranscribe = queue[index].transcribe || transcribe
-            let mergedSummarize = queue[index].summarize || summarize
+            let pending = Work(
+                transcribe: queue[index].transcribe,
+                summarize: queue[index].summarize)
+            let mergedFollowsSetting = Self.mergedSummaryFollowsSetting(
+                pending: pending,
+                pendingFollowsSetting: queue[index].summaryFollowsSetting,
+                incoming: work,
+                origin: origin)
+            let coalesced = Self.merged(
+                pending: pending,
+                incoming: work,
+                origin: origin)
+            let mergedTranscribe = coalesced.transcribe
+            let mergedSummarize = coalesced.summarize
             if let jobStore,
                !jobStore.enqueue(
                     meetingID: meeting.id,
                     transcribe: mergedTranscribe,
-                    summarize: mergedSummarize) {
+                    summarize: mergedSummarize,
+                    summaryFollowsSetting: mergedFollowsSetting) {
                 stages[meeting.id] = .failed("Could not persist the processing queue update.")
-                return
+                return .persistenceFailed
             }
             queue[index].transcribe = mergedTranscribe
             queue[index].summarize = mergedSummarize
+            queue[index].summaryFollowsSetting = mergedFollowsSetting
             queue[index].resumed = false
             if origin == .userInitiated { queue[index].origin = .userInitiated }
-            lokalbotLog("pipeline coalesced queued meeting=\(meeting.id)")
-            return
+            lokalbotLog(
+                "pipeline coalesced queued meeting=\(meeting.id) "
+                    + "transcribe=\(mergedTranscribe) summarize=\(mergedSummarize)")
+            return .coalesced
         }
-        guard activeMeetingID != meeting.id else {
-            lokalbotLog("pipeline duplicate ignored while active meeting=\(meeting.id)")
-            return
+        if activeMeetingID == meeting.id, var activeJob {
+            guard activePhase == .transcribing else {
+                lokalbotLog(
+                    "pipeline request too late while summarizing meeting=\(meeting.id)")
+                return .alreadyProcessing
+            }
+            let pending = Work(
+                transcribe: activeJob.transcribe,
+                summarize: activeJob.summarize)
+            let updated = Self.merged(pending: pending, incoming: work, origin: origin)
+            let updatedFollowsSetting = Self.mergedSummaryFollowsSetting(
+                pending: pending,
+                pendingFollowsSetting: activeJob.summaryFollowsSetting,
+                incoming: work,
+                origin: origin)
+            if let jobStore,
+               !jobStore.updateIntent(
+                    meetingID: meeting.id,
+                    transcribe: updated.transcribe,
+                    summarize: updated.summarize,
+                    summaryFollowsSetting: updatedFollowsSetting) {
+                return .persistenceFailed
+            }
+            activeJob.transcribe = updated.transcribe
+            activeJob.summarize = updated.summarize
+            activeJob.summaryFollowsSetting = updatedFollowsSetting
+            if origin == .userInitiated { activeJob.origin = .userInitiated }
+            self.activeJob = activeJob
+            lokalbotLog(
+                "pipeline updated active meeting=\(meeting.id) "
+                    + "transcribe=\(updated.transcribe) summarize=\(updated.summarize)")
+            return .updatedActive
         }
         if let jobStore,
            !jobStore.enqueue(
-                meetingID: meeting.id, transcribe: transcribe, summarize: summarize) {
+                meetingID: meeting.id,
+                transcribe: transcribe,
+                summarize: summarize,
+                summaryFollowsSetting: summaryFollowsSetting) {
             stages[meeting.id] = .failed("Could not persist the processing job.")
-            return
+            return .persistenceFailed
         }
-        queue.append(Job(meeting: meeting, transcribe: transcribe, summarize: summarize,
-                         origin: origin))
+        queue.append(Job(
+            meeting: meeting,
+            transcribe: transcribe,
+            summarize: summarize,
+            summaryFollowsSetting: summaryFollowsSetting,
+            origin: origin))
+        lokalbotLog(
+            "pipeline enqueued meeting=\(meeting.id) transcribe=\(transcribe) "
+                + "summarize=\(summarize) origin=\(origin == .userInitiated ? "user" : "auto")")
         stages[meeting.id] = .queued
         drain()
+        return .enqueued
     }
 
     /// Re-check every job parked on missing models — call when a model
@@ -240,6 +399,7 @@ final class ProcessingPipeline: ObservableObject {
             lokalbotLog("pipeline resume continued after queue prune failure")
         }
         let byID = Dictionary(uniqueKeysWithValues: meetings.map { ($0.id, $0) })
+        let autoSummarize = settings().autoSummarize
         for job in jobStore.pendingJobs() {
             guard let meeting = byID[job.meetingID], stages[meeting.id] == nil else { continue }
             let hasTranscript = FileManager.default.fileExists(
@@ -247,11 +407,20 @@ final class ProcessingPipeline: ObservableObject {
                     .appendingPathComponent("transcript.json").path)
             lokalbotLog(
                 "pipeline resume meeting=\(meeting.id) attempts=\(job.attempts) hasTranscript=\(hasTranscript)")
-            queue.append(Job(meeting: meeting,
-                             transcribe: job.transcribe && !hasTranscript,
-                             summarize: job.summarize,
-                             resumed: true,
-                             origin: .automatic))
+            let work = Self.resumedWork(
+                pending: .init(
+                    transcribe: job.transcribe,
+                    summarize: job.summarize),
+                summaryFollowsSetting: job.summaryFollowsSetting,
+                autoSummarize: autoSummarize,
+                hasTranscript: hasTranscript)
+            queue.append(Job(
+                meeting: meeting,
+                transcribe: work.transcribe,
+                summarize: work.summarize,
+                summaryFollowsSetting: job.summaryFollowsSetting,
+                resumed: true,
+                origin: .automatic))
             stages[meeting.id] = .queued
         }
         for parked in jobStore.parkedJobs() {
@@ -269,7 +438,10 @@ final class ProcessingPipeline: ObservableObject {
             while !queue.isEmpty {
                 let job = queue.removeFirst()
                 activeMeetingID = job.meeting.id
+                activeJob = job
                 await process(job)
+                activePhase = nil
+                activeJob = nil
                 activeMeetingID = nil
             }
             isDraining = false
@@ -302,6 +474,7 @@ final class ProcessingPipeline: ObservableObject {
                !automationReadiness.think(config, storage) {
                 waitingForModelsJobs.append(Job(
                     meeting: meeting, transcribe: false, summarize: true,
+                    summaryFollowsSetting: job.summaryFollowsSetting,
                     resumed: job.resumed, origin: .automatic))
                 stages[meeting.id] = .waitingForModels
                 lokalbotLog(
@@ -317,6 +490,10 @@ final class ProcessingPipeline: ObservableObject {
         do {
             if job.transcribe || !FileManager.default.fileExists(
                 atPath: folder.appendingPathComponent("transcript.json").path) {
+                activePhase = .transcribing
+                if let transcriptionStarted {
+                    await transcriptionStarted(meeting.id)
+                }
                 // A fresh enqueue means "transcribe with today's settings" —
                 // stale checkpoints from an earlier failed attempt may have
                 // been produced by a different model. Only a crash resume
@@ -351,7 +528,8 @@ final class ProcessingPipeline: ObservableObject {
                         modelsPrepared: true)
                 }
                 transcript = SpeakerAutoNamer.applyingAliases(
-                    to: transcript, participantNames: meeting.participantNameHints ?? [])
+                    to: transcript,
+                    participants: meeting.resolvedCalendarParticipantIdentities)
                 let mergedSanitization = TranscriptSanitizer.sanitize(transcript)
                 transcript = mergedSanitization.transcript
                 if mergedSanitization.changed {
@@ -369,15 +547,19 @@ final class ProcessingPipeline: ObservableObject {
                 clearCheckpoints(in: folder)
                 transcriptWrittenThisJob = true
             }
-            if job.summarize {
+            let resolvedJob = activeJob ?? job
+            activePhase = .summarizing
+            if resolvedJob.summarize {
                 // Missing Think model on automatic work: keep the transcript
                 // that just landed and park only the summary. The durable row
                 // stays pending, so the summary still happens once the model
                 // is downloaded (or the user asks explicitly).
-                if job.origin == .automatic, !automationReadiness.think(config, storage) {
+                if resolvedJob.origin == .automatic,
+                   !automationReadiness.think(config, storage) {
                     waitingForModelsJobs.append(Job(
                         meeting: meeting, transcribe: false, summarize: true,
-                        resumed: job.resumed, origin: .automatic))
+                        summaryFollowsSetting: resolvedJob.summaryFollowsSetting,
+                        resumed: resolvedJob.resumed, origin: .automatic))
                     stages[meeting.id] = .waitingForModels
                     lokalbotLog(
                         "pipeline parked summary meeting=\(meeting.id) waiting for the Think model")
@@ -401,18 +583,33 @@ final class ProcessingPipeline: ObservableObject {
                             + "\(sanitization.removedCharacters)")
                 }
                 // The default built-in server supports continuous batching.
-                // For a short transcript, outcomes and summary are independent
-                // reads of the same source, so overlap their generation instead
-                // of paying two serial full-prefill passes. Long transcripts
-                // still wait because outcomes intentionally consume the summary.
+                // A single-pass outcomes extraction is independent of the
+                // summary, so overlap those two reads of the transcript. Long
+                // outcomes scans stay serial to bound local model pressure.
+                let outcomeContext = MeetingNotes.promptContext(in: folder)
+                let outcomeUserLabel = transcript.displaySpeaker(for: "me")
+                let outcomeContextTokens = MeetingSummaryGenerator.contextTokenLimit(
+                    for: config.summarizerBackend)
+                let outcomeLanguage = SummaryLanguage.resolvedForTranscript(
+                    config.summaryLanguage,
+                    transcript: transcript)
                 let concurrentOutcomes = Self.shouldExtractOutcomesConcurrently(
-                    transcriptCharacterCount: transcript.markdown.count,
+                    canUseSinglePass: MeetingOutcomesGenerator.canUseSinglePass(
+                        transcript: transcript,
+                        userSpeakerLabel: outcomeUserLabel,
+                        context: outcomeContext,
+                        contextTokens: outcomeContextTokens,
+                        outputLanguage: outcomeLanguage),
                     backend: config.summarizerBackend)
-                let outcomesTask: Task<Void, Never>? = concurrentOutcomes
+                let outcomesTask: Task<MeetingOutcomes?, Never>? = concurrentOutcomes
                     ? Task { [weak self] in
-                        await self?.extractOutcomes(
-                            transcript: transcript, summary: "", meetingID: meeting.id,
-                            folder: folder, config: config)
+                        guard let self else { return nil }
+                        return await self.extractOutcomes(
+                            transcript: transcript,
+                            meetingID: meeting.id,
+                            folder: folder,
+                            config: config,
+                            context: outcomeContext)
                     }
                     : nil
                 let summary: String
@@ -441,12 +638,30 @@ final class ProcessingPipeline: ObservableObject {
                 try summary.data(using: .utf8)?.write(
                     to: folder.appendingPathComponent("summary.md"), options: .atomic)
                 MeetingSummaryGenerator.removeCheckpoint(in: folder)
+                let extractedOutcomes: MeetingOutcomes?
                 if let outcomesTask {
-                    await outcomesTask.value
+                    extractedOutcomes = await outcomesTask.value
                 } else {
-                    await extractOutcomes(transcript: transcript, summary: summary,
-                                          meetingID: meeting.id, folder: folder, config: config)
+                    extractedOutcomes = await extractOutcomes(
+                        transcript: transcript,
+                        meetingID: meeting.id,
+                        folder: folder,
+                        config: config,
+                        context: outcomeContext)
                 }
+                // The grounded artifact is the only authority for outcome
+                // sections. On a non-fatal extraction failure, mirror the
+                // last successful artifact (or an empty one) so the summary
+                // can never disagree with the cards beside it.
+                let authoritativeOutcomes = extractedOutcomes
+                    ?? MeetingOutcomes.load(from: folder)
+                    ?? MeetingOutcomes()
+                let synchronizedSummary = MeetingSummaryOutcomeSynchronizer.synchronize(
+                    summary,
+                    outcomes: authoritativeOutcomes,
+                    template: config.noteTemplate)
+                try synchronizedSummary.data(using: .utf8)?.write(
+                    to: folder.appendingPathComponent("summary.md"), options: .atomic)
             }
             if let jobStore, !jobStore.markCompleted(meetingID: meeting.id) {
                 stages[meeting.id] = .failed(
@@ -494,7 +709,8 @@ final class ProcessingPipeline: ObservableObject {
                 }
                 if let transcript = try await transcribeTrack(name: name, url: url,
                                                               speaker: speaker, engine: engine,
-                                                              language: language) {
+                                                              language: language,
+                                                              prompt: config.transcriptionPrompt) {
                     if let data = try? JSONEncoder().encode(transcript) {
                         try? data.write(to: checkpoint, options: .atomic)
                     }
@@ -529,7 +745,8 @@ final class ProcessingPipeline: ObservableObject {
 
     private func transcribeTrack(name: String, url: URL, speaker: String,
                                  engine: TranscriptionEngine,
-                                 language: String?) async throws -> Transcript? {
+                                 language: String?,
+                                 prompt: String?) async throws -> Transcript? {
         guard let duration = AudioFileInspector.duration(at: url),
               duration >= AudioFileInspector.minimumTranscribableDuration else {
             lokalbotLog("transcription track skipped track=\(name) reason=no-audio")
@@ -547,7 +764,10 @@ final class ProcessingPipeline: ObservableObject {
         let started = Date()
         lokalbotLog(
             "transcription track start track=\(name) engine=\(engine.displayName) duration=\(Self.formatSeconds(duration)) language=\(language ?? "auto")")
-        var transcript = try await engine.transcribe(audio: url, language: language)
+        var transcript = try await engine.transcribe(
+            audio: url,
+            language: language,
+            prompt: prompt)
         for i in transcript.segments.indices { transcript.segments[i].speaker = speaker }
         let sanitization = TranscriptSanitizer.sanitize(transcript)
         transcript = sanitization.transcript
@@ -650,11 +870,11 @@ final class ProcessingPipeline: ObservableObject {
     // MARK: - Summarization
 
     nonisolated static func shouldExtractOutcomesConcurrently(
-        transcriptCharacterCount: Int,
+        canUseSinglePass: Bool,
         backend: AppSettings.SummarizerBackend
     ) -> Bool {
         backend == .builtIn
-            && transcriptCharacterCount <= OutcomesExtractor.transcriptCharacterLimit
+            && canUseSinglePass
     }
 
     private func summarize(_ transcript: Transcript, meeting: Meeting,
@@ -706,31 +926,32 @@ final class ProcessingPipeline: ObservableObject {
         return header + body + "\n"
     }
 
-    /// Outcomes ride behind the summary: same engine, schema-constrained where
-    /// the backend supports it (see `OutcomesExtractor`). Failure is non-fatal
-    /// — outcomes are an enhancement, never a gate on the meeting artifacts.
-    private func extractOutcomes(transcript: Transcript, summary: String,
-                                 meetingID: Meeting.ID, folder: URL,
-                                 config: AppSettings) async {
+    /// Outcomes scan the complete transcript through bounded, cited chunks.
+    /// Failure is non-fatal and never overwrites the last successful artifact.
+    private func extractOutcomes(
+        transcript: Transcript,
+        meetingID: Meeting.ID,
+        folder: URL,
+        config: AppSettings,
+        context: [String]
+    ) async -> MeetingOutcomes? {
         do {
             try Task.checkCancellation()
             let engine = try await thinkExecution.makeTextEngine(config)
             let userSpeakerLabel = transcript.displaySpeaker(for: "me")
-            let output = try await engine.generate(
-                system: OutcomesExtractor.systemPrompt(userSpeakerLabel: userSpeakerLabel),
-                prompt: OutcomesExtractor.prompt(transcript: transcript, summary: summary),
-                context: MeetingNotes.promptContext(in: folder),
-                schema: OutcomesExtractor.schema)
-            try Task.checkCancellation()
-            guard let outcomes = OutcomesExtractor.parse(
-                output,
+            let outputLanguage = SummaryLanguage.resolvedForTranscript(
+                config.summaryLanguage,
+                transcript: transcript)
+            let outcomes = try await MeetingOutcomesGenerator.generate(
+                transcript: transcript,
+                engine: engine,
                 userSpeakerLabel: userSpeakerLabel,
-                sourceSegments: transcript.segmentSourceMap,
+                context: context,
+                contextTokens: MeetingSummaryGenerator.contextTokenLimit(
+                    for: config.summarizerBackend),
                 meetingID: meetingID,
-                requireEvidence: true) else {
-                lokalbotLog("outcomes extraction unparseable, skipping")
-                return
-            }
+                checkpointURL: MeetingOutcomesGenerator.checkpointURL(in: folder),
+                outputLanguage: outputLanguage)
             try Task.checkCancellation()
             let previous = MeetingOutcomes.load(from: folder)
             let previousState = MeetingOutcomeStore.loadState(from: folder)
@@ -740,18 +961,23 @@ final class ProcessingPipeline: ObservableObject {
                     previousState, from: previous, to: outcomes)
                 try MeetingOutcomeStore.writeState(reconciled, to: folder)
             }
+            MeetingOutcomesGenerator.removeCheckpoint(in: folder)
+            return outcomes
         } catch {
             lokalbotLog("outcomes extraction failed error=\(error.localizedDescription)")
+            return nil
         }
     }
 
     /// Cancellation is cooperative; some inference backends may not return
     /// immediately. A failed summary must not let its sibling outcomes task
     /// outlive the job and race a retry's artifact writes.
-    nonisolated static func cancelAndWaitForOutcomes(_ task: Task<Void, Never>?) async {
+    nonisolated static func cancelAndWaitForOutcomes<Success: Sendable>(
+        _ task: Task<Success, Never>?
+    ) async {
         guard let task else { return }
         task.cancel()
-        await task.value
+        _ = await task.value
     }
 
     /// Day digest (M4/M6) — shared by the Timeline UI, scheduler, and

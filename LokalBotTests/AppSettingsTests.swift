@@ -21,6 +21,26 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertNil(object["languageHint"])
     }
 
+    func testTranscriptionPromptDefaultsEmptyAndRoundTrips() throws {
+        XCTAssertEqual(AppSettings().transcriptionPrompt, "")
+
+        var settings = AppSettings()
+        settings.transcriptionPrompt = "LokalBot, QVAC, Stevan"
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONEncoder().encode(settings))
+
+        XCTAssertEqual(decoded.transcriptionPrompt, "LokalBot, QVAC, Stevan")
+    }
+
+    func testOlderSettingsDefaultToEmptyTranscriptionPrompt() throws {
+        let settings = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data(#"{"autoTranscribe":true}"#.utf8))
+
+        XCTAssertEqual(settings.transcriptionPrompt, "")
+    }
+
     func testMenuBarOnlyDefaultsTrue() {
         XCTAssertTrue(AppSettings().menuBarOnly)
     }
@@ -74,6 +94,36 @@ final class AppSettingsTests: XCTestCase {
 
         settings.summarizerBackend = .appleIntelligence
         XCTAssertFalse(settings.usesRemoteMainLLM, "Apple Intelligence is on-device")
+    }
+
+    func testOpenRouterDataPolicyDefaultsPrivateForLegacySettings() throws {
+        XCTAssertEqual(AppSettings().openRouterDataPolicy, .privateOnly)
+
+        let legacyData = #"{"openAIBaseURL":"https://openrouter.ai/api/v1"}"#
+            .data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: legacyData)
+
+        XCTAssertEqual(decoded.openRouterDataPolicy, .privateOnly)
+        XCTAssertTrue(decoded.corruptedSettingsKeys.isEmpty)
+    }
+
+    func testOpenRouterAccountPolicyRoundTrips() throws {
+        var settings = AppSettings()
+        settings.openRouterDataPolicy = .accountPolicy
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertEqual(decoded.openRouterDataPolicy, .accountPolicy)
+    }
+
+    func testUnknownOpenRouterDataPolicyFallsBackPrivateAndIsReported() throws {
+        let data = #"{"openRouterDataPolicy":"future-policy"}"#.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertEqual(decoded.openRouterDataPolicy, .privateOnly)
+        XCTAssertTrue(decoded.corruptedSettingsKeys.contains("openRouterDataPolicy"))
     }
 
     func testMultiSpeakerDiarizationDefaultsTrue() {

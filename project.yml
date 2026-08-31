@@ -24,19 +24,22 @@ settings:
 packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio
-    exactVersion: 0.15.4   # pinned: 0.x releases break API between minors
+    exactVersion: 0.15.5   # pinned: 0.x releases break API between minors
   WhisperKit:
     url: https://github.com/argmaxinc/WhisperKit
-    exactVersion: 1.0.0
+    exactVersion: 1.1.0
   Qwen3Speech:
     url: https://github.com/soniqo/speech-swift
-    exactVersion: 0.0.21
+    exactVersion: 0.0.26
+  MLXSwift:
+    url: https://github.com/ml-explore/mlx-swift
+    exactVersion: 0.31.4   # 0.31.5+ attaches CudaBuild, which fails headless Xcode plug-in validation
   ArgumentParser:
     url: https://github.com/apple/swift-argument-parser
     from: "1.3.0"
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
-    exactVersion: 2.9.1    # pinned to a known-good Developer-ID-signed release
+    exactVersion: 2.9.6    # pinned to a known-good Developer-ID-signed release
   swift-log:
     url: https://github.com/apple/swift-log.git
     from: "1.5.0"
@@ -139,8 +142,8 @@ targetTemplates:
       properties:
         CFBundleDisplayName: LokalBot
         CFBundleIconFile: AppIcon
-        CFBundleShortVersionString: "0.6.2"
-        CFBundleVersion: "26"
+        CFBundleShortVersionString: "0.7.0"
+        CFBundleVersion: "27"
         NSMicrophoneUsageDescription: >-
           LokalBot records your side of meetings from the microphone.
           Audio stays on this Mac; transcript text is sent off-device only if
@@ -151,8 +154,10 @@ targetTemplates:
           is sent off-device only if you explicitly approve a remote server.
         NSCalendarsFullAccessUsageDescription: >-
           LokalBot reads your calendar to confirm meetings and title
-          recordings. Approved remote inference servers may receive meeting
-          titles as context; LokalBot never sends calendar data otherwise.
+          recordings, and uses attendee names and emails to suggest speaker
+          labels. Emails stay in local meeting metadata. Approved remote
+          inference servers may receive meeting titles and chosen display
+          names as context, but never attendee emails.
         LSApplicationCategoryType: public.app-category.productivity
         # Sparkle auto-update. SUFeedURL points at the appcast published with
         # each GitHub release; SUPublicEDKey is the ed25519 public key whose
@@ -301,6 +306,7 @@ targets:
       - LokalBot/CLISupport
       - path: LokalBot/Models/Meeting.swift
       - path: LokalBot/Models/Transcript.swift
+      - path: LokalBot/Models/CalendarParticipantIdentity.swift
       - path: LokalBot/Models/AppIdentifiers.swift
       - path: LokalBot/Models/AppDirectories.swift
     dependencies:

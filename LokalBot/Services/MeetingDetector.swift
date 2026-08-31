@@ -98,6 +98,28 @@ final class MeetingDetector {
     /// `alwaysOpenAudioBundles`.
     static let nativeAudioMinimumConfirmationDuration: TimeInterval = 12
 
+    /// How long the confirmation window survives a candidate producing no
+    /// output audio at all, before `nativeAudioMinimumConfirmationDuration`
+    /// has elapsed.
+    ///
+    /// `detectRunningMeetingApp` requires current audio (`requireAudio: true`)
+    /// so the confirmation window is watching a signal that is not "is a call
+    /// happening" but "is the remote side making sound right now" — and in a
+    /// real conversation the remote side spends much of its time listening.
+    /// Without this, the very first quiet turn dropped the candidate entirely
+    /// (not merely the elapsed time — the app stopped being detected as
+    /// running at all), and a live 12-second window essentially never
+    /// completed: six consecutive real attempts on 2026-08-26 each failed
+    /// after 4.2–12.7 s, two of them past the 12 s mark itself.
+    ///
+    /// Six seconds is half the confirmation window on purpose: a single blip
+    /// followed by silence past this tolerance still resets — the case
+    /// `nativeAudioMinimumConfirmationDuration` exists to guard against — while
+    /// audio recurring at least this often lets a real conversation complete
+    /// the window. It only ever bridges a gap in evidence; it never invents
+    /// evidence on its own, so this cannot make an idle-but-open app confirm.
+    static let nativeAudioConfirmationGapTolerance: TimeInterval = 6
+
     /// Bundles inside a meeting app's namespace that hold their Core Audio
     /// streams open for the app's whole lifetime, so their state carries no
     /// information about whether a call is running.
@@ -165,9 +187,14 @@ final class MeetingDetector {
     private var timer: Timer?
     private var pendingStop: DispatchWorkItem?
     /// The start candidate still waiting out
-    /// `nativeAudioMinimumConfirmationDuration`, and when its audio was first
-    /// seen.
-    private var pendingStart: (bundleID: String, firstSeen: Date)?
+    /// `nativeAudioMinimumConfirmationDuration`: when its audio was first seen,
+    /// and when it was last seen — the second lets a normal conversational gap
+    /// (the remote side listening rather than talking) survive without
+    /// restarting the window. See `nativeAudioConfirmationGapTolerance`.
+    private var startConfirmation = MeetingMatcher.StartConfirmationState()
+    /// Last logged start-decision state, so the 10 s safety poll does not
+    /// repeat the same line forever. Diagnostics only.
+    private var lastLoggedStartState: String?
     private var pendingStartRecheck: DispatchWorkItem?
     private var workspaceObservers: [NSObjectProtocol] = []
 
@@ -372,12 +399,55 @@ final class MeetingDetector {
             appAudioActive: false,
             calendarBackedBrowserWithAudio: calendarBackedBrowserWithAudio)
 
-        guard inMeeting, let app = runningMeetingApp else {
-            clearPendingStart()
+        if inMeeting, let app = runningMeetingApp {
+            guard startConfirmed(app: app, calendarBacked: calendarEvent != nil, now: now) else { return }
+            logStartState("detector confirmed app=\(app.bundleID)")
+            beginMeeting(app: app, calendarEvent: calendarEvent, now: now)
             return
         }
-        guard startConfirmed(app: app, calendarBacked: calendarEvent != nil, now: now) else { return }
+
+        // No fresh output audio this instant. `detectRunningMeetingApp`
+        // requires it, so this branch also covers the remote side simply
+        // listening rather than talking — the app itself may still be mid-call.
+        // A candidate already inside its confirmation window gets a grace
+        // period before that silence is read as the call having ended.
+        if let pendingStart = startConfirmation.window,
+           Self.requiresSustainedAudioForStart(
+               bundleID: pendingStart.bundleID, calendarBacked: calendarEvent != nil),
+           let app = Self.nativeApp(bundleID: pendingStart.bundleID, in: running) {
+            switch MeetingMatcher.startConfirmationGapOutcome(
+                firstSeenAt: pendingStart.firstSeenAt,
+                lastAudioSeenAt: pendingStart.lastAudioSeenAt,
+                now: now,
+                gapTolerance: Self.nativeAudioConfirmationGapTolerance,
+                minimumDuration: Self.nativeAudioMinimumConfirmationDuration) {
+            case .confirmed:
+                logStartState("detector confirmed app=\(app.bundleID) (bridged gap)")
+                beginMeeting(app: app, calendarEvent: calendarEvent, now: now)
+                return
+            case .stillWaiting:
+                let elapsed = now.timeIntervalSince(pendingStart.firstSeenAt)
+                let gapRemaining = Self.nativeAudioConfirmationGapTolerance
+                    - now.timeIntervalSince(pendingStart.lastAudioSeenAt)
+                scheduleStartConfirmationRecheck(
+                    after: min(gapRemaining, Self.nativeAudioMinimumConfirmationDuration - elapsed),
+                    generation: pendingStart.generation)
+                return
+            case .abandoned:
+                break
+            }
+        }
+
+        logStartState(
+            runningMeetingApp.map {
+                "detector idle app=\($0.bundleID) audio=\(startAudioActive) "
+                    + "calendar=\(calendarEvent != nil)"
+            } ?? "detector idle app=none")
         clearPendingStart()
+    }
+
+    private func beginMeeting(app: DetectedApp, calendarEvent: CalendarMeetingCandidate?, now: Date) {
+        clearPendingStart(loggingLoss: false)
         pendingStop?.cancel()
         pendingStop = nil
         activeApp = app
@@ -393,15 +463,25 @@ final class MeetingDetector {
     /// Tracks how long the start candidate's audio has been continuously
     /// present and answers whether it may start a recording yet. Candidates
     /// that need no confirmation answer true on their first tick.
+    /// Called only when `app` has fresh output audio this tick. Advances the
+    /// window's evidence clock; `tick()` separately decides whether a gap
+    /// since the last call may still keep this same window alive.
     private func startConfirmed(app: DetectedApp, calendarBacked: Bool, now: Date) -> Bool {
         guard Self.requiresSustainedAudioForStart(
             bundleID: app.bundleID, calendarBacked: calendarBacked) else { return true }
-        if pendingStart?.bundleID != app.bundleID {
-            pendingStart = (app.bundleID, now)
+        let startedNewWindow = startConfirmation.observeAudio(
+            bundleID: app.bundleID,
+            at: now,
+            gapTolerance: Self.nativeAudioConfirmationGapTolerance)
+        if startedNewWindow {
+            cancelPendingStartRecheck()
+            lokalbotLog(
+                "detector waiting for sustained audio app=\(app.bundleID) "
+                    + "needs=\(Int(Self.nativeAudioMinimumConfirmationDuration))s")
         }
-        let firstSeen = pendingStart?.firstSeen
+        guard let pendingStart = startConfirmation.window else { return false }
         if MeetingMatcher.sustainedAudioConfirmed(
-            firstSeenAt: firstSeen,
+            firstSeenAt: pendingStart.firstSeenAt,
             now: now,
             minimumDuration: Self.nativeAudioMinimumConfirmationDuration) {
             return true
@@ -409,16 +489,29 @@ final class MeetingDetector {
         // Ticks are event-driven plus a slow safety poll, so a real meeting
         // would otherwise wait for the next poll boundary instead of starting
         // the moment the minimum duration elapses.
-        let elapsed = firstSeen.map { now.timeIntervalSince($0) } ?? 0
+        let elapsed = now.timeIntervalSince(pendingStart.firstSeenAt)
         scheduleStartConfirmationRecheck(
-            after: Self.nativeAudioMinimumConfirmationDuration - elapsed)
+            after: Self.nativeAudioMinimumConfirmationDuration - elapsed,
+            generation: pendingStart.generation)
         return false
     }
 
-    private func scheduleStartConfirmationRecheck(after delay: TimeInterval) {
-        guard pendingStartRecheck == nil else { return }
+    /// Logs a start-decision state once per change. The detector otherwise
+    /// says nothing at all unless it starts a recording, so "it did not fire"
+    /// has no evidence behind it.
+    private func logStartState(_ state: String) {
+        guard lastLoggedStartState != state else { return }
+        lastLoggedStartState = state
+        lokalbotLog(state)
+    }
+
+    private func scheduleStartConfirmationRecheck(after delay: TimeInterval,
+                                                  generation: UInt64) {
+        guard startConfirmation.acceptsRecheck(for: generation),
+              pendingStartRecheck == nil else { return }
         let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
+            guard let self,
+                  self.startConfirmation.acceptsRecheck(for: generation) else { return }
             self.pendingStartRecheck = nil
             self.tick()
         }
@@ -426,8 +519,20 @@ final class MeetingDetector {
         DispatchQueue.main.asyncAfter(deadline: .now() + max(delay, 0.25), execute: work)
     }
 
-    private func clearPendingStart() {
-        pendingStart = nil
+    /// `loggingLoss` is false when the candidate is being cleared because it
+    /// just started a meeting — that clears the same state but is a success,
+    /// not a loss, and must not log as one.
+    private func clearPendingStart(loggingLoss: Bool = true) {
+        if loggingLoss, let pendingStart = startConfirmation.window {
+            lokalbotLog(
+                "detector lost the audio it was waiting on app=\(pendingStart.bundleID) "
+                    + "after=\(String(format: "%.1fs", Date().timeIntervalSince(pendingStart.firstSeenAt)))")
+        }
+        startConfirmation.clear()
+        cancelPendingStartRecheck()
+    }
+
+    private func cancelPendingStartRecheck() {
         pendingStartRecheck?.cancel()
         pendingStartRecheck = nil
     }
@@ -471,6 +576,17 @@ final class MeetingDetector {
             guard let name = knownApps[entry.bundleID] else { return nil }
             return DetectedApp(name: name, bundleID: entry.bundleID, pid: entry.pid)
         }
+    }
+
+    /// A specific native app by bundle id, with no audio requirement at all —
+    /// used to check whether a confirmation candidate is still open during a
+    /// bridged gap, where the point is exactly that it may be silent right now.
+    private static func nativeApp(bundleID: String,
+                                  in running: [NSRunningApplication]) -> DetectedApp? {
+        meetingAppCandidates(bundleIDs: running.compactMap { app in
+            guard app.bundleIdentifier == bundleID else { return nil }
+            return (bundleID: bundleID, pid: app.processIdentifier)
+        }).first
     }
 
     private static func nativeMeetingApp(in running: [NSRunningApplication],

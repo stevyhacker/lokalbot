@@ -21,10 +21,11 @@ final class AgentSessionController: ObservableObject {
     @Published private(set) var items: [AgentTranscriptItem] = []
     @Published private(set) var recoveryAction: RecoveryAction?
     @Published private(set) var sessionTitle: String?
+    @Published private(set) var activeSessionFile: URL?
     @Published var workspace: URL
     @Published var draft = ""
-    @Published var autoApproveSession = false {
-        didSet { policy.autoApproveFileChanges = autoApproveSession }
+    @Published private(set) var approvalMode: AgentApprovalMode = .askBeforeChanges {
+        didSet { policy.mode = approvalMode }
     }
 
     private let settings: () -> AppSettings
@@ -136,8 +137,18 @@ final class AgentSessionController: ObservableObject {
             }
             client = rpc
             consumeEvents(from: rpc, generation: generation)
-            if launchMode == .continueRecent {
-                await restorePreviousMessages(using: rpc)
+            captureActiveSessionFile(using: rpc, generation: generation)
+            switch launchMode {
+            case .fresh:
+                break
+            case .continueRecent:
+                await restorePreviousMessages(
+                    using: rpc,
+                    resumedNotice: "Resumed the most recent session for this working folder.")
+            case .saved(let session):
+                await restorePreviousMessages(
+                    using: rpc,
+                    resumedNotice: "Resumed \"\(session.title)\".")
             }
             state = .ready
         } catch {
@@ -163,8 +174,8 @@ final class AgentSessionController: ObservableObject {
         await process?.stop()
         process = nil
         client = nil
-        policy.resetSession()
-        autoApproveSession = false
+        activeSessionFile = nil
+        resetApprovalPolicy()
         releaseLLMLease()
         state = .idle
     }
@@ -201,8 +212,7 @@ final class AgentSessionController: ObservableObject {
         await shutdown()
         discardPendingTextDelta()
         folder = AgentTranscriptFolder()
-        policy.resetSession()
-        autoApproveSession = false
+        resetApprovalPolicy()
         sessionTitle = nil
         draft = ""
         publish()
@@ -210,7 +220,49 @@ final class AgentSessionController: ObservableObject {
         await start()
     }
 
+    func resumeSavedSession(_ session: AgentSavedSession) async {
+        await shutdown()
+        discardPendingTextDelta()
+        folder = AgentTranscriptFolder()
+        resetApprovalPolicy()
+        workspace = session.workspace
+        sessionTitle = session.title
+        activeSessionFile = session.fileURL
+        draft = ""
+        publish()
+        launchMode = .saved(session)
+        await start()
+    }
+
     // MARK: - Approvals
+
+    /// Applies one of the user-visible session modes and immediately answers
+    /// any already-visible cards that the new mode now permits. Changing modes
+    /// clears narrower per-tool session exceptions so downgrades take effect.
+    func setApprovalMode(_ mode: AgentApprovalMode) async {
+        guard approvalMode != mode else { return }
+        policy.resetSession()
+        approvalMode = mode
+
+        let pendingRequests = folder.items.compactMap { item -> AgentApprovalRequest? in
+            if case .approval(let request) = item { return request }
+            return nil
+        }
+        for request in pendingRequests where policy.verdict(
+            tool: request.tool,
+            path: request.path,
+            requestWorkspace: request.workspace,
+            selectedWorkspace: workspace) == .allow {
+            await respondToApproval(id: request.id, approved: true, scope: .once)
+        }
+    }
+
+    /// Keeps the existing unattended `--agent` test hook narrowly scoped to
+    /// workspace file changes; external reads and shell commands still surface
+    /// and are denied by that caller.
+    func approveWorkspaceFileChangesForAutomation() {
+        policy.approveWorkspaceFileChangesForAutomation()
+    }
 
     func respondToApproval(id: String, approved: Bool, scope: ApprovalScope) async {
         guard let client else { return }
@@ -351,7 +403,38 @@ final class AgentSessionController: ObservableObject {
             endpoint: endpoint,
             helpersDirectory: FileManager.default.fileExists(atPath: helpers.path) ? helpers : nil,
             agentAccessCapability: capabilityToken,
-            continuePreviousSession: launchMode == .continueRecent)
+            continuePreviousSession: launchMode.isContinueRecent,
+            specificSession: launchMode.specificSession)
+    }
+
+    /// Production Pi reports the exact file it created or resumed. Capturing
+    /// it lets the history browser prevent the same JSONL file from being
+    /// opened by two live tabs. Test transports skip this background request.
+    private func captureActiveSessionFile(using client: PiRPCClient, generation: Int) {
+        guard makeTransport == nil else { return }
+        let requestID = freshID("session-file")
+        Task { [weak self] in
+            guard let response = try? await client.request(.getSessionStats(id: requestID)),
+                  response.success,
+                  let file = Self.sessionFile(from: response.dataJSON),
+                  let self,
+                  generation == self.lifecycleGeneration else { return }
+            let expectedDirectory = self.sessionsDirectory.standardizedFileURL
+                .resolvingSymlinksInPath().path
+            let actualDirectory = file.deletingLastPathComponent().standardizedFileURL
+                .resolvingSymlinksInPath().path
+            guard actualDirectory == expectedDirectory else { return }
+            self.activeSessionFile = file.standardizedFileURL
+        }
+    }
+
+    private static func sessionFile(from dataJSON: String?) -> URL? {
+        guard let dataJSON,
+              let data = dataJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let path = object["sessionFile"] as? String,
+              !path.isEmpty else { return nil }
+        return URL(fileURLWithPath: path)
     }
 
     // MARK: - Helpers
@@ -462,9 +545,9 @@ final class AgentSessionController: ObservableObject {
         let oldProcess = process
         process = nil
         client = nil
+        activeSessionFile = nil
         folder.resolveAllApprovals()
-        policy.resetSession()
-        autoApproveSession = false
+        resetApprovalPolicy()
         revokeAccessCapability()
         folder.appendNotice(message, isError: true)
         publish()
@@ -478,8 +561,8 @@ final class AgentSessionController: ObservableObject {
 
     private func setFailure(_ error: Error) {
         folder.resolveAllApprovals()
-        policy.resetSession()
-        autoApproveSession = false
+        activeSessionFile = nil
+        resetApprovalPolicy()
         revokeAccessCapability()
         releaseLLMLease()
         state = .failed(Self.message(for: error))
@@ -488,6 +571,11 @@ final class AgentSessionController: ObservableObject {
         } else {
             recoveryAction = .restart
         }
+    }
+
+    private func resetApprovalPolicy() {
+        policy = AgentApprovalPolicy()
+        approvalMode = .askBeforeChanges
     }
 
     /// Our extension sends title "lokalbot_tool_approval" with exact structured
@@ -522,6 +610,10 @@ final class AgentSessionController: ObservableObject {
     }
 
     var workspaceDisplayName: String {
+        workspaceDisplayName(for: workspace)
+    }
+
+    func workspaceDisplayName(for workspace: URL) -> String {
         if workspace.standardizedFileURL == storage.rootURL.standardizedFileURL {
             return "Meeting Library"
         }
@@ -532,6 +624,13 @@ final class AgentSessionController: ObservableObject {
         state == .running
             || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !items.isEmpty
+    }
+
+    var canReplaceWithSavedSession: Bool {
+        (state == .idle || state == .ready)
+            && sessionTitle == nil
+            && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && items.isEmpty
     }
 
     var canResumePreviousSession: Bool {
@@ -589,9 +688,23 @@ final class AgentSessionController: ObservableObject {
     private enum LaunchMode {
         case fresh
         case continueRecent
+        case saved(AgentSavedSession)
+
+        var isContinueRecent: Bool {
+            if case .continueRecent = self { return true }
+            return false
+        }
+
+        var specificSession: URL? {
+            if case .saved(let session) = self { return session.fileURL }
+            return nil
+        }
     }
 
-    private func restorePreviousMessages(using client: PiRPCClient) async {
+    private func restorePreviousMessages(
+        using client: PiRPCClient,
+        resumedNotice: String
+    ) async {
         do {
             let response = try await client.request(.getMessages(id: freshID("history")))
             guard response.success else {
@@ -617,7 +730,7 @@ final class AgentSessionController: ObservableObject {
                     break
                 }
             }
-            folder.appendNotice("Resumed the most recent session for this working folder.")
+            folder.appendNotice(resumedNotice)
             publish()
         } catch {
             folder.appendNotice("Couldn't restore the previous session: \(Self.message(for: error))",

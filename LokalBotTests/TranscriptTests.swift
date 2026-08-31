@@ -32,6 +32,7 @@ final class TranscriptTests: XCTestCase {
         let transcript = try JSONDecoder().decode(Transcript.self, from: Data(json.utf8))
 
         XCTAssertTrue(transcript.speakerAliases.isEmpty)
+        XCTAssertTrue(transcript.speakerCalendarIdentityIDs.isEmpty)
         XCTAssertEqual(transcript.displaySpeaker(for: "them 1"), "Them 1")
     }
 
@@ -81,6 +82,29 @@ final class TranscriptTests: XCTestCase {
 
         transcript.setSpeakerAlias("Them 1", for: "them 1")
         XCTAssertNil(transcript.speakerAlias(for: "them 1"))
+    }
+
+    func testCalendarIdentityAssignmentRoundTripsWithoutEmail() throws {
+        var transcript = Transcript(
+            segments: [
+                .init(start: 65, end: 70, speaker: "them 1", text: "Ship it.", confidence: 0.9),
+            ],
+            engine: "test")
+        transcript.setSpeakerAlias(
+            "Ana",
+            for: "them 1",
+            calendarIdentityID: "opaque-participant-id")
+
+        let data = try JSONEncoder().encode(transcript)
+        let encoded = try XCTUnwrap(String(data: data, encoding: .utf8))
+        let decoded = try JSONDecoder().decode(Transcript.self, from: data)
+
+        XCTAssertEqual(decoded.calendarIdentityID(for: "them 1"), "opaque-participant-id")
+        XCTAssertFalse(encoded.contains("@"))
+
+        var manuallyRenamed = decoded
+        manuallyRenamed.setSpeakerAlias("Ana Maria", for: "them 1")
+        XCTAssertNil(manuallyRenamed.calendarIdentityID(for: "them 1"))
     }
 
     func testNormalizedTextStripsWhisperControlTokens() {

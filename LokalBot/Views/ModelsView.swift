@@ -11,6 +11,8 @@ struct ModelsView: View {
     @State private var ollamaModels: [String] = []
     @State private var ollamaReachable = false
     @State private var testResult: String?
+    @State private var testFailure: GenerationTestFailurePresentation?
+    @State private var showingTestFailure = false
     @State private var testing = false
     @State private var speechModelDownloaded = false
     @State private var preparingSpeechModel = false
@@ -27,6 +29,7 @@ struct ModelsView: View {
     @State private var didLoadOpenAIAPIKey = false
     @State private var openAIAPIKeySaved = false
     @State private var expandedRoles: Set<ModelRole> = []
+    @State private var confirmingOpenRouterAccountPolicy = false
 
     var body: some View {
         ScrollView {
@@ -133,6 +136,16 @@ struct ModelsView: View {
                 }
             }
             .frame(maxWidth: 320)
+            TextField(
+                "Names, acronyms, and domain vocabulary",
+                text: $app.settings.transcriptionPrompt,
+                axis: .vertical)
+                .lineLimit(2...4)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("models.transcriptionPrompt")
+            Text("Optional context for Whisper and Qwen3-ASR, such as participant names, product terms, and preferred spelling. It stays on this Mac.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Text("Runs fully on-device with Core ML, MLX, ONNX, or llama.cpp. Models fetch from Hugging Face on first use — or use Download to cache and warm one up.")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -251,6 +264,9 @@ struct ModelsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 remoteEndpointDisclosure(rawURL: app.settings.openAIBaseURL)
+                if isOpenRouterEndpoint {
+                    openRouterDataPolicyControl
+                }
             }
 
             HStack(spacing: 8) {
@@ -258,9 +274,28 @@ struct ModelsView: View {
                     Task { await testGeneration() }
                 }
                 .disabled(testing)
+                .accessibilityIdentifier("models.generationTest")
+                .popover(isPresented: $showingTestFailure, arrowEdge: .bottom) {
+                    if let testFailure {
+                        GenerationTestFailurePopover(failure: testFailure)
+                    }
+                }
                 if let testResult {
                     Text(testResult).font(.caption).foregroundStyle(.secondary)
                         .lineLimit(2)
+                }
+                if let testFailure {
+                    Button {
+                        showingTestFailure = true
+                    } label: {
+                        Label(testFailure.inlineTitle,
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Brand.error)
+                    .help("View the error and recovery steps")
+                    .accessibilityIdentifier("models.generationTest.issue")
                 }
             }
         }
@@ -352,6 +387,69 @@ struct ModelsView: View {
             if approved {
                 app.settings.approvedRemoteInferenceOrigins.append(origin)
             }
+        }
+    }
+
+    private var isOpenRouterEndpoint: Bool {
+        guard let url = URL(string: app.settings.openAIBaseURL) else { return false }
+        return ChatCompletionDialect.inferred(from: url) == .openRouter
+    }
+
+    private var openRouterDataPolicyControl: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Provider data use")
+                .font(.caption.weight(.semibold))
+            Picker("Provider data use", selection: openRouterDataPolicyBinding) {
+                Text("Private endpoints only (Recommended)")
+                    .tag(OpenRouterDataPolicy.privateOnly)
+                Text("Follow my OpenRouter privacy settings")
+                    .tag(OpenRouterDataPolicy.accountPolicy)
+            }
+            .labelsHidden()
+            .pickerStyle(.radioGroup)
+            .accessibilityIdentifier("models.openRouterDataPolicy")
+
+            Text(openRouterDataPolicyDetail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .alert(
+            "Follow your OpenRouter privacy policy?",
+            isPresented: $confirmingOpenRouterAccountPolicy
+        ) {
+            Button("Follow OpenRouter Policy") {
+                app.settings.openRouterDataPolicy = .accountPolicy
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Approved meeting transcripts, screen text, and Agent context may be sent "
+                + "to providers that retain requests or use them for training. LokalBot "
+                + "cannot verify the OpenRouter policy attached to this account, API key, "
+                + "workspace, or guardrail.")
+        }
+    }
+
+    private var openRouterDataPolicyBinding: Binding<OpenRouterDataPolicy> {
+        Binding {
+            app.settings.openRouterDataPolicy
+        } set: { policy in
+            if policy == .accountPolicy,
+               app.settings.openRouterDataPolicy != .accountPolicy {
+                confirmingOpenRouterAccountPolicy = true
+            } else {
+                app.settings.openRouterDataPolicy = policy
+            }
+        }
+    }
+
+    private var openRouterDataPolicyDetail: String {
+        switch app.settings.openRouterDataPolicy {
+        case .privateOnly:
+            "Every request is restricted to providers that do not collect inference data."
+        case .accountPolicy:
+            "Provider eligibility follows your OpenRouter account, API-key, workspace, "
+                + "and guardrail settings."
         }
     }
 
@@ -777,6 +875,8 @@ struct ModelsView: View {
     func testGeneration() async {
         testing = true
         testResult = nil
+        testFailure = nil
+        showingTestFailure = false
         defer { testing = false }
         do {
             let engine = try await app.thinkExecution.makeTextEngine(
@@ -789,7 +889,13 @@ struct ModelsView: View {
                 context: [])
             testResult = "✓ " + reply.prefix(120)
         } catch {
-            testResult = "✗ \(error.localizedDescription)"
+            let isOpenAICompatible = app.settings.summarizerBackend == .openAICompatible
+            testFailure = GenerationTestFailurePresentation(
+                error: error,
+                baseURL: isOpenAICompatible ? app.settings.openAIBaseURL : nil,
+                model: isOpenAICompatible ? app.settings.openAIModel : nil,
+                openRouterDataPolicy: app.settings.openRouterDataPolicy)
+            showingTestFailure = true
         }
     }
 }

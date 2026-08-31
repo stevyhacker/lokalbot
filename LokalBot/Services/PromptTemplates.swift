@@ -16,6 +16,9 @@ enum PromptTemplates {
         var lines: [String] = []
         lines.append(persona(for: template))
         lines.append(rules(for: template))
+        if template == .meeting {
+            lines.append(meetingOutcomeSemanticsRule)
+        }
         lines.append(userActionabilityRule(userSpeakerLabel: userSpeakerLabel))
         if let directive = languageSystemDirective(summaryLanguage) {
             lines.append(directive)
@@ -27,14 +30,18 @@ enum PromptTemplates {
     /// Returns nil for `.matchTranscript` so existing behaviour is preserved.
     static func languageSystemDirective(_ language: SummaryLanguage) -> String? {
         guard let name = language.promptLanguageName else { return nil }
-        return "Write the entire output in \(name). Translate quoted material when needed; keep proper nouns and code identifiers in their original form."
+        return "Write prose and list content in \(name). Keep every required Markdown section "
+            + "and subsection heading exactly as specified in the prompt; do not translate "
+            + "headings. Translate quoted material when needed; keep proper nouns and code "
+            + "identifiers in their original form."
     }
 
     /// Reinforcement rule used inside the per-template body when a language
     /// is fixed. Returns nil for `.matchTranscript`.
     static func languageRule(_ language: SummaryLanguage) -> String? {
         guard let name = language.promptLanguageName else { return nil }
-        return "Output language: \(name). Do not switch back to English."
+        return "Output language: \(name) for prose and list content. Keep required Markdown "
+            + "headings exactly as specified; do not translate them."
     }
 
     // MARK: - User prompt
@@ -67,8 +74,10 @@ enum PromptTemplates {
         var lines = [
             "Extract the key points, decisions, action items (with [hh:mm:ss] timestamps) and open questions from this part of a meeting transcript as terse Markdown bullets.",
             "The speaker labeled \"\(user)\" is this Mac's user (\"Me\"); every other speaker is another participant.",
+            "In prose about the user, write naturally in first person using I, me, and my. Reserve the literal label Me for the `### Me` subheading; never write sentences such as \"Me will...\" or \"Me accepted...\".",
             "Perform a separate actionability pass: under ## Action items, use ### Me for commitments made by \"\(user)\", requests or assignments directed to \"\(user)\", and agreed follow-ups \"\(user)\" owns; use ### Others for everyone else's tasks. Write \"None\" under either subgroup when this part contains no qualifying item.",
             "Do not turn generic advice, optional ideas, or another participant's work into an action for Me.",
+            meetingOutcomeSemanticsRule,
             "No preamble.",
         ]
         if let directive = languageSystemDirective(summaryLanguage) {
@@ -268,7 +277,10 @@ enum PromptTemplates {
         let user = normalizedSpeakerLabel(userSpeakerLabel)
         return """
         Before finalizing, always perform a separate actionability pass for this Mac's user. \
-        The transcript speaker labeled "\(user)" is the user; call that owner "Me" in the notes. \
+        The transcript speaker labeled "\(user)" is the user. In prose about the user, write \
+        naturally in first person using `I`, `me`, and `my`. Reserve the literal label `Me` for \
+        the required `### Me` subheading and structured owner metadata; never write sentences \
+        such as "Me will...", "Me accepted...", or "Me introduced himself." \
         In `## Action items`, always include both of these subheadings:
         ### Me
         Include explicit commitments made by "\(user)", requests or assignments directed to \
@@ -282,6 +294,13 @@ enum PromptTemplates {
         context, but never invent an action.
         """
     }
+
+    private static let meetingOutcomeSemanticsRule = """
+        Put only choices the participants explicitly settled on under `## Decisions`. Tentative \
+        terms, intentions, suggestions, and possibilities are not decisions; preserve unresolved \
+        terms under `## Open questions`. Give each outcome one role: never duplicate a concrete \
+        commitment or assigned follow-up as a decision.
+        """
 
     private static func normalizedSpeakerLabel(_ label: String) -> String {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)

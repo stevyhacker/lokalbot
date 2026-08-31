@@ -74,6 +74,30 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertEqual(outcomes.otherActionItems.map(\.owner), ["Ana"])
     }
 
+    func testUserOwnershipStaysMeWhileUserFacingProseUsesFirstPerson() throws {
+        let persistedID = "persisted-action-id"
+        let data = Data("""
+            {"actionItems":[
+                {"id":"\(persistedID)","text":"Me will touch base on WhatsApp.",
+                 "owner":"Me","isForUser":true,"citations":[]}],
+             "decisionRecords":[
+                {"text":"Me accepted the same terms.","citations":[]}],
+             "openQuestions":[]}
+            """.utf8)
+        let outcomes = try JSONDecoder().decode(MeetingOutcomes.self, from: data)
+
+        XCTAssertEqual(outcomes.actionItems.first?.id, persistedID)
+        XCTAssertEqual(outcomes.actionItems.first?.owner, "Me")
+        XCTAssertEqual(outcomes.actionItems.first?.text, "I will touch base on WhatsApp.")
+        XCTAssertEqual(outcomes.decisionRecords.first?.text, "I accepted the same terms.")
+        XCTAssertEqual(
+            OutcomeProse.firstPersonSubject("Me's next step is to send the plan."),
+            "My next step is to send the plan.")
+        XCTAssertEqual(
+            OutcomeProse.actionText("Them 1 will share the repo.", isForUser: false),
+            "Them 1 will share the repo.")
+    }
+
     // MARK: - Schema and prompt
 
     func testSchemaSerializesAsJSON() throws {
@@ -93,33 +117,36 @@ final class MeetingOutcomesTests: XCTestCase {
     }
 
     func testSystemPromptAlwaysChecksWhatTheUserNeedsToDo() {
-        let prompt = OutcomesExtractor.systemPrompt(userSpeakerLabel: "Stevan")
+        let prompt = OutcomesExtractor.systemPrompt(
+            userSpeakerLabel: "Stevan",
+            outputLanguage: .en)
         XCTAssertTrue(prompt.contains("everything actionable for that user"), prompt)
         XCTAssertTrue(prompt.contains("commitments made by \"Stevan\""), prompt)
         XCTAssertTrue(prompt.contains("requests or assignments directed to \"Stevan\""), prompt)
         XCTAssertTrue(prompt.contains("\"for_user\" to true"), prompt)
         XCTAssertTrue(prompt.contains("set \"owner\" to \"Me\""), prompt)
+        XCTAssertTrue(prompt.contains("I will"), prompt)
+        XCTAssertTrue(prompt.contains("Never use \"Me\" as a sentence subject"), prompt)
+        XCTAssertTrue(prompt.contains("text field in English"), prompt)
     }
 
-    func testPromptPrefersTranscriptUntilItOutgrowsTheContext() {
-        let short = OutcomesExtractor.prompt(transcriptMarkdown: "short transcript",
-                                             summary: "the summary")
-        XCTAssertTrue(short.contains("short transcript"))
-        let long = OutcomesExtractor.prompt(
-            transcriptMarkdown: String(repeating: "x", count: 25_000), summary: "the summary")
-        XCTAssertTrue(long.contains("the summary"))
-        XCTAssertFalse(long.contains("xxxxx"))
+    func testPromptUsesOnlySourceLabelledEvidence() {
+        let prompt = OutcomesExtractor.prompt(
+            evidence: "[segment-0001] [00:00:12] Me: I will send the plan.")
+
+        XCTAssertTrue(prompt.contains("segment-0001"), prompt)
+        XCTAssertTrue(prompt.contains("Only cite segment IDs that appear below"), prompt)
     }
 
     func testOnlyShortBuiltInOutcomesCanOverlapSummary() {
         XCTAssertTrue(ProcessingPipeline.shouldExtractOutcomesConcurrently(
-            transcriptCharacterCount: OutcomesExtractor.transcriptCharacterLimit,
+            canUseSinglePass: true,
             backend: .builtIn))
         XCTAssertFalse(ProcessingPipeline.shouldExtractOutcomesConcurrently(
-            transcriptCharacterCount: OutcomesExtractor.transcriptCharacterLimit + 1,
+            canUseSinglePass: false,
             backend: .builtIn))
         XCTAssertFalse(ProcessingPipeline.shouldExtractOutcomesConcurrently(
-            transcriptCharacterCount: 1_000,
+            canUseSinglePass: true,
             backend: .openAICompatible))
     }
 
@@ -167,6 +194,28 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertEqual(outcomes.actionItems.first?.schemaVersion, MeetingOutcomes.currentSchemaVersion)
         XCTAssertEqual(outcomes.actionItems.first?.isForUser, true)
         XCTAssertEqual(outcomes.decisionRecords.map(\.text), ["Use the local store"])
+    }
+
+    func testGroundedParseReportsRejectedEvidenceCandidates() throws {
+        let transcript = Transcript(
+            segments: [
+                .init(start: 12, end: 18, speaker: "me", text: "I will send the plan."),
+            ],
+            engine: "fixture")
+        let parsed = try XCTUnwrap(OutcomesExtractor.parseResult(
+            """
+            {"action_items": [
+              {"text":"Send the plan","owner":"Me","due":"","for_user":true,
+               "source_segment_ids":["segment-does-not-exist"]}],
+             "decisions": ["Proceed"], "open_questions":[]}
+            """,
+            sourceSegments: transcript.segmentSourceMap,
+            requireEvidence: true))
+
+        XCTAssertTrue(parsed.outcomes.actionItems.isEmpty)
+        XCTAssertTrue(parsed.outcomes.decisionRecords.isEmpty)
+        XCTAssertEqual(parsed.rejectedActionItems, 1)
+        XCTAssertEqual(parsed.rejectedDecisions, 1)
     }
 
     func testLegacyOutcomeShapeStillDecodesWithDerivedOwnership() throws {

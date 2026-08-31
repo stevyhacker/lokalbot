@@ -8,20 +8,38 @@ import SwiftUI
 struct SelectableDigestText: View {
     let text: String
     var font: Font = .body
+    var searchQuery: String = ""
+    var activeMatchIndex: Int?
 
-    init(_ text: String, font: Font = .body) {
+    init(
+        _ text: String,
+        font: Font = .body,
+        searchQuery: String = "",
+        activeMatchIndex: Int? = nil
+    ) {
         self.text = text
         self.font = font
+        self.searchQuery = searchQuery
+        self.activeMatchIndex = activeMatchIndex
     }
 
     var body: some View {
-        Text(Self.attributedText(from: text, font: font))
+        Text(Self.attributedText(
+            from: text,
+            font: font,
+            searchQuery: searchQuery,
+            activeMatchIndex: activeMatchIndex))
             .frame(maxWidth: .infinity, alignment: .leading)
             .textSelection(.enabled)
             .help("Select any part and press ⌘C to copy")
     }
 
-    static func attributedText(from markdown: String, font: Font = .body) -> AttributedString {
+    static func attributedText(
+        from markdown: String,
+        font: Font = .body,
+        searchQuery: String = "",
+        activeMatchIndex: Int? = nil
+    ) -> AttributedString {
         let lines = markdown.components(separatedBy: "\n")
         var document = AttributedString()
         for (index, line) in lines.enumerated() {
@@ -30,7 +48,14 @@ struct SelectableDigestText: View {
                 document.append(AttributedString("\n"))
             }
         }
-        return document
+        return MeetingSearchHighlighting.apply(
+            to: document,
+            query: searchQuery,
+            activeMatchIndex: activeMatchIndex)
+    }
+
+    static func searchableText(from markdown: String) -> String {
+        String(attributedText(from: markdown).characters)
     }
 
     private static func attributedLine(_ line: String, font: Font) -> AttributedString {
@@ -100,6 +125,50 @@ struct SelectableDigestText: View {
               trimmed.index(after: dot) < trimmed.endIndex,
               trimmed[trimmed.index(after: dot)] == " " else { return nil }
         return (number, String(trimmed[trimmed.index(dot, offsetBy: 2)...]))
+    }
+}
+
+/// Plain transcript text with the same find highlighting used by summary
+/// Markdown. Attributes preserve text selection and accessibility value.
+struct SearchHighlightedText: View {
+    let text: String
+    let query: String
+    let activeMatchIndex: Int?
+
+    init(_ text: String, query: String, activeMatchIndex: Int? = nil) {
+        self.text = text
+        self.query = query
+        self.activeMatchIndex = activeMatchIndex
+    }
+
+    var body: some View {
+        Text(MeetingSearchHighlighting.apply(
+            to: AttributedString(text),
+            query: query,
+            activeMatchIndex: activeMatchIndex))
+    }
+}
+
+private enum MeetingSearchHighlighting {
+    static func apply(
+        to attributedText: AttributedString,
+        query: String,
+        activeMatchIndex: Int?
+    ) -> AttributedString {
+        var result = attributedText
+        let plainText = String(result.characters)
+        for (index, range) in MeetingPageSearch.ranges(
+            in: plainText,
+            query: query).enumerated() {
+            guard let lowerBound = AttributedString.Index(range.lowerBound, within: result),
+                  let upperBound = AttributedString.Index(range.upperBound, within: result) else {
+                continue
+            }
+            result[lowerBound..<upperBound].backgroundColor = index == activeMatchIndex
+                ? Color.orange.opacity(0.58)
+                : Color.yellow.opacity(0.34)
+        }
+        return result
     }
 }
 

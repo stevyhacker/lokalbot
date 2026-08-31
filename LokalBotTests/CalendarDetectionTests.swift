@@ -314,6 +314,154 @@ final class CalendarDetectionTests: XCTestCase {
             bundleID: "com.google.Chrome", calendarBacked: false))
     }
 
+    /// `detectRunningMeetingApp` requires fresh output audio, so a candidate
+    /// lost that signal entirely — not just its elapsed time — every time the
+    /// remote side paused to listen rather than talk. Real log, 2026-08-26: six
+    /// consecutive attempts on a live Teams call each failed after 4.2-12.7 s,
+    /// two of them past the 12 s window itself. A gap this short is
+    /// conversational rhythm, not the call ending, and must not restart the
+    /// window.
+    func testABriefPauseInTheRemoteSideDoesNotAbandonTheWindow() {
+        let firstSeen = Date()
+        let lastAudioSeenAt = firstSeen.addingTimeInterval(3)
+        let now = lastAudioSeenAt.addingTimeInterval(4)  // a 4 s quiet turn
+
+        XCTAssertEqual(
+            MeetingMatcher.startConfirmationGapOutcome(
+                firstSeenAt: firstSeen, lastAudioSeenAt: lastAudioSeenAt, now: now,
+                gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance,
+                minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration),
+            .stillWaiting)
+    }
+
+    /// Silence past the gap tolerance is what `nativeAudioMinimumConfirmationDuration`
+    /// itself already guards against for a single blip — a candidate that never
+    /// recurs must still be abandoned, gap-tolerant or not.
+    func testSilenceLongerThanTheGapToleranceAbandonsTheCandidate() {
+        let firstSeen = Date()
+        let lastAudioSeenAt = firstSeen.addingTimeInterval(1)
+        let now = lastAudioSeenAt.addingTimeInterval(
+            MeetingDetector.nativeAudioConfirmationGapTolerance + 0.1)
+
+        XCTAssertEqual(
+            MeetingMatcher.startConfirmationGapOutcome(
+                firstSeenAt: firstSeen, lastAudioSeenAt: lastAudioSeenAt, now: now,
+                gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance,
+                minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration),
+            .abandoned)
+    }
+
+    /// The two anomalous log lines — "lost the audio... after=12.3s" and
+    /// "after=12.7s" — show the total span already past the window at the
+    /// exact instant the tick found no fresh audio. A bridged gap must confirm
+    /// immediately in that case rather than waiting for evidence that both
+    /// sides have already provided.
+    func testATotalSpanPastTheWindowConfirmsEvenMidGap() {
+        let firstSeen = Date()
+        let lastAudioSeenAt = firstSeen.addingTimeInterval(11)
+        let now = firstSeen.addingTimeInterval(
+            MeetingDetector.nativeAudioMinimumConfirmationDuration + 0.3)
+
+        XCTAssertEqual(
+            MeetingMatcher.startConfirmationGapOutcome(
+                firstSeenAt: firstSeen, lastAudioSeenAt: lastAudioSeenAt, now: now,
+                gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance,
+                minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration),
+            .confirmed)
+    }
+
+    /// The tolerance only ever bridges a gap in evidence that already exists;
+    /// it cannot manufacture evidence on its own. A single blip (a
+    /// notification ding) followed by real silence for the rest of the window
+    /// must still be abandoned — the exact case
+    /// `nativeAudioMinimumConfirmationDuration` was introduced to guard
+    /// against, and this tolerance must not reopen it.
+    func testAnIsolatedBlipCannotCoastToConfirmationOnToleranceAlone() {
+        let firstSeen = Date()
+        let lastAudioSeenAt = firstSeen.addingTimeInterval(0.5)  // one brief blip
+        let now = firstSeen.addingTimeInterval(
+            MeetingDetector.nativeAudioMinimumConfirmationDuration + 1)
+
+        XCTAssertEqual(
+            MeetingMatcher.startConfirmationGapOutcome(
+                firstSeenAt: firstSeen, lastAudioSeenAt: lastAudioSeenAt, now: now,
+                gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance,
+                minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration),
+            .abandoned)
+    }
+
+    /// The gap boundary is inclusive, matching `sustainedAudioConfirmed`'s own
+    /// inclusive boundary.
+    func testGapToleranceBoundaryIsInclusive() {
+        let firstSeen = Date()
+        let lastAudioSeenAt = firstSeen
+        let now = lastAudioSeenAt.addingTimeInterval(
+            MeetingDetector.nativeAudioConfirmationGapTolerance)
+
+        XCTAssertNotEqual(
+            MeetingMatcher.startConfirmationGapOutcome(
+                firstSeenAt: firstSeen, lastAudioSeenAt: lastAudioSeenAt, now: now,
+                gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance,
+                minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration),
+            .abandoned)
+    }
+
+    /// A fresh tick cannot revive a window whose last evidence is already past
+    /// tolerance. At this timestamp the old implementation saw a 12-second
+    /// total span and confirmed immediately instead of starting over.
+    func testFreshAudioAfterExpiredGapStartsANewConfirmationWindow() throws {
+        var state = MeetingMatcher.StartConfirmationState()
+        let firstSeen = Date()
+        let lastAudioSeenAt = firstSeen.addingTimeInterval(5)
+        let restartedAt = firstSeen.addingTimeInterval(
+            MeetingDetector.nativeAudioMinimumConfirmationDuration)
+
+        XCTAssertTrue(state.observeAudio(
+            bundleID: "com.microsoft.teams2",
+            at: firstSeen,
+            gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance))
+        XCTAssertFalse(state.observeAudio(
+            bundleID: "com.microsoft.teams2",
+            at: lastAudioSeenAt,
+            gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance))
+        XCTAssertTrue(state.observeAudio(
+            bundleID: "com.microsoft.teams2",
+            at: restartedAt,
+            gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance))
+
+        let restarted = try XCTUnwrap(state.window)
+        XCTAssertEqual(restarted.firstSeenAt, restartedAt)
+        XCTAssertEqual(restarted.lastAudioSeenAt, restartedAt)
+        XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(
+            firstSeenAt: restarted.firstSeenAt,
+            now: restartedAt,
+            minimumDuration: MeetingDetector.nativeAudioMinimumConfirmationDuration))
+    }
+
+    /// Canceling a submitted DispatchWorkItem is not the identity check: if an
+    /// obsolete callback is already queued, its captured generation must no
+    /// longer match the restarted window.
+    func testRestartedConfirmationWindowRejectsStaleRecheck() throws {
+        var state = MeetingMatcher.StartConfirmationState()
+        let firstSeen = Date()
+        state.observeAudio(
+            bundleID: "com.microsoft.teams2",
+            at: firstSeen,
+            gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance)
+        let staleGeneration = try XCTUnwrap(state.window).generation
+
+        state.observeAudio(
+            bundleID: "com.microsoft.teams2",
+            at: firstSeen.addingTimeInterval(
+                MeetingDetector.nativeAudioConfirmationGapTolerance + 0.1),
+            gapTolerance: MeetingDetector.nativeAudioConfirmationGapTolerance)
+
+        let restartedGeneration = try XCTUnwrap(state.window).generation
+        XCTAssertNotEqual(restartedGeneration, staleGeneration)
+        XCTAssertFalse(state.acceptsRecheck(for: staleGeneration))
+        XCTAssertTrue(state.acceptsRecheck(for: restartedGeneration))
+    }
+
     func testSustainedAudioIsUnconfirmedBeforeAnyAudioWasSeen() {
         XCTAssertFalse(MeetingMatcher.sustainedAudioConfirmed(
             firstSeenAt: nil,
@@ -381,6 +529,7 @@ final class CalendarDetectionTests: XCTestCase {
         XCTAssertNil(meeting.scheduledStartAt)
         XCTAssertNil(meeting.meetingURL)
         XCTAssertNil(meeting.participantNameHints)
+        XCTAssertNil(meeting.calendarParticipantIdentities)
     }
 
     /// Calendar provenance round-trips through the same ISO-8601 codec
@@ -398,6 +547,12 @@ final class CalendarDetectionTests: XCTestCase {
         meeting.scheduledEndAt = Date(timeIntervalSince1970: 1_700_003_600)
         meeting.meetingURL = URL(string: "https://meet.google.com/abc-defg-hij")
         meeting.participantNameHints = ["Ana", "Stevan"]
+        meeting.calendarParticipantIdentities = [
+            try XCTUnwrap(CalendarParticipantIdentity(
+                id: "ana-calendar-id",
+                name: "Ana",
+                emailAddress: "ana@example.com")),
+        ]
 
         let (encoder, decoder) = iso()
         let decoded = try decoder.decode(Meeting.self, from: encoder.encode(meeting))
@@ -418,6 +573,7 @@ final class CalendarDetectionTests: XCTestCase {
         XCTAssertNil(object["calendarEventID"])
         XCTAssertNil(object["meetingURL"])
         XCTAssertNil(object["participantNameHints"])
+        XCTAssertNil(object["calendarParticipantIdentities"])
     }
 
     // MARK: - Streams that are open for the app's whole lifetime
