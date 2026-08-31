@@ -1,12 +1,5 @@
-# SwiftLint ruleset for LokalBot (product: BotinaV2).
-#
-# Tuned to be LENIENT. The lint workflow runs `swiftlint lint --strict`
-# (.github/workflows/lint.yml), where ANY violation — warning OR error — fails
-# the check. So every rule left active below is one the current codebase
-# already satisfies; the disabled list and loosened thresholds exist purely to
-# keep `--strict` green on existing code, not to impose a new style on an
-# un-audited tree. Re-tighten deliberately, rule by rule, once a baseline pass
-# has been cleaned up.
+# SwiftLint ruleset for LokalBot. CI runs SwiftLint in strict mode, so warnings
+# and errors are both release-blocking.
 
 # Lint only the hand-written Swift sources; generated/vendored trees are out.
 included:
@@ -23,13 +16,7 @@ excluded:
   - "**/*.generated.swift"
 
 disabled_rules:
-  # --- Structural caps: enforcing these fights the architecture, not style.
-  #     The app has legitimately large SwiftUI views (SettingsView) and a
-  #     multi-stage processing pipeline. ---
-  - file_length
-  - type_body_length
-  - function_body_length
-  - cyclomatic_complexity
+  # --- Structural rules that still need a dedicated cleanup pass. ---
   - function_parameter_count
   - nesting
   - large_tuple                 # e.g. (app:, title:, start:) activity tuples
@@ -60,7 +47,7 @@ disabled_rules:
   #     between two equally correct APIs (`Data(str.utf8)` vs
   #     `str.data(using: .utf8)`, `String(bytes:encoding:)` vs
   #     `String(data:encoding:)`), not a defect. Disabled to keep `--strict`
-  #     green per the lenient philosophy above; re-enable with a tree-wide
+  #     green; re-enable with a tree-wide
   #     sweep if the house style settles on the non-optional initializers. ---
   - non_optional_string_data_conversion
   - optional_data_string_conversion
@@ -77,6 +64,46 @@ line_length:
   ignores_comments: true
   ignores_urls: true
 
-# No opt_in_rules are enabled on purpose: opting in would risk fresh violations
-# across an un-pre-linted tree, which `--strict` rejects. Add them back one at a
-# time after confirming the tree stays clean.
+# Architectural gates: hand-written files stay below 1,000 code lines and
+# functions stay below a cyclomatic complexity of 22. Cognitive complexity is
+# enforced separately with swift-complexity.
+file_length:
+  warning: 999
+  error: 999
+  ignore_comment_only_lines: true
+
+type_body_length:
+  warning: 1300
+  error: 1500
+
+function_body_length:
+  warning: 240
+  error: 280
+
+cyclomatic_complexity:
+  warning: 21
+  error: 21
+
+# These rules turn common mechanically redundant constructs into release
+# failures. The complementary default-on duplicate/redundant rules remain
+# active as part of the strict lint pass.
+opt_in_rules:
+  - redundant_final
+  - redundant_nil_coalescing
+  - redundant_type_annotation
+  - unneeded_parentheses_in_closure_argument
+
+# `Any` is forbidden in application/domain models. The small number of Apple
+# framework boundaries whose signatures require heterogeneous dictionaries or
+# opaque monitor tokens carry one-line suppressions with the API rationale.
+# XCTest fixture glue is excluded because JSONSerialization and assertion
+# autoclosures expose `Any` in their public signatures.
+custom_rules:
+  no_dynamic_any:
+    name: "Dynamic Any"
+    regex: "\\bAny\\b"
+    excluded: "LokalBotTests"
+    match_kinds:
+      - keyword
+    message: "Use a concrete type; suppress only at an API boundary that requires Any."
+    severity: error

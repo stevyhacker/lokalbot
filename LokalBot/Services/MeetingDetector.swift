@@ -315,68 +315,105 @@ final class MeetingDetector {
         let calendarEvent = calendarEnabled ? calendar?.activeCandidate(now: now) : nil
 
         if let currentApp = activeApp {
-            let continuingApp = Self.continuingApp(currentApp, in: running)
-            let appAudioActive = continuingApp.map {
-                hasContinuingAudio(for: $0, now: now)
-            } ?? false
-            let isBrowserApp = continuingApp.map { Self.browsers.contains($0.bundleID) } ?? false
-            let calendarBackedBrowserWithAudio = isBrowserApp
-                && calendarEnabled
-                && calendarEvent?.meetingURL != nil
-                && appAudioActive
-            let inMeeting = MeetingMatcher.isMeetingOngoing(
-                hasActiveSession: true,
-                hasRunningMeetingApp: false,
-                hasContinuingApp: continuingApp != nil,
-                startAudioActive: false,
-                appAudioActive: appAudioActive,
-                calendarBackedBrowserWithAudio: calendarBackedBrowserWithAudio)
-
-            guard inMeeting, let app = continuingApp else {
-                if let replacementApp = Self.detectRunningMeetingApp(
-                    in: running,
-                    calendarEvent: calendarEvent,
-                    calendarEnabled: calendarEnabled,
-                    requireCalendarForBrowser: requireCalendarForBrowser) {
-                    pendingStop?.cancel()
-                    pendingStop = nil
-                    let previousApp = activeApp
-                    activeApp = replacementApp
-                    activeCalendarEvent = calendarEvent
-                    continuationLease.recordReliableAudio(at: now)
-                    if previousApp != replacementApp {
-                        onMeetingSwitched?(MeetingDetectionContext(
-                            detectedApp: replacementApp,
-                            calendarEvent: calendarEvent,
-                            confidence: MeetingMatcher.confidence(
-                                hasApp: true, hasCalendar: calendarEvent != nil),
-                            reason: "meeting-app-handoff"))
-                    }
-                    return
-                }
-                scheduleStopIfNeeded(now: now)
-                return
-            }
-
-            pendingStop?.cancel()
-            pendingStop = nil
-            let previousEventID = activeCalendarEvent?.externalID
-            activeApp = app
-            if let calendarEvent {
-                activeCalendarEvent = calendarEvent
-                if MeetingMatcher.shouldSplitForCalendarHandoff(
-                    activeEventID: previousEventID,
-                    nextEventID: calendarEvent.externalID) {
-                    onMeetingSwitched?(MeetingDetectionContext(
-                        detectedApp: app,
-                        calendarEvent: calendarEvent,
-                        confidence: MeetingMatcher.confidence(hasApp: true, hasCalendar: true),
-                        reason: "calendar-handoff"))
-                }
-            }
+            updateActiveMeeting(
+                currentApp,
+                running: running,
+                calendarEvent: calendarEvent,
+                now: now)
             return
         }
 
+        detectMeetingStart(running: running, calendarEvent: calendarEvent, now: now)
+    }
+
+    private func updateActiveMeeting(
+        _ currentApp: DetectedApp,
+        running: [NSRunningApplication],
+        calendarEvent: CalendarMeetingCandidate?,
+        now: Date
+    ) {
+        let continuingApp = Self.continuingApp(currentApp, in: running)
+        let appAudioActive = continuingApp.map {
+            hasContinuingAudio(for: $0, now: now)
+        } ?? false
+        let isBrowserApp = continuingApp.map { Self.browsers.contains($0.bundleID) } ?? false
+        let calendarBackedBrowserWithAudio = isBrowserApp
+            && calendarEnabled
+            && calendarEvent?.meetingURL != nil
+            && appAudioActive
+        let inMeeting = MeetingMatcher.isMeetingOngoing(
+            hasActiveSession: true,
+            hasRunningMeetingApp: false,
+            hasContinuingApp: continuingApp != nil,
+            startAudioActive: false,
+            appAudioActive: appAudioActive,
+            calendarBackedBrowserWithAudio: calendarBackedBrowserWithAudio)
+
+        guard inMeeting, let app = continuingApp else {
+            replaceActiveAppOrScheduleStop(
+                running: running,
+                calendarEvent: calendarEvent,
+                now: now)
+            return
+        }
+        keepActiveMeeting(app, calendarEvent: calendarEvent)
+    }
+
+    private func replaceActiveAppOrScheduleStop(
+        running: [NSRunningApplication],
+        calendarEvent: CalendarMeetingCandidate?,
+        now: Date
+    ) {
+        guard let replacement = Self.detectRunningMeetingApp(
+            in: running,
+            calendarEvent: calendarEvent,
+            calendarEnabled: calendarEnabled,
+            requireCalendarForBrowser: requireCalendarForBrowser
+        ) else {
+            scheduleStopIfNeeded(now: now)
+            return
+        }
+        pendingStop?.cancel()
+        pendingStop = nil
+        let previousApp = activeApp
+        activeApp = replacement
+        activeCalendarEvent = calendarEvent
+        continuationLease.recordReliableAudio(at: now)
+        guard previousApp != replacement else { return }
+        onMeetingSwitched?(MeetingDetectionContext(
+            detectedApp: replacement,
+            calendarEvent: calendarEvent,
+            confidence: MeetingMatcher.confidence(
+                hasApp: true, hasCalendar: calendarEvent != nil),
+            reason: "meeting-app-handoff"))
+    }
+
+    private func keepActiveMeeting(
+        _ app: DetectedApp,
+        calendarEvent: CalendarMeetingCandidate?
+    ) {
+        pendingStop?.cancel()
+        pendingStop = nil
+        let previousEventID = activeCalendarEvent?.externalID
+        activeApp = app
+        guard let calendarEvent else { return }
+        activeCalendarEvent = calendarEvent
+        guard MeetingMatcher.shouldSplitForCalendarHandoff(
+            activeEventID: previousEventID,
+            nextEventID: calendarEvent.externalID
+        ) else { return }
+        onMeetingSwitched?(MeetingDetectionContext(
+            detectedApp: app,
+            calendarEvent: calendarEvent,
+            confidence: MeetingMatcher.confidence(hasApp: true, hasCalendar: true),
+            reason: "calendar-handoff"))
+    }
+
+    private func detectMeetingStart(
+        running: [NSRunningApplication],
+        calendarEvent: CalendarMeetingCandidate?,
+        now: Date
+    ) {
         let runningMeetingApp = Self.detectRunningMeetingApp(
             in: running,
             calendarEvent: calendarEvent,
@@ -862,13 +899,6 @@ final class MeetingDetector {
             for: app,
             in: currentAudioProcesses(),
             excluding: excludedPIDs)
-    }
-
-    /// Compatibility entry point for callers that only need the default
-    /// capture target. Recovery uses ``currentCaptureTargetProcess`` directly
-    /// so it can exclude a dead attachment.
-    static func currentCaptureAudioProcess(for app: DetectedApp) -> AudioProcess? {
-        currentCaptureTargetProcess(for: app)
     }
 
     static func currentAudioProcesses(now: Date = Date()) -> [AudioProcess] {

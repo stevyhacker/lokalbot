@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// One llama.cpp-compatible Granite Speech model plus its multimodal projector.
@@ -123,8 +122,9 @@ struct GraniteSpeechModelConfiguration: Codable, Equatable, Hashable, Sendable {
     var cacheDirectoryName: String? {
         guard repository != Self.defaultModel.repository
                 || revision != Self.defaultModel.revision else { return nil }
-        let digest = SHA256.hash(data: Data("\(repository)@\(revision)".utf8))
-        return digest.prefix(10).map { String(format: "%02x", $0) }.joined()
+        return SHA256Digest.hex(
+            of: "\(repository)@\(revision)",
+            prefixByteCount: 10)
     }
 
     var localModelFileName: String { Self.safeLeafName(model.path) }

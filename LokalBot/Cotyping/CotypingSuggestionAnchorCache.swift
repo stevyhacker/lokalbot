@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// Bounded memory of recently shown continuation suggestions. It lets common
@@ -170,8 +169,6 @@ enum CotypingSuggestionCacheFingerprint {
         let payload = components
             .map { "\($0.utf8.count):\($0)" }
             .joined(separator: "|")
-        return SHA256.hash(data: Data(payload.utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
+        return SHA256Digest.hex(of: payload)
     }
 }

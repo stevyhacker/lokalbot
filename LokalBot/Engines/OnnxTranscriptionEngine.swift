@@ -53,8 +53,6 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
     private init(model: Model) { self.model = model }
 
     nonisolated var displayName: String { model.displayName }
-    nonisolated let supportsStreaming = false
-
     static let sampleRate = 16_000
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
@@ -97,15 +95,11 @@ actor OnnxTranscriptionEngine: TranscriptionEngine {
     /// status text (the model row shows it).
     func prepare(progress: ModelPreparationProgressHandler? = nil) async throws {
         _ = try SherpaOnnxRuntime.installedRuntime(executableName: "sherpa-onnx-offline")
-        report(.init(fractionCompleted: nil, status: "Downloading model..."), to: progress)
+        reportModelPreparation(
+            .init(fractionCompleted: nil, status: "Downloading model..."),
+            to: progress)
         _ = try await preparedModelDir()
-        report(.init(fractionCompleted: 1, status: "Ready"), to: progress)
-    }
-
-    private nonisolated func report(_ update: ModelPreparationUpdate,
-                                    to handler: ModelPreparationProgressHandler?) {
-        guard let handler else { return }
-        Task { @MainActor in handler(update) }
+        reportModelPreparation(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
     // MARK: - Model download / extract

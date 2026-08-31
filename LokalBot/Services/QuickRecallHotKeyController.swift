@@ -96,7 +96,7 @@ final class QuickRecallHotKeyController {
 }
 
 private func quickRecallHotKeyHandler(
-    _ nextHandler: EventHandlerCallRef?,
+    _: EventHandlerCallRef?,
     _ event: EventRef?,
     _ userData: UnsafeMutableRawPointer?
 ) -> OSStatus {

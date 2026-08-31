@@ -16,7 +16,11 @@ struct LiveMeetingDetailView: View {
     let meeting: Meeting
 
     @State private var notes = ""
+    @State private var savedNotes = ""
     @State private var notesLoaded = false
+    @State private var isLoadingNotes = false
+    @State private var isSavingNotes = false
+    @State private var notesPersistenceError: String?
     @State private var saveTask: Task<Void, Never>?
 
     private var transcriber: LiveMeetingTranscriber { app.liveTranscriber }
@@ -39,11 +43,11 @@ struct LiveMeetingDetailView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
             transcriber.activate()   // opting in starts the ASR passes
-            loadNotes()
+            Task { await loadNotes() }
         }
         .onDisappear {
             saveTask?.cancel()
-            saveNotes()
+            scheduleSave(immediately: true)
         }
     }
 
@@ -171,12 +175,38 @@ struct LiveMeetingDetailView: View {
                 .padding(6)
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 9))
                 .accessibilityIdentifier("live.notes")
+                .disabled(!notesLoaded)
                 .onChange(of: notes) { scheduleSave() }
-            Text("Notes are saved with the meeting and folded into the summary.")
+            notesStatus
+        }
+        .padding(.leading, 12)
+    }
+
+    @ViewBuilder
+    private var notesStatus: some View {
+        if let notesPersistenceError {
+            InlineIssueView(
+                notesPersistenceError,
+                actionTitle: "Retry",
+                font: .caption2
+            ) {
+                if notesLoaded {
+                    scheduleSave(immediately: true)
+                } else {
+                    Task { await loadNotes() }
+                }
+            }
+        } else if isLoadingNotes {
+            LoadingStateLabel("Loading notes…", font: .caption2, controlSize: .mini)
+        } else if isSavingNotes || notes != savedNotes {
+            Text("Saving notes…")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        } else {
+            Text("Saved with the meeting and folded into the summary.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
-        .padding(.leading, 12)
     }
 
     private static func timestamp(_ time: TimeInterval) -> String {
@@ -186,23 +216,54 @@ struct LiveMeetingDetailView: View {
 
     // MARK: - Notes persistence
 
-    private func loadNotes() {
-        guard !notesLoaded else { return }
-        notesLoaded = true
-        notes = MeetingNotes.load(from: folder) ?? ""
-    }
-
-    private func scheduleSave() {
-        saveTask?.cancel()
-        saveTask = Task {
-            try? await Task.sleep(for: .milliseconds(600))
-            guard !Task.isCancelled else { return }
-            saveNotes()
+    private func loadNotes() async {
+        guard !notesLoaded, !isLoadingNotes else { return }
+        isLoadingNotes = true
+        let notesFolder = folder
+        do {
+            let loaded = try await Task.detached(priority: .utility) {
+                try MeetingNotes.load(from: notesFolder) ?? ""
+            }.value
+            savedNotes = loaded
+            notes = loaded
+            notesLoaded = true
+            notesPersistenceError = nil
+        } catch {
+            notesLoaded = false
+            notesPersistenceError = "Could not load notes."
+            app.lastError = "Could not load meeting notes: \(error.localizedDescription)"
         }
+        isLoadingNotes = false
     }
 
-    private func saveNotes() {
-        guard notesLoaded else { return }
-        MeetingNotes.write(notes, to: folder)
+    private func scheduleSave(immediately: Bool = false) {
+        guard notesLoaded, notes != savedNotes else { return }
+        if isSavingNotes { return }
+        saveTask?.cancel()
+        let snapshot = notes
+        let notesFolder = folder
+        saveTask = Task {
+            do {
+                if !immediately {
+                    try await Task.sleep(for: .milliseconds(600))
+                }
+                try Task.checkCancellation()
+                isSavingNotes = true
+                try await Task.detached(priority: .utility) {
+                    try MeetingNotes.write(snapshot, to: notesFolder)
+                }.value
+                savedNotes = snapshot
+                notesPersistenceError = nil
+            } catch is CancellationError {
+                return
+            } catch {
+                notesPersistenceError = "Notes were not saved."
+                app.lastError = "Could not save meeting notes: \(error.localizedDescription)"
+            }
+            isSavingNotes = false
+            if notes != savedNotes {
+                scheduleSave()
+            }
+        }
     }
 }

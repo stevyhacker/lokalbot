@@ -1,9 +1,8 @@
-# SwiftLint style gate for LokalBot.
+# Static quality gates for LokalBot.
 #
 # Runs in `--strict` mode: any violation (warning or error) fails the check.
-# That makes the ruleset in .swiftlint.yml load-bearing — it is deliberately
-# lenient so the current codebase is violation-free, and `--strict` keeps it
-# that way rather than letting style warnings quietly accumulate.
+# SwiftLint enforces file size and cyclomatic complexity; swift-complexity
+# independently enforces function-level cyclomatic and cognitive complexity.
 #
 # Findings go through `--reporter github-actions-logging` so they land as inline
 # annotations on the PR diff instead of being buried in the run log.
@@ -39,6 +38,19 @@ jobs:
           swiftlint version
 
       - name: Run SwiftLint
-        # Strict: any violation fails the check. The ruleset (.swiftlint.yml,
-        # auto-discovered at the repo root) is tuned to be clean on this code.
         run: swiftlint lint --strict --reporter github-actions-logging
+
+  complexity:
+    name: Complexity
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Enforce cyclomatic and cognitive complexity
+        uses: fummicc1/swift-complexity@5f8610dc111c95842eaa6693568a44c11280d188
+        with:
+          version: "1.2.0"
+          paths: "LokalBot CLI"
+          threshold: "22"
+          config: ".swift-complexity.yml"

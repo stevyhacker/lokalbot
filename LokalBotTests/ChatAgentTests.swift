@@ -141,25 +141,25 @@ final class ChatAgentTests: XCTestCase {
             ChatToolSpec(name: "list_meetings", summary: "l", arguments: []),
         ]
         let schema = ChatPrompt.toolCallSchema(specs)
-        XCTAssertEqual(schema["type"] as? String, "object")
-        XCTAssertEqual(schema["additionalProperties"] as? Bool, false)
-        let rootProperties = try XCTUnwrap(schema["properties"] as? [String: Any])
-        let call = try XCTUnwrap(rootProperties["call"] as? [String: Any])
-        let variants = try XCTUnwrap(call["anyOf"] as? [[String: Any]])
+        XCTAssertEqual(schema["type"]?.stringValue, "object")
+        XCTAssertEqual(schema["additionalProperties"]?.boolValue, false)
+        let rootProperties = try XCTUnwrap(schema["properties"]?.objectValue)
+        let call = try XCTUnwrap(rootProperties["call"]?.objectValue)
+        let variants = try XCTUnwrap(call["anyOf"]?.objectArrayValue)
         XCTAssertEqual(variants.count, 2)
-        let properties = try XCTUnwrap(variants[0]["properties"] as? [String: Any])
-        let tool = try XCTUnwrap(properties["tool"] as? [String: Any])
-        XCTAssertEqual(tool["enum"] as? [String], ["search_meetings"])
-        let arguments = try XCTUnwrap(properties["arguments"] as? [String: Any])
-        XCTAssertEqual(arguments["required"] as? [String], ["query", "limit"])
-        XCTAssertEqual(arguments["additionalProperties"] as? Bool, false)
+        let properties = try XCTUnwrap(variants[0]["properties"]?.objectValue)
+        let tool = try XCTUnwrap(properties["tool"]?.objectValue)
+        XCTAssertEqual(tool["enum"]?.stringArrayValue, ["search_meetings"])
+        let arguments = try XCTUnwrap(properties["arguments"]?.objectValue)
+        XCTAssertEqual(arguments["required"]?.stringArrayValue, ["query", "limit"])
+        XCTAssertEqual(arguments["additionalProperties"]?.boolValue, false)
         let argumentProperties = try XCTUnwrap(
-            arguments["properties"] as? [String: Any])
-        let limit = try XCTUnwrap(argumentProperties["limit"] as? [String: Any])
-        XCTAssertEqual(limit["type"] as? [String], ["string", "null"])
+            arguments["properties"]?.objectValue)
+        let limit = try XCTUnwrap(argumentProperties["limit"]?.objectValue)
+        XCTAssertEqual(limit["type"]?.stringArrayValue, ["string", "null"])
         XCTAssertNil(OpenAIStrictSchemaValidator.validationIssue(in: schema))
         // Must serialise — it's sent verbatim as the response_format schema.
-        XCTAssertNoThrow(try JSONSerialization.data(withJSONObject: schema))
+        XCTAssertNoThrow(try JSONValue.encodeObject(schema))
     }
 
     func testMalformedToolAttemptRetriesWithConstrainedDecode() async throws {
@@ -598,7 +598,7 @@ private final class ScriptedEngine: TextEngine {
     private var outputs: [String]
     private(set) var prompts: [(system: String, prompt: String, context: [String])] = []
     /// One entry per generate call: the constraining schema, or nil for plain calls.
-    private(set) var schemas: [[String: Any]?] = []
+    private(set) var schemas: [JSONObject?] = []
 
     init(_ outputs: [String]) { self.outputs = outputs }
 
@@ -611,7 +611,7 @@ private final class ScriptedEngine: TextEngine {
     }
 
     func generate(system: String, prompt: String, context: [String],
-                  schema: [String: Any]) async throws -> String {
+                  schema: JSONObject) async throws -> String {
         prompts.append((system, prompt, context))
         schemas.append(schema)
         return outputs.isEmpty ? "" : outputs.removeFirst()

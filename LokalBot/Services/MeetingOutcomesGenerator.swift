@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// Token-aware, full-transcript extraction for cited meeting outcomes.
@@ -340,9 +339,9 @@ enum MeetingOutcomesGenerator {
     }
 
     private static var schemaTokenEstimate: Int {
-        guard let data = try? JSONSerialization.data(
-            withJSONObject: OutcomesExtractor.schema,
-            options: [.sortedKeys]),
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(JSONValue.object(OutcomesExtractor.schema)),
               let text = String(data: data, encoding: .utf8) else {
             return 512
         }
@@ -607,9 +606,7 @@ enum MeetingOutcomesGenerator {
             context.joined(separator: "\n<context>\n"),
             chunks.map(\.evidence).joined(separator: "\n<chunk>\n"),
         ].joined(separator: "\n<field>\n")
-        return SHA256.hash(data: Data(value.utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
+        return SHA256Digest.hex(of: value)
     }
 
     private static func loadCheckpoint(

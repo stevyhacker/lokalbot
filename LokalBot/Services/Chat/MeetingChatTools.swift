@@ -63,38 +63,64 @@ enum MeetingChatFormat {
         }
         var lines: [String] = []
         for entry in entries {
-            lines.append("# [\(SessionLookup.shortID(entry.meeting.id))] \(entry.meeting.title)"
-                + " — \(dateLabel(entry.meeting.startedAt))")
-            if !entry.outcomes.userActionItems.isEmpty {
-                lines.append("My action items:")
-                for item in entry.outcomes.userActionItems {
-                    var notes: [String] = []
-                    if let due = item.due { notes.append("due: \(due)") }
-                    lines.append("- \(item.text)"
-                        + (notes.isEmpty ? "" : " (\(notes.joined(separator: ", ")))"))
-                }
-            }
-            if !entry.outcomes.otherActionItems.isEmpty {
-                lines.append("Other action items:")
-                for item in entry.outcomes.otherActionItems {
-                    var notes: [String] = []
-                    if let owner = item.owner { notes.append("owner: \(owner)") }
-                    if let due = item.due { notes.append("due: \(due)") }
-                    lines.append("- \(item.text)"
-                        + (notes.isEmpty ? "" : " (\(notes.joined(separator: ", ")))"))
-                }
-            }
-            if !entry.outcomes.decisions.isEmpty {
-                lines.append("Decisions:")
-                lines.append(contentsOf: entry.outcomes.decisions.map { "- \($0)" })
-            }
-            if !entry.outcomes.openQuestions.isEmpty {
-                lines.append("Open questions:")
-                lines.append(contentsOf: entry.outcomes.openQuestions.map { "- \($0)" })
-            }
-            lines.append("")
+            lines.append(contentsOf: outcomeLines(for: entry))
         }
         return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func outcomeLines(
+        for entry: (meeting: Meeting, outcomes: MeetingOutcomes)
+    ) -> [String] {
+        var lines = [
+            "# [\(SessionLookup.shortID(entry.meeting.id))] \(entry.meeting.title)"
+                + " — \(dateLabel(entry.meeting.startedAt))",
+        ]
+        appendUserActions(entry.outcomes.userActionItems, to: &lines)
+        appendOtherActions(entry.outcomes.otherActionItems, to: &lines)
+        appendList(entry.outcomes.decisions, title: "Decisions:", to: &lines)
+        appendList(entry.outcomes.openQuestions, title: "Open questions:", to: &lines)
+        lines.append("")
+        return lines
+    }
+
+    private static func appendUserActions(
+        _ items: [MeetingOutcomes.ActionItem],
+        to lines: inout [String]
+    ) {
+        guard !items.isEmpty else { return }
+        lines.append("My action items:")
+        lines.append(contentsOf: items.map {
+            outcomeItemLine(text: $0.text, annotations: $0.due.map { ["due: \($0)"] } ?? [])
+        })
+    }
+
+    private static func appendOtherActions(
+        _ items: [MeetingOutcomes.ActionItem],
+        to lines: inout [String]
+    ) {
+        guard !items.isEmpty else { return }
+        lines.append("Other action items:")
+        lines.append(contentsOf: items.map { item in
+            var annotations: [String] = []
+            if let owner = item.owner { annotations.append("owner: \(owner)") }
+            if let due = item.due { annotations.append("due: \(due)") }
+            return outcomeItemLine(text: item.text, annotations: annotations)
+        })
+    }
+
+    private static func appendList(
+        _ values: [String],
+        title: String,
+        to lines: inout [String]
+    ) {
+        guard !values.isEmpty else { return }
+        lines.append(title)
+        lines.append(contentsOf: values.map { "- \($0)" })
+    }
+
+    private static func outcomeItemLine(text: String, annotations: [String]) -> String {
+        let suffix = annotations.isEmpty ? "" : " (\(annotations.joined(separator: ", ")))"
+        return "- \(text)\(suffix)"
     }
 
     static func meeting(_ meeting: Meeting, summary: String?, transcript: String?,
@@ -451,7 +477,7 @@ final class MeetingChatTools: ChatToolRunner {
     /// the in-memory list we pass it so it never touches the hard-coded library
     /// path), then fall back to a title substring match.
     private func resolve(_ idArgument: String, in meetings: [Meeting]) -> Meeting? {
-        if let found = (try? SessionLookup.find(id: idArgument, in: meetings)) ?? nil {
+        if let found = try? SessionLookup.find(id: idArgument, in: meetings) {
             return found
         }
         return meetings.first { $0.title.localizedCaseInsensitiveContains(idArgument) }

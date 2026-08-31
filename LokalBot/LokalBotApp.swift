@@ -26,6 +26,7 @@ enum LokalBotMain {
 
 struct LokalBotApp: App {
     @StateObject private var app: AppState
+    // periphery:ignore - SwiftUI consumes this property wrapper implicitly.
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {

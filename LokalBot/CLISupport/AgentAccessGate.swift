@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 struct AgentAccessCapability: Equatable, Sendable {
@@ -176,9 +175,7 @@ struct AgentAccessGate {
     }
 
     private static func digest(_ secret: String) -> String {
-        SHA256.hash(data: Data(secret.utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
+        SHA256Digest.hex(of: secret)
     }
 
     private struct CapabilityRecord: Codable {

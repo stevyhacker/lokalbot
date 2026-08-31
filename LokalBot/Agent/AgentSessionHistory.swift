@@ -89,39 +89,21 @@ enum AgentSessionHistory {
         var buffer = Data()
         var droppingOversizedLine = false
 
-        while true {
-            let chunk: Data
-            do {
-                guard let next = try handle.read(upToCount: readChunkBytes), !next.isEmpty else { break }
-                chunk = next
-            } catch {
+        readLoop: while true {
+            switch readChunk(from: handle) {
+            case .data(let chunk):
+                append(
+                    chunk,
+                    to: &buffer,
+                    droppingOversizedLine: &droppingOversizedLine)
+                consumeCompleteLines(from: &buffer, with: &parser)
+                trimOversizedRemainder(
+                    buffer: &buffer,
+                    droppingOversizedLine: &droppingOversizedLine)
+            case .end:
+                break readLoop
+            case .failure:
                 return nil
-            }
-            var appendStart = chunk.startIndex
-            if droppingOversizedLine {
-                guard let newline = chunk.firstIndex(of: 0x0A) else { continue }
-                appendStart = chunk.index(after: newline)
-                droppingOversizedLine = false
-            }
-            if appendStart < chunk.endIndex {
-                buffer.append(contentsOf: chunk[appendStart...])
-            }
-
-            var consumedThrough = buffer.startIndex
-            while let newline = buffer[consumedThrough...].firstIndex(of: 0x0A) {
-                let line = buffer[consumedThrough..<newline]
-                if line.count <= maximumJSONLineBytes {
-                    parser.consume(Data(line))
-                }
-                consumedThrough = buffer.index(after: newline)
-                if consumedThrough == buffer.endIndex { break }
-            }
-            if consumedThrough > buffer.startIndex {
-                buffer.removeSubrange(buffer.startIndex..<consumedThrough)
-            }
-            if buffer.count > maximumJSONLineBytes {
-                buffer.removeAll(keepingCapacity: true)
-                droppingOversizedLine = true
             }
         }
 
@@ -129,6 +111,63 @@ enum AgentSessionHistory {
             parser.consume(buffer)
         }
         return parser.session(file: file)
+    }
+
+    private enum ChunkRead {
+        case data(Data)
+        case end
+        case failure
+    }
+
+    private static func readChunk(from handle: FileHandle) -> ChunkRead {
+        do {
+            guard let chunk = try handle.read(upToCount: readChunkBytes),
+                  !chunk.isEmpty else { return .end }
+            return .data(chunk)
+        } catch {
+            return .failure
+        }
+    }
+
+    private static func append(
+        _ chunk: Data,
+        to buffer: inout Data,
+        droppingOversizedLine: inout Bool
+    ) {
+        var appendStart = chunk.startIndex
+        if droppingOversizedLine {
+            guard let newline = chunk.firstIndex(of: 0x0A) else { return }
+            appendStart = chunk.index(after: newline)
+            droppingOversizedLine = false
+        }
+        guard appendStart < chunk.endIndex else { return }
+        buffer.append(contentsOf: chunk[appendStart...])
+    }
+
+    private static func consumeCompleteLines(
+        from buffer: inout Data,
+        with parser: inout MetadataParser
+    ) {
+        var consumedThrough = buffer.startIndex
+        while let newline = buffer[consumedThrough...].firstIndex(of: 0x0A) {
+            let line = buffer[consumedThrough..<newline]
+            if line.count <= maximumJSONLineBytes {
+                parser.consume(Data(line))
+            }
+            consumedThrough = buffer.index(after: newline)
+            if consumedThrough == buffer.endIndex { break }
+        }
+        guard consumedThrough > buffer.startIndex else { return }
+        buffer.removeSubrange(buffer.startIndex..<consumedThrough)
+    }
+
+    private static func trimOversizedRemainder(
+        buffer: inout Data,
+        droppingOversizedLine: inout Bool
+    ) {
+        guard buffer.count > maximumJSONLineBytes else { return }
+        buffer.removeAll(keepingCapacity: true)
+        droppingOversizedLine = true
     }
 
     private struct MetadataParser {
@@ -155,13 +194,13 @@ enum AgentSessionHistory {
 
         mutating func consume(_ data: Data) {
             guard !data.isEmpty,
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let type = object["type"] as? String else { return }
+                  let object = try? JSONValue.decodeObject(from: data),
+                  let type = object["type"]?.stringValue else { return }
             if sessionID == nil {
                 guard type == "session",
-                      let id = object["id"] as? String,
+                      let id = object["id"]?.stringValue,
                       !id.isEmpty,
-                      let cwd = object["cwd"] as? String,
+                      let cwd = object["cwd"]?.stringValue,
                       !cwd.isEmpty else { return }
                 sessionID = id
                 workspace = URL(fileURLWithPath: cwd).standardizedFileURL
@@ -170,13 +209,13 @@ enum AgentSessionHistory {
             }
 
             if type == "session_info" {
-                explicitName = (object["name"] as? String)?.trimmingCharacters(
+                explicitName = object["name"]?.stringValue?.trimmingCharacters(
                     in: .whitespacesAndNewlines).nilIfEmpty
                 return
             }
             guard type == "message",
-                  let message = object["message"] as? [String: Any],
-                  let role = message["role"] as? String,
+                  let message = object["message"]?.objectValue,
+                  let role = message["role"]?.stringValue,
                   role == "user" || role == "assistant" else { return }
             messageCount += 1
             if let activity = date(from: message["timestamp"]) ?? date(from: object["timestamp"]),
@@ -203,19 +242,19 @@ enum AgentSessionHistory {
                 messageCount: messageCount)
         }
 
-        private func date(from value: Any?) -> Date? {
-            if let milliseconds = value as? NSNumber {
-                return Date(timeIntervalSince1970: milliseconds.doubleValue / 1_000)
+        private func date(from value: JSONValue?) -> Date? {
+            if let milliseconds = value?.doubleValue {
+                return Date(timeIntervalSince1970: milliseconds / 1_000)
             }
-            guard let value = value as? String else { return nil }
+            guard let value = value?.stringValue else { return nil }
             return fractionalISO8601.date(from: value) ?? iso8601.date(from: value)
         }
 
-        private static func text(from value: Any?) -> String {
-            if let value = value as? String { return value }
-            guard let blocks = value as? [[String: Any]] else { return "" }
+        private static func text(from value: JSONValue?) -> String {
+            if let value = value?.stringValue { return value }
+            guard let blocks = value?.objectArrayValue else { return "" }
             return blocks.compactMap { block in
-                block["type"] as? String == "text" ? block["text"] as? String : nil
+                block["type"]?.stringValue == "text" ? block["text"]?.stringValue : nil
             }.joined(separator: "\n")
         }
 

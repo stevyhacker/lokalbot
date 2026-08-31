@@ -337,8 +337,8 @@ private struct CitationRow: View {
     ) {
         switch citation.kind {
         case .meeting:
-            let meeting = (try? SessionLookup.find(
-                id: citation.meetingID, in: app.meetings)) ?? nil
+            let meeting = try? SessionLookup.find(
+                id: citation.meetingID, in: app.meetings)
             guard let meeting else {
                 return ("Meeting \(citation.meetingID)", "Local source missing", "person.2", false)
             }
@@ -433,14 +433,26 @@ private struct ConversationListContent: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 4) {
-                ForEach(model.conversations) { conversation in
-                    Button {
-                        model.select(conversation.id)
-                    } label: {
-                        row(conversation, selected: model.currentID == conversation.id)
-                    }
+        VStack(spacing: 0) {
+            if let error = model.persistenceError {
+                InlineIssueView(
+                    error,
+                    systemImage: "externaldrive.badge.exclamationmark",
+                    actionTitle: "Dismiss"
+                ) {
+                    model.dismissPersistenceError()
+                }
+                .padding(10)
+                Divider()
+            }
+            ScrollView {
+                LazyVStack(spacing: 4) {
+                    ForEach(model.conversations) { conversation in
+                        Button {
+                            model.select(conversation.id)
+                        } label: {
+                            row(conversation, selected: model.currentID == conversation.id)
+                        }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier(
                             "chat.conversation.\(conversation.id.uuidString)")
@@ -451,10 +463,11 @@ private struct ConversationListContent: View {
                                 Label("Delete", systemImage: "trash")
                             }
                         }
+                    }
                 }
+                .padding(.horizontal, 8)
+                .padding(.top, 12)
             }
-            .padding(.horizontal, 8)
-            .padding(.top, 12)
         }
         .background(WorkspacePalette.conversationColumn(for: colorScheme))
         // One native title owns both the visible toolbar label and the window's

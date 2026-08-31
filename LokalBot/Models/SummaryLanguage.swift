@@ -14,27 +14,10 @@ enum SummaryLanguage: Equatable, Hashable, Sendable {
     static let en: SummaryLanguage = .language(.en)
     static let zh: SummaryLanguage = .language(.zh)
     static let zhHant: SummaryLanguage = .language(.zhHant)
-    static let yue: SummaryLanguage = .language(.yue)
-    static let ja: SummaryLanguage = .language(.ja)
-    static let ko: SummaryLanguage = .language(.ko)
-    static let es: SummaryLanguage = .language(.es)
-    static let fr: SummaryLanguage = .language(.fr)
     static let de: SummaryLanguage = .language(.de)
     static let pt: SummaryLanguage = .language(.pt)
     static let ptPT: SummaryLanguage = .language(.ptPT)
-    static let ru: SummaryLanguage = .language(.ru)
-    static let ar: SummaryLanguage = .language(.ar)
-    static let hi: SummaryLanguage = .language(.hi)
-    static let it: SummaryLanguage = .language(.it)
-    static let nl: SummaryLanguage = .language(.nl)
-    static let tr: SummaryLanguage = .language(.tr)
-    static let pl: SummaryLanguage = .language(.pl)
-    static let sv: SummaryLanguage = .language(.sv)
-    static let da: SummaryLanguage = .language(.da)
     static let no: SummaryLanguage = .language(.no)
-    static let nn: SummaryLanguage = .language(.nn)
-    static let th: SummaryLanguage = .language(.th)
-    static let vi: SummaryLanguage = .language(.vi)
 
     /// Stable preset cases (excludes `.matchTranscript` and `.custom`) - used
     /// to drive Pickers without exposing two-mode logic.
@@ -62,20 +45,9 @@ enum SummaryLanguage: Equatable, Hashable, Sendable {
         }
     }
 
-    /// Resolve `.matchTranscript` against a transcript by running language
-    /// detection; concrete languages are returned as-is.
-    static func resolvedForTranscript(_ language: SummaryLanguage, transcript: String) -> SummaryLanguage {
-        guard language == .matchTranscript else { return language }
-        return detectTranscriptLanguage(transcript)
-    }
-
     static func resolvedForTranscript(_ language: SummaryLanguage, transcript: Transcript) -> SummaryLanguage {
         guard language == .matchTranscript else { return language }
         return detectTranscriptLanguage(transcript.segments.map(\.displayText))
-    }
-
-    static func detectTranscriptLanguage(_ text: String) -> SummaryLanguage {
-        detectTranscriptLanguage(detectionWindows(in: text))
     }
 
     /// Detect each bounded passage independently, then choose the language

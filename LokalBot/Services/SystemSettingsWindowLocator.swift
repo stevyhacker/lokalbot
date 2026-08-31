@@ -31,7 +31,8 @@ enum SystemSettingsWindowLocator {
                 .max(by: { activationPriority(of: $0) < activationPriority(of: $1) }),
               let windowInfo = CGWindowListCopyWindowInfo(
                 [.optionOnScreenOnly, .excludeDesktopElements],
-                .zero) as? [[String: Any]] else {
+                // CoreGraphics returns untyped window dictionaries.
+                .zero) as? [[String: Any]] else { // swiftlint:disable:this no_dynamic_any
             return nil
         }
 

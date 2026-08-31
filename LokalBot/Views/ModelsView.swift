@@ -28,6 +28,7 @@ struct ModelsView: View {
     @State private var openAIAPIKeySavedValue = ""
     @State private var didLoadOpenAIAPIKey = false
     @State private var openAIAPIKeySaved = false
+    @State private var openAIAPIKeyError: String?
     @State private var expandedRoles: Set<ModelRole> = []
     @State private var confirmingOpenRouterAccountPolicy = false
 
@@ -57,9 +58,14 @@ struct ModelsView: View {
         .onAppear {
             refreshSpeechModel()
             if !didLoadOpenAIAPIKey {
-                let savedKey = app.settings.openAIAPIKey
-                openAIAPIKeyDraft = savedKey
-                openAIAPIKeySavedValue = savedKey
+                do {
+                    let savedKey = try app.settings.loadOpenAIAPIKey()
+                    openAIAPIKeyDraft = savedKey
+                    openAIAPIKeySavedValue = savedKey
+                    openAIAPIKeyError = nil
+                } catch {
+                    openAIAPIKeyError = "The saved API key could not be read: \(error.localizedDescription)"
+                }
                 didLoadOpenAIAPIKey = true
             }
         }
@@ -252,17 +258,29 @@ struct ModelsView: View {
                     SecureField("API key (optional)", text: $openAIAPIKeyDraft)
                         .onChange(of: openAIAPIKeyDraft) { _, _ in
                             openAIAPIKeySaved = false
+                            openAIAPIKeyError = nil
                         }
                     Button(openAIAPIKeySaved ? "Saved" : "Save key") {
-                        app.settings.openAIAPIKey = openAIAPIKeyDraft
-                        openAIAPIKeySavedValue = openAIAPIKeyDraft
-                        openAIAPIKeySaved = true
+                        do {
+                            try app.settings.saveOpenAIAPIKey(openAIAPIKeyDraft)
+                            openAIAPIKeySavedValue = openAIAPIKeyDraft
+                            openAIAPIKeySaved = true
+                            openAIAPIKeyError = nil
+                        } catch {
+                            openAIAPIKeySaved = false
+                            openAIAPIKeyError = "The API key was not saved: \(error.localizedDescription)"
+                        }
                     }
                     .disabled(openAIAPIKeyDraft == openAIAPIKeySavedValue)
                 }
                 Text("The key is written to Keychain only when you choose Save key.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let openAIAPIKeyError {
+                    Label(openAIAPIKeyError, systemImage: "key.slash")
+                        .font(.caption)
+                        .foregroundStyle(Brand.error)
+                }
                 remoteEndpointDisclosure(rawURL: app.settings.openAIBaseURL)
                 if isOpenRouterEndpoint {
                     openRouterDataPolicyControl
@@ -600,93 +618,163 @@ struct ModelsView: View {
     // MARK: - Hugging Face browse sheet
 
     private var huggingFaceBrowser: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Browse Hugging Face").font(.headline)
-                Spacer()
-                Button("Done") { showingHFBrowse = false }
-            }
-            .padding()
-            Divider()
-            HStack {
-                TextField("Search downloadable models (e.g. Qwen, Llama)…", text: $hfSearch.query)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { Task { await hfSearch.search() } }
-                Button("Search") { Task { await hfSearch.search() } }
-                    .disabled(hfSearch.query.trimmingCharacters(in: .whitespaces).isEmpty)
-                if hfSearch.isSearching { ProgressView().controlSize(.small) }
-            }
-            .padding(12)
-            if let error = hfSearch.errorMessage {
-                Text(error).font(.caption).foregroundStyle(Brand.error)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-            }
-            List {
-                ForEach(hfSearch.results) { model in
-                    Button {
-                        Task {
-                            hfSelectedModel = model.id
-                            hfFiles = await hfSearch.ggufFiles(for: model.id)
-                        }
-                    } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(model.id).font(.system(size: 12.5, weight: .medium))
-                                Text("↓ \(model.downloads)   ♥ \(model.likes)")
-                                    .font(.caption2).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: hfSelectedModel == model.id ? "chevron.down" : "chevron.right")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    if hfSelectedModel == model.id {
-                        if hfFiles.isEmpty {
-                            Text("No compatible model files in this repository.")
-                                .font(.caption2).foregroundStyle(.secondary).padding(.leading, 16)
-                        } else {
-                            ForEach(hfFiles) { file in
-                                HStack(spacing: 8) {
-                                    Text(file.fileName).font(.caption)
-                                    if let size = file.sizeLabel {
-                                        Text(size).font(.caption2).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Button("Download") {
-                                        let entry = ModelCatalog.Entry(
-                                            id: "hf:\(file.modelID)/\(file.id)",
-                                            displayName: file.fileName,
-                                            fileName: file.fileName,
-                                            url: file.downloadURL.absoluteString,
-                                            sha256: file.sha256,
-                                            sizeBytes: file.sizeBytes.map(Int64.init),
-                                            sizeGB: file.sizeBytes.map { Double($0) / 1_000_000_000 } ?? 0,
-                                            blurb: "Downloaded from \(file.modelID).",
-                                            disablesThinking: false)
-                                        app.settings.customBuiltInModels.removeAll { $0.id == entry.id }
-                                        app.settings.customBuiltInModels.append(entry)
-                                        app.settings.builtInModelID = entry.id
-                                        app.settings.summarizerBackend = .builtIn
-                                        ModelDownloadManager.shared.download(
-                                            url: entry.url,
-                                            fileName: entry.fileName,
-                                            id: entry.id,
-                                            expectedSizeGB: entry.sizeGB > 0 ? entry.sizeGB : nil,
-                                            storage: app.storage)
-                                        showingHFBrowse = false
-                                    }
-                                    .controlSize(.small)
-                                }
-                                .padding(.leading, 16)
-                            }
-                        }
+        HuggingFaceBrowser(
+            search: hfSearch,
+            isPresented: $showingHFBrowse,
+            selectedModelID: $hfSelectedModel,
+            files: $hfFiles)
+    }
+
+    private struct HuggingFaceBrowser: View {
+        @EnvironmentObject private var app: AppState
+        @ObservedObject var search: HuggingFaceSearchService
+        @Binding var isPresented: Bool
+        @Binding var selectedModelID: String?
+        @Binding var files: [HFFile]
+
+        var body: some View {
+            VStack(spacing: 0) {
+                browserHeader
+                Divider()
+                searchControls
+                errorMessage
+                List {
+                    ForEach(search.results) { model in
+                        HuggingFaceRepositoryRow(
+                            model: model,
+                            isSelected: selectedModelID == model.id,
+                            files: files,
+                            onSelect: { select(model) },
+                            onDownload: download)
                     }
                 }
             }
+            .frame(width: 580, height: 460)
         }
-        .frame(width: 580, height: 460)
+
+        private var browserHeader: some View {
+            HStack {
+                Text("Browse Hugging Face").font(.headline)
+                Spacer()
+                Button("Done") { isPresented = false }
+            }
+            .padding()
+        }
+
+        private var searchControls: some View {
+            HStack {
+                TextField(
+                    "Search downloadable models (e.g. Qwen, Llama)…",
+                    text: $search.query)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(runSearch)
+                Button("Search", action: runSearch)
+                    .disabled(search.query.trimmingCharacters(in: .whitespaces).isEmpty)
+                if search.isSearching { ProgressView().controlSize(.small) }
+            }
+            .padding(12)
+        }
+
+        @ViewBuilder private var errorMessage: some View {
+            if let error = search.errorMessage {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(Brand.error)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+            }
+        }
+
+        private func runSearch() {
+            Task { await search.search() }
+        }
+
+        private func select(_ model: HFModelSummary) {
+            Task {
+                selectedModelID = model.id
+                files = await search.ggufFiles(for: model.id)
+            }
+        }
+
+        private func download(_ file: HFFile) {
+            let entry = ModelCatalog.Entry(
+                id: "hf:\(file.modelID)/\(file.id)",
+                displayName: file.fileName,
+                fileName: file.fileName,
+                url: file.downloadURL.absoluteString,
+                sha256: file.sha256,
+                sizeBytes: file.sizeBytes.map(Int64.init),
+                sizeGB: file.sizeBytes.map { Double($0) / 1_000_000_000 } ?? 0,
+                blurb: "Downloaded from \(file.modelID).",
+                disablesThinking: false)
+            app.settings.customBuiltInModels.removeAll { $0.id == entry.id }
+            app.settings.customBuiltInModels.append(entry)
+            app.settings.builtInModelID = entry.id
+            app.settings.summarizerBackend = .builtIn
+            ModelDownloadManager.shared.download(
+                url: entry.url,
+                fileName: entry.fileName,
+                id: entry.id,
+                expectedSizeGB: entry.sizeGB > 0 ? entry.sizeGB : nil,
+                storage: app.storage)
+            isPresented = false
+        }
+    }
+
+    private struct HuggingFaceRepositoryRow: View {
+        let model: HFModelSummary
+        let isSelected: Bool
+        let files: [HFFile]
+        let onSelect: () -> Void
+        let onDownload: (HFFile) -> Void
+
+        var body: some View {
+            Button(action: onSelect) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(model.id).font(.system(size: 12.5, weight: .medium))
+                        Text("↓ \(model.downloads)   ♥ \(model.likes)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: isSelected ? "chevron.down" : "chevron.right")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+            if isSelected { fileRows }
+        }
+
+        @ViewBuilder private var fileRows: some View {
+            if files.isEmpty {
+                Text("No compatible model files in this repository.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 16)
+            } else {
+                ForEach(files) { file in
+                    HuggingFaceFileRow(file: file) { onDownload(file) }
+                }
+            }
+        }
+    }
+
+    private struct HuggingFaceFileRow: View {
+        let file: HFFile
+        let onDownload: () -> Void
+
+        var body: some View {
+            HStack(spacing: 8) {
+                Text(file.fileName).font(.caption)
+                if let size = file.sizeLabel {
+                    Text(size).font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Download", action: onDownload).controlSize(.small)
+            }
+            .padding(.leading, 16)
+        }
     }
 
     private func refreshOllama() async {

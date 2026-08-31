@@ -21,7 +21,7 @@ enum MainLLMRuntimePolicy {
     /// Keep vendor-specific sampling guidance scoped to the built-in model
     /// that requires it. `extraBody` is merged after per-request options, so
     /// these values consistently replace the generic digest temperature.
-    static func requestOverrides(for modelID: String) -> [String: Any] {
+    static func requestOverrides(for modelID: String) -> JSONObject {
         switch modelID {
         case "lfm2.5-2.6b":
             return [

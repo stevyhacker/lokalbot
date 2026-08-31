@@ -4,7 +4,6 @@ struct MeetingOutcomeProjection: Identifiable, Equatable, Sendable {
     let meeting: Meeting
     var outcomes: MeetingOutcomes
     var state: MeetingOutcomeState
-    var followUp: FollowUpDraft
 
     var id: Meeting.ID { meeting.id }
 
@@ -30,9 +29,7 @@ struct MeetingOutcomeProjection: Identifiable, Equatable, Sendable {
         let folder = meeting.folderURL(in: storage)
         guard let outcomes = MeetingOutcomes.load(from: folder) else { return nil }
         let state = MeetingOutcomeStore.loadState(from: folder)
-        let followUp = MeetingOutcomeStore.loadFollowUp(from: folder)
-            ?? FollowUpDraft.seeded(for: meeting, outcomes: outcomes)
-        return Self(meeting: meeting, outcomes: outcomes, state: state, followUp: followUp)
+        return Self(meeting: meeting, outcomes: outcomes, state: state)
     }
 }
 
@@ -61,8 +58,6 @@ final class OutcomeIndex: ObservableObject {
     @Published private(set) var projections: [Meeting.ID: MeetingOutcomeProjection] = [:]
 
     private let storage: StorageManager
-    private(set) var lastError: String?
-
     init(storage: StorageManager) {
         self.storage = storage
     }
@@ -119,26 +114,6 @@ final class OutcomeIndex: ObservableObject {
         }
     }
 
-    @discardableResult
-    func saveFollowUp(_ draft: FollowUpDraft, meetingID: Meeting.ID) -> Bool {
-        guard var projection = projections[meetingID] else { return false }
-        var next = draft
-        next.updatedAt = Date().outcomePersistedTimestamp
-        next.seeded = false
-        next.sourceMeetingID = meetingID
-        do {
-            try MeetingOutcomeStore.writeFollowUp(
-                next, to: projection.meeting.folderURL(in: storage))
-            projection.followUp = next
-            projections[meetingID] = projection
-            lastError = nil
-            return true
-        } catch {
-            lastError = error.localizedDescription
-            return false
-        }
-    }
-
     private func mutateAction(actionID: String, meetingID: Meeting.ID,
                               change: (inout MeetingOutcomeState.ActionState) -> Void) -> Bool {
         guard var projection = projections[meetingID] else { return false }
@@ -150,10 +125,8 @@ final class OutcomeIndex: ObservableObject {
             try MeetingOutcomeStore.writeState(
                 projection.state, to: projection.meeting.folderURL(in: storage))
             projections[meetingID] = projection
-            lastError = nil
             return true
         } catch {
-            lastError = error.localizedDescription
             return false
         }
     }

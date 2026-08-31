@@ -103,6 +103,13 @@ struct MeetingPageSearchMatch: Equatable {
     let occurrenceIndex: Int
 }
 
+extension Optional where Wrapped == MeetingPageSearchMatch {
+    func occurrenceIndex(at location: MeetingPageSearchMatch.Location) -> Int? {
+        guard self?.location == location else { return nil }
+        return self?.occurrenceIndex
+    }
+}
+
 /// One visible text node on the meeting page. Keeping the location beside the
 /// exact rendered text makes matching, highlighting, and scrolling agree.
 struct MeetingPageSearchSource: Equatable {

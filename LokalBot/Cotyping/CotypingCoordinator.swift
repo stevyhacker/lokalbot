@@ -21,8 +21,6 @@ final class CotypingCoordinator: ObservableObject {
     @Published var state: CotypingState = .idle
     /// True while the subsystem is running (taps + focus poll installed).
     @Published var isRunning = false
-    /// Last non-empty suggestion shown (diagnostics).
-    @Published var lastSuggestion: String?
     /// Words accepted this session (diagnostics).
     @Published var acceptedWordCount = 0
 

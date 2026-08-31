@@ -18,7 +18,7 @@ final class TextEngineTests: XCTestCase {
     }
 
     func testBuiltInHighReasoningBudgetReservesHalfOfBoundedOutput() {
-        var body: [String: Any] = [:]
+        var body: JSONObject = [:]
 
         OpenAICompatibleEngine.applyGenerationOptions(
             to: &body,
@@ -27,12 +27,12 @@ final class TextEngineTests: XCTestCase {
             dialect: .llamaServer,
             model: "local")
 
-        XCTAssertEqual(body["max_tokens"] as? Int, 8_192)
-        XCTAssertEqual(body["thinking_budget_tokens"] as? Int, 4_096)
+        XCTAssertEqual(body["max_tokens"]?.intValue, 8_192)
+        XCTAssertEqual(body["thinking_budget_tokens"]?.intValue, 4_096)
     }
 
     func testBuiltInHighReasoningUsesFullCeilingWithoutOutputLimit() {
-        var body: [String: Any] = [:]
+        var body: JSONObject = [:]
 
         OpenAICompatibleEngine.applyGenerationOptions(
             to: &body,
@@ -42,11 +42,11 @@ final class TextEngineTests: XCTestCase {
             model: "local")
 
         XCTAssertNil(body["max_tokens"])
-        XCTAssertEqual(body["thinking_budget_tokens"] as? Int, 8_192)
+        XCTAssertEqual(body["thinking_budget_tokens"]?.intValue, 8_192)
     }
 
     func testExplicitReasoningBudgetCanDisableThinkingForOneRequest() {
-        var body: [String: Any] = [:]
+        var body: JSONObject = [:]
 
         OpenAICompatibleEngine.applyGenerationOptions(
             to: &body,
@@ -58,12 +58,12 @@ final class TextEngineTests: XCTestCase {
             dialect: .llamaServer,
             model: "local")
 
-        XCTAssertEqual(body["thinking_budget_tokens"] as? Int, 0)
-        XCTAssertEqual(body["temperature"] as? Double, 0.2)
+        XCTAssertEqual(body["thinking_budget_tokens"]?.intValue, 0)
+        XCTAssertEqual(body["temperature"]?.doubleValue, 0.2)
     }
 
     func testGenericExternalEngineLeavesReasoningAtServerDefault() {
-        var body: [String: Any] = [:]
+        var body: JSONObject = [:]
 
         OpenAICompatibleEngine.applyGenerationOptions(
             to: &body,
@@ -76,8 +76,8 @@ final class TextEngineTests: XCTestCase {
 
         XCTAssertNil(body["thinking_budget_tokens"])
         XCTAssertNil(body["reasoning_effort"])
-        XCTAssertEqual(body["max_tokens"] as? Int, 700)
-        XCTAssertEqual(body["temperature"] as? Double, 0.2)
+        XCTAssertEqual(body["max_tokens"]?.intValue, 700)
+        XCTAssertEqual(body["temperature"]?.doubleValue, 0.2)
     }
 
     func testOfficialOpenAIUsesModernReasoningFieldsWithoutSamplingExtension() throws {
@@ -107,7 +107,7 @@ final class TextEngineTests: XCTestCase {
     }
 
     func testOfficialNonReasoningModelKeepsTemperature() {
-        var body: [String: Any] = [:]
+        var body: JSONObject = [:]
 
         OpenAICompatibleEngine.applyGenerationOptions(
             to: &body,
@@ -118,8 +118,8 @@ final class TextEngineTests: XCTestCase {
             dialect: .openAI,
             model: "gpt-4.1-mini")
 
-        XCTAssertEqual(body["max_completion_tokens"] as? Int, 300)
-        XCTAssertEqual(body["temperature"] as? Double, 0.4)
+        XCTAssertEqual(body["max_completion_tokens"]?.intValue, 300)
+        XCTAssertEqual(body["temperature"]?.doubleValue, 0.4)
         XCTAssertNil(body["reasoning_effort"])
     }
 
@@ -148,7 +148,7 @@ final class TextEngineTests: XCTestCase {
             model: "anthropic/example-model",
             apiKey: "test-token",
             chatDialect: .openRouter)
-        let schema: [String: Any] = [
+        let schema: JSONObject = [
             "type": "object",
             "properties": ["answer": ["type": "string"]],
             "required": ["answer"],
@@ -237,7 +237,7 @@ final class TextEngineTests: XCTestCase {
             model: "z-ai/glm-5.3",
             apiKey: "test-token",
             chatDialect: .openRouter)
-        let schema: [String: Any] = [
+        let schema: JSONObject = [
             "type": "object",
             "properties": ["answer": ["type": "string"]],
             "required": ["answer"],
@@ -272,7 +272,7 @@ final class TextEngineTests: XCTestCase {
     }
 
     func testOpenRouterHighReasoningFallbackReplacesDisabledReasoning() {
-        var body: [String: Any] = [:]
+        var body: JSONObject = [:]
 
         OpenAICompatibleEngine.applyGenerationOptions(
             to: &body,
@@ -285,8 +285,8 @@ final class TextEngineTests: XCTestCase {
             model: "z-ai/glm-5.3",
             openRouterReasoning: .highEffort)
 
-        let reasoning = body["reasoning"] as? [String: Any]
-        XCTAssertEqual(reasoning?["effort"] as? String, "high")
+        let reasoning = body["reasoning"]?.objectValue
+        XCTAssertEqual(reasoning?["effort"]?.stringValue, "high")
         XCTAssertNil(reasoning?["max_tokens"])
         XCTAssertNil(body["temperature"])
     }
@@ -297,7 +297,7 @@ final class TextEngineTests: XCTestCase {
             model: "stealth/ox-alpha",
             apiKey: "test-token",
             chatDialect: .openRouter)
-        let schema: [String: Any] = [
+        let schema: JSONObject = [
             "type": "object",
             "properties": ["answer": ["type": "string"]],
             "required": ["answer"],
@@ -401,7 +401,7 @@ final class TextEngineTests: XCTestCase {
             model: "deepseek/example-model",
             apiKey: "test-token",
             chatDialect: .openRouter)
-        let schema: [String: Any] = [
+        let schema: JSONObject = [
             "type": "object",
             "properties": ["answer": ["type": "string"]],
             "required": ["answer"],
@@ -434,7 +434,7 @@ final class TextEngineTests: XCTestCase {
             model: "openai/example-model",
             apiKey: "test-token",
             chatDialect: .openRouter)
-        let invalidSchema: [String: Any] = [
+        let invalidSchema: JSONObject = [
             "type": "object",
             "properties": ["answer": ["type": "string"]],
             "required": ["answer"],

@@ -56,9 +56,9 @@ final class ModelCatalogTests: XCTestCase {
 
     func testExperimentalLFM26BUsesVendorSamplingProfile() throws {
         let overrides = MainLLMRuntimePolicy.requestOverrides(for: "lfm2.5-2.6b")
-        XCTAssertEqual(overrides["temperature"] as? Double, 0.1)
-        XCTAssertEqual(overrides["top_k"] as? Int, 50)
-        XCTAssertEqual(overrides["repeat_penalty"] as? Double, 1.1)
+        XCTAssertEqual(overrides["temperature"]?.doubleValue, 0.1)
+        XCTAssertEqual(overrides["top_k"]?.intValue, 50)
+        XCTAssertEqual(overrides["repeat_penalty"]?.doubleValue, 1.1)
         XCTAssertTrue(MainLLMRuntimePolicy.requestOverrides(for: "qwen3.5-4b").isEmpty)
     }
 
@@ -86,7 +86,7 @@ final class ModelCatalogTests: XCTestCase {
     func testMinistralUsesVendorLowTemperatureProfile() {
         let overrides = MainLLMRuntimePolicy.requestOverrides(
             for: "ministral-3-3b-instruct-2512")
-        XCTAssertEqual(overrides["temperature"] as? Double, 0.05)
+        XCTAssertEqual(overrides["temperature"]?.doubleValue, 0.05)
         XCTAssertEqual(overrides.count, 1)
     }
 

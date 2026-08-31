@@ -406,14 +406,13 @@ private struct TimelineMeetingPreview: View {
     let onBack: () -> Void
     let onDismiss: (() -> Void)?
 
+    @State private var summary: String?
+    @State private var summaryLoadError: String?
+
     private var folder: URL { meeting.folderURL(in: app.storage) }
     private var projection: MeetingOutcomeProjection? {
         app.outcomeIndex.projection(for: meeting.id)
     }
-    private var summary: String? {
-        try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8)
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -441,6 +440,16 @@ private struct TimelineMeetingPreview: View {
                             .lineLimit(8)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
+                    }
+                }
+
+                if let summaryLoadError {
+                    InlineIssueView(
+                        summaryLoadError,
+                        systemImage: "doc.badge.ellipsis",
+                        actionTitle: "Retry"
+                    ) {
+                        Task { await loadSummary() }
                     }
                 }
 
@@ -498,6 +507,20 @@ private struct TimelineMeetingPreview: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .task(id: meeting.id) { await loadSummary() }
+    }
+
+    private func loadSummary() async {
+        let meetingFolder = folder
+        do {
+            summary = try await Task.detached(priority: .utility) {
+                try MeetingArtifactLoader.loadSummary(from: meetingFolder)
+            }.value
+            summaryLoadError = nil
+        } catch {
+            summary = nil
+            summaryLoadError = "The meeting summary could not be loaded."
         }
     }
 }

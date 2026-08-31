@@ -6,8 +6,8 @@ import Foundation
 /// Lives in `Models/` (not `Engines/`) because the embedded `lokalbot-cli`
 /// reads it without linking WhisperKit / FluidAudio. The transcription engines
 /// fill it in, but it's just a data shape — no engine dependency.
-struct Transcript: Codable {
-    struct Segment: Codable, Equatable {
+struct Transcript: Codable, Sendable {
+    struct Segment: Codable, Equatable, Sendable {
         enum TimingPrecision: String, Codable, Sendable {
             /// The text covers a fallback window or whole track; its words are
             /// not localized closely enough to support destructive filtering.

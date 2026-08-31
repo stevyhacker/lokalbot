@@ -9,7 +9,6 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     static let shared = GraniteSpeechEngine()
 
     nonisolated let displayName = "Granite Speech 4.1 2B"
-    nonisolated let supportsStreaming = false
 
     nonisolated static let modelFileName =
         GraniteSpeechModelConfiguration.defaultModel.localModelFileName
@@ -44,14 +43,14 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         _ configuration: GraniteSpeechModelConfiguration,
         progress: ModelPreparationProgressHandler?
     ) async throws {
-        report(.init(fractionCompleted: nil, status: "Checking..."), to: progress)
+        reportModelPreparation(.init(fractionCompleted: nil, status: "Checking..."), to: progress)
         try await preparation.run { [weak self] in
             guard let self else { return }
             try await self.performPreparation(
                 configuration: configuration,
                 progress: progress)
         }
-        report(.init(fractionCompleted: 1, status: "Ready"), to: progress)
+        reportModelPreparation(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
     func shutdown() async {
@@ -66,7 +65,9 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         let paths = try await preparedPaths(
             configuration: configuration,
             progress: progress)
-        report(.init(fractionCompleted: nil, status: "Starting local server..."), to: progress)
+        reportModelPreparation(
+            .init(fractionCompleted: nil, status: "Starting local server..."),
+            to: progress)
         try await server(for: paths).ensureRunning(modelAt: paths.model)
     }
 
@@ -157,12 +158,6 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         waiters.forEach { $0.resume() }
     }
 
-    private nonisolated func report(_ update: ModelPreparationUpdate,
-                                    to handler: ModelPreparationProgressHandler?) {
-        guard let handler else { return }
-        Task { @MainActor in handler(update) }
-    }
-
     // MARK: - Download / paths
 
     struct PreparedPaths: Sendable {
@@ -171,10 +166,6 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     }
 
     private nonisolated static var appSupport: URL { AppDirectories.applicationSupport }
-
-    nonisolated static func modelRoot() -> URL {
-        modelRoot(appSupport: appSupport)
-    }
 
     nonisolated static func modelRoot(appSupport: URL) -> URL {
         modelRoot(
@@ -195,10 +186,6 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         return base.appendingPathComponent("4.1-2b", isDirectory: true)
     }
 
-    nonisolated static func modelURL() -> URL {
-        modelURL(appSupport: appSupport)
-    }
-
     nonisolated static func modelURL(appSupport: URL) -> URL {
         modelURL(
             configuration: .defaultModel,
@@ -211,10 +198,6 @@ actor GraniteSpeechEngine: TranscriptionEngine {
     ) -> URL {
         modelRoot(configuration: configuration, appSupport: appSupport)
             .appendingPathComponent(configuration.localModelFileName)
-    }
-
-    nonisolated static func projectorURL() -> URL {
-        projectorURL(appSupport: appSupport)
     }
 
     nonisolated static func projectorURL(appSupport: URL) -> URL {
@@ -294,10 +277,12 @@ actor GraniteSpeechEngine: TranscriptionEngine {
             return
         }
         DownloadIntegrity.removeFileAndMarker(at: destination)
-        report(.init(fractionCompleted: 0, status: status), to: progress)
+        reportModelPreparation(.init(fractionCompleted: 0, status: status), to: progress)
 
         let stashed = try await ParallelRangeDownloader.download(from: source, session: .shared) { update in
-            report(.init(fractionCompleted: update.fractionCompleted, status: status), to: progress)
+            reportModelPreparation(
+                .init(fractionCompleted: update.fractionCompleted, status: status),
+                to: progress)
         }
         do {
             guard ModelFileValidator.looksLikeGGUF(stashed) else {
@@ -313,12 +298,6 @@ actor GraniteSpeechEngine: TranscriptionEngine {
         DownloadIntegrity.removeFileAndMarker(at: stashed)
         try DownloadIntegrity.markInstalled(
             at: destination, expectedBytes: expectedBytes, expectedSHA256: expectedSHA256)
-    }
-
-    private nonisolated static func report(_ update: ModelPreparationUpdate,
-                                           to handler: ModelPreparationProgressHandler?) {
-        guard let handler else { return }
-        Task { @MainActor in handler(update) }
     }
 
     private nonisolated static func makeWorkDir() throws -> URL {
@@ -451,8 +430,6 @@ private struct ConfiguredGraniteSpeechEngine: TranscriptionEngine {
     let configuration: GraniteSpeechModelConfiguration
 
     var displayName: String { configuration.displayName }
-    let supportsStreaming = false
-
     func prepare(progress: ModelPreparationProgressHandler?) async throws {
         try await GraniteSpeechEngine.shared.prepare(
             configuration: configuration,

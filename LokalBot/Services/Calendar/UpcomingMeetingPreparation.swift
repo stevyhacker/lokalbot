@@ -346,7 +346,7 @@ enum UpcomingMeetingBriefGenerator {
         let brief: String
     }
 
-    private static let schema: [String: Any] = [
+    private static let schema: JSONObject = [
         "type": "object",
         "properties": [
             "brief": ["type": "string"],

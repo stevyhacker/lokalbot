@@ -431,8 +431,8 @@ final class AgentSessionController: ObservableObject {
     private static func sessionFile(from dataJSON: String?) -> URL? {
         guard let dataJSON,
               let data = dataJSON.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let path = object["sessionFile"] as? String,
+              let object = try? JSONValue.decodeObject(from: data),
+              let path = object["sessionFile"]?.stringValue,
               !path.isEmpty else { return nil }
         return URL(fileURLWithPath: path)
     }
@@ -650,9 +650,9 @@ final class AgentSessionController: ObservableObject {
             defer { try? handle.close() }
             guard let data = try? handle.read(upToCount: 16 * 1024),
                   let firstLine = data.split(separator: 0x0A).first,
-                  let header = try? JSONSerialization.jsonObject(with: Data(firstLine)) as? [String: Any],
-                  header["type"] as? String == "session",
-                  let cwd = header["cwd"] as? String else { continue }
+                  let header = try? JSONValue.decodeObject(from: Data(firstLine)),
+                  header["type"]?.stringValue == "session",
+                  let cwd = header["cwd"]?.stringValue else { continue }
             if URL(fileURLWithPath: cwd).standardizedFileURL.path == expectedCWD {
                 return true
             }
@@ -742,17 +742,17 @@ final class AgentSessionController: ObservableObject {
     private static func historyMessages(from dataJSON: String?) -> [(role: String, text: String)] {
         guard let dataJSON,
               let data = dataJSON.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let messages = object["messages"] as? [[String: Any]] else { return [] }
+              let object = try? JSONValue.decodeObject(from: data),
+              let messages = object["messages"]?.objectArrayValue else { return [] }
         return messages.compactMap { message in
-            guard let role = message["role"] as? String,
+            guard let role = message["role"]?.stringValue,
                   role == "user" || role == "assistant" else { return nil }
             let text: String
-            if let content = message["content"] as? String {
+            if let content = message["content"]?.stringValue {
                 text = content
-            } else if let blocks = message["content"] as? [[String: Any]] {
+            } else if let blocks = message["content"]?.objectArrayValue {
                 text = blocks.compactMap { block in
-                    block["type"] as? String == "text" ? block["text"] as? String : nil
+                    block["type"]?.stringValue == "text" ? block["text"]?.stringValue : nil
                 }.joined()
             } else {
                 return nil

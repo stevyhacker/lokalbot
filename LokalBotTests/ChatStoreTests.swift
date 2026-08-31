@@ -32,9 +32,9 @@ final class ChatStoreTests: XCTestCase {
                             activity: [.init(tool: "search_meetings", icon: "magnifyingglass",
                                              text: "Searched meetings", done: true)]),
             ])
-        store.save(conversation)
+        try store.save(conversation)
 
-        let loaded = store.loadAll()
+        let loaded = try store.loadAll().conversations
         XCTAssertEqual(loaded.count, 1)
         let restored = try XCTUnwrap(loaded.first)
         XCTAssertEqual(restored.id, conversation.id)
@@ -57,28 +57,28 @@ final class ChatStoreTests: XCTestCase {
         XCTAssertEqual(decoded.id, message.id, "a message's stable id must survive")
     }
 
-    func testLoadAllSortsByUpdatedAtDescending() {
+    func testLoadAllSortsByUpdatedAtDescending() throws {
         let store = makeStore()
-        store.save(Conversation(title: "older", updatedAt: Date(timeIntervalSince1970: 1_000),
-                                messages: [ChatMessage(role: .user, text: "a")]))
-        store.save(Conversation(title: "newer", updatedAt: Date(timeIntervalSince1970: 2_000),
-                                messages: [ChatMessage(role: .user, text: "b")]))
-        XCTAssertEqual(store.loadAll().map(\.title), ["newer", "older"])
+        try store.save(Conversation(title: "older", updatedAt: Date(timeIntervalSince1970: 1_000),
+                                    messages: [ChatMessage(role: .user, text: "a")]))
+        try store.save(Conversation(title: "newer", updatedAt: Date(timeIntervalSince1970: 2_000),
+                                    messages: [ChatMessage(role: .user, text: "b")]))
+        XCTAssertEqual(try store.loadAll().conversations.map(\.title), ["newer", "older"])
     }
 
-    func testDeleteRemovesConversationFromDisk() {
+    func testDeleteRemovesConversationFromDisk() throws {
         let store = makeStore()
         let conversation = Conversation(title: "temp", messages: [ChatMessage(role: .user, text: "x")])
-        store.save(conversation)
-        XCTAssertEqual(store.loadAll().count, 1)
-        store.delete(conversation.id)
-        XCTAssertTrue(store.loadAll().isEmpty, "deleting must remove the conversation file")
+        try store.save(conversation)
+        XCTAssertEqual(try store.loadAll().conversations.count, 1)
+        try store.delete(conversation.id)
+        XCTAssertTrue(try store.loadAll().conversations.isEmpty, "deleting must remove the conversation file")
     }
 
     func testFilesOnDiskAreEncrypted() throws {
         let store = makeStore()
-        store.save(Conversation(title: "Secret pricing strategy",
-                                messages: [ChatMessage(role: .user, text: "raise prices 20%")]))
+        try store.save(Conversation(title: "Secret pricing strategy",
+                                    messages: [ChatMessage(role: .user, text: "raise prices 20%")]))
 
         let chats = root.appendingPathComponent("chats", isDirectory: true)
         let files = try FileManager.default.contentsOfDirectory(at: chats, includingPropertiesForKeys: nil)
@@ -89,7 +89,8 @@ final class ChatStoreTests: XCTestCase {
         let asText = String(decoding: raw, as: UTF8.self)
         XCTAssertFalse(asText.contains("Secret pricing strategy"), "title must not be readable on disk")
         XCTAssertFalse(asText.contains("raise prices 20%"), "message must not be readable on disk")
-        XCTAssertEqual(store.loadAll().first?.title, "Secret pricing strategy", "but it must decrypt back")
+        XCTAssertEqual(try store.loadAll().conversations.first?.title,
+                       "Secret pricing strategy", "but it must decrypt back")
     }
 
     func testLegacyPlaintextIsMigratedToEncrypted() throws {
@@ -101,8 +102,9 @@ final class ChatStoreTests: XCTestCase {
         try encoder.encode(conversation)
             .write(to: chats.appendingPathComponent("\(conversation.id.uuidString).json"))
 
-        let loaded = makeStore().loadAll()
-        XCTAssertEqual(loaded.first?.title, "legacy", "legacy plaintext must still load")
+        let loaded = try makeStore().loadAll()
+        XCTAssertEqual(loaded.conversations.first?.title, "legacy", "legacy plaintext must still load")
+        XCTAssertTrue(loaded.issues.isEmpty)
 
         let files = try FileManager.default.contentsOfDirectory(at: chats, includingPropertiesForKeys: nil)
         XCTAssertTrue(files.contains { $0.pathExtension == "enc" }, "should have migrated to a sealed file")
@@ -135,6 +137,66 @@ final class ChatStoreTests: XCTestCase {
                 code: 429, detail: "raw provider detail", retryAfter: 2))
         XCTAssertTrue(rateLimited.contains("rate-limited"))
         XCTAssertFalse(rateLimited.contains("raw provider detail"))
+    }
+
+    func testCorruptEncryptedFileIsReportedWithoutHidingValidHistory() throws {
+        let store = makeStore()
+        try store.save(Conversation(title: "valid", messages: [ChatMessage(role: .user, text: "hi")]))
+        let corrupt = root.appendingPathComponent("chats/corrupt.json.enc")
+        try Data("not encrypted".utf8).write(to: corrupt)
+
+        let load = try store.loadAll()
+
+        XCTAssertEqual(load.conversations.map(\.title), ["valid"])
+        XCTAssertEqual(load.issues.map(\.file), ["corrupt.json.enc"])
+    }
+
+    func testEncryptionKeyFailureIsReportedPerEncryptedFileAndStillBlocksSave() throws {
+        let conversation = Conversation(title: "saved", messages: [ChatMessage(role: .user, text: "hi")])
+        try makeStore().save(conversation)
+        let keyError = CocoaError(.fileReadNoPermission)
+        let failing = ChatStore(rootURL: root, encryptionKey: {
+            throw keyError
+        })
+
+        let load = try failing.loadAll()
+
+        XCTAssertTrue(load.conversations.isEmpty)
+        XCTAssertEqual(load.issues.map(\.file), ["\(conversation.id.uuidString).json.enc"])
+        XCTAssertEqual(load.issues.first?.detail, keyError.localizedDescription)
+        XCTAssertThrowsError(try failing.save(conversation))
+    }
+
+    func testEncryptionKeyFailureDoesNotHideLegacyPlaintext() throws {
+        let encrypted = Conversation(title: "encrypted", messages: [ChatMessage(role: .user, text: "sealed")])
+        try makeStore().save(encrypted)
+
+        let legacy = Conversation(title: "legacy", messages: [ChatMessage(role: .user, text: "plaintext")])
+        let legacyURL = root.appendingPathComponent("chats/\(legacy.id.uuidString).json")
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(legacy).write(to: legacyURL)
+
+        let failing = ChatStore(rootURL: root, encryptionKey: {
+            throw CocoaError(.fileReadNoPermission)
+        })
+        let load = try failing.loadAll()
+
+        XCTAssertEqual(load.conversations.map(\.id), [legacy.id])
+        XCTAssertEqual(
+            Set(load.issues.map(\.file)),
+            Set(["\(encrypted.id.uuidString).json.enc", "\(legacy.id.uuidString).json"])
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyURL.path))
+    }
+
+    func testUnavailableDirectoryIsSurfaced() throws {
+        let blockedRoot = root.appendingPathComponent("not-a-directory")
+        try Data("blocked".utf8).write(to: blockedRoot)
+        let store = ChatStore(rootURL: blockedRoot, encryptionKey: { [encryptionKey] in encryptionKey })
+
+        XCTAssertThrowsError(try store.loadAll())
+        XCTAssertThrowsError(try store.save(Conversation()))
     }
 
     private func makeStore() -> ChatStore {

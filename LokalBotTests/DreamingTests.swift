@@ -2,13 +2,13 @@ import XCTest
 @testable import LokalBot
 
 final class DreamingTests: XCTestCase {
-    private var calendar: Calendar {
+    var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         return calendar
     }
 
-    private func date(_ value: String) throws -> Date {
+    func date(_ value: String) throws -> Date {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         return try XCTUnwrap(formatter.date(from: value))
@@ -576,13 +576,13 @@ final class DreamingTests: XCTestCase {
 
     func testStrictSchemaClosesEveryObjectShape() throws {
         let schema = DreamPrompts.schema
-        XCTAssertEqual(schema["additionalProperties"] as? Bool, false)
-        let properties = try XCTUnwrap(schema["properties"] as? [String: Any])
+        XCTAssertEqual(schema["additionalProperties"]?.boolValue, false)
+        let properties = try XCTUnwrap(schema["properties"]?.objectValue)
 
         for key in ["active_projects", "work_goals"] {
-            let arraySchema = try XCTUnwrap(properties[key] as? [String: Any])
-            let itemSchema = try XCTUnwrap(arraySchema["items"] as? [String: Any])
-            XCTAssertEqual(itemSchema["additionalProperties"] as? Bool, false, key)
+            let arraySchema = try XCTUnwrap(properties[key]?.objectValue)
+            let itemSchema = try XCTUnwrap(arraySchema["items"]?.objectValue)
+            XCTAssertEqual(itemSchema["additionalProperties"]?.boolValue, false, key)
         }
     }
 
@@ -962,231 +962,4 @@ final class DreamingTests: XCTestCase {
         XCTAssertFalse(stub.provenanceDescription.contains("No model was reachable"))
     }
 
-    // MARK: - Expired goals
-
-    func testExpiredGoalIsRemovedAndNeverInserted() throws {
-        let existing = DreamMemory(
-            updatedAt: try date("2026-07-18T04:00:00Z"),
-            workGoals: [
-                .init(text: "Ship 0.5", horizon: "next week",
-                      lastReinforcedDay: "2026-07-17"),
-                .init(text: "Keep inbox at zero", horizon: "ongoing",
-                      lastReinforcedDay: "2026-07-17"),
-            ])
-        let update = DreamMemoryUpdate(workGoals: [
-            .init(text: "ship 0.5", horizon: "done",
-                  reinforcedToday: true, expired: true),
-            .init(text: "Never existed", horizon: "unknown",
-                  reinforcedToday: true, expired: true),
-        ])
-
-        let merged = existing.merging(update, dreamDay: "2026-07-18",
-                                      at: try date("2026-07-19T04:01:00Z"),
-                                      calendar: calendar)
-
-        XCTAssertEqual(merged.workGoals.map(\.text), ["Keep inbox at zero"])
-    }
-
-    func testParseReadsOptionalExpiredFlag() throws {
-        let output = """
-        {"narrative": "Wrapped up the release.", "attention": [], "repeated_work": [],
-         "suggested_checks": [], "frictions": [], "top_actions": [],
-         "active_projects": [],
-         "work_goals": [
-            {"text": "Ship 0.5", "horizon": "done", "reinforced_today": true, "expired": true},
-            {"text": "Plan 0.6", "horizon": "next month", "reinforced_today": true}],
-         "recurring_patterns": []}
-        """
-        let synthesis = try XCTUnwrap(DreamPrompts.parse(output))
-        XCTAssertEqual(synthesis.memory.workGoals.map(\.expired), [true, false])
-    }
-
-    func testSystemPromptAndStrictSchemaRequireExpiredGoals() throws {
-        XCTAssertTrue(DreamPrompts.system.contains("expired"))
-
-        let properties = try XCTUnwrap(DreamPrompts.schema["properties"] as? [String: Any])
-        let goals = try XCTUnwrap(properties["work_goals"] as? [String: Any])
-        let items = try XCTUnwrap(goals["items"] as? [String: Any])
-        let goalProperties = try XCTUnwrap(items["properties"] as? [String: Any])
-        XCTAssertNotNil(goalProperties["expired"])
-        let required = try XCTUnwrap(items["required"] as? [String])
-        XCTAssertTrue(required.contains("expired"))
-    }
-
-    // MARK: - Pinned memory
-
-    func testPinnedEntriesSurviveRetentionCapsAndExpiry() throws {
-        let existing = DreamMemory(
-            updatedAt: try date("2026-07-18T04:00:00Z"),
-            activeProjects: [.init(name: "Anchor", status: "long-running",
-                                   lastActiveDay: "2026-01-01", evidence: [],
-                                   pinned: true)],
-            workGoals: [.init(text: "North star", horizon: "always",
-                              lastReinforcedDay: "2026-01-01", pinned: true)])
-        // Cap pressure: a full slate of fresh proposals, none matching the
-        // pinned entries, plus an expiry attempt against the pinned goal.
-        var update = DreamMemoryUpdate(
-            activeProjects: (1...DreamMemory.maxProjects).map {
-                .init(name: "Project \($0)", status: "active", evidence: [])
-            },
-            workGoals: (1...DreamMemory.maxGoals).map {
-                .init(text: "Goal \($0)", horizon: "soon", reinforcedToday: true)
-            })
-        update.workGoals.append(.init(text: "North star", horizon: "gone",
-                                      reinforcedToday: true, expired: true))
-
-        let merged = existing.merging(update, dreamDay: "2026-07-18",
-                                      at: try date("2026-07-19T04:01:00Z"),
-                                      calendar: calendar)
-
-        XCTAssertTrue(merged.activeProjects.contains { $0.name == "Anchor" })
-        XCTAssertTrue(merged.workGoals.contains { $0.text == "North star" })
-        XCTAssertLessThanOrEqual(merged.activeProjects.count, DreamMemory.maxProjects)
-        XCTAssertLessThanOrEqual(merged.workGoals.count, DreamMemory.maxGoals)
-    }
-
-    func testLegacyMemoryFilesWithoutPinnedKeyStillDecode() throws {
-        let legacy = Data("""
-        {"version": 1, "updatedAt": "2026-07-19T04:01:00Z", "lastDreamDay": "2026-07-18",
-         "activeProjects": [{"name": "Atlas", "status": "in review",
-                             "lastActiveDay": "2026-07-18", "evidence": []}],
-         "workGoals": [{"text": "Ship 0.5", "horizon": "next week",
-                        "lastReinforcedDay": "2026-07-18"}],
-         "recurringPatterns": []}
-        """.utf8)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let memory = try decoder.decode(DreamMemory.self, from: legacy)
-        XCTAssertEqual(memory.activeProjects.first?.pinned, false)
-        XCTAssertEqual(memory.workGoals.first?.pinned, false)
-    }
-
-    func testMarkdownMarksPinnedEntries() throws {
-        let memory = DreamMemory(
-            updatedAt: try date("2026-07-19T04:01:00Z"),
-            activeProjects: [.init(name: "Anchor", status: "long-running",
-                                   lastActiveDay: "2026-07-18", evidence: [],
-                                   pinned: true)],
-            workGoals: [.init(text: "North star", horizon: "always",
-                              lastReinforcedDay: "2026-07-18", pinned: true)])
-        let markdown = memory.markdown()
-        let pinMentions = markdown.components(separatedBy: "pinned").count - 1
-        XCTAssertEqual(pinMentions, 2)
-    }
-
-    func testStorePersistsProjectAndGoalPins() throws {
-        let store = DreamStore(root: try temporaryRoot())
-        let initial = DreamMemory(
-            updatedAt: try date("2026-07-19T04:01:00Z"),
-            activeProjects: [.init(name: "Anchor", status: "long-running",
-                                   lastActiveDay: "2026-07-18")],
-            workGoals: [.init(text: "North star", horizon: "always",
-                              lastReinforcedDay: "2026-07-18")])
-        try store.save(initial)
-
-        let projectUpdate = try XCTUnwrap(store.setPinned(
-            true,
-            for: .project(name: "anchor"),
-            at: try date("2026-07-19T05:00:00Z")))
-        XCTAssertTrue(try XCTUnwrap(projectUpdate.activeProjects.first).pinned)
-
-        let goalUpdate = try XCTUnwrap(store.setPinned(
-            true,
-            for: .goal(text: "north star"),
-            at: try date("2026-07-19T05:01:00Z")))
-        XCTAssertTrue(try XCTUnwrap(goalUpdate.workGoals.first).pinned)
-
-        let reloaded = try XCTUnwrap(store.loadMemory())
-        XCTAssertTrue(try XCTUnwrap(reloaded.activeProjects.first).pinned)
-        XCTAssertTrue(try XCTUnwrap(reloaded.workGoals.first).pinned)
-        XCTAssertEqual(reloaded.updatedAt, try date("2026-07-19T05:01:00Z"))
-    }
-
-    // MARK: - Power gate
-
-    func testDreamingRequiresACPowerAndNormalPowerMode() {
-        XCTAssertTrue(DreamScheduler.powerAllowsDreaming(
-            isOnBattery: false, isLowPower: false))
-        XCTAssertFalse(DreamScheduler.powerAllowsDreaming(
-            isOnBattery: true, isLowPower: false))
-        XCTAssertFalse(DreamScheduler.powerAllowsDreaming(
-            isOnBattery: false, isLowPower: true))
-    }
-
-    // MARK: - Headless flag
-
-    func testHeadlessDreamFlagParsesOptionalDay() {
-        XCTAssertEqual(HeadlessCommand.parse(["LokalBot", "--dream"]),
-                       .dream(dayKey: nil))
-        XCTAssertEqual(HeadlessCommand.parse(["LokalBot", "--dream", "2026-07-18"]),
-                       .dream(dayKey: "2026-07-18"))
-        // A following flag is not a day key.
-        XCTAssertEqual(HeadlessCommand.parse(["LokalBot", "--dream", "--verbose"]),
-                       .dream(dayKey: nil))
-    }
-
-    func testHeadlessDigestFlagParsesOptionalDay() {
-        XCTAssertEqual(HeadlessCommand.parse(["LokalBot", "--digest"]),
-                       .digest(dayKey: nil))
-        XCTAssertEqual(HeadlessCommand.parse(["LokalBot", "--digest", "2026-08-04"]),
-                       .digest(dayKey: "2026-08-04"))
-        XCTAssertEqual(HeadlessCommand.parse(["LokalBot", "--digest", "--verbose"]),
-                       .digest(dayKey: nil))
-    }
-
-    func testHeadlessDreamTargetDefaultsToYesterdayAndAcceptsOlderDays() throws {
-        let now = try date("2026-07-20T12:00:00Z")
-        let defaultTarget = try HeadlessCommand.validatedDreamTarget(
-            dayKey: nil,
-            now: now,
-            calendar: calendar)
-        XCTAssertEqual(defaultTarget.dayKey, "2026-07-19")
-
-        let historicalTarget = try HeadlessCommand.validatedDreamTarget(
-            dayKey: "2026-07-18",
-            now: now,
-            calendar: calendar)
-        XCTAssertEqual(historicalTarget.dayKey, "2026-07-18")
-    }
-
-    func testHeadlessDreamTargetRejectsCurrentAndFutureDays() throws {
-        let now = try date("2026-07-20T12:00:00Z")
-        for dayKey in ["2026-07-20", "2026-07-21"] {
-            XCTAssertThrowsError(try HeadlessCommand.validatedDreamTarget(
-                dayKey: dayKey,
-                now: now,
-                calendar: calendar)) { error in
-                    XCTAssertEqual(error as? DreamDayArgumentError, .notHistorical(dayKey))
-                }
-        }
-    }
-
-    func testHeadlessDreamTargetRejectsNonCanonicalDay() throws {
-        XCTAssertThrowsError(try HeadlessCommand.validatedDreamTarget(
-            dayKey: "2026-7-18",
-            now: try date("2026-07-20T12:00:00Z"),
-            calendar: calendar)) { error in
-                XCTAssertEqual(error as? DreamDayArgumentError, .invalidFormat("2026-7-18"))
-            }
-    }
-
-    // MARK: - Redaction
-
-    func testRedactionScrubsCredentialsFromReportAndMemory() throws {
-        let report = DreamReport(
-            day: "2026-07-18",
-            generatedAt: try date("2026-07-19T04:01:00Z"),
-            engineName: "Built-in — Test",
-            narrative: "Saw password: hunter2secret in a screenshot.",
-            topActions: ["Rotate api_key = sk-abcdef1234567890abcd"]).redacted()
-        XCTAssertFalse(report.narrative.contains("hunter2secret"))
-        XCTAssertTrue(report.narrative.contains("[REDACTED]"))
-        XCTAssertFalse(try XCTUnwrap(report.topActions.first).contains("sk-abcdef"))
-
-        let memory = DreamMemory(
-            updatedAt: try date("2026-07-19T04:01:00Z"),
-            activeProjects: [.init(name: "Atlas", status: "token ghp_0123456789abcdefghij noted",
-                                   lastActiveDay: "2026-07-18", evidence: [])]).redacted()
-        XCTAssertFalse(try XCTUnwrap(memory.activeProjects.first).status.contains("ghp_"))
-    }
 }

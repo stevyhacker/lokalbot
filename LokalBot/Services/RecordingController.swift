@@ -346,138 +346,202 @@ final class RecordingController: ObservableObject {
         guard case .idle = status, startTask == nil else { return }
         let detectedApp = context?.detectedApp
         let calendarEvent = context?.calendarEvent
-        // Don't immediately re-record the same scheduled event after one ended.
-        if MeetingMatcher.shouldSuppressRepeat(
-            eventID: calendarEvent?.externalID, lastEventID: lastCalendarEventID,
-            lastEndedAt: lastCalendarEventEndedAt, now: Date(),
-            cooldown: Self.calendarRepeatCooldown) {
-            lokalbotLog("startRecording suppressed: calendar event \(calendarEvent?.externalID ?? "?") within cooldown")
-            return
-        }
-        // Refuse up front on a nearly-full volume: a recording that dies
-        // mid-meeting from ENOSPC loses the meeting; a clear refusal doesn't.
-        if let advisory = DiskSpacePrecheck.recordingAdvisory(
-            availableBytes: DiskSpacePrecheck.availableBytes(at: storage.rootURL)) {
-            lokalbotLog("startRecording refused: low disk space")
-            onError(advisory)
-            return
-        }
+        guard canStartRecording(calendarEvent: calendarEvent) else { return }
         status = .starting
         audioMonitor.isRecordingActive = true
         audioMonitor.accept()
         lokalbotLog("startRecording source=\(source) app=\(detectedApp?.name ?? "manual") calendar=\(calendarEvent?.title ?? "none")")
         startTask = Task { [weak self] in
-            guard let self else { return }
-            var created: Meeting?
-            defer {
-                self.startTask = nil
-                if case .starting = self.status { self.status = .idle }
-            }
-            guard await MicRecorder.requestPermission() else {
-                guard !Task.isCancelled else { return }
-                onMicPermissionDenied()
-                audioMonitor.isRecordingActive = false
-                audioMonitor.reseed()
-                return
-            }
-            do {
-                try Task.checkCancellation()
-                let title = MeetingMatcher.recordingTitle(
-                    calendarTitle: calendarEvent?.title,
-                    useCalendarTitles: settings.useCalendarTitles,
-                    appName: detectedApp?.name)
-                var meeting = try storage.createMeetingFolder(title: title,
-                                                              appName: detectedApp?.name ?? "Manual")
-                if let calendarEvent {
-                    meeting.calendarProvider = calendarEvent.provider
-                    meeting.calendarEventID = calendarEvent.externalID
-                    meeting.calendarTitle = calendarEvent.title
-                    meeting.scheduledStartAt = calendarEvent.startDate
-                    meeting.scheduledEndAt = calendarEvent.endDate
-                    meeting.meetingURL = calendarEvent.meetingURL
-                    meeting.participantNameHints = calendarEvent.participantNames.isEmpty
-                        ? nil
-                        : calendarEvent.participantNames
-                    let participants = calendarEvent.resolvedParticipantIdentities
-                    meeting.calendarParticipantIdentities = participants.isEmpty
-                        ? nil
-                        : participants
-                    try? storage.saveMeta(meeting)
-                }
-                created = meeting
-                try Task.checkCancellation()
-                try micRecorder.start(
-                    writingTo: meeting.folderURL(in: storage).appendingPathComponent("mic.m4a"),
-                    previewTee: meeting.folderURL(in: storage)
-                        .appendingPathComponent(AudioPreviewTee.micFileName))
-                startRecordingHealthWatchdog()
-                try Task.checkCancellation()
-
-                // Meeting-intent callers may fall back to a running native app
-                // before it emits audio, giving the watchdog a target to repair.
-                // Mic-only callers never evaluate that fallback, so headless
-                // voice recording cannot silently widen its capture scope.
-                if let captureApp = systemAudioPolicy.captureApp(
-                    detectedApp: detectedApp,
-                    fallback: { MeetingDetector.captureCandidateApp() }
-                ) {
-                    let captureProcess = MeetingDetector.currentCaptureTargetProcess(for: captureApp)
-                    let pid = captureProcess?.id ?? captureApp.pid
-                    do {
-                        try systemRecorder.start(
-                            capturingPID: pid,
-                            writingTo: meeting.folderURL(in: storage).appendingPathComponent("system.m4a"),
-                            previewTee: meeting.folderURL(in: storage)
-                                .appendingPathComponent(AudioPreviewTee.systemFileName))
-                        meeting.hasSystemTrack = true
-                        systemAudioTarget = SystemAudioTarget(
-                            bundleID: captureApp.bundleID,
-                            pid: pid)
-                        systemAudioTapLedger.attached(to: pid, audibleDuration: 0)
-                        if pid != captureApp.pid || captureProcess?.bundleID != captureApp.bundleID {
-                            lokalbotLog(
-                                "system audio capture resolved detectedPID=\(captureApp.pid) capturePID=\(pid) captureBundle=\(captureProcess?.bundleID ?? "unknown") hostBundle=\(captureApp.bundleID)")
-                        }
-                        lokalbotLog(
-                            "system audio tap started pid=\(pid) bundle=\(captureApp.bundleID) detected=\(detectedApp != nil)")
-                    } catch {
-                        // Degrade gracefully: mic-only recording. Only worth
-                        // telling the user about when a meeting was actually
-                        // detected — on a hand-started voice memo the app was
-                        // merely running nearby and no system track was asked
-                        // for, so a banner would be noise.
-                        if detectedApp != nil {
-                            onError("System audio tap failed (\(error.localizedDescription)) — recording mic only.")
-                        }
-                        lokalbotLog(
-                            "system audio tap FAILED detected=\(detectedApp != nil): \(error.localizedDescription)")
-                    }
-                }
-                try Task.checkCancellation()
-                currentMeeting = meeting
-                status = .recording(meetingID: meeting.id)
-                startRecordingTick()
-                if isInteractive() {
-                    RecordingNotifier.shared.recordingStarted(title: meeting.title)
-                    prewarmSelectedTranscriptionModel(reason: source)
-                    prewarmSelectedSummaryModel(reason: source)
-                    prewarmDiarizationModels(reason: source)
-                }
-            } catch is CancellationError {
-                cleanupCancelledStart(created: created)
-            } catch {
-                onError("Could not start recording: \(error.localizedDescription)")
-                lokalbotLog("startRecording FAILED: \(error.localizedDescription)")
-                stopRecordingHealthWatchdog()
-                systemAudioTarget = nil
-                audioMonitor.isRecordingActive = false
-                audioMonitor.reseed()
-                // Don't leave a 0-minute husk in the library.
-                micRecorder.stop()
-                systemRecorder.stop()
-                if let husk = created { try? storage.deleteMeeting(husk) }
-            }
+            await self?.beginRecording(
+                detectedApp: detectedApp,
+                calendarEvent: calendarEvent,
+                source: source,
+                systemAudioPolicy: systemAudioPolicy)
         }
+    }
+
+    private func canStartRecording(calendarEvent: CalendarMeetingCandidate?) -> Bool {
+        // Don't immediately re-record the same scheduled event after one ended.
+        if MeetingMatcher.shouldSuppressRepeat(
+            eventID: calendarEvent?.externalID,
+            lastEventID: lastCalendarEventID,
+            lastEndedAt: lastCalendarEventEndedAt,
+            now: Date(),
+            cooldown: Self.calendarRepeatCooldown
+        ) {
+            lokalbotLog(
+                "startRecording suppressed: calendar event "
+                    + "\(calendarEvent?.externalID ?? "?") within cooldown")
+            return false
+        }
+        // Refuse up front on a nearly-full volume: a recording that dies
+        // mid-meeting from ENOSPC loses the meeting; a clear refusal doesn't.
+        guard let advisory = DiskSpacePrecheck.recordingAdvisory(
+            availableBytes: DiskSpacePrecheck.availableBytes(at: storage.rootURL)
+        ) else { return true }
+        lokalbotLog("startRecording refused: low disk space")
+        onError(advisory)
+        return false
+    }
+
+    private func beginRecording(
+        detectedApp: MeetingDetector.DetectedApp?,
+        calendarEvent: CalendarMeetingCandidate?,
+        source: String,
+        systemAudioPolicy: RecordingSystemAudioPolicy
+    ) async {
+        var created: Meeting?
+        defer {
+            startTask = nil
+            if case .starting = status { status = .idle }
+        }
+        guard await recordingPermissionGranted() else { return }
+        do {
+            try Task.checkCancellation()
+            var meeting = try createMeeting(
+                detectedApp: detectedApp,
+                calendarEvent: calendarEvent)
+            created = meeting
+            try startMicrophone(for: meeting)
+            try Task.checkCancellation()
+            startSystemAudioIfRequested(
+                for: &meeting,
+                detectedApp: detectedApp,
+                policy: systemAudioPolicy)
+            try Task.checkCancellation()
+            finishRecordingStart(meeting, source: source)
+        } catch is CancellationError {
+            cleanupCancelledStart(created: created)
+        } catch {
+            failRecordingStart(error, created: created)
+        }
+    }
+
+    private func recordingPermissionGranted() async -> Bool {
+        guard await MicRecorder.requestPermission() else {
+            guard !Task.isCancelled else { return false }
+            onMicPermissionDenied()
+            audioMonitor.isRecordingActive = false
+            audioMonitor.reseed()
+            return false
+        }
+        return true
+    }
+
+    private func createMeeting(
+        detectedApp: MeetingDetector.DetectedApp?,
+        calendarEvent: CalendarMeetingCandidate?
+    ) throws -> Meeting {
+        let title = MeetingMatcher.recordingTitle(
+            calendarTitle: calendarEvent?.title,
+            useCalendarTitles: settings.useCalendarTitles,
+            appName: detectedApp?.name)
+        var meeting = try storage.createMeetingFolder(
+            title: title,
+            appName: detectedApp?.name ?? "Manual")
+        guard let calendarEvent else { return meeting }
+        meeting.calendarProvider = calendarEvent.provider
+        meeting.calendarEventID = calendarEvent.externalID
+        meeting.calendarTitle = calendarEvent.title
+        meeting.scheduledStartAt = calendarEvent.startDate
+        meeting.scheduledEndAt = calendarEvent.endDate
+        meeting.meetingURL = calendarEvent.meetingURL
+        meeting.participantNameHints = calendarEvent.participantNames.isEmpty
+            ? nil
+            : calendarEvent.participantNames
+        let participants = calendarEvent.resolvedParticipantIdentities
+        meeting.calendarParticipantIdentities = participants.isEmpty ? nil : participants
+        try? storage.saveMeta(meeting)
+        return meeting
+    }
+
+    private func startMicrophone(for meeting: Meeting) throws {
+        try Task.checkCancellation()
+        let folder = meeting.folderURL(in: storage)
+        try micRecorder.start(
+            writingTo: folder.appendingPathComponent("mic.m4a"),
+            previewTee: folder.appendingPathComponent(AudioPreviewTee.micFileName))
+        startRecordingHealthWatchdog()
+    }
+
+    private func startSystemAudioIfRequested(
+        for meeting: inout Meeting,
+        detectedApp: MeetingDetector.DetectedApp?,
+        policy: RecordingSystemAudioPolicy
+    ) {
+        // Meeting-intent callers may fall back to a running native app before
+        // it emits audio. Mic-only callers never widen their capture scope.
+        guard let captureApp = policy.captureApp(
+            detectedApp: detectedApp,
+            fallback: { MeetingDetector.captureCandidateApp() }
+        ) else { return }
+        let captureProcess = MeetingDetector.currentCaptureTargetProcess(for: captureApp)
+        let pid = captureProcess?.id ?? captureApp.pid
+        do {
+            let folder = meeting.folderURL(in: storage)
+            try systemRecorder.start(
+                capturingPID: pid,
+                writingTo: folder.appendingPathComponent("system.m4a"),
+                previewTee: folder.appendingPathComponent(AudioPreviewTee.systemFileName))
+            meeting.hasSystemTrack = true
+            systemAudioTarget = SystemAudioTarget(bundleID: captureApp.bundleID, pid: pid)
+            systemAudioTapLedger.attached(to: pid, audibleDuration: 0)
+            logSystemAudioStart(
+                captureApp: captureApp,
+                captureProcess: captureProcess,
+                pid: pid,
+                wasDetected: detectedApp != nil)
+        } catch {
+            if detectedApp != nil {
+                onError(
+                    "System audio tap failed (\(error.localizedDescription)) "
+                        + "— recording mic only.")
+            }
+            lokalbotLog(
+                "system audio tap FAILED detected=\(detectedApp != nil): "
+                    + error.localizedDescription)
+        }
+    }
+
+    private func logSystemAudioStart(
+        captureApp: MeetingDetector.DetectedApp,
+        captureProcess: AudioProcess?,
+        pid: pid_t,
+        wasDetected: Bool
+    ) {
+        if pid != captureApp.pid || captureProcess?.bundleID != captureApp.bundleID {
+            lokalbotLog(
+                "system audio capture resolved detectedPID=\(captureApp.pid) "
+                    + "capturePID=\(pid) captureBundle="
+                    + "\(captureProcess?.bundleID ?? "unknown") "
+                    + "hostBundle=\(captureApp.bundleID)")
+        }
+        lokalbotLog(
+            "system audio tap started pid=\(pid) bundle=\(captureApp.bundleID) "
+                + "detected=\(wasDetected)")
+    }
+
+    private func finishRecordingStart(_ meeting: Meeting, source: String) {
+        currentMeeting = meeting
+        status = .recording(meetingID: meeting.id)
+        startRecordingTick()
+        guard isInteractive() else { return }
+        RecordingNotifier.shared.recordingStarted(title: meeting.title)
+        prewarmSelectedTranscriptionModel(reason: source)
+        prewarmSelectedSummaryModel(reason: source)
+        prewarmDiarizationModels(reason: source)
+    }
+
+    private func failRecordingStart(_ error: Error, created: Meeting?) {
+        onError("Could not start recording: \(error.localizedDescription)")
+        lokalbotLog("startRecording FAILED: \(error.localizedDescription)")
+        stopRecordingHealthWatchdog()
+        systemAudioTarget = nil
+        audioMonitor.isRecordingActive = false
+        audioMonitor.reseed()
+        micRecorder.stop()
+        systemRecorder.stop()
+        if let husk = created { try? storage.deleteMeeting(husk) }
     }
 
     func stop(process: Bool = true) {

@@ -343,7 +343,7 @@ final class MicRecorder {
         isRecording = true
         observeConfigurationChanges(for: engine)
         do {
-            try installTapAndStart(inputFormat: inputFormat, recordingFormat: recordingFormat)
+            try installTapAndStart(inputFormat: inputFormat)
         } catch {
             isRecording = false
             reconfigurationTask?.cancel()
@@ -407,9 +407,9 @@ final class MicRecorder {
     }
 
     func restartCapture() throws {
-        guard isRecording, let recordingFormat else { return }
+        guard isRecording, recordingFormat != nil else { return }
         do {
-            try rebuildCaptureGraph(recordingFormat: recordingFormat)
+            try rebuildCaptureGraph()
             reconfigurationTask?.cancel()
             reconfigurationTask = nil
             updateRecoveryState(.healthy)
@@ -426,7 +426,7 @@ final class MicRecorder {
     /// stale tap format. Build a completely new graph, while retaining the
     /// session's output file and recording format so capture can continue in
     /// the same artifact.
-    private func rebuildCaptureGraph(recordingFormat: AVAudioFormat) throws {
+    private func rebuildCaptureGraph() throws {
         removeConfigurationChangeObserver()
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
@@ -448,7 +448,6 @@ final class MicRecorder {
         observeConfigurationChanges(for: replacementEngine)
         do {
             try installTapAndStart(inputFormat: inputFormat,
-                                   recordingFormat: recordingFormat,
                                    shouldDrainExistingConverter: false,
                                    stageRecoverySilence: true)
         } catch {
@@ -466,7 +465,6 @@ final class MicRecorder {
     /// configuration-change reinstall.
     private func installTapAndStart(
         inputFormat: AVAudioFormat,
-        recordingFormat: AVAudioFormat,
         shouldDrainExistingConverter: Bool = true,
         stageRecoverySilence: Bool = false
     ) throws {
@@ -603,7 +601,8 @@ final class MicRecorder {
         throw lastError ?? RecorderError.unsupportedInputFormat
     }
 
-    private static func fileSettings(for url: URL, recordingFormat: AVAudioFormat) -> [String: Any] {
+    // AVAudioFile requires this heterogeneous settings dictionary.
+    private static func fileSettings(for url: URL, recordingFormat: AVAudioFormat) -> [String: Any] { // swiftlint:disable:this no_dynamic_any
         if url.pathExtension.lowercased() == "caf" {
             return [
                 AVFormatIDKey: kAudioFormatLinearPCM,
@@ -701,11 +700,11 @@ final class MicRecorder {
                     guard let self, self.isRecording else {
                         return ReconfigurationAttemptResult.stopped
                     }
-                    guard let recordingFormat = self.recordingFormat else {
+                    guard self.recordingFormat != nil else {
                         return ReconfigurationAttemptResult.stopped
                     }
                     do {
-                        try self.rebuildCaptureGraph(recordingFormat: recordingFormat)
+                        try self.rebuildCaptureGraph()
                         NSLog("MicRecorder reconfig retry succeeded")
                         self.reconfigurationTask = nil
                         self.updateRecoveryState(.healthy)

@@ -85,7 +85,8 @@ final class ScreenContextEventCoalescer: @unchecked Sendable {
 final class ScreenContextEventMonitor {
     var onTrigger: ((ScreenCaptureTrigger) -> Void)?
 
-    private var globalMonitor: Any?
+    // AppKit returns and consumes an intentionally opaque monitor token.
+    private var globalMonitor: Any? // swiftlint:disable:this no_dynamic_any
     private var pasteboardTimer: Timer?
     private var eventCoalescer: ScreenContextEventCoalescer?
     private var launchObserver: (any NSObjectProtocol)?

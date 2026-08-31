@@ -219,7 +219,8 @@ enum CotypingAcceptanceChunker {
                 && text[text.index(before: beforeIndex)].isLetter
             if !priorIsLetter { return false }
             if terminalPeriodAbbreviations.contains(
-                trailingLetters(in: text, endingBefore: periodIndex).lowercased()) {
+                CotypingStringScanner.trailingLetters(
+                    in: text, endingBefore: periodIndex).lowercased()) {
                 return false
             }
         }
@@ -334,17 +335,6 @@ enum CotypingAcceptanceChunker {
         "mr", "mrs", "ms", "dr", "st", "vs", "eg", "ie", "etc", "no", "fig", "approx", "inc", "ltd"
     ]
 
-    private static func trailingLetters(in text: String, endingBefore index: String.Index) -> String {
-        var letters: [Character] = []
-        var cursor = index
-        while cursor > text.startIndex {
-            let previous = text.index(before: cursor)
-            guard text[previous].isLetter else { break }
-            letters.append(text[previous])
-            cursor = previous
-        }
-        return String(letters.reversed())
-    }
 }
 
 extension Character {

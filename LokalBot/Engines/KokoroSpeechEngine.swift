@@ -61,18 +61,18 @@ actor KokoroSpeechEngine {
     private static let archiveBytes: Int64 = 349_418_188
     private static let archiveSHA256 = "c133d26353d776da730870dac7da07dbfc9a5e3bc80cc5e8e83ab6e823be7046"
 
-    nonisolated var displayName: String { "Kokoro 82M" }
-
     func prepare(progress: ModelPreparationProgressHandler? = nil) async throws {
-        report(.init(fractionCompleted: nil, status: "Checking..."), to: progress)
+        reportModelPreparation(.init(fractionCompleted: nil, status: "Checking..."), to: progress)
         _ = try SherpaOnnxRuntime.installedRuntime(executableName: Self.executableName)
         if Self.isModelDownloaded {
-            report(.init(fractionCompleted: 1, status: "Ready"), to: progress)
+            reportModelPreparation(.init(fractionCompleted: 1, status: "Ready"), to: progress)
             return
         }
-        report(.init(fractionCompleted: nil, status: "Downloading Kokoro..."), to: progress)
+        reportModelPreparation(
+            .init(fractionCompleted: nil, status: "Downloading Kokoro..."),
+            to: progress)
         _ = try await preparedModelDir()
-        report(.init(fractionCompleted: 1, status: "Ready"), to: progress)
+        reportModelPreparation(.init(fractionCompleted: 1, status: "Ready"), to: progress)
     }
 
     func synthesize(_ request: SpeechSynthesisRequest) async throws -> URL {
@@ -110,12 +110,6 @@ actor KokoroSpeechEngine {
             throw SpeechError.missingOutput
         }
         return output
-    }
-
-    private nonisolated func report(_ update: ModelPreparationUpdate,
-                                    to handler: ModelPreparationProgressHandler?) {
-        guard let handler else { return }
-        Task { @MainActor in handler(update) }
     }
 
     private func preparedModelDir() async throws -> URL {

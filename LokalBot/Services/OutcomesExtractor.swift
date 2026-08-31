@@ -70,7 +70,7 @@ enum OutcomesExtractor {
     /// JSON schema matching `systemPrompt`'s shape, for grammar-constrained
     /// backends. `owner`/`due` are required-but-emptyable rather than optional,
     /// and `for_user` is required so strict grammars keep the object shape fixed.
-    static var schema: [String: Any] {
+    static var schema: JSONObject {
         [
             "type": "object",
             "properties": [
@@ -148,17 +148,17 @@ enum OutcomesExtractor {
     ) -> ParseResult? {
         guard let json = ChatPrompt.extractJSONObject(strippingReasoning(output)),
               let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+              let object = try? JSONValue.decodeObject(from: data) else {
             return nil
         }
         var outcomes = MeetingOutcomes()
         var rejectedActionItems = 0
         var rejectedDecisions = 0
-        for raw in object["action_items"] as? [Any] ?? [] {
-            guard let item = raw as? [String: Any],
+        for raw in object["action_items"]?.arrayValue ?? [] {
+            guard let item = raw.objectValue,
                   let text = cleaned(item["text"]) else { continue }
             let rawOwner = cleaned(item["owner"])
-            let belongsToUser = item["for_user"] as? Bool == true
+            let belongsToUser = item["for_user"]?.boolValue == true
                 || isUserOwner(rawOwner, userSpeakerLabel: userSpeakerLabel)
             let citations = resolveCitations(
                 item["source_segment_ids"], sourceSegments: sourceSegments,
@@ -175,7 +175,7 @@ enum OutcomesExtractor {
                 citations: citations))
         }
         outcomes.actionItems = outcomes.userActionItems + outcomes.otherActionItems
-        for raw in object["decisions"] as? [Any] ?? [] {
+        for raw in object["decisions"]?.arrayValue ?? [] {
             if let text = cleaned(raw), !requireEvidence {
                 outcomes.decisionRecords.append(.init(text: text))
                 continue
@@ -184,7 +184,7 @@ enum OutcomesExtractor {
                 rejectedDecisions += 1
                 continue
             }
-            guard let item = raw as? [String: Any], let text = cleaned(item["text"]) else {
+            guard let item = raw.objectValue, let text = cleaned(item["text"]) else {
                 continue
             }
             let citations = resolveCitations(
@@ -204,12 +204,12 @@ enum OutcomesExtractor {
     }
 
     private static func resolveCitations(
-        _ value: Any?, sourceSegments: [String: Transcript.Segment]?,
+        _ value: JSONValue?, sourceSegments: [String: Transcript.Segment]?,
         meetingID: Meeting.ID?
     ) -> [OutcomeSourceCitation] {
         guard let sourceSegments else { return [] }
         var seen: Set<String> = []
-        return (value as? [Any] ?? []).compactMap { raw in
+        return (value?.arrayValue ?? []).compactMap { raw in
             guard let id = cleaned(raw), !seen.contains(id),
                   let segment = sourceSegments[id] else { return nil }
             seen.insert(id)
@@ -223,12 +223,12 @@ enum OutcomesExtractor {
         }
     }
 
-    private static func strings(_ value: Any?) -> [String] {
-        (value as? [Any] ?? []).compactMap { cleaned($0) }
+    private static func strings(_ value: JSONValue?) -> [String] {
+        (value?.arrayValue ?? []).compactMap { cleaned($0) }
     }
 
-    private static func cleaned(_ value: Any?) -> String? {
-        guard let text = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+    private static func cleaned(_ value: JSONValue?) -> String? {
+        guard let text = value?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty else { return nil }
         return text
     }

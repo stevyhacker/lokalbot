@@ -593,7 +593,7 @@ final class MemoryRoutineScheduler: ObservableObject {
     private let now: () -> Date
     private let canRun: () -> Bool
     private var configuration: Configuration?
-    private var timer: Timer?
+    private var ticker: WallClockTicker?
     private var runTask: Task<Void, Never>?
     private var errorHandler: ((String) -> Void)?
     private var generation = 0
@@ -626,24 +626,20 @@ final class MemoryRoutineScheduler: ObservableObject {
             isRunning = false
             currentKind = nil
         }
-        timer?.invalidate()
-        timer = nil
+        ticker?.invalidate()
+        ticker = nil
         guard configuration.enabled, !configuration.destinationPath.isEmpty else {
             dueCount = 0
             return
         }
-        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
+        ticker = WallClockTicker { [weak self] in self?.tick() }
         tick()
     }
 
     func stop() {
         generation &+= 1
-        timer?.invalidate()
-        timer = nil
+        ticker?.invalidate()
+        ticker = nil
         runTask?.cancel()
         runTask = nil
         isRunning = false

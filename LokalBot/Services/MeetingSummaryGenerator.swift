@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// Token-aware meeting summarization with bounded recovery for models that use
@@ -83,9 +82,8 @@ enum MeetingSummaryGenerator {
             summaryLanguage: language,
             userSpeakerLabel: userSpeakerLabel)
 
-        if FileManager.default.fileExists(atPath: checkpointURL.path) {
-            lokalbotLog("meeting summary resuming checkpointed split extraction")
-            return try await mapReduce(
+        func splitSummary(forceMultipleChunks: Bool) async throws -> String {
+            try await mapReduce(
                 transcript: transcript,
                 turns: turns,
                 engine: engine,
@@ -96,7 +94,12 @@ enum MeetingSummaryGenerator {
                 context: context,
                 contextTokens: contextTokens,
                 checkpointURL: checkpointURL,
-                forceMultipleChunks: true)
+                forceMultipleChunks: forceMultipleChunks)
+        }
+
+        if FileManager.default.fileExists(atPath: checkpointURL.path) {
+            lokalbotLog("meeting summary resuming checkpointed split extraction")
+            return try await splitSummary(forceMultipleChunks: true)
         }
 
         if shouldUseSinglePass(
@@ -123,18 +126,7 @@ enum MeetingSummaryGenerator {
             } catch RecoveryFailure.outputTruncated {
                 lokalbotLog(
                     "meeting summary direct recovery exhausted; switching to split extraction")
-                return try await mapReduce(
-                    transcript: transcript,
-                    turns: turns,
-                    engine: engine,
-                    systemPrompt: systemPrompt,
-                    template: template,
-                    language: language,
-                    userSpeakerLabel: userSpeakerLabel,
-                    context: context,
-                    contextTokens: contextTokens,
-                    checkpointURL: checkpointURL,
-                    forceMultipleChunks: true)
+                return try await splitSummary(forceMultipleChunks: true)
             }
         }
 
@@ -142,18 +134,7 @@ enum MeetingSummaryGenerator {
             "meeting summary using map-reduce inputTokens="
                 + "\(inputTokenEstimate(system: systemPrompt, prompt: directPrompt, context: context)) "
                 + "contextTokens=\(contextTokens)")
-        return try await mapReduce(
-            transcript: transcript,
-            turns: turns,
-            engine: engine,
-            systemPrompt: systemPrompt,
-            template: template,
-            language: language,
-            userSpeakerLabel: userSpeakerLabel,
-            context: context,
-            contextTokens: contextTokens,
-            checkpointURL: checkpointURL,
-            forceMultipleChunks: false)
+        return try await splitSummary(forceMultipleChunks: false)
     }
 
     private static func mapReduce(
@@ -499,9 +480,7 @@ enum MeetingSummaryGenerator {
             chunkSystem,
             chunkText,
         ].joined(separator: "\n<field>\n")
-        return SHA256.hash(data: Data(value.utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
+        return SHA256Digest.hex(of: value)
     }
 
     private static func loadCheckpoint(

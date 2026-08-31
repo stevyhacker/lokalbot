@@ -1,6 +1,53 @@
 import Foundation
 import SQLite3
 
+/// Values accepted by SQLite parameter binding. Keeping this as a closed set
+/// of conformances prevents arbitrary runtime values from reaching SQLite,
+/// while preserving readable heterogeneous binding arrays at call sites.
+protocol SQLiteBinding {
+    func bind(to statement: OpaquePointer, at position: Int32) -> Int32
+}
+
+extension String: SQLiteBinding {
+    func bind(to statement: OpaquePointer, at position: Int32) -> Int32 {
+        sqlite3_bind_text(statement, position, self, -1, SQLiteDatabase.transient)
+    }
+}
+
+extension Double: SQLiteBinding {
+    func bind(to statement: OpaquePointer, at position: Int32) -> Int32 {
+        sqlite3_bind_double(statement, position, self)
+    }
+}
+
+extension Int: SQLiteBinding {
+    func bind(to statement: OpaquePointer, at position: Int32) -> Int32 {
+        sqlite3_bind_int64(statement, position, sqlite3_int64(self))
+    }
+}
+
+extension Int64: SQLiteBinding {
+    func bind(to statement: OpaquePointer, at position: Int32) -> Int32 {
+        sqlite3_bind_int64(statement, position, sqlite3_int64(self))
+    }
+}
+
+extension Data: SQLiteBinding {
+    func bind(to statement: OpaquePointer, at position: Int32) -> Int32 {
+        guard !isEmpty else { return sqlite3_bind_zeroblob(statement, position, 0) }
+        return withUnsafeBytes { bytes in
+            sqlite3_bind_blob(
+                statement, position, bytes.baseAddress, Int32(count), SQLiteDatabase.transient)
+        }
+    }
+}
+
+extension NSNull: SQLiteBinding {
+    func bind(to statement: OpaquePointer, at position: Int32) -> Int32 {
+        sqlite3_bind_null(statement, position)
+    }
+}
+
 /// Small SQLite wrapper shared by the app's indexes and durable queues.
 ///
 /// The checked APIs preserve SQLite failures as typed errors. The legacy
@@ -119,7 +166,7 @@ final class SQLiteDatabase {
         }
     }
 
-    func runChecked(_ sql: String, bind values: [Any] = []) throws {
+    func runChecked(_ sql: String, bind values: [SQLiteBinding] = []) throws {
         try withPreparedStatement(sql, bind: values) { statement in
             try stepToCompletion(statement, sql: sql)
         }
@@ -127,7 +174,7 @@ final class SQLiteDatabase {
 
     /// Executes an already-prepared statement, resetting and rebinding it so
     /// callers can reuse one statement for a batch of rows.
-    func runChecked(_ statement: OpaquePointer, bind values: [Any] = []) throws {
+    func runChecked(_ statement: OpaquePointer, bind values: [SQLiteBinding] = []) throws {
         let resetResult = sqlite3_reset(statement)
         guard resetResult == SQLITE_OK else {
             throw record(.reset(code: resetResult, message: message))
@@ -155,7 +202,7 @@ final class SQLiteDatabase {
         }
     }
 
-    func queryChecked<T>(_ sql: String, bind values: [Any] = [],
+    func queryChecked<T>(_ sql: String, bind values: [SQLiteBinding] = [],
                          row: (OpaquePointer) -> T?) throws -> [T] {
         try withPreparedStatement(sql, bind: values) { statement in
             var rows: [T] = []
@@ -176,7 +223,7 @@ final class SQLiteDatabase {
     /// Stream rows without building an intermediate array. Returning `false`
     /// from `row` intentionally stops iteration (useful for bounded context
     /// assembly); SQLite failures encountered before that point still throw.
-    func forEachRowChecked(_ sql: String, bind values: [Any] = [],
+    func forEachRowChecked(_ sql: String, bind values: [SQLiteBinding] = [],
                            row: (OpaquePointer) -> Bool) throws {
         try withPreparedStatement(sql, bind: values) { statement in
             var result = sqlite3_step(statement)
@@ -190,7 +237,7 @@ final class SQLiteDatabase {
         }
     }
 
-    func firstDoubleChecked(_ sql: String, bind values: [Any] = []) throws -> Double? {
+    func firstDoubleChecked(_ sql: String, bind values: [SQLiteBinding] = []) throws -> Double? {
         try withPreparedStatement(sql, bind: values) { statement in
             let result = sqlite3_step(statement)
             switch result {
@@ -204,7 +251,7 @@ final class SQLiteDatabase {
         }
     }
 
-    func hasRowChecked(_ sql: String, bind values: [Any] = []) throws -> Bool {
+    func hasRowChecked(_ sql: String, bind values: [SQLiteBinding] = []) throws -> Bool {
         try withPreparedStatement(sql, bind: values) { statement in
             let result = sqlite3_step(statement)
             switch result {
@@ -219,7 +266,7 @@ final class SQLiteDatabase {
     }
 
     @discardableResult
-    func withPreparedStatement<T>(_ sql: String, bind values: [Any] = [],
+    func withPreparedStatement<T>(_ sql: String, bind values: [SQLiteBinding] = [],
                                   _ body: (OpaquePointer) throws -> T) throws -> T {
         var statement: OpaquePointer?
         let result = sqlite3_prepare_v2(db, sql, -1, &statement, nil)
@@ -249,7 +296,7 @@ final class SQLiteDatabase {
     }
 
     @discardableResult
-    func run(_ sql: String, bind values: [Any] = []) -> Bool {
+    func run(_ sql: String, bind values: [SQLiteBinding] = []) -> Bool {
         do {
             try runChecked(sql, bind: values)
             return true
@@ -259,7 +306,7 @@ final class SQLiteDatabase {
     }
 
     @discardableResult
-    func run(_ statement: OpaquePointer, bind values: [Any] = []) -> Bool {
+    func run(_ statement: OpaquePointer, bind values: [SQLiteBinding] = []) -> Bool {
         do {
             try runChecked(statement, bind: values)
             return true
@@ -286,20 +333,21 @@ final class SQLiteDatabase {
         }
     }
 
-    func query<T>(_ sql: String, bind values: [Any] = [], row: (OpaquePointer) -> T?) -> [T] {
+    func query<T>(_ sql: String, bind values: [SQLiteBinding] = [],
+                  row: (OpaquePointer) -> T?) -> [T] {
         (try? queryChecked(sql, bind: values, row: row)) ?? []
     }
 
-    func firstDouble(_ sql: String, bind values: [Any] = []) -> Double? {
-        (try? firstDoubleChecked(sql, bind: values)) ?? nil
+    func firstDouble(_ sql: String, bind values: [SQLiteBinding] = []) -> Double? {
+        try? firstDoubleChecked(sql, bind: values)
     }
 
-    func hasRow(_ sql: String, bind values: [Any] = []) -> Bool {
+    func hasRow(_ sql: String, bind values: [SQLiteBinding] = []) -> Bool {
         (try? hasRowChecked(sql, bind: values)) ?? false
     }
 
     @discardableResult
-    func withStatement<T>(_ sql: String, bind values: [Any] = [],
+    func withStatement<T>(_ sql: String, bind values: [SQLiteBinding] = [],
                           _ body: (OpaquePointer) -> T) -> T? {
         try? withPreparedStatement(sql, bind: values, body)
     }
@@ -323,35 +371,10 @@ final class SQLiteDatabase {
         }
     }
 
-    private func bindChecked(_ values: [Any], to statement: OpaquePointer) throws {
+    private func bindChecked(_ values: [SQLiteBinding], to statement: OpaquePointer) throws {
         for (index, value) in values.enumerated() {
             let position = Int32(index + 1)
-            let result: Int32
-            switch value {
-            case let text as String:
-                result = sqlite3_bind_text(statement, position, text, -1, Self.transient)
-            case let number as Double:
-                result = sqlite3_bind_double(statement, position, number)
-            case let number as Int:
-                result = sqlite3_bind_int64(statement, position, sqlite3_int64(number))
-            case let number as Int64:
-                result = sqlite3_bind_int64(statement, position, sqlite3_int64(number))
-            case let data as Data where data.isEmpty:
-                result = sqlite3_bind_zeroblob(statement, position, 0)
-            case let data as Data:
-                result = data.withUnsafeBytes { bytes in
-                    sqlite3_bind_blob(statement, position, bytes.baseAddress,
-                                      Int32(data.count), Self.transient)
-                }
-            case is NSNull:
-                result = sqlite3_bind_null(statement, position)
-            default:
-                let error = DatabaseError.bind(
-                    index: position, code: SQLITE_MISMATCH,
-                    message: "unsupported value type \(type(of: value))")
-                assertionFailure(error.localizedDescription)
-                throw record(error)
-            }
+            let result = value.bind(to: statement, at: position)
             guard result == SQLITE_OK else {
                 throw record(.bind(index: position, code: result, message: message))
             }

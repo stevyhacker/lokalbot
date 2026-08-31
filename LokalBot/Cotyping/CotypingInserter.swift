@@ -74,22 +74,10 @@ final class CotypingInserter {
     @discardableResult
     func insert(_ text: String) -> Bool {
         let scrubbed = text.replacingOccurrences(of: "\r", with: "")
-        guard !scrubbed.isEmpty else { return false }
-        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
-              let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else {
-            return false
-        }
-        let utf16 = Array(scrubbed.utf16)
-        utf16.withUnsafeBufferPointer { buffer in
-            guard let base = buffer.baseAddress else { return }
-            down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: base)
-            up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: base)
-        }
+        guard !scrubbed.isEmpty,
+              let events = Self.unicodeKeyEvents(for: scrubbed) else { return false }
         suppressionController.registerSyntheticInsertion(expectedKeyDownCount: 1)
-        suppressionController.markSynthetic(down)
-        suppressionController.markSynthetic(up)
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
+        post(events)
         return true
     }
 
@@ -98,35 +86,11 @@ final class CotypingInserter {
     /// correction. Backspace is virtual key 51.
     @discardableResult
     func replace(deletingCharacters count: Int, with text: String) -> Bool {
-        let scrubbed = text.replacingOccurrences(of: "\r", with: "")
-        guard CotypingSyntheticEditPolicy.allowsBackwardDeletion(count),
-              count > 0 || !scrubbed.isEmpty else {
-            return false
-        }
-        var events: [CGEvent] = []
-        for _ in 0..<max(0, count) {
-            guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: true),
-                  let up = CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: false) else { return false }
-            events.append(down)
-            events.append(up)
-        }
-        if !scrubbed.isEmpty {
-            guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
-                  let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else { return false }
-            let utf16 = Array(scrubbed.utf16)
-            utf16.withUnsafeBufferPointer { buffer in
-                guard let base = buffer.baseAddress else { return }
-                down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: base)
-                up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: base)
-            }
-            events.append(down)
-            events.append(up)
-        }
-        suppressionController.registerSyntheticInsertion(
-            expectedKeyDownCount: max(0, count) + (scrubbed.isEmpty ? 0 : 1))
-        for event in events { suppressionController.markSynthetic(event) }
-        for event in events { event.post(tap: .cghidEventTap) }
-        return true
+        replace(
+            deletingCharacters: count,
+            with: text,
+            deletionKey: 51,
+            deletionAllowed: CotypingSyntheticEditPolicy.allowsBackwardDeletion(count))
     }
 
     /// Deletes `deletingCharacters` graphemes to the right of the caret (Forward
@@ -134,35 +98,61 @@ final class CotypingInserter {
     /// where the model's first characters are already present after the caret.
     @discardableResult
     func replaceForward(deletingCharacters count: Int, with text: String) -> Bool {
+        replace(
+            deletingCharacters: count,
+            with: text,
+            deletionKey: 117,
+            deletionAllowed: CotypingSyntheticEditPolicy.allowsForwardDeletion(count))
+    }
+
+    private func replace(
+        deletingCharacters count: Int,
+        with text: String,
+        deletionKey: CGKeyCode,
+        deletionAllowed: Bool
+    ) -> Bool {
         let scrubbed = text.replacingOccurrences(of: "\r", with: "")
-        guard CotypingSyntheticEditPolicy.allowsForwardDeletion(count),
-              count > 0 || !scrubbed.isEmpty else {
+        guard deletionAllowed, count > 0 || !scrubbed.isEmpty else {
             return false
         }
         var events: [CGEvent] = []
         for _ in 0..<max(0, count) {
-            guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 117, keyDown: true),
-                  let up = CGEvent(keyboardEventSource: nil, virtualKey: 117, keyDown: false) else { return false }
-            events.append(down)
-            events.append(up)
+            guard let deletionEvents = Self.keyEvents(for: deletionKey) else { return false }
+            events.append(contentsOf: deletionEvents)
         }
         if !scrubbed.isEmpty {
-            guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
-                  let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else { return false }
-            let utf16 = Array(scrubbed.utf16)
-            utf16.withUnsafeBufferPointer { buffer in
-                guard let base = buffer.baseAddress else { return }
-                down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: base)
-                up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: base)
-            }
-            events.append(down)
-            events.append(up)
+            guard let insertionEvents = Self.unicodeKeyEvents(for: scrubbed) else { return false }
+            events.append(contentsOf: insertionEvents)
         }
         suppressionController.registerSyntheticInsertion(
             expectedKeyDownCount: max(0, count) + (scrubbed.isEmpty ? 0 : 1))
+        post(events)
+        return true
+    }
+
+    private func post(_ events: [CGEvent]) {
         for event in events { suppressionController.markSynthetic(event) }
         for event in events { event.post(tap: .cghidEventTap) }
-        return true
+    }
+
+    private static func keyEvents(for key: CGKeyCode) -> [CGEvent]? {
+        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: true),
+              let up = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: false) else {
+            return nil
+        }
+        return [down, up]
+    }
+
+    private static func unicodeKeyEvents(for text: String) -> [CGEvent]? {
+        guard let events = keyEvents(for: 0) else { return nil }
+        let utf16 = Array(text.utf16)
+        utf16.withUnsafeBufferPointer { buffer in
+            guard let base = buffer.baseAddress else { return }
+            for event in events {
+                event.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: base)
+            }
+        }
+        return events
     }
 
     /// Inserts `text` by placing it on the pasteboard and synthesizing a synthetic

@@ -50,7 +50,7 @@ final class MeetingOutcomesGeneratorTests: XCTestCase {
             system: String,
             prompt: String,
             context: [String],
-            schema: [String: Any],
+            schema: JSONObject,
             options: TextGenerationOptions
         ) async throws -> String {
             try await script.next(prompt: prompt, options: options)

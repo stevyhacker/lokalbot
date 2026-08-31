@@ -42,26 +42,7 @@ enum CotypingTextNormalizer {
     /// strip → deterministic space management → safety gate.
     static func normalizeDetailed(_ raw: String, for request: CotypingRequest) -> CotypingNormalizationResult {
         let rawHadContent = !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        var normalized = raw.replacingOccurrences(of: "\r", with: "")
-
-        normalized = CotypingControlTokens.sanitize(normalized)
-        normalized = stripThinkBlocks(normalized)
-
-        if !request.prompt.isEmpty, normalized.hasPrefix(request.prompt) {
-            normalized.removeFirst(request.prompt.count)
-            normalized = normalized.trimmingCharacters(in: .controlCharacters.union(.newlines))
-        }
-        if !request.prefixText.isEmpty, normalized.hasPrefix(request.prefixText) {
-            normalized.removeFirst(request.prefixText.count)
-        }
-
-        normalized = normalized.trimmingCharacters(in: .controlCharacters.union(.newlines))
-        // Drop leading formatting-only newlines before collapsing to one line, so
-        // "\ndelicious" is not misread as an empty first line.
-        normalized = normalized.trimmingCharacters(in: .newlines)
-        normalized = stripLeadingScaffoldingLabels(normalized)
-        normalized = stripBenignInlineMarkup(normalized)
-        normalized = normalized.trimmingCharacters(in: .newlines)
+        var normalized = initiallyNormalized(raw, request: request)
 
         // Instruction-tuned models used as raw continuers occasionally restart
         // from the hidden prompt head. Compare with the exact rendered preface
@@ -74,41 +55,12 @@ enum CotypingTextNormalizer {
             return CotypingNormalizationResult(text: "", suppression: .promptContextLeak)
         }
 
-        if request.isMultiLine {
-            if let blankLine = normalized.range(of: "\n\n") {
-                normalized = String(normalized[..<blankLine.lowerBound])
-            }
-            normalized = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
-        } else if let firstLine = normalized.split(separator: "\n", maxSplits: 1).first {
-            normalized = String(firstLine)
-        }
-
-        // Mid-word: don't re-type the partial word the caret sits in, and (when
-        // strictly inside a word — Cotabby's forceWordContinuation) don't begin
-        // with whitespace, so the suggestion continues the current word instead
-        // of restarting or space-breaking it. The HTTP backend can't mask the
-        // first token like Cotabby's in-process runtime, so it's reproduced here.
-        let partialWord = CotypingMidWord.currentPartialWord(in: request.prefixText)
-        if partialWord.count >= 2, normalized.count > partialWord.count,
-           normalized.lowercased().hasPrefix(partialWord.lowercased()) {
-            normalized = String(normalized.dropFirst(partialWord.count))
-        }
-        if request.forceWordContinuation {
-            normalized = String(normalized.drop(while: { $0.isWhitespace }))
-            if !isPlausibleMidWordContinuation(normalized, trailingText: request.trailingText) {
-                return CotypingNormalizationResult(text: "", suppression: .unsafeToInsert)
-            }
-        }
-        // Caret at the end of a partial word (nothing word-like after it): when
-        // the fragment is not a valid standalone word, a whitespace-leading
-        // continuation would leave broken text ("follo" + " up on that") — reject
-        // it. The in-process runtime's required-prefix decode can't produce this;
-        // the HTTP fallback and misbehaving models can.
-        if !request.forceWordContinuation,
-           request.wordPrefixAtCaret.count >= 2,
-           !request.wordPrefixIsValidWord,
-           let first = normalized.first, first.isWhitespace {
-            return CotypingNormalizationResult(text: "", suppression: .wordCompletionMismatch)
+        normalized = collapseLines(in: normalized, isMultiLine: request.isMultiLine)
+        switch normalizeMidWord(normalized, request: request) {
+        case .accepted(let text):
+            normalized = text
+        case .suppressed(let reason):
+            return CotypingNormalizationResult(text: "", suppression: reason)
         }
 
         if !request.forceWordContinuation, CotypingTrailingDuplicationFilter.duplicatesTrailingText(
@@ -145,6 +97,69 @@ enum CotypingTextNormalizer {
                     normalized: normalized))
         }
         return CotypingNormalizationResult(text: normalized, suppression: nil)
+    }
+
+    private enum NormalizationStep {
+        case accepted(String)
+        case suppressed(CotypingSuppressionReason)
+    }
+
+    private static func initiallyNormalized(
+        _ raw: String,
+        request: CotypingRequest
+    ) -> String {
+        var text = CotypingControlTokens.sanitize(
+            raw.replacingOccurrences(of: "\r", with: ""))
+        text = stripThinkBlocks(text)
+        if !request.prompt.isEmpty, text.hasPrefix(request.prompt) {
+            text.removeFirst(request.prompt.count)
+            text = text.trimmingCharacters(in: .controlCharacters.union(.newlines))
+        }
+        if !request.prefixText.isEmpty, text.hasPrefix(request.prefixText) {
+            text.removeFirst(request.prefixText.count)
+        }
+        text = text.trimmingCharacters(in: .controlCharacters.union(.newlines))
+        // Drop leading formatting-only newlines before collapsing to one line, so
+        // "\ndelicious" is not misread as an empty first line.
+        text = text.trimmingCharacters(in: .newlines)
+        text = stripLeadingScaffoldingLabels(text)
+        text = stripBenignInlineMarkup(text)
+        return text.trimmingCharacters(in: .newlines)
+    }
+
+    private static func collapseLines(in text: String, isMultiLine: Bool) -> String {
+        if isMultiLine {
+            let end = text.range(of: "\n\n")?.lowerBound ?? text.endIndex
+            return String(text[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return text.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? text
+    }
+
+    /// Applies the two mid-word policies without mixing their early exits into
+    /// the rest of the normalization pipeline.
+    private static func normalizeMidWord(
+        _ text: String,
+        request: CotypingRequest
+    ) -> NormalizationStep {
+        var text = text
+        let partialWord = CotypingMidWord.currentPartialWord(in: request.prefixText)
+        if partialWord.count >= 2,
+           text.count > partialWord.count,
+           text.lowercased().hasPrefix(partialWord.lowercased()) {
+            text = String(text.dropFirst(partialWord.count))
+        }
+        if request.forceWordContinuation {
+            text = String(text.drop(while: \.isWhitespace))
+            return isPlausibleMidWordContinuation(text, trailingText: request.trailingText)
+                ? .accepted(text)
+                : .suppressed(.unsafeToInsert)
+        }
+        let breaksPartialWord = request.wordPrefixAtCaret.count >= 2
+            && !request.wordPrefixIsValidWord
+            && text.first?.isWhitespace == true
+        return breaksPartialWord
+            ? .suppressed(.wordCompletionMismatch)
+            : .accepted(text)
     }
 
     private static func conservativeSingleLineContinuation(
@@ -188,7 +203,8 @@ enum CotypingTextNormalizer {
                 && text[text.index(before: beforeIndex)].isLetter
             if !priorIsLetter { return true }
             if nonTerminalPeriodAbbreviations.contains(
-                trailingLetters(in: text, endingBefore: periodIndex).lowercased()) {
+                CotypingStringScanner.trailingLetters(
+                    in: text, endingBefore: periodIndex).lowercased()) {
                 return true
             }
         }
@@ -467,18 +483,6 @@ enum CotypingTextNormalizer {
         "mr", "mrs", "ms", "dr", "st", "vs", "eg", "ie", "etc", "no",
         "fig", "approx", "inc", "ltd"
     ]
-
-    private static func trailingLetters(in text: String, endingBefore index: String.Index) -> String {
-        var letters: [Character] = []
-        var cursor = index
-        while cursor > text.startIndex {
-            let previous = text.index(before: cursor)
-            guard text[previous].isLetter else { break }
-            letters.append(text[previous])
-            cursor = previous
-        }
-        return String(letters.reversed())
-    }
 
     private static func containsPlaceholderText(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

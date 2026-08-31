@@ -236,4 +236,8 @@ enum CotypingState: Equatable, Sendable {
     case generating
     case ready(text: String)
     case failed(String)
+
+    var isGenerating: Bool {
+        if case .generating = self { true } else { false }
+    }
 }

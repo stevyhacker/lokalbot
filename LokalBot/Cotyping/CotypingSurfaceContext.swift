@@ -96,11 +96,6 @@ struct CotypingSurfaceCaptureCache: Sendable {
         return resolved
     }
 
-    mutating func removeAll() {
-        key = nil
-        captured = .empty
-    }
-
     static func key(
         processID: pid_t,
         bundleID: String?,

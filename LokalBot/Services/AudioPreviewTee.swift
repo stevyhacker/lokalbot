@@ -29,7 +29,8 @@ final class AudioPreviewTee {
         }
         self.teeFormat = teeFormat
         self.converter = converter
-        let settings: [String: Any] = [
+        // AVAudioFile requires its heterogeneous settings dictionary.
+        let settings: [String: Any] = [ // swiftlint:disable:this no_dynamic_any
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVSampleRateKey: teeFormat.sampleRate,
             AVNumberOfChannelsKey: 1,

@@ -150,7 +150,9 @@ final class ProcessingPipeline: ObservableObject {
     /// successful meetings are removed (the files on disk are the result).
     @Published private(set) var stages: [Meeting.ID: Stage] = [:]
 
-    private let storage: StorageManager
+    /// Internal so focused feature extensions can share the same storage root
+    /// without turning this already-large orchestrator into a monolith.
+    let storage: StorageManager
     private let settings: () -> AppSettings
     let thinkExecution: ThinkExecution
     private let automationReadiness: AutomationReadiness
@@ -451,226 +453,21 @@ final class ProcessingPipeline: ObservableObject {
     private func process(_ job: Job) async {
         let meeting = job.meeting
         let folder = meeting.folderURL(in: storage)
-        let config = settings()
-        // Automatic work never ambush-downloads a model: park the job instead
-        // (before markStarted, so waiting burns no auto-resume attempts and
-        // the durable row is re-checked on the next launch). A user-initiated
-        // job passes through and downloads on demand.
-        if job.origin == .automatic {
-            let needsTranscription = job.transcribe || !FileManager.default.fileExists(
-                atPath: folder.appendingPathComponent("transcript.json").path)
-            if needsTranscription, !automationReadiness.transcription(config) {
-                waitingForModelsJobs.append(job)
-                stages[meeting.id] = .waitingForModels
-                lokalbotLog(
-                    "pipeline parked meeting=\(meeting.id) waiting for the transcription model")
-                return
-            }
-            // A transcript may already exist because an earlier attempt
-            // completed transcription before parking its summary. Check Think
-            // before markStarted in that case: merely waiting for a model must
-            // never consume the crash-loop attempt budget.
-            if !needsTranscription, job.summarize,
-               !automationReadiness.think(config, storage) {
-                waitingForModelsJobs.append(Job(
-                    meeting: meeting, transcribe: false, summarize: true,
-                    summaryFollowsSetting: job.summaryFollowsSetting,
-                    resumed: job.resumed, origin: .automatic))
-                stages[meeting.id] = .waitingForModels
-                lokalbotLog(
-                    "pipeline parked summary meeting=\(meeting.id) waiting for the Think model")
-                return
-            }
-        }
-        if let jobStore, !jobStore.markStarted(meetingID: meeting.id) {
-            stages[meeting.id] = .failed("Could not durably start this processing job.")
-            return
-        }
-        var transcriptWrittenThisJob = false
+        guard let config = beginProcessing(job, folder: folder) else { return }
         do {
-            if job.transcribe || !FileManager.default.fileExists(
-                atPath: folder.appendingPathComponent("transcript.json").path) {
-                activePhase = .transcribing
-                if let transcriptionStarted {
-                    await transcriptionStarted(meeting.id)
-                }
-                // A fresh enqueue means "transcribe with today's settings" —
-                // stale checkpoints from an earlier failed attempt may have
-                // been produced by a different model. Only a crash resume
-                // trusts them.
-                if !job.resumed { clearCheckpoints(in: folder) }
-                stages[meeting.id] = .preparingTranscriptionModel
-                let engine = config.transcriptionEngine()   // engines prepare lazily inside transcribe
-
-                stages[meeting.id] = .transcribing
-                var transcript = try await transcribeTracks(meeting: meeting, folder: folder,
-                                                            engine: engine, config: config)
-                // Before diarization, while speakers are still the raw track
-                // labels: drop mic segments that are only the remote voice
-                // leaking back in through the speakers.
-                let bleed = SpeakerBleedFilter.filter(transcript)
-                transcript = bleed.transcript
-                if bleed.changed {
-                    lokalbotLog(
-                        "transcript speaker bleed removedSegments=\(bleed.removedSegments) "
-                            + "removedWords=\(bleed.removedWords)")
-                }
-                if config.multiSpeakerDiarization,
-                   MeetingAudioFiles.transcribableURL(for: .system, in: folder) != nil {
-                    stages[meeting.id] = .preparingDiarizationModel
-                    await prepareDiarizationModels()
-                    stages[meeting.id] = .diarizing
-                    transcript = await refineSpeakers(
-                        transcript: transcript,
-                        meeting: meeting,
-                        folder: folder,
-                        config: config,
-                        modelsPrepared: true)
-                }
-                transcript = SpeakerAutoNamer.applyingAliases(
-                    to: transcript,
-                    participants: meeting.resolvedCalendarParticipantIdentities)
-                let mergedSanitization = TranscriptSanitizer.sanitize(transcript)
-                transcript = mergedSanitization.transcript
-                if mergedSanitization.changed {
-                    lokalbotLog(
-                        "transcript cleanup after merge changedSegments="
-                            + "\(mergedSanitization.changedSegments) removedWords="
-                            + "\(mergedSanitization.removedWords) removedCharacters="
-                            + "\(mergedSanitization.removedCharacters)")
-                }
-                try write(transcript, to: folder)
-                // A finalized AAC track makes its CAF duplicate redundant. A
-                // crash-recovery CAF remains when the AAC container is broken,
-                // preserving playable audio after the transcript is written.
-                MeetingAudioFiles.removeRedundantRecoveryFiles(in: folder)
-                clearCheckpoints(in: folder)
-                transcriptWrittenThisJob = true
-            }
+            let transcriptWrittenThisJob = try await transcribeIfNeeded(
+                job,
+                folder: folder,
+                config: config)
             let resolvedJob = activeJob ?? job
             activePhase = .summarizing
-            if resolvedJob.summarize {
-                // Missing Think model on automatic work: keep the transcript
-                // that just landed and park only the summary. The durable row
-                // stays pending, so the summary still happens once the model
-                // is downloaded (or the user asks explicitly).
-                if resolvedJob.origin == .automatic,
-                   !automationReadiness.think(config, storage) {
-                    waitingForModelsJobs.append(Job(
-                        meeting: meeting, transcribe: false, summarize: true,
-                        summaryFollowsSetting: resolvedJob.summaryFollowsSetting,
-                        resumed: resolvedJob.resumed, origin: .automatic))
-                    stages[meeting.id] = .waitingForModels
-                    lokalbotLog(
-                        "pipeline parked summary meeting=\(meeting.id) waiting for the Think model")
-                    if transcriptWrittenThisJob { onArtifactsWritten?(meeting) }
-                    return
-                }
-                if config.summarizerBackend == .builtIn {
-                    stages[meeting.id] = .preparingSummaryModel
-                    _ = try await thinkExecution.prepareBuiltInModel(config)
-                }
-                stages[meeting.id] = .summarizing
-                var transcript = try loadTranscript(from: folder)
-                let sanitization = TranscriptSanitizer.sanitize(transcript)
-                if sanitization.changed {
-                    transcript = sanitization.transcript
-                    try write(transcript, to: folder)
-                    lokalbotLog(
-                        "transcript cleanup before summary changedSegments="
-                            + "\(sanitization.changedSegments) removedWords="
-                            + "\(sanitization.removedWords) removedCharacters="
-                            + "\(sanitization.removedCharacters)")
-                }
-                // The default built-in server supports continuous batching.
-                // A single-pass outcomes extraction is independent of the
-                // summary, so overlap those two reads of the transcript. Long
-                // outcomes scans stay serial to bound local model pressure.
-                let outcomeContext = MeetingNotes.promptContext(in: folder)
-                let outcomeUserLabel = transcript.displaySpeaker(for: "me")
-                let outcomeContextTokens = MeetingSummaryGenerator.contextTokenLimit(
-                    for: config.summarizerBackend)
-                let outcomeLanguage = SummaryLanguage.resolvedForTranscript(
-                    config.summaryLanguage,
-                    transcript: transcript)
-                let concurrentOutcomes = Self.shouldExtractOutcomesConcurrently(
-                    canUseSinglePass: MeetingOutcomesGenerator.canUseSinglePass(
-                        transcript: transcript,
-                        userSpeakerLabel: outcomeUserLabel,
-                        context: outcomeContext,
-                        contextTokens: outcomeContextTokens,
-                        outputLanguage: outcomeLanguage),
-                    backend: config.summarizerBackend)
-                let outcomesTask: Task<MeetingOutcomes?, Never>? = concurrentOutcomes
-                    ? Task { [weak self] in
-                        guard let self else { return nil }
-                        return await self.extractOutcomes(
-                            transcript: transcript,
-                            meetingID: meeting.id,
-                            folder: folder,
-                            config: config,
-                            context: outcomeContext)
-                    }
-                    : nil
-                let summary: String
-                do {
-                    do {
-                        summary = try await summarize(transcript, meeting: meeting, config: config)
-                    } catch {
-                        guard let delay = thinkExecution.retryDelay(
-                            for: error,
-                            settings: config,
-                            attempt: 0) else { throw error }
-                        // One bounded retry for transient network, rate-limit,
-                        // or server failures. Deterministic 4xx/schema/payload
-                        // failures surface immediately instead of doubling work.
-                        lokalbotLog(
-                            "summary retry delay=\(String(format: "%.2f", delay))s "
-                                + "after error=\(error.localizedDescription)")
-                        try await Task.sleep(
-                            nanoseconds: UInt64(delay * 1_000_000_000))
-                        summary = try await summarize(transcript, meeting: meeting, config: config)
-                    }
-                } catch {
-                    await Self.cancelAndWaitForOutcomes(outcomesTask)
-                    throw error
-                }
-                try summary.data(using: .utf8)?.write(
-                    to: folder.appendingPathComponent("summary.md"), options: .atomic)
-                MeetingSummaryGenerator.removeCheckpoint(in: folder)
-                let extractedOutcomes: MeetingOutcomes?
-                if let outcomesTask {
-                    extractedOutcomes = await outcomesTask.value
-                } else {
-                    extractedOutcomes = await extractOutcomes(
-                        transcript: transcript,
-                        meetingID: meeting.id,
-                        folder: folder,
-                        config: config,
-                        context: outcomeContext)
-                }
-                // The grounded artifact is the only authority for outcome
-                // sections. On a non-fatal extraction failure, mirror the
-                // last successful artifact (or an empty one) so the summary
-                // can never disagree with the cards beside it.
-                let authoritativeOutcomes = extractedOutcomes
-                    ?? MeetingOutcomes.load(from: folder)
-                    ?? MeetingOutcomes()
-                let synchronizedSummary = MeetingSummaryOutcomeSynchronizer.synchronize(
-                    summary,
-                    outcomes: authoritativeOutcomes,
-                    template: config.noteTemplate)
-                try synchronizedSummary.data(using: .utf8)?.write(
-                    to: folder.appendingPathComponent("summary.md"), options: .atomic)
-            }
-            if let jobStore, !jobStore.markCompleted(meetingID: meeting.id) {
-                stages[meeting.id] = .failed(
-                    "Artifacts were saved, but the durable processing queue could not be completed.")
-                onArtifactsWritten?(meeting)
-                return
-            }
-            stages[meeting.id] = nil
-            onArtifactsWritten?(meeting)
+            guard try await summarizeIfNeeded(
+                resolvedJob,
+                folder: folder,
+                config: config,
+                transcriptWrittenThisJob: transcriptWrittenThisJob
+            ) else { return }
+            completeProcessing(resolvedJob)
         } catch {
             // The persisted job row stays — the next launch re-enqueues it
             // (until the attempt cap) so a crash or transient failure never
@@ -679,6 +476,319 @@ final class ProcessingPipeline: ObservableObject {
             jobStore?.markFailed(meetingID: meeting.id, message: error.localizedDescription)
             stages[meeting.id] = .failed(error.localizedDescription)
         }
+    }
+
+    private func summarizeIfNeeded(
+        _ job: Job,
+        folder: URL,
+        config: AppSettings,
+        transcriptWrittenThisJob: Bool
+    ) async throws -> Bool {
+        guard job.summarize else { return true }
+        guard !parkAutomaticSummaryIfNeeded(
+            job,
+            config: config,
+            transcriptWrittenThisJob: transcriptWrittenThisJob
+        ) else { return false }
+        if config.summarizerBackend == .builtIn {
+            stages[job.meeting.id] = .preparingSummaryModel
+            _ = try await thinkExecution.prepareBuiltInModel(config)
+        }
+        stages[job.meeting.id] = .summarizing
+        let transcript = try sanitizedTranscriptForSummary(in: folder)
+        try await generateSummaryArtifacts(
+            transcript: transcript,
+            meeting: job.meeting,
+            folder: folder,
+            config: config)
+        return true
+    }
+
+    private func parkAutomaticSummaryIfNeeded(
+        _ job: Job,
+        config: AppSettings,
+        transcriptWrittenThisJob: Bool
+    ) -> Bool {
+        guard job.origin == .automatic,
+              !automationReadiness.think(config, storage) else { return false }
+        waitingForModelsJobs.append(Job(
+            meeting: job.meeting,
+            transcribe: false,
+            summarize: true,
+            summaryFollowsSetting: job.summaryFollowsSetting,
+            resumed: job.resumed,
+            origin: .automatic))
+        stages[job.meeting.id] = .waitingForModels
+        lokalbotLog(
+            "pipeline parked summary meeting=\(job.meeting.id) waiting for the Think model")
+        if transcriptWrittenThisJob { onArtifactsWritten?(job.meeting) }
+        return true
+    }
+
+    private func sanitizedTranscriptForSummary(in folder: URL) throws -> Transcript {
+        let transcript = try loadTranscript(from: folder)
+        let sanitization = TranscriptSanitizer.sanitize(transcript)
+        guard sanitization.changed else { return transcript }
+        try write(sanitization.transcript, to: folder)
+        lokalbotLog(
+            "transcript cleanup before summary changedSegments="
+                + "\(sanitization.changedSegments) removedWords="
+                + "\(sanitization.removedWords) removedCharacters="
+                + "\(sanitization.removedCharacters)")
+        return sanitization.transcript
+    }
+
+    private func generateSummaryArtifacts(
+        transcript: Transcript,
+        meeting: Meeting,
+        folder: URL,
+        config: AppSettings
+    ) async throws {
+        let outcomeContext = try MeetingNotes.promptContext(in: folder)
+        let outcomesTask = concurrentOutcomesTask(
+            transcript: transcript,
+            meeting: meeting,
+            folder: folder,
+            config: config,
+            context: outcomeContext)
+        let summary: String
+        do {
+            summary = try await summarizeWithRetry(
+                transcript,
+                meeting: meeting,
+                config: config)
+        } catch {
+            await Self.cancelAndWaitForOutcomes(outcomesTask)
+            throw error
+        }
+        try writeSummary(summary, to: folder)
+        MeetingSummaryGenerator.removeCheckpoint(in: folder)
+        let outcomes = await resolvedOutcomes(
+            task: outcomesTask,
+            transcript: transcript,
+            meeting: meeting,
+            folder: folder,
+            config: config,
+            context: outcomeContext)
+        let authoritative = outcomes
+            ?? MeetingOutcomes.load(from: folder)
+            ?? MeetingOutcomes()
+        let synchronized = MeetingSummaryOutcomeSynchronizer.synchronize(
+            summary,
+            outcomes: authoritative,
+            template: config.noteTemplate)
+        try writeSummary(synchronized, to: folder)
+    }
+
+    private func concurrentOutcomesTask(
+        transcript: Transcript,
+        meeting: Meeting,
+        folder: URL,
+        config: AppSettings,
+        context: [String]
+    ) -> Task<MeetingOutcomes?, Never>? {
+        let canUseSinglePass = MeetingOutcomesGenerator.canUseSinglePass(
+            transcript: transcript,
+            userSpeakerLabel: transcript.displaySpeaker(for: "me"),
+            context: context,
+            contextTokens: MeetingSummaryGenerator.contextTokenLimit(
+                for: config.summarizerBackend),
+            outputLanguage: SummaryLanguage.resolvedForTranscript(
+                config.summaryLanguage,
+                transcript: transcript))
+        guard Self.shouldExtractOutcomesConcurrently(
+            canUseSinglePass: canUseSinglePass,
+            backend: config.summarizerBackend
+        ) else { return nil }
+        return Task { [weak self] in
+            guard let self else { return nil }
+            return await self.extractOutcomes(
+                transcript: transcript,
+                meetingID: meeting.id,
+                folder: folder,
+                config: config,
+                context: context)
+        }
+    }
+
+    private func summarizeWithRetry(
+        _ transcript: Transcript,
+        meeting: Meeting,
+        config: AppSettings
+    ) async throws -> String {
+        do {
+            return try await summarize(transcript, meeting: meeting, config: config)
+        } catch {
+            guard let delay = thinkExecution.retryDelay(
+                for: error,
+                settings: config,
+                attempt: 0
+            ) else { throw error }
+            lokalbotLog(
+                "summary retry delay=\(String(format: "%.2f", delay))s "
+                    + "after error=\(error.localizedDescription)")
+            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            return try await summarize(transcript, meeting: meeting, config: config)
+        }
+    }
+
+    private func resolvedOutcomes(
+        task: Task<MeetingOutcomes?, Never>?,
+        transcript: Transcript,
+        meeting: Meeting,
+        folder: URL,
+        config: AppSettings,
+        context: [String]
+    ) async -> MeetingOutcomes? {
+        if let task { return await task.value }
+        return await extractOutcomes(
+            transcript: transcript,
+            meetingID: meeting.id,
+            folder: folder,
+            config: config,
+            context: context)
+    }
+
+    private func writeSummary(_ summary: String, to folder: URL) throws {
+        try summary.data(using: .utf8)?.write(
+            to: folder.appendingPathComponent("summary.md"),
+            options: .atomic)
+    }
+
+    private func beginProcessing(_ job: Job, folder: URL) -> AppSettings? {
+        let config = settings()
+        guard !parkBeforeStartingIfNeeded(job, folder: folder, config: config) else {
+            return nil
+        }
+        if let jobStore, !jobStore.markStarted(meetingID: job.meeting.id) {
+            stages[job.meeting.id] = .failed("Could not durably start this processing job.")
+            return nil
+        }
+        return config
+    }
+
+    private func completeProcessing(_ job: Job) {
+        if let jobStore, !jobStore.markCompleted(meetingID: job.meeting.id) {
+            stages[job.meeting.id] = .failed(
+                "Artifacts were saved, but the durable processing queue could not be completed.")
+        } else {
+            stages[job.meeting.id] = nil
+        }
+        onArtifactsWritten?(job.meeting)
+    }
+
+    private func parkBeforeStartingIfNeeded(
+        _ job: Job,
+        folder: URL,
+        config: AppSettings
+    ) -> Bool {
+        guard job.origin == .automatic else { return false }
+        let requiresTranscription = needsTranscription(job, folder: folder)
+        if requiresTranscription, !automationReadiness.transcription(config) {
+            park(job, reason: "transcription")
+            return true
+        }
+        guard !requiresTranscription,
+              job.summarize,
+              !automationReadiness.think(config, storage) else { return false }
+        park(
+            Job(
+                meeting: job.meeting,
+                transcribe: false,
+                summarize: true,
+                summaryFollowsSetting: job.summaryFollowsSetting,
+                resumed: job.resumed,
+                origin: .automatic),
+            reason: "Think")
+        return true
+    }
+
+    private func needsTranscription(_ job: Job, folder: URL) -> Bool {
+        job.transcribe || !FileManager.default.fileExists(
+            atPath: folder.appendingPathComponent("transcript.json").path)
+    }
+
+    private func park(_ job: Job, reason: String) {
+        waitingForModelsJobs.append(job)
+        stages[job.meeting.id] = .waitingForModels
+        lokalbotLog(
+            "pipeline parked meeting=\(job.meeting.id) waiting for the \(reason) model")
+    }
+
+    private func transcribeIfNeeded(
+        _ job: Job,
+        folder: URL,
+        config: AppSettings
+    ) async throws -> Bool {
+        guard needsTranscription(job, folder: folder) else { return false }
+        activePhase = .transcribing
+        if let transcriptionStarted {
+            await transcriptionStarted(job.meeting.id)
+        }
+        if !job.resumed { clearCheckpoints(in: folder) }
+        stages[job.meeting.id] = .preparingTranscriptionModel
+        let engine = config.transcriptionEngine()
+        stages[job.meeting.id] = .transcribing
+        var transcript = try await transcribeTracks(
+            folder: folder,
+            engine: engine,
+            config: config)
+        transcript = filterSpeakerBleed(transcript)
+        transcript = await diarizeIfNeeded(
+            transcript,
+            meeting: job.meeting,
+            folder: folder,
+            config: config)
+        transcript = SpeakerAutoNamer.applyingAliases(
+            to: transcript,
+            participants: job.meeting.resolvedCalendarParticipantIdentities)
+        transcript = sanitizeMergedTranscript(transcript)
+        try write(transcript, to: folder)
+        MeetingAudioFiles.removeRedundantRecoveryFiles(in: folder)
+        clearCheckpoints(in: folder)
+        return true
+    }
+
+    private func filterSpeakerBleed(_ transcript: Transcript) -> Transcript {
+        let result = SpeakerBleedFilter.filter(transcript)
+        if result.changed {
+            lokalbotLog(
+                "transcript speaker bleed removedSegments=\(result.removedSegments) "
+                    + "removedWords=\(result.removedWords)")
+        }
+        return result.transcript
+    }
+
+    private func diarizeIfNeeded(
+        _ transcript: Transcript,
+        meeting: Meeting,
+        folder: URL,
+        config: AppSettings
+    ) async -> Transcript {
+        guard config.multiSpeakerDiarization,
+              MeetingAudioFiles.transcribableURL(for: .system, in: folder) != nil else {
+            return transcript
+        }
+        stages[meeting.id] = .preparingDiarizationModel
+        await prepareDiarizationModels()
+        stages[meeting.id] = .diarizing
+        return await refineSpeakers(
+            transcript: transcript,
+            folder: folder,
+            config: config,
+            modelsPrepared: true)
+    }
+
+    private func sanitizeMergedTranscript(_ transcript: Transcript) -> Transcript {
+        let result = TranscriptSanitizer.sanitize(transcript)
+        if result.changed {
+            lokalbotLog(
+                "transcript cleanup after merge changedSegments="
+                    + "\(result.changedSegments) removedWords="
+                    + "\(result.removedWords) removedCharacters="
+                    + "\(result.removedCharacters)")
+        }
+        return result.transcript
     }
 
     // MARK: - Transcription
@@ -722,7 +832,7 @@ final class ProcessingPipeline: ObservableObject {
         }
     }
 
-    private func transcribeTracks(meeting: Meeting, folder: URL,
+    private func transcribeTracks(folder: URL,
                                   engine: TranscriptionEngine, config: AppSettings) async throws -> Transcript {
         let language = config.transcriptionLanguage.code
         var tracks: [Transcript] = []
@@ -849,7 +959,6 @@ final class ProcessingPipeline: ObservableObject {
     /// crashes the pipeline — a diarization failure just leaves the
     /// pre-existing labels alone.
     private func refineSpeakers(transcript: Transcript,
-                                meeting: Meeting,
                                 folder: URL,
                                 config: AppSettings,
                                 modelsPrepared: Bool = false) async -> Transcript {
@@ -945,7 +1054,7 @@ final class ProcessingPipeline: ObservableObject {
         // Quick notes the user typed during the meeting ride along as context
         // in the final pass (both paths) — they're the user's own words, so
         // the summary should fold them in rather than rediscover them.
-        let noteContext = MeetingNotes.promptContext(in: meeting.folderURL(in: storage))
+        let noteContext = try MeetingNotes.promptContext(in: meeting.folderURL(in: storage))
         let body = try await MeetingSummaryGenerator.generate(
             transcript: transcript,
             engine: engine,
@@ -1027,123 +1136,6 @@ final class ProcessingPipeline: ObservableObject {
         guard let task else { return }
         task.cancel()
         _ = await task.value
-    }
-
-    /// Day digest (M4/M6) — shared by the Timeline UI, scheduler, and
-    /// `--digest`. The model writes only the task-first overview. LokalBot
-    /// renders the complete chronological activity/meeting log and time table
-    /// directly as optional evidence, so filtering summary noise never loses
-    /// the underlying workday record.
-    func generateDayDigest(
-        for day: Date,
-        blocks: [ActivityBlock],
-        meetings: [Meeting],
-        screenContexts: [DayScreenContext],
-        config: AppSettings
-    ) async throws -> DayDigestGenerationResult {
-        let evidence = DayDigestEvidence.build(
-            day: day,
-            blocks: blocks,
-            screenContexts: screenContexts,
-            meetings: dayMeetingEvidence(meetings))
-
-        let overview: DayDigestOverviewGeneration
-        if evidence.isEmpty {
-            overview = DayDigestOverviewGeneration(
-                summary: DayDigestOverviewGenerator.fallback(evidence),
-                quality: .complete)
-        } else {
-            do {
-                try Task.checkCancellation()
-                let engine = try await thinkExecution.makeTextEngine(
-                    config,
-                    purpose: "day digest")
-                overview = try await generateDayOverview(
-                    evidence: evidence,
-                    engine: engine,
-                    customPrompt: config.dayDigestCustomPrompt)
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                lokalbotLog(
-                    "day digest overview fallback error=\(error.localizedDescription)")
-                overview = DayDigestOverviewGeneration(
-                    summary: DayDigestOverviewGenerator.fallback(evidence),
-                    quality: .fallback)
-            }
-        }
-
-        try Task.checkCancellation()
-        let text = evidence.renderDocument(summary: overview.summary)
-        let name = DreamDay.key(for: day)
-        let url = storage.rootURL.appendingPathComponent("journal/\(name).md")
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try text.write(to: url, atomically: true, encoding: .utf8)
-        try DayDigestGenerationMetadataStore.record(
-            quality: overview.quality,
-            evidenceLatestAt: evidence.latestEvidenceAt,
-            for: url)
-        return DayDigestGenerationResult(
-            text: text,
-            url: url,
-            quality: overview.quality)
-    }
-
-    /// Code owns evidence coverage and persistence. The model rejects
-    /// metadata-only segments, extracts substantive work, and groups it by task.
-    private func generateDayOverview(
-        evidence: DayDigestEvidence,
-        engine: TextEngine,
-        customPrompt: String
-    ) async throws -> DayDigestOverviewGeneration {
-        try await DayDigestOverviewGenerator.generateResult(
-            evidence: evidence,
-            engine: engine,
-            customPrompt: customPrompt)
-    }
-
-    private func dayMeetingEvidence(_ meetings: [Meeting]) -> [DayDigestMeetingEvidence] {
-        meetings.compactMap { meeting in
-            guard let endedAt = meeting.endedAt else { return nil }
-            let folder = meeting.folderURL(in: storage)
-            let sourceSummary = (try? String(
-                contentsOf: folder.appendingPathComponent("summary.md"),
-                encoding: .utf8)) ?? ""
-            let outcomes = MeetingOutcomes.load(from: folder).map(Self.renderOutcomes) ?? ""
-            return DayDigestMeetingEvidence(
-                id: meeting.id,
-                title: meeting.title,
-                app: meeting.appName,
-                startedAt: meeting.startedAt,
-                endedAt: endedAt,
-                sourceSummary: sourceSummary,
-                outcomes: outcomes,
-                artifactModifiedAt: DayDigestMeetingArtifacts.latestModifiedAt(in: folder))
-        }
-    }
-
-    private nonisolated static func renderOutcomes(_ outcomes: MeetingOutcomes) -> String {
-        var lines: [String] = []
-        if !outcomes.actionItems.isEmpty {
-            lines.append("Action items:")
-            for item in outcomes.actionItems {
-                var details: [String] = []
-                if let owner = item.owner, !owner.isEmpty { details.append("owner: \(owner)") }
-                if let due = item.due, !due.isEmpty { details.append("due: \(due)") }
-                lines.append("- " + item.text
-                    + (details.isEmpty ? "" : " (\(details.joined(separator: ", ")))"))
-            }
-        }
-        if !outcomes.decisions.isEmpty {
-            lines.append("Decisions:")
-            lines += outcomes.decisions.map { "- \($0)" }
-        }
-        if !outcomes.openQuestions.isEmpty {
-            lines.append("Open questions:")
-            lines += outcomes.openQuestions.map { "- \($0)" }
-        }
-        return lines.joined(separator: "\n")
     }
 
     enum PipelineError: LocalizedError {

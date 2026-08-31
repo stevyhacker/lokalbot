@@ -65,15 +65,7 @@ final class DictationInputMonitor {
     /// Returns true when the original event should be swallowed.
     func handle(type: CGEventType, event: CGEvent) -> Bool {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            // A disabled event tap can swallow the physical key-up. Treat the
-            // disable notification as a fail-safe release before re-enabling,
-            // otherwise push-to-talk may record indefinitely.
-            let shouldStop = shortcutIsDown && activeTriggerMode == .pushToTalk
-            shortcutIsDown = false
-            activeTriggerMode = nil
-            activeShortcut = nil
-            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
-            if shouldStop { onStop?() }
+            recoverDisabledTap()
             return false
         }
         guard type == .keyDown || type == .keyUp else { return false }
@@ -90,43 +82,68 @@ final class DictationInputMonitor {
             : triggerModeProvider()
         switch triggerMode {
         case .pushToTalk:
-            if type == .keyDown {
-                let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-                if !shortcutIsDown && !isRepeat {
-                    shortcutIsDown = true
-                    activeTriggerMode = .pushToTalk
-                    activeShortcut = shortcut
-                    onStart?()
-                }
-            } else {
-                if shortcutIsDown {
-                    shortcutIsDown = false
-                    activeTriggerMode = nil
-                    activeShortcut = nil
-                    onStop?()
-                }
-            }
+            handlePushToTalk(type: type, event: event, shortcut: shortcut)
         case .toggle:
-            if type == .keyDown {
-                let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-                if !shortcutIsDown && !isRepeat {
-                    shortcutIsDown = true
-                    activeTriggerMode = .toggle
-                    activeShortcut = shortcut
-                    onToggle?()
-                }
-            } else {
-                shortcutIsDown = false
-                activeTriggerMode = nil
-                activeShortcut = nil
-            }
+            handleToggle(type: type, event: event, shortcut: shortcut)
         }
         return true
+    }
+
+    /// A disabled event tap can swallow the physical key-up. Treat the
+    /// notification as a fail-safe release before re-enabling the tap.
+    private func recoverDisabledTap() {
+        let shouldStop = shortcutIsDown && activeTriggerMode == .pushToTalk
+        clearHeldShortcut()
+        if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+        if shouldStop { onStop?() }
+    }
+
+    private func handlePushToTalk(
+        type: CGEventType,
+        event: CGEvent,
+        shortcut: DictationShortcut
+    ) {
+        if type == .keyDown {
+            guard !shortcutIsDown, !isRepeat(event) else { return }
+            shortcutIsDown = true
+            activeTriggerMode = .pushToTalk
+            activeShortcut = shortcut
+            onStart?()
+        } else if shortcutIsDown {
+            clearHeldShortcut()
+            onStop?()
+        }
+    }
+
+    private func handleToggle(
+        type: CGEventType,
+        event: CGEvent,
+        shortcut: DictationShortcut
+    ) {
+        guard type == .keyDown else {
+            clearHeldShortcut()
+            return
+        }
+        guard !shortcutIsDown, !isRepeat(event) else { return }
+        shortcutIsDown = true
+        activeTriggerMode = .toggle
+        activeShortcut = shortcut
+        onToggle?()
+    }
+
+    private func clearHeldShortcut() {
+        shortcutIsDown = false
+        activeTriggerMode = nil
+        activeShortcut = nil
+    }
+
+    private func isRepeat(_ event: CGEvent) -> Bool {
+        event.getIntegerValueField(.keyboardEventAutorepeat) != 0
     }
 }
 
 private func dictationShortcutCallback(
-    _ proxy: CGEventTapProxy,
+    _: CGEventTapProxy,
     _ type: CGEventType,
     _ event: CGEvent,
     _ userInfo: UnsafeMutableRawPointer?

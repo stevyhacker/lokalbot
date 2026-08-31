@@ -16,9 +16,9 @@ protocol TextEngine {
     /// default ignores the schema, so callers must keep their tolerant-parse
     /// fallback for backends that can't constrain (Apple Intelligence).
     func generate(system: String, prompt: String, context: [String],
-                  schema: [String: Any]) async throws -> String
+                  schema: JSONObject) async throws -> String
     func generate(system: String, prompt: String, context: [String],
-                  schema: [String: Any],
+                  schema: JSONObject,
                   options: TextGenerationOptions) async throws -> String
 
     /// Low-latency raw text continuation for cotyping (inline autocomplete).
@@ -33,6 +33,18 @@ protocol TextEngine {
     /// non-streaming; `OpenAICompatibleEngine` overrides it with SSE.
     func completeStreaming(_ request: CompletionRequest,
                            onPartial: @escaping @Sendable (String) -> Void) async throws -> String
+}
+
+/// Shared adapter for HTTP chat backends. Each backend owns one request path;
+/// the four public generation overloads only select schema/options.
+protocol ChatTextEngine: TextEngine {
+    func chat(
+        system: String,
+        prompt: String,
+        context: [String],
+        schema: JSONObject?,
+        options: TextGenerationOptions?
+    ) async throws -> String
 }
 
 /// Per-request generation controls shared by the local chat backends. A nil
@@ -133,9 +145,9 @@ enum TextEngineError: LocalizedError, Sendable {
     }
 
     private static func serverErrorDetail(_ data: Data) -> String {
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let error = json["error"] as? [String: Any],
-           let message = error["message"] as? String {
+        if let json = try? JSONValue.decodeObject(from: data),
+           let error = json["error"]?.objectValue,
+           let message = error["message"]?.stringValue {
             return clipped(message)
         }
         guard let text = String(data: data, encoding: .utf8)?
@@ -172,60 +184,68 @@ enum TextEngineRetryPolicy {
 /// invariants LokalBot relies on locally so malformed schemas never consume a
 /// remote request merely to receive a deterministic 400 response.
 enum OpenAIStrictSchemaValidator {
-    static func validationIssue(in schema: [String: Any]) -> String? {
-        guard schema["type"] as? String == "object" else {
+    static func validationIssue(in schema: JSONObject) -> String? {
+        guard schema["type"]?.stringValue == "object" else {
             return "$ must be an object schema"
         }
         return validationIssue(in: schema, path: "$")
     }
 
-    private static func validationIssue(in node: [String: Any], path: String) -> String? {
-        if let variants = node["anyOf"] as? [[String: Any]] {
+    private static func validationIssue(in node: JSONObject, path: String) -> String? {
+        anyOfIssue(in: node, path: path)
+            ?? objectIssue(in: node, path: path)
+            ?? arrayIssue(in: node, path: path)
+            ?? definitionsIssue(in: node, path: path)
+    }
+
+    private static func anyOfIssue(in node: JSONObject, path: String) -> String? {
+        if let variants = node["anyOf"]?.objectArrayValue {
             for (index, variant) in variants.enumerated() {
                 if let issue = validationIssue(in: variant, path: "\(path).anyOf[\(index)]") {
                     return issue
                 }
             }
         }
+        return nil
+    }
 
-        let isObject = node["type"] as? String == "object"
-            || (node["type"] as? [String])?.contains("object") == true
-        if isObject {
-            guard node["additionalProperties"] as? Bool == false else {
-                return "\(path) must set additionalProperties to false"
+    private static func objectIssue(in node: JSONObject, path: String) -> String? {
+        guard schema(node, containsType: "object") else { return nil }
+        guard node["additionalProperties"]?.boolValue == false else {
+            return "\(path) must set additionalProperties to false"
+        }
+        guard let properties = node["properties"]?.objectValue else {
+            return "\(path) must declare properties"
+        }
+        let required = Set(node["required"]?.stringArrayValue ?? [])
+        let propertyNames = Set(properties.keys)
+        guard required == propertyNames else {
+            let missing = propertyNames.subtracting(required).sorted().joined(separator: ", ")
+            return "\(path) must require every property; missing: \(missing)"
+        }
+        for name in properties.keys.sorted() {
+            guard let property = properties[name]?.objectValue else {
+                return "\(path).properties.\(name) is not a schema object"
             }
-            guard let properties = node["properties"] as? [String: Any] else {
-                return "\(path) must declare properties"
-            }
-            let required = Set(node["required"] as? [String] ?? [])
-            let propertyNames = Set(properties.keys)
-            guard required == propertyNames else {
-                let missing = propertyNames.subtracting(required).sorted().joined(separator: ", ")
-                return "\(path) must require every property; missing: \(missing)"
-            }
-            for name in properties.keys.sorted() {
-                guard let property = properties[name] as? [String: Any] else {
-                    return "\(path).properties.\(name) is not a schema object"
-                }
-                if let issue = validationIssue(in: property,
-                                               path: "\(path).properties.\(name)") {
-                    return issue
-                }
+            if let issue = validationIssue(in: property, path: "\(path).properties.\(name)") {
+                return issue
             }
         }
+        return nil
+    }
 
-        let isArray = node["type"] as? String == "array"
-            || (node["type"] as? [String])?.contains("array") == true
-        if isArray {
-            guard let items = node["items"] as? [String: Any] else {
-                return "\(path) must declare array items"
-            }
-            if let issue = validationIssue(in: items, path: "\(path).items") { return issue }
+    private static func arrayIssue(in node: JSONObject, path: String) -> String? {
+        guard schema(node, containsType: "array") else { return nil }
+        guard let items = node["items"]?.objectValue else {
+            return "\(path) must declare array items"
         }
+        return validationIssue(in: items, path: "\(path).items")
+    }
 
-        if let definitions = node["$defs"] as? [String: Any] {
+    private static func definitionsIssue(in node: JSONObject, path: String) -> String? {
+        if let definitions = node["$defs"]?.objectValue {
             for name in definitions.keys.sorted() {
-                guard let definition = definitions[name] as? [String: Any] else {
+                guard let definition = definitions[name]?.objectValue else {
                     return "\(path).$defs.\(name) is not a schema object"
                 }
                 if let issue = validationIssue(in: definition,
@@ -235,6 +255,11 @@ enum OpenAIStrictSchemaValidator {
             }
         }
         return nil
+    }
+
+    private static func schema(_ node: JSONObject, containsType type: String) -> Bool {
+        node["type"]?.stringValue == type
+            || node["type"]?.stringArrayValue?.contains(type) == true
     }
 }
 
@@ -315,10 +340,10 @@ func cotypingParseSSEEvent(_ line: String) -> CotypingSSEEvent? {
     guard !payload.isEmpty else { return nil }
     if payload == "[DONE]" { return CotypingSSEEvent(delta: nil, isTerminal: true) }
     guard let data = payload.data(using: .utf8),
-          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let choice = (json["choices"] as? [[String: Any]])?.first else { return nil }
-    let finishReason = choice["finish_reason"] as? String
-    return CotypingSSEEvent(delta: choice["text"] as? String,
+          let json = try? JSONValue.decodeObject(from: data),
+          let choice = json["choices"]?.objectArrayValue?.first else { return nil }
+    let finishReason = choice["finish_reason"]?.stringValue
+    return CotypingSSEEvent(delta: choice["text"]?.stringValue,
                             isTerminal: finishReason != nil)
 }
 
@@ -337,7 +362,7 @@ extension TextEngine {
 
     /// Unconstrained fallback for backends without decode-time grammar support.
     func generate(system: String, prompt: String, context: [String],
-                  schema: [String: Any]) async throws -> String {
+                  schema: JSONObject) async throws -> String {
         try await generate(system: system, prompt: prompt, context: context)
     }
 
@@ -345,7 +370,7 @@ extension TextEngine {
     /// still preserve the schema. Built-in llama-server and Ollama override
     /// this path so digest extraction also gets its explicit sampling policy.
     func generate(system: String, prompt: String, context: [String],
-                  schema: [String: Any],
+                  schema: JSONObject,
                   options: TextGenerationOptions) async throws -> String {
         try await generate(system: system, prompt: prompt, context: context,
                            schema: schema)
@@ -368,74 +393,79 @@ extension TextEngine {
     }
 }
 
-// MARK: - Ollama
-
-struct OllamaEngine: TextEngine {
-    var baseURL: URL
-    var model: String
-
-    var displayName: String { "Ollama — \(model)" }
-
+extension ChatTextEngine {
     func generate(system: String, prompt: String, context: [String]) async throws -> String {
         try await chat(system: system, prompt: prompt, context: context, schema: nil, options: nil)
     }
 
     func generate(system: String, prompt: String, context: [String],
                   options: TextGenerationOptions) async throws -> String {
-        try await chat(system: system, prompt: prompt, context: context,
-                       schema: nil, options: options)
+        try await chat(
+            system: system, prompt: prompt, context: context,
+            schema: nil, options: options)
     }
+
+    func generate(system: String, prompt: String, context: [String],
+                  schema: JSONObject) async throws -> String {
+        try await chat(
+            system: system, prompt: prompt, context: context,
+            schema: schema, options: nil)
+    }
+
+    func generate(system: String, prompt: String, context: [String],
+                  schema: JSONObject,
+                  options: TextGenerationOptions) async throws -> String {
+        try await chat(
+            system: system, prompt: prompt, context: context,
+            schema: schema, options: options)
+    }
+}
+
+// MARK: - Ollama
+
+struct OllamaEngine: ChatTextEngine {
+    var baseURL: URL
+    var model: String
+
+    var displayName: String { "Ollama — \(model)" }
 
     /// Ollama enforces JSON schemas natively via the `format` field.
-    func generate(system: String, prompt: String, context: [String],
-                  schema: [String: Any]) async throws -> String {
-        try await chat(system: system, prompt: prompt, context: context,
-                       schema: schema, options: nil)
-    }
-
-    func generate(system: String, prompt: String, context: [String],
-                  schema: [String: Any],
-                  options: TextGenerationOptions) async throws -> String {
-        try await chat(system: system, prompt: prompt, context: context,
-                       schema: schema, options: options)
-    }
-
-    private func chat(system: String, prompt: String, context: [String],
-                      schema: [String: Any]?,
-                      options: TextGenerationOptions?) async throws -> String {
+    func chat(system: String, prompt: String, context: [String],
+              schema: JSONObject?,
+              options: TextGenerationOptions?) async throws -> String {
         guard !model.isEmpty else { throw TextEngineError.noModel }
         var request = URLRequest(url: baseURL.appendingPathComponent("api/chat"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let user = (context + [prompt]).joined(separator: "\n\n")
-        var body: [String: Any] = [
-            "model": model,
+        var body: JSONObject = [
+            "model": .string(model),
             "stream": false,
-            "messages": [
-                ["role": "system", "content": system],
-                ["role": "user", "content": user],
-            ],
+            "messages": .array([
+                .object(["role": "system", "content": .string(system)]),
+                .object(["role": "user", "content": .string(user)]),
+            ]),
         ]
-        if let schema { body["format"] = schema }
-        var generationOptions: [String: Any] = [:]
+        if let schema { body["format"] = .object(schema) }
+        var generationOptions: JSONObject = [:]
         if let maxTokens = options?.maxTokens {
-            generationOptions["num_predict"] = max(1, maxTokens)
+            generationOptions["num_predict"] = .number(Double(max(1, maxTokens)))
         }
         if let temperature = options?.temperature {
-            generationOptions["temperature"] = max(0, temperature)
+            generationOptions["temperature"] = .number(max(0, temperature))
         }
-        if !generationOptions.isEmpty { body["options"] = generationOptions }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        if !generationOptions.isEmpty { body["options"] = .object(generationOptions) }
+        request.httpBody = try JSONValue.encodeObject(body)
 
         let (data, response) = try await send(request, base: baseURL)
         let httpResponse = response as? HTTPURLResponse
         guard let status = httpResponse?.statusCode, (200...299).contains(status) else {
             throw TextEngineError.fromHTTPResponse(httpResponse, data: data)
         }
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let message = json["message"] as? [String: Any],
-              let content = message["content"] as? String else {
+        let json = try JSONValue.decodeObject(from: data)
+        guard let message = json["message"]?.objectValue,
+              let content = message["content"]?.stringValue else {
             throw TextEngineError.badResponse("unexpected /api/chat payload")
         }
         return strippingReasoning(content)
@@ -446,20 +476,20 @@ struct OllamaEngine: TextEngine {
         var request = URLRequest(url: baseURL.appendingPathComponent("api/tags"))
         request.timeoutInterval = 3
         guard let (data, _) = try? await llmSession.data(for: request),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let models = json["models"] as? [[String: Any]] else { return [] }
-        return models.compactMap { $0["name"] as? String }.sorted()
+              let json = try? JSONValue.decodeObject(from: data),
+              let models = json["models"]?.objectArrayValue else { return [] }
+        return models.compactMap { $0["name"]?.stringValue }.sorted()
     }
 }
 
 // MARK: - OpenAI-compatible localhost (LM Studio, vllm-mlx, …)
 
-struct OpenAICompatibleEngine: TextEngine {
+struct OpenAICompatibleEngine: ChatTextEngine {
     var baseURL: URL        // e.g. http://localhost:1234/v1
     var model: String
     var apiKey: String?
     /// Extra top-level request fields for server-specific compatibility.
-    var extraBody: [String: Any] = [:]
+    var extraBody: JSONObject = [:]
     var chatDialect: ChatCompletionDialect = .generic
     var openRouterDataPolicy: OpenRouterDataPolicy = .privateOnly
     /// llama-server's request-level thinking ceiling. Kept nil for generic
@@ -469,42 +499,19 @@ struct OpenAICompatibleEngine: TextEngine {
 
     var displayName: String { displayNameOverride ?? "OpenAI-compatible — \(model)" }
 
-    func generate(system: String, prompt: String, context: [String]) async throws -> String {
-        try await chat(system: system, prompt: prompt, context: context, schema: nil, options: nil)
-    }
-
-    func generate(system: String, prompt: String, context: [String],
-                  options: TextGenerationOptions) async throws -> String {
-        try await chat(system: system, prompt: prompt, context: context,
-                       schema: nil, options: options)
-    }
-
     /// OpenAI-standard structured output: llama-server compiles the schema to
     /// a GBNF grammar and constrains decoding; LM Studio / vllm honour the
     /// same `response_format` shape.
-    func generate(system: String, prompt: String, context: [String],
-                  schema: [String: Any]) async throws -> String {
-        try await chat(system: system, prompt: prompt, context: context,
-                       schema: schema, options: nil)
-    }
-
-    func generate(system: String, prompt: String, context: [String],
-                  schema: [String: Any],
-                  options: TextGenerationOptions) async throws -> String {
-        try await chat(system: system, prompt: prompt, context: context,
-                       schema: schema, options: options)
-    }
-
-    private func chat(system: String, prompt: String, context: [String],
-                      schema: [String: Any]?,
-                      options: TextGenerationOptions?) async throws -> String {
+    func chat(system: String, prompt: String, context: [String],
+              schema: JSONObject?,
+              options: TextGenerationOptions?) async throws -> String {
         try await chat(
             system: system, prompt: prompt, context: context,
             schema: schema, options: options, openRouterReasoning: .native)
     }
 
     private func chat(system: String, prompt: String, context: [String],
-                      schema: [String: Any]?,
+                      schema: JSONObject?,
                       options: TextGenerationOptions?,
                       openRouterReasoning: OpenRouterReasoningCompatibility) async throws -> String {
         guard !model.isEmpty else { throw TextEngineError.noModel }
@@ -547,7 +554,7 @@ struct OpenAICompatibleEngine: TextEngine {
     /// Pure request construction keeps provider-field compatibility covered by
     /// offline tests without requiring credentials or a billable call.
     func makeChatRequest(system: String, prompt: String, context: [String],
-                         schema: [String: Any]?,
+                         schema: JSONObject?,
                          options: TextGenerationOptions?,
                          openRouterReasoning: OpenRouterReasoningCompatibility = .native) throws -> URLRequest {
         if chatDialect == .openAI
@@ -564,17 +571,21 @@ struct OpenAICompatibleEngine: TextEngine {
         }
 
         let user = (context + [prompt]).joined(separator: "\n\n")
-        var body: [String: Any] = [
-            "model": model,
-            "messages": [
-                ["role": "system", "content": system],
-                ["role": "user", "content": user],
-            ],
+        var body: JSONObject = [
+            "model": .string(model),
+            "messages": .array([
+                .object(["role": "system", "content": .string(system)]),
+                .object(["role": "user", "content": .string(user)]),
+            ]),
         ]
         if let schema, !(chatDialect == .openRouter && openRouterReasoning == .highEffort) {
             body["response_format"] = [
                 "type": "json_schema",
-                "json_schema": ["name": "response", "strict": true, "schema": schema],
+                "json_schema": [
+                    "name": "response",
+                    "strict": true,
+                    "schema": .object(schema),
+                ],
             ]
         }
         Self.applyGenerationOptions(
@@ -585,17 +596,17 @@ struct OpenAICompatibleEngine: TextEngine {
             model: model,
             openRouterReasoning: openRouterReasoning)
         if chatDialect == .openRouter {
-            var provider: [String: Any] = [
-                "data_collection": openRouterDataPolicy.providerDataCollectionValue,
+            var provider: JSONObject = [
+                "data_collection": .string(openRouterDataPolicy.providerDataCollectionValue),
             ]
             if openRouterReasoning != .highEffort,
                schema != nil || (options?.reasoningBudgetTokens ?? 0) > 0 {
                 provider["require_parameters"] = true
             }
-            body["provider"] = provider
+            body["provider"] = .object(provider)
         }
         body.merge(extraBody) { _, new in new }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.httpBody = try JSONValue.encodeObject(body)
         return request
     }
 
@@ -612,16 +623,16 @@ struct OpenAICompatibleEngine: TextEngine {
     }
 
     static func parseChatCompletion(_ data: Data) throws -> ParsedChatCompletion {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choice = (json["choices"] as? [[String: Any]])?.first,
-              let message = choice["message"] as? [String: Any] else {
+        guard let json = try? JSONValue.decodeObject(from: data),
+              let choice = json["choices"]?.objectArrayValue?.first,
+              let message = choice["message"]?.objectValue else {
             throw TextEngineError.badResponse("unexpected /chat/completions payload")
         }
-        if let refusal = (message["refusal"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines), !refusal.isEmpty {
+        if let refusal = message["refusal"]?.stringValue?.trimmingCharacters(
+            in: .whitespacesAndNewlines), !refusal.isEmpty {
             throw TextEngineError.badResponse("model refusal: \(String(refusal.prefix(600)))")
         }
-        switch choice["finish_reason"] as? String {
+        switch choice["finish_reason"]?.stringValue {
         case "length":
             throw TextEngineError.outputTruncated
         case "content_filter":
@@ -629,18 +640,18 @@ struct OpenAICompatibleEngine: TextEngine {
         default:
             break
         }
-        guard let content = message["content"] as? String else {
+        guard let content = message["content"]?.stringValue else {
             throw TextEngineError.badResponse("chat completion contained no text")
         }
 
-        let usageObject = json["usage"] as? [String: Any]
-        let inputDetails = usageObject?["prompt_tokens_details"] as? [String: Any]
-        let outputDetails = usageObject?["completion_tokens_details"] as? [String: Any]
+        let usageObject = json["usage"]?.objectValue
+        let inputDetails = usageObject?["prompt_tokens_details"]?.objectValue
+        let outputDetails = usageObject?["completion_tokens_details"]?.objectValue
         let usage = usageObject.map {
-            ChatUsage(inputTokens: $0["prompt_tokens"] as? Int ?? 0,
-                      outputTokens: $0["completion_tokens"] as? Int ?? 0,
-                      cachedInputTokens: inputDetails?["cached_tokens"] as? Int ?? 0,
-                      reasoningOutputTokens: outputDetails?["reasoning_tokens"] as? Int ?? 0)
+            ChatUsage(inputTokens: $0["prompt_tokens"]?.intValue ?? 0,
+                      outputTokens: $0["completion_tokens"]?.intValue ?? 0,
+                      cachedInputTokens: inputDetails?["cached_tokens"]?.intValue ?? 0,
+                      reasoningOutputTokens: outputDetails?["reasoning_tokens"]?.intValue ?? 0)
         }
         return ParsedChatCompletion(content: content, usage: usage)
     }
@@ -650,7 +661,7 @@ struct OpenAICompatibleEngine: TextEngine {
     /// OpenRouter normalizes a provider-independent reasoning object. Generic
     /// compatible servers receive only common request fields.
     nonisolated static func applyGenerationOptions(
-        to body: inout [String: Any],
+        to body: inout JSONObject,
         options: TextGenerationOptions?,
         defaultThinkingBudgetTokens: Int?,
         dialect: ChatCompletionDialect,
@@ -658,65 +669,115 @@ struct OpenAICompatibleEngine: TextEngine {
         openRouterReasoning: OpenRouterReasoningCompatibility = .native
     ) {
         let maxTokens = options?.maxTokens.map { max(1, $0) }
-        let isReasoningModel = supportsOpenAIReasoningEffort(model: model)
-
         switch dialect {
         case .llamaServer:
-            if let maxTokens { body["max_tokens"] = maxTokens }
-            if let temperature = options?.temperature {
-                body["temperature"] = max(0, temperature)
-            }
-            guard let requested = options?.reasoningBudgetTokens
-                    ?? defaultThinkingBudgetTokens else { return }
-            let nonnegative = max(0, requested)
-            let effective = maxTokens.map { min(nonnegative, $0 / 2) } ?? nonnegative
-            body["thinking_budget_tokens"] = effective
-
+            applyLlamaServerOptions(
+                to: &body,
+                options: options,
+                maxTokens: maxTokens,
+                defaultThinkingBudgetTokens: defaultThinkingBudgetTokens)
         case .generic:
-            if let maxTokens { body["max_tokens"] = maxTokens }
-            if let temperature = options?.temperature {
-                body["temperature"] = max(0, temperature)
-            }
-
+            applyCommonSamplingOptions(to: &body, options: options, maxTokens: maxTokens)
         case .openRouter:
-            if let maxTokens { body["max_tokens"] = maxTokens }
-            if openRouterReasoning == .highEffort {
-                body["reasoning"] = ["effort": "high"]
-            } else if let requested = options?.reasoningBudgetTokens {
-                let nonnegative = max(0, requested)
-                if nonnegative == 0 {
-                    body["reasoning"] = ["effort": "none"]
-                } else {
-                    let effective = maxTokens.map { min(nonnegative, $0 / 2) }
-                        ?? nonnegative
-                    body["reasoning"] = [
-                        "max_tokens": max(1, effective),
-                        "exclude": true,
-                    ]
-                }
-            }
-            // Sampling controls vary across routed reasoning providers. Keep
-            // temperature only for requests that leave reasoning at the model
-            // default or explicitly disable it. High-effort fallback is
-            // always-on thinking, so omit temperature there too.
-            if openRouterReasoning != .highEffort,
-               (options?.reasoningBudgetTokens ?? 0) <= 0,
-               let temperature = options?.temperature {
-                body["temperature"] = max(0, temperature)
-            }
-
+            applyOpenRouterOptions(
+                to: &body,
+                options: options,
+                maxTokens: maxTokens,
+                reasoningCompatibility: openRouterReasoning)
         case .openAI:
-            if let maxTokens { body["max_completion_tokens"] = maxTokens }
-            // Current OpenAI reasoning models reject sampling knobs such as a
-            // custom temperature. Non-reasoning chat models still accept it.
-            if !isReasoningModel, let temperature = options?.temperature {
-                body["temperature"] = max(0, temperature)
-            }
-            if isReasoningModel,
-               let budget = options?.reasoningBudgetTokens,
-               budget > 0 {
-                body["reasoning_effort"] = reasoningEffort(for: budget)
-            }
+            applyOpenAIOptions(
+                to: &body,
+                options: options,
+                maxTokens: maxTokens,
+                model: model)
+        }
+    }
+
+    private nonisolated static func applyCommonSamplingOptions(
+        to body: inout JSONObject,
+        options: TextGenerationOptions?,
+        maxTokens: Int?
+    ) {
+        if let maxTokens { body["max_tokens"] = .number(Double(maxTokens)) }
+        if let temperature = options?.temperature {
+            body["temperature"] = .number(max(0, temperature))
+        }
+    }
+
+    private nonisolated static func applyLlamaServerOptions(
+        to body: inout JSONObject,
+        options: TextGenerationOptions?,
+        maxTokens: Int?,
+        defaultThinkingBudgetTokens: Int?
+    ) {
+        applyCommonSamplingOptions(to: &body, options: options, maxTokens: maxTokens)
+        guard let requested = options?.reasoningBudgetTokens
+                ?? defaultThinkingBudgetTokens else { return }
+        let nonnegative = max(0, requested)
+        let effective = maxTokens.map {
+            min(nonnegative, $0 / 2)
+        } ?? nonnegative
+        body["thinking_budget_tokens"] = .number(Double(effective))
+    }
+
+    private nonisolated static func applyOpenRouterOptions(
+        to body: inout JSONObject,
+        options: TextGenerationOptions?,
+        maxTokens: Int?,
+        reasoningCompatibility: OpenRouterReasoningCompatibility
+    ) {
+        if let maxTokens { body["max_tokens"] = .number(Double(maxTokens)) }
+        applyOpenRouterReasoning(
+            to: &body,
+            requestedBudget: options?.reasoningBudgetTokens,
+            maxTokens: maxTokens,
+            compatibility: reasoningCompatibility)
+        // Routed reasoning providers do not share sampling controls.
+        if reasoningCompatibility != .highEffort,
+           (options?.reasoningBudgetTokens ?? 0) <= 0,
+           let temperature = options?.temperature {
+            body["temperature"] = .number(max(0, temperature))
+        }
+    }
+
+    private nonisolated static func applyOpenRouterReasoning(
+        to body: inout JSONObject,
+        requestedBudget: Int?,
+        maxTokens: Int?,
+        compatibility: OpenRouterReasoningCompatibility
+    ) {
+        if compatibility == .highEffort {
+            body["reasoning"] = ["effort": "high"]
+            return
+        }
+        guard let requestedBudget else { return }
+        let nonnegative = max(0, requestedBudget)
+        guard nonnegative > 0 else {
+            body["reasoning"] = ["effort": "none"]
+            return
+        }
+        let effective = maxTokens.map { min(nonnegative, $0 / 2) } ?? nonnegative
+        body["reasoning"] = [
+            "max_tokens": .number(Double(max(1, effective))),
+            "exclude": true,
+        ]
+    }
+
+    private nonisolated static func applyOpenAIOptions(
+        to body: inout JSONObject,
+        options: TextGenerationOptions?,
+        maxTokens: Int?,
+        model: String
+    ) {
+        if let maxTokens { body["max_completion_tokens"] = .number(Double(maxTokens)) }
+        let isReasoningModel = supportsOpenAIReasoningEffort(model: model)
+        if !isReasoningModel, let temperature = options?.temperature {
+            body["temperature"] = .number(max(0, temperature))
+        }
+        if isReasoningModel,
+           let budget = options?.reasoningBudgetTokens,
+           budget > 0 {
+            body["reasoning_effort"] = .string(reasoningEffort(for: budget))
         }
     }
 
@@ -769,30 +830,30 @@ struct OpenAICompatibleEngine: TextEngine {
         if let apiKey, !apiKey.isEmpty {
             urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         }
-        var body: [String: Any] = [
-            "model": model,
-            "prompt": request.prompt,
-            "max_tokens": request.maxTokens,
-            "temperature": request.temperature,
-            "top_p": request.topP,
-            "top_k": request.topK,
-            "min_p": request.minP,
-            "repeat_penalty": request.repeatPenalty,
-            "seed": request.seed,
+        var body: JSONObject = [
+            "model": .string(model),
+            "prompt": .string(request.prompt),
+            "max_tokens": .number(Double(request.maxTokens)),
+            "temperature": .number(request.temperature),
+            "top_p": .number(request.topP),
+            "top_k": .number(Double(request.topK)),
+            "min_p": .number(request.minP),
+            "repeat_penalty": .number(request.repeatPenalty),
+            "seed": .number(Double(request.seed)),
             "stream": false,
         ]
-        if !request.stop.isEmpty { body["stop"] = request.stop }
+        if !request.stop.isEmpty { body["stop"] = .array(request.stop.map(JSONValue.string)) }
         body.merge(extraBody) { _, new in new }
-        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+        urlRequest.httpBody = try JSONValue.encodeObject(body)
 
         let (data, response) = try await cotypingCompletionSend(urlRequest, base: baseURL)
         let httpResponse = response as? HTTPURLResponse
         guard let status = httpResponse?.statusCode, (200...299).contains(status) else {
             throw TextEngineError.fromHTTPResponse(httpResponse, data: data)
         }
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let text = choices.first?["text"] as? String else {
+        let json = try JSONValue.decodeObject(from: data)
+        guard let choices = json["choices"]?.objectArrayValue,
+              let text = choices.first?["text"]?.stringValue else {
             throw TextEngineError.badResponse("unexpected /completions payload")
         }
         return text
@@ -815,70 +876,77 @@ struct OpenAICompatibleEngine: TextEngine {
         if let apiKey, !apiKey.isEmpty {
             urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         }
-        var body: [String: Any] = [
-            "model": model,
-            "prompt": request.prompt,
-            "max_tokens": request.maxTokens,
-            "temperature": request.temperature,
-            "top_p": request.topP,
-            "top_k": request.topK,
-            "min_p": request.minP,
-            "repeat_penalty": request.repeatPenalty,
-            "seed": request.seed,
+        var body: JSONObject = [
+            "model": .string(model),
+            "prompt": .string(request.prompt),
+            "max_tokens": .number(Double(request.maxTokens)),
+            "temperature": .number(request.temperature),
+            "top_p": .number(request.topP),
+            "top_k": .number(Double(request.topK)),
+            "min_p": .number(request.minP),
+            "repeat_penalty": .number(request.repeatPenalty),
+            "seed": .number(Double(request.seed)),
             "stream": true,
         ]
-        if !request.stop.isEmpty { body["stop"] = request.stop }
+        if !request.stop.isEmpty { body["stop"] = .array(request.stop.map(JSONValue.string)) }
         body.merge(extraBody) { _, new in new }
-        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+        urlRequest.httpBody = try JSONValue.encodeObject(body)
 
-        var accumulated = ""
-        var tokenLikeChunks = 0
-        var receivedEvent = false
-        var receivedTerminalEvent = false
-        var stoppedByPolicy = false
         do {
-            let (bytes, response) = try await completionSession.bytes(for: urlRequest)
-            let httpResponse = response as? HTTPURLResponse
-            guard let status = httpResponse?.statusCode, (200...299).contains(status) else {
-                throw TextEngineError.fromHTTPResponse(httpResponse, data: Data())
-            }
-            for try await line in bytes.lines {
-                guard let event = cotypingParseSSEEvent(line) else { continue }
-                receivedEvent = true
-                if let delta = event.delta, !delta.isEmpty {
-                    accumulated += delta
-                    tokenLikeChunks += 1
-                    onPartial(accumulated)
-                    if CotypingDecodeStopPolicy.verdict(
-                        accumulated: accumulated,
-                        tokensGenerated: tokenLikeChunks
-                    ) != nil {
-                        stoppedByPolicy = true
-                        break
-                    }
-                }
-                if event.isTerminal {
-                    receivedTerminalEvent = true
-                    break
-                }
-            }
-            if !stoppedByPolicy, !receivedTerminalEvent {
-                if !receivedEvent && accumulated.isEmpty {
-                    throw StreamingCompatibilityError.unsupportedPayload
-                }
-                throw TextEngineError.badResponse(
-                    "stream ended before a terminal completion event")
-            }
+            return try await collectStreamingCompletion(urlRequest, onPartial: onPartial)
         } catch let error as URLError where error.code == .cancelled {
             throw error
         } catch is CancellationError {
             throw CancellationError()
-        } catch is StreamingCompatibilityError where accumulated.isEmpty {
+        } catch is StreamingCompatibilityError {
             // A 2xx non-SSE response means this server does not implement the
             // streaming contract. No tokens were generated or shown yet.
             let full = try await complete(request)
             onPartial(full)
             return full
+        }
+    }
+
+    private func collectStreamingCompletion(
+        _ urlRequest: URLRequest,
+        onPartial: @escaping @Sendable (String) -> Void
+    ) async throws -> String {
+        var accumulated = ""
+        var tokenLikeChunks = 0
+        var receivedEvent = false
+        var receivedTerminalEvent = false
+        var stoppedByPolicy = false
+        let (bytes, response) = try await completionSession.bytes(for: urlRequest)
+        let httpResponse = response as? HTTPURLResponse
+        guard let status = httpResponse?.statusCode, (200...299).contains(status) else {
+            throw TextEngineError.fromHTTPResponse(httpResponse, data: Data())
+        }
+        for try await line in bytes.lines {
+            guard let event = cotypingParseSSEEvent(line) else { continue }
+            receivedEvent = true
+            if let delta = event.delta, !delta.isEmpty {
+                accumulated += delta
+                tokenLikeChunks += 1
+                onPartial(accumulated)
+                if CotypingDecodeStopPolicy.verdict(
+                    accumulated: accumulated,
+                    tokensGenerated: tokenLikeChunks
+                ) != nil {
+                    stoppedByPolicy = true
+                    break
+                }
+            }
+            if event.isTerminal {
+                receivedTerminalEvent = true
+                break
+            }
+        }
+        if !stoppedByPolicy, !receivedTerminalEvent {
+            guard receivedEvent || !accumulated.isEmpty else {
+                throw StreamingCompatibilityError.unsupportedPayload
+            }
+            throw TextEngineError.badResponse(
+                "stream ended before a terminal completion event")
         }
         return accumulated
     }

@@ -9,6 +9,20 @@ struct ModelPreparationUpdate: Sendable {
 
 typealias ModelPreparationProgressHandler = @MainActor @Sendable (ModelPreparationUpdate) -> Void
 
+func reportModelPreparation(
+    _ update: ModelPreparationUpdate,
+    to handler: ModelPreparationProgressHandler?
+) {
+    guard let handler else { return }
+    Task { @MainActor in handler(update) }
+}
+
+func finishIdleTrackedUse(_ activeUses: inout Int, idleTimer: IdleTimer) {
+    activeUses -= 1
+    guard activeUses == 0 else { return }
+    Task { await idleTimer.bump() }
+}
+
 private func reportPreparationUpdate(_ update: ModelPreparationUpdate,
                                      to handler: ModelPreparationProgressHandler?) {
     guard let handler else { return }
@@ -123,7 +137,6 @@ enum TranscriptionModelChoice: String, Codable, CaseIterable, Identifiable {
 /// without per-engine switches.
 protocol TranscriptionEngine {
     var displayName: String { get }
-    var supportsStreaming: Bool { get }
     func prepare(progress: ModelPreparationProgressHandler?) async throws
     func transcribe(audio: URL, language: String?) async throws -> Transcript
     func transcribe(audio: URL, language: String?, prompt: String?) async throws -> Transcript
@@ -234,7 +247,6 @@ actor ParakeetEngine: TranscriptionEngine {
     static let v2 = ParakeetEngine(variant: .v2)
 
     nonisolated let displayName = "Parakeet TDT 0.6B"
-    nonisolated let supportsStreaming = false
 
     private let variant: Variant
     private var manager: AsrManager?
@@ -295,7 +307,7 @@ actor ParakeetEngine: TranscriptionEngine {
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
         activeUses += 1
-        defer { finishUse() }
+        defer { finishIdleTrackedUse(&activeUses, idleTimer: idle) }
         try await prepare()
         guard let manager else { throw TranscriptionEngineError.notLoaded }
         var state = try TdtDecoderState()
@@ -304,12 +316,6 @@ actor ParakeetEngine: TranscriptionEngine {
         let transcript = Transcript(segments: Self.segments(from: result, speaker: "speaker"),
                                     engine: "\(variant == .v2 ? "parakeet-tdt-0.6b-v2" : "parakeet-tdt-0.6b-v3") (FluidAudio)")
         return transcript
-    }
-
-    private func finishUse() {
-        activeUses -= 1
-        guard activeUses == 0 else { return }
-        Task { await idle.bump() }
     }
 
     // MARK: - Token timings → readable segments
@@ -379,7 +385,6 @@ actor ParakeetEngine: TranscriptionEngine {
 actor WhisperEngine: TranscriptionEngine {
     static let shared = WhisperEngine()
     nonisolated let displayName = "Whisper large-v3 turbo"
-    nonisolated let supportsStreaming = false
 
     private var pipe: WhisperKit?
     private let preparation = AsyncSingleFlight()
@@ -454,7 +459,7 @@ actor WhisperEngine: TranscriptionEngine {
 
     func transcribe(audio url: URL, language: String?, prompt: String?) async throws -> Transcript {
         activeUses += 1
-        defer { finishUse() }
+        defer { finishIdleTrackedUse(&activeUses, idleTimer: idle) }
         try await prepare()
         guard let pipe else { throw TranscriptionEngineError.notLoaded }
         let promptTokens = TranscriptionPrompt.normalized(prompt).flatMap { context in
@@ -475,11 +480,6 @@ actor WhisperEngine: TranscriptionEngine {
         return Transcript(segments: segments, engine: "whisper-large-v3-turbo (WhisperKit)")
     }
 
-    private func finishUse() {
-        activeUses -= 1
-        guard activeUses == 0 else { return }
-        Task { await idle.bump() }
-    }
 }
 
 /// Cohere Transcribe (03-2026) via FluidAudio — CoreML int8, 14 languages.
@@ -489,7 +489,6 @@ actor WhisperEngine: TranscriptionEngine {
 actor CohereEngine: TranscriptionEngine {
     static let shared = CohereEngine()
     nonisolated let displayName = "Cohere Transcribe"
-    nonisolated let supportsStreaming = false
 
     private var models: CoherePipeline.LoadedModels?
     private let preparation = AsyncSingleFlight()
@@ -546,7 +545,7 @@ actor CohereEngine: TranscriptionEngine {
 
     func transcribe(audio url: URL, language: String?) async throws -> Transcript {
         activeUses += 1
-        defer { finishUse() }
+        defer { finishIdleTrackedUse(&activeUses, idleTimer: idle) }
         try await prepare()
         guard let models else { throw TranscriptionEngineError.notLoaded }
         let lang = language.flatMap { CohereAsrConfig.Language(rawValue: $0) } ?? .english
@@ -590,12 +589,6 @@ actor CohereEngine: TranscriptionEngine {
             engine: "cohere-transcribe-03-2026 (FluidAudio)")
     }
 
-    private func finishUse() {
-        activeUses -= 1
-        guard activeUses == 0 else { return }
-        Task { await idle.bump() }
-    }
-
     private nonisolated static func formatSeconds(_ seconds: TimeInterval) -> String {
         String(format: "%.2fs", seconds)
     }
@@ -633,7 +626,7 @@ actor SpeechActivity {
     /// instead of one block per track.
     func speechSegments(in url: URL) async -> [VadSegment]? {
         activeUses += 1
-        defer { finishUse() }
+        defer { finishIdleTrackedUse(&activeUses, idleTimer: idle) }
         let key = Self.cacheKey(for: url)
         if let cachedSegments, cachedSegments.key == key {
             return cachedSegments.segments
@@ -696,9 +689,4 @@ actor SpeechActivity {
         await ModelRuntimeRegistry.shared.unregister(id: "voice-activity:silero-vad")
     }
 
-    private func finishUse() {
-        activeUses -= 1
-        guard activeUses == 0 else { return }
-        Task { await idle.bump() }
-    }
 }

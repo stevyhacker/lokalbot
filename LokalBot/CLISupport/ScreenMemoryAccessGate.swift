@@ -1,17 +1,6 @@
 import Combine
 import Foundation
 
-enum ScreenMemoryAccessError: LocalizedError {
-    case disabled
-
-    var errorDescription: String? {
-        switch self {
-        case .disabled:
-            FileLibraryToolProvider.screenAccessDisabledMessage
-        }
-    }
-}
-
 struct ScreenMemoryAccessProfile: Codable, Equatable, Sendable {
     enum Scope: String, Codable, CaseIterable, Identifiable, Sendable {
         case today
@@ -86,10 +75,6 @@ struct ScreenMemoryAccessGate {
     /// intentionally accepting no environment-borne meeting capability.
     func isAuthorized() -> Bool {
         isEnabled
-    }
-
-    func requireAuthorized() throws {
-        guard isAuthorized() else { throw ScreenMemoryAccessError.disabled }
     }
 
     func enable(profile: ScreenMemoryAccessProfile = .safeDefault) throws {

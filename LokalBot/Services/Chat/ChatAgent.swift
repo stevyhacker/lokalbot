@@ -237,27 +237,27 @@ enum ChatPrompt {
     /// JSON schema forcing exactly one valid tool call, used for the
     /// constrained retry. The root stays an object for OpenAI strict Structured
     /// Outputs; the nested `call` is an anyOf over closed per-tool shapes.
-    static func toolCallSchema(_ tools: [ChatToolSpec]) -> [String: Any] {
-        let variants: [[String: Any]] = tools.map { tool in
-            var properties: [String: Any] = [:]
+    static func toolCallSchema(_ tools: [ChatToolSpec]) -> JSONObject {
+        let variants: [JSONObject] = tools.map { tool in
+            var properties: JSONObject = [:]
             for argument in tool.arguments {
-                var schema: [String: Any] = ["description": argument.description]
+                var schema: JSONObject = ["description": .string(argument.description)]
                 schema["type"] = argument.required ? "string" : ["string", "null"]
-                properties[argument.name] = schema
+                properties[argument.name] = .object(schema)
             }
-            let argumentsSchema: [String: Any] = [
+            let argumentsSchema: JSONObject = [
                 "type": "object",
-                "properties": properties,
+                "properties": .object(properties),
                 // Strict Structured Outputs requires optional fields to be
                 // required-but-nullable rather than omitted.
-                "required": tool.arguments.map(\.name),
+                "required": .array(tool.arguments.map { .string($0.name) }),
                 "additionalProperties": false,
             ]
             return [
                 "type": "object",
                 "properties": [
-                    "tool": ["type": "string", "enum": [tool.name]],
-                    "arguments": argumentsSchema,
+                    "tool": ["type": "string", "enum": [.string(tool.name)]],
+                    "arguments": .object(argumentsSchema),
                 ],
                 "required": ["tool", "arguments"],
                 "additionalProperties": false,
@@ -265,7 +265,9 @@ enum ChatPrompt {
         }
         return [
             "type": "object",
-            "properties": ["call": ["anyOf": variants]],
+            "properties": [
+                "call": ["anyOf": .array(variants.map(JSONValue.object))],
+            ],
             "required": ["call"],
             "additionalProperties": false,
         ]
@@ -276,22 +278,22 @@ enum ChatPrompt {
     private static let nameKeys = ["tool", "name", "action", "tool_name"]
     private static let argumentKeys = ["arguments", "args", "parameters", "params", "input"]
 
-    private static func jsonObject(in text: String) -> [String: Any]? {
+    private static func jsonObject(in text: String) -> JSONObject? {
         guard let json = extractJSONObject(text),
               let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+              let object = try? JSONValue.decodeObject(from: data) else {
             return nil
         }
         return object
     }
 
-    private static func toolCallObject(in object: [String: Any]) -> [String: Any] {
-        object["call"] as? [String: Any] ?? object
+    private static func toolCallObject(in object: JSONObject) -> JSONObject {
+        object["call"]?.objectValue ?? object
     }
 
-    private static func toolName(in object: [String: Any]) -> String? {
+    private static func toolName(in object: JSONObject) -> String? {
         for key in nameKeys {
-            if let name = (object[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            if let name = object[key]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
                !name.isEmpty {
                 return name
             }
@@ -299,7 +301,7 @@ enum ChatPrompt {
         return nil
     }
 
-    private static func argumentDictionary(in object: [String: Any],
+    private static func argumentDictionary(in object: JSONObject,
                                            toolNameKeys: [String]) -> [String: String] {
         if let key = argumentKeys.first(where: { object[$0] != nil }) {
             return coerce(object[key])
@@ -307,25 +309,28 @@ enum ChatPrompt {
         // Flat shape: {"tool": "x", "query": "y"} — arguments alongside the name.
         var flat = object
         for key in toolNameKeys { flat.removeValue(forKey: key) }
-        return coerce(flat)
+        return coerce(.object(flat))
     }
 
-    static func coerce(_ value: Any?) -> [String: String] {
-        guard let dictionary = value as? [String: Any] else { return [:] }
+    static func coerce(_ value: JSONValue?) -> [String: String] {
+        guard let dictionary = value?.objectValue else { return [:] }
         var result: [String: String] = [:]
         for (key, raw) in dictionary {
             switch raw {
-            case let string as String:
+            case .string(let string):
                 result[key] = string
-            case let number as NSNumber:
-                result[key] = CFGetTypeID(number) == CFBooleanGetTypeID()
-                    ? (number.boolValue ? "true" : "false")
-                    : number.stringValue
-            case is NSNull:
+            case .number(let number):
+                let isInt64 = number.isFinite
+                    && number.rounded() == number
+                    && number >= Double(Int64.min)
+                    && number <= Double(Int64.max)
+                result[key] = isInt64 ? String(Int64(number)) : String(number)
+            case .bool(let value):
+                result[key] = value ? "true" : "false"
+            case .null:
                 continue
-            default:
-                if let data = try? JSONSerialization.data(withJSONObject: raw,
-                                                          options: [.fragmentsAllowed]),
+            case .array, .object:
+                if let data = try? JSONEncoder().encode(raw),
                    let string = String(data: data, encoding: .utf8) {
                     result[key] = string
                 }

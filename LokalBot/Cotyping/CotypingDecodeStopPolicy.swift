@@ -74,24 +74,14 @@ nonisolated enum CotypingSentenceBoundary {
             let priorIsLetter = beforeIndex > text.startIndex
                 && text[text.index(before: beforeIndex)].isLetter
             if !priorIsLetter { return false }
-            if abbreviations.contains(trailingLetters(in: text, endingBefore: periodIndex).lowercased()) {
+            if abbreviations.contains(CotypingStringScanner.trailingLetters(
+                in: text, endingBefore: periodIndex).lowercased()) {
                 return false
             }
         }
         return true
     }
 
-    private static func trailingLetters(in text: String, endingBefore index: String.Index) -> String {
-        var letters: [Character] = []
-        var cursor = index
-        while cursor > text.startIndex {
-            let previous = text.index(before: cursor)
-            guard text[previous].isLetter else { break }
-            letters.append(text[previous])
-            cursor = previous
-        }
-        return String(letters.reversed())
-    }
 }
 
 private extension Character {

@@ -82,51 +82,109 @@ enum UITestRuntime {
 }
 
 enum KeychainSecrets {
-    static func string(account: String) -> String? {
-        guard let data = data(account: account) else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
+    private enum KeychainFailure: LocalizedError {
+        case operation(String, account: String, status: OSStatus)
+        case invalidData(account: String)
+        case verification(account: String)
 
-    static func data(account: String) -> Data? {
-        data(service: AppIdentifiers.bundleID, account: account)
-    }
-
-    static func setString(_ value: String, account: String) {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            delete(account: account)
-        } else {
-            set(Data(trimmed.utf8), account: account)
+        var errorDescription: String? {
+            switch self {
+            case .operation(let operation, let account, let status):
+                let detail = SecCopyErrorMessageString(status, nil) as String? ?? "status \(status)"
+                return "Could not \(operation) the \(account) Keychain item (\(detail))."
+            case .invalidData(let account):
+                return "The \(account) Keychain item contains invalid data."
+            case .verification(let account):
+                return "The \(account) Keychain item could not be verified after saving."
+            }
         }
     }
 
-    static func set(_ data: Data, account: String) {
-        let query = baseQuery(service: AppIdentifiers.bundleID, account: account)
+    static func string(account: String) throws -> String? {
+        guard let data = try data(account: account) else { return nil }
+        guard let value = String(data: data, encoding: .utf8) else {
+            throw KeychainFailure.invalidData(account: account)
+        }
+        return value
+    }
+
+    static func data(account: String) throws -> Data? {
+        try data(service: AppIdentifiers.bundleID, account: account)
+    }
+
+    static func setString(_ value: String, account: String) throws {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            try delete(account: account)
+        } else {
+            try set(Data(trimmed.utf8), account: account)
+        }
+    }
+
+    static func set(_ data: Data, account: String) throws {
+        try set(data, service: AppIdentifiers.bundleID, account: account)
+    }
+
+    /// Copy a secret between app identities without exposing low-level
+    /// Security.framework queries to migration code. Existing destination
+    /// values always win, and source items remain untouched as a fallback.
+    static func copyIfMissing(
+        account: String,
+        fromService oldService: String,
+        toService newService: String
+    ) throws {
+        guard try data(service: newService, account: account) == nil,
+              let source = try data(service: oldService, account: account) else {
+            return
+        }
+        try set(source, service: newService, account: account)
+    }
+
+    private static func set(_ data: Data, service: String, account: String) throws {
+        let query = baseQuery(service: service, account: account)
         let update = [kSecValueData as String: data]
         let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
         if status == errSecItemNotFound {
             var add = query
             add[kSecValueData as String] = data
-            SecItemAdd(add as CFDictionary, nil)
+            let addStatus = SecItemAdd(add as CFDictionary, nil)
+            guard addStatus == errSecSuccess else {
+                throw KeychainFailure.operation("save", account: account, status: addStatus)
+            }
+        } else if status != errSecSuccess {
+            throw KeychainFailure.operation("update", account: account, status: status)
+        }
+        guard try self.data(service: service, account: account) == data else {
+            throw KeychainFailure.verification(account: account)
         }
     }
 
-    static func delete(account: String) {
-        SecItemDelete(baseQuery(service: AppIdentifiers.bundleID, account: account) as CFDictionary)
+    static func delete(account: String) throws {
+        let status = SecItemDelete(
+            baseQuery(service: AppIdentifiers.bundleID, account: account) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw KeychainFailure.operation("delete", account: account, status: status)
+        }
     }
 
-    private static func data(service: String, account: String) -> Data? {
+    private static func data(service: String, account: String) throws -> Data? {
         var query = baseQuery(service: service, account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var existing: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &existing) == errSecSuccess else {
-            return nil
+        let status = SecItemCopyMatching(query as CFDictionary, &existing)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess else {
+            throw KeychainFailure.operation("read", account: account, status: status)
         }
-        return existing as? Data
+        guard let data = existing as? Data else {
+            throw KeychainFailure.invalidData(account: account)
+        }
+        return data
     }
 
-    private static func baseQuery(service: String, account: String) -> [String: Any] {
+    // Security.framework requires a heterogeneous query dictionary.
+    private static func baseQuery(service: String, account: String) -> [String: Any] { // swiftlint:disable:this no_dynamic_any
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -150,17 +208,13 @@ enum KeychainSecrets {
             return key
         }
 #endif
-        if let data = data(account: account) {
+        if let data = try data(account: account) {
             let key = SymmetricKey(data: data)
             symmetricKeyCache[account] = key
             return key
         }
         let key = SymmetricKey(size: .bits256)
-        set(key.withUnsafeBytes { Data($0) }, account: account)
-        guard data(account: account) != nil else {
-            throw NSError(domain: "LokalBot", code: 6,
-                          userInfo: [NSLocalizedDescriptionKey: "Could not save encryption key (\(account))"])
-        }
+        try set(key.withUnsafeBytes { Data($0) }, account: account)
         symmetricKeyCache[account] = key
         return key
     }

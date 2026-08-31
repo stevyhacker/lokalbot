@@ -21,7 +21,7 @@ final class DailyMemoryExportScheduler {
     private let now: () -> Date
     private var configuration: Configuration?
     private var export: Export?
-    private var timer: Timer?
+    private var ticker: WallClockTicker?
     private var exportTask: Task<Void, Never>?
     private var lastSuccessfulDay: Date?
     private var lastAttempt: Date?
@@ -49,21 +49,17 @@ final class DailyMemoryExportScheduler {
             lastAttempt = nil
             lastSuccessfulDay = nil
         }
-        timer?.invalidate()
-        timer = nil
+        ticker?.invalidate()
+        ticker = nil
         guard configuration.enabled, !configuration.destinationID.isEmpty else { return }
-        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
+        ticker = WallClockTicker { [weak self] in self?.tick() }
         tick()
     }
 
     func stop() {
         generation &+= 1
-        timer?.invalidate()
-        timer = nil
+        ticker?.invalidate()
+        ticker = nil
         exportTask?.cancel()
         exportTask = nil
     }

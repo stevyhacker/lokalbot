@@ -180,18 +180,13 @@ struct DreamStore {
         do {
             data = try Data(contentsOf: url)
         } catch {
-            let cocoaError = error as NSError
-            let isMissing = cocoaError.code == NSFileNoSuchFileError
-                || cocoaError.code == NSFileReadNoSuchFileError
-            if cocoaError.domain == NSCocoaErrorDomain,
-               isMissing {
+            if FileSystemSupport.isMissing(error) {
                 return nil
             }
             throw DreamStoreError.unreadableFile(url: url, underlying: error)
         }
 
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = JSONCoding.iso8601Decoder()
         do {
             return try decoder.decode(type, from: data)
         } catch {
@@ -200,9 +195,7 @@ struct DreamStore {
     }
 
     private func write<T: Encodable>(_ value: T, to url: URL) throws {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let encoder = JSONCoding.prettyPrintedISO8601Encoder()
         try writeData(encoder.encode(value), to: url)
     }
 
