@@ -10,19 +10,22 @@ struct CommandPaletteView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var selection = 0
-    @FocusState private var fieldFocused: Bool
+    @State private var focusRequest = 0
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "command")
                     .foregroundStyle(.tint).font(.title3)
-                TextField("Type a command or search meetings…", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.title3)
-                    .focused($fieldFocused)
-                    .onSubmit { runSelection() }
-                    .accessibilityIdentifier("palette.input")
+                CommandPaletteTextField(
+                    text: $query,
+                    focusRequest: focusRequest,
+                    onSubmit: runSelection,
+                    onPrevious: { move(by: -1) },
+                    onNext: { move(by: 1) },
+                    onCancel: { dismiss() })
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 24)
                 Text("⌘K").font(.caption.monospaced()).foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 16).padding(.vertical, 14)
@@ -48,11 +51,8 @@ struct CommandPaletteView: View {
         }
         .frame(width: 560, height: 420)
         .background(.regularMaterial)
-        .onAppear { fieldFocused = true }
+        .onAppear { focusRequest &+= 1 }
         .onChange(of: query) { selection = 0 }
-        .onKeyPress(.upArrow) { move(by: -1); return .handled }
-        .onKeyPress(.downArrow) { move(by: 1); return .handled }
-        .onKeyPress(.escape) { dismiss(); return .handled }
     }
 
     // MARK: - Items

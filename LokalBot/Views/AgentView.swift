@@ -6,6 +6,7 @@ struct AgentView: View {
     @EnvironmentObject private var app: AppState
     @ObservedObject var sessions: AgentSessionTabs
     @ObservedObject var installer: AgentRuntimeInstaller
+    @State private var showingSessionHistory = false
 
     var body: some View {
         Group {
@@ -16,11 +17,17 @@ struct AgentView: View {
             }
         }
         .navigationTitle("Agent")
+        .sheet(isPresented: $showingSessionHistory) {
+            AgentSessionHistoryView(sessions: sessions)
+        }
     }
 
     private var sessionTabs: some View {
         VStack(spacing: 0) {
-            AgentSessionTabBar(sessions: sessions, verifyRuntime: verifyRuntime)
+            AgentSessionTabBar(
+                sessions: sessions,
+                verifyRuntime: verifyRuntime,
+                showHistory: { showingSessionHistory = true })
             Divider()
             ZStack {
                 // Keep every tab mounted so its draft, scroll position, task,
@@ -28,7 +35,8 @@ struct AgentView: View {
                 ForEach(sessions.tabs) { tab in
                     AgentSessionView(
                         controller: tab.controller,
-                        isSelected: sessions.selectedID == tab.id)
+                        isSelected: sessions.selectedID == tab.id,
+                        showSessionHistory: { showingSessionHistory = true })
                         .opacity(sessions.selectedID == tab.id ? 1 : 0)
                         .allowsHitTesting(sessions.selectedID == tab.id)
                         .accessibilityHidden(sessions.selectedID != tab.id)
@@ -96,6 +104,7 @@ struct AgentView: View {
 private struct AgentSessionTabBar: View {
     @ObservedObject var sessions: AgentSessionTabs
     let verifyRuntime: () -> Void
+    let showHistory: () -> Void
     @State private var pendingClose: UUID?
     @State private var confirmingHistoryClear = false
     @State private var historyClearError: String?
@@ -116,6 +125,15 @@ private struct AgentSessionTabBar: View {
             .scrollIndicators(.hidden)
             .accessibilityIdentifier("agent.tabs")
 
+            Button(action: showHistory) {
+                Label("History", systemImage: "clock.arrow.circlepath")
+                    .frame(minHeight: 28)
+            }
+            .buttonStyle(.borderless)
+            .help("Browse Saved Agent Sessions")
+            .accessibilityLabel("Browse Saved Agent Sessions")
+            .accessibilityIdentifier("agent.sessionHistory")
+
             Button {
                 sessions.addSession()
             } label: {
@@ -129,6 +147,9 @@ private struct AgentSessionTabBar: View {
             .accessibilityIdentifier("agent.newSession")
 
             Menu {
+                Button("Browse Saved Sessions…", action: showHistory)
+                    .accessibilityIdentifier("agent.browseSavedSessions")
+                Divider()
                 Button("Verify Agent Runtime…", action: verifyRuntime)
                     .disabled(sessions.tabs.contains { $0.controller.state == .running })
                     .accessibilityIdentifier("agent.verifyRuntime")
@@ -162,7 +183,7 @@ private struct AgentSessionTabBar: View {
             }
             Button("Cancel", role: .cancel) { pendingClose = nil }
         } message: {
-            Text("Its conversation, pending work, and unsent draft will be discarded.")
+            Text("Its live process, pending work, and unsent draft will close. The saved conversation remains available in History.")
         }
         .confirmationDialog(
             "Clear all saved Agent history?",

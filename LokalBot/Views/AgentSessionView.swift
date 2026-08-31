@@ -7,9 +7,10 @@ struct AgentSessionView: View {
     @EnvironmentObject private var app: AppState
     @ObservedObject var controller: AgentSessionController
     let isSelected: Bool
+    let showSessionHistory: () -> Void
 
     @State private var pickingFolder = false
-    @State private var confirmingAutoApprove = false
+    @State private var pendingApprovalMode: AgentApprovalMode?
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -27,13 +28,14 @@ struct AgentSessionView: View {
         .onChange(of: controller.state) {
             focusComposerWhenReady()
         }
-        .alert("Allow every file change this session?", isPresented: $confirmingAutoApprove) {
-            Button("Allow All File Changes", role: .destructive) {
-                controller.autoApproveSession = true
-            }
-            Button("Keep Asking", role: .cancel) {}
-        } message: {
-            Text("The agent will be able to write and edit files without showing each request first. Shell commands and reads outside the working folder will still ask every time. This resets when the session closes.")
+        .alert(item: $pendingApprovalMode) { mode in
+            Alert(
+                title: Text(mode.confirmationTitle),
+                message: Text(mode.confirmationMessage),
+                primaryButton: .destructive(Text(mode.confirmationAction)) {
+                    Task { await controller.setApprovalMode(mode) }
+                },
+                secondaryButton: .cancel(Text("Keep Current Mode")))
         }
     }
 
@@ -62,8 +64,7 @@ struct AgentSessionView: View {
 
             statusBadge
             Spacer()
-            Label("Ask before changes", systemImage: "hand.raised")
-                .workspaceTextRole(.trust)
+            approvalModeMenu
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -148,18 +149,26 @@ struct AgentSessionView: View {
                 }
                 .workspacePanel()
             }
-            if controller.canResumePreviousSession {
-                Button {
-                    Task {
-                        if controller.state == .idle { await controller.start() }
-                        await controller.resumePreviousSession()
-                    }
-                } label: {
-                    Label("Resume Most Recent Session", systemImage: "clock.arrow.circlepath")
+            HStack(spacing: 10) {
+                Button(action: showSessionHistory) {
+                    Label("Browse Session History", systemImage: "clock.arrow.circlepath")
                 }
                 .buttonStyle(.bordered)
-                .disabled(controller.state == .starting)
-                .accessibilityIdentifier("agent.resumePrevious")
+                .accessibilityIdentifier("agent.browseSessionHistory")
+
+                if controller.canResumePreviousSession {
+                    Button {
+                        Task {
+                            if controller.state == .idle { await controller.start() }
+                            await controller.resumePreviousSession()
+                        }
+                    } label: {
+                        Label("Resume Most Recent Session", systemImage: "clock.arrow.circlepath")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(controller.state == .starting)
+                    .accessibilityIdentifier("agent.resumePrevious")
+                }
             }
             HStack(spacing: 10) {
                 starterCard(
@@ -182,24 +191,19 @@ struct AgentSessionView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("Working folder: \(controller.workspaceDisplayName)", systemImage: "folder")
                     Label("Meeting Library: scoped local read access", systemImage: "lock.open")
-                    Label("File changes and shell commands require approval", systemImage: "hand.raised")
+                    Label(controller.approvalMode.accessSummary,
+                          systemImage: controller.approvalMode.systemImage)
                 }
                 .workspaceTextRole(.trust)
                 .padding(.top, 8)
             }
             .font(WorkspaceTypography.body)
-            DisclosureGroup("Advanced") {
+            DisclosureGroup("Approval mode") {
                 VStack(alignment: .leading, spacing: 10) {
-                    Toggle("Allow all file changes for this session", isOn: Binding(
-                        get: { controller.autoApproveSession },
-                        set: { enabled in
-                            if enabled { confirmingAutoApprove = true } else {
-                                controller.autoApproveSession = false
-                            }
-                        }))
-                        .toggleStyle(.switch)
-                        .accessibilityIdentifier("agent.autoApprove")
-                    Text("Off by default and reset when this session closes.")
+                    Label(controller.approvalMode.title,
+                          systemImage: controller.approvalMode.systemImage)
+                    Text(controller.approvalMode.detail)
+                    Text("Change this from the menu in the top-right. It resets when the session closes.")
                 }
                 .workspaceTextRole(.trust)
                 .padding(.top, 8)
@@ -232,7 +236,7 @@ struct AgentSessionView: View {
 
     private var emptyStateDetail: String {
         if controller.state == .idle {
-            return "Work in the selected folder across a continuing session. Reads and changes follow the approval rules; the runtime starts after you press Send."
+            return "Work in the selected folder across a continuing session. \(controller.approvalMode.runtimeSummary) The runtime starts after you press Send."
         }
         if controller.state == .starting {
             return app.settings.usesRemoteMainLLM
@@ -240,8 +244,40 @@ struct AgentSessionView: View {
                 : "Your local Agent runtime and Main LLM are starting."
         }
         return app.settings.usesRemoteMainLLM
-            ? "It can read your Meeting Library now. File changes and commands ask first; prompts and approved context use your remote Main LLM. Session history stays on this Mac."
-            : "It can read your Meeting Library now. File changes and commands ask first. Model inference and session history stay on this Mac."
+            ? "It can read your Meeting Library now. \(controller.approvalMode.runtimeSummary) Prompts and approved context use your remote Main LLM. Session history stays on this Mac."
+            : "It can read your Meeting Library now. \(controller.approvalMode.runtimeSummary) Model inference and session history stay on this Mac."
+    }
+
+    private var approvalModeMenu: some View {
+        Menu {
+            ForEach(AgentApprovalMode.allCases) { mode in
+                Button {
+                    selectApprovalMode(mode)
+                } label: {
+                    Label(mode.title,
+                          systemImage: controller.approvalMode == mode ? "checkmark" : mode.systemImage)
+                }
+            }
+        } label: {
+            Label(controller.approvalMode.title,
+                  systemImage: controller.approvalMode.systemImage)
+                .workspaceTextRole(.trust)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help(controller.approvalMode.detail)
+        .accessibilityLabel("Agent approval mode")
+        .accessibilityValue(controller.approvalMode.title)
+        .accessibilityIdentifier("agent.approvalMode")
+    }
+
+    private func selectApprovalMode(_ mode: AgentApprovalMode) {
+        guard mode != controller.approvalMode else { return }
+        if mode.rawValue > controller.approvalMode.rawValue {
+            pendingApprovalMode = mode
+        } else {
+            Task { await controller.setApprovalMode(mode) }
+        }
     }
 
     private func recoveryCard(message: String) -> some View {
@@ -474,6 +510,96 @@ struct AgentSessionView: View {
         Task { @MainActor in
             await Task.yield()
             composerFocused = true
+        }
+    }
+}
+
+private extension AgentApprovalMode {
+    var title: String {
+        switch self {
+        case .askBeforeChanges: "Ask before changes"
+        case .approveReads: "Auto-approve reads"
+        case .approveReadsAndEdits: "Auto-approve reads & edits"
+        case .fullAccess: "Full access"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .askBeforeChanges: "hand.raised"
+        case .approveReads: "eye"
+        case .approveReadsAndEdits: "pencil"
+        case .fullAccess: "lock.open"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .askBeforeChanges:
+            "Reads in the working folder run automatically. Outside reads, file changes, and shell commands ask first."
+        case .approveReads:
+            "All reads run automatically, including outside the working folder. File changes and shell commands ask first."
+        case .approveReadsAndEdits:
+            "All reads, writes, and edits run automatically, including outside the working folder. Shell commands ask first."
+        case .fullAccess:
+            "All current read, write, edit, and shell calls run automatically, including outside the working folder."
+        }
+    }
+
+    var accessSummary: String {
+        switch self {
+        case .askBeforeChanges:
+            "Outside reads, file changes, and shell commands require approval"
+        case .approveReads:
+            "All reads are automatic; file changes and shell commands require approval"
+        case .approveReadsAndEdits:
+            "All reads and file changes are automatic; shell commands require approval"
+        case .fullAccess:
+            "Reads, file changes, and shell commands are automatic"
+        }
+    }
+
+    var runtimeSummary: String {
+        switch self {
+        case .askBeforeChanges:
+            "Outside reads, file changes, and shell commands ask first."
+        case .approveReads:
+            "All reads run automatically; file changes and shell commands ask first."
+        case .approveReadsAndEdits:
+            "All reads and file changes run automatically; shell commands ask first."
+        case .fullAccess:
+            "All current read, file-change, and shell calls run automatically."
+        }
+    }
+
+    var confirmationTitle: String {
+        switch self {
+        case .askBeforeChanges: "Use Ask before changes?"
+        case .approveReads: "Auto-approve every read?"
+        case .approveReadsAndEdits: "Auto-approve every read and edit?"
+        case .fullAccess: "Give this agent full access?"
+        }
+    }
+
+    var confirmationMessage: String {
+        switch self {
+        case .askBeforeChanges:
+            "Outside reads, file changes, and shell commands will ask first."
+        case .approveReads:
+            "The agent can read any file this Mac account can access, including files outside the working folder, without showing each request. File changes and shell commands will still ask. This resets when the session closes."
+        case .approveReadsAndEdits:
+            "The agent can read, create, overwrite, and edit files anywhere this Mac account can access without showing each request. Shell commands will still ask. This resets when the session closes."
+        case .fullAccess:
+            "The agent can read and change files anywhere and run shell commands without asking. Commands may delete data, access secrets, or connect to the network. This resets when the session closes."
+        }
+    }
+
+    var confirmationAction: String {
+        switch self {
+        case .askBeforeChanges: "Keep Asking"
+        case .approveReads: "Auto-approve Reads"
+        case .approveReadsAndEdits: "Auto-approve Reads & Edits"
+        case .fullAccess: "Give Full Access"
         }
     }
 }

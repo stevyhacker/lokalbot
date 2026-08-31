@@ -462,7 +462,7 @@ private struct TimelineMeetingPreview: View {
                                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                                     Image(systemName: "checkmark")
                                         .foregroundStyle(Brand.teal)
-                                    Text(decision.text)
+                                    Text(decision.displayText)
                                         .font(WorkspaceTypography.body)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }

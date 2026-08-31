@@ -329,6 +329,10 @@ final class RecordingController: ObservableObject {
                     meeting.participantNameHints = calendarEvent.participantNames.isEmpty
                         ? nil
                         : calendarEvent.participantNames
+                    let participants = calendarEvent.resolvedParticipantIdentities
+                    meeting.calendarParticipantIdentities = participants.isEmpty
+                        ? nil
+                        : participants
                     try? storage.saveMeta(meeting)
                 }
                 created = meeting

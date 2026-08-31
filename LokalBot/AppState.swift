@@ -225,6 +225,11 @@ final class AppState: ObservableObject {
     /// switch back to Ask before presenting their content.
     @Published var askMode: AskMode = .ask
     @Published var selectedMeetingIDs: Set<Meeting.ID> = []
+    /// The meeting whose page-level find bar is visible. Keeping presentation
+    /// in shared observable state makes menu/AppKit requests and the rendered
+    /// NavigationSplitView consume one source of truth.
+    @Published private(set) var presentedMeetingSearchID: Meeting.ID?
+    @Published private(set) var meetingPageSearchRequestRevision = 0
 
     /// A day handed to the Ask section (the old Timeline "Ask" tab, spec
     /// §2.2): rendered as a removable chip, and prepended to escalated
@@ -271,6 +276,21 @@ final class AppState: ObservableObject {
         navigationHandoff.stageMeeting(id, seek: seek)
         selectedMeetingIDs = [id]
         navSection = .meetings
+    }
+
+    var canSearchSelectedMeeting: Bool {
+        navSection == .meetings && selectedMeeting?.endedAt != nil
+    }
+
+    func requestSelectedMeetingSearch() {
+        guard canSearchSelectedMeeting, let meeting = selectedMeeting else { return }
+        presentedMeetingSearchID = meeting.id
+        meetingPageSearchRequestRevision &+= 1
+    }
+
+    func dismissMeetingSearch(for meetingID: Meeting.ID) {
+        guard presentedMeetingSearchID == meetingID else { return }
+        presentedMeetingSearchID = nil
     }
 
     func selectDefaultMeetingIfNeeded() {
@@ -1156,7 +1176,7 @@ final class AppState: ObservableObject {
         if end <= meeting.startedAt { end = fallbackEnd }
         let ocr = activityStore.ocrText(from: meeting.startedAt, to: end, maxChars: 12_000)
         return SpeakerNameHintExtractor.hints(
-            calendarNames: meeting.participantNameHints ?? [],
+            calendarNames: meeting.resolvedCalendarParticipantIdentities.compactMap(\.name),
             ocrText: ocr)
     }
 

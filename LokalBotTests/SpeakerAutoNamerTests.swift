@@ -13,11 +13,16 @@ final class SpeakerAutoNamerTests: XCTestCase {
         }, engine: "test")
     }
 
+    private func participants(_ names: [String]) -> [CalendarParticipantIdentity] {
+        names.compactMap { CalendarParticipantIdentity(name: $0, emailAddress: nil) }
+    }
+
     func testSingleRemoteSpeakerWithOneAttendeeGetsNamed() {
         let named = SpeakerAutoNamer.applyingAliases(
             to: transcript(speakers: ["me", "them", "me", "them"]),
-            participantNames: ["Ana Petrović"])
+            participants: participants(["Ana Petrović"]))
         XCTAssertEqual(named.speakerAliases["them"], "Ana Petrović")
+        XCTAssertNotNil(named.calendarIdentityID(for: "them"))
         XCTAssertEqual(named.displaySpeaker(for: "them"), "Ana Petrović")
         // Raw labels stay untouched — only the alias layer changes.
         XCTAssertTrue(named.segments.allSatisfy { $0.speaker == "me" || $0.speaker == "them" })
@@ -26,14 +31,14 @@ final class SpeakerAutoNamerTests: XCTestCase {
     func testMultipleAttendeesAreSkipped() {
         let named = SpeakerAutoNamer.applyingAliases(
             to: transcript(speakers: ["me", "them"]),
-            participantNames: ["Ana Petrović", "Marko Marković"])
+            participants: participants(["Ana Petrović", "Marko Marković"]))
         XCTAssertTrue(named.speakerAliases.isEmpty)
     }
 
     func testNumberedSpeakersAreSkipped() {
         let named = SpeakerAutoNamer.applyingAliases(
             to: transcript(speakers: ["me", "them 1", "them 2"]),
-            participantNames: ["Ana Petrović"])
+            participants: participants(["Ana Petrović"]))
         XCTAssertTrue(named.speakerAliases.isEmpty)
     }
 
@@ -41,22 +46,48 @@ final class SpeakerAutoNamerTests: XCTestCase {
         var existing = transcript(speakers: ["me", "them"])
         existing.setSpeakerAlias("Hand-Renamed", for: "them")
         let named = SpeakerAutoNamer.applyingAliases(
-            to: existing, participantNames: ["Ana Petrović"])
+            to: existing, participants: participants(["Ana Petrović"]))
         XCTAssertEqual(named.speakerAliases["them"], "Hand-Renamed")
     }
 
     func testNoHintsOrBlankHintsAreSkipped() {
         let base = transcript(speakers: ["me", "them"])
         XCTAssertTrue(SpeakerAutoNamer.applyingAliases(
-            to: base, participantNames: []).speakerAliases.isEmpty)
+            to: base, participants: []).speakerAliases.isEmpty)
         XCTAssertTrue(SpeakerAutoNamer.applyingAliases(
-            to: base, participantNames: ["   "]).speakerAliases.isEmpty)
+            to: base, participants: participants(["   "])).speakerAliases.isEmpty)
     }
 
     func testMicOnlyTranscriptWithoutRemoteSpeakerIsSkipped() {
         let named = SpeakerAutoNamer.applyingAliases(
             to: transcript(speakers: ["me", "me"]),
-            participantNames: ["Ana Petrović"])
+            participants: participants(["Ana Petrović"]))
         XCTAssertTrue(named.speakerAliases.isEmpty)
+    }
+
+    func testDuplicateEmailRepresentsOneUnambiguousAttendee() throws {
+        let emailOnly = try XCTUnwrap(CalendarParticipantIdentity(
+            id: "first", name: nil, emailAddress: "ana@example.com"))
+        let named = try XCTUnwrap(CalendarParticipantIdentity(
+            id: "second", name: "Ana Petrović", emailAddress: "ANA@example.com"))
+
+        let result = SpeakerAutoNamer.applyingAliases(
+            to: transcript(speakers: ["me", "them"]),
+            participants: [emailOnly, named])
+
+        XCTAssertEqual(result.displaySpeaker(for: "them"), "Ana Petrović")
+        XCTAssertEqual(result.calendarIdentityID(for: "them"), "first")
+    }
+
+    func testEmailWithoutDisplayNameIsNeverUsedAsTranscriptAlias() throws {
+        let attendee = try XCTUnwrap(CalendarParticipantIdentity(
+            id: "attendee", name: nil, emailAddress: "ana@example.com"))
+
+        let result = SpeakerAutoNamer.applyingAliases(
+            to: transcript(speakers: ["me", "them"]),
+            participants: [attendee])
+
+        XCTAssertTrue(result.speakerAliases.isEmpty)
+        XCTAssertFalse(result.markdown.contains("ana@example.com"))
     }
 }

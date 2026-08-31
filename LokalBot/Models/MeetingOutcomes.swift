@@ -50,15 +50,21 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
              due: String? = nil, isForUser: Bool? = nil,
              citations: [OutcomeSourceCitation] = [],
              schemaVersion: Int = MeetingOutcomes.currentSchemaVersion) {
+            let resolvedIsForUser = isForUser ?? Self.ownerBelongsToUser(owner)
+            let proseText = OutcomeProse.actionText(text, isForUser: resolvedIsForUser)
             self.id = id ?? MeetingOutcomes.stableID(
-                kind: "action", text: text, owner: owner, due: due,
+                kind: "action", text: proseText, owner: owner, due: due,
                 citationIDs: citations.map(\.segmentID))
             self.schemaVersion = schemaVersion
-            self.text = text
+            self.text = proseText
             self.owner = owner
             self.due = due
-            self.isForUser = isForUser ?? Self.ownerBelongsToUser(owner)
+            self.isForUser = resolvedIsForUser
             self.citations = citations
+        }
+
+        var displayText: String {
+            OutcomeProse.actionText(text, isForUser: isForUser)
         }
 
         private static func ownerBelongsToUser(_ owner: String?) -> Bool {
@@ -76,13 +82,14 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             schemaVersion = try container.decodeIfPresent(
                 Int.self, forKey: .schemaVersion) ?? 1
-            text = try container.decode(String.self, forKey: .text)
+            let decodedText = try container.decode(String.self, forKey: .text)
             owner = try container.decodeIfPresent(String.self, forKey: .owner)
             due = try container.decodeIfPresent(String.self, forKey: .due)
             citations = try container.decodeIfPresent(
                 [OutcomeSourceCitation].self, forKey: .citations) ?? []
             isForUser = try container.decodeIfPresent(Bool.self, forKey: .isForUser)
                 ?? Self.ownerBelongsToUser(owner)
+            text = OutcomeProse.actionText(decodedText, isForUser: isForUser)
             id = try container.decodeIfPresent(String.self, forKey: .id)
                 ?? MeetingOutcomes.stableID(
                     kind: "action", text: text, owner: owner, due: due,
@@ -100,13 +107,16 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
         init(id: String? = nil, text: String,
              citations: [OutcomeSourceCitation] = [],
              schemaVersion: Int = MeetingOutcomes.currentSchemaVersion) {
+            let proseText = OutcomeProse.firstPersonSubject(text)
             self.id = id ?? MeetingOutcomes.stableID(
-                kind: "decision", text: text,
+                kind: "decision", text: proseText,
                 citationIDs: citations.map(\.segmentID))
             self.schemaVersion = schemaVersion
-            self.text = text
+            self.text = proseText
             self.citations = citations
         }
+
+        var displayText: String { OutcomeProse.firstPersonSubject(text) }
 
         private enum CodingKeys: String, CodingKey {
             case id, schemaVersion, text, citations

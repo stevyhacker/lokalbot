@@ -39,7 +39,7 @@
       <p>The project does not receive your recordings, transcripts, summaries, screenshots, prompts, files, calendar events, or usage history. LokalBot can store these in its Application Support directory:</p>
       <ul>
         <li>meeting microphone and system-audio tracks;</li>
-        <li>transcripts, summaries, notes, search indexes, and meeting metadata;</li>
+        <li>transcripts, summaries, notes, search indexes, and meeting metadata, including attendee names and emails for calendar-matched meetings;</li>
         <li>downloaded speech, embedding, and language models;</li>
         <li>permission-gated app/window activity, screenshots, and locally extracted text;</li>
         <li>opt-in Agent Mode sessions and runtime files; and</li>
@@ -57,7 +57,7 @@
       <p>Those services receive ordinary connection metadata such as IP address and request headers. LokalBot adds no advertising identifier and does not use those requests for tracking. A remote server's operator controls its own privacy terms.</p>
 
       <h2>Permissions and consent</h2>
-      <p>Microphone and system-audio permissions enable recording. Calendar access helps detect and title meetings. Accessibility enables browser-meeting detection, Cotyping, dictation insertion, and approved agent interaction. Screen Recording enables visual screen context when selected.</p>
+      <p>Microphone and system-audio permissions enable recording. Calendar access helps detect and title meetings and provides local speaker-name suggestions. Attendee emails remain in meeting metadata, are deleted with the meeting, and are never added to transcripts, exports, or model prompts. Accessibility enables browser-meeting detection, Cotyping, dictation insertion, and approved agent interaction. Screen Recording enables visual screen context when selected.</p>
       <p>Recording defaults to automatic detection on a fresh install. You are responsible for informing participants and obtaining any consent required before recording other people.</p>
 
       <h2>External-agent access</h2>

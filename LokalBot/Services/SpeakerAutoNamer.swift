@@ -13,14 +13,17 @@ import Foundation
 enum SpeakerAutoNamer {
 
     /// The transcript with the alias applied, or the input unchanged.
-    /// `participantNames` is `Meeting.participantNameHints` — already filtered
-    /// upstream to remote, non-declined attendees.
-    static func applyingAliases(to transcript: Transcript,
-                                participantNames: [String]) -> Transcript {
-        let names = participantNames
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        guard names.count == 1, let name = names.first else { return transcript }
+    /// `participants` is already filtered upstream to remote, non-declined
+    /// attendees. Email addresses deduplicate identities but are never used as
+    /// transcript display labels.
+    static func applyingAliases(
+        to transcript: Transcript,
+        participants: [CalendarParticipantIdentity]
+    ) -> Transcript {
+        let participants = CalendarParticipantIdentity.normalized(participants)
+        guard participants.count == 1,
+              let participant = participants.first,
+              let name = participant.name else { return transcript }
 
         let remoteSpeakers = Set(transcript.segments.map {
             $0.speaker.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -31,7 +34,10 @@ enum SpeakerAutoNamer {
         guard transcript.speakerAliases["them"] == nil else { return transcript }
 
         var named = transcript
-        named.setSpeakerAlias(name, for: "them")
+        named.setSpeakerAlias(
+            name,
+            for: "them",
+            calendarIdentityID: participant.id)
         return named
     }
 }

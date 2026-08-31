@@ -129,6 +129,7 @@ final class EventKitCalendarEventProvider: ObservableObject, CalendarEventProvid
               let start = event.startDate, let end = event.endDate,
               let title = event.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty
         else { return nil }
+        let participants = participantIdentities(from: event)
         return CalendarMeetingCandidate(
             provider: "eventkit",
             externalID: occurrenceID(event, start: start),
@@ -137,7 +138,8 @@ final class EventKitCalendarEventProvider: ObservableObject, CalendarEventProvid
             endDate: end,
             meetingURL: meetingURL,
             sourceCalendarTitle: event.calendar?.title,
-            participantNames: participantNames(from: event))
+            participantNames: participants.compactMap(\.name),
+            participantIdentities: participants)
     }
 
     /// Per-occurrence id: the event id alone is shared across a recurring
@@ -151,14 +153,18 @@ final class EventKitCalendarEventProvider: ObservableObject, CalendarEventProvid
         event.attendees?.contains { $0.isCurrentUser && $0.participantStatus == .declined } ?? false
     }
 
-    private static func participantNames(from event: EKEvent) -> [String] {
-        let names = event.attendees?.compactMap { participant -> String? in
+    private static func participantIdentities(
+        from event: EKEvent
+    ) -> [CalendarParticipantIdentity] {
+        let identities: [CalendarParticipantIdentity] = event.attendees?.compactMap { participant -> CalendarParticipantIdentity? in
             guard !participant.isCurrentUser,
-                  participant.participantStatus != .declined,
-                  let name = participant.name else { return nil }
-            return SpeakerNameHintExtractor.normalizedName(name)
+                  participant.participantStatus != .declined else { return nil }
+            return CalendarParticipantIdentity(
+                name: participant.name,
+                emailAddress: CalendarParticipantIdentity.emailAddress(
+                    from: participant.url))
         } ?? []
-        return SpeakerNameHintExtractor.hints(calendarNames: names)
+        return CalendarParticipantIdentity.normalized(identities)
     }
 
     private static func map(_ status: EKAuthorizationStatus) -> CalendarAuthorizationStatus {

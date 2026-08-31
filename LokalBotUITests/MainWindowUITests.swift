@@ -16,7 +16,10 @@ final class MainWindowUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         fixture = try SyntheticFixture.plant()
-        let launch = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "MainWindow")
+        let launch = try UITestHarness.launch(
+            storageRoot: fixture.root,
+            suitePrefix: "MainWindow",
+            environment: ["LOKALBOT_UI_TEST_DIAGNOSTICS": "1"])
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
         // Wait until the main window has rendered Today's header —
@@ -85,6 +88,21 @@ final class MainWindowUITests: XCTestCase {
         toolbarSidebarButtons.firstMatch.click()
         XCTAssertTrue(app.descendants(matching: .any)["sidebar.settings"]
             .waitForExistence(timeout: 5), "sidebar did not return")
+    }
+
+    /// The command palette uses one AppKit field-editor path. A printable key
+    /// must update its query exactly once rather than also travelling through
+    /// the palette's navigation-key handler.
+    func testCommandPaletteDoesNotDuplicateTypedCharacters() {
+        app.typeKey("k", modifierFlags: .command)
+        let field = app.textFields["palette.input"]
+        XCTAssertTrue(field.waitForExistence(timeout: 4), "command palette input missing")
+
+        field.click()
+        field.typeText("AI tooling")
+
+        XCTAssertEqual(field.value as? String, "AI tooling")
+        app.typeKey(.escape, modifierFlags: [])
     }
 
     /// The native toolbar item must do real work in both directions. This
@@ -586,6 +604,44 @@ final class MainWindowUITests: XCTestCase {
                       "first transcript segment text missing")
     }
 
+    /// Calendar attendees are explicit choices for remote diarization labels;
+    /// email disambiguates the local choice but never becomes the alias.
+    func testSpeakerRenameOffersCalendarAttendeeIdentities() {
+        openLibrary()
+        selectMeeting(fixture.designReview)
+
+        let disclosure = identified("meeting.transcriptDisclosure")
+        UITestHarness.scrollTo(disclosure, in: app)
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 4))
+        disclosure.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).click()
+
+        let remoteSpeaker = app.buttons["transcript.segment.1.speaker"]
+        UITestHarness.scrollTo(remoteSpeaker, in: app)
+        XCTAssertTrue(remoteSpeaker.waitForExistence(timeout: 3))
+        remoteSpeaker.click()
+
+        let candidate = identified("speaker.rename.calendarCandidate.0")
+        XCTAssertTrue(
+            candidate.waitForExistence(timeout: 3),
+            "calendar candidate missing from sheet AX tree:\n\(app.sheets.firstMatch.debugDescription)")
+        XCTAssertEqual(
+            candidate.elementType,
+            .button,
+            "calendar candidate must be an AXButton: \(candidate.debugDescription)")
+        XCTAssertTrue(candidate.label.contains("Ana Petrović"),
+                      "calendar candidate name missing from button label: \(candidate.label)")
+        XCTAssertTrue(candidate.label.contains("ana@example.com"),
+                      "calendar candidate email missing from button label: \(candidate.label)")
+        candidate.click()
+
+        let name = app.textFields["speaker.rename.name"]
+        XCTAssertEqual(name.value as? String, "Ana Petrović")
+        identified("speaker.rename.save").click()
+        XCTAssertTrue(UITestHarness.waitUntil {
+            self.app.buttons["transcript.segment.1.speaker"].label.contains("Ana Petrović")
+        }, "calendar attendee was not saved as the speaker alias")
+    }
+
     /// Frequent processing actions stay direct, while copy/export and speech
     /// utilities remain available in one clearly labelled overflow.
     func testMeetingProcessingActionsAreDirectToolbarButtons() {
@@ -610,6 +666,50 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(app.menuItems["Export Meeting as Markdown..."].exists)
         XCTAssertTrue(app.menuItems["Export audio"].exists)
         app.typeKey(.escape, modifierFlags: [])
+    }
+
+    /// Command-F and the visible toolbar action search every visible meeting
+    /// content node. Matches move through outcomes and summary prose into
+    /// collapsed transcript evidence without switching to library-wide Ask.
+    func testMeetingFindSearchesAllVisibleContent() {
+        openLibrary()
+        selectMeeting(fixture.designReview)
+        XCTAssertTrue(app.staticTexts["detail.title"].waitForExistence(timeout: 4))
+        XCTAssertTrue(identified("toolbar.meetingSearch").exists)
+
+        app.typeKey("f", modifierFlags: .command)
+        let field = app.textFields["meeting.search.field"]
+        XCTAssertTrue(
+            field.waitForExistence(timeout: 3),
+            "Command-F did not open meeting find. Menu tree:\n\(app.menuBars.debugDescription)")
+        XCTAssertFalse(app.staticTexts["meeting.search.status"].exists,
+                       "empty search repeated the field's scope label")
+        field.typeText("failover")
+
+        let status = app.staticTexts["meeting.search.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 3))
+        XCTAssertEqual(status.value as? String, "1 of 4 · Action items")
+
+        identified("meeting.search.next").click()
+        identified("meeting.search.next").click()
+        identified("meeting.search.next").click()
+        XCTAssertEqual(status.value as? String, "4 of 4 · Transcript")
+        XCTAssertTrue(app.staticTexts["transcript.segment.3.text"]
+            .waitForExistence(timeout: 3), "transcript match did not expand its evidence")
+
+        field.click()
+        field.typeKey("a", modifierFlags: .command)
+        field.typeText("Adopt Redis for caching")
+        XCTAssertTrue(UITestHarness.waitUntil {
+            status.value as? String == "1 of 2 · Decisions"
+        }, "decision card text was not included before its summary duplicate")
+
+        field.click()
+        field.typeKey("a", modifierFlags: .command)
+        field.typeText("Zoom")
+        XCTAssertTrue(UITestHarness.waitUntil {
+            status.value as? String == "1 of 1 · Meeting details"
+        }, "meeting header metadata was not searchable")
     }
 
     // MARK: - Ask

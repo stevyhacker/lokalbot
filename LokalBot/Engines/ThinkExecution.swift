@@ -105,7 +105,8 @@ final class ThinkExecution {
                 baseURL: url,
                 model: settings.openAIModel,
                 apiKey: settings.openAIAPIKey,
-                chatDialect: .inferred(from: url))
+                chatDialect: .inferred(from: url),
+                openRouterDataPolicy: settings.openRouterDataPolicy)
         }
     }
 

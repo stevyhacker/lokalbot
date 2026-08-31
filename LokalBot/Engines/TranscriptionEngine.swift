@@ -17,7 +17,7 @@ private func reportPreparationUpdate(_ update: ModelPreparationUpdate,
 
 private func downloadProgressHandler(
     _ handler: ModelPreparationProgressHandler?
-) -> DownloadUtils.ProgressHandler? {
+) -> ProgressHandler? {
     guard handler != nil else { return nil }
     return { progress in
         let status: String
@@ -482,7 +482,7 @@ actor CohereEngine: TranscriptionEngine {
             let repoDir = base.appendingPathComponent(Repo.cohereTranscribeCoreml.folderName)
             if !FileManager.default.fileExists(
                 atPath: repoDir.appendingPathComponent(ModelNames.CohereTranscribe.encoderCompiledFile).path) {
-                try await DownloadUtils.downloadRepo(
+                try await ModelHub.download(
                     .cohereTranscribeCoreml,
                     to: base,
                     progressHandler: downloadProgressHandler(progress))

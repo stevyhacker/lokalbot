@@ -128,6 +128,78 @@ final class AgentSessionTabsTests: XCTestCase {
             at: factory.sessionsDirectory,
             includingPropertiesForKeys: nil), [])
     }
+
+    func testLoadsAndOpensExactSavedSessionInBlankTab() async throws {
+        let factory = Factory(root: root)
+        try FileManager.default.createDirectory(
+            at: factory.sessionsDirectory,
+            withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: factory.storage.rootURL, withIntermediateDirectories: true)
+        let savedFile = factory.sessionsDirectory.appendingPathComponent("saved.jsonl")
+        try writeSession(
+            id: "saved-session",
+            title: "Reopen this conversation",
+            workspace: factory.storage.rootURL,
+            to: savedFile)
+        let sessions = AgentSessionTabs { factory.makeController() }
+        let originalTab = try XCTUnwrap(sessions.selectedTab)
+
+        let loaded = try await sessions.loadSavedSessions()
+        let saved = try XCTUnwrap(loaded.first)
+        let opening = Task { try await sessions.openSavedSession(saved) }
+        let transport = try XCTUnwrap(factory.transports.first)
+        for _ in 0..<20 where !transport.sentLines.contains(where: { $0.contains("get_messages") }) {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        transport.inject(#"{"type":"response","id":"history1","command":"get_messages","success":true,"data":{"messages":[{"role":"user","content":"Reopen this conversation"}]}}"#)
+        try await opening.value
+
+        XCTAssertEqual(sessions.tabs.count, 1, "a blank selected tab should be reused")
+        XCTAssertEqual(sessions.selectedID, originalTab.id)
+        XCTAssertEqual(originalTab.controller.activeSessionFile, savedFile)
+        XCTAssertEqual(originalTab.controller.sessionTitle, "Reopen this conversation")
+        XCTAssertTrue(sessions.isOpen(saved))
+        let plan = try XCTUnwrap(factory.plans.first)
+        let sessionIndex = try XCTUnwrap(plan.arguments.firstIndex(of: "--session"))
+        XCTAssertEqual(plan.arguments[sessionIndex + 1], savedFile.path)
+
+        do {
+            try await sessions.openSavedSession(saved)
+            XCTFail("expected the duplicate session to be rejected")
+        } catch AgentSavedSessionOpenError.alreadyOpen {
+            // Expected.
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
+    private func writeSession(
+        id: String,
+        title: String,
+        workspace: URL,
+        to file: URL
+    ) throws {
+        let records: [[String: Any]] = [
+            [
+                "type": "session",
+                "id": id,
+                "timestamp": "2026-08-05T20:52:04.304Z",
+                "cwd": workspace.path,
+            ],
+            [
+                "type": "message",
+                "message": [
+                    "role": "user",
+                    "content": title,
+                    "timestamp": 1_785_963_156_269 as Int64,
+                ],
+            ],
+        ]
+        let lines = try records.map {
+            String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self)
+        }
+        try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: file)
+    }
 }
 
 @MainActor
@@ -135,6 +207,7 @@ private final class Factory {
     let storage: StorageManager
     let sessionsDirectory: URL
     private(set) var transports: [FakeTransport] = []
+    private(set) var plans: [PiLaunchPlan] = []
 
     init(root: URL) {
         storage = StorageManager(rootURL: root)
@@ -152,6 +225,9 @@ private final class Factory {
             settings: { settings },
             storage: storage,
             sessionsDirectory: sessionsDirectory,
-            makeTransport: { _ in transport })
+            makeTransport: { plan in
+                self.plans.append(plan)
+                return transport
+            })
     }
 }
