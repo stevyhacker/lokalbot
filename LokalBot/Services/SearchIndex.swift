@@ -213,7 +213,10 @@ final class SearchIndex {
     /// `dropStopWords` strips function words first — both used by the chat tool to
     /// rescue natural-language questions. `kind` nil = all kinds.
     func search(_ query: String, kind: Kind? = nil, limit: Int = 60,
-                matchAll: Bool = true, dropStopWords: Bool = false) -> [Hit] {
+                matchAll: Bool = true, dropStopWords: Bool = false,
+                meetingIDs: Set<UUID>? = nil) -> [Hit] {
+        guard limit > 0 else { return [] }
+        if let meetingIDs, meetingIDs.isEmpty { return [] }
         guard let match = Self.ftsQuery(from: query, matchAll: matchAll,
                                         dropStopWords: dropStopWords),
               let database else { return [] }
@@ -226,15 +229,20 @@ final class SearchIndex {
                   WHERE deleted.meeting_id = docs.meeting_id
               )
             """
-        if kind != nil { sql += " AND kind = ?2" }
-        sql += " ORDER BY rank LIMIT \(limit)"
-
-        let values: [Any]
+        var values: [Any] = [match]
         if let kind {
-            values = [match, kind.rawValue]
-        } else {
-            values = [match]
+            values.append(kind.rawValue)
+            sql += " AND kind = ?\(values.count)"
         }
+        if let meetingIDs {
+            let sortedIDs = meetingIDs.map(\.uuidString).sorted()
+            let placeholders = sortedIDs.map { id -> String in
+                values.append(id)
+                return "?\(values.count)"
+            }
+            sql += " AND meeting_id IN (\(placeholders.joined(separator: ", ")))"
+        }
+        sql += " ORDER BY rank LIMIT \(limit)"
         return database.query(sql, bind: values) { statement in
             guard let idText = sqlite3_column_text(statement, 0),
                   let meetingID = UUID(uuidString: String(cString: idText)),

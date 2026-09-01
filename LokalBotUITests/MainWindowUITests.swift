@@ -728,12 +728,8 @@ final class MainWindowUITests: XCTestCase {
         field.click()
         field.typeText("failover")
 
-        // The row's accessibility identifier propagates to every StaticText
-        // child; take the first match so the click is unambiguous.
-        let segmentHit = app.staticTexts.matching(
-            NSPredicate(format: "identifier == %@",
-                        "search.hit.\(fixture.designReview.id.uuidString).segment"))
-            .firstMatch
+        let segmentHit = identified(
+            "search.hit.\(fixture.designReview.id.uuidString).segment")
         XCTAssertTrue(segmentHit.waitForExistence(timeout: 4),
                       "expected design review segment hit for 'failover'")
         segmentHit.click()
@@ -755,12 +751,14 @@ final class MainWindowUITests: XCTestCase {
                       "ask empty-state did not render")
         XCTAssertTrue(app.descendants(matching: .any)["ask.submit"].exists,
                       "explicit Ask action missing")
-        for source in ["meetings", "today", "screen"] {
-            XCTAssertTrue(app.descendants(matching: .any)["ask.source.\(source)"].exists,
-                          "per-question \(source) source missing")
-        }
-        XCTAssertTrue(askRetrievalSegment("Match by meaning").exists,
-                      "Match by meaning control missing")
+        XCTAssertTrue(identified("ask.sources").exists,
+                      "per-question source menu missing")
+        XCTAssertTrue(identified("ask.timeScope").exists,
+                      "independent time-scope control missing")
+        XCTAssertTrue(identified("ask.inferenceStatus").exists,
+                      "local/remote inference status missing")
+        XCTAssertTrue(askRetrievalSegment("Search").exists,
+                      "Search mode missing")
 
         let field = app.textFields["search.field"]
         XCTAssertTrue(field.waitForExistence(timeout: 4), "ask input field missing")
@@ -782,16 +780,16 @@ final class MainWindowUITests: XCTestCase {
         let askFrame = field.frame
 
         UITestHarness.selectSegment(
-            "Keyword search", pickerIdentifier: "ask.retrieval", in: app)
+            "Search", pickerIdentifier: "ask.retrieval", in: app)
         XCTAssertTrue(identified("ask.facet.all").waitForExistence(timeout: 4),
-                      "Keyword search facets did not appear")
-        // One segmented control owns all three retrieval modes, so Ask and
-        // Match by meaning stay one click away instead of a "Back" round trip.
+                      "Search facets did not appear")
+        // The top-level switch stays binary; exact/meaning is a Search-only
+        // menu so it cannot be confused with asking the model.
         XCTAssertTrue(askRetrievalSegment("Ask").exists, "Ask segment missing")
-        XCTAssertTrue(askRetrievalSegment("Match by meaning").exists,
-                      "Match by meaning segment missing")
-        XCTAssertFalse(app.descendants(matching: .any)["ask.source.meetings"].exists,
-                       "Ask scopes should not masquerade as keyword facets")
+        XCTAssertTrue(identified("ask.searchMatching").exists,
+                      "Exact/meaning search menu missing")
+        XCTAssertFalse(identified("ask.sources").exists,
+                       "Ask scopes should not masquerade as search facets")
         XCTAssertEqual(field.frame.minY, askFrame.minY, accuracy: 8,
                        "composer jumped vertically when leaving Ask")
         XCTAssertEqual(field.frame.minX, askFrame.minX, accuracy: 8,
@@ -1014,9 +1012,9 @@ final class MainWindowUITests: XCTestCase {
 
     private func switchToKeywordSearch() {
         UITestHarness.selectSegment(
-            "Keyword search", pickerIdentifier: "ask.retrieval", in: app)
+            "Search", pickerIdentifier: "ask.retrieval", in: app)
         XCTAssertTrue(identified("ask.facet.all").waitForExistence(timeout: 5),
-                      "Ask did not enter keyword-search mode")
+                      "Ask did not enter Search mode")
     }
 
     private func askRetrievalSegment(_ name: String) -> XCUIElement {

@@ -307,23 +307,25 @@ final class MeetingChatTools: ChatToolRunner {
             return ChatToolResult(text: "Provide a 'query' argument.", summary: "missing query")
         }
         let meetings = scopedMeetings(meetingsProvider(), call: call)
-        let allowedIDs = Set(meetings.map(\.id))
-        var keyword = searchIndex.search(query, limit: 8)
+        let hasDayScope = call.string("_lokalbot_day_scope")
+            .flatMap { Self.parseDay($0) } != nil
+        let allowedIDs: Set<UUID>? = hasDayScope ? Set(meetings.map(\.id)) : nil
+        var keyword = searchIndex.search(query, limit: 8, meetingIDs: allowedIDs)
         if keyword.isEmpty {
             // A natural-language question ANDs every stop word against the index and
             // misses; retry on content keywords with OR semantics (ranked by FTS)
             // before reporting nothing.
-            keyword = searchIndex.search(query, limit: 8, matchAll: false, dropStopWords: true)
+            keyword = searchIndex.search(
+                query, limit: 8, matchAll: false, dropStopWords: true,
+                meetingIDs: allowedIDs)
         }
-        keyword = keyword.filter { allowedIDs.contains($0.meetingID) }
         var semantic: [EmbeddingIndex.Hit] = []
         if settingsProvider().semanticSearchEnabled, embeddingIndex.hasEmbeddings {
             // Drop semantic chunks already surfaced by keyword search.
             let seen = Set(keyword.map { "\($0.meetingID)-\(Int($0.start))" })
-            semantic = await embeddingIndex.search(query, limit: 5)
+            semantic = await embeddingIndex.search(query, limit: 5, meetingIDs: allowedIDs)
                 .filter {
-                    allowedIDs.contains($0.meetingID)
-                        && !seen.contains("\($0.meetingID)-\(Int($0.start))")
+                    !seen.contains("\($0.meetingID)-\(Int($0.start))")
                 }
         }
         let text = MeetingChatFormat.searchResults(query: query, keyword: keyword,
@@ -374,9 +376,10 @@ final class MeetingChatTools: ChatToolRunner {
             scoped = [meeting]
             scopeLabel = meeting.title
         } else {
-            if call.string("_lokalbot_day_scope") == "today" {
+            if let dayArgument = call.string("_lokalbot_day_scope"),
+               let day = Self.parseDay(dayArgument) {
                 scoped = meetings
-                scopeLabel = "today"
+                scopeLabel = day.formatted(date: .abbreviated, time: .omitted)
             } else {
                 let days = max(1, min(call.int("days") ?? 7, 90))
                 let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
@@ -398,14 +401,20 @@ final class MeetingChatTools: ChatToolRunner {
         guard let query = call.string("query") else {
             return ChatToolResult(text: "Provide a 'query' argument.", summary: "missing query")
         }
-        var hits = activityStore.searchOCR(query, limit: 12)
+        let filter: ScreenSearchFilter
+        if let dayArgument = call.string("_lokalbot_day_scope"),
+           let day = Self.parseDay(dayArgument) {
+            filter = ScreenSearchFilter(interval: ActivityStore.dayInterval(containing: day))
+        } else {
+            filter = .all
+        }
+        var hits = activityStore.searchOCR(query, limit: 12, filter: filter)
         if hits.isEmpty {
             // Same rescue as meeting search: a natural-language question ANDs
             // stop words and misses; retry on OR'd content keywords.
-            hits = activityStore.searchOCR(query, limit: 12, matchAll: false, dropStopWords: true)
-        }
-        if call.string("_lokalbot_day_scope") == "today" {
-            hits = hits.filter { Calendar.current.isDateInToday($0.ts) }
+            hits = activityStore.searchOCR(
+                query, limit: 12, matchAll: false, dropStopWords: true,
+                filter: filter)
         }
         return ChatToolResult(
             text: MeetingChatFormat.screenResults(query: query, hits: hits),
@@ -420,8 +429,10 @@ final class MeetingChatTools: ChatToolRunner {
                 summary: "bad day argument")
         }
         let blocks = activityStore.blocks(on: day)
-        let meetings = meetingsProvider()
-            .filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }
+        let includeMeetings = call.string("_lokalbot_include_meetings") != "false"
+        let meetings = includeMeetings
+            ? meetingsProvider().filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }
+            : []
         let label = day.formatted(date: .abbreviated, time: .omitted)
         return ChatToolResult(
             text: MeetingChatFormat.activitySummary(dayLabel: label, blocks: blocks,
@@ -430,8 +441,9 @@ final class MeetingChatTools: ChatToolRunner {
     }
 
     private func scopedMeetings(_ meetings: [Meeting], call: ChatToolCall) -> [Meeting] {
-        guard call.string("_lokalbot_day_scope") == "today" else { return meetings }
-        return meetings.filter { Calendar.current.isDateInToday($0.startedAt) }
+        guard let dayArgument = call.string("_lokalbot_day_scope"),
+              let day = Self.parseDay(dayArgument) else { return meetings }
+        return meetings.filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }
     }
 
     /// 'today' / 'yesterday' / ISO date (YYYY-MM-DD) → a Date inside that day.

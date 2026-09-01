@@ -64,7 +64,7 @@ final class ChatHistoryUITests: XCTestCase {
         UITestHarness.clickSidebar("sidebar.ask", in: app)
 
         UITestHarness.selectSegment(
-            "Keyword search", pickerIdentifier: "ask.retrieval", in: app)
+            "Search", pickerIdentifier: "ask.retrieval", in: app)
         XCTAssertTrue(app.descendants(matching: .any)["ask.facet.all"]
             .waitForExistence(timeout: 4), "keyword mode did not expose search facets")
         let field = app.textFields["search.field"]
@@ -92,7 +92,9 @@ final class ChatHistoryUITests: XCTestCase {
     }
 
     private func conversationButton(_ id: String) -> XCUIElement {
-        app.buttons["chat.conversation.\(id)"]
+        app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier == %@", "chat.conversation.\(id)"))
+            .firstMatch
     }
 
     /// Write one conversation JSON in exactly the shape `ChatStore` decodes

@@ -392,6 +392,11 @@ final class ChatAgentTests: XCTestCase {
         let list = await tools.run(ChatToolCall(name: "list_meetings", arguments: [:]))
         XCTAssertTrue(list.text.contains("Caching strategy"), "list: \(list.text)")
 
+        let dateMiss = await tools.run(ChatToolCall(
+            name: "list_meetings",
+            arguments: ["_lokalbot_day_scope": "2020-01-01"]))
+        XCTAssertFalse(dateMiss.text.contains("Caching strategy"), "date miss: \(dateMiss.text)")
+
         let search = await tools.run(ChatToolCall(name: "search_meetings",
                                                   arguments: ["query": "eviction"]))
         XCTAssertTrue(search.text.contains("Caching strategy"), "search: \(search.text)")
@@ -408,6 +413,72 @@ final class ChatAgentTests: XCTestCase {
 
         let miss = await tools.run(ChatToolCall(name: "get_meeting", arguments: ["id": "zzzzzzzz"]))
         XCTAssertTrue(miss.text.contains("No meeting matches"), "miss: \(miss.text)")
+    }
+
+    func testMeetingDayFilterIsAppliedBeforeResultLimit() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lokalbot-chat-day-\(UUID().uuidString)", isDirectory: true)
+        setenv("LOKALBOT_STORAGE_ROOT", root.path, 1)
+        defer {
+            unsetenv("LOKALBOT_STORAGE_ROOT")
+            try? FileManager.default.removeItem(at: root)
+        }
+        let storage = StorageManager()
+        let calendar = Calendar(identifier: .gregorian)
+        let selectedDay = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 1, hour: 12)))
+        let otherDay = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: selectedDay))
+        var meetings: [Meeting] = []
+
+        func addMeeting(title: String, startedAt: Date, path: String, text: String) throws -> Meeting {
+            let meeting = Meeting(
+                id: UUID(), title: title, appName: "Zoom",
+                startedAt: startedAt, endedAt: startedAt.addingTimeInterval(900),
+                relativePath: path, hasSystemTrack: true)
+            let folder = meeting.folderURL(in: storage)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let transcript = Transcript(segments: [
+                .init(start: 10, end: 20, speaker: "me", text: text, confidence: nil),
+            ], engine: "test")
+            try JSONEncoder().encode(transcript)
+                .write(to: folder.appendingPathComponent("transcript.json"))
+            return meeting
+        }
+
+        let selected = try addMeeting(
+            title: "Selected day meeting", startedAt: selectedDay,
+            path: "meetings/2026/07/selected", text: "needle")
+        meetings.append(selected)
+        for index in 0..<20 {
+            meetings.append(try addMeeting(
+                title: "Needle priority \(index)",
+                startedAt: otherDay.addingTimeInterval(TimeInterval(index)),
+                path: "meetings/2026/07/outside-\(index)",
+                text: "needle needle needle priority"))
+        }
+
+        let sqlite = storage.rootURL.appendingPathComponent("lokalbotv3.sqlite")
+        let searchIndex = SearchIndex(databaseURL: sqlite)
+        for meeting in meetings { searchIndex.reindex(meeting, storage: storage) }
+        XCTAssertFalse(searchIndex.search("needle", limit: 8).contains {
+            $0.meetingID == selected.id
+        }, "fixture must push the selected-day result beyond the global limit")
+
+        var settings = AppSettings()
+        settings.semanticSearchEnabled = false
+        let tools = MeetingChatTools(
+            meetings: { meetings }, storage: storage,
+            searchIndex: searchIndex,
+            embeddingIndex: EmbeddingIndex(databaseURL: sqlite, storage: storage),
+            activityStore: ActivityStore(databaseURL: sqlite),
+            settings: { settings })
+
+        let scoped = await tools.run(ChatToolCall(
+            name: "search_meetings",
+            arguments: ["query": "needle", "_lokalbot_day_scope": "2026-07-01"]))
+
+        XCTAssertTrue(scoped.text.contains("Selected day meeting"), "scoped: \(scoped.text)")
+        XCTAssertFalse(scoped.text.contains("Needle priority"), "scoped: \(scoped.text)")
     }
 
     // MARK: - Screen / activity tools
@@ -428,11 +499,33 @@ final class ChatAgentTests: XCTestCase {
         let fixtureTime = try XCTUnwrap(Calendar.current.date(from: DateComponents(
             year: 2026, month: 7, day: 1, hour: 12
         )))
+        let fixtureMeeting = Meeting(
+            id: UUID(), title: "Private planning meeting", appName: "Zoom",
+            startedAt: fixtureTime.addingTimeInterval(-1_800),
+            endedAt: fixtureTime.addingTimeInterval(-900),
+            relativePath: "meetings/2026/07/private-planning",
+            hasSystemTrack: true)
 
         try activityStore.insertScreenshot(
             ts: fixtureTime, path: "/tmp/x.heic.enc", app: "Safari",
             windowTitle: "Stripe invoicing docs", trigger: "app_switch",
             ocr: "How to issue a refund for an invoice in the Stripe dashboard")
+        let nextDay = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: 1, to: fixtureTime))
+        try activityStore.insertScreenshot(
+            ts: nextDay, path: "/tmp/y.heic.enc", app: "Safari",
+            windowTitle: "Other day refund docs", trigger: "app_switch",
+            ocr: "How to issue a refund for an invoice in the Stripe dashboard")
+        // More than the tool's result limit on another day: date filtering must
+        // happen in SQL before LIMIT or the valid selected-day hit disappears.
+        for index in 0..<13 {
+            try activityStore.insertScreenshot(
+                ts: nextDay.addingTimeInterval(TimeInterval(index)),
+                path: "/tmp/out-of-day-\(index).heic.enc",
+                app: "Browser \(index)",
+                windowTitle: "Other day refund \(index)",
+                trigger: "app_switch",
+                ocr: "How to issue a refund for an invoice in the Stripe dashboard")
+        }
         activityStore.insert(ActivityBlock(app: "Xcode", title: "LokalBot.xcodeproj",
                                            start: fixtureTime.addingTimeInterval(-7_200),
                                            end: fixtureTime.addingTimeInterval(-3_600)))
@@ -443,7 +536,7 @@ final class ChatAgentTests: XCTestCase {
         var settings = AppSettings()
         settings.semanticSearchEnabled = false
         let tools = MeetingChatTools(
-            meetings: { [] }, storage: storage,
+            meetings: { [fixtureMeeting] }, storage: storage,
             searchIndex: SearchIndex(databaseURL: sqlite),
             embeddingIndex: EmbeddingIndex(databaseURL: sqlite, storage: storage),
             activityStore: activityStore,
@@ -451,9 +544,14 @@ final class ChatAgentTests: XCTestCase {
 
         let hit = await tools.run(ChatToolCall(name: "search_screen",
                                                arguments: ["query": "refund invoice"]))
-        XCTAssertTrue(hit.text.contains("Safari"), "screen: \(hit.text)")
-        XCTAssertTrue(hit.text.contains("Stripe invoicing docs"), "screen: \(hit.text)")
+        XCTAssertFalse(hit.text.contains("No screen-text matches"), "screen: \(hit.text)")
         XCTAssertTrue(hit.text.contains("[screen:"), "screen citation: \(hit.text)")
+
+        let scopedHit = await tools.run(ChatToolCall(
+            name: "search_screen",
+            arguments: ["query": "refund invoice", "_lokalbot_day_scope": "2026-07-01"]))
+        XCTAssertTrue(scopedHit.text.contains("Stripe invoicing docs"), "scoped: \(scopedHit.text)")
+        XCTAssertFalse(scopedHit.text.contains("Other day refund docs"), "scoped: \(scopedHit.text)")
 
         // Natural-language question rescued by the relaxed OR fallback.
         let rescued = await tools.run(ChatToolCall(name: "search_screen",
@@ -471,6 +569,24 @@ final class ChatAgentTests: XCTestCase {
         XCTAssertTrue(summary.text.contains("Xcode: 1h 00m"), "summary: \(summary.text)")
         XCTAssertTrue(summary.text.contains("Safari: 10m"), "summary: \(summary.text)")
         XCTAssertTrue(summary.text.contains("LokalBot.xcodeproj"), "summary: \(summary.text)")
+
+        let activityOnly = await tools.run(ChatToolCall(
+            name: "activity_summary",
+            arguments: [
+                "day": "2026-07-01",
+                "_lokalbot_include_meetings": "false",
+            ]))
+        XCTAssertFalse(activityOnly.text.contains("Private planning meeting"),
+                       "activity-only source leaked meeting data: \(activityOnly.text)")
+
+        let activityAndMeetings = await tools.run(ChatToolCall(
+            name: "activity_summary",
+            arguments: [
+                "day": "2026-07-01",
+                "_lokalbot_include_meetings": "true",
+            ]))
+        XCTAssertTrue(activityAndMeetings.text.contains("Private planning meeting"),
+                      "meeting-enabled activity omitted the meeting: \(activityAndMeetings.text)")
 
         let empty = await tools.run(ChatToolCall(name: "activity_summary",
                                                  arguments: ["day": "2020-01-01"]))

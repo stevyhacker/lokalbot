@@ -596,8 +596,10 @@ final class EmbeddingIndex {
         }
     }
 
-    func search(_ query: String, limit: Int = 10) async -> [Hit] {
+    func search(_ query: String, limit: Int = 10,
+                meetingIDs: Set<UUID>? = nil) async -> [Hit] {
         guard limit > 0, let database, hasEmbeddings else { return [] }
+        if let meetingIDs, meetingIDs.isEmpty { return [] }
         guard let queryVector = try? await Self.embed([query], prefix: Self.queryPrefix,
                                                       storage: storage).first else { return [] }
         let candidates: [Candidate] = database.query(
@@ -615,11 +617,13 @@ final class EmbeddingIndex {
                   let blob = sqlite3_column_blob(statement, 3) else { return nil }
             let byteCount = Int(sqlite3_column_bytes(statement, 3))
             guard byteCount == queryVector.count * MemoryLayout<Float>.stride else { return nil }
-            return Candidate(
+            let candidate = Candidate(
                 meetingID: meetingID,
                 start: sqlite3_column_double(statement, 1),
                 text: String(cString: text),
                 vector: Data(bytes: blob, count: byteCount))
+            guard meetingIDs?.contains(candidate.meetingID) ?? true else { return nil }
+            return candidate
         }
         let ranked = await Task.detached(priority: .userInitiated) {
             Self.rank(candidates, against: queryVector, limit: limit)
