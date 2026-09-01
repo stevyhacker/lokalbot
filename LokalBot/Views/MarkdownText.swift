@@ -1,26 +1,34 @@
 import SwiftUI
 
-/// A digest-specific Markdown renderer backed by one SwiftUI `Text`. Keeping
-/// the whole document in one attributed string gives macOS one continuous
+/// A selectable Markdown renderer backed by one SwiftUI `Text`. Keeping the
+/// whole document in one attributed string gives macOS one continuous
 /// selection range, so users can drag across lines and copy only the portion
-/// they need. The general-purpose `MarkdownText` below keeps its richer
-/// per-line layout for meeting summaries and chat.
+/// they need. Editorial mode preserves Ask's compact type hierarchy and
+/// citation treatment without splitting the answer into selection islands.
 struct SelectableDigestText: View {
+    enum Style: Equatable {
+        case standard
+        case editorial
+    }
+
     let text: String
     var font: Font = .body
     var searchQuery: String = ""
     var activeMatchIndex: Int?
+    var style: Style = .standard
 
     init(
         _ text: String,
         font: Font = .body,
         searchQuery: String = "",
-        activeMatchIndex: Int? = nil
+        activeMatchIndex: Int? = nil,
+        style: Style = .standard
     ) {
         self.text = text
         self.font = font
         self.searchQuery = searchQuery
         self.activeMatchIndex = activeMatchIndex
+        self.style = style
     }
 
     var body: some View {
@@ -28,7 +36,9 @@ struct SelectableDigestText: View {
             from: text,
             font: font,
             searchQuery: searchQuery,
-            activeMatchIndex: activeMatchIndex))
+            activeMatchIndex: activeMatchIndex,
+            style: style))
+            .lineSpacing(style == .editorial ? 3 : 0)
             .frame(maxWidth: .infinity, alignment: .leading)
             .textSelection(.enabled)
             .help("Select any part and press ⌘C to copy")
@@ -38,12 +48,13 @@ struct SelectableDigestText: View {
         from markdown: String,
         font: Font = .body,
         searchQuery: String = "",
-        activeMatchIndex: Int? = nil
+        activeMatchIndex: Int? = nil,
+        style: Style = .standard
     ) -> AttributedString {
         let lines = markdown.components(separatedBy: "\n")
         var document = AttributedString()
         for (index, line) in lines.enumerated() {
-            document.append(attributedLine(line, font: font))
+            document.append(attributedLine(line, font: font, style: style))
             if index < lines.count - 1 {
                 document.append(AttributedString("\n"))
             }
@@ -58,56 +69,121 @@ struct SelectableDigestText: View {
         String(attributedText(from: markdown).characters)
     }
 
-    private static func attributedLine(_ line: String, font: Font) -> AttributedString {
+    private static func attributedLine(
+        _ line: String,
+        font: Font,
+        style: Style
+    ) -> AttributedString {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let baseFont = style == .editorial ? WorkspaceTypography.editorialBody : font
         if trimmed.isEmpty { return AttributedString() }
         if trimmed == "---" || trimmed == "***" || trimmed == "___" {
-            return styled("────────────────────", font: font,
+            return styled("────────────────────", font: baseFont,
                           foreground: .secondary)
         }
         if trimmed.hasPrefix("### ") {
-            return styledInline(String(trimmed.dropFirst(4)), font: .headline)
+            let headingFont = style == .editorial
+                ? WorkspaceTypography.editorialBodyEmphasis
+                : Font.headline
+            return styledInline(
+                String(trimmed.dropFirst(4)),
+                font: headingFont,
+                style: style)
         }
         if trimmed.hasPrefix("## ") {
-            return styledInline(String(trimmed.dropFirst(3)), font: .title3.bold())
+            let headingFont = style == .editorial
+                ? WorkspaceTypography.editorialSectionTitle
+                : Font.title3.bold()
+            return styledInline(
+                String(trimmed.dropFirst(3)),
+                font: headingFont,
+                style: style)
         }
         if trimmed.hasPrefix("# ") {
-            return styledInline(String(trimmed.dropFirst(2)), font: .title2.bold())
+            let headingFont = style == .editorial
+                ? WorkspaceTypography.conversationTitle
+                : Font.title2.bold()
+            return styledInline(
+                String(trimmed.dropFirst(2)),
+                font: headingFont,
+                style: style)
         }
         if trimmed.hasPrefix("- [ ] ") || trimmed.hasPrefix("- [x] ") {
             return prefixed(trimmed.hasPrefix("- [x] ") ? "☑ " : "☐ ",
-                            content: String(trimmed.dropFirst(6)), font: font)
+                            content: String(trimmed.dropFirst(6)),
+                            font: baseFont,
+                            style: style)
         }
         if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
-            return prefixed("• ", content: String(trimmed.dropFirst(2)), font: font)
+            return prefixed(
+                "• ",
+                content: String(trimmed.dropFirst(2)),
+                font: baseFont,
+                style: style)
         }
         if let ordered = orderedListItem(trimmed) {
-            return prefixed("\(ordered.number). ", content: ordered.rest, font: font)
+            return prefixed(
+                "\(ordered.number). ",
+                content: ordered.rest,
+                font: baseFont,
+                style: style)
         }
         if trimmed.hasPrefix("> ") {
             return prefixed("▎ ", content: String(trimmed.dropFirst(2)),
-                            font: font.italic(), foreground: .secondary)
+                            font: baseFont.italic(),
+                            foreground: .secondary,
+                            style: style)
         }
-        return styledInline(trimmed, font: font)
+        return styledInline(trimmed, font: baseFont, style: style)
     }
 
     private static func prefixed(_ prefix: String, content: String,
                                  font: Font = .body,
-                                 foreground: Color? = nil) -> AttributedString {
+                                 foreground: Color? = nil,
+                                 style: Style) -> AttributedString {
         var result = styled(prefix, font: font, foreground: foreground)
-        result.append(styledInline(content, font: font, foreground: foreground))
+        result.append(styledInline(
+            content,
+            font: font,
+            foreground: foreground,
+            style: style))
         return result
     }
 
     private static func styledInline(_ source: String, font: Font,
-                                     foreground: Color? = nil) -> AttributedString {
+                                     foreground: Color? = nil,
+                                     style: Style) -> AttributedString {
         var result = (try? AttributedString(
             markdown: source,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         )) ?? AttributedString(source)
         result.font = font
         if let foreground { result.foregroundColor = foreground }
+        if style == .editorial { styleNumericCitations(in: &result) }
         return result
+    }
+
+    private static func styleNumericCitations(in attributedText: inout AttributedString) {
+        let plainText = String(attributedText.characters)
+        var searchStart = plainText.startIndex
+
+        while searchStart < plainText.endIndex,
+              let open = plainText[searchStart...].firstIndex(of: "[") {
+            let afterOpen = plainText.index(after: open)
+            guard let close = plainText[afterOpen...].firstIndex(of: "]") else { break }
+            let digits = plainText[afterOpen..<close]
+            let afterClose = plainText.index(after: close)
+
+            if !digits.isEmpty,
+               digits.allSatisfy(\.isNumber),
+               let lowerBound = AttributedString.Index(open, within: attributedText),
+               let upperBound = AttributedString.Index(afterClose, within: attributedText) {
+                attributedText[lowerBound..<upperBound].font = WorkspaceTypography.metadataEmphasis
+                attributedText[lowerBound..<upperBound].foregroundColor = Brand.teal
+            }
+
+            searchStart = afterClose
+        }
     }
 
     private static func styled(_ source: String, font: Font,

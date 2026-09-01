@@ -109,8 +109,7 @@ private struct EditorialTurn: View {
                     action: model.canRetry(message.id) ? { model.retry(message.id) } : nil)
             } else {
                 if !parsed.display.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    MarkdownText(parsed.display, style: .editorial)
-                        .textSelection(.enabled)
+                    SelectableDigestText(parsed.display, style: .editorial)
                         .foregroundStyle(message.isError ? AnyShapeStyle(.red)
                                                          : AnyShapeStyle(.primary))
                         .contextMenu {

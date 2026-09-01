@@ -70,4 +70,39 @@ final class ChatCitationTests: XCTestCase {
         XCTAssertNil(ChatCitationParser.seconds(from: "1:99"))
         XCTAssertNil(ChatCitationParser.seconds(from: "12"))
     }
+
+    func testEditorialMarkdownBuildsOneContinuousVisibleString() throws {
+        let rendered = SelectableDigestText.attributedText(
+            from: """
+            # Proposed task
+
+            **Summary:** Keep inline `code` and an ordinary [label] before [1].
+            - First step [2]
+            - [x] Completed step
+            1. Verify the result
+            > Local-only context
+            """,
+            style: .editorial)
+
+        XCTAssertEqual(String(rendered.characters), """
+        Proposed task
+
+        Summary: Keep inline code and an ordinary [label] before [1].
+        • First step [2]
+        ☑ Completed step
+        1. Verify the result
+        ▎ Local-only context
+        """)
+
+        let plainText = String(rendered.characters)
+        let citation = try XCTUnwrap(plainText.range(of: "[1]"))
+        let lowerBound = try XCTUnwrap(
+            AttributedString.Index(citation.lowerBound, within: rendered))
+        let upperBound = try XCTUnwrap(
+            AttributedString.Index(citation.upperBound, within: rendered))
+        let citationRun = try XCTUnwrap(rendered[lowerBound..<upperBound].runs.first)
+
+        XCTAssertEqual(citationRun.font, WorkspaceTypography.metadataEmphasis)
+        XCTAssertEqual(citationRun.foregroundColor, Brand.teal)
+    }
 }
