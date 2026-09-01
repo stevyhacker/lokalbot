@@ -402,6 +402,56 @@ final class ChatStoreTests: XCTestCase {
         XCTAssertFalse(rateLimited.contains("raw provider detail"))
     }
 
+    func testCompactConversationTitlesFavorTheQuestionSubject() {
+        XCTAssertEqual(
+            ChatViewModel.compactTitle(
+                from: "give me the best tasks i should do today, i know there was more context"),
+            "The best tasks I should do today")
+        XCTAssertEqual(
+            ChatViewModel.compactTitle(
+                from: "give me a short task title and description for this task: "
+                    + "Vault-provider research — quick comparison of providers"),
+            "Vault-provider research — quick…")
+
+        let conversation = Conversation(
+            title: "give me a short task title and description for…",
+            messages: [ChatMessage(
+                role: .user,
+                text: "give me a short task title and description for this task: "
+                    + "Vault-provider research — quick comparison of providers")])
+        XCTAssertEqual(
+            ChatViewModel.displayTitle(for: conversation),
+            "Vault-provider research — quick…")
+    }
+
+    func testTranscriptPresentationGroupsDatesAndRepeatedScopes() {
+        let first = ChatMessage(
+            role: .user,
+            text: "First",
+            createdAt: .distantPast,
+            sourceScopes: [.meetings],
+            createdAtIsEstimated: true)
+        let second = ChatMessage(
+            role: .user,
+            text: "Second",
+            createdAt: .distantPast,
+            sourceScopes: [.meetings],
+            createdAtIsEstimated: true)
+        let changed = ChatMessage(
+            role: .user,
+            text: "Third",
+            sourceScopes: [.screen])
+
+        XCTAssertEqual(
+            ChatTranscriptPresentation.dateDividerTitle(for: first, after: nil),
+            "Earlier conversation")
+        XCTAssertNil(ChatTranscriptPresentation.dateDividerTitle(for: second, after: first))
+        XCTAssertTrue(ChatTranscriptPresentation.questionScopeChanged(first, after: nil))
+        XCTAssertFalse(ChatTranscriptPresentation.questionScopeChanged(second, after: first))
+        XCTAssertTrue(ChatTranscriptPresentation.questionScopeChanged(changed, after: second))
+        XCTAssertTrue(ChatTranscriptPresentation.isLongQuestion(String(repeating: "x", count: 181)))
+    }
+
     func testFinalizedHistoryExcludesFailedAndUnansweredPairs() {
         let messages = [
             ChatMessage(role: .user, text: "Completed question"),

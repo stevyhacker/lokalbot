@@ -274,26 +274,57 @@ extension View {
 /// activation point does not toggle reliably; this component keeps the same
 /// visual hierarchy while making mouse, keyboard, and UI-test activation
 /// deterministic.
+enum WorkspaceDisclosureStyle {
+    case standard
+    case compact
+}
+
 struct WorkspaceDisclosure<Label: View, Content: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding private var isExpanded: Bool
     private let identifier: String
+    private let style: WorkspaceDisclosureStyle
     private let label: () -> Label
     private let content: () -> Content
 
     init(
         isExpanded: Binding<Bool>,
         identifier: String,
+        style: WorkspaceDisclosureStyle = .standard,
         @ViewBuilder content: @escaping () -> Content,
         @ViewBuilder label: @escaping () -> Label
     ) {
         _isExpanded = isExpanded
         self.identifier = identifier
+        self.style = style
         self.content = content
         self.label = label
     }
 
+    @ViewBuilder
     var body: some View {
+        switch style {
+        case .standard:
+            disclosureContent.workspacePanel()
+        case .compact:
+            disclosureContent
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(
+                    .quaternary.opacity(0.16),
+                    in: RoundedRectangle(
+                        cornerRadius: Brand.Radius.control,
+                        style: .continuous))
+                .overlay {
+                    RoundedRectangle(
+                        cornerRadius: Brand.Radius.control,
+                        style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.09))
+                }
+        }
+    }
+
+    private var disclosureContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 withAnimation(WorkspaceMotion.animation(
@@ -322,7 +353,6 @@ struct WorkspaceDisclosure<Label: View, Content: View>: View {
                         reduceMotion: reduceMotion))
             }
         }
-        .workspacePanel()
     }
 }
 

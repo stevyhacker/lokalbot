@@ -58,6 +58,8 @@ final class ChatHistoryUITests: XCTestCase {
         // The new-chat affordance is present in the history column.
         XCTAssertTrue(app.descendants(matching: .any)["chat.new"].exists,
                       "new-chat button missing")
+        XCTAssertTrue(app.textFields["chat.history.search"].exists,
+                      "question search should live inside the history column")
     }
 
     func testSelectingConversationClearsActiveSearch() {

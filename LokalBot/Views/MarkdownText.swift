@@ -38,7 +38,7 @@ struct SelectableDigestText: View {
             searchQuery: searchQuery,
             activeMatchIndex: activeMatchIndex,
             style: style))
-            .lineSpacing(style == .editorial ? 3 : 0)
+            .lineSpacing(style == .editorial ? 4 : 0)
             .frame(maxWidth: .infinity, alignment: .leading)
             .textSelection(.enabled)
             .help("Select any part and press ⌘C to copy")
@@ -75,7 +75,7 @@ struct SelectableDigestText: View {
         style: Style
     ) -> AttributedString {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
-        let baseFont = style == .editorial ? WorkspaceTypography.editorialBody : font
+        let baseFont = style == .editorial ? WorkspaceTypography.body : font
         if trimmed.isEmpty { return AttributedString() }
         if trimmed == "---" || trimmed == "***" || trimmed == "___" {
             return styled("────────────────────", font: baseFont,
@@ -83,7 +83,7 @@ struct SelectableDigestText: View {
         }
         if trimmed.hasPrefix("### ") {
             let headingFont = style == .editorial
-                ? WorkspaceTypography.editorialBodyEmphasis
+                ? WorkspaceTypography.bodyEmphasis
                 : Font.headline
             return styledInline(
                 String(trimmed.dropFirst(4)),
@@ -92,7 +92,7 @@ struct SelectableDigestText: View {
         }
         if trimmed.hasPrefix("## ") {
             let headingFont = style == .editorial
-                ? WorkspaceTypography.editorialSectionTitle
+                ? WorkspaceTypography.sectionTitle
                 : Font.title3.bold()
             return styledInline(
                 String(trimmed.dropFirst(3)),

@@ -639,11 +639,63 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    /// A one-line conversation title derived from the first user message.
-    private static func title(from text: String) -> String {
+    /// A short, stable history label derived locally from the first question.
+    /// This deliberately avoids another inference request for a cosmetic title.
+    static func compactTitle(from text: String) -> String {
         let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        return trimmed.count > 48 ? String(trimmed.prefix(48)) + "…" : trimmed
+        var candidate = line.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !candidate.isEmpty else { return newChatTitle }
+
+        if let colon = candidate.firstIndex(of: ":") {
+            let lead = candidate[..<colon].lowercased()
+            if lead.contains("task title") || lead.contains("for this task") {
+                candidate = String(candidate[candidate.index(after: colon)...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+
+        for prefix in ["please give me ", "give me ", "please tell me ", "tell me ", "please "] {
+            if candidate.lowercased().hasPrefix(prefix) {
+                candidate.removeFirst(prefix.count)
+                break
+            }
+        }
+
+        if let comma = candidate.firstIndex(of: ","),
+           candidate.distance(from: candidate.startIndex, to: comma) >= 18 {
+            candidate = String(candidate[..<comma])
+        }
+
+        candidate = candidate.split(separator: " ").map { word in
+            word == "i" ? "I" : String(word)
+        }.joined(separator: " ")
+        guard !candidate.isEmpty else { return newChatTitle }
+        if let first = candidate.first {
+            candidate.replaceSubrange(
+                candidate.startIndex...candidate.startIndex,
+                with: String(first).uppercased())
+        }
+
+        let limit = 38
+        guard candidate.count > limit else { return candidate }
+        let prefix = candidate.prefix(limit)
+        if let boundary = prefix.lastIndex(where: \.isWhitespace) {
+            return String(prefix[..<boundary]) + "…"
+        }
+        return String(prefix) + "…"
+    }
+
+    static func displayTitle(for conversation: Conversation) -> String {
+        let stored = conversation.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard stored != newChatTitle else { return newChatTitle }
+        let source = stored.hasSuffix("…")
+            ? conversation.messages.first(where: { $0.role == .user })?.text ?? stored
+            : stored
+        return compactTitle(from: source)
+    }
+
+    private static func title(from text: String) -> String {
+        compactTitle(from: text)
     }
 
     // MARK: - Run

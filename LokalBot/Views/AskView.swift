@@ -371,15 +371,27 @@ private struct AskContent: View {
     }
 
     private var inferenceStatus: some View {
-        Label(
-            inferenceState.label,
-            systemImage: inferenceState.icon)
+        Button {
+            app.openSettings(tab: .models)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: inferenceState.icon)
+                    .foregroundStyle(inferenceState.color)
+                Text(inferenceState.label)
+                    .foregroundStyle(.primary)
+            }
             .font(WorkspaceTypography.metadataEmphasis)
-            .foregroundStyle(inferenceState.color)
-            .fixedSize()
-            .help(inferenceStatusHelp)
-            .accessibilityLabel(inferenceStatusHelp)
-            .accessibilityIdentifier("ask.inferenceStatus")
+            .padding(.horizontal, 8)
+            .frame(minHeight: 28)
+            .background(.quaternary.opacity(0.18), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("\(inferenceStatusHelp) Open model settings.")
+        .accessibilityLabel(inferenceStatusHelp)
+        .accessibilityHint("Opens model settings")
+        .accessibilityIdentifier("ask.inferenceStatus")
     }
 
     private var inferenceStatusHelp: String {
@@ -412,11 +424,11 @@ private struct AskContent: View {
             }
         }
 
-        var color: AnyShapeStyle {
+        var color: Color {
             switch self {
-            case .local: AnyShapeStyle(.secondary)
-            case .approvedRemote: AnyShapeStyle(Brand.amber)
-            case .blocked: AnyShapeStyle(Brand.error)
+            case .local: Brand.teal
+            case .approvedRemote: Brand.amber
+            case .blocked: Brand.error
             }
         }
     }

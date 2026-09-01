@@ -22,15 +22,18 @@ struct ChatTranscriptView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            ZStack(alignment: .bottomTrailing) {
+            ZStack(alignment: .bottom) {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 24) {
-                        ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        ForEach(transcriptEntries) { entry in
                             EditorialTurn(
-                                message: message,
+                                message: entry.message,
                                 model: model,
-                                startsQuestion: index > 0 && message.role == .user)
-                                .id(message.id)
+                                startsQuestion: entry.startsQuestion,
+                                dateDividerTitle: entry.dateDividerTitle,
+                                showsQuestionScope: entry.showsQuestionScope,
+                                isLatestQuestion: entry.isLatestQuestion)
+                                .id(entry.id)
                         }
                     }
                     .padding(.horizontal, WorkspaceMetric.pagePadding)
@@ -49,15 +52,23 @@ struct ChatTranscriptView: View {
                 }
 
                 if !isNearBottom {
-                    Button {
-                        scrollToEnd(proxy, animated: true, force: true)
-                    } label: {
-                        Label("Jump to latest", systemImage: "arrow.down")
+                    HStack {
+                        Spacer(minLength: 0)
+                        Button {
+                            scrollToEnd(proxy, animated: true, force: true)
+                        } label: {
+                            Label("Jump to latest", systemImage: "arrow.down")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .background(.regularMaterial, in: Capsule())
+                        .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
+                        .accessibilityIdentifier("chat.jumpToLatest")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .padding(16)
-                    .accessibilityIdentifier("chat.jumpToLatest")
+                    .workspaceReadingWidth()
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, WorkspaceMetric.pagePadding)
+                    .padding(.bottom, 16)
                 }
             }
             .onChange(of: model.messages.count) {
@@ -80,6 +91,27 @@ struct ChatTranscriptView: View {
                 isNearBottom = true
                 scrollToEnd(proxy, animated: false, force: true)
             }
+        }
+    }
+
+    private var transcriptEntries: [ChatTranscriptEntry] {
+        let latestUserID = model.messages.last(where: { $0.role == .user })?.id
+        var previousUser: ChatMessage?
+        return model.messages.enumerated().map { index, message in
+            defer {
+                if message.role == .user { previousUser = message }
+            }
+            return ChatTranscriptEntry(
+                message: message,
+                startsQuestion: index > 0 && message.role == .user,
+                dateDividerTitle: ChatTranscriptPresentation.dateDividerTitle(
+                    for: message,
+                    after: previousUser),
+                showsQuestionScope: message.role == .user
+                    && ChatTranscriptPresentation.questionScopeChanged(
+                        message,
+                        after: previousUser),
+                isLatestQuestion: message.id == latestUserID)
         }
     }
 
@@ -115,11 +147,75 @@ struct ChatTranscriptView: View {
     }
 }
 
+private struct ChatTranscriptEntry: Identifiable {
+    let message: ChatMessage
+    let startsQuestion: Bool
+    let dateDividerTitle: String?
+    let showsQuestionScope: Bool
+    let isLatestQuestion: Bool
+    var id: UUID { message.id }
+}
+
+enum ChatTranscriptPresentation {
+    static func dateDividerTitle(
+        for message: ChatMessage,
+        after previousUser: ChatMessage?,
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> String? {
+        guard message.role == .user else { return nil }
+        if message.createdAtIsEstimated {
+            return previousUser?.createdAtIsEstimated == true ? nil : "Earlier conversation"
+        }
+        if let previousUser,
+           !previousUser.createdAtIsEstimated,
+           calendar.isDate(previousUser.createdAt, inSameDayAs: message.createdAt) {
+            return nil
+        }
+        if calendar.isDateInToday(message.createdAt) { return "Today" }
+        if calendar.isDateInYesterday(message.createdAt) { return "Yesterday" }
+        return message.createdAt.formatted(date: .long, time: .omitted)
+    }
+
+    static func questionScopeChanged(
+        _ message: ChatMessage,
+        after previousUser: ChatMessage?
+    ) -> Bool {
+        guard message.role == .user else { return false }
+        guard let previousUser else { return true }
+        return Set(message.sourceScopes) != Set(previousUser.sourceScopes)
+            || message.dayScopeKey != previousUser.dayScopeKey
+            || message.attachedScreenDayKeys != previousUser.attachedScreenDayKeys
+    }
+
+    static func isLongQuestion(_ text: String) -> Bool {
+        text.count > 180 || text.components(separatedBy: .newlines).count > 3
+    }
+}
+
+private struct ConversationDateDivider: View {
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .font(WorkspaceTypography.metadataEmphasis)
+                .foregroundStyle(.secondary)
+            Color.primary.opacity(0.10)
+                .frame(height: 1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
 private struct EditorialTurn: View {
     @EnvironmentObject var app: AppState
     let message: ChatMessage
     @ObservedObject var model: ChatViewModel
     let startsQuestion: Bool
+    let dateDividerTitle: String?
+    let showsQuestionScope: Bool
+    let isLatestQuestion: Bool
     @ObservedObject private var downloads = ModelDownloadManager.shared
     @State private var speechPlayer: AVAudioPlayer?
     @State private var speechError: String?
@@ -128,10 +224,13 @@ private struct EditorialTurn: View {
     @State private var speechTask: Task<Void, Never>?
     @State private var speechSessionID: UUID?
     @State private var copied = false
+    @State private var questionExpanded = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            if startsQuestion {
+        VStack(alignment: .leading, spacing: 12) {
+            if let dateDividerTitle {
+                ConversationDateDivider(title: dateDividerTitle)
+            } else if startsQuestion {
                 Divider()
             }
             Group {
@@ -146,44 +245,62 @@ private struct EditorialTurn: View {
     }
 
     private var userRow: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            turnMetadata("You asked", systemImage: "person.crop.circle")
-            if let scopeSummary = questionScopeSummary {
-                Label(scopeSummary, systemImage: "scope")
-                    .font(WorkspaceTypography.metadata)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .accessibilityLabel("Question scope: \(scopeSummary)")
-            }
+        VStack(alignment: .leading, spacing: 7) {
+            turnMetadata(
+                "You",
+                systemImage: "person.crop.circle",
+                scopeSummary: showsQuestionScope ? questionScopeSummary : nil)
             Text(message.text)
                 .font(WorkspaceTypography.conversationTitle)
+                .lineLimit(questionIsExpanded ? nil : 3)
                 .textSelection(.enabled)
+            if ChatTranscriptPresentation.isLongQuestion(message.text), !isLatestQuestion {
+                Button(questionExpanded ? "Show less" : "Show full question") {
+                    questionExpanded.toggle()
+                }
+                .buttonStyle(.plain)
+                .font(WorkspaceTypography.metadataEmphasis)
+                .foregroundStyle(Brand.teal)
+                .frame(minHeight: 28)
+                .accessibilityIdentifier("chat.question.expand")
+            }
         }
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityValue(questionScopeSummary.map { "Question scope: \($0)" } ?? "")
     }
 
     @ViewBuilder private var assistantBlock: some View {
         let parsed = ChatCitationParser.extract(message.text)
         VStack(alignment: .leading, spacing: 10) {
-            turnMetadata(assistantTurnLabel, systemImage: "sparkles")
-            if message.activity.contains(where: { !$0.done }) {
-                WorkedLine(activities: message.activity)
+            if isStoppedTurn {
+                responseStatusRow(
+                    title: "Response stopped",
+                    detail: model.canRetry(message.id)
+                        ? "The response was interrupted. You can try the question again."
+                        : "This earlier response was not completed.",
+                    systemImage: "stop.circle",
+                    tint: Color.primary.opacity(0.55))
+            } else if message.isError {
+                responseStatusRow(
+                    title: "Answer unavailable",
+                    detail: message.text,
+                    systemImage: "exclamationmark.triangle",
+                    tint: Brand.error)
+            } else {
+                turnMetadata(
+                    message.isPending ? "LokalBot is answering" : "LokalBot",
+                    systemImage: "sparkles")
+                if message.activity.contains(where: { !$0.done }) {
+                    WorkedLine(activities: message.activity)
+                }
             }
-            if message.isPending && message.text.isEmpty {
+            if message.isPending && message.text.isEmpty && !message.isError {
                 ModelPreparationView(
                     presentation: assistantPreparation,
                     style: .standard)
                 answerActions(copyText: "", allowsSpeech: false)
-            } else if message.isError {
-                ModelPreparationView(
-                    presentation: .init(
-                        state: .failed,
-                        title: "Assistant needs attention",
-                        status: message.text),
-                    style: .standard)
-                answerActions(copyText: message.text, allowsSpeech: false)
-            } else {
+            } else if !message.isError && !isStoppedTurn {
                 if !parsed.display.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     SelectableDigestText(parsed.display, style: .editorial)
                         .foregroundStyle(message.isError ? AnyShapeStyle(.red)
@@ -217,10 +334,13 @@ private struct EditorialTurn: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var assistantTurnLabel: String {
-        if message.isPending { return "LokalBot is answering" }
-        if message.isError { return "LokalBot could not answer" }
-        return "LokalBot answered"
+    private var questionIsExpanded: Bool {
+        isLatestQuestion || questionExpanded
+    }
+
+    private var isStoppedTurn: Bool {
+        let normalized = message.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized == "stopped." || normalized.hasPrefix("response stopped")
     }
 
     private var questionScopeSummary: String? {
@@ -258,21 +378,69 @@ private struct EditorialTurn: View {
         return parts.joined(separator: " · ")
     }
 
-    private func turnMetadata(_ title: String, systemImage: String) -> some View {
+    private func turnMetadata(
+        _ title: String,
+        systemImage: String,
+        scopeSummary: String? = nil
+    ) -> some View {
         HStack(spacing: 7) {
             Image(systemName: systemImage)
                 .frame(width: 14)
             Text(title)
                 .font(WorkspaceTypography.metadataEmphasis)
-            Text("·")
-                .foregroundStyle(.tertiary)
-            Text(message.createdAtIsEstimated
-                 ? "Earlier conversation"
-                 : message.createdAt.formatted(date: .abbreviated, time: .shortened))
-                .font(WorkspaceTypography.metadata.monospacedDigit())
+            if !message.createdAtIsEstimated {
+                Text("·").foregroundStyle(.tertiary)
+                Text(message.createdAt.formatted(date: .omitted, time: .shortened))
+                    .font(WorkspaceTypography.metadata.monospacedDigit())
+            }
+            if let scopeSummary {
+                Text("·").foregroundStyle(.tertiary)
+                Image(systemName: "scope")
+                Text(scopeSummary).lineLimit(1)
+            }
         }
-        .foregroundStyle(.secondary)
+        .font(WorkspaceTypography.metadata)
+        .foregroundStyle(Color.primary.opacity(0.68))
         .accessibilityElement(children: .combine)
+    }
+
+    private func responseStatusRow(
+        title: String,
+        detail: String,
+        systemImage: String,
+        tint: Color
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 20, height: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(WorkspaceTypography.bodyEmphasis)
+                Text(detail)
+                    .font(WorkspaceTypography.metadata)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            if model.canRetry(message.id) {
+                Button {
+                    model.retry(message.id)
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(ChatAnswerActionButtonStyle())
+                .accessibilityIdentifier("chat.answer.retry")
+            }
+        }
+        .padding(10)
+        .background(
+            .quaternary.opacity(0.18),
+            in: RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08))
+        }
     }
 
     @ViewBuilder
@@ -322,9 +490,7 @@ private struct EditorialTurn: View {
                 .accessibilityIdentifier("chat.answer.stop")
             }
         }
-        .font(WorkspaceTypography.metadata)
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
+        .buttonStyle(ChatAnswerActionButtonStyle())
         .padding(.top, 2)
     }
 
@@ -451,6 +617,23 @@ private struct EditorialTurn: View {
     }
 }
 
+private struct ChatAnswerActionButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(WorkspaceTypography.metadataEmphasis)
+            .foregroundStyle(
+                isEnabled ? Color.primary.opacity(0.72) : Color.secondary.opacity(0.45))
+            .padding(.horizontal, 7)
+            .frame(minHeight: 28)
+            .background(
+                configuration.isPressed ? Color.primary.opacity(0.08) : Color.clear,
+                in: Capsule())
+            .contentShape(Capsule())
+    }
+}
+
 /// One compact evidence disclosure matching inline `[n]` references in the answer.
 private struct EvidenceDisclosure: View {
     @EnvironmentObject var app: AppState
@@ -458,31 +641,28 @@ private struct EvidenceDisclosure: View {
     @State private var isExpanded = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Divider()
-                .padding(.top, 8)
-            WorkspaceDisclosure(
-                isExpanded: $isExpanded,
-                identifier: "chat.evidence") {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(citations.enumerated()), id: \.element.id) { index, citation in
-                        sourceRow(number: index + 1, citation: citation)
-                        if index != citations.count - 1 { Divider() }
-                    }
+        WorkspaceDisclosure(
+            isExpanded: $isExpanded,
+            identifier: "chat.evidence",
+            style: .compact) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(citations.enumerated()), id: \.element.id) { index, citation in
+                    sourceRow(number: index + 1, citation: citation)
+                    if index != citations.count - 1 { Divider() }
                 }
-                Text("LokalBot used only the sources enabled for this question. Citation numbers remain stable even when a local source is later removed.")
+            }
+            Text("LokalBot used only the sources enabled for this question. Citation numbers remain stable even when a local source is later removed.")
+                .font(WorkspaceTypography.metadata)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 10)
+        } label: {
+            HStack(spacing: 8) {
+                Label("Evidence", systemImage: "checkmark.shield")
+                    .font(WorkspaceTypography.control)
+                Text(evidenceSummary)
                     .font(WorkspaceTypography.metadata)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 12)
-            } label: {
-                HStack(spacing: 8) {
-                    Label("Evidence", systemImage: "checkmark.shield")
-                        .font(WorkspaceTypography.control)
-                    Text(evidenceSummary)
-                        .font(WorkspaceTypography.metadata)
-                        .foregroundStyle(.secondary)
-                }
             }
         }
         .accessibilityIdentifier("chat.sources")
@@ -500,9 +680,9 @@ private struct EvidenceDisclosure: View {
             return "1 source · \(resolved(first).title)"
         }
         if keys.count == 1 {
-            return "\(citations.count) moments from \(resolved(first).title)"
+            return "\(citations.count) citations · \(resolved(first).title)"
         }
-        return "\(citations.count) moments from \(keys.count) sources"
+        return "\(citations.count) citations · \(keys.count) sources"
     }
 
     @ViewBuilder private func sourceRow(number: Int, citation: ChatCitation) -> some View {
@@ -657,51 +837,39 @@ private struct ConversationListContent: View {
     @State private var pendingDeletion: Conversation?
 
     var body: some View {
-        List(selection: conversationSelection) {
-            Section {
-                Button {
-                    model.newConversation()
-                } label: {
-                    Label("New Question", systemImage: "square.and.pencil")
-                        .font(WorkspaceTypography.control)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Brand.teal)
-                .keyboardShortcut("n", modifiers: [.command])
-                .help("Start a new question")
-                .accessibilityIdentifier("chat.new")
-            }
-
-            if historySections.isEmpty {
-                Text("No questions match “\(historyQuery)”.")
-                    .font(WorkspaceTypography.metadata)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(historySections, id: \.title) { section in
-                    Section(section.title) {
-                        ForEach(section.conversations) { conversation in
-                            row(conversation)
-                                .tag(conversation.id)
-                                .accessibilityIdentifier(
-                                    "chat.conversation.\(conversation.id.uuidString)")
-                                .contextMenu {
-                                    Button(role: .destructive) {
-                                        pendingDeletion = conversation
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
+        VStack(spacing: 0) {
+            historyHeader
+            Divider()
+            List(selection: conversationSelection) {
+                if historySections.isEmpty {
+                    Text("No questions match “\(historyQuery)”.")
+                        .font(WorkspaceTypography.metadata)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(historySections, id: \.title) { section in
+                        Section(section.title) {
+                            ForEach(section.conversations) { conversation in
+                                row(conversation)
+                                    .tag(conversation.id)
+                                    .accessibilityIdentifier(
+                                        "chat.conversation.\(conversation.id.uuidString)")
+                                    .contextMenu {
+                                        Button(role: .destructive) {
+                                            pendingDeletion = conversation
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
+                                        }
                                     }
-                                }
                             }
                         }
                     }
+                }
             }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .tint(Brand.teal)
         }
-        .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
         .background(WorkspacePalette.conversationColumn(for: colorScheme))
-        .searchable(text: $historyQuery, prompt: "Search questions")
         // One native title owns both the visible toolbar label and the window's
         // accessibility title. The detail column deliberately adds no second
         // Ask label.
@@ -720,8 +888,52 @@ private struct ConversationListContent: View {
                 pendingDeletion = nil
             }
         } message: { conversation in
-            Text("This removes “\(conversation.title)” from Ask history.")
+            Text("This removes “\(ChatViewModel.displayTitle(for: conversation))” from Ask history.")
         }
+    }
+
+    private var historyHeader: some View {
+        VStack(spacing: 8) {
+            Button {
+                model.newConversation()
+            } label: {
+                Label("New Question", systemImage: "square.and.pencil")
+                    .font(WorkspaceTypography.control)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Brand.teal)
+            .frame(minHeight: 28)
+            .keyboardShortcut("n", modifiers: [.command])
+            .help("Start a new question")
+            .accessibilityIdentifier("chat.new")
+
+            HStack(spacing: 7) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search questions", text: $historyQuery)
+                    .textFieldStyle(.plain)
+                    .font(WorkspaceTypography.control)
+                    .accessibilityIdentifier("chat.history.search")
+                if !historyQuery.isEmpty {
+                    Button {
+                        historyQuery = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Clear question search")
+                    .accessibilityLabel("Clear question search")
+                }
+            }
+            .padding(.horizontal, 9)
+            .frame(minHeight: 32)
+            .workspaceControl()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
     }
 
     private var deletionConfirmationPresented: Binding<Bool> {
@@ -773,13 +985,23 @@ private struct ConversationListContent: View {
 
     private func row(_ conversation: Conversation) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(conversation.title.isEmpty ? ChatViewModel.newChatTitle : conversation.title)
-                .font(WorkspaceTypography.rowTitle).lineLimit(2)
-            Text(conversation.updatedAt.formatted(date: .abbreviated, time: .shortened))
+            Text(ChatViewModel.displayTitle(for: conversation))
+                .font(WorkspaceTypography.rowTitle)
+                .lineLimit(1)
+            Text(historyTimestamp(conversation.updatedAt))
                 .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 5)
         .contentShape(Rectangle())
+    }
+
+    private func historyTimestamp(_ date: Date) -> String {
+        let calendar = Calendar.autoupdatingCurrent
+        if calendar.isDateInToday(date) {
+            return date.formatted(date: .omitted, time: .shortened)
+        }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        return date.formatted(date: .abbreviated, time: .omitted)
     }
 }
