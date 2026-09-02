@@ -61,7 +61,11 @@ final class ChatHistoryUITests: XCTestCase {
         )).firstMatch
         XCTAssertTrue(newQuestion.waitForExistence(timeout: 4),
                       "new-chat button missing")
-        XCTAssertTrue(app.textFields["chat.history.search"].exists,
+        let questionSearch = app.textFields.matching(NSPredicate(
+            format: "identifier == %@ OR placeholderValue == %@",
+            "chat.history.search", "Search questions"
+        )).firstMatch
+        XCTAssertTrue(questionSearch.waitForExistence(timeout: 4),
                       "question search should live inside the history column")
     }
 
