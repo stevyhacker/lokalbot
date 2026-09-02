@@ -56,7 +56,10 @@ final class ChatHistoryUITests: XCTestCase {
                       "seeded assistant message missing from the transcript")
 
         // The new-chat affordance is present in the history column.
-        XCTAssertTrue(app.descendants(matching: .any)["chat.new"].exists,
+        let newQuestion = app.buttons.matching(NSPredicate(
+            format: "identifier == %@ OR label == %@", "chat.new", "New Question"
+        )).firstMatch
+        XCTAssertTrue(newQuestion.waitForExistence(timeout: 4),
                       "new-chat button missing")
         XCTAssertTrue(app.textFields["chat.history.search"].exists,
                       "question search should live inside the history column")
