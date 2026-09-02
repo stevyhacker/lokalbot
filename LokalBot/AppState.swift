@@ -585,6 +585,7 @@ final class AppState: ObservableObject {
     private var cotypingRuntimeTask: Task<Void, Never>?
     private var cotypingRuntimeTaskID: UUID?
     private var libraryLoadTask: Task<Void, Never>?
+    private var embeddingBackfillTask: (token: UUID, task: Task<Void, Never>)?
     private var embeddingIndexTasks: [Meeting.ID: (token: UUID, task: Task<Void, Never>)] = [:]
     private var indexCleanupTasks: [Meeting.ID: (token: UUID, task: Task<Void, Never>)] = [:]
     private var deletedMeetingIDs: Set<Meeting.ID> = []
@@ -889,6 +890,9 @@ final class AppState: ObservableObject {
             // later timer tick.
             self.dreaming.tick()
             self.reindexLibraryInBackground(merged)
+            if self.settings.semanticSearchEnabled {
+                self.reindexEmbeddingLibraryInBackground(merged)
+            }
             self.libraryLoadTask = nil
             if let pending = self.pendingRecordingStart {
                 self.pendingRecordingStart = nil
@@ -909,6 +913,18 @@ final class AppState: ObservableObject {
     private func reindexSearchInBackground(_ meeting: Meeting) {
         let worker = searchIndexWorkQueue
         Task { await worker.enqueue(meeting) }
+    }
+
+    private func reindexEmbeddingLibraryInBackground(_ meetings: [Meeting]) {
+        embeddingBackfillTask?.task.cancel()
+        let token = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            await self.embeddingIndex.reindexAll(meetings)
+            guard self.embeddingBackfillTask?.token == token else { return }
+            self.embeddingBackfillTask = nil
+        }
+        embeddingBackfillTask = (token, task)
     }
 
     private func reindexEmbeddingInBackground(_ meeting: Meeting) {
@@ -1016,6 +1032,8 @@ final class AppState: ObservableObject {
             cotypingRuntimeTaskID = nil
             libraryLoadTask?.cancel()
             libraryLoadTask = nil
+            embeddingBackfillTask?.task.cancel()
+            embeddingBackfillTask = nil
             for entry in embeddingIndexTasks.values { entry.task.cancel() }
             embeddingIndexTasks.removeAll()
             for entry in indexCleanupTasks.values { entry.task.cancel() }

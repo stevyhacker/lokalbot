@@ -407,7 +407,7 @@ final class IndexPersistenceTests: XCTestCase {
             bind: [meetingID, 0.0, "preserved", Data(repeating: 1, count: 8)]))
         XCTAssertTrue(database.run(
             "INSERT INTO embedded_meetings (meeting_id, source_mtime, model_id) VALUES (?1, ?2, ?3)",
-            bind: [meetingID, 100.0, "qwen3-embedding-0.6b-q8"]))
+            bind: [meetingID, 100.0, EmbeddingIndex.indexVersion]))
 
         _ = EmbeddingIndex(databaseURL: url, storage: StorageManager(rootURL: root))
 
@@ -418,6 +418,38 @@ final class IndexPersistenceTests: XCTestCase {
         XCTAssertEqual(database.firstDouble(
             "SELECT COUNT(*) FROM embeddings WHERE meeting_id = ?1",
             bind: [meetingID]), 1)
+    }
+
+    func testEmbeddingIndexInvalidatesPreviousPoolingVersion() throws {
+        let url = root.appendingPathComponent("embedding-pooling-migration.sqlite")
+        let database = try XCTUnwrap(SQLiteDatabase(url: url))
+        XCTAssertTrue(database.exec("""
+            CREATE TABLE embeddings (
+                meeting_id TEXT NOT NULL,
+                start REAL NOT NULL,
+                text TEXT NOT NULL,
+                vec BLOB NOT NULL
+            );
+            CREATE TABLE embedded_meetings (
+                meeting_id TEXT PRIMARY KEY,
+                source_mtime REAL NOT NULL,
+                model_id TEXT NOT NULL DEFAULT ''
+            );
+            """))
+        let meetingID = UUID().uuidString
+        XCTAssertTrue(database.run(
+            "INSERT INTO embeddings (meeting_id, start, text, vec) VALUES (?1, ?2, ?3, ?4)",
+            bind: [meetingID, 0.0, "mean-pooled", Data(repeating: 1, count: 8)]))
+        XCTAssertTrue(database.run(
+            "INSERT INTO embedded_meetings (meeting_id, source_mtime, model_id) VALUES (?1, ?2, ?3)",
+            bind: [meetingID, 100.0, "qwen3-embedding-0.6b-q8"]))
+
+        let index = EmbeddingIndex(databaseURL: url, storage: StorageManager(rootURL: root))
+
+        XCTAssertNotEqual(EmbeddingIndex.indexVersion, "qwen3-embedding-0.6b-q8")
+        XCTAssertFalse(index.hasEmbeddings)
+        XCTAssertEqual(database.firstDouble("SELECT COUNT(*) FROM embeddings"), 0)
+        XCTAssertEqual(database.firstDouble("SELECT COUNT(*) FROM embedded_meetings"), 0)
     }
 
     private func writeTranscript(text: String, to url: URL,

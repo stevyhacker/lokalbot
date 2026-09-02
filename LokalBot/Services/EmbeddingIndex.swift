@@ -161,6 +161,10 @@ final class EmbeddingIndex {
     }
 
     private static let modelID = "qwen3-embedding-0.6b-q8"
+    /// Persisted separately from the server-facing model name. Any change to
+    /// pooling, prompting, or chunking must advance this value so vectors made
+    /// under incompatible contracts are discarded before search resumes.
+    nonisolated static let indexVersion = "qwen3-embedding-0.6b-q8-last-chunks-v2"
     nonisolated private static let modelFile = "Qwen3-Embedding-0.6B-Q8_0.gguf"
     nonisolated private static let modelBytes: Int64 = 639_150_592
     nonisolated private static let modelSHA256 = "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439"
@@ -176,6 +180,10 @@ final class EmbeddingIndex {
         Instruct: Retrieve relevant OCR text captured from the user's screen.
         Query:
         """
+    nonisolated static let transcriptChunkTargetCharacters = 500
+    /// Preserve the existing chunk shape for normal ASR output while keeping a
+    /// single pathological segment safely below the embedder's 2K context.
+    nonisolated static let transcriptChunkHardLimitCharacters = 1_800
     private static let modelPreparation = EmbeddingModelPreparationCoordinator()
 
     private let database: SQLiteDatabase?
@@ -226,10 +234,10 @@ final class EmbeddingIndex {
                 WHERE meeting_id IN (
                     SELECT meeting_id FROM embedded_meetings WHERE model_id != ?1
                 )
-                """, bind: [Self.modelID])
+                """, bind: [Self.indexVersion])
                     && database.run(
                     "DELETE FROM embedded_meetings WHERE model_id != ?1",
-                    bind: [Self.modelID])
+                    bind: [Self.indexVersion])
             }
             if database.hasRow("""
                 SELECT 1 FROM sqlite_master
@@ -237,7 +245,7 @@ final class EmbeddingIndex {
                 """) {
                 database.run(
                     "DELETE FROM screen_embeddings WHERE model_id != ?1",
-                    bind: [Self.modelID])
+                    bind: [Self.indexVersion])
             }
         }
         _ = reconcileDeletedMeetings()
@@ -250,6 +258,78 @@ final class EmbeddingIndex {
             guard !Task.isCancelled else { return }
             try? await index(meeting)
         }
+    }
+
+    /// Matches the historical ~500-character transcript chunks for ordinary
+    /// segments. A malformed or low-quality ASR segment can contain thousands
+    /// of characters, so enforce a separate hard ceiling before it reaches the
+    /// embedding server. Split pieces preserve every source character and keep
+    /// the segment timestamp for deep-linking.
+    nonisolated static func transcriptChunks(
+        _ transcript: Transcript
+    ) -> [(start: TimeInterval, text: String)] {
+        var chunks: [(start: TimeInterval, text: String)] = []
+        var current = ""
+        var start: TimeInterval = 0
+
+        func flushCurrent() {
+            guard !current.isEmpty else { return }
+            chunks.append((start, current))
+            current = ""
+        }
+
+        for segment in transcript.segments {
+            let line = "\(transcript.displaySpeaker(for: segment.speaker)): \(segment.text)\n"
+            if line.count > transcriptChunkHardLimitCharacters {
+                flushCurrent()
+                chunks.append(contentsOf: splitEmbeddingText(
+                    line,
+                    maximumCharacters: transcriptChunkTargetCharacters
+                ).map { (start: segment.start, text: $0) })
+                continue
+            }
+
+            if !current.isEmpty,
+               current.count + line.count > transcriptChunkHardLimitCharacters {
+                flushCurrent()
+            }
+            if current.isEmpty { start = segment.start }
+            current += line
+            if current.count > transcriptChunkTargetCharacters {
+                flushCurrent()
+            }
+        }
+        flushCurrent()
+        return chunks
+    }
+
+    /// Prefer a nearby whitespace boundary but fall back to an exact character
+    /// boundary for very long unbroken tokens. Substrings are not trimmed, so
+    /// concatenating the pieces reconstructs the original input byte-for-byte.
+    nonisolated private static func splitEmbeddingText(
+        _ text: String,
+        maximumCharacters: Int
+    ) -> [String] {
+        precondition(maximumCharacters > 0)
+        var remaining = text[...]
+        var pieces: [String] = []
+        while remaining.count > maximumCharacters {
+            let hardEnd = remaining.index(
+                remaining.startIndex,
+                offsetBy: maximumCharacters)
+            let softStart = remaining.index(
+                remaining.startIndex,
+                offsetBy: maximumCharacters / 2)
+            let candidate = remaining[..<hardEnd]
+            let whitespace = candidate.indices.reversed().first {
+                $0 >= softStart && candidate[$0].isWhitespace
+            }
+            let end = whitespace.map { remaining.index(after: $0) } ?? hardEnd
+            pieces.append(String(remaining[..<end]))
+            remaining = remaining[end...]
+        }
+        if !remaining.isEmpty { pieces.append(String(remaining)) }
+        return pieces
     }
 
     func index(_ meeting: Meeting) async throws {
@@ -267,17 +347,7 @@ final class EmbeddingIndex {
         var chunks: [(start: TimeInterval, text: String)] = []
         if let data = try? Data(contentsOf: folder.appendingPathComponent("transcript.json")),
            let transcript = try? JSONDecoder().decode(Transcript.self, from: data) {
-            var current = ""
-            var start: TimeInterval = 0
-            for segment in transcript.segments {
-                if current.isEmpty { start = segment.start }
-                current += "\(transcript.displaySpeaker(for: segment.speaker)): \(segment.text)\n"
-                if current.count > 500 {
-                    chunks.append((start, current))
-                    current = ""
-                }
-            }
-            if !current.isEmpty { chunks.append((start, current)) }
+            chunks.append(contentsOf: Self.transcriptChunks(transcript))
         }
         if let summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"),
                                      encoding: .utf8) {
@@ -317,7 +387,7 @@ final class EmbeddingIndex {
                     """
                     SELECT source_mtime FROM embedded_meetings
                     WHERE meeting_id = ?1 AND model_id = ?2
-                    """, bind: [meetingID, Self.modelID]), indexed >= mtime {
+                    """, bind: [meetingID, Self.indexVersion]), indexed >= mtime {
                     return true
                 }
             } catch {
@@ -339,7 +409,7 @@ final class EmbeddingIndex {
             guard inserted else { return false }
             return database.run(
                 "INSERT OR REPLACE INTO embedded_meetings (meeting_id, source_mtime, model_id) VALUES (?1, ?2, ?3)",
-                bind: [meetingID, mtime, Self.modelID])
+                bind: [meetingID, mtime, Self.indexVersion])
         }
     }
 
@@ -385,13 +455,18 @@ final class EmbeddingIndex {
 
     var hasEmbeddings: Bool {
         database?.hasRow("""
-            SELECT 1 FROM embeddings
-            WHERE NOT EXISTS (
+            SELECT 1 FROM embeddings AS embedded
+            WHERE EXISTS (
+                SELECT 1 FROM embedded_meetings AS indexed
+                WHERE indexed.meeting_id = embedded.meeting_id
+                  AND indexed.model_id = ?1
+            )
+              AND NOT EXISTS (
                 SELECT 1 FROM deleted_meetings AS deleted
-                WHERE deleted.meeting_id = embeddings.meeting_id
+                WHERE deleted.meeting_id = embedded.meeting_id
             )
             LIMIT 1
-            """) ?? false
+            """, bind: [Self.indexVersion]) ?? false
     }
 
     var hasScreenEmbeddings: Bool {
@@ -413,7 +488,7 @@ final class EmbeddingIndex {
                   WHERE CAST(ocr.snapshot_id AS INTEGER) = embedded.snapshot_id
               )
             LIMIT 1
-            """, bind: [Self.modelID])
+            """, bind: [Self.indexVersion])
     }
 
     /// Backfills immutable OCR rows that do not yet have a vector. This is
@@ -462,7 +537,7 @@ final class EmbeddingIndex {
                   )
                 ORDER BY CAST(ocr.ts AS REAL), CAST(ocr.snapshot_id AS INTEGER)
                 LIMIT 32
-                """, bind: [Self.modelID]) { statement in
+                """, bind: [Self.indexVersion]) { statement in
                 guard let app = sqlite3_column_text(statement, 2),
                       let text = sqlite3_column_text(statement, 3) else { return nil }
                 let snapshotID = sqlite3_column_int64(statement, 0)
@@ -516,7 +591,7 @@ final class EmbeddingIndex {
                                 document.app,
                                 document.text,
                                 vectorData,
-                                Self.modelID,
+                                Self.indexVersion,
                             ])
                     }
                 }
@@ -546,7 +621,7 @@ final class EmbeddingIndex {
         else { return [] }
 
         var conditions = ["embedded.model_id = ?1"]
-        var bindings: [Any] = [Self.modelID]
+        var bindings: [Any] = [Self.indexVersion]
         if let interval = filter.interval {
             let startParameter = bindings.count + 1
             bindings.append(interval.start.timeIntervalSince1970)
@@ -604,12 +679,18 @@ final class EmbeddingIndex {
                                                       storage: storage).first else { return [] }
         let candidates: [Candidate] = database.query(
             """
-            SELECT meeting_id, start, text, vec FROM embeddings
-            WHERE NOT EXISTS (
-                SELECT 1 FROM deleted_meetings AS deleted
-                WHERE deleted.meeting_id = embeddings.meeting_id
+            SELECT embedded.meeting_id, embedded.start, embedded.text, embedded.vec
+            FROM embeddings AS embedded
+            WHERE EXISTS (
+                SELECT 1 FROM embedded_meetings AS indexed
+                WHERE indexed.meeting_id = embedded.meeting_id
+                  AND indexed.model_id = ?1
             )
-            """
+              AND NOT EXISTS (
+                SELECT 1 FROM deleted_meetings AS deleted
+                WHERE deleted.meeting_id = embedded.meeting_id
+            )
+            """, bind: [Self.indexVersion]
         ) { statement in
             guard let idText = sqlite3_column_text(statement, 0),
                   let meetingID = UUID(uuidString: String(cString: idText)),
@@ -828,7 +909,7 @@ final class EmbeddingIndex {
     private func indexedMtime(_ id: UUID) -> TimeInterval? {
         database?.firstDouble(
             "SELECT source_mtime FROM embedded_meetings WHERE meeting_id = ?1 AND model_id = ?2",
-            bind: [id.uuidString, Self.modelID])
+            bind: [id.uuidString, Self.indexVersion])
     }
 
     private func isDeleted(_ id: UUID) -> Bool {

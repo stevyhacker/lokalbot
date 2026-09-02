@@ -50,7 +50,7 @@ actor LlamaServer {
         runtimeAllowanceBytes: 3 * 1_073_741_824)
     /// Embeddings instance (semantic search) — small model, second port.
     static let embedder = LlamaServer(port: 17873, contextTokens: 2_048,
-                                      extraArgs: ["--embeddings", "--pooling", "mean",
+                                      extraArgs: ["--embeddings", "--pooling", "last",
                                                   "--parallel", "1", "--cache-ram", "256"],
                                       runtimeAllowanceBytes: 384 * 1_048_576)
     /// Cotyping instance — an optional separate (typically smaller/faster)
