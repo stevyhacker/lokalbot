@@ -267,7 +267,7 @@ private struct EditorialTurn: View {
         }
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityValue(questionScopeSummary.map { "Question scope: \($0)" } ?? "")
+        .accessibilityValue(userTurnAccessibilityValue)
     }
 
     @ViewBuilder private var assistantBlock: some View {
@@ -336,6 +336,11 @@ private struct EditorialTurn: View {
 
     private var questionIsExpanded: Bool {
         isLatestQuestion || questionExpanded
+    }
+
+    private var userTurnAccessibilityValue: String {
+        guard let questionScopeSummary else { return message.text }
+        return "\(message.text). Question scope: \(questionScopeSummary)"
     }
 
     private var isStoppedTurn: Bool {
@@ -984,16 +989,21 @@ private struct ConversationListContent: View {
     }
 
     private func row(_ conversation: Conversation) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(ChatViewModel.displayTitle(for: conversation))
+        let title = ChatViewModel.displayTitle(for: conversation)
+        let timestamp = historyTimestamp(conversation.updatedAt)
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(title)
                 .font(WorkspaceTypography.rowTitle)
                 .lineLimit(1)
-            Text(historyTimestamp(conversation.updatedAt))
+            Text(timestamp)
                 .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 5)
         .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue(timestamp)
     }
 
     private func historyTimestamp(_ date: Date) -> String {
