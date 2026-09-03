@@ -492,10 +492,7 @@ struct SettingsView: View {
                             value: $app.settings.dayDigestHour,
                             in: 0...23)
                     }
-                    TextField("Digest instructions (optional)",
-                              text: $app.settings.dayDigestCustomPrompt,
-                              axis: .vertical)
-                        .lineLimit(1...3)
+                    digestInstructionsField
                     Text("Writes a detailed Timeline digest to your local journal at the chosen hour, then finalizes yesterday once after the date changes so late activity is included. Instructions shape scheduled and manual generation alike.")
                         .font(.caption).foregroundStyle(.secondary)
                     Divider()
@@ -532,6 +529,41 @@ struct SettingsView: View {
                 }
             }
 
+    }
+
+    private var digestInstructionsField: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Digest instructions (optional)")
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $app.settings.dayDigestCustomPrompt)
+                    .font(WorkspaceTypography.editorialBody)
+                    .multilineTextAlignment(.leading)
+                    .scrollContentBackground(.hidden)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 5)
+                    .accessibilityLabel("Digest instructions")
+                    .accessibilityIdentifier("settings.digestInstructions")
+
+                if app.settings.dayDigestCustomPrompt.isEmpty {
+                    Text("Example: Emphasize decisions, blockers, and next steps.")
+                        .font(WorkspaceTypography.editorialBody)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .frame(height: 72, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous)
+                    .fill(Color(NSColor.textBackgroundColor).opacity(0.92))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous)
+                    .stroke(Color(NSColor.separatorColor), lineWidth: 1.2)
+            }
+        }
     }
 
     @ViewBuilder private var routinesSection: some View {
