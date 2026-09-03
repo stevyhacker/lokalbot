@@ -4,6 +4,12 @@ import Foundation
 /// `Me` remains the stable owner identity; sentences about the user are written
 /// in first person instead of treating that label as a subject pronoun.
 enum OutcomeProse {
+    static func hasFirstPersonSubject(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).range(
+            of: #"^(?:i(?:\s|['’](?:ll|m|ve|d)\b)|my\s)"#,
+            options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
     static func firstPersonSubject(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let possessive = trimmed.replacingOccurrences(

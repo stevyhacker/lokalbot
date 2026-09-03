@@ -76,6 +76,7 @@ enum PromptTemplates {
             "The speaker labeled \"\(user)\" is this Mac's user (\"Me\"); every other speaker is another participant.",
             "In prose about the user, write naturally in first person using I, me, and my. Reserve the literal label Me for the `### Me` subheading; never write sentences such as \"Me will...\" or \"Me accepted...\".",
             "Perform a separate actionability pass: under ## Action items, use ### Me for commitments made by \"\(user)\", requests or assignments directed to \"\(user)\", and agreed follow-ups \"\(user)\" owns; use ### Others for everyone else's tasks. Write \"None\" under either subgroup when this part contains no qualifying item.",
+            "Keep every qualifying ### Me item. Under ### Others, include at most the five most important tasks, prioritizing stated urgency, impact, deadlines, risk, participant emphasis, and work that blocks other work.",
             "Do not turn generic advice, optional ideas, or another participant's work into an action for Me.",
             meetingOutcomeSemanticsRule,
             "No preamble.",
@@ -288,10 +289,13 @@ enum PromptTemplates {
         `- [ ] task — [hh:mm:ss]`; preserve any stated deadline. Write `None` when no supported \
         action for Me exists.
         ### Others
-        Include other participants' concrete tasks as `- [ ] owner: task — [hh:mm:ss]`, or \
-        `None`. Never turn generic advice, optional ideas, unresolved possibilities, or work owned \
-        only by someone else into an action for Me. Check the transcript and user-written note \
-        context, but never invent an action.
+        Include at most the five most important concrete tasks owned by other participants as \
+        `- [ ] owner: task — [hh:mm:ss]`, or `None`. Prioritize stated urgency, impact, deadlines, \
+        risk, participant emphasis, and work that blocks other work. Keep the complete action list \
+        at ten whenever Me has ten or fewer items by reducing Others first; never omit a supported \
+        action for Me. Never turn generic advice, optional ideas, unresolved possibilities, or work \
+        owned only by someone else into an action for Me. Check the transcript and user-written \
+        note context, but never invent an action.
         """
     }
 

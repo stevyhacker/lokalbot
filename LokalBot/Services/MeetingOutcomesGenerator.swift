@@ -176,7 +176,7 @@ enum MeetingOutcomesGenerator {
             saveCheckpoint(checkpoint, to: checkpointURL)
         }
 
-        return merge(parts)
+        return merge(parts).prioritizingActionItems()
     }
 
     static func merge(_ parts: [MeetingOutcomes]) -> MeetingOutcomes {
@@ -490,6 +490,7 @@ enum MeetingOutcomesGenerator {
             owner: isForUser ? "Me" : lhs.owner ?? rhs.owner,
             due: lhs.due ?? rhs.due,
             isForUser: isForUser,
+            importance: max(lhs.importance, rhs.importance),
             citations: mergedCitations(lhs.citations, rhs.citations))
     }
 
@@ -501,6 +502,7 @@ enum MeetingOutcomesGenerator {
             owner: action.isForUser ? "Me" : action.owner,
             due: action.due,
             isForUser: action.isForUser,
+            importance: action.importance,
             citations: mergedCitations(action.citations, []))
     }
 

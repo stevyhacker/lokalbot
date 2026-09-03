@@ -29,7 +29,8 @@ enum OutcomesExtractor {
         You extract structured outcomes from meeting notes. Reply with ONLY a JSON \
         object of this exact shape:
         {"action_items": [{"text": "...", "owner": "...", "due": "...", "for_user": true, \
-        "source_segment_ids": ["segment-..."]}], "decisions": [{"text": "...", \
+        "importance": 5, "source_segment_ids": ["segment-..."]}], \
+        "decisions": [{"text": "...", \
         "source_segment_ids": ["segment-..."]}], "open_questions": ["..."]}
 
         Rules:
@@ -45,11 +46,16 @@ enum OutcomesExtractor {
         - Set "for_user" to true exactly when the action belongs to the user. For those \
         items, set "owner" to "Me" even when the transcript uses "\(user)". Otherwise, \
         use the owner's name exactly as it appears, or "" when no owner was stated.
+        - Set "importance" to an integer from 1 (minor) to 5 (critical), relative to this \
+        meeting. Base it only on stated urgency, impact, participant emphasis, deadlines, \
+        risk, and whether the task blocks other work. Do not rank by owner or speaking time.
         - The "owner" field is metadata, while "text" is natural prose. For every action or \
         decision about the user, write text in first person using "I", "me", and "my". Never \
         use "Me" as a sentence subject; write "I will..." instead of "Me will...", and \
         "Them 1 and I agreed..." instead of "Me and Them 1 agreed...".
-        - Put all "for_user": true items first. Do not classify generic advice, optional \
+        - Include every "for_user": true action and put those items first. For everyone \
+        else, include at most the five highest-importance actions in this evidence. Never \
+        drop a user action to satisfy an item limit. Do not classify generic advice, optional \
         ideas, unresolved possibilities, or another participant's work as user action items.
         - decisions: only choices the participants explicitly settled on. Tentative terms, \
         intentions, suggestions, and possibilities are not decisions; keep unresolved terms in \
@@ -69,7 +75,8 @@ enum OutcomesExtractor {
 
     /// JSON schema matching `systemPrompt`'s shape, for grammar-constrained
     /// backends. `owner`/`due` are required-but-emptyable rather than optional,
-    /// and `for_user` is required so strict grammars keep the object shape fixed.
+    /// and `for_user`/`importance` are required so strict grammars keep the
+    /// object shape fixed.
     static var schema: [String: Any] {
         [
             "type": "object",
@@ -83,11 +90,18 @@ enum OutcomesExtractor {
                             "owner": ["type": "string"],
                             "due": ["type": "string"],
                             "for_user": ["type": "boolean"],
+                            "importance": [
+                                "type": "integer",
+                                "description": "Relative importance from 1 to 5.",
+                            ],
                             "source_segment_ids": [
                                 "type": "array", "items": ["type": "string"],
                             ],
                         ],
-                        "required": ["text", "owner", "due", "for_user", "source_segment_ids"],
+                        "required": [
+                            "text", "owner", "due", "for_user", "importance",
+                            "source_segment_ids",
+                        ],
                         "additionalProperties": false,
                     ],
                 ],
@@ -160,6 +174,7 @@ enum OutcomesExtractor {
             let rawOwner = cleaned(item["owner"])
             let belongsToUser = item["for_user"] as? Bool == true
                 || isUserOwner(rawOwner, userSpeakerLabel: userSpeakerLabel)
+                || OutcomeProse.hasFirstPersonSubject(text)
             let citations = resolveCitations(
                 item["source_segment_ids"], sourceSegments: sourceSegments,
                 meetingID: meetingID)
@@ -172,6 +187,8 @@ enum OutcomesExtractor {
                 owner: belongsToUser ? "Me" : rawOwner,
                 due: cleaned(item["due"]),
                 isForUser: belongsToUser,
+                importance: (item["importance"] as? NSNumber)?.intValue
+                    ?? MeetingOutcomes.ActionItem.defaultImportance,
                 citations: citations))
         }
         outcomes.actionItems = outcomes.userActionItems + outcomes.otherActionItems

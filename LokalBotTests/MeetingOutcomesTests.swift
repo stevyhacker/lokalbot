@@ -12,12 +12,16 @@ final class MeetingOutcomesTests: XCTestCase {
 
     func testParseCleanJSON() throws {
         let outcomes = try XCTUnwrap(OutcomesExtractor.parse("""
-            {"action_items": [{"text": "Benchmark failover", "owner": "Ana", "due": "Friday", "for_user": false}],
+            {"action_items": [{"text": "Benchmark failover", "owner": "Ana", "due": "Friday", "for_user": false, "importance": 4}],
              "decisions": ["Adopt Redis"],
              "open_questions": ["Who owns the migration?"]}
             """))
         XCTAssertEqual(outcomes.actionItems,
-                       [.init(text: "Benchmark failover", owner: "Ana", due: "Friday")])
+                       [.init(
+                        text: "Benchmark failover",
+                        owner: "Ana",
+                        due: "Friday",
+                        importance: 4)])
         XCTAssertEqual(outcomes.decisions, ["Adopt Redis"])
         XCTAssertEqual(outcomes.openQuestions, ["Who owns the migration?"])
     }
@@ -74,6 +78,19 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertEqual(outcomes.otherActionItems.map(\.owner), ["Ana"])
     }
 
+    func testFirstPersonActionRepairsInconsistentOwnerMetadata() throws {
+        let outcomes = try XCTUnwrap(OutcomesExtractor.parse("""
+            {"action_items": [
+                {"text": "I will review the hardening tasks", "owner": "Them 3", "due": "", "for_user": false, "importance": 5}
+             ], "decisions": [], "open_questions": []}
+            """))
+
+        XCTAssertEqual(outcomes.userActionItems.map(\.owner), ["Me"])
+        XCTAssertEqual(outcomes.userActionItems.map(\.importance), [5])
+        XCTAssertTrue(OutcomeProse.hasFirstPersonSubject("My next step is to send the plan"))
+        XCTAssertFalse(OutcomeProse.hasFirstPersonSubject("I/O migration needs an owner"))
+    }
+
     func testUserOwnershipStaysMeWhileUserFacingProseUsesFirstPerson() throws {
         let persistedID = "persisted-action-id"
         let data = Data("""
@@ -98,6 +115,22 @@ final class MeetingOutcomesTests: XCTestCase {
             "Them 1 will share the repo.")
     }
 
+    func testDecodingRepairsPersistedFirstPersonActionOwnership() throws {
+        let data = Data("""
+            {"actionItems":[
+                {"text":"I will check the hardening tasks.",
+                 "owner":"Them 3","isForUser":false,"citations":[]}],
+             "decisionRecords":[],"openQuestions":[]}
+            """.utf8)
+
+        let outcomes = try JSONDecoder().decode(MeetingOutcomes.self, from: data)
+
+        XCTAssertEqual(outcomes.userActionItems.map(\.owner), ["Me"])
+        XCTAssertEqual(outcomes.userActionItems.map(\.text), [
+            "I will check the hardening tasks.",
+        ])
+    }
+
     // MARK: - Schema and prompt
 
     func testSchemaSerializesAsJSON() throws {
@@ -110,8 +143,14 @@ final class MeetingOutcomesTests: XCTestCase {
         let actionItems = try XCTUnwrap(properties["action_items"] as? [String: Any])
         let item = try XCTUnwrap(actionItems["items"] as? [String: Any])
         XCTAssertEqual(Set(item["required"] as? [String] ?? []),
-                       ["text", "owner", "due", "for_user", "source_segment_ids"])
+                       [
+                        "text", "owner", "due", "for_user", "importance",
+                        "source_segment_ids",
+                       ])
         XCTAssertEqual(item["additionalProperties"] as? Bool, false)
+        let itemProperties = try XCTUnwrap(item["properties"] as? [String: Any])
+        let importance = try XCTUnwrap(itemProperties["importance"] as? [String: Any])
+        XCTAssertEqual(importance["type"] as? String, "integer")
         XCTAssertNil(OpenAIStrictSchemaValidator.validationIssue(
             in: OutcomesExtractor.schema))
     }
@@ -125,6 +164,9 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertTrue(prompt.contains("requests or assignments directed to \"Stevan\""), prompt)
         XCTAssertTrue(prompt.contains("\"for_user\" to true"), prompt)
         XCTAssertTrue(prompt.contains("set \"owner\" to \"Me\""), prompt)
+        XCTAssertTrue(prompt.contains("\"importance\" to an integer from 1"), prompt)
+        XCTAssertTrue(prompt.contains("at most the five highest-importance actions"), prompt)
+        XCTAssertTrue(prompt.contains("Never drop a user action"), prompt)
         XCTAssertTrue(prompt.contains("I will"), prompt)
         XCTAssertTrue(prompt.contains("Never use \"Me\" as a sentence subject"), prompt)
         XCTAssertTrue(prompt.contains("text field in English"), prompt)
@@ -166,6 +208,71 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertEqual(MeetingOutcomes.load(from: folder), outcomes)
     }
 
+    func testActionPrioritizationKeepsMineAndSelectsOnlyTopOthersWithinTen() {
+        let mine = (1...6).map {
+            MeetingOutcomes.ActionItem(text: "My action \($0)", owner: "Me", importance: 1)
+        }
+        let others = [1, 5, 2, 4, 3, 5, 4].enumerated().map { index, importance in
+            MeetingOutcomes.ActionItem(
+                text: "Other action \(index)",
+                owner: "Them",
+                importance: importance)
+        }
+        let prioritized = MeetingOutcomes(actionItems: mine + others)
+            .prioritizingActionItems()
+
+        XCTAssertEqual(prioritized.actionItems.count, 10)
+        XCTAssertEqual(prioritized.userActionItems.map(\.text), mine.map(\.text))
+        XCTAssertEqual(prioritized.otherActionItems.map(\.importance), [5, 5, 4, 4])
+
+        let fewerMine = MeetingOutcomes(actionItems: Array(mine.prefix(3)) + others)
+            .prioritizingActionItems()
+        XCTAssertEqual(fewerMine.actionItems.count, 8)
+        XCTAssertEqual(fewerMine.otherActionItems.map(\.importance), [5, 5, 4, 4, 3])
+    }
+
+    func testActionPrioritizationNeverDropsMineEvenAboveNormalCeiling() {
+        let mine = (1...11).map {
+            MeetingOutcomes.ActionItem(text: "My action \($0)", owner: "Me")
+        }
+        let other = MeetingOutcomes.ActionItem(
+            text: "Other critical action",
+            owner: "Them",
+            importance: 5)
+
+        let prioritized = MeetingOutcomes(actionItems: mine + [other])
+            .prioritizingActionItems()
+
+        XCTAssertEqual(prioritized.actionItems.count, 11)
+        XCTAssertEqual(prioritized.userActionItems.count, 11)
+        XCTAssertTrue(prioritized.otherActionItems.isEmpty)
+    }
+
+    func testLoadingExistingArtifactAppliesActionItemSelectionPolicy() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lokalbot-outcome-limit-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let mine = (1...6).map {
+            MeetingOutcomes.ActionItem(text: "My action \($0)", owner: "Me")
+        }
+        let others = (1...7).map {
+            MeetingOutcomes.ActionItem(
+                text: "Other action \($0)",
+                owner: "Them",
+                importance: $0.isMultiple(of: 2) ? 5 : 1)
+        }
+        try MeetingOutcomes(actionItems: mine + others).write(to: folder)
+
+        let loaded = try XCTUnwrap(MeetingOutcomes.load(from: folder))
+
+        XCTAssertEqual(loaded.actionItems.count, 10)
+        XCTAssertEqual(loaded.userActionItems.count, 6)
+        XCTAssertEqual(loaded.otherActionItems.count, 4)
+        XCTAssertEqual(loaded.otherActionItems.map(\.importance), [5, 5, 5, 1])
+    }
+
     func testGroundedParseRejectsUnknownEvidenceAndResolvesKnownSegments() throws {
         let meetingID = UUID(uuidString: "11111111-2222-4333-8444-555555555555")!
         let transcript = Transcript(
@@ -193,6 +300,9 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertEqual(outcomes.actionItems.first?.citations.first?.meetingID, meetingID)
         XCTAssertEqual(outcomes.actionItems.first?.schemaVersion, MeetingOutcomes.currentSchemaVersion)
         XCTAssertEqual(outcomes.actionItems.first?.isForUser, true)
+        XCTAssertEqual(
+            outcomes.actionItems.first?.importance,
+            MeetingOutcomes.ActionItem.defaultImportance)
         XCTAssertEqual(outcomes.decisionRecords.map(\.text), ["Use the local store"])
     }
 

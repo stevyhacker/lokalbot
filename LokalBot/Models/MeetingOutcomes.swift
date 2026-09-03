@@ -31,7 +31,9 @@ struct OutcomeSourceCitation: Codable, Equatable, Hashable, Identifiable, Sendab
 /// extracted text and evidence are immutable source data; user corrections and
 /// workflow status live separately in `MeetingOutcomeState`.
 struct MeetingOutcomes: Codable, Equatable, Sendable {
-    static let currentSchemaVersion = 2
+    static let currentSchemaVersion = 3
+    static let maximumActionItems = 10
+    static let maximumOtherActionItems = 5
 
     struct ActionItem: Codable, Equatable, Identifiable, Sendable {
         var id: String
@@ -44,10 +46,19 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
         var due: String?
         /// Stored extraction judgment. Legacy records derive it from owner.
         var isForUser: Bool
+        /// Relative meeting importance assigned by the grounded extraction
+        /// pass. This is used only to select the most useful actions owned by
+        /// other participants; every user-owned action is retained.
+        var importance: Int
         var citations: [OutcomeSourceCitation]
+
+        static let defaultImportance = 3
+        static let minimumImportance = 1
+        static let maximumImportance = 5
 
         init(id: String? = nil, text: String, owner: String? = nil,
              due: String? = nil, isForUser: Bool? = nil,
+             importance: Int = defaultImportance,
              citations: [OutcomeSourceCitation] = [],
              schemaVersion: Int = MeetingOutcomes.currentSchemaVersion) {
             let resolvedIsForUser = isForUser ?? Self.ownerBelongsToUser(owner)
@@ -60,6 +71,7 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
             self.owner = owner
             self.due = due
             self.isForUser = resolvedIsForUser
+            self.importance = Self.clampedImportance(importance)
             self.citations = citations
         }
 
@@ -74,8 +86,12 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
             return owner.caseInsensitiveCompare("Me") == .orderedSame
         }
 
+        private static func clampedImportance(_ importance: Int) -> Int {
+            min(maximumImportance, max(minimumImportance, importance))
+        }
+
         private enum CodingKeys: String, CodingKey {
-            case id, schemaVersion, text, owner, due, isForUser, citations
+            case id, schemaVersion, text, owner, due, isForUser, importance, citations
         }
 
         init(from decoder: Decoder) throws {
@@ -87,8 +103,15 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
             due = try container.decodeIfPresent(String.self, forKey: .due)
             citations = try container.decodeIfPresent(
                 [OutcomeSourceCitation].self, forKey: .citations) ?? []
-            isForUser = try container.decodeIfPresent(Bool.self, forKey: .isForUser)
-                ?? Self.ownerBelongsToUser(owner)
+            let storedIsForUser = try container.decodeIfPresent(
+                Bool.self, forKey: .isForUser)
+            isForUser = storedIsForUser == true
+                || Self.ownerBelongsToUser(owner)
+                || OutcomeProse.hasFirstPersonSubject(decodedText)
+            if isForUser { owner = "Me" }
+            importance = Self.clampedImportance(
+                try container.decodeIfPresent(Int.self, forKey: .importance)
+                    ?? Self.defaultImportance)
             text = OutcomeProse.actionText(decodedText, isForUser: isForUser)
             id = try container.decodeIfPresent(String.self, forKey: .id)
                 ?? MeetingOutcomes.stableID(
@@ -167,6 +190,22 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
     var userActionItems: [ActionItem] { actionItems.filter(\.isForUser) }
     var otherActionItems: [ActionItem] { actionItems.filter { !$0.isForUser } }
 
+    /// Keeps all of the user's work first, then fills the remaining room with
+    /// at most five of everyone else's highest-importance actions. If the user
+    /// alone owns more than ten actions, preserving their complete list wins
+    /// over the normal ten-item readability ceiling.
+    func prioritizingActionItems() -> Self {
+        var prioritized = self
+        let userItems = userActionItems
+        let remainingSlots = max(0, Self.maximumActionItems - userItems.count)
+        let otherLimit = min(Self.maximumOtherActionItems, remainingSlots)
+        let otherItems = otherActionItems
+            .sorted(by: Self.higherPriorityAction)
+            .prefix(otherLimit)
+        prioritized.actionItems = userItems + otherItems
+        return prioritized
+    }
+
     static let fileName = "outcomes.json"
 
     static func load(from folder: URL) -> MeetingOutcomes? {
@@ -174,6 +213,7 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
             return nil
         }
         return try? JSONDecoder().decode(MeetingOutcomes.self, from: data)
+            .prioritizingActionItems()
     }
 
     func write(to folder: URL) throws {
@@ -214,6 +254,14 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
         try container.encode(actionItems, forKey: .actionItems)
         try container.encode(decisionRecords, forKey: .decisionRecords)
         try container.encode(openQuestions, forKey: .openQuestions)
+    }
+
+    private static func higherPriorityAction(_ lhs: ActionItem, _ rhs: ActionItem) -> Bool {
+        if lhs.importance != rhs.importance { return lhs.importance > rhs.importance }
+        let left = lhs.citations.first?.start ?? .infinity
+        let right = rhs.citations.first?.start ?? .infinity
+        if left != right { return left < right }
+        return lhs.text.localizedCaseInsensitiveCompare(rhs.text) == .orderedAscending
     }
 
     /// FNV-1a keeps identity stable across app launches and re-extractions.

@@ -72,7 +72,7 @@ final class MeetingOutcomesGeneratorTests: XCTestCase {
         let empty = #"{"action_items":[],"decisions":[],"open_questions":[]}"#
         let action = """
             {"action_items":[{"text":"Send the launch plan","owner":"Me","due":"",
-            "for_user":true,"source_segment_ids":["\(tailID)"]}],
+            "for_user":true,"importance":5,"source_segment_ids":["\(tailID)"]}],
             "decisions":[],"open_questions":[]}
             """
         let responses = chunks.indices.map { index in
@@ -112,7 +112,7 @@ final class MeetingOutcomesGeneratorTests: XCTestCase {
             .failure(.outputTruncated),
             .value("""
                 {"action_items":[{"text":"Send the plan","owner":"Me","due":"",
-                "for_user":true,"source_segment_ids":["\(sourceID)"]}],
+                "for_user":true,"importance":5,"source_segment_ids":["\(sourceID)"]}],
                 "decisions":[],"open_questions":[]}
                 """),
         ])
@@ -141,6 +141,7 @@ final class MeetingOutcomesGeneratorTests: XCTestCase {
                 text: "Share the project repository",
                 owner: "Me",
                 isForUser: true,
+                importance: 2,
                 citations: [citation]),
         ]
         first.decisionRecords = [
@@ -152,6 +153,7 @@ final class MeetingOutcomesGeneratorTests: XCTestCase {
                 text: "Share the project repository with Stevan",
                 owner: "Me",
                 isForUser: true,
+                importance: 5,
                 citations: [citation]),
             .init(
                 text: "Review the repository",
@@ -170,6 +172,7 @@ final class MeetingOutcomesGeneratorTests: XCTestCase {
         XCTAssertEqual(merged.actionItems.count, 2)
         XCTAssertEqual(merged.actionItems.first?.text, "Share the project repository with Stevan")
         XCTAssertEqual(merged.actionItems.first?.owner, "Me")
+        XCTAssertEqual(merged.actionItems.first?.importance, 5)
         XCTAssertTrue(merged.decisionRecords.isEmpty)
     }
 

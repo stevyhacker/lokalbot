@@ -144,6 +144,9 @@ final class SummaryPromptActionabilityTests: XCTestCase {
             XCTAssertTrue(prompt.contains("generic advice"), template.rawValue)
             XCTAssertTrue(prompt.contains("first person"), template.rawValue)
             XCTAssertTrue(prompt.contains("Me will"), template.rawValue)
+            XCTAssertTrue(prompt.contains("at most the five most important"), template.rawValue)
+            XCTAssertTrue(prompt.contains("reducing Others first"), template.rawValue)
+            XCTAssertTrue(prompt.contains("never omit a supported action for Me"), template.rawValue)
         }
     }
 
@@ -159,6 +162,8 @@ final class SummaryPromptActionabilityTests: XCTestCase {
         XCTAssertTrue(chunk.contains("requests or assignments directed to \"Stevan\""), chunk)
         XCTAssertTrue(chunk.contains("### Me"), chunk)
         XCTAssertTrue(chunk.contains("### Others"), chunk)
+        XCTAssertTrue(chunk.contains("at most the five most important"), chunk)
+        XCTAssertTrue(chunk.contains("Keep every qualifying ### Me item"), chunk)
     }
 
     func testMeetingPromptsKeepTentativeTermsAndActionsOutOfDecisions() {
