@@ -82,6 +82,45 @@ enum UITestRuntime {
 }
 
 enum KeychainSecrets {
+    struct EncryptionKeyOperations {
+        let read: (_ service: String, _ account: String) -> (status: OSStatus, data: Data?)
+        let add: (_ service: String, _ account: String, _ data: Data) -> OSStatus
+    }
+
+    enum EncryptionKeyFailure: LocalizedError, Equatable {
+        case operation(String, account: String, status: OSStatus)
+        case invalidData(account: String)
+        case verification(account: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .operation(let operation, let account, let status):
+                let detail = SecCopyErrorMessageString(status, nil) as String?
+                    ?? "status \(status)"
+                return "Could not \(operation) the \(account) Keychain item (\(detail))."
+            case .invalidData(let account):
+                return "The \(account) Keychain item does not contain a valid AES-256 key."
+            case .verification(let account):
+                return "The \(account) Keychain item could not be verified after saving."
+            }
+        }
+    }
+
+    private static let liveEncryptionKeyOperations = EncryptionKeyOperations(
+        read: { service, account in
+            var query = baseQuery(service: service, account: account)
+            query[kSecReturnData as String] = true
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
+            var existing: CFTypeRef?
+            let status = SecItemCopyMatching(query as CFDictionary, &existing)
+            return (status, existing as? Data)
+        },
+        add: { service, account, data in
+            var query = baseQuery(service: service, account: account)
+            query[kSecValueData as String] = data
+            return SecItemAdd(query as CFDictionary, nil)
+        })
+
     static func string(account: String) -> String? {
         guard let data = data(account: account) else { return nil }
         return String(data: data, encoding: .utf8)
@@ -150,18 +189,58 @@ enum KeychainSecrets {
             return key
         }
 #endif
-        if let data = data(account: account) {
-            let key = SymmetricKey(data: data)
-            symmetricKeyCache[account] = key
-            return key
-        }
-        let key = SymmetricKey(size: .bits256)
-        set(key.withUnsafeBytes { Data($0) }, account: account)
-        guard data(account: account) != nil else {
-            throw NSError(domain: "LokalBot", code: 6,
-                          userInfo: [NSLocalizedDescriptionKey: "Could not save encryption key (\(account))"])
-        }
+        let key = try resolveSymmetricKey(
+            account: account,
+            operations: liveEncryptionKeyOperations)
         symmetricKeyCache[account] = key
         return key
+    }
+
+    /// Loads the existing AES-256 key or atomically creates it on first use.
+    /// Existing items are never updated: a temporary read failure must not be
+    /// mistaken for absence, and a concurrent creator wins without replacement.
+    static func resolveSymmetricKey(
+        account: String,
+        operations: EncryptionKeyOperations
+    ) throws -> SymmetricKey {
+        if let existing = try encryptionKeyData(account: account, operations: operations) {
+            return SymmetricKey(data: existing)
+        }
+
+        let proposedKey = SymmetricKey(size: .bits256)
+        let proposedData = proposedKey.withUnsafeBytes { Data($0) }
+        let addStatus = operations.add(AppIdentifiers.bundleID, account, proposedData)
+        if addStatus == errSecDuplicateItem {
+            guard let existing = try encryptionKeyData(
+                account: account,
+                operations: operations
+            ) else {
+                throw EncryptionKeyFailure.verification(account: account)
+            }
+            return SymmetricKey(data: existing)
+        }
+        guard addStatus == errSecSuccess else {
+            throw EncryptionKeyFailure.operation("save", account: account, status: addStatus)
+        }
+        guard try encryptionKeyData(account: account, operations: operations) == proposedData else {
+            throw EncryptionKeyFailure.verification(account: account)
+        }
+        return proposedKey
+    }
+
+    private static func encryptionKeyData(
+        account: String,
+        operations: EncryptionKeyOperations
+    ) throws -> Data? {
+        let result = operations.read(AppIdentifiers.bundleID, account)
+        if result.status == errSecItemNotFound { return nil }
+        guard result.status == errSecSuccess else {
+            throw EncryptionKeyFailure.operation(
+                "read", account: account, status: result.status)
+        }
+        guard let data = result.data, data.count == 32 else {
+            throw EncryptionKeyFailure.invalidData(account: account)
+        }
+        return data
     }
 }
