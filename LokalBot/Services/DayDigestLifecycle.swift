@@ -10,9 +10,10 @@ final class DayDigestLifecycle {
         var text: String?
         var modifiedAt: Date?
         var latestEvidenceAt: Date?
+        var evidenceMatches: Bool = true
 
         var isStale: Bool {
-            DayDigestFreshness.isStale(
+            !evidenceMatches || DayDigestFreshness.isStale(
                 digestModifiedAt: modifiedAt,
                 latestEvidenceAt: latestEvidenceAt)
         }
@@ -32,6 +33,7 @@ final class DayDigestLifecycle {
     private let generator: Generator
     private let calendar: Calendar
     private let scheduler: DayDigestScheduler
+    private var invalidatedDays: Set<String> = []
 
     init(
         storageRoot: URL,
@@ -84,10 +86,14 @@ final class DayDigestLifecycle {
         let url = journalURL(for: day)
         let text = try? String(contentsOf: url, encoding: .utf8)
         let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let signature = try? evidenceInput(for: day).digestEvidence(calendar: calendar).contentSignature
         return Snapshot(
             text: text,
             modifiedAt: attributes?[.modificationDate] as? Date,
-            latestEvidenceAt: latestEvidenceAt(for: day))
+            latestEvidenceAt: latestEvidenceAt(for: day),
+            evidenceMatches: text == nil || signature.map {
+                DayDigestGenerationMetadataStore.isCurrent(for: url, evidenceSignature: $0)
+            } == true)
     }
 
     func meetings(for day: Date, includeInProgress: Bool = true) -> [Meeting] {
@@ -131,7 +137,10 @@ final class DayDigestLifecycle {
                 return self.automaticCompletionAt(for: day)
             },
             latestEvidenceAt: { [weak self] day in
-                self?.latestEvidenceAt(for: day)
+                guard let self else { return nil }
+                // A deleted last meeting still leaves an owned journal to repair.
+                return self.latestEvidenceAt(for: day)
+                    ?? DayDigestGenerationMetadataStore.load(for: self.journalURL(for: day))?.generatedAt
             },
             canRun: canRun,
             generate: { [weak self] day in
@@ -139,10 +148,15 @@ final class DayDigestLifecycle {
                     throw TextEngineError.unavailable("LokalBot is shutting down.")
                 }
                 let evidence = try self.evidenceInput(for: day)
-                guard !evidence.isEmpty else { return .deferred }
+                let url = self.journalURL(for: day)
+                let ownedJournal = DayDigestGenerationMetadataStore.load(for: url).map {
+                    DayDigestGenerationMetadataStore.journalMatches($0, at: url)
+                } == true
+                guard !evidence.isEmpty || ownedJournal else { return .deferred }
                 let result = try await self.generator(
                     evidence,
                     self.settings())
+                self.invalidatedDays.remove(DreamDay.key(for: day, calendar: self.calendar))
                 return result.quality.needsRepair ? .needsRepair : .completed
             },
             onError: onError)
@@ -155,7 +169,8 @@ final class DayDigestLifecycle {
     /// A user correction or completion can make the current journal stale
     /// without changing meeting metadata. Re-evaluate immediately instead of
     /// waiting for the next minute tick.
-    func reconsiderEvidence() {
+    func reconsiderEvidence(for day: Date? = nil) {
+        if let day { invalidatedDays.insert(DreamDay.key(for: day, calendar: calendar)) }
         scheduler.reconsiderEvidence()
     }
 
@@ -183,9 +198,25 @@ final class DayDigestLifecycle {
     /// artifacts it actually consumes. This makes the next quiet tick repair
     /// the journal without regenerating it for every later activity sample.
     private func automaticCompletionAt(for day: Date) -> Date? {
-        let completedAt = DayDigestGenerationMetadataStore.completedAt(
-            for: journalURL(for: day))
-        guard let completedAt else { return nil }
+        let url = journalURL(for: day)
+        if let metadata = DayDigestGenerationMetadataStore.load(for: url), metadata.journalDigest != nil {
+            // Preserve manual edits even if the file's timestamp is restored.
+            guard DayDigestGenerationMetadataStore.journalMatches(metadata, at: url) else {
+                return .distantFuture
+            }
+        }
+        // Ownership is checked before quality: editing even a degraded digest
+        // must opt it out of automatic replacement.
+        guard let completedAt = DayDigestGenerationMetadataStore.completedAt(for: url) else { return nil }
+        if let metadata = DayDigestGenerationMetadataStore.load(for: url), metadata.journalDigest != nil {
+            if let evidence = try? evidenceInput(for: day).digestEvidence(calendar: calendar) {
+                if let saved = metadata.meetingEvidenceSignature, saved != evidence.meetingSignature {
+                    return nil
+                }
+                if invalidatedDays.contains(DreamDay.key(for: day, calendar: calendar)),
+                   metadata.evidenceSignature != evidence.contentSignature { return nil }
+            }
+        }
         let latestArtifactWrite = meetings(for: day, includeInProgress: false)
             .compactMap(latestArtifactWriteAt(for:))
             .max()

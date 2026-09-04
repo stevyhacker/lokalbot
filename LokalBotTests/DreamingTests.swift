@@ -400,6 +400,12 @@ final class DreamingTests: XCTestCase {
             to: journalDirectory.appendingPathComponent("\(target.dayKey).md"))
         try Data("wrong adjacent digest".utf8).write(
             to: journalDirectory.appendingPathComponent("\(ambientKey).md"))
+        let snapshot = try FileDailyEvidenceSource(root: root, calendar: target.calendar)
+            .snapshot(for: target.day)
+        try DayDigestGenerationMetadataStore.record(
+            quality: .complete, evidenceLatestAt: snapshot.latestEvidenceAt,
+            evidenceSignature: snapshot.digestEvidence(calendar: target.calendar).contentSignature,
+            for: journalDirectory.appendingPathComponent("\(target.dayKey).md"))
 
         let evidence = try DreamCompiler.compile(
             day: target.day,

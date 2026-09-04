@@ -1038,11 +1038,7 @@ final class ProcessingPipeline: ObservableObject {
         from snapshot: DailyEvidenceSnapshot,
         config: AppSettings
     ) async throws -> DayDigestGenerationResult {
-        let evidence = DayDigestEvidence.build(
-            day: snapshot.day,
-            blocks: snapshot.activityBlocks,
-            screenContexts: snapshot.screenContexts,
-            meetings: dayMeetingEvidence(snapshot.meetings))
+        let evidence = snapshot.digestEvidence()
 
         let overview: DayDigestOverviewGeneration
         if evidence.isEmpty {
@@ -1080,6 +1076,8 @@ final class ProcessingPipeline: ObservableObject {
         try DayDigestGenerationMetadataStore.record(
             quality: overview.quality,
             evidenceLatestAt: evidence.latestEvidenceAt,
+            evidenceSignature: evidence.contentSignature,
+            meetingEvidenceSignature: evidence.meetingSignature,
             for: url)
         return DayDigestGenerationResult(
             text: text,
@@ -1098,54 +1096,6 @@ final class ProcessingPipeline: ObservableObject {
             evidence: evidence,
             engine: engine,
             customPrompt: customPrompt)
-    }
-
-    private func dayMeetingEvidence(
-        _ meetings: [DailyEvidenceMeeting]
-    ) -> [DayDigestMeetingEvidence] {
-        meetings.compactMap { evidence in
-            let meeting = evidence.meeting
-            guard let endedAt = meeting.endedAt else { return nil }
-            return DayDigestMeetingEvidence(
-                id: meeting.id,
-                title: meeting.title,
-                app: meeting.appName,
-                startedAt: meeting.startedAt,
-                endedAt: endedAt,
-                sourceSummary: evidence.summary,
-                outcomes: Self.renderOutcomes(evidence),
-                artifactModifiedAt: evidence.artifactModifiedAt)
-        }
-    }
-
-    private nonisolated static func renderOutcomes(_ evidence: DailyEvidenceMeeting) -> String {
-        let outcomes = evidence.outcomes
-        var lines: [String] = []
-        if !evidence.actionReferences.isEmpty {
-            lines.append("Action items:")
-            for reference in evidence.actionReferences {
-                var details: [String] = []
-                if let owner = reference.owner, !owner.isEmpty {
-                    details.append("owner: \(owner)")
-                }
-                if let due = reference.due, !due.isEmpty {
-                    details.append("due: \(due)")
-                }
-                if reference.status == .deferred { details.append("status: deferred") }
-                let marker = reference.status == .done ? "x" : " "
-                lines.append("- [\(marker)] " + reference.text
-                    + (details.isEmpty ? "" : " (\(details.joined(separator: ", ")))"))
-            }
-        }
-        if !outcomes.decisions.isEmpty {
-            lines.append("Decisions:")
-            lines += outcomes.decisions.map { "- \($0)" }
-        }
-        if !outcomes.openQuestions.isEmpty {
-            lines.append("Open questions:")
-            lines += outcomes.openQuestions.map { "- \($0)" }
-        }
-        return lines.joined(separator: "\n")
     }
 
     enum PipelineError: LocalizedError {

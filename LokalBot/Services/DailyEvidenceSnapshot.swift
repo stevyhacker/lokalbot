@@ -302,13 +302,20 @@ enum DailyEvidenceArtifacts {
         let url = root.appendingPathComponent("journal/\(dayKey).md")
         guard let text = try? String(contentsOf: url, encoding: .utf8),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let modifiedAt = attributes[.modificationDate] as? Date
+              let metadata = DayDigestGenerationMetadataStore.load(for: url),
+              metadata.evidenceSignature != nil
         else { return nil }
-        if let latestEvidenceAt = snapshot.latestEvidenceAt,
-           latestEvidenceAt > modifiedAt {
-            return nil
+        let detailed: DailyEvidenceSnapshot
+        if snapshot.coverage.contains([.activityBlocks, .screenContexts]) {
+            detailed = snapshot
+        } else {
+            guard let loaded = try? FileDailyEvidenceSource(root: root, calendar: calendar)
+                .snapshot(for: snapshot.day, meetings: snapshot.meetings.map(\.meeting),
+                          includeScreenSummary: false) else { return nil }
+            detailed = loaded
         }
-        return text
+        return DayDigestGenerationMetadataStore.isCurrent(
+            for: url, evidenceSignature: detailed.digestEvidence(calendar: calendar).contentSignature)
+            ? text : nil
     }
 }

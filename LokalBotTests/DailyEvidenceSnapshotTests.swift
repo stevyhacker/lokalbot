@@ -175,6 +175,108 @@ final class DailyEvidenceSnapshotTests: XCTestCase {
             .contains(where: { $0.text.contains("obsolete") }))
     }
 
+    func testDeletionInvalidatesDigestEvenWhenWatermarkDoesNotAdvance() throws {
+        let root = try temporaryRoot()
+        let day = try date("2026-07-18T12:00:00Z")
+        try MeetingFixture.write([
+            .init(title: "Older", startedAt: day.addingTimeInterval(-3_600)),
+            .init(title: "Newer", startedAt: day),
+        ], under: root)
+        let source = FileDailyEvidenceSource(root: root, calendar: calendar)
+        let before = try source.snapshot(for: day)
+        let journal = try writeDigest("Includes both meetings", snapshot: before, root: root)
+        XCTAssertEqual(DailyEvidenceArtifacts.currentDigest(for: before, root: root, calendar: calendar),
+                       "Includes both meetings")
+        let storage = StorageManager(rootURL: root)
+        try storage.deleteMeeting(before.meetings[0].meeting)
+        let after = try source.snapshot(for: day)
+        XCTAssertLessThanOrEqual(after.latestEvidenceAt ?? .distantPast, before.latestEvidenceAt ?? .distantPast)
+        XCTAssertNotEqual(after.digestEvidence(calendar: calendar).contentSignature,
+                          before.digestEvidence(calendar: calendar).contentSignature)
+        XCTAssertNil(DailyEvidenceArtifacts.currentDigest(for: after, root: root, calendar: calendar))
+        XCTAssertNil(try DreamCompiler.compile(day: day, storageRoot: root, calendar: calendar).digest)
+        XCTAssertNil(try FileDailyMemoryExportSource(root: root, calendar: calendar)
+            .snapshot(for: day, interval: after.interval).digest)
+        try storage.deleteMeeting(after.meetings[0].meeting)
+        let empty = try source.snapshot(for: day)
+        XCTAssertTrue(empty.isEmpty)
+        XCTAssertNil(DailyEvidenceArtifacts.currentDigest(for: empty, root: root, calendar: calendar))
+        XCTAssertEqual(try String(contentsOf: journal, encoding: .utf8), "Includes both meetings")
+    }
+
+    func testSignatureIncludesCorrectionsAndCompletionButNotArtifactMtime() throws {
+        let root = try temporaryRoot()
+        let day = try date("2026-07-18T12:00:00Z")
+        try MeetingFixture.write([.init(title: "Plan", startedAt: day)], under: root)
+        let storage = StorageManager(rootURL: root)
+        let meeting = try XCTUnwrap(SessionLookup.loadAllMeetings(root: root).first)
+        let action = MeetingOutcomes.ActionItem(text: "Send the revised proposal", owner: "Me")
+        try MeetingOutcomes(actionItems: [action]).write(to: meeting.folderURL(in: storage))
+        let source = FileDailyEvidenceSource(root: root, calendar: calendar)
+        let before = try source.snapshot(for: day)
+        _ = try writeDigest("Proposal is open", snapshot: before, root: root)
+        var touched = before
+        touched.meetings[0].artifactModifiedAt = Date().addingTimeInterval(500)
+        XCTAssertEqual(before.digestEvidence(calendar: calendar).contentSignature,
+                       touched.digestEvidence(calendar: calendar).contentSignature)
+        var state = MeetingOutcomeState()
+        state.actions[action.id] = .init(status: .done, textCorrection: "Send Acme the proposal", userEdited: true)
+        try MeetingOutcomeStore.writeState(state, to: meeting.folderURL(in: storage))
+        let after = try source.snapshot(for: day)
+        XCTAssertNil(DailyEvidenceArtifacts.currentDigest(for: after, root: root, calendar: calendar))
+    }
+
+    func testDigestRejectsUnsignedAndManuallyEditedJournal() throws {
+        let root = try temporaryRoot()
+        let day = try date("2026-07-18T12:00:00Z")
+        let snapshot = try FileDailyEvidenceSource(root: root, calendar: calendar).snapshot(for: day)
+        let journal = root.appendingPathComponent("journal/2026-07-18.md")
+        try FileManager.default.createDirectory(at: journal.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "Legacy journal".write(to: journal, atomically: true, encoding: .utf8)
+        XCTAssertNil(DailyEvidenceArtifacts.currentDigest(for: snapshot, root: root, calendar: calendar))
+        _ = try writeDigest("Generated", snapshot: snapshot, root: root)
+        let attributes = try FileManager.default.attributesOfItem(atPath: journal.path)
+        try "My handwritten edits".write(to: journal, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: attributes[.modificationDate]!], ofItemAtPath: journal.path)
+        XCTAssertNil(DailyEvidenceArtifacts.currentDigest(for: snapshot, root: root, calendar: calendar))
+        XCTAssertEqual(try String(contentsOf: journal, encoding: .utf8), "My handwritten edits")
+    }
+
+    func testSummaryOnlyReaderLoadsSameDetailedDigestEvidenceAndDetectsScreenDeletion() throws {
+        let root = try temporaryRoot()
+        let day = try date("2026-07-18T12:00:00Z")
+        let databaseURL = root.appendingPathComponent("lokalbotv3.sqlite")
+        let database = try XCTUnwrap(SQLiteDatabase(url: databaseURL))
+        try database.execute("""
+            CREATE TABLE activity_blocks (id INTEGER PRIMARY KEY, app TEXT, title TEXT, start REAL, end REAL);
+            CREATE VIRTUAL TABLE ocr_fts USING fts5(text, window_title, ts UNINDEXED, app UNINDEXED, snapshot_id UNINDEXED);
+            """)
+        try database.runChecked("INSERT INTO activity_blocks VALUES (1, 'Xcode', 'Source', ?1, ?2)",
+                                bind: [day.timeIntervalSince1970, day.timeIntervalSince1970 + 600])
+        try database.runChecked("INSERT INTO ocr_fts VALUES ('Retained source text', 'Source', ?1, 'Xcode', 1)",
+                                bind: [day.timeIntervalSince1970 + 300])
+        let source = FileDailyEvidenceSource(root: root, calendar: calendar)
+        let full = try source.snapshot(for: day, meetings: [], includeScreenSummary: false)
+        _ = try writeDigest("Screen-backed digest", snapshot: full, root: root)
+        let partial = try source.snapshot(for: day, meetings: [], includeDetailedActivity: false, includeScreenSummary: false)
+        XCTAssertEqual(DailyEvidenceArtifacts.currentDigest(for: partial, root: root, calendar: calendar),
+                       "Screen-backed digest")
+        try database.execute("DELETE FROM ocr_fts")
+        XCTAssertNil(DailyEvidenceArtifacts.currentDigest(for: partial, root: root, calendar: calendar))
+    }
+
+    private func writeDigest(_ text: String, snapshot: DailyEvidenceSnapshot, root: URL) throws -> URL {
+        let journal = root.appendingPathComponent("journal/\(DreamDay.key(for: snapshot.day, calendar: calendar)).md")
+        try FileManager.default.createDirectory(at: journal.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try text.write(to: journal, atomically: true, encoding: .utf8)
+        let evidence = snapshot.digestEvidence(calendar: calendar)
+        try DayDigestGenerationMetadataStore.record(
+            quality: .complete, evidenceLatestAt: snapshot.latestEvidenceAt,
+            evidenceSignature: evidence.contentSignature, meetingEvidenceSignature: evidence.meetingSignature,
+            for: journal)
+        return journal
+    }
+
     private func temporaryRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("daily-evidence-\(UUID().uuidString)", isDirectory: true)

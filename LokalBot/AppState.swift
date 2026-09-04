@@ -1198,15 +1198,19 @@ final class AppState: ObservableObject {
     /// user outcome edits both reach this path, so derived Digest, Dream,
     /// export, and routine surfaces cannot silently diverge.
     private func primaryEvidenceDidChange(for meeting: Meeting) {
-        dayDigest.reconsiderEvidence()
-        dailyMemoryExportScheduler.reconsider(day: meeting.startedAt)
-        memoryRoutines.tick()
+        primaryEvidenceDidChange(on: meeting.startedAt)
+    }
+
+    func primaryEvidenceDidChange(on day: Date) {
+        dayDigest.reconsiderEvidence(for: day)
+        dailyMemoryExportScheduler.reconsider(day: day)
+        memoryRoutines.reconsiderEvidence()
 
         // A parked/failed recovery job or later user correction may arrive
         // after Dreaming wrote that day's durable marker. Remove the stale
         // report so the next quiet tick rebuilds it from the shared snapshot.
         let calendar = Calendar.current
-        let dayKey = DreamDay.key(for: meeting.startedAt, calendar: calendar)
+        let dayKey = DreamDay.key(for: day, calendar: calendar)
         let reportURL = dreamStore.reportJSONURL(forDayKey: dayKey)
         let activationKey = settings.dreamingFirstEligibleDayKey ?? dayKey
         guard settings.dreamingEnabled,
@@ -1483,6 +1487,7 @@ final class AppState: ObservableObject {
 
     /// Permanently removes meetings: audio folder, list entry, both indexes.
     func deleteMeetings(_ ids: Set<Meeting.ID>) {
+        let deletedCandidates = meetings.filter { ids.contains($0.id) }
         var deletedIDs: Set<Meeting.ID> = []
         for meeting in meetings where ids.contains(meeting.id) {
             do {
@@ -1501,5 +1506,8 @@ final class AppState: ObservableObject {
         selectedMeetingIDs.subtract(deletedIDs)
         pipeline.forget(meetingIDs: deletedIDs)
         outcomeIndex.refresh(meetings: meetings)
+        for meeting in deletedCandidates where deletedIDs.contains(meeting.id) {
+            primaryEvidenceDidChange(for: meeting)
+        }
     }
 }

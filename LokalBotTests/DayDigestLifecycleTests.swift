@@ -132,7 +132,7 @@ final class DayDigestLifecycleTests: XCTestCase {
             root: root,
             meetings: { [meeting] },
             latestActivityEvidenceAt: { _ in nil })
-        XCTAssertFalse(lifecycle.snapshot(for: day).isStale)
+        XCTAssertTrue(lifecycle.snapshot(for: day).isStale, "Legacy journals have no evidence proof")
 
         let summary = folder.appendingPathComponent("summary.md")
         try "## TL;DR\n\nArchitecture shipped.".write(
@@ -303,6 +303,64 @@ final class DayDigestLifecycleTests: XCTestCase {
             "LokalBot --digest: /tmp/journal/2026-08-23.md ("))
         XCTAssertTrue(output.contains("model=qwen"))
         XCTAssertTrue(output.contains("day=2026-08-23"))
+    }
+
+    func testDeletingLastMeetingReopensOwnedYesterdayDigestButPreservesManualEdits() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let meeting = try finishedMeeting()
+        let day = meeting.startedAt
+        let now = try date("2026-08-24T08:00:00Z")
+        let journal = root.appendingPathComponent("journal/2026-08-23.md")
+        try FileManager.default.createDirectory(at: journal.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "Meeting no longer exists".write(to: journal, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-600)], ofItemAtPath: journal.path)
+        let original = try FileDailyEvidenceSource(root: root, calendar: calendar)
+            .snapshot(for: day, meetings: [meeting], includeScreenSummary: false)
+            .digestEvidence(calendar: calendar)
+        try DayDigestGenerationMetadataStore.record(
+            quality: .complete, evidenceLatestAt: original.latestEvidenceAt,
+            evidenceSignature: original.contentSignature, meetingEvidenceSignature: original.meetingSignature,
+            for: journal, generatedAt: now.addingTimeInterval(-600))
+
+        let regenerated = expectation(description: "Deleted evidence is removed from yesterday's digest")
+        let lifecycle = DayDigestLifecycle(
+            storageRoot: root, calendar: calendar,
+            scheduler: DayDigestScheduler(calendar: calendar, now: { now }),
+            blocks: { _ in [] }, screenContexts: { _ in [] }, meetings: { [] },
+            latestActivityEvidenceAt: { _ in nil }, settings: AppSettings.init,
+            generator: { evidence, _ in
+                XCTAssertTrue(evidence.isEmpty)
+                regenerated.fulfill()
+                return DayDigestGenerationResult(text: "Empty day", url: journal, quality: .complete)
+            })
+        XCTAssertTrue(lifecycle.snapshot(for: day).isStale)
+        lifecycle.configureAutomaticGeneration(.init(enabled: true, hour: 18), canRun: { true }, onError: { XCTFail($0) })
+        await fulfillment(of: [regenerated], timeout: 2)
+        lifecycle.stopAutomaticGeneration()
+
+        try DayDigestGenerationMetadataStore.record(
+            quality: .fallback, evidenceLatestAt: original.latestEvidenceAt,
+            evidenceSignature: original.contentSignature, meetingEvidenceSignature: original.meetingSignature,
+            for: journal, generatedAt: now.addingTimeInterval(-600))
+        let modifiedAt = try XCTUnwrap(DayDigestGenerationMetadataStore.load(for: journal)?.journalModifiedAt)
+        try "My handwritten journal".write(to: journal, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: modifiedAt], ofItemAtPath: journal.path)
+        let shouldNotGenerate = expectation(description: "Manual edits are preserved")
+        shouldNotGenerate.isInverted = true
+        let protected = DayDigestLifecycle(
+            storageRoot: root, calendar: calendar,
+            scheduler: DayDigestScheduler(calendar: calendar, now: { now }),
+            blocks: { _ in [] }, screenContexts: { _ in [] }, meetings: { [] },
+            latestActivityEvidenceAt: { _ in nil }, settings: AppSettings.init,
+            generator: { _, _ in
+                shouldNotGenerate.fulfill()
+                return DayDigestGenerationResult(text: "Unexpected", url: journal, quality: .complete)
+            })
+        protected.configureAutomaticGeneration(.init(enabled: true, hour: 18), canRun: { true }, onError: { XCTFail($0) })
+        await fulfillment(of: [shouldNotGenerate], timeout: 0.15)
+        protected.stopAutomaticGeneration()
+        XCTAssertEqual(try String(contentsOf: journal, encoding: .utf8), "My handwritten journal")
     }
 
     private func makeLifecycle(

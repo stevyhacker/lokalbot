@@ -362,6 +362,9 @@ struct ScreenRewindView: View {
             frames: frames, firstIndex: rangeStartIndex, lastIndex: rangeEndIndex) else { return }
         do {
             try app.screenshots.deleteCaptures(in: interval)
+            let days = Set(frames.filter { interval.contains($0.screenshot.ts) }
+                .map { Calendar.current.startOfDay(for: $0.screenshot.ts) })
+            for day in days { app.primaryEvidenceDidChange(on: day) }
             selectedSnapshotID = nil
             isSelectingRange = false
             isPlaying = false
