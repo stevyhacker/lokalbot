@@ -255,6 +255,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if env["LOKALBOT_DISMISS_ONBOARDING"] == "1" {
             UserDefaults.standard.set(true, forKey: "lokalbotv3.gettingStartedDismissed")
         }
+        if let name = env["LOKALBOT_INITIAL_SETTINGS_CATEGORY"], let category = AppState.SettingsTab(captureName: name) {
+            app.settingsTab = category
+        }
+        if env["LOKALBOT_INITIAL_ACTIONS"] == "1" { app.openActions() }
+        if env["LOKALBOT_INITIAL_ASK_MODE"] == "search" { app.askMode = .keyword }
         if env["LOKALBOT_SHOW_GETTING_STARTED"] == "1" {
             UserDefaults.standard.set(false, forKey: "lokalbotv3.gettingStartedDismissed")
         }

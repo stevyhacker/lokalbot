@@ -32,7 +32,7 @@ final class CotypingSettingsUITests: XCTestCase {
     }
 
     func testAutocompleteExperienceShowsReadinessPreviewAndPrivacy() {
-        XCTAssertTrue(staticText("Off · model ready").exists)
+        XCTAssertTrue(staticText("Autocomplete on").exists)
         XCTAssertTrue(staticText("Try the real autocomplete").exists)
         XCTAssertTrue(staticText("Two-step rehearsal").exists)
         XCTAssertTrue(staticText("Private by design").exists)

@@ -36,6 +36,13 @@ final class SummaryPresentationTests: XCTestCase {
         XCTAssertTrue(parts.body.contains("**Next steps:**"))
     }
 
+    func testRecapKeepsParagraphImmediatelyBelowHeading() {
+        let markdown = "## TL;DR\nA decision and its reason.\n\n## Actions\n- [ ] Follow up."
+        XCTAssertEqual(SummaryPresentation.recap(markdown), "A decision and its reason.")
+        XCTAssertEqual(SummaryPresentation.split(markdown).body, markdown)
+        XCTAssertNil(SummaryPresentation.recap("## Actions\n- [ ] Follow up."))
+    }
+
     func testLeavesSummariesWithoutAProvenanceLineIntact() {
         let markdown = "Just a paragraph with no header metadata."
         let parts = SummaryPresentation.split(markdown)

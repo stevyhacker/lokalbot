@@ -177,6 +177,12 @@ enum UITestHarness {
         segment.click()
     }
 
+    static func toggle(_ label: String, in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(
+            format: "label == %@ AND (elementType == %d OR elementType == %d)", label,
+            XCUIElement.ElementType.checkBox.rawValue, XCUIElement.ElementType.switch.rawValue)).firstMatch
+    }
+
     static func selectSettingsCategory(_ name: String, in app: XCUIApplication,
                                        file: StaticString = #filePath, line: UInt = #line) {
         let title = name == "Recording" ? "Meetings" : (name == "Privacy" ? "Privacy & Data" : name)

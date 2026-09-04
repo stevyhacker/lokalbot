@@ -32,8 +32,12 @@ This change implements the app-wide redesign as one pull request. The main flow 
 
 ## Verification
 
-The integrated non-UI suite passes with 1,795 tests passed, three skipped, and no failures. It covers the existing library/runtime contracts plus the new migration, draft setup, bounded scope, grouping, calendar-day union, manual/retention review, and 0/40/400-action persistence/Undo cases. SwiftLint and whitespace validation apply to the entire patch.
+The integrated non-UI suite passes with 1,797 tests passed, three skipped, and no failures. It covers the existing library/runtime contracts plus the new migration, draft setup, bounded scope, grouping, calendar-day union, manual/retention review, and 0/40/400-action persistence/Undo cases. SwiftLint and whitespace validation apply to the entire patch.
 
-Hosted XCUITest exercises the new navigation and interaction contracts with a synthetic library. `RedesignUITests` attaches light/dark screenshots at 1000×700, 1180×740 and 1440×900, along with bounded drafts, keyboard rehearsal, retention cancellation, model/setup screens and contrast states. A separate hosted run enables Reduce Motion and verifies the actual macOS accessibility setting. Accessibility audits check control descriptions and actions. Test result bundles are retained by the UI workflow for review. Local UI automation is not part of validation.
+Hosted XCUITest exercises the new navigation and interaction contracts with a synthetic library. `RedesignUITests` uses the existing native image exporter to attach full-size light/dark screenshots at 1000×700, 1180×740 and 1440×900, along with bounded drafts, keyboard rehearsal, retention cancellation, model/setup screens and contrast states. A separate hosted run enables Reduce Motion and verifies the actual macOS accessibility setting. Accessibility audits check control descriptions and actions. Test result bundles are retained by the UI workflow for review. Local UI automation is not part of validation.
 
 Exact-revision CI status and any remaining environment limitations belong in the PR's validation notes. This PR does not merge or release the application. The private audit screenshots are intentionally excluded from the repository.
+
+## Recall performance
+
+A same-input, pure Swift check of 2,000 chronological screen matches measured the initial grouping at 2.04 seconds and the sorted/bucketed implementation at 3.4 milliseconds on the development Mac. The regression fixture also shuffles relevance order and confirms every source ID survives. These measurements cover grouping, not total search latency, inference or UI scrolling; they are not a comparison with the released app.

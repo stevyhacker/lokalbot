@@ -19,55 +19,41 @@ final class RedesignUITests: XCTestCase {
     }
 
     func testWorkspaceVisualMatrix() throws {
+        let routes: [(String, [String: String])] = [
+            ("today", ["LOKALBOT_INITIAL_SECTION": "today"]),
+            ("actions", ["LOKALBOT_INITIAL_ACTIONS": "1"]),
+            ("meeting", ["LOKALBOT_INITIAL_SECTION": "meetings", "LOKALBOT_SELECT_INDEX": "0"]),
+            ("transcript", ["LOKALBOT_INITIAL_SECTION": "meetings", "LOKALBOT_SELECT_INDEX": "0", "LOKALBOT_DETAIL_TAB": "transcript"]),
+            ("timeline", ["LOKALBOT_INITIAL_SECTION": "timeline"]),
+            ("search", ["LOKALBOT_INITIAL_SECTION": "ask", "LOKALBOT_INITIAL_ASK_MODE": "search", "LOKALBOT_INITIAL_SEARCH": "failover"]),
+            ("ask", ["LOKALBOT_INITIAL_SECTION": "ask"]),
+            ("settings", ["LOKALBOT_INITIAL_SECTION": "settings", "LOKALBOT_INITIAL_SETTINGS_CATEGORY": "privacy"]),
+            ("models", ["LOKALBOT_INITIAL_SECTION": "models"]),
+            ("dictation", ["LOKALBOT_INITIAL_SECTION": "dictation"]),
+            ("autocomplete", ["LOKALBOT_INITIAL_SECTION": "autocomplete", "LOKALBOT_COTYPING_DEMO": "1"]),
+            ("agent", ["LOKALBOT_INITIAL_SECTION": "agent", "LOKALBOT_AGENT_DEMO": "1"]),
+        ]
         for size in ["1000x700", "1180x740", "1440x900"] {
             for appearance in ["light", "dark"] {
-                try launch(["LOKALBOT_CAPTURE_SIZE": size, "LOKALBOT_CAPTURE_APPEARANCE": appearance,
-                            "LOKALBOT_SCREEN_MEMORY_DEMO": "1", "LOKALBOT_AGENT_UI_TEST_READY": "1"])
-                XCTAssertTrue(element("today.header").waitForExistence(timeout: 8))
-                // The app applies the requested size after window creation.
-                _ = XCTWaiter.wait(for: [], timeout: 2)
-                snapshot("\(size)-\(appearance)-today")
-                app.buttons["Review actions"].click()
-                XCTAssertTrue(element("actions.list").waitForExistence(timeout: 4))
-                snapshot("\(size)-\(appearance)-actions")
-                UITestHarness.clickSidebar("sidebar.meetings", in: app)
-                let row = app.staticTexts.matching(NSPredicate(format: "value == %@ OR label == %@",
-                    fixture.designReview.title, fixture.designReview.title)).firstMatch
-                XCTAssertTrue(row.waitForExistence(timeout: 5))
-                row.click()
-                XCTAssertTrue(element("meeting.contentTabs").waitForExistence(timeout: 5))
-                snapshot("\(size)-\(appearance)-meeting")
-                UITestHarness.selectSegment("Transcript", pickerIdentifier: "meeting.contentTabs", in: app)
-                snapshot("\(size)-\(appearance)-transcript")
-                UITestHarness.clickSidebar("sidebar.timeline", in: app)
-                XCTAssertTrue(element("timeline.workSessions").waitForExistence(timeout: 5))
-                snapshot("\(size)-\(appearance)-timeline")
-                UITestHarness.clickSidebar("sidebar.ask", in: app)
-                UITestHarness.selectSegment("Search", pickerIdentifier: "ask.retrieval", in: app)
-                let input = app.textFields["search.field"]
-                input.click(); input.typeText("failover")
-                XCTAssertTrue(element("search.hit.\(fixture.designReview.id.uuidString).segment").waitForExistence(timeout: 6))
-                snapshot("\(size)-\(appearance)-search")
-                UITestHarness.clickSidebar("sidebar.settings", in: app)
-                UITestHarness.selectSettingsCategory("Privacy & Data", in: app)
-                snapshot("\(size)-\(appearance)-settings")
-                let review = app.buttons["Review expired context…"]
-                UITestHarness.scrollTo(review, in: app)
-                review.click()
-                XCTAssertTrue(app.buttons["retention.confirm"].waitForExistence(timeout: 4))
-                snapshot("\(size)-\(appearance)-retention-review")
-                app.buttons["Cancel"].click()
-                UITestHarness.selectSettingsCategory("Models", in: app)
-                XCTAssertTrue(element("models.residency").waitForExistence(timeout: 5))
-                snapshot("\(size)-\(appearance)-models")
-                UITestHarness.clickSidebar("sidebar.type", in: app)
-                UITestHarness.selectSegment("Dictation", pickerIdentifier: "type.tab", in: app)
-                snapshot("\(size)-\(appearance)-dictation")
-                UITestHarness.selectSegment("Autocomplete", pickerIdentifier: "type.tab", in: app)
-                snapshot("\(size)-\(appearance)-autocomplete")
-                UITestHarness.clickSidebar("sidebar.agent", in: app)
-                XCTAssertTrue(app.textFields["agent.composer"].waitForExistence(timeout: 5))
-                snapshot("\(size)-\(appearance)-agent")
+                for (route, state) in routes {
+                    let name = "\(size)-\(appearance)-\(route)"
+                    let destination = fixture.root.appendingPathComponent(name + ".png")
+                    var environment = state
+                    environment.merge([
+                        "LOKALBOT_CAPTURE_FILE": destination.path,
+                        "LOKALBOT_CAPTURE_SIZE": size, "LOKALBOT_CAPTURE_SCALE": "1", "LOKALBOT_CAPTURE_DELAY": "8",
+                        "LOKALBOT_CAPTURE_APPEARANCE": appearance, "LOKALBOT_SCREEN_MEMORY_DEMO": "1",
+                        "LOKALBOT_AGENT_UI_TEST_READY": "1",
+                    ]) { _, value in value }
+                    try launch(environment)
+                    XCTAssertTrue(UITestHarness.waitUntil(timeout: 20) { FileManager.default.fileExists(atPath: destination.path) },
+                                  "Native capture did not finish: \(name)")
+                    let bitmap = try XCTUnwrap(NSBitmapImageRep(data: Data(contentsOf: destination)))
+                    XCTAssertEqual(bitmap.pixelsWide, Int(size.split(separator: "x")[0]), "Capture width must match the requested layout")
+                    let attachment = XCTAttachment(contentsOfFile: destination)
+                    attachment.name = name; attachment.lifetime = .keepAlways
+                    add(attachment)
+                }
             }
         }
     }
@@ -149,9 +135,34 @@ final class RedesignUITests: XCTestCase {
         UITestHarness.scrollTo(review, in: app)
         review.click()
         XCTAssertTrue(app.buttons["retention.confirm"].waitForExistence(timeout: 5))
+        snapshot("retention-review-before-cancel")
         app.buttons["Cancel"].click()
         XCTAssertFalse(app.buttons["retention.confirm"].exists)
         XCTAssertEqual(UserDefaults(suiteName: suite!)?.data(forKey: "lokalbotv3.settings"), before)
+    }
+
+    func testFourHundredActionsStaySearchableAndCompletionCanBeUndone() throws {
+        let folder = fixture.folder(for: fixture.designReview)
+        let actions: [[String: Any]] = (0..<400).map { index in
+            ["id": "large-action-\(index)", "schemaVersion": 2, "text": "Synthetic commitment \(index)",
+             "owner": "Me", "isForUser": true, "due": "Friday", "citations": []]
+        }
+        let data = try JSONSerialization.data(withJSONObject: ["schemaVersion": 2, "actionItems": actions])
+        try data.write(to: folder.appendingPathComponent("outcomes.json"))
+        try launch()
+        app.buttons["Review actions"].click()
+        let search = app.textFields["actions.search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.click(); search.typeText("Synthetic commitment 399")
+        let action = UITestHarness.staticText(containing: "Synthetic commitment 399", in: app)
+        XCTAssertTrue(action.waitForExistence(timeout: 5))
+        let complete = app.buttons["outcome.action.toggle.\(fixture.designReview.id.uuidString):large-action-399"]
+        XCTAssertTrue(complete.waitForExistence(timeout: 4))
+        complete.click()
+        XCTAssertTrue(UITestHarness.waitUntil { !action.exists })
+        app.buttons["outcomes.undo"].click()
+        XCTAssertTrue(action.waitForExistence(timeout: 5))
+        snapshot("four-hundred-actions-search-and-undo")
     }
 
     private func launch(_ environment: [String: String] = [:]) throws {

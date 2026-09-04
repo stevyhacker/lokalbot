@@ -36,6 +36,18 @@ enum SummaryPresentation {
         return Parts(metadata: [], body: markdown)
     }
 
+    /// Extract a reading preview without changing the stored/exported Markdown.
+    /// Headings may share a paragraph with their content in older summaries.
+    static func recap(_ markdown: String) -> String? {
+        split(markdown).body.components(separatedBy: "\n\n").lazy.compactMap { paragraph -> String? in
+            let content = paragraph.components(separatedBy: "\n")
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
+                .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !content.isEmpty, !content.hasPrefix("- "), !content.hasPrefix("* "), !content.hasPrefix("|") else { return nil }
+            return content
+        }.first
+    }
+
     private static func parseMetadataLine(_ line: String) -> [MetadataItem]? {
         var items: [MetadataItem] = []
         for piece in line.components(separatedBy: " · ") {

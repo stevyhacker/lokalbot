@@ -43,7 +43,7 @@ final class DictationSettingsUITests: XCTestCase {
 
     func testEnablingGlobalShortcutRevealsPermissionRepairRows() {
         app.buttons["Writing settings…"].click()
-        let toggle = app.checkBoxes["Enable dictation shortcut"]
+        let toggle = UITestHarness.toggle("Enable dictation shortcut", in: app)
         UITestHarness.scrollTo(toggle, in: app)
         XCTAssertTrue(toggle.waitForExistence(timeout: 4))
         toggle.click()

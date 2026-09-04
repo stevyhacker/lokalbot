@@ -59,6 +59,22 @@ final class RedesignContractTests: XCTestCase {
         XCTAssertEqual(groups[0].matches.count, 100)
     }
 
+    func testScreenGroupingPreservesRelevanceAndAllMomentsInLongSessions() {
+        let day = Calendar.current.startOfDay(for: Date())
+        let hits = (0..<2_000).map { ActivityStore.OCRHit(snapshotID: Int64($0 + 1),
+            ts: day.addingTimeInterval(Double($0 * 30)), app: "Editor", windowTitle: "Long session", snippet: "evidence") }
+        // Relevance order can be unrelated to chronology, including a bridge
+        // between initially distant hits. Source grouping must still be complete.
+        let ranked = [hits[1_999], hits[0]] + Array(hits[1..<1_999])
+        let groups = RecallSearch.screenGroups(ranked)
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(groups.first?.primary.snapshotID, 2_000)
+        XCTAssertEqual(Set(groups.flatMap(\.matches).map(\.snapshotID)), Set(hits.map(\.snapshotID)))
+        XCTAssertTrue(RecallSearch.screenGroups(hits, limit: 0).isEmpty)
+        let other = ActivityStore.OCRHit(snapshotID: 2_001, ts: day, app: "Browser", windowTitle: "Other", snippet: "source")
+        XCTAssertEqual(RecallSearch.screenGroups([other] + ranked).map { $0.primary.snapshotID }, [2_001, 2_000])
+    }
+
     func testRelativeDuePhrasesAreNotInventedDates() {
         XCTAssertNil(ActionDuePresentation.date("Tomorrow"))
         XCTAssertNil(ActionDuePresentation.date("Friday"))

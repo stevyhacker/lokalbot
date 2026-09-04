@@ -104,6 +104,7 @@ private struct MeetingWorkspaceDetail: View {
                         ForEach(MeetingWorkspaceTab.allCases) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
+                    .labelsHidden()
                     .accessibilityIdentifier("meeting.contentTabs")
                 }
                 .padding(.horizontal, WorkspaceMetric.pagePadding)
@@ -262,6 +263,7 @@ private struct MeetingWorkspaceDetail: View {
                 .accessibilityIdentifier("toolbar.meetingActions")
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("meeting.detail.workspace")
     }
 
@@ -340,8 +342,7 @@ private struct MeetingWorkspaceDetail: View {
 
     @ViewBuilder private var overviewContent: some View {
         if let projection, !projection.outcomes.isEmpty {
-            if let summary, let recap = SummaryPresentation.split(summary).body
-                .components(separatedBy: "\n\n").first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#") && !$0.isEmpty }) {
+            if let summary, let recap = SummaryPresentation.recap(summary) {
                 WorkspaceSection(title: "Recap", icon: "text.alignleft") {
                     SelectableDigestText(recap)
                 }
@@ -1110,42 +1111,33 @@ private struct MeetingAudioBar: View {
     let folder: URL
 
     var body: some View {
-        let progress = player.duration > 0 ? player.currentTime / player.duration : 0
-        VStack(spacing: 7) {
-            HStack(spacing: 12) {
-                Button { player.playPause() } label: {
-                    Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 28))
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.space, modifiers: [])
-                .help("Play / pause (Space)")
-                .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
-                WaveformView(
-                    url: MeetingAudioFiles.readableURL(for: .mic, in: folder)
-                        ?? MeetingAudioFiles.readableURL(for: .system, in: folder)
-                        ?? MeetingAudioFiles.primaryURL(for: .mic, in: folder),
-                    progress: progress,
-                    onSeek: { player.seek(to: $0 * player.duration) })
-                Menu("\(player.speed.formatted())x") {
-                    ForEach([1.0, 1.25, 1.5, 1.75, 2.0], id: \.self) { speed in
-                        Button("\(speed.formatted())x") { player.speed = Float(speed) }
-                    }
-                    Divider()
-                    Button("Reset to 1x") { player.speed = 1.0 }
-                }
-                .menuStyle(.borderlessButton)
+        HStack(spacing: 12) {
+            Button { player.playPause() } label: {
+                Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                    .font(.system(size: 28))
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.space, modifiers: [])
+            .help("Play / pause (Space)")
+            .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
+            Slider(value: Binding(get: { player.currentTime }, set: { player.seek(to: $0) }),
+                   in: 0...max(1, player.duration)) { Text("Playback position") }
+                .labelsHidden()
+                .accessibilityValue(Transcript.stamp(player.currentTime))
+                .accessibilityIdentifier("meeting.playbackPosition")
+            Text("\(Transcript.stamp(player.currentTime)) / \(Transcript.stamp(player.duration))")
+                .font(WorkspaceTypography.metadata.monospacedDigit()).foregroundStyle(.secondary)
                 .fixedSize()
-            }
-            HStack {
-                Text(Transcript.stamp(player.currentTime))
-                Spacer()
-                Text(Transcript.stamp(player.duration))
-            }
-            .font(WorkspaceTypography.metadata.monospacedDigit())
-            .foregroundStyle(.secondary)
+            Menu("\(player.speed.formatted())x") {
+                ForEach([0.75, 1, 1.25, 1.5, 1.75, 2.0], id: \.self) { speed in
+                    Button("\(speed.formatted())x") { player.speed = Float(speed) }
+                }
+                Divider()
+                Button("Reset to 1x") { player.speed = 1.0 }
+            }.menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Playback speed")
         }
-        .workspacePanel()
+        .padding(12).workspaceControl()
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("meeting.audioPlayer")
     }
 }

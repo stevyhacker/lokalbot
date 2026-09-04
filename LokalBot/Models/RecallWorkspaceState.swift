@@ -26,20 +26,34 @@ extension RecallSearch {
         var screens: [ScreenRecallGroup] = []
     }
 
-    /// Rank first, then group nearby hits from the same source window. Every
-    /// matching capture stays available inside its group and bounded Ask scope.
+    /// Group adjacent moments per source/day, then restore relevance order.
+    /// Each timestamp is classified once; long sessions avoid quadratic scans.
     static func screenGroups(_ hits: [ActivityStore.OCRHit], limit: Int = 40) -> [ScreenRecallGroup] {
-        var groups: [[ActivityStore.OCRHit]] = []
-        for hit in hits {
-            if let index = groups.firstIndex(where: { group in
-                group.contains { other in
-                    other.app == hit.app && other.windowTitle == hit.windowTitle
-                        && Calendar.current.isDate(other.ts, inSameDayAs: hit.ts)
-                        && abs(other.ts.timeIntervalSince(hit.ts)) <= 300
-                }
-            }) { groups[index].append(hit) } else { groups.append([hit]) }
+        guard limit > 0 else { return [] }
+        struct Source: Hashable { let app: String; let window: String; let day: Date }
+        let calendar = Calendar.current
+        let buckets = Dictionary(grouping: hits.enumerated()) { indexed in
+            Source(app: indexed.element.app, window: indexed.element.windowTitle,
+                   day: calendar.startOfDay(for: indexed.element.ts))
         }
-        return groups.prefix(limit).map { ScreenRecallGroup(id: "screen-\($0[0].snapshotID)", matches: $0) }
+        var rankedGroups: [[EnumeratedSequence<[ActivityStore.OCRHit]>.Element]] = []
+        for bucket in buckets.values {
+            let chronological = bucket.sorted {
+                $0.element.ts == $1.element.ts ? $0.offset < $1.offset : $0.element.ts < $1.element.ts
+            }
+            var current: [EnumeratedSequence<[ActivityStore.OCRHit]>.Element] = []
+            for indexed in chronological {
+                if let previous = current.last, indexed.element.ts.timeIntervalSince(previous.element.ts) > 300 {
+                    rankedGroups.append(current.sorted { $0.offset < $1.offset })
+                    current = []
+                }
+                current.append(indexed)
+            }
+            if !current.isEmpty { rankedGroups.append(current.sorted { $0.offset < $1.offset }) }
+        }
+        return rankedGroups.sorted { $0[0].offset < $1[0].offset }.prefix(limit).map { group in
+            ScreenRecallGroup(id: "screen-\(group[0].element.snapshotID)", matches: group.map(\.element))
+        }
     }
 
     @MainActor

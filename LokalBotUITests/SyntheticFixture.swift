@@ -353,6 +353,7 @@ enum SyntheticFixture {
         // A short readable recovery track makes the real meeting player part
         // of the UI fixture without reaching for microphone or system audio.
         try writeAudioFixture(to: folder.appendingPathComponent("mic.live.caf"))
+        if meeting.hasSystemTrack { try writeAudioFixture(to: folder.appendingPathComponent("system.live.caf")) }
 
         // Grounded outcome fixtures drive the redesigned Today, Timeline,
         // and full Meetings follow-through workspace.
@@ -364,7 +365,7 @@ enum SyntheticFixture {
 
     private static func writeAudioFixture(to url: URL) throws {
         guard let format = AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8_000) else {
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8_000 * 60) else {
             throw NSError(
                 domain: "LokalBotUITests.SyntheticFixture",
                 code: 1,

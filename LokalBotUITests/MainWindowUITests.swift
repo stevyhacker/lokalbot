@@ -336,7 +336,7 @@ final class MainWindowUITests: XCTestCase {
         preset.click()
         XCTAssertTrue(app.buttons["Apply and stage downloads"]
             .waitForExistence(timeout: 4), "preset applied without a review step")
-        XCTAssertTrue(textWithContent("Estimated new download").firstMatch.exists)
+        XCTAssertTrue(textWithContent("Estimated new GGUF download").firstMatch.exists)
         let reviewSheet = app.sheets.firstMatch
         XCTAssertTrue(reviewSheet.waitForExistence(timeout: 4), "preset review sheet missing")
         reviewSheet.buttons["Cancel"].firstMatch.click()

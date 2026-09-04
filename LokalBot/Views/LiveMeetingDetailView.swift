@@ -8,9 +8,8 @@ import SwiftUI
 /// notes are saved to `notes.md` in the meeting folder and folded into the
 /// summary.
 ///
-/// Appearing is the ASR opt-in: `transcriber.activate()` runs on first show,
-/// so recordings nobody watches still cost zero live-transcription cycles
-/// (the same economy the old popover had).
+/// Starting preview is an explicit ASR opt-in. Opening a live meeting alone
+/// does not load a model or start speech inference.
 struct LiveMeetingDetailView: View {
     @EnvironmentObject var app: AppState
     let meeting: Meeting
@@ -111,7 +110,10 @@ struct LiveMeetingDetailView: View {
 
     private var transcript: some View {
         Group {
-            if transcriber.lines.isEmpty {
+            if !transcriber.isRunning && !transcriber.isWorking {
+                ContentUnavailableView("Preview is off", systemImage: "text.bubble",
+                                       description: Text("Start live transcript preview to read along. Recording continues independently."))
+            } else if transcriber.lines.isEmpty {
                 Group {
                     if transcriber.isWorking || transcriber.statusMessage == nil {
                         LoadingStateLabel(

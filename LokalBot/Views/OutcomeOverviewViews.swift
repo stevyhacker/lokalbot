@@ -92,6 +92,7 @@ struct OutcomeOverviewActionRow: View {
             .accessibilityIdentifier("outcome.action.status.\(reference.id)")
         }
         .padding(.vertical, WorkspaceMetric.rowVerticalPadding)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("outcome.action.\(reference.id)")
     }
 
