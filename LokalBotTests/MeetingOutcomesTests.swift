@@ -518,6 +518,25 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertFalse(recentScan.text.contains("Start the project"), recentScan.text)
         XCTAssertEqual(recentScan.summary, "last 7 days — 1 action item")
 
+        var completedState = MeetingOutcomeState()
+        completedState.actions[recentOutcomes.actionItems[0].id] = .init(
+            status: .done, textCorrection: "Benchmark production failover", userEdited: true)
+        try MeetingOutcomeStore.writeState(completedState, to: recent.folderURL(in: storage))
+        let completed = await tools.run(ChatToolCall(
+            name: "get_action_items", arguments: ["status": "done"]))
+        XCTAssertTrue(completed.text.contains("Benchmark production failover"))
+        XCTAssertTrue(completed.text.contains("status: done"))
+        XCTAssertTrue(completed.text.contains("[11111111]"))
+        let all = await tools.run(ChatToolCall(name: "get_action_items", arguments: [:]))
+        XCTAssertTrue(all.text.contains("Benchmark production failover"))
+        let active = await tools.run(ChatToolCall(
+            name: "get_action_items", arguments: ["status": "active"]))
+        XCTAssertFalse(active.text.contains("Benchmark production failover"))
+        XCTAssertEqual(active.text, "No open or deferred action items found in this scope.")
+        let deferred = await tools.run(ChatToolCall(
+            name: "get_action_items", arguments: ["status": "deferred"]))
+        XCTAssertEqual(deferred.text, "No deferred action items found in this scope.")
+
         let byID = await tools.run(ChatToolCall(
             name: "get_action_items", arguments: ["id": SessionLookup.shortID(old.id)]))
         XCTAssertTrue(byID.text.contains("Start the project"), byID.text)
