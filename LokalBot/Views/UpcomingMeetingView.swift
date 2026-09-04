@@ -411,6 +411,9 @@ private struct UpcomingMeetingCard: View {
         var metadata: [String] = []
         if let owner = reference.owner, !owner.isEmpty { metadata.append(owner) }
         if let due = reference.due, !due.isEmpty { metadata.append("due \(due)") }
+        if reference.sourceMeetingCount > 1 {
+            metadata.append("\(reference.sourceMeetingCount) meetings")
+        }
         let source = reference.meetingTitle
             + (metadata.isEmpty ? "" : " · \(metadata.joined(separator: " · "))")
         return Button {

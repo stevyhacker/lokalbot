@@ -55,6 +55,34 @@ private final class StubScreenMemoryReader: ScreenMemoryReading {
             trackedSeconds: 60, appCount: 1, activityBlockCount: 1,
             screenshotCount: 1, savedMomentCount: 1)
     }
+
+    func activityBlocks(from start: Date, to end: Date) throws
+        -> [ScreenMemoryActivityBlock] {
+        [ScreenMemoryActivityBlock(
+            id: 3,
+            app: "Safari",
+            windowTitle: "Report",
+            startedAt: timestamp,
+            endedAt: timestamp.addingTimeInterval(60),
+            durationSeconds: 60)]
+    }
+
+    func screenContexts(
+        from start: Date,
+        to end: Date,
+        maxCharactersPerCapture: Int
+    ) throws -> [ScreenMemoryTextContext] {
+        [ScreenMemoryTextContext(
+            snapshotID: 7,
+            capturedAt: timestamp,
+            app: "Safari",
+            windowTitle: "Report",
+            text: String("Revenue grew".prefix(maxCharactersPerCapture)))]
+    }
+
+    func latestEvidenceAt(from start: Date, to end: Date) throws -> Date? {
+        timestamp
+    }
 }
 
 final class FileLibraryToolProviderTests: XCTestCase {

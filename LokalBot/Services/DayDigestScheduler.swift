@@ -95,6 +95,16 @@ final class DayDigestScheduler {
         generateTask = nil
     }
 
+    /// Primary evidence changed while the scheduler may have been awaiting a
+    /// model. Cancel that snapshot-bound run and let policy choose a fresh one.
+    func reconsiderEvidence() {
+        generation &+= 1
+        generateTask?.cancel()
+        generateTask = nil
+        lastFailure = nil
+        tick()
+    }
+
     func tick() {
         guard generateTask == nil,
               let configuration,

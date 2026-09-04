@@ -1,12 +1,12 @@
 import Foundation
 
-/// Turns raw model output into clean inline ghost text. Ported from Cotabby's
-/// `SuggestionTextNormalizer` + `TrailingDuplicationFilter` + `ControlTokenMarkers`
-/// + `InsertionSafetyGate` — the backend-agnostic, load-bearing cleanup that
-/// makes a small local model's completion safe to show and insert.
-///
-/// Pure: the same `(raw, request)` always yields the same result, which makes it
-/// directly unit-testable without a model.
+// Turns raw model output into clean inline ghost text. Ported from Cotabby's
+// `SuggestionTextNormalizer` + `TrailingDuplicationFilter` + `ControlTokenMarkers`
+// + `InsertionSafetyGate` — the backend-agnostic, load-bearing cleanup that
+// makes a small local model's completion safe to show and insert.
+//
+// Pure: the same `(raw, request)` always yields the same result, which makes it
+// directly unit-testable without a model.
 
 /// Why a raw completion was reduced to empty ghost text (diagnostics only).
 enum CotypingSuppressionReason: String, Sendable, Equatable {

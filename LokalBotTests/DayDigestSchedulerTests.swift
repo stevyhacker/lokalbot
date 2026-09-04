@@ -207,6 +207,43 @@ final class DayDigestSchedulerTests: XCTestCase {
         scheduler.stop()
     }
 
+    @MainActor
+    func testEvidenceChangeRestartsInFlightGeneration() async throws {
+        let current = try date("2026-07-21T18:00:00Z")
+        let scheduler = DayDigestScheduler(calendar: calendar, now: { current })
+        let started = expectation(description: "first generation started")
+        let cancelled = expectation(description: "stale generation cancelled")
+        let refreshed = expectation(description: "fresh generation completed")
+        var calls = 0
+
+        scheduler.configure(
+            .init(enabled: true, hour: 18),
+            digestModifiedAt: { _ in nil },
+            latestEvidenceAt: { _ in current },
+            canRun: { true },
+            generate: { _ in
+                calls += 1
+                if calls == 1 {
+                    started.fulfill()
+                    do {
+                        while true { try await Task.sleep(for: .seconds(60)) }
+                    } catch is CancellationError {
+                        cancelled.fulfill()
+                        throw CancellationError()
+                    }
+                }
+                refreshed.fulfill()
+                return .completed
+            },
+            onError: { _ in XCTFail("Cancellation should not surface as an error") })
+
+        await fulfillment(of: [started], timeout: 2)
+        scheduler.reconsiderEvidence()
+        await fulfillment(of: [cancelled, refreshed], timeout: 2)
+        XCTAssertEqual(calls, 2)
+        scheduler.stop()
+    }
+
     // MARK: - Custom prompt folding
 
     func testEmptyCustomPromptKeepsTheBaseDigestPrompt() {

@@ -356,7 +356,9 @@ enum MemoryRoutineRunner {
         let interval = DateInterval(start: yesterday, end: today)
         let priorMeetings = meetings.filter { interval.contains($0.startedAt) }
             .sorted { $0.startedAt < $1.startedAt }
-        let snapshot = try FileDailyMemoryExportSource(root: storageRoot).snapshot(
+        let snapshot = try FileDailyMemoryExportSource(
+            root: storageRoot,
+            calendar: calendar).snapshot(
             for: yesterday,
             interval: interval)
         let actions = recentActions(
@@ -413,17 +415,16 @@ enum MemoryRoutineRunner {
             ? try reader.appUsage(from: start, to: end, limit: 20)
             : []
         var decisions: [String] = []
-        var actions: [String] = []
+        var actionReferences: [OutcomeActionReference] = []
         for meeting in scoped {
             guard let projection = MeetingOutcomeProjection.load(
                 for: meeting, storage: storage) else { continue }
             decisions += projection.outcomes.decisions.map {
                 "- \(clean($0)) — `\(SessionLookup.shortID(meeting.id))`"
             }
-            actions += projection.actionReferences.map {
-                actionLine($0) + " — `\(SessionLookup.shortID(meeting.id))`"
-            }
+            actionReferences += projection.actionReferences
         }
+        let actions = ActionThreadClusterer.cluster(actionReferences).map(actionLine)
         var lines = [
             "# Weekly work log — ending \(displayDate(day))",
             "",
@@ -471,7 +472,9 @@ enum MemoryRoutineRunner {
         let start = calendar.startOfDay(for: day)
         let end = calendar.date(byAdding: .day, value: 1, to: start)
             ?? start.addingTimeInterval(86_400)
-        let snapshot = try FileDailyMemoryExportSource(root: storageRoot).snapshot(
+        let snapshot = try FileDailyMemoryExportSource(
+            root: storageRoot,
+            calendar: calendar).snapshot(
             for: start,
             interval: DateInterval(start: start, end: end))
         var lines = ["# Journal — \(displayDate(day))", "", "## Digest", ""]
@@ -504,17 +507,39 @@ enum MemoryRoutineRunner {
         meetings: [Meeting],
         storage: StorageManager
     ) -> [ActionReference] {
-        meetings
+        let references = meetings
             .filter { $0.startedAt >= cutoff }
             .sorted { $0.startedAt > $1.startedAt }
-            .flatMap { meeting -> [ActionReference] in
+            .flatMap { meeting -> [OutcomeActionReference] in
                 guard let projection = MeetingOutcomeProjection.load(
                     for: meeting, storage: storage) else { return [] }
-                return projection.actionReferences.filter { $0.status != .done }.map {
-                    ActionReference(
-                        line: actionLine($0) + " — `\(SessionLookup.shortID(meeting.id))`")
-                }
+                return projection.actionReferences
             }
+        return ActionThreadClusterer.cluster(references)
+            .filter { $0.status != .done }
+            .map {
+                ActionReference(line: actionLine($0))
+            }
+    }
+
+    private static func actionLine(_ thread: ActionThread) -> String {
+        var suffix: [String] = []
+        if let owner = thread.owner, !owner.isEmpty {
+            suffix.append("owner: \(clean(owner))")
+        }
+        if let due = thread.due, !due.isEmpty {
+            suffix.append("due: \(clean(due))")
+        }
+        if thread.status == .deferred { suffix.append("status: deferred") }
+        let sources = thread.references.map {
+            SessionLookup.shortID($0.meetingID)
+        }.reduce(into: [String]()) { result, id in
+            if !result.contains(id) { result.append(id) }
+        }
+        suffix.append("sources: " + sources.map { "`\($0)`" }.joined(separator: ", "))
+        let marker = thread.status == .done ? "x" : " "
+        return "- [\(marker)] \(clean(thread.text))"
+            + (suffix.isEmpty ? "" : " (\(suffix.joined(separator: ", ")))")
     }
 
     private static func actionLine(_ reference: OutcomeActionReference) -> String {
@@ -528,7 +553,7 @@ enum MemoryRoutineRunner {
         if reference.status == .deferred { suffix.append("status: deferred") }
         let marker = reference.status == .done ? "x" : " "
         return "- [\(marker)] \(clean(reference.text))"
-            + (suffix.isEmpty ? "" : " (\(suffix.joined(separator: ", ")))" )
+            + (suffix.isEmpty ? "" : " (\(suffix.joined(separator: ", ")))")
     }
 
     private static func clean(_ value: String) -> String {

@@ -315,7 +315,11 @@ final class AppState: ObservableObject {
     }
 
     let storage = StorageManager()
-    private(set) lazy var outcomeIndex = OutcomeIndex(storage: storage)
+    private(set) lazy var outcomeIndex = OutcomeIndex(
+        storage: storage,
+        onEvidenceChanged: { [weak self] meeting in
+            self?.primaryEvidenceDidChange(for: meeting)
+        })
     private(set) lazy var cotypingLearning = CotypingLearningStore(storageRoot: storage.rootURL)
     let detector = MeetingDetector()
     let audioMonitor = AudioSourceMonitor()
@@ -747,26 +751,7 @@ final class AppState: ObservableObject {
             if self.settings.semanticSearchEnabled {
                 self.reindexEmbeddingInBackground(meeting)
             }
-            self.memoryRoutines.tick()
-            // A parked/failed recovery job may complete after dreaming already
-            // wrote that day's durable marker. Invalidate the generated brief
-            // so the next quiet tick incorporates the recovered artifacts.
-            let calendar = Calendar.current
-            let dayKey = DreamDay.key(for: meeting.startedAt, calendar: calendar)
-            let reportURL = self.dreamStore.reportJSONURL(forDayKey: dayKey)
-            let activationKey = self.settings.dreamingFirstEligibleDayKey ?? dayKey
-            if self.settings.dreamingEnabled,
-               dayKey >= activationKey,
-               FileManager.default.fileExists(atPath: reportURL.path) {
-                do {
-                    try self.dreamStore.invalidateReport(forDayKey: dayKey)
-                } catch {
-                    self.lastError = "Could not refresh the dream for \(dayKey): "
-                        + error.localizedDescription
-                }
-                self.latestDreamReport = self.dreamStore.latestReport()
-                self.dreaming.reconsiderReports()
-            }
+            self.primaryEvidenceDidChange(for: meeting)
         }
         if needsSynchronousLibrary {
             searchIndex.reindexAll(meetings, storage: storage)
@@ -1207,6 +1192,35 @@ final class AppState: ObservableObject {
         return SpeakerNameHintExtractor.hints(
             calendarNames: meeting.resolvedCalendarParticipantIdentities.compactMap(\.name),
             ocrText: ocr)
+    }
+
+    /// One invalidation route for every meeting-evidence write. Processing and
+    /// user outcome edits both reach this path, so derived Digest, Dream,
+    /// export, and routine surfaces cannot silently diverge.
+    private func primaryEvidenceDidChange(for meeting: Meeting) {
+        dayDigest.reconsiderEvidence()
+        dailyMemoryExportScheduler.reconsider(day: meeting.startedAt)
+        memoryRoutines.tick()
+
+        // A parked/failed recovery job or later user correction may arrive
+        // after Dreaming wrote that day's durable marker. Remove the stale
+        // report so the next quiet tick rebuilds it from the shared snapshot.
+        let calendar = Calendar.current
+        let dayKey = DreamDay.key(for: meeting.startedAt, calendar: calendar)
+        let reportURL = dreamStore.reportJSONURL(forDayKey: dayKey)
+        let activationKey = settings.dreamingFirstEligibleDayKey ?? dayKey
+        guard settings.dreamingEnabled,
+              dayKey >= activationKey,
+              FileManager.default.fileExists(atPath: reportURL.path)
+        else { return }
+        do {
+            try dreamStore.invalidateReport(forDayKey: dayKey)
+        } catch {
+            lastError = "Could not refresh the dream for \(dayKey): "
+                + error.localizedDescription
+        }
+        latestDreamReport = dreamStore.latestReport()
+        dreaming.reconsiderReports()
     }
 
     func applyTrackingSetting() {

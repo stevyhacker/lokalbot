@@ -4,16 +4,17 @@ import Foundation
 /// pure function of this value: the analyzed day's meetings with extracted
 /// outcomes, the day digest, screen-memory stats, plus a bounded comparison
 /// window of prior meetings and still-open action candidates.
-struct DreamEvidence: Equatable {
-    struct MeetingEvidence: Equatable {
+struct DreamEvidence: Equatable, Sendable {
+    struct MeetingEvidence: Equatable, Sendable {
         var shortID: String
         var title: String
         var durationLabel: String
         var startedAt: Date
         var outcomes: MeetingOutcomes
+        var actionReferences: [OutcomeActionReference] = []
     }
 
-    struct PriorMeeting: Equatable {
+    struct PriorMeeting: Equatable, Sendable {
         var dayKey: String
         var title: String
     }
@@ -60,23 +61,28 @@ enum DreamCompiler {
         let start = calendar.startOfDay(for: day)
         let end = calendar.date(byAdding: .day, value: 1, to: start)
             ?? start.addingTimeInterval(86_400)
-        let interval = DateInterval(start: start, end: end)
-        let snapshot = try FileDailyMemoryExportSource(
+        let all = try SessionLookup.loadAllMeetings(root: storageRoot)
+        let snapshot = try FileDailyEvidenceSource(
             root: storageRoot,
             calendar: calendar).snapshot(
-            for: start, interval: interval)
-        let all = try SessionLookup.loadAllMeetings(root: storageRoot)
+            for: start,
+            meetings: all,
+            includeDetailedActivity: false)
 
-        let dayMeetings = all.filter { interval.contains($0.startedAt) }
-            .sorted { $0.startedAt < $1.startedAt }
-            .map { meeting in
-                DreamEvidence.MeetingEvidence(
-                    shortID: SessionLookup.shortID(meeting.id),
-                    title: meeting.title,
-                    durationLabel: meeting.durationLabel,
-                    startedAt: meeting.startedAt,
-                    outcomes: outcomes(for: meeting, storageRoot: storageRoot))
-            }
+        let dayMeetings = snapshot.meetings.map { evidence in
+            let meeting = evidence.meeting
+            return DreamEvidence.MeetingEvidence(
+                shortID: SessionLookup.shortID(meeting.id),
+                title: meeting.title,
+                durationLabel: meeting.durationLabel,
+                startedAt: meeting.startedAt,
+                outcomes: evidence.activeOutcomes,
+                actionReferences: evidence.actionReferences)
+        }
+        let dayActionReferences = Dictionary(
+            uniqueKeysWithValues: snapshot.meetings.map {
+                ($0.meeting.id, $0.actionReferences)
+            })
 
         let windowStart = calendar.date(byAdding: .day,
                                         value: -(comparisonWindowDays - 1),
@@ -90,18 +96,26 @@ enum DreamCompiler {
                     title: $0.title)
             }
 
-        let openActions = all.filter { $0.startedAt >= windowStart && $0.startedAt < end }
+        let actionReferences = all.filter { $0.startedAt >= windowStart && $0.startedAt < end }
             .sorted { $0.startedAt > $1.startedAt }
             .flatMap { meeting in
-                outcomes(for: meeting, storageRoot: storageRoot).actionItems.map {
-                    actionLine($0, shortID: SessionLookup.shortID(meeting.id))
+                if let references = dayActionReferences[meeting.id] {
+                    return references
                 }
+                return MeetingOutcomeProjection.load(for: meeting, root: storageRoot)?
+                    .actionReferences ?? []
             }
+        let openActions = ActionThreadClusterer.cluster(actionReferences)
+            .filter { $0.status != .done }
+            .map(actionLine)
 
         return DreamEvidence(
             day: start,
             dayKey: DreamDay.key(for: start, calendar: calendar),
-            digest: trimmedToNil(snapshot.digest),
+            digest: trimmedToNil(DailyEvidenceArtifacts.currentDigest(
+                for: snapshot,
+                root: storageRoot,
+                calendar: calendar)),
             meetings: dayMeetings,
             appUsage: snapshot.appUsage,
             stats: snapshot.stats,
@@ -172,7 +186,8 @@ enum DreamCompiler {
         if !evidence.openActions.isEmpty {
             sections.append(
                 "Action candidates from the last \(comparisonWindowDays) days "
-                    + "(completion is unknown):\n" + evidence.openActions.joined(separator: "\n"))
+                    + "(using saved corrections and status):\n"
+                    + evidence.openActions.joined(separator: "\n"))
         }
 
         return PromptContextSanitizer.sanitize(
@@ -194,11 +209,21 @@ enum DreamCompiler {
             meeting.outcomes.openQuestions.map { "\(clean($0)) — `\(meeting.shortID)`" }
         }
 
-        let userActions = evidence.meetings.flatMap { meeting in
-            meeting.outcomes.userActionItems.map {
-                actionDescription($0, shortID: meeting.shortID)
-                    + " (completion not tracked)"
+        let projectedUserActions = evidence.meetings
+            .flatMap(\.actionReferences)
+            .filter(\.isForUser)
+        let userActions: [String]
+        if projectedUserActions.isEmpty {
+            // Compatibility for tests and legacy in-memory evidence values.
+            userActions = evidence.meetings.flatMap { meeting in
+                meeting.outcomes.userActionItems.map {
+                    actionDescription($0, shortID: meeting.shortID)
+                }
             }
+        } else {
+            userActions = ActionThreadClusterer.cluster(projectedUserActions)
+                .filter { $0.status != .done }
+                .map(actionDescription)
         }
 
         return DreamReport(
@@ -211,15 +236,22 @@ enum DreamCompiler {
             topActions: Array(userActions.prefix(3)))
     }
 
-    private static func outcomes(for meeting: Meeting, storageRoot: URL) -> MeetingOutcomes {
-        MeetingOutcomes.load(
-            from: storageRoot.appendingPathComponent(meeting.relativePath, isDirectory: true))
-            ?? MeetingOutcomes()
+    private static func actionLine(_ thread: ActionThread) -> String {
+        "- [ ] " + actionDescription(thread)
     }
 
-    private static func actionLine(_ item: MeetingOutcomes.ActionItem,
-                                   shortID: String) -> String {
-        "- [ ] " + actionDescription(item, shortID: shortID)
+    private static func actionDescription(_ thread: ActionThread) -> String {
+        var suffix: [String] = []
+        if let owner = thread.owner, !owner.isEmpty { suffix.append("owner: \(clean(owner))") }
+        if let due = thread.due, !due.isEmpty { suffix.append("due: \(clean(due))") }
+        if thread.status == .deferred { suffix.append("status: deferred") }
+        let sourceIDs = thread.references.map {
+            SessionLookup.shortID($0.meetingID)
+        }.reduce(into: [String]()) { result, id in
+            if !result.contains(id) { result.append(id) }
+        }
+        suffix.append("sources: " + sourceIDs.map { "`\($0)`" }.joined(separator: ", "))
+        return clean(thread.text) + " (" + suffix.joined(separator: ", ") + ")"
     }
 
     private static func actionDescription(_ item: MeetingOutcomes.ActionItem,

@@ -57,7 +57,7 @@ protocol DailyMemoryExportSource {
 /// fails loudly instead of silently publishing incomplete data.
 struct FileDailyMemoryExportSource: DailyMemoryExportSource {
     var root: URL
-    var screenReader: any ScreenMemoryReading
+    var evidenceSource: FileDailyEvidenceSource
     var calendar: Calendar
 
     init(
@@ -66,66 +66,38 @@ struct FileDailyMemoryExportSource: DailyMemoryExportSource {
         calendar: Calendar = .current
     ) {
         self.root = root
-        self.screenReader = screenReader ?? SQLiteScreenMemoryReader(
-            databaseURL: root.appendingPathComponent("lokalbotv3.sqlite"))
+        evidenceSource = FileDailyEvidenceSource(
+            root: root,
+            screenReader: screenReader,
+            calendar: calendar)
         self.calendar = calendar
     }
 
-    func snapshot(for day: Date, interval: DateInterval) throws -> DailyMemoryExportSnapshot {
-        let dayName = Self.dayName(day, calendar: calendar)
-        let digestURL = root.appendingPathComponent("journal/\(dayName).md")
-        let digest: String?
-        if FileManager.default.fileExists(atPath: digestURL.path) {
-            digest = try String(contentsOf: digestURL, encoding: .utf8)
-        } else {
-            digest = nil
-        }
-
-        let meetings = try SessionLookup.loadAllMeetings(root: root)
-            .filter { interval.contains($0.startedAt) }
-            .sorted { $0.startedAt < $1.startedAt }
-            .map {
-                DailyMemoryMeetingReference(
-                    id: SessionLookup.shortID($0.id),
-                    title: $0.title,
-                    startedAt: $0.startedAt,
-                    durationSeconds: $0.duration ?? 0)
-            }
-
-        let databaseURL = root.appendingPathComponent("lokalbotv3.sqlite")
-        let moments: [ScreenMemorySavedMoment]
-        let stats: ScreenMemoryDaySummary
-        let usage: [ScreenMemoryAppUsage]
-        if FileManager.default.fileExists(atPath: databaseURL.path) {
-            moments = try screenReader.savedMoments(
-                from: interval.start, to: interval.end, limit: 500)
-            stats = try screenReader.daySummary(from: interval.start, to: interval.end)
-            usage = try screenReader.appUsage(
-                from: interval.start, to: interval.end, limit: 100)
-        } else {
-            moments = []
-            stats = ScreenMemoryDaySummary(
-                trackedSeconds: 0,
-                appCount: 0,
-                activityBlockCount: 0,
-                screenshotCount: 0,
-                savedMomentCount: 0)
-            usage = []
+    func snapshot(for day: Date, interval _: DateInterval) throws -> DailyMemoryExportSnapshot {
+        let allMeetings = try SessionLookup.loadAllMeetings(root: root)
+        let evidence = try evidenceSource.snapshot(
+            for: day,
+            meetings: allMeetings,
+            includeDetailedActivity: false)
+        let digest = DailyEvidenceArtifacts.currentDigest(
+            for: evidence,
+            root: root,
+            calendar: calendar)
+        let meetings = evidence.meetings.map {
+            DailyMemoryMeetingReference(
+                id: SessionLookup.shortID($0.meeting.id),
+                title: $0.meeting.title,
+                startedAt: $0.meeting.startedAt,
+                durationSeconds: $0.meeting.duration ?? 0)
         }
 
         return DailyMemoryExportSnapshot(
-            day: day,
+            day: evidence.day,
             digest: digest,
             meetings: meetings,
-            savedMoments: moments,
-            stats: stats,
-            appUsage: usage)
-    }
-
-    private static func dayName(_ day: Date, calendar: Calendar) -> String {
-        let parts = calendar.dateComponents([.year, .month, .day], from: day)
-        return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0,
-                      parts.day ?? 0)
+            savedMoments: evidence.savedMoments,
+            stats: evidence.stats,
+            appUsage: evidence.appUsage)
     }
 }
 

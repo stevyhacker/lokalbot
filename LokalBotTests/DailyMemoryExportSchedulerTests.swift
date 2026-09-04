@@ -72,4 +72,46 @@ final class DailyMemoryExportSchedulerTests: XCTestCase {
         await fulfillment(of: [unexpectedError], timeout: 0.1)
         scheduler.stop()
     }
+
+    @MainActor
+    func testEvidenceChangeRestartsInFlightExport() async throws {
+        let current = try date("2026-07-14T18:00:00Z")
+        let scheduler = DailyMemoryExportScheduler(calendar: calendar, now: { current })
+        let counter = ExportCallCounter()
+        let started = expectation(description: "first export started")
+        let cancelled = expectation(description: "stale export cancelled")
+        let refreshed = expectation(description: "fresh export completed")
+
+        scheduler.configure(.init(enabled: true, hour: 18, destinationID: "notes")) { _ in
+            let call = await counter.next()
+            if call == 1 {
+                started.fulfill()
+                do {
+                    while true { try await Task.sleep(for: .seconds(60)) }
+                } catch is CancellationError {
+                    cancelled.fulfill()
+                    throw CancellationError()
+                }
+            }
+            refreshed.fulfill()
+        } onError: { _ in
+            XCTFail("Cancellation should not surface as an error")
+        }
+
+        await fulfillment(of: [started], timeout: 2)
+        scheduler.reconsider(day: current)
+        await fulfillment(of: [cancelled, refreshed], timeout: 2)
+        let callCount = await counter.value
+        XCTAssertEqual(callCount, 2)
+        scheduler.stop()
+    }
+}
+
+private actor ExportCallCounter {
+    private(set) var value = 0
+
+    func next() -> Int {
+        value += 1
+        return value
+    }
 }

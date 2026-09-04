@@ -27,7 +27,11 @@ struct DayDigestMeetingEvidence: Equatable, Sendable {
 }
 
 enum DayDigestMeetingArtifacts {
-    static let fileNames = ["summary.md", MeetingOutcomes.fileName]
+    static let fileNames = [
+        "summary.md",
+        MeetingOutcomes.fileName,
+        MeetingOutcomeState.fileName,
+    ]
 
     static func latestModifiedAt(in folder: URL) -> Date? {
         fileNames.compactMap { name -> Date? in

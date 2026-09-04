@@ -1035,17 +1035,14 @@ final class ProcessingPipeline: ObservableObject {
     /// directly as optional evidence, so filtering summary noise never loses
     /// the underlying workday record.
     func generateDayDigest(
-        for day: Date,
-        blocks: [ActivityBlock],
-        meetings: [Meeting],
-        screenContexts: [DayScreenContext],
+        from snapshot: DailyEvidenceSnapshot,
         config: AppSettings
     ) async throws -> DayDigestGenerationResult {
         let evidence = DayDigestEvidence.build(
-            day: day,
-            blocks: blocks,
-            screenContexts: screenContexts,
-            meetings: dayMeetingEvidence(meetings))
+            day: snapshot.day,
+            blocks: snapshot.activityBlocks,
+            screenContexts: snapshot.screenContexts,
+            meetings: dayMeetingEvidence(snapshot.meetings))
 
         let overview: DayDigestOverviewGeneration
         if evidence.isEmpty {
@@ -1075,7 +1072,7 @@ final class ProcessingPipeline: ObservableObject {
 
         try Task.checkCancellation()
         let text = evidence.renderDocument(summary: overview.summary)
-        let name = DreamDay.key(for: day)
+        let name = DreamDay.key(for: snapshot.day)
         let url = storage.rootURL.appendingPathComponent("journal/\(name).md")
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -1103,35 +1100,40 @@ final class ProcessingPipeline: ObservableObject {
             customPrompt: customPrompt)
     }
 
-    private func dayMeetingEvidence(_ meetings: [Meeting]) -> [DayDigestMeetingEvidence] {
-        meetings.compactMap { meeting in
+    private func dayMeetingEvidence(
+        _ meetings: [DailyEvidenceMeeting]
+    ) -> [DayDigestMeetingEvidence] {
+        meetings.compactMap { evidence in
+            let meeting = evidence.meeting
             guard let endedAt = meeting.endedAt else { return nil }
-            let folder = meeting.folderURL(in: storage)
-            let sourceSummary = (try? String(
-                contentsOf: folder.appendingPathComponent("summary.md"),
-                encoding: .utf8)) ?? ""
-            let outcomes = MeetingOutcomes.load(from: folder).map(Self.renderOutcomes) ?? ""
             return DayDigestMeetingEvidence(
                 id: meeting.id,
                 title: meeting.title,
                 app: meeting.appName,
                 startedAt: meeting.startedAt,
                 endedAt: endedAt,
-                sourceSummary: sourceSummary,
-                outcomes: outcomes,
-                artifactModifiedAt: DayDigestMeetingArtifacts.latestModifiedAt(in: folder))
+                sourceSummary: evidence.summary,
+                outcomes: Self.renderOutcomes(evidence),
+                artifactModifiedAt: evidence.artifactModifiedAt)
         }
     }
 
-    private nonisolated static func renderOutcomes(_ outcomes: MeetingOutcomes) -> String {
+    private nonisolated static func renderOutcomes(_ evidence: DailyEvidenceMeeting) -> String {
+        let outcomes = evidence.outcomes
         var lines: [String] = []
-        if !outcomes.actionItems.isEmpty {
+        if !evidence.actionReferences.isEmpty {
             lines.append("Action items:")
-            for item in outcomes.actionItems {
+            for reference in evidence.actionReferences {
                 var details: [String] = []
-                if let owner = item.owner, !owner.isEmpty { details.append("owner: \(owner)") }
-                if let due = item.due, !due.isEmpty { details.append("due: \(due)") }
-                lines.append("- " + item.text
+                if let owner = reference.owner, !owner.isEmpty {
+                    details.append("owner: \(owner)")
+                }
+                if let due = reference.due, !due.isEmpty {
+                    details.append("due: \(due)")
+                }
+                if reference.status == .deferred { details.append("status: deferred") }
+                let marker = reference.status == .done ? "x" : " "
+                lines.append("- [\(marker)] " + reference.text
                     + (details.isEmpty ? "" : " (\(details.joined(separator: ", ")))"))
             }
         }

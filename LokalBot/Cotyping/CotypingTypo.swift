@@ -1,9 +1,9 @@
 import Foundation
 
-/// Pure typo / autocorrect rules. Ports Cotabby's `CurrentWordExtractor` +
-/// `TypoCaseTransfer` + `TypoGate` + `TypoCorrectionReplacementPlanner`.
-/// Detection and correction themselves come from `NSSpellChecker`
-/// (`CotypingSpellChecker`); these stay pure and testable.
+// Pure typo / autocorrect rules. Ports Cotabby's `CurrentWordExtractor` +
+// `TypoCaseTransfer` + `TypoGate` + `TypoCorrectionReplacementPlanner`.
+// Detection and correction themselves come from `NSSpellChecker`
+// (`CotypingSpellChecker`); these stay pure and testable.
 
 /// The trailing word at the caret plus its grapheme length (one Delete keypress
 /// removes one grapheme, so this is the backspace count to erase the word).

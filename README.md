@@ -39,7 +39,7 @@ The same private library connects four moves: **Remember** meetings and optional
 | | |
 | --- | --- |
 | **Bot-free capture** | Two synchronized audio tracks record you and the meeting app without adding a participant to the call. |
-| **Outcomes, not transcript piles** | Review decisions, action items, open questions, and the day-level tasks that still need attention. |
+| **Outcomes, not transcript piles** | Review decisions, open questions, and evidence-backed action threads that connect repeated commitments across meetings. |
 | **Evidence attached** | Search by words or meaning, open the exact meeting or retained moment, and jump to the supporting audio. |
 | **Local by default** | Built-in transcription, summaries, search, and writing run on your Mac; remote inference is explicit and per-origin approved. |
 | **Free and auditable** | No account or API key is required. The GPLv3 source and network traffic are both yours to inspect. |
@@ -81,8 +81,8 @@ The same private library connects four moves: **Remember** meetings and optional
 - **Records both sides of the call.** Auto-detects Zoom, Teams, Meet, Slack, Webex, and FaceTime, then captures *you* and *them* on two synced tracks — no bot in the participant list.
 - **Follows the call live.** A live meeting view while you talk: quick notes that land in the finished meeting, plus an opt-in rolling transcript.
 - **Transcribes locally.** IBM Granite Speech 4.1 by default; Parakeet for speed (up to ~190× realtime in local benchmarks), Whisper for 99 languages, Qwen3-ASR for harder recordings.
-- **Turns talk into outcomes.** After processing, you get a TL;DR, decisions, action items, and open questions. Mark work done, reassign it, open it in Agent Mode, or jump to the supporting evidence.
-- **Explains the day.** Today surfaces the digest and open actions; Timeline groups activity into work sessions and meetings while preserving access to the raw evidence.
+- **Turns talk into outcomes.** After processing, you get a TL;DR, decisions, action items, and open questions. Repeated commitments become one action thread while every source meeting and citation stays available.
+- **Explains the day consistently.** Digest, Dream, exports, and local routines read the same daily evidence snapshot, including saved action corrections and completion state.
 
 ### Recall
 

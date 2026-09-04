@@ -20,7 +20,7 @@ struct TodayView: View {
                 dreamCard
                 summarySection
                 NeedsAttentionSection(
-                    actions: app.outcomeIndex.openUserActions,
+                    threads: app.outcomeIndex.openUserActionThreads,
                     limit: 3,
                     showingReview: $showingActionReview)
                 UpcomingMeetingSection(model: upcomingMeeting)
@@ -84,7 +84,7 @@ struct TodayView: View {
             } label: {
                 Label("Review actions", systemImage: "checklist")
             }
-            .disabled(app.outcomeIndex.openUserActions.isEmpty)
+            .disabled(app.outcomeIndex.openUserActionThreads.isEmpty)
             Button {
                 app.openAsk(dayScope: model.day)
             } label: {
@@ -93,15 +93,20 @@ struct TodayView: View {
             .buttonStyle(.borderedProminent)
             Menu {
                 Button("Plan open actions in Agent") {
-                    let openActions = app.outcomeIndex.openUserActions
-                    let lines = openActions.prefix(8).map { "- \($0.text)" }
+                    let threads = app.outcomeIndex.openUserActionThreads
+                    let lines = threads.prefix(8).map { thread in
+                        let sources = thread.meetingCount == 1
+                            ? "" : " (mentioned in \(thread.meetingCount) meetings)"
+                        return "- \(thread.text)\(sources)"
+                    }
                     app.openAgent(.init(
-                        title: "Today's open actions",
-                        prompt: "Help me plan today's open meeting actions:\n\(lines.joined(separator: "\n"))",
-                        meetingID: openActions.first?.meetingID,
-                        actionID: openActions.first?.action.id))
+                        title: "Today's action threads",
+                        prompt: "Help me plan today's open meeting action threads:\n"
+                            + lines.joined(separator: "\n"),
+                        meetingID: threads.first?.latestReference.meetingID,
+                        actionID: threads.first?.latestReference.action.id))
                 }
-                .disabled(app.outcomeIndex.openUserActions.isEmpty)
+                .disabled(app.outcomeIndex.openUserActionThreads.isEmpty)
             } label: {
                 Image(systemName: "ellipsis.circle")
             }

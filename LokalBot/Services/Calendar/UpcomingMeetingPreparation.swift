@@ -18,9 +18,10 @@ struct UpcomingMeetingReference: Identifiable, Equatable, Sendable {
     let meetingDate: Date
     let owner: String?
     let due: String?
+    let sourceMeetingCount: Int
 
     init(kind: Kind, text: String, meeting: Meeting, index: Int,
-         owner: String? = nil, due: String? = nil) {
+         owner: String? = nil, due: String? = nil, sourceMeetingCount: Int = 1) {
         id = "\(meeting.id.uuidString)-\(kind.rawValue)-\(index)"
         self.kind = kind
         self.text = text
@@ -29,6 +30,20 @@ struct UpcomingMeetingReference: Identifiable, Equatable, Sendable {
         meetingDate = meeting.startedAt
         self.owner = owner
         self.due = due
+        self.sourceMeetingCount = sourceMeetingCount
+    }
+
+    init(thread: ActionThread) {
+        let source = thread.latestReference
+        id = thread.id
+        kind = .commitment
+        text = thread.text
+        meetingID = source.meetingID
+        meetingTitle = source.meetingTitle
+        meetingDate = source.meetingStartedAt
+        owner = thread.owner
+        due = thread.due
+        sourceMeetingCount = thread.meetingCount
     }
 }
 
@@ -71,7 +86,10 @@ struct UpcomingMeetingEvidence: Equatable, Sendable {
             event.participantNames.joined(separator: "|"),
             relatedMeetings.map { $0.meeting.id.uuidString + $0.summary }.joined(separator: "|"),
             decisions.map(\.text).joined(separator: "|"),
-            commitments.map { $0.text + ($0.owner ?? "") + ($0.due ?? "") }.joined(separator: "|"),
+            commitments.map {
+                $0.text + ($0.owner ?? "") + ($0.due ?? "")
+                    + String($0.sourceMeetingCount)
+            }.joined(separator: "|"),
             projects.map { $0.name + $0.status + $0.lastActiveDay }.joined(separator: "|"),
         ]
         return parts.joined(separator: "\u{1f}")
@@ -127,11 +145,14 @@ struct UpcomingMeetingEvidence: Equatable, Sendable {
             sections.append("Prior decisions:\n" + decisions.map { "- \($0.text)" }.joined(separator: "\n"))
         }
         if !commitments.isEmpty {
-            sections.append("Commitments from prior notes (completion is not tracked):\n"
+            sections.append("Commitments from prior notes (using saved corrections and status):\n"
                 + commitments.map { reference in
                     var metadata: [String] = []
                     if let owner = nonEmpty(reference.owner) { metadata.append("owner: \(owner)") }
                     if let due = nonEmpty(reference.due) { metadata.append("due: \(due)") }
+                    if reference.sourceMeetingCount > 1 {
+                        metadata.append("sources: \(reference.sourceMeetingCount) meetings")
+                    }
                     return "- \(reference.text)"
                         + (metadata.isEmpty ? "" : " (\(metadata.joined(separator: ", ")))")
                 }.joined(separator: "\n"))
@@ -266,21 +287,22 @@ enum UpcomingMeetingPreparationCompiler {
 
         let related = Array(scored.prefix(maximumRelatedMeetings))
         var decisions: [UpcomingMeetingReference] = []
-        var commitments: [UpcomingMeetingReference] = []
+        var actionReferences: [OutcomeActionReference] = []
         for relatedMeeting in related {
             let meeting = relatedMeeting.meeting
-            let folder = storageRoot.appendingPathComponent(meeting.relativePath, isDirectory: true)
-            guard let outcomes = MeetingOutcomes.load(from: folder) else { continue }
+            guard let projection = MeetingOutcomeProjection.load(
+                for: meeting,
+                root: storageRoot) else { continue }
+            let outcomes = projection.outcomes
             for (index, decision) in outcomes.decisions.enumerated() {
                 decisions.append(UpcomingMeetingReference(
                     kind: .decision, text: decision, meeting: meeting, index: index))
             }
-            for (index, item) in outcomes.actionItems.enumerated() {
-                commitments.append(UpcomingMeetingReference(
-                    kind: .commitment, text: item.text, meeting: meeting, index: index,
-                    owner: item.owner, due: item.due))
-            }
+            actionReferences += projection.actionReferences
         }
+        let commitments = ActionThreadClusterer.cluster(actionReferences)
+            .filter { $0.status != .done }
+            .map { UpcomingMeetingReference(thread: $0) }
 
         let projects = projectContext(
             memory: memory,

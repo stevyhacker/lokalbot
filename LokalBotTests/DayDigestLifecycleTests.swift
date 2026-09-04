@@ -88,10 +88,10 @@ final class DayDigestLifecycleTests: XCTestCase {
             meetings: { [finished, inProgress] },
             latestActivityEvidenceAt: { _ in nil },
             settings: AppSettings.init,
-            generator: { _, blocks, meetings, screens, _ in
-                receivedBlocks = blocks
-                receivedMeetings = meetings
-                receivedScreens = screens
+            generator: { evidence, _ in
+                receivedBlocks = evidence.activityBlocks
+                receivedMeetings = evidence.meetings.map(\.meeting)
+                receivedScreens = evidence.screenContexts
                 return DayDigestGenerationResult(
                     text: "digest",
                     url: root.appendingPathComponent("journal/2026-08-23.md"),
@@ -173,12 +173,22 @@ final class DayDigestLifecycleTests: XCTestCase {
             [.modificationDate: digestAt],
             ofItemAtPath: journal.path)
 
-        try MeetingOutcomes(decisions: ["Ship the lifecycle."]).write(to: folder)
+        let action = MeetingOutcomes.ActionItem(text: "Ship the lifecycle", owner: "Me")
+        try MeetingOutcomes(
+            actionItems: [action],
+            decisions: ["Ship the lifecycle."]).write(to: folder)
         let outcomes = folder.appendingPathComponent(MeetingOutcomes.fileName)
         let outcomesAt = try date("2026-08-23T18:05:00Z")
         try FileManager.default.setAttributes(
             [.modificationDate: outcomesAt],
             ofItemAtPath: outcomes.path)
+        var state = MeetingOutcomeState()
+        state.actions[action.id] = .init(status: .done, userEdited: true)
+        try MeetingOutcomeStore.writeState(state, to: folder)
+        let stateAt = try date("2026-08-23T18:06:00Z")
+        try FileManager.default.setAttributes(
+            [.modificationDate: stateAt],
+            ofItemAtPath: folder.appendingPathComponent(MeetingOutcomeState.fileName).path)
 
         let generated = expectation(description: "stale digest repaired")
         let scheduler = DayDigestScheduler(calendar: calendar, now: { now })
@@ -191,10 +201,10 @@ final class DayDigestLifecycleTests: XCTestCase {
             meetings: { [meeting] },
             latestActivityEvidenceAt: { _ in nil },
             settings: AppSettings.init,
-            generator: { generatedDay, _, receivedMeetings, _, _ in
-                XCTAssertEqual(DreamDay.key(for: generatedDay, calendar: self.calendar),
+            generator: { evidence, _ in
+                XCTAssertEqual(DreamDay.key(for: evidence.day, calendar: self.calendar),
                                "2026-08-23")
-                XCTAssertEqual(receivedMeetings, [meeting])
+                XCTAssertEqual(evidence.meetings.map(\.meeting), [meeting])
                 generated.fulfill()
                 return DayDigestGenerationResult(
                     text: "repaired",
@@ -202,7 +212,7 @@ final class DayDigestLifecycleTests: XCTestCase {
                     quality: .complete)
             })
         let snapshot = lifecycle.snapshot(for: day)
-        XCTAssertEqual(snapshot.latestEvidenceAt, outcomesAt)
+        XCTAssertEqual(snapshot.latestEvidenceAt, stateAt)
         XCTAssertTrue(snapshot.isStale)
 
         lifecycle.configureAutomaticGeneration(
@@ -258,8 +268,8 @@ final class DayDigestLifecycleTests: XCTestCase {
             meetings: { [meeting] },
             latestActivityEvidenceAt: { _ in nil },
             settings: AppSettings.init,
-            generator: { generatedDay, _, _, _, _ in
-                XCTAssertEqual(DreamDay.key(for: generatedDay, calendar: self.calendar),
+            generator: { evidence, _ in
+                XCTAssertEqual(DreamDay.key(for: evidence.day, calendar: self.calendar),
                                "2026-08-23")
                 generated.fulfill()
                 return DayDigestGenerationResult(
@@ -308,11 +318,11 @@ final class DayDigestLifecycleTests: XCTestCase {
             meetings: meetings,
             latestActivityEvidenceAt: latestActivityEvidenceAt,
             settings: AppSettings.init,
-            generator: { day, _, _, _, _ in
+            generator: { evidence, _ in
                 DayDigestGenerationResult(
                     text: "",
                     url: root.appendingPathComponent(
-                        "journal/\(DreamDay.key(for: day)).md"),
+                        "journal/\(DreamDay.key(for: evidence.day)).md"),
                     quality: .complete)
             })
     }

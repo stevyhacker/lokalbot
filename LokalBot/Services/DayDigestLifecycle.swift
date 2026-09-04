@@ -19,22 +19,9 @@ final class DayDigestLifecycle {
     }
 
     typealias Generator = @MainActor (
-        _ day: Date,
-        _ blocks: [ActivityBlock],
-        _ meetings: [Meeting],
-        _ screenContexts: [DayScreenContext],
+        _ evidence: DailyEvidenceSnapshot,
         _ settings: AppSettings
     ) async throws -> DayDigestGenerationResult
-
-    private struct EvidenceInput {
-        var blocks: [ActivityBlock]
-        var meetings: [Meeting]
-        var screenContexts: [DayScreenContext]
-
-        var isEmpty: Bool {
-            blocks.isEmpty && meetings.isEmpty && screenContexts.isEmpty
-        }
-    }
 
     private let storageRoot: URL
     private let blocks: (Date) -> [ActivityBlock]
@@ -82,12 +69,9 @@ final class DayDigestLifecycle {
             meetings: meetings,
             latestActivityEvidenceAt: { activityStore.latestEvidenceAt(on: $0) },
             settings: settings,
-            generator: { day, blocks, meetings, screenContexts, settings in
+            generator: { evidence, settings in
                 try await pipeline.generateDayDigest(
-                    for: day,
-                    blocks: blocks,
-                    meetings: meetings,
-                    screenContexts: screenContexts,
+                    from: evidence,
                     config: settings)
             })
     }
@@ -129,12 +113,9 @@ final class DayDigestLifecycle {
         for day: Date,
         settings override: AppSettings? = nil
     ) async throws -> DayDigestGenerationResult {
-        let input = evidenceInput(for: day)
+        let evidence = try evidenceInput(for: day)
         return try await generator(
-            day,
-            input.blocks,
-            input.meetings,
-            input.screenContexts,
+            evidence,
             override ?? settings())
     }
 
@@ -157,13 +138,10 @@ final class DayDigestLifecycle {
                 guard let self else {
                     throw TextEngineError.unavailable("LokalBot is shutting down.")
                 }
-                let input = self.evidenceInput(for: day)
-                guard !input.isEmpty else { return .deferred }
+                let evidence = try self.evidenceInput(for: day)
+                guard !evidence.isEmpty else { return .deferred }
                 let result = try await self.generator(
-                    day,
-                    input.blocks,
-                    input.meetings,
-                    input.screenContexts,
+                    evidence,
                     self.settings())
                 return result.quality.needsRepair ? .needsRepair : .completed
             },
@@ -174,17 +152,25 @@ final class DayDigestLifecycle {
         scheduler.stop()
     }
 
-    private func evidenceInput(for day: Date) -> EvidenceInput {
-        EvidenceInput(
-            blocks: blocks(day),
-            meetings: meetings(for: day, includeInProgress: false),
-            screenContexts: screenContexts(day))
+    /// A user correction or completion can make the current journal stale
+    /// without changing meeting metadata. Re-evaluate immediately instead of
+    /// waiting for the next minute tick.
+    func reconsiderEvidence() {
+        scheduler.reconsiderEvidence()
     }
 
-    /// Summaries and outcomes are produced after a meeting ends, and both are
-    /// consumed by `ProcessingPipeline.generateDayDigest`. Their writes must
-    /// therefore advance the evidence watermark even though the meeting's
-    /// `endedAt` value is unchanged.
+    private func evidenceInput(for day: Date) throws -> DailyEvidenceSnapshot {
+        try FileDailyEvidenceSource(root: storageRoot, calendar: calendar).snapshot(
+            for: day,
+            meetings: meetings(for: day, includeInProgress: false),
+            activityBlocks: blocks(day),
+            screenContexts: screenContexts(day),
+            includeScreenSummary: false)
+    }
+
+    /// Summaries, outcomes, and the user's outcome overlay are consumed by
+    /// `ProcessingPipeline.generateDayDigest`. Their writes must therefore
+    /// advance the evidence watermark even when `endedAt` is unchanged.
     private func latestArtifactWriteAt(for meeting: Meeting) -> Date? {
         let folder = storageRoot.appendingPathComponent(
             meeting.relativePath,

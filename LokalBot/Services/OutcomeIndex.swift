@@ -19,15 +19,31 @@ struct MeetingOutcomeProjection: Identifiable, Equatable, Sendable {
                 status: userState.status,
                 text: userState.textCorrection ?? action.displayText,
                 owner: userState.ownerOverride ?? action.owner,
-                due: userState.dueOverride ?? action.due)
+                due: userState.dueOverride ?? action.due,
+                stateUpdatedAt: userState.userEdited ? userState.updatedAt : meeting.startedAt,
+                textWasCorrected: userState.textCorrection != nil,
+                ownerWasCorrected: userState.ownerOverride != nil,
+                dueWasCorrected: userState.dueOverride != nil)
         }
+    }
+
+    var activeOutcomes: MeetingOutcomes {
+        var result = outcomes
+        result.actionItems = actionReferences
+            .filter { $0.status != .done }
+            .map(\.effectiveAction)
+        return result
     }
 
     /// One loader for UI surfaces and background routines. Keeping the merge
     /// here prevents exports from silently falling back to immutable extraction
     /// after the user has completed or corrected an action in the app.
     static func load(for meeting: Meeting, storage: StorageManager) -> Self? {
-        let folder = meeting.folderURL(in: storage)
+        load(for: meeting, root: storage.rootURL)
+    }
+
+    static func load(for meeting: Meeting, root: URL) -> Self? {
+        let folder = root.appendingPathComponent(meeting.relativePath, isDirectory: true)
         guard let outcomes = MeetingOutcomes.load(from: folder) else { return nil }
         let state = MeetingOutcomeStore.loadState(from: folder)
         let followUp = MeetingOutcomeStore.loadFollowUp(from: folder)
@@ -45,11 +61,24 @@ struct OutcomeActionReference: Identifiable, Equatable, Sendable {
     var text: String
     var owner: String?
     var due: String?
+    var stateUpdatedAt: Date
+    var textWasCorrected: Bool
+    var ownerWasCorrected: Bool
+    var dueWasCorrected: Bool
 
     var id: String { "\(meetingID.uuidString):\(action.id)" }
     var isForUser: Bool {
         owner?.trimmingCharacters(in: .whitespacesAndNewlines)
             .caseInsensitiveCompare("Me") == .orderedSame
+    }
+
+    var effectiveAction: MeetingOutcomes.ActionItem {
+        var result = action
+        result.text = text
+        result.owner = owner
+        result.due = due
+        result.isForUser = isForUser
+        return result
     }
 }
 
@@ -59,12 +88,18 @@ struct OutcomeActionReference: Identifiable, Equatable, Sendable {
 @MainActor
 final class OutcomeIndex: ObservableObject {
     @Published private(set) var projections: [Meeting.ID: MeetingOutcomeProjection] = [:]
+    @Published private(set) var userActionThreads: [ActionThread] = []
 
     private let storage: StorageManager
+    private let onEvidenceChanged: (Meeting) -> Void
     private(set) var lastError: String?
 
-    init(storage: StorageManager) {
+    init(
+        storage: StorageManager,
+        onEvidenceChanged: @escaping (Meeting) -> Void = { _ in }
+    ) {
         self.storage = storage
+        self.onEvidenceChanged = onEvidenceChanged
     }
 
     var all: [MeetingOutcomeProjection] {
@@ -75,6 +110,10 @@ final class OutcomeIndex: ObservableObject {
         all.flatMap(\.actionReferences)
             .filter { $0.isForUser && $0.status == .open }
             .sorted { $0.meetingStartedAt > $1.meetingStartedAt }
+    }
+
+    var openUserActionThreads: [ActionThread] {
+        userActionThreads.filter { $0.status == .open }
     }
 
     func projection(for meetingID: Meeting.ID) -> MeetingOutcomeProjection? {
@@ -89,6 +128,7 @@ final class OutcomeIndex: ObservableObject {
             }
         }
         projections = next
+        rebuildActionThreads()
     }
 
     func refresh(meeting: Meeting) {
@@ -97,15 +137,51 @@ final class OutcomeIndex: ObservableObject {
         } else {
             projections.removeValue(forKey: meeting.id)
         }
+        rebuildActionThreads()
     }
 
     @discardableResult
     func setStatus(_ status: OutcomeStatus, actionID: String,
                    meetingID: Meeting.ID) -> Bool {
+        if let thread = userActionThreads.first(where: { thread in
+            thread.references.contains {
+                $0.meetingID == meetingID && $0.action.id == actionID
+            }
+        }),
+           thread.hasMultipleMeetings {
+            return setStatus(status, thread: thread)
+        }
         mutateAction(actionID: actionID, meetingID: meetingID) { state in
             state.status = status
             state.userEdited = true
         }
+    }
+
+    @discardableResult
+    func setStatus(_ status: OutcomeStatus, thread: ActionThread) -> Bool {
+        var changedMeetings: [Meeting] = []
+        for reference in thread.references where reference.status != status {
+            guard mutateAction(
+                actionID: reference.action.id,
+                meetingID: reference.meetingID,
+                notify: false,
+                rebuildThreads: false,
+                change: { state in
+                    state.status = status
+                    state.userEdited = true
+                })
+            else {
+                rebuildActionThreads()
+                notifyEvidenceChanged(changedMeetings)
+                return false
+            }
+            if let meeting = projections[reference.meetingID]?.meeting {
+                changedMeetings.append(meeting)
+            }
+        }
+        rebuildActionThreads()
+        notifyEvidenceChanged(changedMeetings)
+        return true
     }
 
     @discardableResult
@@ -139,8 +215,13 @@ final class OutcomeIndex: ObservableObject {
         }
     }
 
-    private func mutateAction(actionID: String, meetingID: Meeting.ID,
-                              change: (inout MeetingOutcomeState.ActionState) -> Void) -> Bool {
+    private func mutateAction(
+        actionID: String,
+        meetingID: Meeting.ID,
+        notify: Bool = true,
+        rebuildThreads: Bool = true,
+        change: (inout MeetingOutcomeState.ActionState) -> Void
+    ) -> Bool {
         guard var projection = projections[meetingID] else { return false }
         var actionState = projection.state.actions[actionID] ?? .init()
         change(&actionState)
@@ -150,7 +231,9 @@ final class OutcomeIndex: ObservableObject {
             try MeetingOutcomeStore.writeState(
                 projection.state, to: projection.meeting.folderURL(in: storage))
             projections[meetingID] = projection
+            if rebuildThreads { rebuildActionThreads() }
             lastError = nil
+            if notify { onEvidenceChanged(projection.meeting) }
             return true
         } catch {
             lastError = error.localizedDescription
@@ -160,6 +243,18 @@ final class OutcomeIndex: ObservableObject {
 
     private func loadProjection(for meeting: Meeting) -> MeetingOutcomeProjection? {
         MeetingOutcomeProjection.load(for: meeting, storage: storage)
+    }
+
+    private func notifyEvidenceChanged(_ meetings: [Meeting]) {
+        var notified: Set<Meeting.ID> = []
+        for meeting in meetings where notified.insert(meeting.id).inserted {
+            onEvidenceChanged(meeting)
+        }
+    }
+
+    private func rebuildActionThreads() {
+        userActionThreads = ActionThreadClusterer.cluster(
+            all.flatMap(\.actionReferences).filter(\.isForUser))
     }
 
     private static func nilIfBlank(_ value: String?) -> String? {

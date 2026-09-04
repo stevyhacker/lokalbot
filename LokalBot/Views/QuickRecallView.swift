@@ -597,7 +597,7 @@ private struct QuickRecallApplicationIcon: View {
             if let icon = QuickRecallApplicationIconResolver.icon(for: appName) {
                 Image(nsImage: icon)
                     .resizable()
-                    .aspectRatio(contentMode: .fit)
+                    .scaledToFit()
             } else {
                 Image(systemName: "app.fill")
                     .resizable()

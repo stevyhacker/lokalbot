@@ -147,6 +147,22 @@ final class ScreenMemoryReaderTests: XCTestCase {
         XCTAssertEqual(summary.savedMomentCount, 1)
     }
 
+    func testDailyEvidenceQueriesShareOneBoundedInterval() throws {
+        let end = dayStart.addingTimeInterval(86_400)
+
+        let blocks = try reader.activityBlocks(from: dayStart, to: end)
+        let contexts = try reader.screenContexts(
+            from: dayStart,
+            to: end,
+            maxCharactersPerCapture: 12)
+        let latest = try reader.latestEvidenceAt(from: dayStart, to: end)
+
+        XCTAssertEqual(blocks.map(\.app), ["Safari", "Xcode"])
+        XCTAssertEqual(contexts.count, 1)
+        XCTAssertEqual(contexts[0].text, "Q3 revenue g")
+        XCTAssertEqual(latest, dayStart.addingTimeInterval(7_200))
+    }
+
     func testMissingDatabaseIsNotCreatedByReadOnlyReader() throws {
         let missing = root.appendingPathComponent("missing.sqlite")
         let missingReader = SQLiteScreenMemoryReader(databaseURL: missing)

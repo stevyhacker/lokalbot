@@ -416,6 +416,57 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertTrue(MeetingChatFormat.outcomes([]).contains("extracted when a meeting is summarized"))
     }
 
+    func testThreadedFormatDeduplicatesActionsAndPreservesSourceIDs() {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let first = Meeting(
+            id: UUID(uuidString: "11111111-2222-4333-8444-555555555555")!,
+            title: "Planning",
+            appName: "Zoom",
+            startedAt: start,
+            endedAt: start.addingTimeInterval(1_800),
+            relativePath: "meetings/planning")
+        let second = Meeting(
+            id: UUID(uuidString: "22222222-3333-4444-8555-666666666666")!,
+            title: "Review",
+            appName: "Zoom",
+            startedAt: start.addingTimeInterval(86_400),
+            endedAt: start.addingTimeInterval(88_200),
+            relativePath: "meetings/review")
+        let firstAction = MeetingOutcomes.ActionItem(
+            text: "I will send the revised launch proposal",
+            owner: "Me")
+        let secondAction = MeetingOutcomes.ActionItem(
+            text: "Send the revised launch proposal",
+            owner: "Me")
+        var state = MeetingOutcomeState()
+        state.actions[secondAction.id] = .init(
+            textCorrection: "Send Acme the revised launch proposal",
+            userEdited: true)
+        let projections = [
+            MeetingOutcomeProjection(
+                meeting: first,
+                outcomes: MeetingOutcomes(actionItems: [firstAction]),
+                state: MeetingOutcomeState(),
+                followUp: FollowUpDraft()),
+            MeetingOutcomeProjection(
+                meeting: second,
+                outcomes: MeetingOutcomes(
+                    actionItems: [secondAction],
+                    decisions: ["Keep the rollout staged"]),
+                state: state,
+                followUp: FollowUpDraft()),
+        ]
+
+        let text = MeetingChatFormat.threadedOutcomes(projections)
+
+        XCTAssertEqual(
+            text.components(separatedBy: "Send Acme the revised launch proposal").count - 1,
+            1)
+        XCTAssertTrue(text.contains("[11111111]"), text)
+        XCTAssertTrue(text.contains("[22222222]"), text)
+        XCTAssertTrue(text.contains("Keep the rollout staged"), text)
+    }
+
     // MARK: - get_action_items tool (planted library)
 
     func testGetActionItemsAgainstPlantedLibrary() async throws {
