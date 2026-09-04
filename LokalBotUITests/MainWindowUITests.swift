@@ -567,9 +567,13 @@ final class MainWindowUITests: XCTestCase {
         UITestHarness.scrollTo(toggle, in: app)
         XCTAssertTrue(toggle.waitForExistence(timeout: 5), "Thread toggle missing: \(app.debugDescription)")
         toggle.click()
-        let confirm = app.buttons["Mark all done"].firstMatch
+        // App-wide queries also include Touch Bar controls, which cannot be
+        // clicked through the normal macOS event path.
+        let confirm = app.windows.buttons["Mark all done"].firstMatch
         XCTAssertTrue(confirm.waitForExistence(timeout: 4), "Multi-meeting completion needs explicit approval")
-        app.buttons["Cancel"].firstMatch.click()
+        let cancel = app.windows.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 4))
+        cancel.click()
         let stateURLs = [fixture.designReview, fixture.standup].map {
             fixture.folder(for: $0).appendingPathComponent("outcome-state.json")
         }
