@@ -4,5 +4,37 @@
   "buildCommand": null,
   "installCommand": null,
   "outputDirectory": "web",
-  "cleanUrls": true
+  "cleanUrls": true,
+  "redirects": [
+    {
+      "source": "/assets/feature-demo.mp4",
+      "destination": "/assets/hero-demo.mp4",
+      "permanent": true
+    },
+    {
+      "source": "/assets/hero-demo-short.mp4",
+      "destination": "/assets/hero-demo.mp4",
+      "permanent": true
+    },
+    {
+      "source": "/assets/hero-demo-long.mp4",
+      "destination": "/assets/hero-demo.mp4",
+      "permanent": true
+    },
+    {
+      "source": "/assets/feature-demo-poster.jpg",
+      "destination": "/assets/hero-poster.jpg",
+      "permanent": true
+    },
+    {
+      "source": "/assets/hero-poster-short.jpg",
+      "destination": "/assets/hero-poster.jpg",
+      "permanent": true
+    },
+    {
+      "source": "/assets/hero-poster-long.jpg",
+      "destination": "/assets/hero-poster.jpg",
+      "permanent": true
+    }
+  ]
 }
