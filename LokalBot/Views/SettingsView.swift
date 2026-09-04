@@ -256,6 +256,8 @@ struct SettingsView: View {
                     get: { Double(app.settings.cotypingDebounceMs) },
                     set: { app.settings.cotypingDebounceMs = Int($0) }),
                     in: 20...1_000, step: 20)
+                    .accessibilityLabel("Pause before suggesting")
+                    .settingTarget("settings.cotypingDebounceMs", selected: app.focusedSettingID)
                 Picker("Accept next", selection: $app.settings.cotypingAcceptKey) {
                     ForEach(CotypingAcceptKey.allCases) { Text($0.label).tag($0) }
                 }
@@ -361,6 +363,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    .settingTarget("settings.stopDebounceSeconds", selected: app.focusedSettingID)
                     Divider()
                     Toggle("Use calendar to improve detection", isOn: $app.settings.calendarDetectionEnabled)
                     .settingTarget("settings.calendarDetectionEnabled", selected: app.focusedSettingID)
@@ -496,6 +499,7 @@ struct SettingsView: View {
                             in: 1...15, step: 1) {
                             Text("Idle fallback: at least every \(Int(app.settings.screenshotIntervalMinutes)) min")
                         }
+                        .settingTarget("settings.screenshotIntervalMinutes", selected: app.focusedSettingID)
                         Button("Manage retention and cleanup…") { app.openSettings(tab: .privacy) }
                         Button("Manage capture exclusions…") { app.openSettings(tab: .privacy) }
                         if app.settings.effectiveScreenContextCaptureMode.capturesPixels {

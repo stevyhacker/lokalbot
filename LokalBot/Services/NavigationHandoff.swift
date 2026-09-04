@@ -4,7 +4,8 @@ import Foundation
 struct AskNavigationHandoff: Equatable, Sendable {
     let query: String?
     let dayScope: Date?
-    let screenSnapshotIDs: [Int64]
+    /// Nil is unrestricted; an empty collection deliberately permits no screens.
+    let screenSnapshotIDs: [Int64]?
     let submit: Bool
     var meetingIDs: Set<Meeting.ID>?
     var mode: AskMode = .ask
@@ -40,7 +41,7 @@ final class NavigationHandoff: ObservableObject {
     func stageAsk(
         query: String,
         dayScope: Date?,
-        screenSnapshotIDs: [Int64],
+        screenSnapshotIDs: [Int64]?,
         submit: Bool,
         meetingIDs: Set<Meeting.ID>? = nil,
         mode: AskMode = .ask

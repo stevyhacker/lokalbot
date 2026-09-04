@@ -1043,7 +1043,7 @@ final class ScreenshotService: ObservableObject {
     /// User-requested deletion removes pixels first, then the screenshot row
     /// and all linked OCR, bookmark, and semantic-vector state atomically.
     func deleteCapture(id: Int64) throws {
-        guard let screenshot = store.screenshot(id: id) else { return }
+        guard let screenshot = try store.screenshotChecked(id: id) else { return }
         if !screenshot.path.isEmpty,
            FileManager.default.fileExists(atPath: screenshot.path) {
             try FileManager.default.removeItem(atPath: screenshot.path)
@@ -1070,7 +1070,7 @@ final class ScreenshotService: ObservableObject {
     /// Manual cleanup keeps successful row/file deletions consistent even if
     /// another item fails. Saved moments require an explicit reviewed scope.
     func applyCaptureDeletionReview(_ review: CaptureDeletionReview) throws -> [String] {
-        let current = store.captureDeletionReview(in: review.interval, includesSaved: review.includesSaved)
+        let current = try store.captureDeletionReview(in: review.interval, includesSaved: review.includesSaved)
         guard review.covers(current) else { throw RetentionReviewError.scopeChanged }
         var failures: [String] = []
         for capture in current.captures {

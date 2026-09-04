@@ -381,6 +381,19 @@ final class ActivityStore {
     func screenshots(in interval: DateInterval? = nil, app: String? = nil,
                      bookmarkedOnly: Bool = false,
                      includingMissingFiles: Bool = false) -> [Screenshot] {
+        do {
+            return try screenshotsChecked(in: interval, app: app, bookmarkedOnly: bookmarkedOnly,
+                                          includingMissingFiles: includingMissingFiles)
+        } catch {
+            lokalbotLog("screenshot query failed: \(error.localizedDescription)")
+            return []
+        }
+    }
+
+    /// Destructive previews must distinguish a failed read from an empty scope.
+    func screenshotsChecked(in interval: DateInterval? = nil, app: String? = nil,
+                            bookmarkedOnly: Bool = false,
+                            includingMissingFiles: Bool = false) throws -> [Screenshot] {
         let filter = ScreenSearchFilter(interval: interval, app: app)
         var conditions: [String] = []
         if !includingMissingFiles { conditions.append("shot.path != ''") }
@@ -388,8 +401,7 @@ final class ActivityStore {
         Self.appendFilter(filter, timestampColumn: "shot.ts", appColumn: "shot.app",
                           conditions: &conditions, bindings: &bindings)
         if bookmarkedOnly { conditions.append("bookmark.snapshot_id IS NOT NULL") }
-        do {
-            return try requiredDatabase().queryChecked("""
+        return try requiredDatabase().queryChecked("""
                 SELECT shot.id, shot.ts, shot.path, shot.app, shot.window_title,
                        shot.capture_trigger, shot.perceptual_hash,
                        shot.similarity_group, shot.source_url, shot.document_name,
@@ -400,17 +412,19 @@ final class ActivityStore {
                 \(conditions.isEmpty ? "" : "WHERE " + conditions.joined(separator: " AND "))
                 ORDER BY shot.ts, shot.id
                 """, bind: bindings, row: Self.screenshot(from:))
-        } catch {
-            lokalbotLog("screenshot query failed: \(error.localizedDescription)")
-            return []
-        }
     }
 
     /// Exact row lookup used by `[screen:ID]` citations and pinned context.
     func screenshot(id: Int64) -> Screenshot? {
+        do { return try screenshotChecked(id: id) } catch {
+            lokalbotLog("screenshot lookup failed id=\(id): \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    func screenshotChecked(id: Int64) throws -> Screenshot? {
         guard id > 0 else { return nil }
-        do {
-            return try requiredDatabase().queryChecked("""
+        return try requiredDatabase().queryChecked("""
                 SELECT shot.id, shot.ts, shot.path, shot.app, shot.window_title,
                        shot.capture_trigger, shot.perceptual_hash,
                        shot.similarity_group, shot.source_url, shot.document_name,
@@ -420,10 +434,6 @@ final class ActivityStore {
                 LEFT JOIN screen_bookmarks AS bookmark ON bookmark.snapshot_id = shot.id
                 WHERE shot.id = ?1 LIMIT 1
                 """, bind: [id], row: Self.screenshot(from:)).first
-        } catch {
-            lokalbotLog("screenshot lookup failed id=\(id): \(error.localizedDescription)")
-            return nil
-        }
     }
 
     /// FTS search over screen text (and window titles). `matchAll: false`

@@ -103,8 +103,12 @@ struct DictationView: View {
         Section("Permissions") {
             PermissionRow(permission: .microphone, why: "Records your voice for the current dictation.")
             PermissionRow(permission: .inputMonitoring, why: "Detects the global dictation shortcut.")
-            PermissionRow(permission: .accessibility, why: "Validates the focused field and inserts the composed text safely.")
-            PermissionRow(permission: .screenRecording, why: "Optionally reads only the focused window for this request. The image and OCR text are never stored.")
+            if app.settings.dictationOutputMode == .pasteIntoFocusedApp {
+                PermissionRow(permission: .accessibility, why: "Validates the focused field and inserts your text safely.")
+            }
+            if app.settings.dictationIntent == .compose && app.settings.dictationUseScreenContext {
+                PermissionRow(permission: .screenRecording, why: "Reads only the focused window for this request. The image and OCR text are never stored.")
+            }
             if !app.dictation.isShortcutMonitoringActive {
                 HStack {
                     Text("Relaunch after granting Input Monitoring if the shortcut is still inactive.")

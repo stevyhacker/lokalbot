@@ -5,6 +5,7 @@ struct MeetingNotesEditor: View {
     let meeting: Meeting
     var searchQuery = ""
     var activeMatchIndex: Int?
+    var onTextChange: (String) -> Void = { _ in }
     @State private var text = ""
     @State private var savedText = ""
     @State private var saveTask: Task<Void, Never>?
@@ -36,6 +37,7 @@ struct MeetingNotesEditor: View {
             text = app.meetingNoteDrafts[meeting.id] ?? savedText
         }
         .onChange(of: text) {
+            onTextChange(text)
             app.meetingNoteDrafts[meeting.id] = text
             guard text != savedText else { return }
             status = "Saving…"

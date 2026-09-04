@@ -36,7 +36,11 @@ struct AgentSessionView: View {
             focusComposerWhenReady()
         }
         .onChange(of: isSelected) {
+            if isSelected, let context = app.navigationHandoff.agentContext { launchContext = context }
             focusComposerWhenReady()
+        }
+        .onChange(of: app.navigationHandoff.revision) {
+            if isSelected, let context = app.navigationHandoff.agentContext { launchContext = context }
         }
         .onChange(of: controller.state) {
             focusComposerWhenReady()

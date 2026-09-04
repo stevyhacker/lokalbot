@@ -21,8 +21,8 @@ struct CaptureDeletionReview: Identifiable {
 }
 
 extension ActivityStore {
-    func captureDeletionReview(in interval: DateInterval, includesSaved: Bool) -> CaptureDeletionReview {
-        let all = screenshots(in: interval, app: nil, bookmarkedOnly: false, includingMissingFiles: true)
+    func captureDeletionReview(in interval: DateInterval, includesSaved: Bool) throws -> CaptureDeletionReview {
+        let all = try screenshotsChecked(in: interval, includingMissingFiles: true)
         return CaptureDeletionReview(
             interval: interval, includesSaved: includesSaved,
             captures: all.filter { includesSaved || !$0.isBookmarked },

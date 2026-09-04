@@ -65,6 +65,10 @@ final class OnboardingUITests: XCTestCase {
     private func assertPage(title: String, step: Int) {
         XCTAssertTrue(text(containing: title).waitForExistence(timeout: 6),
                       "onboarding page missing: \(title)")
+        let attachment = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        attachment.name = "onboarding-step-\(step)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
         let progress = app.descendants(matching: .any).matching(NSPredicate(
             format: "identifier == 'onboarding.progress'")).firstMatch
         XCTAssertTrue(progress.waitForExistence(timeout: 4),

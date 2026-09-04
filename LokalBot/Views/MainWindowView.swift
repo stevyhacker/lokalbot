@@ -53,6 +53,13 @@ struct MainWindowView: View {
         // the only attachment point where SwiftUI honors the removal.)
         .toolbar {
             sidebarToolbarItem
+            if app.navSection == .timeline, app.evidenceReturnSection != nil {
+                ToolbarItem(placement: .navigation) {
+                    Button(action: app.returnFromEvidence) {
+                        Label("Back", systemImage: "chevron.left")
+                    }.help("Return to the source search or conversation")
+                }
+            }
             if #available(macOS 26.0, *) {
                 ToolbarSpacer(.flexible)
             }
@@ -192,13 +199,13 @@ struct MainWindowView: View {
                 identifier: "sidebar.today")
             Section {
                 sidebarDestination(
+                    "Meetings", systemImage: "waveform.circle", section: .meetings,
+                    identifier: "sidebar.meetings")
+                sidebarDestination(
                     "Timeline",
                     systemImage: "calendar.day.timeline.left",
                     section: .timeline,
                     identifier: "sidebar.timeline")
-                sidebarDestination(
-                    "Meetings", systemImage: "waveform.circle", section: .meetings,
-                    identifier: "sidebar.meetings")
                 sidebarDestination(
                     "Ask", systemImage: "sparkle.magnifyingglass", section: .ask,
                     identifier: "sidebar.ask")
@@ -249,6 +256,7 @@ struct MainWindowView: View {
             set: { selection in
                 if let selection {
                     if selection == .today { app.showingActions = false }
+                    app.evidenceReturnSection = nil
                     app.navSection = selection
                 }
             })

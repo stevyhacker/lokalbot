@@ -28,6 +28,14 @@ final class NavigationHandoffTests: XCTestCase {
         XCTAssertNil(handoff.consumeAsk())
     }
 
+    func testEmptyScreenBoundaryDoesNotBecomeUnrestrictedDuringHandoff() {
+        let handoff = NavigationHandoff()
+        handoff.stageAsk(query: "No matches", dayScope: nil, screenSnapshotIDs: [], submit: false)
+        XCTAssertEqual(handoff.consumeAsk()?.screenSnapshotIDs, [])
+        handoff.stageAsk(query: "All screens", dayScope: nil, screenSnapshotIDs: nil, submit: false)
+        XCTAssertNil(handoff.consumeAsk()?.screenSnapshotIDs)
+    }
+
     func testMeetingSeekOnlyMatchesItsDestination() {
         let handoff = NavigationHandoff()
         let expectedMeetingID = UUID()

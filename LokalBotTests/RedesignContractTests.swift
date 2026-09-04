@@ -99,12 +99,12 @@ final class RedesignContractTests: XCTestCase {
         let interval = DateInterval(start: now.addingTimeInterval(-60), end: now.addingTimeInterval(60))
         let saved = try store.insertScreenshot(ts: now, path: "", app: "Editor", ocr: "saved")
         try store.saveMoment(snapshotID: saved)
-        let review = store.captureDeletionReview(in: interval, includesSaved: false)
+        let review = try store.captureDeletionReview(in: interval, includesSaved: false)
         XCTAssertEqual(review.captures.count, 0)
         XCTAssertEqual(review.savedExcluded, 1)
-        XCTAssertEqual(store.captureDeletionReview(in: interval, includesSaved: true).captures.map(\.id), [saved])
+        XCTAssertEqual(try store.captureDeletionReview(in: interval, includesSaved: true).captures.map(\.id), [saved])
         _ = try store.insertScreenshot(ts: now, path: "", app: "Editor", ocr: "new")
-        XCTAssertFalse(review.covers(store.captureDeletionReview(in: interval, includesSaved: false)))
+        XCTAssertFalse(review.covers(try store.captureDeletionReview(in: interval, includesSaved: false)))
         XCTAssertEqual(store.ocrText(snapshotID: saved), "saved")
     }
 

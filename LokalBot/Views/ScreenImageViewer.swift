@@ -18,7 +18,8 @@ struct ScreenImageViewer: View {
                 Spacer()
                 Button("Fit") { fit = true }
                 Button("Actual size") { fit = false; zoom = 1 }
-                Slider(value: $zoom, in: 0.25...3).frame(width: 120).onChange(of: zoom) { fit = false }
+                Slider(value: $zoom, in: 0.25...3) { Text("Image zoom") }.labelsHidden()
+                    .frame(width: 120).onChange(of: zoom) { fit = false }
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
             }.padding(12)
             Divider()

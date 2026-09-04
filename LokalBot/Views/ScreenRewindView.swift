@@ -289,7 +289,9 @@ struct ScreenRewindView: View {
                 Spacer()
                 Button("Review deletion") {
                     guard let interval = selectedInterval else { return }
-                    deletionReview = app.activityStore.captureDeletionReview(in: interval, includesSaved: includeSavedMoments)
+                    do {
+                        deletionReview = try app.activityStore.captureDeletionReview(in: interval, includesSaved: includeSavedMoments)
+                    } catch { deletionFailures = ["Could not prepare review: \(error.localizedDescription)"] }
                 }
                 .disabled(selectedCaptureCount == 0)
                 .accessibilityIdentifier("rewind.deleteRange")
@@ -318,7 +320,9 @@ struct ScreenRewindView: View {
 
     private var selectedCaptureCount: Int {
         guard let interval = selectedInterval else { return 0 }
-        return app.activityStore.captureDeletionReview(in: interval, includesSaved: includeSavedMoments).captures.count
+        return Set(frames.flatMap(\.screenshots).filter {
+            $0.ts >= interval.start && $0.ts < interval.end && (includeSavedMoments || !$0.isBookmarked)
+        }.map(\.id)).count
     }
 
     private func synchronizeSelection() {

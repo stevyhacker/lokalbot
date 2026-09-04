@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 /// Hosted-only review of the integrated redesign against synthetic evidence.
@@ -21,8 +22,10 @@ final class RedesignUITests: XCTestCase {
         for size in ["1000x700", "1180x740", "1440x900"] {
             for appearance in ["light", "dark"] {
                 try launch(["LOKALBOT_CAPTURE_SIZE": size, "LOKALBOT_CAPTURE_APPEARANCE": appearance,
-                            "LOKALBOT_SCREEN_MEMORY_DEMO": "1"])
+                            "LOKALBOT_SCREEN_MEMORY_DEMO": "1", "LOKALBOT_AGENT_UI_TEST_READY": "1"])
                 XCTAssertTrue(element("today.header").waitForExistence(timeout: 8))
+                // The app applies the requested size after window creation.
+                _ = XCTWaiter.wait(for: [], timeout: 2)
                 snapshot("\(size)-\(appearance)-today")
                 app.buttons["Review actions"].click()
                 XCTAssertTrue(element("actions.list").waitForExistence(timeout: 4))
@@ -48,6 +51,23 @@ final class RedesignUITests: XCTestCase {
                 UITestHarness.clickSidebar("sidebar.settings", in: app)
                 UITestHarness.selectSettingsCategory("Privacy & Data", in: app)
                 snapshot("\(size)-\(appearance)-settings")
+                let review = app.buttons["Review expired context…"]
+                UITestHarness.scrollTo(review, in: app)
+                review.click()
+                XCTAssertTrue(app.buttons["retention.confirm"].waitForExistence(timeout: 4))
+                snapshot("\(size)-\(appearance)-retention-review")
+                app.buttons["Cancel"].click()
+                UITestHarness.selectSettingsCategory("Models", in: app)
+                XCTAssertTrue(element("models.residency").waitForExistence(timeout: 5))
+                snapshot("\(size)-\(appearance)-models")
+                UITestHarness.clickSidebar("sidebar.type", in: app)
+                UITestHarness.selectSegment("Dictation", pickerIdentifier: "type.tab", in: app)
+                snapshot("\(size)-\(appearance)-dictation")
+                UITestHarness.selectSegment("Autocomplete", pickerIdentifier: "type.tab", in: app)
+                snapshot("\(size)-\(appearance)-autocomplete")
+                UITestHarness.clickSidebar("sidebar.agent", in: app)
+                XCTAssertTrue(app.textFields["agent.composer"].waitForExistence(timeout: 5))
+                snapshot("\(size)-\(appearance)-agent")
             }
         }
     }
@@ -90,7 +110,7 @@ final class RedesignUITests: XCTestCase {
         snapshot("autocomplete-keyboard-rehearsal")
     }
 
-    func testContrastAndReducedMotionKeepActionsAccessible() throws {
+    func testHighContrastKeepsActionsAccessible() throws {
         try launch(["LOKALBOT_CAPTURE_APPEARANCE": "contrast-dark"])
         XCTAssertTrue(app.buttons["toolbar.record"].waitForExistence(timeout: 5))
         app.typeKey(",", modifierFlags: .command)
@@ -98,7 +118,40 @@ final class RedesignUITests: XCTestCase {
         app.textFields["settings.search"].click()
         app.textFields["settings.search"].typeText("retention")
         XCTAssertTrue(element("settings.searchResults").waitForExistence(timeout: 5))
-        snapshot("settings-contrast-reduced-motion")
+        try app.performAccessibilityAudit(for: [.sufficientElementDescription, .action])
+        snapshot("settings-high-contrast")
+    }
+
+    func testReducedMotionWorkspaceRemainsOperable() throws {
+        guard UserDefaults(suiteName: "org.localhost.lokalbot.redesign-ci")?.bool(forKey: "requiresReducedMotion") == true else {
+            throw XCTSkip("Runs in the dedicated hosted Reduce Motion step")
+        }
+        XCTAssertTrue(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+                      "The hosted runner must actually enable Reduce Motion")
+        try launch(["LOKALBOT_CAPTURE_APPEARANCE": "contrast-dark", "LOKALBOT_SCREEN_MEMORY_DEMO": "1"])
+        UITestHarness.clickSidebar("sidebar.timeline", in: app)
+        XCTAssertTrue(element("timeline.workSessions").waitForExistence(timeout: 5))
+        UITestHarness.clickSidebar("sidebar.ask", in: app)
+        UITestHarness.selectSegment("Search", pickerIdentifier: "ask.retrieval", in: app)
+        app.textFields["search.field"].click()
+        app.textFields["search.field"].typeText("failover")
+        XCTAssertTrue(element("search.hit.\(fixture.designReview.id.uuidString).segment").waitForExistence(timeout: 6))
+        try app.performAccessibilityAudit(for: [.sufficientElementDescription, .action])
+        snapshot("search-reduced-motion")
+    }
+
+    func testRetentionReviewCancelPreservesPolicy() throws {
+        try launch(["LOKALBOT_SCREEN_MEMORY_DEMO": "1"])
+        UITestHarness.clickSidebar("sidebar.settings", in: app)
+        UITestHarness.selectSettingsCategory("Privacy & Data", in: app)
+        let before = UserDefaults(suiteName: suite!)?.data(forKey: "lokalbotv3.settings")
+        let review = app.buttons["Review expired context…"]
+        UITestHarness.scrollTo(review, in: app)
+        review.click()
+        XCTAssertTrue(app.buttons["retention.confirm"].waitForExistence(timeout: 5))
+        app.buttons["Cancel"].click()
+        XCTAssertFalse(app.buttons["retention.confirm"].exists)
+        XCTAssertEqual(UserDefaults(suiteName: suite!)?.data(forKey: "lokalbotv3.settings"), before)
     }
 
     private func launch(_ environment: [String: String] = [:]) throws {

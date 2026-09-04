@@ -65,9 +65,11 @@ struct ModelReadinessSnapshot: Equatable, Sendable {
     }
 
     /// True when the Think role can run without triggering a model download.
-    /// Remote backends are always "ready" — their approval flow is separate.
+    /// External endpoints must be approved; Apple Intelligence must be available.
+    @MainActor
     static func thinkReady(_ settings: AppSettings, storage: StorageManager) -> Bool {
         guard !InferencePresentation(settings: settings).isBlocked else { return false }
+        if settings.summarizerBackend == .appleIntelligence { return FoundationModelAvailability.current().isAvailable }
         guard settings.summarizerBackend == .builtIn else { return true }
         guard let entry = ModelCatalog.entry(
             id: settings.builtInModelID,
@@ -92,6 +94,8 @@ struct ModelReadinessSnapshot: Equatable, Sendable {
             || old.summarizerBackend != new.summarizerBackend
             || old.builtInModelID != new.builtInModelID
             || old.customBuiltInModels != new.customBuiltInModels
+            || old.approvedRemoteInferenceOrigins != new.approvedRemoteInferenceOrigins
+            || old.openAIBaseURL != new.openAIBaseURL || old.ollamaBaseURL != new.ollamaBaseURL
     }
 
     /// Total bytes of the core GGUF models (Think when built-in, Autocomplete)
@@ -107,6 +111,7 @@ struct ModelReadinessSnapshot: Equatable, Sendable {
         }.reduce(Int64(0)) { $0 + Int64($1.sizeBytes ?? 0) }
     }
 
+    @MainActor
     static func make(
         settings: AppSettings,
         storage: StorageManager,
@@ -117,11 +122,14 @@ struct ModelReadinessSnapshot: Equatable, Sendable {
         let transcriptionReady = transcriptionReady(settings)
         let thinkReady = thinkReady(settings, storage: storage)
         let autocompleteReady = autocompleteReady(settings, storage: storage)
-        let provenance: Provenance
+        var provenance: Provenance
         switch InferencePresentation(settings: settings) {
         case .onDevice: provenance = .local
         case .remote(let host): provenance = .externalThink(host)
         case .blocked(let reason): provenance = .blockedThink(reason)
+        }
+        if settings.summarizerBackend == .appleIntelligence, !thinkReady {
+            provenance = .blockedThink(FoundationModelAvailability.current().reason ?? "Apple Intelligence is unavailable.")
         }
         let modelsFolder = storage.rootURL.appendingPathComponent("models", isDirectory: true)
         return Self(

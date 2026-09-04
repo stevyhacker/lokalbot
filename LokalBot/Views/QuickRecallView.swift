@@ -2,8 +2,7 @@ import AppKit
 import SwiftUI
 
 /// Compact system-wide search and assistant surface. Typing keeps local recall
-/// instant; the pinned Ask row (or Return) answers in this window, with the full
-/// Ask section still available when a conversation needs more room.
+/// explicit Ask opens a reviewed draft, while Return reveals the selected source.
 struct QuickRecallView: View {
     @EnvironmentObject private var app: AppState
 
@@ -121,15 +120,13 @@ private struct QuickRecallContent: View {
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("Clear")
             }
-            if showingConversation {
-                Button(action: openFullAsk) {
-                    Image(systemName: "arrow.up.right.square")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Open full Ask")
-                .accessibilityLabel("Open full Ask")
+            Button(action: openFullAsk) {
+                Image(systemName: "arrow.up.right.square")
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Open full Ask")
+            .accessibilityLabel("Open full Ask")
             Text(app.settings.quickRecallEnabled ? QuickRecallHotKeyController.shortcutLabel : "Shortcut off")
                 .font(.caption.monospaced())
                 .foregroundStyle(.tertiary)
@@ -156,7 +153,7 @@ private struct QuickRecallContent: View {
             } actions: {
                 VStack(spacing: 7) {
                     ForEach(Array(model.suggestions.prefix(3).enumerated()), id: \.offset) { index, suggestion in
-                        Button { ask(suggestion) } label: {
+                        Button { ask(suggestion, usingResults: false) } label: {
                             HStack {
                                 Text(suggestion)
                                     .foregroundStyle(.primary)
@@ -386,19 +383,21 @@ private struct QuickRecallContent: View {
         dismiss()
     }
 
-    private func ask(_ question: String) {
+    private func ask(_ question: String, usingResults: Bool = true) {
         let value = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, !model.isResponding else { return }
         if !showingConversation {
-            app.recallState.meetingIDs = Set(meetingHits.map(\.meetingID))
-            app.recallState.screenIDs = matchingScreenIDs
-            app.recallState.sources = []
-            if !meetingHits.isEmpty { app.recallState.sources.insert(.meetings) }
-            if !screenHits.isEmpty { app.recallState.sources.insert(.screen) }
-            if app.recallState.sources.isEmpty { app.recallState.sources = [.meetings] }
+            if usingResults {
+                app.recallState.meetingIDs = Set(meetingHits.map(\.meetingID))
+                app.recallState.screenIDs = matchingScreenIDs
+                app.recallState.sources = []
+                if !meetingHits.isEmpty { app.recallState.sources.insert(.meetings) }
+                if !screenHits.isEmpty { app.recallState.sources.insert(.screen) }
+                if app.recallState.sources.isEmpty { app.recallState.sources = [.meetings] }
+            }
             app.recallQuery = value
             app.openAsk(query: value, dayScope: app.askDayScope,
-                        screenSnapshotIDs: Array(app.recallState.screenIDs ?? []),
+                        screenSnapshotIDs: app.recallState.screenIDs.map { Array($0) },
                         meetingIDs: app.recallState.meetingIDs)
             WindowAccess.shared.open("main")
             dismiss()
@@ -433,7 +432,7 @@ private struct QuickRecallContent: View {
             app.navSection = .ask
         } else {
             app.recallQuery = query
-            app.openAsk(query: query, dayScope: app.askDayScope, screenSnapshotIDs: Array(app.recallState.screenIDs ?? []),
+            app.openAsk(query: query, dayScope: app.askDayScope, screenSnapshotIDs: app.recallState.screenIDs.map { Array($0) },
                         meetingIDs: app.recallState.meetingIDs, mode: .keyword)
         }
         WindowAccess.shared.open("main")
@@ -633,7 +632,7 @@ private struct QuickRecallApplicationIcon: View {
             if let icon = QuickRecallApplicationIconResolver.icon(for: appName) {
                 Image(nsImage: icon)
                     .resizable()
-                    .aspectRatio(contentMode: .fit)
+                    .scaledToFit()
             } else {
                 Image(systemName: "app.fill")
                     .resizable()

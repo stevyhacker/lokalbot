@@ -92,7 +92,10 @@ private struct AskContent: View {
         .onChange(of: mode) { if mode == .keyword { runSearch() } }
         .onChange(of: facet) { runSearch() }
         .onChange(of: screenDateScope) { runSearch() }
-        .onChange(of: app.askDayScope) { if mode == .keyword { runSearch() } }
+        .onChange(of: app.askDayScope) {
+            reconcilePinnedScreenScope()
+            if mode == .keyword { runSearch() }
+        }
         .onChange(of: selectedScreenApp) { runSearch() }
         .onKeyPress(.downArrow) {
             guard mode == .keyword, resultCount > 0 else { return .ignored }
@@ -136,17 +139,20 @@ private struct AskContent: View {
         app.askDayScope = handoff.dayScope.map(Calendar.current.startOfDay(for:))
         mode = handoff.mode
         meetingScope = handoff.meetingIDs
-        screenScope = handoff.screenSnapshotIDs.isEmpty ? nil : Set(handoff.screenSnapshotIDs)
+        screenScope = handoff.screenSnapshotIDs.map { Set($0) }
         if meetingScope != nil { sources = [.meetings] }
         if screenScope != nil { sources = meetingScope == nil ? [.screen] : [.meetings, .screen] }
         if let handedQuery = handoff.query {
             query = handedQuery
         }
         pinnedScreens = []
-        if !handoff.screenSnapshotIDs.isEmpty, pinnedScreens.isEmpty {
+        // A single moment is an attachment; a result/session collection is a
+        // retrieval boundary. Do not eagerly copy an entire session into a prompt.
+        let attachedIDs = handoff.screenSnapshotIDs?.count == 1 ? handoff.screenSnapshotIDs ?? [] : []
+        if !attachedIDs.isEmpty {
             rememberScreenAccessBeforePinning()
         }
-        for snapshotID in handoff.screenSnapshotIDs {
+        for snapshotID in attachedIDs {
             guard !pinnedScreens.contains(where: { $0.snapshotID == snapshotID }),
                   let screenshot = app.activityStore.screenshot(id: snapshotID) else { continue }
             let ocr = app.activityStore.ocrText(snapshotID: snapshotID) ?? ""
@@ -195,6 +201,7 @@ private struct AskContent: View {
                 askScopeControls
             } else {
                 searchControls
+                selectedEvidenceControl
             }
             if mode == .ask, !pinnedScreens.isEmpty {
                 pinnedContextRow
@@ -323,22 +330,29 @@ private struct AskContent: View {
     private var askScopeControls: some View {
         HStack(spacing: 8) {
             sourceScopeControl
-            if meetingScope != nil || screenScope != nil {
-                Button {
-                    meetingScope = nil
-                    screenScope = nil
-                } label: {
-                    Label("\(meetingScope?.count ?? 0) meetings · \(screenScope?.count ?? 0) screens", systemImage: "xmark.circle")
-                }
-                .help("Clear the selected evidence boundary")
-                .accessibilityIdentifier("ask.selectedEvidence")
-            }
+            selectedEvidenceControl
             timeScopeControl
             Spacer(minLength: 8)
             inferenceStatus
         }
         .font(WorkspaceTypography.control)
         .controlSize(.small)
+    }
+
+    @ViewBuilder private var selectedEvidenceControl: some View {
+        if meetingScope != nil || screenScope != nil {
+            Button {
+                meetingScope = nil
+                screenScope = nil
+                clearPinnedScreens(restoringScope: true)
+                if mode == .keyword { runSearch() }
+            } label: {
+                Label("\(meetingScope.map { "\($0.count) meetings" } ?? "All meetings") · \(screenScope.map { "\($0.count) screens" } ?? "All screens")",
+                      systemImage: "xmark.circle")
+            }
+            .help("Clear the selected evidence boundary")
+            .accessibilityIdentifier("ask.selectedEvidence")
+        }
     }
 
     private var sourceScopeControl: some View {
@@ -739,6 +753,7 @@ private struct AskContent: View {
 
     private func reconcilePinnedScreenScope() {
         guard !pinnedScreens.isEmpty else { return }
+        pinnedScreens = ScreenAskContext.withinDay(pinnedScreens, day: app.askDayScope)
         sources.insert(.screen)
         screenScope = Set(pinnedScreens.map(\.snapshotID))
     }

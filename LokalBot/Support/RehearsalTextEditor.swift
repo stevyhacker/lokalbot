@@ -74,14 +74,18 @@ struct RehearsalTextEditor: NSViewRepresentable {
 }
 
 private final class RehearsalNativeTextView: NSTextView {
+    private let inputSource = CotypingKeyboardInputSourceMonitor()
     var suggestion = ""
     var acceptKey: CotypingAcceptKey = .tab
     var onAccept: (() -> Void)?
     var onReject: (() -> Void)?
 
     private var canAccept: Bool {
-        !suggestion.isEmpty && !hasMarkedText()
-            && selectedRange().length == 0 && selectedRange().location == (string as NSString).length
+        !suggestion.isEmpty && selectedRange().location == (string as NSString).length
+            && CotypingAcceptanceSnapshotPolicy.canAccept(
+                markedTextState: hasMarkedText() ? .active : .inactive,
+                composingInputModeActive: inputSource.isComposingIMEActive,
+                hasLiveContent: true, selectionLength: selectedRange().length)
     }
 
     override func keyDown(with event: NSEvent) {

@@ -32,13 +32,14 @@ struct ModelsView: View {
     @State private var confirmingOpenRouterAccountPolicy = false
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
                 ModelStackOverviewView(expandedRoles: $expandedRoles) {
                     VStack(alignment: .leading, spacing: 16) {
-                        if expandedRoles.contains(.transcribe) { transcriptionCard }
+                        if expandedRoles.contains(.transcribe) { transcriptionCard.settingTarget("settings.transcriptionModel", selected: app.focusedSettingID) }
                         if expandedRoles.contains(.think) { summarizationCard }
-                        if expandedRoles.contains(.autocomplete) { cotypingCard }
+                        if expandedRoles.contains(.autocomplete) { cotypingCard.settingTarget("settings.cotypingBuiltInModelID", selected: app.focusedSettingID) }
                     }
                 }
                 ModelMemoryBanner()
@@ -49,6 +50,18 @@ struct ModelsView: View {
             .padding(WorkspaceMetric.pagePadding)
             .frame(maxWidth: WorkspaceMetric.contentMaxWidth, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .onChange(of: app.focusedSettingID, initial: true) {
+            guard let id = app.focusedSettingID else { return }
+            if ["settings.transcriptionModel", "settings.transcriptionLanguage", "settings.transcriptionPrompt"].contains(id) {
+                expandedRoles.insert(.transcribe)
+            } else if id == "settings.cotypingBuiltInModelID" {
+                expandedRoles.insert(.autocomplete)
+            } else if id != "settings.models" {
+                expandedRoles.insert(.think)
+            }
+            DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
+        }
         }
         .task {
             refreshSpeechModel()
@@ -136,6 +149,7 @@ struct ModelsView: View {
                 }
             }
             .frame(maxWidth: 320)
+            .settingTarget("settings.transcriptionLanguage", selected: app.focusedSettingID)
             TextField(
                 "Names, acronyms, and domain vocabulary",
                 text: $app.settings.transcriptionPrompt,
@@ -143,6 +157,7 @@ struct ModelsView: View {
                 .lineLimit(2...4)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("models.transcriptionPrompt")
+                .settingTarget("settings.transcriptionPrompt", selected: app.focusedSettingID)
             Text("Optional context for Whisper and Qwen3-ASR, such as participant names, product terms, and preferred spelling. It stays on this Mac.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -196,6 +211,7 @@ struct ModelsView: View {
                     Text(backend.displayName).tag(backend)
                 }
             }
+            .settingTarget("settings.summarizerBackend", selected: app.focusedSettingID)
             switch app.settings.summarizerBackend {
             case .builtIn:
                 VStack(alignment: .leading, spacing: 6) {
@@ -227,6 +243,8 @@ struct ModelsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             case .ollama:
                 TextField("Server", text: $app.settings.ollamaBaseURL)
+                    .textFieldStyle(.roundedBorder)
+                    .settingTarget("settings.ollamaBaseURL", selected: app.focusedSettingID)
                 remoteEndpointDisclosure(rawURL: app.settings.ollamaBaseURL)
                 LabeledContent("Status") {
                     HStack(spacing: 6) {
@@ -247,7 +265,11 @@ struct ModelsView: View {
                 }
             case .openAICompatible:
                 TextField("Base URL (…/v1)", text: $app.settings.openAIBaseURL)
+                    .textFieldStyle(.roundedBorder)
+                    .settingTarget("settings.openAIBaseURL", selected: app.focusedSettingID)
                 TextField("Model name", text: $app.settings.openAIModel)
+                    .textFieldStyle(.roundedBorder)
+                    .settingTarget("settings.openAIModel", selected: app.focusedSettingID)
                 HStack(spacing: 8) {
                     SecureField("API key (optional)", text: $openAIAPIKeyDraft)
                         .onChange(of: openAIAPIKeyDraft) { _, _ in

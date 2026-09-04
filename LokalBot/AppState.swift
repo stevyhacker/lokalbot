@@ -226,6 +226,8 @@ final class AppState: ObservableObject {
         evidenceReturnSection = nil
     }
     @Published var meetingWorkspaceTabs: [UUID: MeetingWorkspaceTab] = [:]
+    var meetingPlaybackPositions: [UUID: TimeInterval] = [:]
+    var meetingPlaybackSpeeds: [UUID: Float] = [:]
     func openActions() { showingActions = true; navSection = .today }
     private static let typeTabDefaultsKey = "lokalbotv3.type.selectedTab"
     private static var navigationDefaults: UserDefaults {
@@ -273,7 +275,7 @@ final class AppState: ObservableObject {
     /// Navigate to the Ask section, optionally pre-filling the query and/or
     /// scoping it to a day (Timeline's "Ask about this day").
     func openAsk(query: String = "", dayScope: Date? = nil,
-                 screenSnapshotIDs: [Int64] = [], submit: Bool = false,
+                 screenSnapshotIDs: [Int64]? = nil, submit: Bool = false,
                  meetingIDs: Set<Meeting.ID>? = nil, mode: AskMode = .ask) {
         navigationHandoff.stageAsk(
             query: query,

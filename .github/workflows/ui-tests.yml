@@ -107,6 +107,14 @@ jobs:
           UI_TEST_FILTER: ${{ inputs.filter || '' }}
         run: Scripts/ui-tests.sh "$UI_TEST_FILTER"
 
+      - name: Verify Reduce Motion
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+        run: |
+          defaults write com.apple.universalaccess reduceMotion -bool true
+          defaults write org.localhost.lokalbot.redesign-ci requiresReducedMotion -bool true
+          Scripts/ui-tests.sh 'RedesignUITests/testReducedMotionWorkspaceRemainsOperable'
+
       - name: Save UI evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

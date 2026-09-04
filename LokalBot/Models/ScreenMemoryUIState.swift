@@ -59,6 +59,11 @@ struct ScreenAskContext: Equatable, Identifiable {
 
     /// Adds primary-evidence context for the model while the UI can still show
     /// only the user's concise question in the transcript.
+    static func withinDay(_ contexts: [Self], day: Date?, calendar: Calendar = .current) -> [Self] {
+        guard let day else { return contexts }
+        return contexts.filter { calendar.isDate($0.timestamp, inSameDayAs: day) }
+    }
+
     static func prompt(question: String, contexts: [ScreenAskContext]) -> String {
         guard !contexts.isEmpty else { return question }
         let sources = contexts.map { context in

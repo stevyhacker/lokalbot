@@ -115,7 +115,11 @@ private struct MeetingWorkspaceDetail: View {
                         case .overview: overviewContent
                         case .actions: actionItemsSection
                         case .transcript: transcriptSection
-                        case .notes: MeetingNotesEditor(meeting: meeting, searchQuery: visibleSearchQuery, activeMatchIndex: activeOccurrence(at: .notes))
+                        case .notes:
+                            MeetingNotesEditor(meeting: meeting, searchQuery: visibleSearchQuery, activeMatchIndex: activeOccurrence(at: .notes)) {
+                                notes = $0
+                                searchContentRevision += 1
+                            }
                         }
                     }
                     .padding(WorkspaceMetric.pagePadding)
@@ -193,6 +197,8 @@ private struct MeetingWorkspaceDetail: View {
                 onCancel: { speakerRenameDraft = nil })
         }
         .onDisappear {
+            app.meetingPlaybackPositions[meeting.id] = player.currentTime
+            app.meetingPlaybackSpeeds[meeting.id] = player.speed
             player.stop()
             stopSpeech(clearError: false)
         }
@@ -616,7 +622,7 @@ private struct MeetingWorkspaceDetail: View {
                 if let notes, !notes.isEmpty {
                     append("Your notes", at: .notesLabel)
                     append(
-                        SelectableDigestText.searchableText(from: notes),
+                        notes,
                         at: .notes)
                 }
                 if let summary, !summary.isEmpty {
@@ -669,7 +675,11 @@ private struct MeetingWorkspaceDetail: View {
         uiTestDiagnosticLog(
             "meeting.load id=\(meeting.id) "
                 + "calendarCandidates=\(calendarSpeakerCandidates.count)")
+        let position = player.isLoaded ? player.currentTime : app.meetingPlaybackPositions[meeting.id] ?? 0
+        let speed = player.isLoaded ? player.speed : app.meetingPlaybackSpeeds[meeting.id] ?? 1
         player.load(folder: folder, hasSystemTrack: meeting.hasSystemTrack)
+        player.speed = speed
+        player.seek(to: position)
         app.outcomeIndex.refresh(meeting: meeting)
         consumeMeetingSeek()
         searchContentRevision += 1
@@ -1110,6 +1120,7 @@ private struct MeetingAudioBar: View {
                 .buttonStyle(.plain)
                 .keyboardShortcut(.space, modifiers: [])
                 .help("Play / pause (Space)")
+                .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
                 WaveformView(
                     url: MeetingAudioFiles.readableURL(for: .mic, in: folder)
                         ?? MeetingAudioFiles.readableURL(for: .system, in: folder)
@@ -1455,50 +1466,6 @@ private struct TranscriptEvidenceList: View {
     ) -> Int? {
         guard activeMatch?.location == location else { return nil }
         return activeMatch?.occurrenceIndex
-    }
-}
-
-private struct MeetingProcessingToolbarModifier: ViewModifier {
-    @ObservedObject var app: AppState
-    let meeting: Meeting
-
-    func body(content: Content) -> some View {
-        content.toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    app.reprocess(meeting, transcribe: true, summarize: true)
-                } label: {
-                    Label("Transcribe & Summarize", systemImage: "wand.and.stars")
-                        .labelStyle(.titleAndIcon)
-                }
-                .help("Transcribe & summarize")
-                .accessibilityIdentifier("toolbar.transcribeAndSummarize")
-
-                Button {
-                    app.reprocess(meeting, transcribe: true, summarize: false)
-                } label: {
-                    Label("Transcribe", systemImage: "waveform")
-                        .labelStyle(.titleAndIcon)
-                }
-                .help("Transcribe only")
-                .accessibilityIdentifier("toolbar.transcribeOnly")
-
-                Button {
-                    app.reprocess(meeting, transcribe: false, summarize: true)
-                } label: {
-                    Label("Re-summarize", systemImage: "arrow.clockwise")
-                        .labelStyle(.titleAndIcon)
-                }
-                .help("Re-summarize and keep the current transcript")
-                .accessibilityIdentifier("toolbar.resummarize")
-            }
-        }
-    }
-}
-
-private extension View {
-    func meetingProcessingToolbar(app: AppState, meeting: Meeting) -> some View {
-        modifier(MeetingProcessingToolbarModifier(app: app, meeting: meeting))
     }
 }
 

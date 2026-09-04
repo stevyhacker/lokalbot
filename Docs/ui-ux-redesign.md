@@ -32,8 +32,8 @@ This change implements the app-wide redesign as one pull request. The main flow 
 
 ## Verification
 
-The non-UI regression suite covers the existing library/runtime contracts plus the new migration, draft setup, bounded scope, grouping, calendar-day union, manual/retention review, and 0/40/400-action persistence/Undo cases. SwiftLint and whitespace validation apply to the entire patch.
+The integrated non-UI suite passes with 1,795 tests passed, three skipped, and no failures. It covers the existing library/runtime contracts plus the new migration, draft setup, bounded scope, grouping, calendar-day union, manual/retention review, and 0/40/400-action persistence/Undo cases. SwiftLint and whitespace validation apply to the entire patch.
 
-Hosted XCUITest exercises the new navigation and interaction contracts with a synthetic library. `RedesignUITests` attaches light/dark screenshots at 1000×700, 1180×740 and 1440×900, along with bounded drafts, keyboard rehearsal and contrast states. Test result bundles are retained by the UI workflow for review. Local UI automation is not part of validation.
+Hosted XCUITest exercises the new navigation and interaction contracts with a synthetic library. `RedesignUITests` attaches light/dark screenshots at 1000×700, 1180×740 and 1440×900, along with bounded drafts, keyboard rehearsal, retention cancellation, model/setup screens and contrast states. A separate hosted run enables Reduce Motion and verifies the actual macOS accessibility setting. Accessibility audits check control descriptions and actions. Test result bundles are retained by the UI workflow for review. Local UI automation is not part of validation.
 
 Exact-revision CI status and any remaining environment limitations belong in the PR's validation notes. This PR does not merge or release the application. The private audit screenshots are intentionally excluded from the repository.
