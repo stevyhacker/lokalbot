@@ -14,9 +14,10 @@ struct ScreenMomentDetailView: View {
     @State private var confirmingDeletion = false
     @State private var detailsExpanded = false
     @State private var fullTextExpanded = false
+    @State private var showingImage = false
 
     private var capturedText: String {
-        app.activityStore.ocrText(snapshotID: screenshot.id) ?? ""
+        app.activityStore.ocrText(snapshotID: screenshot.id, maxChars: Int.max) ?? ""
     }
 
     var body: some View {
@@ -31,6 +32,7 @@ struct ScreenMomentDetailView: View {
                         cornerRadius: Brand.Radius.panel)
                         .background(.black.opacity(0.82),
                                     in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
+                    Button("Open image · zoom and actual size") { showingImage = true }
                 } else {
                     Label("This moment retained text context without screen pixels.",
                           systemImage: "text.viewfinder")
@@ -65,6 +67,7 @@ struct ScreenMomentDetailView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .onAppear(perform: loadNote)
+        .sheet(isPresented: $showingImage) { ScreenImageViewer(screenshot: screenshot) }
         .confirmationDialog("Delete this context moment?", isPresented: $confirmingDeletion) {
             Button("Delete context moment", role: .destructive, action: deleteCapture)
         } message: {
@@ -156,7 +159,7 @@ struct ScreenMomentDetailView: View {
         VStack(alignment: .leading, spacing: 6) {
             Label("Visible text excerpt", systemImage: "text.quote")
                 .font(WorkspaceTypography.sectionTitle)
-            Text(capturedText)
+            Text(fullTextExpanded ? capturedText : (SnippetCleaner.withoutTitleEcho(capturedText, title: screenshot.windowTitle) ?? capturedText))
                 .font(WorkspaceTypography.body)
                 .textSelection(.enabled)
                 .lineLimit(fullTextExpanded ? nil : 6)
@@ -188,7 +191,7 @@ struct ScreenMomentDetailView: View {
                 app.openAsk(
                     query: "What was I looking at here?",
                     screenSnapshotIDs: [screenshot.id],
-                    submit: true)
+                    submit: false)
             } label: {
                 Label("Ask about this", systemImage: "sparkles")
             }
@@ -204,6 +207,7 @@ struct ScreenMomentDetailView: View {
 
     private var savedNote: some View {
         VStack(alignment: .leading, spacing: 6) {
+            Text("Saved until you unsave or delete it.").workspaceTextRole(.supporting)
             Text("Saved moment note").font(WorkspaceTypography.sectionTitle)
             TextField("Why does this moment matter?", text: $note, axis: .vertical)
                 .textFieldStyle(.roundedBorder)

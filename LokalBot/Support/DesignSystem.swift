@@ -70,7 +70,7 @@ enum WorkspaceMetric {
     static let readingMaxWidth: CGFloat = 780
     /// Timeline context remains useful beside the chronology before it drawers.
     static let timelineContextMinWidth: CGFloat = 420
-    static let timelineDrawerBreakpoint: CGFloat = 980
+    static let timelineDrawerBreakpoint: CGFloat = 820
     static let timelineDrawerMaxWidth: CGFloat = 520
 }
 
@@ -116,17 +116,26 @@ private struct WorkspaceTextRoleModifier: ViewModifier {
 /// One honest local/remote inference disclosure. Callers provide copy tailored
 /// to the surface while this view owns readable type and semantic icon color.
 struct InferenceDisclosure: View {
-    let usesRemote: Bool
+    let destination: InferencePresentation
     let localText: String
     let remoteText: String
 
+    init(settings: AppSettings, localText: String, remoteText: String) {
+        destination = InferencePresentation(settings: settings)
+        self.localText = localText
+        self.remoteText = remoteText
+    }
+
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: usesRemote ? "network" : "lock.shield")
-                .foregroundStyle(usesRemote ? Brand.amber : Brand.teal)
-            Text(usesRemote ? remoteText : localText)
-                .workspaceTextRole(.trust)
-                .fixedSize(horizontal: false, vertical: true)
+            Image(systemName: destination.icon)
+                .foregroundStyle(destination == .onDevice ? Brand.teal : Brand.amber)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(destination.label).font(WorkspaceTypography.metadataEmphasis)
+                Text(destination.detail(local: localText, remote: remoteText))
+                    .workspaceTextRole(destination.isBlocked ? .warning : .trust)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .accessibilityElement(children: .combine)
     }
@@ -554,5 +563,16 @@ struct StatTile: View {
         }
         .fixedSize()
         .chipChrome()
+    }
+}
+
+extension View {
+    /// Search scrolls to the exact editable control, then leaves a visible
+    /// highlight until another setting/category is chosen.
+    func settingTarget(_ id: String, selected: String?) -> some View {
+        self.id(id)
+            .padding(selected == id ? 6 : 0)
+            .background(selected == id ? Brand.teal.opacity(0.14) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: Brand.Radius.control))
     }
 }

@@ -22,6 +22,7 @@ struct ActivityBlock: Identifiable, Equatable, Sendable {
 struct ScreenSearchFilter: Equatable, Sendable {
     var interval: DateInterval?
     var app: String?
+    var snapshotIDs: Set<Int64>?
 
     static let all = ScreenSearchFilter()
 
@@ -430,7 +431,7 @@ final class ActivityStore {
     /// rescue the meeting search uses.
     func searchOCR(_ query: String, limit: Int = 40,
                    matchAll: Bool = true, dropStopWords: Bool = false,
-                   filter: ScreenSearchFilter = .all) -> [OCRHit] {
+                   filter: ScreenSearchFilter = .all, groupResults: Bool = true) -> [OCRHit] {
         guard limit > 0 else { return [] }
         guard let match = SearchIndex.ftsQuery(from: query, matchAll: matchAll,
                                                dropStopWords: dropStopWords) else { return [] }
@@ -439,6 +440,14 @@ final class ActivityStore {
             "CAST(ocr_fts.snapshot_id AS INTEGER) > 0",
         ]
         var bindings: [Any] = [match]
+        if let ids = filter.snapshotIDs {
+            guard !ids.isEmpty else { return [] }
+            let parameters = ids.sorted().map { id -> String in
+                bindings.append(id)
+                return "?\(bindings.count)"
+            }.joined(separator: ",")
+            conditions.append("CAST(ocr_fts.snapshot_id AS INTEGER) IN (\(parameters))")
+        }
         Self.appendFilter(
             filter,
             timestampColumn: "CAST(ocr_fts.ts AS REAL)",
@@ -496,11 +505,10 @@ final class ActivityStore {
                            ) AS capture_count
                     FROM candidates
                 )
-                SELECT latest_snapshot_id, latest_captured_at, latest_app,
-                       latest_window_title, snippet_text, similarity_group_id,
-                       capture_count
+                SELECT \(groupResults ? "latest_snapshot_id, latest_captured_at, latest_app, latest_window_title" : "snapshot_id, captured_at, app, window_title"),
+                       snippet_text, similarity_group_id, \(groupResults ? "capture_count" : "1")
                 FROM grouped
-                WHERE evidence_rank = 1
+                WHERE \(groupResults ? "evidence_rank = 1" : "1 = 1")
                 ORDER BY match_rank, latest_captured_at DESC, latest_snapshot_id
                 LIMIT \(limit)
                 """, bind: bindings) { statement in
@@ -563,6 +571,11 @@ final class ActivityStore {
     func removeSavedMoment(snapshotID: Int64) throws {
         try requiredDatabase().runChecked(
             "DELETE FROM screen_bookmarks WHERE snapshot_id = ?1", bind: [snapshotID])
+    }
+
+    func isBookmarked(snapshotID: Int64) throws -> Bool {
+        try requiredDatabase().hasRowChecked(
+            "SELECT 1 FROM screen_bookmarks WHERE snapshot_id = ?1", bind: [snapshotID])
     }
 
     func savedMoments(limit: Int = 200) -> [SavedMoment] {
@@ -690,6 +703,53 @@ final class ActivityStore {
         } catch {
             lokalbotLog("OCR context query failed: \(error.localizedDescription)")
             return ""
+        }
+    }
+
+    func retentionReview(days: Int, keepTextForever: Bool, now: Date = Date()) throws -> RetentionReview {
+        let database = try requiredDatabase()
+        let cutoff = now.addingTimeInterval(-Double(days) * 86_400)
+        let hasVectors = try database.hasRowChecked("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'screen_embeddings'")
+        let vectorQuery = hasVectors
+            ? "EXISTS(SELECT 1 FROM screen_embeddings WHERE snapshot_id = shot.id)" : "0"
+        let candidates = try database.queryChecked("""
+            SELECT shot.id, shot.ts, shot.path,
+                   EXISTS(SELECT 1 FROM ocr_fts WHERE CAST(snapshot_id AS INTEGER) = shot.id),
+                   \(vectorQuery)
+            FROM screenshots AS shot
+            WHERE shot.ts < ?1 AND shot.id NOT IN (SELECT snapshot_id FROM screen_bookmarks)
+            ORDER BY shot.ts
+            """, bind: [cutoff.timeIntervalSince1970]) { statement in
+                RetentionReview.Candidate(
+                    id: sqlite3_column_int64(statement, 0),
+                    timestamp: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
+                    path: String(cString: sqlite3_column_text(statement, 2)),
+                    removeText: !keepTextForever && sqlite3_column_int(statement, 3) != 0,
+                    removeVector: !keepTextForever && sqlite3_column_int(statement, 4) != 0)
+            }.filter { !$0.path.isEmpty || $0.removeText || $0.removeVector }
+        let savedCounts = try database.queryChecked("""
+            SELECT COUNT(*) FROM screen_bookmarks JOIN screenshots ON screenshots.id = snapshot_id
+            WHERE screenshots.ts < ?1
+            """, bind: [cutoff.timeIntervalSince1970]) { Int(sqlite3_column_int($0, 0)) }
+        let bytes = candidates.reduce(Int64(0)) { sum, candidate in
+            let attributes = try? FileManager.default.attributesOfItem(atPath: candidate.path)
+            return sum + ((attributes?[.size] as? NSNumber)?.int64Value ?? 0)
+        }
+        return RetentionReview(days: days, keepTextForever: keepTextForever, reviewedAt: now,
+                               candidates: candidates, savedCount: savedCounts.first ?? 0, bytes: bytes)
+    }
+
+    func clearRetainedText(ids: [Int64]) throws {
+        let database = try requiredDatabase()
+        let hasVectors = try database.hasRowChecked("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'screen_embeddings'")
+        try database.withTransaction {
+            for id in ids {
+                let condition = "CAST(snapshot_id AS INTEGER) = ?1 AND CAST(snapshot_id AS INTEGER) NOT IN (SELECT snapshot_id FROM screen_bookmarks)"
+                try database.runChecked("DELETE FROM ocr_fts WHERE \(condition)", bind: [id])
+                if hasVectors {
+                    try database.runChecked("DELETE FROM screen_embeddings WHERE \(condition)", bind: [id])
+                }
+            }
         }
     }
 

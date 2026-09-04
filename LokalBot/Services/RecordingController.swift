@@ -274,7 +274,7 @@ final class RecordingController: ObservableObject {
             : String(format: "%02d:%02d", m, s)
     }
 
-    func memoryHealthSnapshot() -> RecordingMemoryHealthSnapshot {
+    func memoryHealthSnapshot(at current: Date = Date()) -> RecordingMemoryHealthSnapshot {
         guard isRecording else {
             return RecordingMemoryHealthSnapshot(
                 isRecording: false,
@@ -289,7 +289,9 @@ final class RecordingController: ObservableObject {
         let microphone = micRecorder.captureHealth()
         let microphoneStatus: String = switch microphone.recoveryState {
         case .healthy:
-            microphone.isEngineRunning ? "Healthy" : "Stopped"
+            !microphone.isEngineRunning ? "Stopped"
+                : microphone.lastAudioWriteAt == nil ? "Waiting for audio"
+                : current.timeIntervalSince(microphone.lastAudioWriteAt ?? current) > 10 ? "No recent audio" : "Receiving audio"
         case .recovering(let attempt):
             "Recovering (attempt \(attempt))"
         case .degraded(let description):
@@ -301,10 +303,12 @@ final class RecordingController: ObservableObject {
             systemStatus = "Not attached"
         } else if system.lastAudioWriteAt == nil {
             systemStatus = "Waiting for audio"
+        } else if current.timeIntervalSince(system.lastAudioWriteAt ?? current) > 10 {
+            systemStatus = "No recent audio"
         } else if system.lastAudibleWriteAt == nil {
             systemStatus = "Silent"
         } else {
-            systemStatus = "Healthy"
+            systemStatus = "Receiving audio"
         }
         return RecordingMemoryHealthSnapshot(
             isRecording: true,

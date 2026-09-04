@@ -8,6 +8,7 @@ struct SettingsView: View {
 
     @StateObject private var updates = AppUpdateManager.shared
     @State private var cliMessage: String?
+    @State private var writingAdvancedExpanded = false
 
     // Settings search + live system readouts.
     @State private var settingsQuery = ""
@@ -16,27 +17,41 @@ struct SettingsView: View {
     @ObservedObject private var metrics = GenerationMetricsStore.shared
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            if app.settingsTab == .models && queryIsEmpty {
-                ModelsView()
-            } else {
-                Form {
-                    if queryIsEmpty {
-                        sections(for: app.settingsTab)
-                    } else {
-                        searchResults
+        HSplitView {
+            VStack(alignment: .leading, spacing: 12) {
+                settingsSearchField.padding(12)
+                List(selection: Binding(get: { Optional(app.settingsTab) }, set: {
+                    if let category = $0 { app.settingsTab = category; settingsQuery = ""; app.focusedSettingID = nil }
+                })) {
+                    ForEach(AppState.SettingsTab.allCases, id: \.self) { category in
+                        Text(category.displayName).tag(category)
                     }
                 }
-                .formStyle(.grouped)
-                .scrollContentBackground(.hidden)
-                .background(Color.clear)
-                // Keep this identifier off the enclosing VStack: a container
-                // identifier propagates onto every child AX element and
-                // clobbers settings.search / settings.tab in the header.
-                .accessibilityIdentifier("settings.form")
+                .listStyle(.sidebar)
+                .accessibilityIdentifier("settings.categories")
             }
+            .frame(minWidth: 175, idealWidth: 190, maxWidth: 230)
+            VStack(alignment: .leading, spacing: 0) {
+                settingsHeaderTitle.padding(20)
+                Divider()
+                if !queryIsEmpty {
+                    searchResults
+                } else if app.settingsTab == .models {
+                    ModelsView()
+                    .settingTarget("settings.models", selected: app.focusedSettingID)
+                } else {
+                    ScrollViewReader { proxy in
+                        Form { sections(for: app.settingsTab) }
+                            .formStyle(.grouped)
+                            .scrollContentBackground(.hidden)
+                            .accessibilityIdentifier("settings.form")
+                            .onChange(of: app.focusedSettingID, initial: true) {
+                                guard let id = app.focusedSettingID else { return }
+                                DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
+                            }
+                    }
+                }
+            }.frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 460)
         .navigationTitle("Settings")
@@ -59,37 +74,6 @@ struct SettingsView: View {
 
     /// Search field + tab strip, above the tabbed content so search works
     /// from any tab (including Models).
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .center, spacing: 18) {
-                    settingsHeaderTitle
-                    Spacer(minLength: 12)
-                    settingsSearchField
-                        .frame(width: 230)
-                }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    settingsHeaderTitle
-                    settingsSearchField
-                }
-            }
-
-            Picker("", selection: $app.settingsTab) {
-                ForEach(AppState.SettingsTab.allCases, id: \.self) { tab in
-                    Text(tab.displayName).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: 520, alignment: .leading)
-            .accessibilityIdentifier("settings.tab")
-        }
-        .padding(.horizontal, WorkspaceMetric.pagePadding)
-        .padding(.top, 22)
-        .padding(.bottom, 18)
-    }
-
     private var settingsHeaderTitle: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(app.settingsTab.displayName)
@@ -126,9 +110,13 @@ struct SettingsView: View {
     private var settingsTabSubtitle: String {
         switch app.settingsTab {
         case .general:
-            "Startup, shortcuts, permissions, storage, and updates."
+            "Startup, the main window, shortcuts, and updates."
         case .recording:
-            "Meeting capture, processing, summaries, day memory, and routines."
+            "Meeting capture, detection, processing, and summaries."
+        case .dayMemory:
+            "Activity, captured context, daily briefs, routines, and exports."
+        case .writing:
+            "Dictation, autocomplete, and your writing profile."
         case .models:
             "Choose and prepare local or remote model backends."
         case .privacy:
@@ -143,14 +131,18 @@ struct SettingsView: View {
     @ViewBuilder private func sections(for tab: AppState.SettingsTab) -> some View {
         switch tab {
         case .general:
-            generalSection; cotypingSection; permissionsSection; storageSection; updatesSection
+            generalSection; updatesSection
         case .recording:
-            meetingsSection; processingSection; summarizationSection; dayTrackingSection; routinesSection
-            dreamingSection
+            meetingsSection; processingSection; summarizationSection
+        case .dayMemory:
+            dayTrackingSection; routinesSection; dreamingSection
+        case .writing:
+            cotypingSection
+            Section("Dictation") { DictationSettingsControls() }
         case .models:
             EmptyView() // handled by the ModelsView branch in body
         case .privacy:
-            privacySection
+            privacySection; exclusionsSection; permissionsSection; storageSection
         case .advanced:
             memoryHealthSection; resourceMonitorSection; systemSection; agentCLISection
         }
@@ -159,21 +151,39 @@ struct SettingsView: View {
     /// Spec §2.5: the search field filters across ALL tabs — a non-empty
     /// query shows every matching section regardless of the selected tab,
     /// plus a jump row into the Models tab when its keywords match.
-    @ViewBuilder private var searchResults: some View {
-        generalSection; cotypingSection; permissionsSection; meetingsSection
-        processingSection; summarizationSection; dayTrackingSection; routinesSection; dreamingSection; privacySection
-        storageSection; updatesSection; memoryHealthSection; resourceMonitorSection; systemSection; agentCLISection
-        if shows("Models", ["model", "models", "transcription", "summarization",
-                            "cotyping", "embeddings", "llm", "whisper", "download",
-                            "gguf", "hugging face", "ollama", "engine", "backend"]) {
-            Section("Models") {
-                Button("Open the Models tab…") {
-                    settingsQuery = ""
-                    app.settingsTab = .models
-                }
-                Text("Transcription, main LLM, autocomplete, and embedding models live in the Models tab.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+    private var searchResults: some View {
+        let results = SettingDescriptor.search(settingsQuery)
+        return List(results) { result in
+            Button {
+                app.settingsTab = result.category
+                app.focusedSettingID = result.focusTarget(in: app.settings)
+                writingAdvancedExpanded = result.category == .writing
+                settingsQuery = ""
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(result.title).font(WorkspaceTypography.bodyEmphasis)
+                    Text(result.currentValue(in: app.settings) + " · " + result.category.displayName)
+                        .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+                    if let prerequisite = result.prerequisite(in: app.settings) {
+                        Text(prerequisite).font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+        }
+        .overlay {
+            if results.isEmpty { ContentUnavailableView.search(text: settingsQuery) }
+        }
+        .accessibilityIdentifier("settings.searchResults")
+    }
+
+    private var exclusionsSection: some View {
+        Section("Capture exclusions") {
+            ExclusionRulesEditor(title: "Never capture these apps", value: $app.settings.excludedApps, kind: .applications)
+                .settingTarget("settings.excludedApps", selected: app.focusedSettingID)
+            ExclusionRulesEditor(title: "Never capture these sites", value: $app.settings.excludedScreenDomains, kind: .domains)
+                .settingTarget("settings.excludedScreenDomains", selected: app.focusedSettingID)
+            Toggle("Allow private/incognito browser windows", isOn: $app.settings.capturePrivateWindows)
+                    .settingTarget("settings.capturePrivateWindows", selected: app.focusedSettingID)
         }
     }
 
@@ -184,6 +194,7 @@ struct SettingsView: View {
                                    "accessibility", "retention", "queue", "routines",
                                    "disk", "permissions", "recovery", "diagnostics"]) {
             MemoryHealthSection()
+                    .settingTarget("settings.memoryHealth", selected: app.focusedSettingID)
         }
     }
 
@@ -192,6 +203,7 @@ struct SettingsView: View {
                                       "footprint", "models", "loaded", "running",
                                       "performance", "diagnostics"]) {
             ResourceMonitorSection()
+                    .settingTarget("settings.resourceMonitor", selected: app.focusedSettingID)
         }
     }
 
@@ -206,6 +218,7 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
 
                     Toggle("Menu bar only (hide Dock icon)", isOn: $app.settings.menuBarOnly)
+                    .settingTarget("settings.menuBarOnly", selected: app.focusedSettingID)
                         .onChange(of: app.settings.menuBarOnly) { _, menuBarOnly in
                             DockPolicy.sync()
                             if !menuBarOnly { openWindow(id: "main") }
@@ -214,6 +227,7 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                     Divider()
                     Toggle("Enable the system-wide Ask shortcut", isOn: $app.settings.quickRecallEnabled)
+                    .settingTarget("settings.quickRecallEnabled", selected: app.focusedSettingID)
                     Text("Press \(QuickRecallHotKeyController.shortcutLabel) from any app to search meetings, captured screen text, and saved moments—or ask the assistant without opening the main window. LokalBot registers only this shortcut and does not inspect other keystrokes.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
@@ -227,17 +241,14 @@ struct SettingsView: View {
                               "completion", "typing"]) {
             Section("Autocomplete") {
                 Toggle("Enable autocomplete", isOn: $app.settings.cotypingEnabled)
-                Picker("Model", selection: $app.settings.cotypingBuiltInModelID) {
-                    ForEach(ModelCatalog.keystrokeScaleEntries(
-                        custom: app.settings.customBuiltInModels,
-                        keeping: app.settings.cotypingBuiltInModelID)) { entry in
-                        Text(entry.displayName).tag(entry.id)
-                    }
+                    .settingTarget("settings.cotypingEnabled", selected: app.focusedSettingID)
+                LabeledContent("Autocomplete model") {
+                    Button("Manage in Models…") { app.openSettings(tab: .models) }
                 }
-                CotypingModelPreparationView(compact: true)
                 Stepper("Suggestion length: up to \(app.settings.cotypingMaxWords) words",
                         value: $app.settings.cotypingMaxWords, in: 2...50)
                 Toggle("Allow multi-line suggestions", isOn: $app.settings.cotypingMultiLine)
+                    .settingTarget("settings.cotypingMultiLine", selected: app.focusedSettingID)
                 LabeledContent("Pause before suggesting") {
                     Text("\(app.settings.cotypingDebounceMs) ms").foregroundStyle(.secondary)
                 }
@@ -248,35 +259,52 @@ struct SettingsView: View {
                 Picker("Accept next", selection: $app.settings.cotypingAcceptKey) {
                     ForEach(CotypingAcceptKey.allCases) { Text($0.label).tag($0) }
                 }
+                    .settingTarget("settings.cotypingAcceptKey", selected: app.focusedSettingID)
                 Picker("Each accept takes", selection: $app.settings.cotypingAcceptGranularity) {
                     ForEach(CotypingAcceptGranularity.allCases) { Text($0.label).tag($0) }
                 }
+                    .settingTarget("settings.cotypingAcceptGranularity", selected: app.focusedSettingID)
                 Divider()
                 Toggle("Use app and window context", isOn: $app.settings.cotypingUseAppContext)
+                    .settingTarget("settings.cotypingUseAppContext", selected: app.focusedSettingID)
                 Toggle("Use clipboard as temporary context", isOn: $app.settings.cotypingUseClipboard)
+                    .settingTarget("settings.cotypingUseClipboard", selected: app.focusedSettingID)
                 Toggle("Learn locally from accepted completions",
                        isOn: $app.settings.cotypingUseLocalLearning)
+                    .settingTarget("settings.cotypingUseLocalLearning", selected: app.focusedSettingID)
                 TextField("Your name (optional)", text: $app.settings.cotypingUserName)
+                    .settingTarget("settings.cotypingUserName", selected: app.focusedSettingID)
                 TextField("Writing style (optional)", text: $app.settings.cotypingStyleNote)
+                    .settingTarget("settings.cotypingStyleNote", selected: app.focusedSettingID)
                 TextField("Languages (optional)", text: $app.settings.cotypingLanguages)
+                    .settingTarget("settings.cotypingLanguages", selected: app.focusedSettingID)
                 Divider()
-                TextField("Never suggest in (apps, comma-separated)",
-                          text: $app.settings.cotypingExcludedApps)
-                TextField("Never suggest on (sites, comma-separated)",
-                          text: $app.settings.cotypingExcludedDomains)
+                ExclusionRulesEditor(title: "Never suggest in these apps", value: $app.settings.cotypingExcludedApps, kind: .applications)
+                    .settingTarget("settings.cotypingExcludedApps", selected: app.focusedSettingID)
+                ExclusionRulesEditor(title: "Never suggest on these sites", value: $app.settings.cotypingExcludedDomains, kind: .writingDomains)
+                    .settingTarget("settings.cotypingExcludedDomains", selected: app.focusedSettingID)
                 Toggle("Suggest in integrated terminals",
                        isOn: $app.settings.cotypingSuggestInIntegratedTerminals)
-                DisclosureGroup("Advanced") {
+                    .settingTarget("settings.cotypingSuggestInIntegratedTerminals", selected: app.focusedSettingID)
+                DisclosureGroup("Advanced", isExpanded: Binding(
+                    get: { writingAdvancedExpanded || app.focusedSettingID != nil },
+                    set: { writingAdvancedExpanded = $0 })) {
                     Toggle("Stream partial suggestions",
                            isOn: $app.settings.cotypingStreamSuggestionsWhileGenerating)
+                    .settingTarget("settings.cotypingStreamSuggestionsWhileGenerating", selected: app.focusedSettingID)
                     Toggle("Use fast in-process runtime",
                            isOn: $app.settings.cotypingInProcessRuntime)
+                    .settingTarget("settings.cotypingInProcessRuntime", selected: app.focusedSettingID)
                     Toggle("Match the app font and text color",
                            isOn: $app.settings.cotypingMatchHostStyle)
+                    .settingTarget("settings.cotypingMatchHostStyle", selected: app.focusedSettingID)
                     Toggle("Autocorrect the current word",
                            isOn: $app.settings.cotypingAutocorrect)
+                    .settingTarget("settings.cotypingAutocorrect", selected: app.focusedSettingID)
                     Toggle("Emoji autocomplete", isOn: $app.settings.cotypingEmoji)
+                    .settingTarget("settings.cotypingEmoji", selected: app.focusedSettingID)
                     Toggle("Macros", isOn: $app.settings.cotypingMacros)
+                    .settingTarget("settings.cotypingMacros", selected: app.focusedSettingID)
                 }
                 Button("Open the autocomplete rehearsal") { app.openType(.cotyping) }
                 Text("Preview and rehearsal runs are excluded from production stats and local learning.")
@@ -290,11 +318,11 @@ struct SettingsView: View {
                                      "screen recording", "system audio", "accessibility",
                                      "input monitoring", "keyboard", "relaunch", "tcc"]) {
                 Section("Permissions") {
-                    PermissionRow(permission: .microphone)
+                    PermissionRow(permission: .microphone).settingTarget("settings.permissions", selected: app.focusedSettingID)
                     PermissionRow(permission: .accessibility,
                                   why: "Optional — window titles for the day timeline and browser-meeting detection.")
                     PermissionRow(permission: .screenRecording,
-                                  why: "Optional — only used while screenshot capture (Day tracking) is on. System audio does not need it.")
+                                  why: "Optional — only used while visual capture (Day Memory) is on. System audio does not need it.")
                     PermissionRow(permission: .inputMonitoring,
                                   why: "Optional — powers the dictation and autocomplete shortcuts.")
                     HStack {
@@ -317,6 +345,7 @@ struct SettingsView: View {
                             Text(mode.rawValue).tag(mode)
                         }
                     }
+                    .settingTarget("settings.autoRecordMode", selected: app.focusedSettingID)
                     Text("Only record when everyone has been informed and you have any consent required for the meeting and location.")
                         .font(.caption).foregroundStyle(.secondary)
                     LabeledContent("Detected apps") {
@@ -324,7 +353,7 @@ struct SettingsView: View {
                              + " + browser meetings (Meet, Jitsi, Whereby)")
                             .foregroundStyle(.secondary)
                     }
-                    LabeledContent("Stop debounce") {
+                    LabeledContent("Wait before stopping") {
                         Stepper(value: $app.settings.stopDebounceSeconds,
                                 in: AppSettings.minimumStopDebounceSeconds...AppSettings.maximumStopDebounceSeconds,
                                 step: 5) {
@@ -334,6 +363,7 @@ struct SettingsView: View {
                     }
                     Divider()
                     Toggle("Use calendar to improve detection", isOn: $app.settings.calendarDetectionEnabled)
+                    .settingTarget("settings.calendarDetectionEnabled", selected: app.focusedSettingID)
                         .onChange(of: app.settings.calendarDetectionEnabled) { _, enabled in
                             if enabled, app.calendar.authorizationStatus == .notDetermined {
                                 app.calendar.requestAccess { _ in }
@@ -343,7 +373,9 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                     if app.settings.calendarDetectionEnabled {
                         Toggle("Use calendar titles for recordings", isOn: $app.settings.useCalendarTitles)
+                    .settingTarget("settings.useCalendarTitles", selected: app.focusedSettingID)
                         Toggle("Require a calendar match for browser auto-recording", isOn: $app.settings.requireCalendarForBrowser)
+                    .settingTarget("settings.requireCalendarForBrowser", selected: app.focusedSettingID)
                         Text("Stricter: only auto-record a browser tab when a scheduled event with a meeting link is in progress.")
                             .font(.caption).foregroundStyle(.secondary)
                         LabeledContent("Calendar access") { calendarAccessControl }
@@ -360,12 +392,15 @@ struct SettingsView: View {
                                     "microphone mode", "voice isolation"]) {
                 Section("Processing") {
                     Toggle("Transcribe automatically after each meeting", isOn: $app.settings.autoTranscribe)
+                    .settingTarget("settings.autoTranscribe", selected: app.focusedSettingID)
                     Toggle("Summarize automatically after transcription", isOn: $app.settings.autoSummarize)
+                    .settingTarget("settings.autoSummarize", selected: app.focusedSettingID)
                     Text("Choose transcription and main LLM models in the Models tab.")
                         .font(.caption).foregroundStyle(.secondary)
                     Divider()
                     Toggle("Remove the other side from your microphone track",
                            isOn: $app.settings.echoCancellation)
+                    .settingTarget("settings.echoCancellation", selected: app.focusedSettingID)
                     Text("On speakers the other side reaches your microphone too and gets transcribed a second time as you. Subtracts the system-audio track before transcription — including for meetings already recorded. No effect on headphones.")
                         .font(.caption).foregroundStyle(.secondary)
                     Text("Needs the microphone mode for LokalBot itself set to Standard (Control Center → microphone icon → LokalBot's row) — macOS Voice Isolation removes the very echo this looks for. The meeting app can stay on Voice Isolation; the mode is set per app, not on the microphone.")
@@ -384,6 +419,7 @@ struct SettingsView: View {
                             Text("\(template.displayName)").tag(template)
                         }
                     }
+                    .settingTarget("settings.noteTemplate", selected: app.focusedSettingID)
                     Text(app.settings.noteTemplate.description)
                         .font(.caption).foregroundStyle(.secondary)
                     Picker("Notes language", selection: $app.settings.summaryLanguage) {
@@ -393,6 +429,7 @@ struct SettingsView: View {
                             Text(lang.displayName).tag(lang)
                         }
                     }
+                    .settingTarget("settings.summaryLanguage", selected: app.focusedSettingID)
                     Toggle("Split \"Them\" by speaker (neural diarization)",
                            isOn: $app.settings.multiSpeakerDiarization)
                     Text("Adds 30–60 s of post-processing per meeting. First run downloads ~100 MB of speaker models from Hugging Face.")
@@ -408,7 +445,7 @@ struct SettingsView: View {
                                       "excluded apps", "never capture", "export", "obsidian",
                                       "logseq", "markdown", "daily note", "vault", "digest",
                                       "journal", "schedule", "prompt"]) {
-                Section("Day tracking") {
+                Section("Day Memory") {
                     Toggle("Track app & window activity", isOn: Binding(
                         get: { app.settings.trackingEnabled },
                         set: { app.settings.trackingEnabled = $0
@@ -419,6 +456,7 @@ struct SettingsView: View {
                                    app.settings.screenContextCaptureMode = .activityOnly
                                    app.settings.screenshotsEnabled = false
                                } }))
+                    .settingTarget("settings.trackingEnabled", selected: app.focusedSettingID)
                     LabeledContent("Window titles") {
                         if ActivitySampler.hasAccessibility {
                             Text("Accessibility granted").foregroundStyle(.secondary)
@@ -448,6 +486,7 @@ struct SettingsView: View {
                             Text(mode.rawValue).tag(mode)
                         }
                     }
+                    .settingTarget("settings.effectiveScreenContextCaptureMode", selected: app.focusedSettingID)
                     Text(app.settings.effectiveScreenContextCaptureMode.detail)
                         .workspaceTextRole(.supporting)
                     if app.settings.effectiveScreenContextCaptureMode.capturesText {
@@ -457,21 +496,16 @@ struct SettingsView: View {
                             in: 1...15, step: 1) {
                             Text("Idle fallback: at least every \(Int(app.settings.screenshotIntervalMinutes)) min")
                         }
-                        Stepper("Keep screen context \(app.settings.retentionDays) days",
-                                value: $app.settings.retentionDays, in: 1...90)
-                        TextField("Never capture (domains or URL prefixes, comma-separated)",
-                                  text: $app.settings.excludedScreenDomains)
-                        Toggle("Allow private/incognito browser windows",
-                               isOn: $app.settings.capturePrivateWindows)
+                        Button("Manage retention and cleanup…") { app.openSettings(tab: .privacy) }
+                        Button("Manage capture exclusions…") { app.openSettings(tab: .privacy) }
                         if app.settings.effectiveScreenContextCaptureMode.capturesPixels {
                             Toggle("Capture low-frequency visual context during meetings",
                                    isOn: $app.settings.meetingVisualContextEnabled)
+                    .settingTarget("settings.meetingVisualContextEnabled", selected: app.focusedSettingID)
                             Text("Off by default. When enabled, captures the focused display at most once per minute on meaningful changes and links each frame to the active meeting.")
                                 .workspaceTextRole(.trust)
                         }
                     }
-                    TextField("Never capture (app names, comma-separated)",
-                              text: $app.settings.excludedApps)
                     Text(
                         "Captures context after app/window changes, clicks, typing pauses, settled "
                             + "scrolls, or a clipboard-generation change without storing raw keys, "
@@ -486,13 +520,14 @@ struct SettingsView: View {
                     Divider()
                     Toggle("Generate the day digest automatically",
                            isOn: $app.settings.dayDigestAutoEnabled)
+                    .settingTarget("settings.dayDigestAutoEnabled", selected: app.focusedSettingID)
                     if app.settings.dayDigestAutoEnabled {
                         Stepper(
                             "Generate at \(String(format: "%02d:00", app.settings.dayDigestHour))",
                             value: $app.settings.dayDigestHour,
                             in: 0...23)
                     }
-                    digestInstructionsField
+                    digestInstructionsField.settingTarget("settings.dayDigestCustomPrompt", selected: app.focusedSettingID)
                     Text("Writes a detailed Timeline digest to your local journal at the chosen hour, then finalizes yesterday once after the date changes so late activity is included. Instructions shape scheduled and manual generation alike.")
                         .font(.caption).foregroundStyle(.secondary)
                     Divider()
@@ -504,12 +539,14 @@ struct SettingsView: View {
                                 chooseDailyExportFolder()
                             }
                         }))
+                    .settingTarget("settings.dailyMemoryExportEnabled", selected: app.focusedSettingID)
                     if app.settings.dailyMemoryExportEnabled {
                         Picker("Format", selection: $app.settings.dailyMemoryExportFormat) {
                             ForEach(AppSettings.DailyMemoryExportFormat.allCases) { format in
                                 Text(format.rawValue).tag(format)
                             }
                         }
+                    .settingTarget("settings.dailyMemoryExportFormat", selected: app.focusedSettingID)
                         LabeledContent("Folder") {
                             Button(app.settings.dailyMemoryExportFolder.isEmpty
                                    ? "Choose…"
@@ -579,6 +616,7 @@ struct SettingsView: View {
                             chooseMemoryRoutineFolder()
                         }
                     }))
+                    .settingTarget("settings.memoryRoutinesEnabled", selected: app.focusedSettingID)
                 if app.settings.memoryRoutinesEnabled {
                     LabeledContent("Output folder") {
                         Button(app.settings.memoryRoutineFolder.isEmpty
@@ -598,6 +636,7 @@ struct SettingsView: View {
                             Text(weekdayName(weekday)).tag(weekday)
                         }
                     }
+                    .settingTarget("settings.memoryRoutineWeekday", selected: app.focusedSettingID)
                     ForEach(AppSettings.MemoryRoutineKind.allCases) { kind in
                         Toggle(kind.displayName, isOn: Binding(
                             get: { app.settings.enabledMemoryRoutines.contains(kind) },
@@ -639,22 +678,23 @@ struct SettingsView: View {
         if shows("Dreaming", ["dream", "dreaming", "overnight", "retrospective", "morning",
                               "brief", "memory", "projects", "goals", "pin", "pinned",
                               "downtime", "sleep"]) {
-            Section("Dreaming") {
-                Toggle("Dream overnight", isOn: Binding(
+            Section("Overnight review") {
+                Toggle("Review the day overnight", isOn: Binding(
                     get: { app.settings.dreamingEnabled },
                     set: { app.setDreamingEnabled($0) }))
+                    .settingTarget("settings.dreamingEnabled", selected: app.focusedSettingID)
                 if app.settings.dreamingEnabled {
                     Stepper(
-                        "Dream after \(String(format: "%02d:00", app.settings.dreamingHour))",
+                        "Review after \(String(format: "%02d:00", app.settings.dreamingHour))",
                         value: $app.settings.dreamingHour,
                         in: 0...23)
                     HStack(spacing: 8) {
-                        Button("Dream now") { app.dreamNow() }
+                        Button("Review now") { app.dreamNow() }
                             .disabled(app.dreaming.isDreaming || !app.libraryReady)
                         if app.dreaming.isDreaming {
-                            LoadingStateLabel("Dreaming…", font: .caption)
+                            LoadingStateLabel("Reviewing…", font: .caption)
                         } else if let last = app.dreaming.lastDreamedAt {
-                            Text("Last dreamed " + last.formatted(.relative(presentation: .named)))
+                            Text("Last reviewed " + last.formatted(.relative(presentation: .named)))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -727,17 +767,14 @@ struct SettingsView: View {
                                  "data", "security", "agents", "mcp", "claude", "cli"]) {
                 Section("Privacy") {
                     InferenceDisclosure(
-                        usesRemote: app.settings.usesRemoteMainLLM,
+                        settings: app.settings,
                         localText: "Audio, transcripts, and captured context stay on this Mac. Network access is limited to model downloads, updates, and optional Agent Mode setup.",
                         remoteText: "Audio stays on this Mac. Transcripts and approved context may be sent to your remote Main LLM (\(app.settings.summarizerBackend.displayName)). Other network access is for models, updates, and optional Agent Mode setup.")
-                    Toggle("Keep screen text forever", isOn: Binding(
-                        get: { app.settings.keepOCRTextForever },
-                        set: { app.settings.keepOCRTextForever = $0
-                               if !$0 { app.screenshots.pruneOldScreenshots() } }))
-                    Text("Captured screen text is deleted with any pixels after \(app.settings.retentionDays) days. Saved moments are retained until you unsave or delete them. Turn on to keep all other screen text searchable forever; turning back off deletes text older than the window.")
-                        .workspaceTextRole(.trust)
+                    RetentionSettingsControls()
                     AgentAccessToggleRow(manager: app.agentAccess)
+                    .settingTarget("settings.agentAccess", selected: app.focusedSettingID)
                     ScreenMemoryAccessToggleRow(manager: app.screenMemoryAccess)
+                    .settingTarget("settings.screenMemoryAccess", selected: app.focusedSettingID)
                     HStack(spacing: 16) {
                         Link("Privacy Policy", destination: URL(string: "https://www.lokalbot.com/privacy")!)
                         Link("Support", destination: URL(string: "https://www.lokalbot.com/support")!)
@@ -915,7 +952,7 @@ struct SettingsView: View {
     /// A section is visible when the search field is empty or its title/keywords
     /// match the query (every query token must appear).
     private func shows(_ title: String, _ keywords: [String]) -> Bool {
-        SettingsSearchRanker.matches(query: settingsQuery, haystack: [title] + keywords)
+        true
     }
 
     private func chooseDailyExportFolder() {

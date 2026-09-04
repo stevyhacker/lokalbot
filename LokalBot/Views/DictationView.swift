@@ -8,8 +8,11 @@ struct DictationView: View {
     var body: some View {
         Form {
             statusSection
-            shortcutSection
-            outputSection
+            Section("Shortcut and output") {
+                LabeledContent("Shortcut", value: app.settings.dictationEnabled ? DictationShortcut.label : "Off")
+                LabeledContent("Shortcut output", value: app.settings.dictationOutputMode.label)
+                Button("Writing settings…") { app.openSettings(tab: .writing) }
+            }
             modelSection
             if app.settings.dictationEnabled { permissionsSection }
             if let result = app.dictation.lastComposedText {
@@ -48,49 +51,20 @@ struct DictationView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button(actionTitle) { app.dictation.toggle() }
+                Button(actionTitle) { app.dictation.toggle(source: "rehearsal") }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .tint(app.dictation.state.isRecording || app.dictation.isStarting ? .red : Brand.teal)
             }
-            Toggle("Enable global shortcut", isOn: $app.settings.dictationEnabled)
-                .accessibilityIdentifier("dictation.enabled")
-            Text("Speak the text you want, or ramble an instruction. LokalBot always composes the final wording and can use the focused window as context.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var shortcutSection: some View {
-        Section("Shortcut") {
-            LabeledContent("Shortcut") {
-                Text(DictationShortcut.label)
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.secondary)
+            Picker("Intent", selection: $app.settings.dictationIntent) {
+                ForEach(DictationIntent.allCases) { Text($0.rawValue).tag($0) }
+            }.pickerStyle(.segmented).disabled(app.dictation.state != .idle || app.dictation.isStarting)
+            Text(app.settings.dictationIntent.detail)
+            if app.settings.dictationIntent == .compose {
+                Toggle("Use the focused window as context", isOn: $app.settings.dictationUseScreenContext)
+                    .disabled(app.dictation.state != .idle || app.dictation.isStarting)
             }
-            Picker("Trigger", selection: $app.settings.dictationTriggerMode) {
-                ForEach(DictationTriggerMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
-                }
-            }
-            Toggle("Show floating pill", isOn: $app.settings.dictationShowOverlay)
-            Toggle("Show live transcript while dictating", isOn: $app.settings.dictationLivePreview)
-                .disabled(!app.settings.dictationShowOverlay)
-            Text("Live preview shows the speech transcript. The final result is composed from the full recording.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var outputSection: some View {
-        Section("Output") {
-            Picker("After composing", selection: $app.settings.dictationOutputMode) {
-                ForEach(DictationOutputMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
-                }
-            }
-            Toggle("Keep dictation audio files", isOn: $app.settings.dictationRetainAudio)
-            Text("Audio is otherwise deleted after the text is delivered.")
+            Text("Try here shows the result below. It never inserts into another app or changes your clipboard.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -106,17 +80,22 @@ struct DictationView: View {
                 Text(app.settings.transcriptionLanguage.displayName)
                     .foregroundStyle(.secondary)
             }
+            if app.settings.dictationIntent == .compose {
             LabeledContent("Compose") {
-                Text(app.settings.summarizerBackend.displayName)
+                Text(app.settings.dictationCompositionTextEngineSettings.thinkModelDisplayName)
                     .foregroundStyle(.secondary)
             }
             // Where the words go changes what dictation means, so the remote
             // case reads as a first-class notice, not caption fine print.
             InferenceDisclosure(
-                usesRemote: app.settings.usesRemoteMainLLM,
-                localText: "Speech uses the meeting ASR model; final wording uses your local Main LLM and autocomplete writing profile. Everything stays on this Mac.",
+                settings: app.settings.dictationCompositionTextEngineSettings,
+                localText: "Speech uses the meeting ASR model; final wording uses your configured local composition model and writing profile. Everything stays on this Mac.",
                 remoteText: "Final wording uses your approved remote Main LLM (\(app.settings.summarizerBackend.displayName)). What you dictate — and any screen context it composes with — is sent to that server.")
                 .accessibilityIdentifier("dictation.remoteNotice")
+            } else {
+                Label("Speech recognition runs on this Mac. No screen context or rewrite model is used.", systemImage: "desktopcomputer")
+                    .workspaceTextRole(.trust)
+            }
         }
     }
 
@@ -140,7 +119,7 @@ struct DictationView: View {
     }
 
     private func lastResultSection(_ result: String) -> some View {
-        Section("Last composed text") {
+        Section("Last result") {
             Text(result)
                 .font(.callout)
                 .textSelection(.enabled)
@@ -174,7 +153,7 @@ struct DictationView: View {
         case .idle:
             if app.settings.dictationEnabled {
                 return app.dictation.isShortcutMonitoringActive
-                    ? "Ready — hold \(DictationShortcut.label) to compose."
+                    ? "Ready — hold \(DictationShortcut.label) to dictate."
                     : "Shortcut inactive."
             }
             return "Ready from this screen. Turn on the shortcut for system-wide use."
@@ -190,8 +169,8 @@ struct DictationView: View {
     private var actionTitle: String {
         if app.dictation.isStarting { return "Cancel" }
         return switch app.dictation.state {
-        case .idle: "Start"
-        case .recording: "Stop & Compose"
+        case .idle: "Try here"
+        case .recording: "Stop & finish"
         case .transcribing, .composing: "Cancel"
         }
     }

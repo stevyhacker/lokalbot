@@ -1,6 +1,17 @@
 import CoreGraphics
 import Foundation
 
+enum DictationIntent: String, Codable, CaseIterable, Identifiable {
+    case transcribe = "Transcribe"
+    case compose = "Compose"
+    var id: String { rawValue }
+    var detail: String {
+        self == .transcribe
+            ? "Keep the recognized speech. No rewriting or screen context."
+            : "Rewrite the spoken request with your writing profile and optional screen context."
+    }
+}
+
 enum DictationTriggerMode: String, Codable, CaseIterable, Identifiable {
     case pushToTalk = "Push to talk"
     case toggle = "Toggle"
@@ -18,6 +29,7 @@ enum DictationTriggerMode: String, Codable, CaseIterable, Identifiable {
 enum DictationOutputMode: String, Codable, CaseIterable, Identifiable {
     case pasteIntoFocusedApp = "Paste into focused app"
     case copyToClipboard = "Copy to clipboard"
+    case showInLokalBot = "Show in LokalBot"
 
     var id: String { rawValue }
 
@@ -25,6 +37,7 @@ enum DictationOutputMode: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .pasteIntoFocusedApp: "Paste into focused app"
         case .copyToClipboard: "Copy to clipboard"
+        case .showInLokalBot: "Show in LokalBot"
         }
     }
 }

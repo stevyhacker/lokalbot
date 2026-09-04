@@ -101,54 +101,53 @@ private struct TodayMeetingsSchedule: View {
     @State private var laterExpanded = false
     @State private var preparationExpanded = false
 
-    private var remainingMeetings: [CalendarMeetingCandidate] {
-        guard let preparedID = model.evidence?.event.externalID else {
-            return model.meetingsToday
-        }
-        return model.meetingsToday.filter { $0.externalID != preparedID }
-    }
+    @State private var earlierExpanded = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(spacing: 8) {
-                Label("Upcoming", systemImage: "calendar")
-                    .font(WorkspaceTypography.sectionTitle)
-                Spacer()
-                Text("\(model.meetingsToday.count) scheduled")
-                    .font(WorkspaceTypography.metadata.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-
-            if let evidence = model.evidence {
-                TodayMeetingRow(event: evidence.event)
-                    .environmentObject(app)
-            }
-
-            if !remainingMeetings.isEmpty {
-                DisclosureGroup(
-                    "\(remainingMeetings.count) later today",
-                    isExpanded: $laterExpanded
-                ) {
-                    ForEach(remainingMeetings, id: \.externalID) { event in
-                        TodayMeetingRow(event: event)
-                            .environmentObject(app)
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            let upcoming = model.meetingsToday.filter { $0.endDate > context.date }
+            let earlier = model.meetingsToday.filter { $0.endDate <= context.date }
+            VStack(alignment: .leading, spacing: 11) {
+                HStack {
+                    Label("Upcoming", systemImage: "calendar")
+                        .font(WorkspaceTypography.sectionTitle)
+                    Spacer()
+                    Text("\(upcoming.count) remaining")
+                        .font(WorkspaceTypography.metadata.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                if let next = upcoming.first {
+                    TodayMeetingRow(event: next).environmentObject(app)
+                } else {
+                    Text("No more meetings scheduled today.").foregroundStyle(.secondary)
+                }
+                if upcoming.count > 1 {
+                    DisclosureGroup("\(upcoming.count - 1) later today", isExpanded: $laterExpanded) {
+                        ForEach(Array(upcoming.dropFirst()), id: \.externalID) { event in
+                            TodayMeetingRow(event: event).environmentObject(app)
+                        }
                     }
                 }
-                .font(.callout)
-            }
-
-            if let evidence = model.evidence, evidence.hasPreparationContext {
-                DisclosureGroup("Preparation context", isExpanded: $preparationExpanded) {
-                    UpcomingMeetingCard(model: model, evidence: evidence)
-                        .environmentObject(app)
-                        .padding(.top, 7)
+                if let evidence = model.evidence, evidence.event.endDate > context.date,
+                   evidence.hasPreparationContext {
+                    DisclosureGroup("Preparation context", isExpanded: $preparationExpanded) {
+                        UpcomingMeetingCard(model: model, evidence: evidence).environmentObject(app)
+                    }
                 }
-                .font(.callout)
+                if !earlier.isEmpty {
+                    DisclosureGroup("Earlier today · \(earlier.count)", isExpanded: $earlierExpanded) {
+                        ForEach(earlier, id: \.externalID) { event in
+                            TodayMeetingRow(event: event).environmentObject(app)
+                        }
+                    }
+                }
             }
+            .font(.callout)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("today.meetings")
     }
+
 }
 
 private struct TodayMeetingRow: View {

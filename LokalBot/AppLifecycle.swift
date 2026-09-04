@@ -231,7 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // sidebar colors resolve per scheme. Pin the app-level appearance
             // before the capture window exists so exports are reproducible.
             NSApp.appearance = NSAppearance(
-                named: style == "dark" ? .darkAqua : .aqua)
+                named: style == "contrast-dark" ? .accessibilityHighContrastDarkAqua : (style == "dark" ? .darkAqua : .aqua))
         }
         if let raw = env["LOKALBOT_INITIAL_SECTION"],
            let section = AppState.NavSection(captureName: raw) {

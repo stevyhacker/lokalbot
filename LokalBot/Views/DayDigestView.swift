@@ -10,6 +10,7 @@ private enum DayDigestTaskType {
 /// focus stay visible; the forensic activity/evidence trail is available on
 /// demand without making every captured moment compete for attention.
 struct DayDigestView: View {
+    @EnvironmentObject private var app: AppState
     enum Mode: Equatable {
         case standalone
         case timeline
@@ -28,6 +29,7 @@ struct DayDigestView: View {
     @State private var extraFocusExpanded = false
     @State private var otherActivityExpanded = false
     @State private var timeAllocationExpanded = false
+    @State private var fullBriefExpanded = false
 
     init(_ markdown: String, mode: Mode = .standalone) {
         presentation = DayDigestPresentation(markdown: markdown)
@@ -35,6 +37,20 @@ struct DayDigestView: View {
     }
 
     var body: some View {
+        if mode == .today {
+            VStack(alignment: .leading, spacing: 12) {
+                if !presentation.atAGlanceMarkdown.isEmpty {
+                    SelectableDigestText(presentation.atAGlanceMarkdown)
+                        .lineLimit(5)
+                }
+                ForEach(presentation.focusBlocks.prefix(3)) { focusBlock($0, prominent: true) }
+                DisclosureGroup("Full brief", isExpanded: $fullBriefExpanded) { fullContent }
+                    .accessibilityIdentifier("today.fullBrief")
+            }
+        } else { fullContent }
+    }
+
+    private var fullContent: some View {
         VStack(alignment: .leading, spacing: 20) {
             if !presentation.atAGlanceMarkdown.isEmpty {
                 digestSection("Highlights", icon: "sparkles") {
@@ -204,6 +220,18 @@ struct DayDigestView: View {
                 } else {
                     SelectableDigestText(block.summaryMarkdown)
                         .foregroundStyle(.secondary)
+                }
+            }
+            if !block.sourceIDs.isEmpty {
+                ForEach(block.sourceIDs, id: \.self) { id in
+                    if let shot = app.activityStore.screenshot(id: id) {
+                        Button { app.openScreenSnapshot(id) } label: {
+                            Label("\(shot.documentName.isEmpty ? shot.app : shot.documentName) · \(shot.ts.formatted(date: .omitted, time: .shortened))", systemImage: "doc.text.magnifyingglass")
+                                .font(WorkspaceTypography.metadata)
+                        }.buttonStyle(.link)
+                    } else {
+                        Text("Source moment unavailable").font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+                    }
                 }
             }
         }

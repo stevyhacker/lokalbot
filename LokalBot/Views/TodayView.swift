@@ -17,14 +17,15 @@ struct TodayView: View {
             VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
                 header
                 nowCard
-                dreamCard
-                summarySection
+                UpcomingMeetingSection(model: upcomingMeeting)
                 NeedsAttentionSection(
                     actions: app.outcomeIndex.openUserActions,
                     limit: 3,
                     showingReview: $showingActionReview)
-                UpcomingMeetingSection(model: upcomingMeeting)
+                summarySection
                 capturedSection
+                DisclosureGroup("Overnight and yesterday") { dreamCard }
+                BriefContextView()
                 if !gettingStartedDismissed { GettingStartedCard() }
             }
             .padding(WorkspaceMetric.pagePadding)
@@ -35,6 +36,7 @@ struct TodayView: View {
         .task(id: app.navSection) {
             guard app.navSection == .today else { return }
             reloadCurrentDay(at: Date())
+            app.refreshDreamMemory()
             while !Task.isCancelled {
                 await upcomingMeeting.refresh(app: app)
                 do {
@@ -80,11 +82,10 @@ struct TodayView: View {
             }
             Spacer()
             Button {
-                showingActionReview = true
+                app.openActions()
             } label: {
                 Label("Review actions", systemImage: "checklist")
             }
-            .disabled(app.outcomeIndex.openUserActions.isEmpty)
             Button {
                 app.openAsk(dayScope: model.day)
             } label: {
@@ -306,9 +307,7 @@ struct TodayView: View {
     // MARK: Day so far
 
     private var perApp: [(key: String, value: TimeInterval)] {
-        Dictionary(grouping: model.blocks, by: \.app)
-            .mapValues { $0.reduce(0) { $0 + $1.duration } }
-            .sorted { $0.value > $1.value }
+        DayActivityProjection(blocks: model.blocks, day: model.day).perApp
     }
 
     @ViewBuilder private var daySoFar: some View {
@@ -324,7 +323,7 @@ struct TodayView: View {
                         .foregroundStyle(Brand.teal)
                 }
                 DayStatRow(
-                    trackedSeconds: apps.reduce(0) { $0 + $1.value },
+                    trackedSeconds: DayActivityProjection(blocks: model.blocks, day: model.day).activeSeconds,
                     appCount: apps.count,
                     momentCount: model.shots.count,
                     meetingCount: todaysMeetings.count)
@@ -371,6 +370,11 @@ struct TodayView: View {
                 .accessibilityLabel("Day digest actions")
                 .accessibilityIdentifier("today.dayDigest.actions")
             }
+            HStack {
+                if let generated = model.digestUpdatedAt { Text("Generated " + generated.formatted(date: .omitted, time: .shortened)) }
+                if let latest = model.latestDigestEvidenceAt { Text("Latest capture " + latest.formatted(date: .omitted, time: .shortened)) }
+                if model.digestIsStale { Text("New evidence available") }
+            }.font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
             DayDigestView(digest, mode: .today)
                 .accessibilityIdentifier("today.dayDigest.text")
         } else {
@@ -436,7 +440,7 @@ struct TodayView: View {
     }
 
     private var summarySection: some View {
-        WorkspaceSection(title: "Summary", icon: "chart.bar") {
+        WorkspaceSection(title: "Today’s brief", icon: "chart.bar") {
             daySoFar
         }
     }

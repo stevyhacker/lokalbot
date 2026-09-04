@@ -25,7 +25,9 @@ struct MainWindowView: View {
     @Environment(\.colorScheme) private var colorScheme
     /// Mirrors the current split controller for the app-owned toolbar label.
     /// AppKit owns the actual collapse animation through the responder chain.
-    @State private var sidebarVisible = true
+    @SceneStorage("workspace.sidebar.visible") private var sidebarVisible = true
+    @SceneStorage("workspace.meetings.width") private var meetingColumnWidth = 300.0
+    @SceneStorage("workspace.conversations.width") private var conversationColumnWidth = 250.0
     @State private var pendingDelete: Set<Meeting.ID>?
     /// Shared by Timeline's chronology and bounded context panel.
     @StateObject private var capture = CaptureModel()
@@ -85,11 +87,7 @@ struct MainWindowView: View {
             // First-run permission onboarding is now triggered from AppState.
             WindowAccess.shared.register { openWindow(id: $0) }
         }
-        .onChange(of: app.navSection) {
-            // Every section mounts a fresh NavigationSplitView with its sidebar
-            // visible. Keep the app-owned toolbar label in sync with that fact.
-            sidebarVisible = true
-        }
+
     }
 
     /// macOS 26 automatically groups navigation items into a Liquid Glass
@@ -111,11 +109,7 @@ struct MainWindowView: View {
 
     private var sidebarToggleButton: some View {
         Button {
-            let handled = NSApp.sendAction(
-                #selector(NSSplitViewController.toggleSidebar(_:)),
-                to: nil,
-                from: nil)
-            if handled { sidebarVisible.toggle() }
+            sidebarVisible.toggle()
         } label: {
             Image(systemName: "sidebar.left")
                 .font(.system(size: 13, weight: .semibold))
@@ -135,67 +129,59 @@ struct MainWindowView: View {
     /// chronology/context split belongs to that workspace, rather than
     /// becoming two more global navigation columns. Meetings and Ask retain
     /// their native three-column information architecture.
-    @ViewBuilder private var navigation: some View {
-        if app.navSection == .today {
-            NavigationSplitView {
-                sidebar
-            } detail: {
-                TodayView()
-                    .workspaceSurface()
-            }
-        } else if app.navSection == .timeline {
-            NavigationSplitView {
-                sidebar
-            } detail: {
-                TimelineContentView(model: capture)
-                    .workspaceSurface()
-            }
-        } else if app.navSection == .meetings {
-            NavigationSplitView {
-                sidebar
-            } content: {
+    private var navigation: some View {
+        NavigationSplitView(columnVisibility: Binding(
+            get: { sidebarVisible ? .all : .detailOnly },
+            set: { sidebarVisible = $0 != .detailOnly })) {
+            sidebar
+        } detail: {
+            workspace
+                .workspaceSurface()
+                .safeAreaInset(edge: .bottom) {
+                    if !app.outcomeIndex.statusUndo.isEmpty {
+                        HStack {
+                            Text("Updated \(app.outcomeIndex.statusUndo.count) action(s)")
+                            Button("Undo") { app.outcomeIndex.undoStatusChange() }
+                                .accessibilityIdentifier("outcomes.undo")
+                            Spacer()
+                            Button("Dismiss") { app.outcomeIndex.dismissUndo() }
+                        }
+                        .font(WorkspaceTypography.control)
+                        .padding(12).background(.bar)
+                    }
+                }
+        }
+    }
+
+    @ViewBuilder private var workspace: some View {
+        switch app.navSection {
+        case .today:
+            if app.showingActions { ActionsWorkspaceView() } else { TodayView() }
+        case .timeline:
+            TimelineContentView(model: capture)
+        case .meetings:
+            HSplitView {
                 MeetingListView(pendingDelete: $pendingDelete)
-                    .navigationTitle("Meetings")
-                    .modifier(ScriptedCaptureContentWidth(
-                        maximum: scriptedCaptureContentMaximum))
-            } detail: {
+                    .frame(minWidth: 240, idealWidth: meetingColumnWidth, maxWidth: 440)
+                    .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { meetingColumnWidth = $0 }
                 MeetingLibraryDetailView(pendingDelete: $pendingDelete)
-                    .workspaceSurface()
+                    .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
             }
-        } else if app.navSection == .type {
-            NavigationSplitView {
-                sidebar
-            } detail: {
-                TypeView()
-                    .workspaceSurface()
+        case .type:
+            TypeView()
+        case .ask:
+            HSplitView {
+                if app.askMode == .ask {
+                    ChatConversationList()
+                        .frame(minWidth: 200, idealWidth: conversationColumnWidth, maxWidth: 340)
+                        .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { conversationColumnWidth = $0 }
+                }
+                AskView().frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
             }
-        } else if app.navSection == .ask {
-            NavigationSplitView {
-                sidebar
-            } content: {
-                ChatConversationList()
-                    .frame(minWidth: 250, idealWidth: 250, maxWidth: 280)
-                    .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 280)
-            } detail: {
-                AskView()
-                    .frame(minWidth: 420)
-                    .workspaceSurface()
-                    .navigationSplitViewColumnWidth(min: 420, ideal: 680)
-            }
-        } else if app.navSection == .agent {
-            NavigationSplitView {
-                sidebar
-            } detail: {
-                AgentView(sessions: app.agentSessions, installer: app.agentInstaller)
-                    .workspaceSurface()
-            }
-        } else {
-            NavigationSplitView {
-                sidebar
-            } detail: {
-                SettingsView()
-                    .workspaceSurface()
-            }
+        case .agent:
+            AgentView(sessions: app.agentSessions, installer: app.agentInstaller)
+        case .settings:
+            SettingsView()
         }
     }
 
@@ -221,13 +207,13 @@ struct MainWindowView: View {
             }
             Section {
                 sidebarDestination(
-                    "Type", systemImage: "keyboard", section: .type,
+                    "Write", systemImage: "keyboard", section: .type,
                     identifier: "sidebar.type")
                 sidebarDestination(
                     "Agent", systemImage: "wand.and.sparkles", section: .agent,
                     identifier: "sidebar.agent")
             } header: {
-                sidebarSectionHeader("Write & act")
+                sidebarSectionHeader("Tools")
             }
             sidebarDestination(
                 "Settings", systemImage: "gearshape", section: .settings,
@@ -261,7 +247,10 @@ struct MainWindowView: View {
         Binding(
             get: { app.navSection },
             set: { selection in
-                if let selection { app.navSection = selection }
+                if let selection {
+                    if selection == .today { app.showingActions = false }
+                    app.navSection = selection
+                }
             })
     }
 
@@ -370,17 +359,17 @@ private struct SidebarPrivacyFooter: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.colorScheme) private var colorScheme
 
-    private var remoteThink: Bool { app.settings.usesRemoteMainLLM }
+    private var destination: InferencePresentation { InferencePresentation(settings: app.settings) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                StatusDot(color: remoteThink ? Brand.amber : .green, size: 7)
-                Text(remoteThink ? "Memory is stored locally" : "All memory is local")
+                StatusDot(color: destination == .onDevice ? Brand.teal : Brand.amber, size: 7)
+                Text("Memory stored on this Mac")
                     .font(WorkspaceTypography.editorialBodyEmphasis)
                     .foregroundStyle(.primary)
             }
-            Text(remoteThink ? "Think uses an approved remote server" : "No data leaves your Mac")
+            Text(destination.label)
                 .workspaceTextRole(.supporting)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

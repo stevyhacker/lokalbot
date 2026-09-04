@@ -68,6 +68,7 @@ final class DictationOverlayController {
 }
 
 struct DictationOverlayView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var dictation: DictationCoordinator
 
     var body: some View {
@@ -82,9 +83,9 @@ struct DictationOverlayView: View {
         }
         .frame(width: width, height: height)
         .hudCapsule(radius: radius, shadowed: false)
-        .animation(.snappy(duration: 0.28), value: dictation.state)
-        .animation(.snappy(duration: 0.2), value: dictation.isStarting)
-        .animation(.snappy(duration: 0.22), value: dictation.liveTranscript)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: dictation.state)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: dictation.isStarting)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: dictation.liveTranscript)
     }
 
     private var modelPreparationPanel: some View {

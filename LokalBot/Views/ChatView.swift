@@ -19,6 +19,8 @@ struct ChatTranscriptView: View {
     @ObservedObject var model: ChatViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isNearBottom = true
+    @State private var scrollPosition = ScrollPosition(edge: .top)
+    @State private var displayedConversation: UUID?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -44,6 +46,12 @@ struct ChatTranscriptView: View {
                     .accessibilityIdentifier("chat.readingColumn")
                 }
                 .accessibilityIdentifier("chat.messages")
+                .scrollPosition($scrollPosition)
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    max(0, geometry.contentOffset.y)
+                } action: { _, offset in
+                    if let id = displayedConversation { model.readingOffsets[id] = offset }
+                }
                 .onScrollGeometryChange(for: Bool.self) { geometry in
                     let remaining = geometry.contentSize.height - geometry.visibleRect.maxY
                     return remaining < 96
@@ -88,9 +96,19 @@ struct ChatTranscriptView: View {
                 scrollToEnd(proxy, animated: false)
             }
             .onChange(of: model.currentID) {
-                isNearBottom = true
-                scrollToEnd(proxy, animated: false, force: true)
+                restorePosition(proxy)
             }
+            .onAppear { restorePosition(proxy) }
+        }
+    }
+
+    private func restorePosition(_ proxy: ScrollViewProxy) {
+        displayedConversation = nil
+        let id = model.currentID
+        let saved = model.readingOffsets[id]
+        DispatchQueue.main.async {
+            if let saved { scrollPosition.scrollTo(y: saved); isNearBottom = false } else { isNearBottom = true; scrollToEnd(proxy, animated: false, force: true) }
+            displayedConversation = id
         }
     }
 

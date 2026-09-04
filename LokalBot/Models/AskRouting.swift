@@ -1,6 +1,6 @@
 import Foundation
 
-enum AskMode: String, CaseIterable, Identifiable {
+enum AskMode: String, CaseIterable, Identifiable, Sendable {
     case ask = "Ask"
     case keyword = "Keyword search"
     var id: String { rawValue }
@@ -101,12 +101,7 @@ enum AskEscalationScope {
         selectedSources: Set<AskSourceScope>,
         selectedDay: Date?
     ) -> (sources: Set<AskSourceScope>, dayScope: Date?) {
-        // Search intentionally spans the selected result facet, not the hidden
-        // scope from a previous Ask conversation. Escalating a visible result
-        // therefore starts with the unsurprising full-library scope.
-        if mode == .keyword {
-            return (AskSourceScope.defaults, nil)
-        }
+
         return (selectedSources, selectedDay)
     }
 }
@@ -118,11 +113,16 @@ final class ScopedChatToolRunner: ChatToolRunner {
     private let base: ChatToolRunner
     private let scopes: Set<AskSourceScope>
     private let dayScopeKey: String?
+    private let meetingIDs: Set<UUID>?
+    private let screenSnapshotIDs: Set<Int64>?
 
     init(base: ChatToolRunner, scopes: Set<AskSourceScope>, dayScope: Date? = nil,
-         dayScopeKey: String? = nil) {
+         dayScopeKey: String? = nil, meetingIDs: Set<UUID>? = nil,
+         screenSnapshotIDs: Set<Int64>? = nil) {
         self.base = base
         self.scopes = scopes
+        self.meetingIDs = meetingIDs
+        self.screenSnapshotIDs = screenSnapshotIDs
         self.dayScopeKey = dayScopeKey ?? dayScope.map { AskDayScope.key(for: $0) }
     }
 
@@ -131,7 +131,7 @@ final class ScopedChatToolRunner: ChatToolRunner {
     func libraryOverview() -> String {
         // Source-limited and day-limited questions must not receive ambient
         // meeting titles outside the exact scope enforced by the tools below.
-        guard scopes.contains(.meetings), dayScopeKey == nil else { return "" }
+        guard scopes.contains(.meetings), dayScopeKey == nil, meetingIDs == nil else { return "" }
         return base.libraryOverview()
     }
 
@@ -142,7 +142,13 @@ final class ScopedChatToolRunner: ChatToolRunner {
                 summary: "source not enabled")
         }
         var scopedCall = call
-        var arguments = call.arguments
+        var arguments = call.arguments.filter { !$0.key.hasPrefix("_lokalbot_") }
+        if let meetingIDs {
+            arguments["_lokalbot_meeting_ids"] = meetingIDs.map(\.uuidString).sorted().joined(separator: ",")
+        }
+        if let screenSnapshotIDs {
+            arguments["_lokalbot_screen_ids"] = screenSnapshotIDs.sorted().map(String.init).joined(separator: ",")
+        }
         if call.name == "activity_summary" {
             arguments["_lokalbot_include_meetings"] = scopes.contains(.meetings)
                 ? "true"

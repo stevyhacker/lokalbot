@@ -6,11 +6,16 @@ struct AskNavigationHandoff: Equatable, Sendable {
     let dayScope: Date?
     let screenSnapshotIDs: [Int64]
     let submit: Bool
+    var meetingIDs: Set<Meeting.ID>?
+    var mode: AskMode = .ask
 }
+
+enum EvidenceIntent: Equatable, Sendable { case reveal, play }
 
 struct MeetingSeekHandoff: Equatable, Sendable {
     let meetingID: Meeting.ID
     let seconds: TimeInterval
+    var intent: EvidenceIntent = .reveal
 }
 
 struct AgentLaunchContext: Equatable, Sendable {
@@ -36,13 +41,15 @@ final class NavigationHandoff: ObservableObject {
         query: String,
         dayScope: Date?,
         screenSnapshotIDs: [Int64],
-        submit: Bool
+        submit: Bool,
+        meetingIDs: Set<Meeting.ID>? = nil,
+        mode: AskMode = .ask
     ) {
         pendingAsk = AskNavigationHandoff(
             query: query.isEmpty ? nil : query,
             dayScope: dayScope,
             screenSnapshotIDs: screenSnapshotIDs,
-            submit: submit)
+            submit: submit, meetingIDs: meetingIDs, mode: mode)
         changed()
     }
 
@@ -55,19 +62,22 @@ final class NavigationHandoff: ObservableObject {
 
     /// Every meeting navigation replaces the previous seek request. Opening a
     /// meeting without a timestamp therefore cannot inherit an older seek.
-    func stageMeeting(_ meetingID: Meeting.ID, seek seconds: TimeInterval?) {
+    func stageMeeting(_ meetingID: Meeting.ID, seek seconds: TimeInterval?, intent: EvidenceIntent = .reveal) {
         pendingMeetingSeek = seconds.map {
-            MeetingSeekHandoff(meetingID: meetingID, seconds: $0)
+            MeetingSeekHandoff(meetingID: meetingID, seconds: max(0, $0), intent: intent)
         }
         changed()
     }
 
-    func consumeMeetingSeek(for meetingID: Meeting.ID) -> TimeInterval? {
-        guard pendingMeetingSeek?.meetingID == meetingID,
-              let seconds = pendingMeetingSeek?.seconds else { return nil }
+    func consumeMeetingEvidence(for meetingID: Meeting.ID) -> MeetingSeekHandoff? {
+        guard let pending = pendingMeetingSeek, pending.meetingID == meetingID else { return nil }
         pendingMeetingSeek = nil
         changed()
-        return seconds
+        return pending
+    }
+
+    func consumeMeetingSeek(for meetingID: Meeting.ID) -> TimeInterval? {
+        consumeMeetingEvidence(for: meetingID)?.seconds
     }
 
     func stageScreenSnapshot(_ snapshotID: Int64) {

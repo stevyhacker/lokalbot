@@ -10,18 +10,31 @@ struct AgentSessionView: View {
     let showSessionHistory: () -> Void
 
     @State private var pickingFolder = false
+    @State private var launchContext: AgentLaunchContext?
+    @State private var followingOutput = true
     @State private var pendingApprovalMode: AgentApprovalMode?
     @FocusState private var composerFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
-            transcript
-            Divider()
-            composer
+            if controller.items.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        transcriptLead
+                        composer
+                    }.workspaceReadingWidth().padding(24)
+                        .frame(maxWidth: .infinity, alignment: .top)
+                }
+            } else {
+                transcript
+                Divider()
+                composer
+            }
         }
-        .task { focusComposerWhenReady() }
+        .task {
+            if isSelected { launchContext = app.navigationHandoff.agentContext }
+            focusComposerWhenReady()
+        }
         .onChange(of: isSelected) {
             focusComposerWhenReady()
         }
@@ -101,8 +114,19 @@ struct AgentSessionView: View {
                 .padding(WorkspaceMetric.pagePadding)
                 .frame(maxWidth: .infinity, minHeight: 320, alignment: .topLeading)
             }
+            .onScrollGeometryChange(for: Bool.self) {
+                $0.contentSize.height - $0.visibleRect.maxY < 96
+            } action: { _, nearEnd in followingOutput = nearEnd }
+            .overlay(alignment: .bottomTrailing) {
+                if !followingOutput {
+                    Button("Jump to latest") {
+                        followingOutput = true
+                        if let last = controller.items.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                    }.buttonStyle(.bordered).padding(12)
+                }
+            }
             .onChange(of: controller.items.count) {
-                if let last = controller.items.last {
+                if followingOutput, let last = controller.items.last {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
@@ -122,7 +146,7 @@ struct AgentSessionView: View {
              .ready where controller.items.isEmpty:
             emptyState
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 52)
+                .padding(.vertical, 12)
         default:
             EmptyView()
         }
@@ -235,17 +259,8 @@ struct AgentSessionView: View {
     }
 
     private var emptyStateDetail: String {
-        if controller.state == .idle {
-            return "Work in the selected folder across a continuing session. \(controller.approvalMode.runtimeSummary) The runtime starts after you press Send."
-        }
-        if controller.state == .starting {
-            return app.settings.usesRemoteMainLLM
-                ? "The local Agent runtime is starting and connecting to your approved remote Main LLM."
-                : "Your local Agent runtime and Main LLM are starting."
-        }
-        return app.settings.usesRemoteMainLLM
-            ? "It can read your Meeting Library now. \(controller.approvalMode.runtimeSummary) Prompts and approved context use your remote Main LLM. Session history stays on this Mac."
-            : "It can read your Meeting Library now. \(controller.approvalMode.runtimeSummary) Model inference and session history stay on this Mac."
+        "Work in the selected folder across a continuing session. \(controller.approvalMode.runtimeSummary) "
+            + "\(InferencePresentation(settings: app.settings).label). The runtime starts after you press Send."
     }
 
     private var approvalModeMenu: some View {
@@ -374,6 +389,7 @@ struct AgentSessionView: View {
             Label("Approval required: \(request.tool)", systemImage: "hand.raised.fill")
                 .font(.callout.weight(.semibold))
 
+            Text(approvalEffect(request.tool)).workspaceTextRole(.trust)
             if let path = request.path {
                 approvalText(label: "File", value: path)
             }
@@ -442,6 +458,16 @@ struct AgentSessionView: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.orange.opacity(0.4)))
     }
 
+    private func approvalEffect(_ tool: String) -> String {
+        switch tool.lowercased() {
+        case "read": "Read the file shown below and make its contents available to this session."
+        case "write": "Create or replace the file shown below with the proposed content."
+        case "edit": "Apply the replacements shown below to the target file."
+        case "bash", "shell": "Run the command shown below in the working folder with this session's current access."
+        default: "Allow the operation shown below with this session's current access."
+        }
+    }
+
     private func approvalText(label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
@@ -467,6 +493,15 @@ struct AgentSessionView: View {
     }
 
     private var composer: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            header
+            HStack {
+                Label(InferencePresentation(settings: app.settings).label,
+                      systemImage: InferencePresentation(settings: app.settings).icon)
+                if let context = launchContext {
+                    Text("Context: \(context.title)").lineLimit(2)
+                }
+            }.font(WorkspaceTypography.metadata).padding(.horizontal, 12)
         HStack(spacing: 8) {
             TextField("Ask the agent…", text: $controller.draft, axis: .vertical)
                 .textFieldStyle(.plain)
@@ -485,6 +520,7 @@ struct AgentSessionView: View {
                 .accessibilityIdentifier("agent.send")
         }
         .padding(12)
+        }
     }
 
     private func submit() {

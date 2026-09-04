@@ -39,6 +39,15 @@ final class NavigationHandoffTests: XCTestCase {
         XCTAssertNil(handoff.consumeMeetingSeek(for: expectedMeetingID))
     }
 
+    func testEvidenceDefaultsToRevealAndExplicitPlayIsPreserved() {
+        let handoff = NavigationHandoff()
+        let meetingID = UUID()
+        handoff.stageMeeting(meetingID, seek: 42)
+        XCTAssertEqual(handoff.consumeMeetingEvidence(for: meetingID)?.intent, .reveal)
+        handoff.stageMeeting(meetingID, seek: 42, intent: .play)
+        XCTAssertEqual(handoff.consumeMeetingEvidence(for: meetingID)?.intent, .play)
+    }
+
     func testOpeningMeetingWithoutSeekClearsOlderRequest() {
         let handoff = NavigationHandoff()
         let meetingID = UUID()

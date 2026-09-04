@@ -140,15 +140,37 @@ final class AskRoutingTests: XCTestCase {
         XCTAssertEqual(reconciled.dayScope, selected)
     }
 
-    func testSearchEscalationUsesVisibleFullLibraryScope() throws {
+    func testSearchEscalationPreservesReviewedScope() throws {
         let day = try XCTUnwrap(Calendar.current.date(from: DateComponents(
             year: 2026, month: 8, day: 31)))
 
         let scope = AskEscalationScope.resolve(
             mode: .keyword, selectedSources: [.screen], selectedDay: day)
 
-        XCTAssertEqual(scope.sources, AskSourceScope.defaults)
-        XCTAssertNil(scope.dayScope)
+        XCTAssertEqual(scope.sources, [.screen])
+        XCTAssertEqual(scope.dayScope, day)
+    }
+
+    func testExplicitMeetingAndScreenScopesCannotBeOverriddenByToolArguments() async {
+        let base = RecordingToolRunner()
+        let meetingID = UUID()
+        let scoped = ScopedChatToolRunner(base: base, scopes: [.meetings, .screen],
+                                          meetingIDs: [meetingID], screenSnapshotIDs: [42])
+        XCTAssertEqual(scoped.libraryOverview(), "")
+        _ = await scoped.run(.init(name: "search_meetings", arguments: [
+            "query": "roadmap", "_lokalbot_meeting_ids": UUID().uuidString]))
+        XCTAssertEqual(base.lastCall?.string("_lokalbot_meeting_ids"), meetingID.uuidString)
+        _ = await scoped.run(.init(name: "search_screen", arguments: ["query": "roadmap"]))
+        XCTAssertEqual(base.lastCall?.string("_lokalbot_screen_ids"), "42")
+    }
+
+    func testMessageScopeSurvivesPersistenceIncludingEmptyBoundary() throws {
+        let meetingID = UUID()
+        let message = ChatMessage(role: .user, text: "What was decided?",
+                                  meetingIDs: [meetingID], screenSnapshotIDs: [])
+        let decoded = try JSONDecoder().decode(ChatMessage.self, from: JSONEncoder().encode(message))
+        XCTAssertEqual(decoded.meetingIDs, [meetingID])
+        XCTAssertEqual(decoded.screenSnapshotIDs, [])
     }
 
     private final class RecordingToolRunner: ChatToolRunner {

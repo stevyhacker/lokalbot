@@ -94,9 +94,9 @@ struct AgentView: View {
     }
 
     private var installDescription: String {
-        let inference = app.settings.usesRemoteMainLLM
-            ? "Prompts and approved context are sent to your remote Main LLM (\(app.settings.summarizerBackend.displayName))."
-            : "Model inference stays on this Mac."
+        let inference = InferencePresentation(settings: app.settings).detail(
+            local: "Model inference runs on this Mac.",
+            remote: "Prompts and approved context are sent to your configured remote Main LLM.")
         return "A local coding and file agent powered by your selected Main LLM. Setup downloads about 50 MB and uses about 225 MB after installation. \(inference) Session history stays local; commands you approve run with your Mac user permissions and may access files or the network."
     }
 }

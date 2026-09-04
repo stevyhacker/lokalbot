@@ -1067,9 +1067,53 @@ final class ScreenshotService: ObservableObject {
         return captures.count
     }
 
+    /// Manual cleanup keeps successful row/file deletions consistent even if
+    /// another item fails. Saved moments require an explicit reviewed scope.
+    func applyCaptureDeletionReview(_ review: CaptureDeletionReview) throws -> [String] {
+        let current = store.captureDeletionReview(in: review.interval, includesSaved: review.includesSaved)
+        guard review.covers(current) else { throw RetentionReviewError.scopeChanged }
+        var failures: [String] = []
+        for capture in current.captures {
+            do {
+                if !review.includesSaved, try store.isBookmarked(snapshotID: capture.id) { continue }
+                try deleteCapture(id: capture.id)
+            } catch {
+                failures.append("\(capture.app) · \(capture.ts.formatted(date: .omitted, time: .standard)): \(error.localizedDescription)")
+            }
+        }
+        return failures
+    }
+
     /// Files older than the retention window are deleted. OCR text follows
     /// the same cutoff unless the user explicitly opted into keeping it —
     /// screen text can be as sensitive as the pixels it came from.
+    /// Execute only the reviewed data set. Regular maintenance is separate.
+    func applyRetentionReview(_ review: RetentionReview) throws -> [String] {
+        let current = try store.retentionReview(days: review.days, keepTextForever: review.keepTextForever, now: now())
+        guard review.covers(current) else { throw RetentionReviewError.scopeChanged }
+        var failures: [String] = []
+        for candidate in current.candidates {
+            do {
+                // Re-check saving immediately before the irreversible file step.
+                guard try !store.isBookmarked(snapshotID: candidate.id) else { continue }
+                if !candidate.path.isEmpty {
+                    if FileManager.default.fileExists(atPath: candidate.path) {
+                        try FileManager.default.removeItem(atPath: candidate.path)
+                    }
+                    try store.clearScreenshotPath(candidate.path)
+                }
+                if candidate.removeText || candidate.removeVector {
+                    try store.clearRetainedText(ids: [candidate.id])
+                }
+            } catch {
+                failures.append("Moment \(candidate.id): \(error.localizedDescription)")
+            }
+        }
+        lastRetentionRun = now()
+        lastRetentionError = failures.isEmpty ? nil : failures.joined(separator: "\n")
+        return failures
+    }
+
     func pruneOldScreenshots() {
         _ = runRetentionMaintenanceIfNeeded(force: true)
     }

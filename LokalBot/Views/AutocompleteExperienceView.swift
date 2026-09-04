@@ -20,6 +20,7 @@ struct AutocompleteExperienceView: View {
     @State private var task: Task<Void, Never>?
     @State private var rehearsalStep = 0
     @State private var rehearsalActive = false
+    @State private var focusRevision = 0
 
     private let rehearsalPrompt = "Reply to the team: Thanks for reviewing the proposal. Next"
 
@@ -59,9 +60,7 @@ struct AutocompleteExperienceView: View {
         }
         .task {
             permissions.startPolling()
-            if app.settings.cotypingBuiltInModelID.isEmpty {
-                app.settings.cotypingBuiltInModelID = ModelCatalog.recommendedCotypingID
-            }
+
         }
         .onDisappear {
             permissions.stopPolling()
@@ -82,7 +81,7 @@ struct AutocompleteExperienceView: View {
             Toggle("Enable", isOn: $app.settings.cotypingEnabled)
                 .toggleStyle(.switch)
             Button {
-                app.openSettings(tab: .general)
+                app.openSettings(tab: .writing)
             } label: {
                 Label("Settings", systemImage: "gearshape")
             }
@@ -90,7 +89,7 @@ struct AutocompleteExperienceView: View {
     }
 
     private var readiness: some View {
-        WorkspaceSection(title: "Ready to type", icon: "checkmark.circle") {
+        WorkspaceSection(title: app.settings.cotypingEnabled ? "Autocomplete on" : (modelReady ? "Off · model ready" : "Off · model needed"), icon: "checkmark.circle") {
             HStack(spacing: 16) {
                 readinessItem(
                     "Model",
@@ -134,8 +133,11 @@ struct AutocompleteExperienceView: View {
     private var preview: some View {
         WorkspaceSection(title: "Try the real autocomplete", icon: "text.cursor") {
             VStack(alignment: .leading, spacing: 10) {
-                TextEditor(text: $text)
-                    .font(WorkspaceTypography.body)
+                RehearsalTextEditor(text: $text, suggestion: suggestion,
+                                    acceptKey: app.settings.cotypingAcceptKey,
+                                    focusRevision: focusRevision,
+                                    onAccept: { accept(fromKeyboard: true) },
+                                    onReject: { task?.cancel(); suggestion = ""; generating = false })
                     .frame(minHeight: 120)
                     .padding(8)
                     .workspaceControl()
@@ -147,7 +149,7 @@ struct AutocompleteExperienceView: View {
                         .foregroundStyle(.secondary)
                     if generating { ProgressView().controlSize(.small) }
                     Spacer()
-                    Button("Accept \(app.settings.cotypingAcceptKey.label)", action: accept)
+                    Button("Insert suggestion") { accept(fromKeyboard: false) }
                         .buttonStyle(.borderedProminent)
                         .disabled(suggestion.isEmpty)
                 }
@@ -189,6 +191,7 @@ struct AutocompleteExperienceView: View {
                         rehearsalStep = 0
                         text = rehearsalPrompt
                         suggestion = ""
+                        focusRevision += 1
                         schedule()
                     }
                 rehearsalRow(
@@ -244,7 +247,14 @@ struct AutocompleteExperienceView: View {
             generating = true
             defer { generating = false }
             do {
-                let result = try await app.cotyping.previewSuggestion(precedingText: context)
+                let result: String
+#if LOKALBOT_UI_TEST_HOST
+                if demoReady { result = " up on the synthetic review." } else {
+                    result = try await app.cotyping.previewSuggestion(precedingText: context)
+                }
+#else
+                result = try await app.cotyping.previewSuggestion(precedingText: context)
+#endif
                 if !Task.isCancelled {
                     suggestion = result
                     if rehearsalActive, !result.isEmpty { rehearsalStep = max(rehearsalStep, 1) }
@@ -256,10 +266,10 @@ struct AutocompleteExperienceView: View {
         }
     }
 
-    private func accept() {
+    private func accept(fromKeyboard: Bool) {
         guard !suggestion.isEmpty else { return }
         text += suggestion
         suggestion = ""
-        if rehearsalActive, rehearsalStep >= 1 { rehearsalStep = 2 }
+        if fromKeyboard, rehearsalActive, rehearsalStep >= 1 { rehearsalStep = 2 }
     }
 }

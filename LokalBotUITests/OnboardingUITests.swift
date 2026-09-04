@@ -41,52 +41,25 @@ final class OnboardingUITests: XCTestCase {
     }
 
     func testWizardExplainsDayMemoryDefaultsAndPermissionGates() {
-        assertPage(title: "Welcome to LokalBot", step: 1)
+        let before = UserDefaults(suiteName: defaultsSuiteName!)?.data(forKey: "lokalbotv3.settings")
+        assertPage(title: "Choose what to remember", step: 1)
+        XCTAssertTrue(app.descendants(matching: .any)["onboarding.meetingMode"].firstMatch.exists)
+        XCTAssertTrue(text(containing: "applied on the final Review step").exists)
         app.buttons["Continue"].click()
-        assertPage(title: "Remember. Ask. Write. Act.", step: 2)
-        app.buttons["Continue"].click()
-        assertPage(title: "Private by default", step: 3)
-        app.buttons["Continue"].click()
-        assertPage(title: "Remember your day?", step: 4)
-
-        let activity = optIn("Track app & window activity")
-        let textContext = optIn("Capture visible text context")
-        let visualContext = optIn("Add encrypted visual context")
-        for option in [activity, textContext, visualContext] {
-            XCTAssertTrue(option.waitForExistence(timeout: 4),
-                          "day-memory opt-in missing")
-        }
-        XCTAssertTrue(text(containing: "app activity, visible text, and encrypted visual context selected")
-            .exists, "day-memory page did not explain its enabled defaults")
-
-        // The models step names the local stack; the hermetic library has no
-        // GGUFs, so the explicit download affordance must be offered (never
-        // clicked here — it would start real downloads).
-        app.buttons["Continue"].click()
-        assertPage(title: "Prepare on-device models", step: 5)
-        XCTAssertTrue(app.descendants(matching: .any)["onboarding.downloadModels"]
-            .firstMatch.waitForExistence(timeout: 5),
-            "models page did not offer the download action for a fresh library")
-
-        // Visual context starts selected, so onboarding exposes its macOS grant.
-        app.buttons["Continue to permissions"].click()
-        assertPage(title: "Grant LokalBot access", step: 6)
+        assertPage(title: "Enable the access you need", step: 2)
         XCTAssertTrue(text(containing: "Screen Recording").waitForExistence(timeout: 5),
-                      "visual-context default did not expose its required permission")
-
-        app.buttons["Back"].click()
-        assertPage(title: "Prepare on-device models", step: 5)
-        app.buttons["Back"].click()
-        assertPage(title: "Remember your day?", step: 4)
-        optIn("Add encrypted visual context").click()
+                      "Existing visual capture must retain its permission requirement")
+        app.buttons["Continue with current access"].click()
+        assertPage(title: "Prepare your workflows", step: 3)
+        XCTAssertTrue(app.buttons["onboarding.downloadModels"].exists)
+        XCTAssertTrue(text(containing: "Autocomplete (optional)").exists)
         app.buttons["Continue"].click()
-        assertPage(title: "Prepare on-device models", step: 5)
-        app.buttons["Continue to permissions"].click()
-        assertPage(title: "Grant LokalBot access", step: 6)
-        XCTAssertFalse(text(containing: "Screen Recording").exists,
-                       "visual-context opt-out kept requesting Screen Recording")
-        XCTAssertTrue(text(containing: "Permission access stays local")
-            .waitForExistence(timeout: 5), "permission privacy reassurance missing")
+        assertPage(title: "Review and start", step: 4)
+        XCTAssertTrue(app.buttons["onboarding.finish"].exists)
+        app.buttons["Back"].click()
+        assertPage(title: "Prepare your workflows", step: 3)
+        XCTAssertEqual(UserDefaults(suiteName: defaultsSuiteName!)?.data(forKey: "lokalbotv3.settings"), before,
+                       "Moving through setup must not apply capture choices")
     }
 
     private func assertPage(title: String, step: Int) {
@@ -96,10 +69,8 @@ final class OnboardingUITests: XCTestCase {
             format: "identifier == 'onboarding.progress'")).firstMatch
         XCTAssertTrue(progress.waitForExistence(timeout: 4),
                       "onboarding progress control missing at step \(step)")
-        XCTAssertTrue(UITestHarness.waitUntil {
-            progress.label == "Step \(step) of 6"
-                || progress.value as? String == "Step \(step) of 6"
-        }, "onboarding progress did not reach step \(step)")
+        XCTAssertTrue(text(containing: "Step \(step) of 4").exists,
+                      "onboarding progress did not reach step \(step)")
     }
 
     private func text(containing fragment: String) -> XCUIElement {

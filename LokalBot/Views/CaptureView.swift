@@ -27,7 +27,7 @@ final class CaptureModel: ObservableObject {
     }
 
     var workSessions: [TimelineWorkSession] {
-        TimelineWorkSession.sessions(from: blocks)
+        DayActivityProjection(blocks: blocks, day: day).sessions
     }
 
     var selectedSession: TimelineWorkSession? {
@@ -260,13 +260,10 @@ struct TimelineContentView: View {
                     }
                 } else {
                     HSplitView {
-                        TimelineContextPanel(model: model, onDismiss: nil)
-                            .frame(
-                                minWidth: WorkspaceMetric.timelineContextMinWidth,
-                                idealWidth: 520,
-                                maxWidth: WorkspaceMetric.readingMaxWidth)
                         CaptureDayView(model: model, onOpenContext: {})
-                            .frame(minWidth: 480, idealWidth: 760, maxWidth: .infinity)
+                            .frame(minWidth: 360, idealWidth: 460, maxWidth: .infinity)
+                        TimelineContextPanel(model: model, onDismiss: nil)
+                            .frame(minWidth: 340, idealWidth: 520, maxWidth: WorkspaceMetric.readingMaxWidth)
                     }
                 }
             }

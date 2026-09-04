@@ -18,7 +18,7 @@ final class WorkspacePresentationTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(WorkspaceMetric.timelineContextMinWidth, 420)
         XCTAssertGreaterThan(
             WorkspaceMetric.timelineDrawerBreakpoint,
-            WorkspaceMetric.timelineContextMinWidth + 480)
+            WorkspaceMetric.timelineContextMinWidth + 360)
     }
 
     func testCompactRadiusTokensAreNamedAndOrdered() {

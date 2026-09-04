@@ -22,16 +22,13 @@ struct NeedsAttentionSection: View {
                         if reference.id != actions.prefix(limit).last?.id { Divider() }
                     }
                 }
-                Button("Review \(actions.count) open item\(actions.count == 1 ? "" : "s")") {
-                    showingReview = true
+                Button("Review all \(actions.count) actions") {
+                    app.openActions()
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("outcomes.review")
             }
-            .sheet(isPresented: $showingReview) {
-                ActionReviewView(actions: actions)
-                    .environmentObject(app)
-            }
+
         }
     }
 }
@@ -51,6 +48,7 @@ struct OutcomeOverviewActionRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("outcome.action.toggle.\(reference.id)")
+            .accessibilityLabel(reference.status == .done ? "Reopen action" : "Complete action")
             VStack(alignment: .leading, spacing: 4) {
                 Text(reference.text)
                     .font(WorkspaceTypography.bodyEmphasis)
@@ -62,7 +60,7 @@ struct OutcomeOverviewActionRow: View {
                         .font(WorkspaceTypography.metadata)
                         .foregroundStyle(Brand.teal)
                     if let due = reference.due {
-                        Text("Due \(due)")
+                        Text(ActionDuePresentation.label(due, spokenAt: reference.meetingStartedAt))
                             .font(WorkspaceTypography.metadata)
                             .foregroundStyle(.secondary)
                     }

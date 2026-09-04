@@ -1,0 +1,28 @@
+import SwiftUI
+
+struct DictationSettingsControls: View {
+    @EnvironmentObject private var app: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle("Enable dictation shortcut", isOn: $app.settings.dictationEnabled)
+                .settingTarget("settings.dictationEnabled", selected: app.focusedSettingID)
+            LabeledContent("Shortcut", value: DictationShortcut.label)
+            Picker("Trigger", selection: $app.settings.dictationTriggerMode) {
+                ForEach(DictationTriggerMode.allCases) { Text($0.label).tag($0) }
+            }.settingTarget("settings.dictationTriggerMode", selected: app.focusedSettingID)
+            Picker("After a shortcut recording", selection: $app.settings.dictationOutputMode) {
+                ForEach(DictationOutputMode.allCases) { Text($0.label).tag($0) }
+            }.settingTarget("settings.dictationOutputMode", selected: app.focusedSettingID)
+            Toggle("Show floating dictation status", isOn: $app.settings.dictationShowOverlay)
+                .settingTarget("settings.dictationShowOverlay", selected: app.focusedSettingID)
+            Toggle("Show live transcript", isOn: $app.settings.dictationLivePreview)
+                .settingTarget("settings.dictationLivePreview", selected: app.focusedSettingID)
+            Toggle("Keep dictation audio files", isOn: $app.settings.dictationRetainAudio)
+                .settingTarget("settings.dictationRetainAudio", selected: app.focusedSettingID)
+            Text("Try here always displays the result in LokalBot. The system shortcut uses the output setting above.")
+                .workspaceTextRole(.supporting)
+            Button("Open dictation") { app.openType(.dictation) }
+        }
+    }
+}

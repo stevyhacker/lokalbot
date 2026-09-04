@@ -24,7 +24,7 @@ final class AppState: ObservableObject {
             case "today": self = .today
             case "timeline", "capture": self = .timeline
             case "meetings": self = .meetings
-            case "type", "dictation", "cotyping", "autocomplete": self = .type
+            case "write", "type", "dictation", "cotyping", "autocomplete": self = .type
             case "ask", "search", "chat": self = .ask
             case "agent": self = .agent
             case "settings", "models": self = .settings
@@ -52,16 +52,25 @@ final class AppState: ObservableObject {
     /// Which tab the Settings surface shows (spec §2.5 — Settings absorbs
     /// Models as a tab strip). Session-sticky like TypeTab.
     enum SettingsTab: String, CaseIterable {
-        case general, recording, models, privacy, advanced
+        case general, recording, dayMemory, writing, models, privacy, advanced
 
-        var displayName: String { rawValue.capitalized }
+        var displayName: String {
+            switch self {
+            case .recording: "Meetings"
+            case .dayMemory: "Day Memory"
+            case .privacy: "Privacy & Data"
+            default: rawValue.capitalized
+            }
+        }
 
         /// Legacy capture names select their tab; the pre-merge "models"
         /// section name lands on the Models tab.
         init?(captureName: String) {
             switch captureName.lowercased() {
             case "general": self = .general
-            case "recording": self = .recording
+            case "recording", "meetings": self = .recording
+            case "daymemory", "day memory": self = .dayMemory
+            case "writing", "write": self = .writing
             case "models": self = .models
             case "privacy": self = .privacy
             case "advanced": self = .advanced
@@ -127,12 +136,8 @@ final class AppState: ObservableObject {
                 if settings.quickRecallEnabled != oldValue.quickRecallEnabled {
                     applyQuickRecallSetting()
                 }
-                if ScreenshotRetentionSchedule.requiresImmediatePrune(
-                    previousDays: oldValue.retentionDays,
-                    currentDays: settings.retentionDays
-                ) {
-                    screenshots.pruneOldScreenshots()
-                }
+                // UI retention reductions are reviewed and executed explicitly.
+                // Changing a preference must not trigger an unreviewed cleanup.
                 if Self.dailyMemoryExportChanged(from: oldValue, to: settings) {
                     applyDailyMemoryExportSetting()
                 }
@@ -208,6 +213,20 @@ final class AppState: ObservableObject {
 
     // Navigation (main window): sidebar section and selected meeting.
     @Published var navSection: NavSection = .today
+    @Published var showingActions = false
+    @Published var meetingNoteDrafts: [UUID: String] = [:]
+    @Published var actionSelection: Set<String> = []
+    @Published var recallQuery = ""
+    @Published var recallState = RecallWorkspaceState()
+    @Published var evidenceMeetingID: UUID?
+    @Published var evidenceReturnSection: NavSection?
+    func returnFromEvidence() {
+        guard let section = evidenceReturnSection else { return }
+        navSection = section
+        evidenceReturnSection = nil
+    }
+    @Published var meetingWorkspaceTabs: [UUID: MeetingWorkspaceTab] = [:]
+    func openActions() { showingActions = true; navSection = .today }
     private static let typeTabDefaultsKey = "lokalbotv3.type.selectedTab"
     private static var navigationDefaults: UserDefaults {
         if let suite = UITestRuntime.defaultsSuiteName,
@@ -220,6 +239,7 @@ final class AppState: ObservableObject {
         didSet { Self.navigationDefaults.set(typeTab.rawValue, forKey: Self.typeTabDefaultsKey) }
     }
     @Published var settingsTab: SettingsTab = .general
+    @Published var focusedSettingID: String?
     /// Ask's retrieval choice survives NavigationSplitView remounts while the
     /// app is running. Explicit handoffs and conversation selections still
     /// switch back to Ask before presenting their content.
@@ -253,12 +273,13 @@ final class AppState: ObservableObject {
     /// Navigate to the Ask section, optionally pre-filling the query and/or
     /// scoping it to a day (Timeline's "Ask about this day").
     func openAsk(query: String = "", dayScope: Date? = nil,
-                 screenSnapshotIDs: [Int64] = [], submit: Bool = false) {
+                 screenSnapshotIDs: [Int64] = [], submit: Bool = false,
+                 meetingIDs: Set<Meeting.ID>? = nil, mode: AskMode = .ask) {
         navigationHandoff.stageAsk(
             query: query,
             dayScope: dayScope,
             screenSnapshotIDs: screenSnapshotIDs,
-            submit: submit)
+            submit: submit, meetingIDs: meetingIDs, mode: mode)
         navSection = .ask
     }
 
@@ -272,8 +293,10 @@ final class AppState: ObservableObject {
 
     /// Open one meeting in the Meetings section — the deep-link target
     /// for search hits, menu-bar recents, and palette recents.
-    func openMeeting(_ id: Meeting.ID, seek: TimeInterval? = nil) {
-        navigationHandoff.stageMeeting(id, seek: seek)
+    func openMeeting(_ id: Meeting.ID, seek: TimeInterval? = nil, intent: EvidenceIntent = .reveal) {
+        evidenceMeetingID = id
+        if navSection != .meetings { evidenceReturnSection = navSection }
+        navigationHandoff.stageMeeting(id, seek: seek, intent: intent)
         selectedMeetingIDs = [id]
         navSection = .meetings
     }
@@ -463,11 +486,11 @@ final class AppState: ObservableObject {
     private(set) lazy var dictation = DictationCoordinator(
         storageRoot: storage.rootURL,
         settingsProvider: { [store = settingsStore] in store.current },
-        makeTextEngine: { [weak self] in
+        makeTextEngine: { [weak self] sessionSettings in
             guard let self else {
                 throw TextEngineError.unavailable("LokalBot is shutting down.")
             }
-            let config = self.settingsStore.current.dictationCompositionTextEngineSettings
+            let config = sessionSettings.dictationCompositionTextEngineSettings
             return try await self.thinkExecution.makeTextEngine(
                 config,
                 priority: .interactive,
@@ -1456,6 +1479,7 @@ final class AppState: ObservableObject {
 
     /// Screen search/citation hit → open Timeline at the exact captured frame.
     func openScreenSnapshot(_ snapshotID: Int64) {
+        if navSection != .timeline { evidenceReturnSection = navSection }
         navigationHandoff.stageScreenSnapshot(snapshotID)
         selectedMeetingIDs = []
         navSection = .timeline

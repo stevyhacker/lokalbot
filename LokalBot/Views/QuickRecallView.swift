@@ -25,6 +25,7 @@ private struct QuickRecallContent: View {
 #endif
     @State private var meetingHits: [SearchIndex.Hit] = []
     @State private var screenHits: [ActivityStore.OCRHit] = []
+    @State private var matchingScreenIDs: Set<Int64> = []
     @State private var savedMoments: [ActivityStore.SavedMoment] = []
     @State private var selection = 0
     @State private var showingConversation = false
@@ -52,6 +53,13 @@ private struct QuickRecallContent: View {
             }
         }
         .onDisappear { searchTask?.cancel() }
+        .onChange(of: model.currentID) {
+            showingConversation = !model.messages.isEmpty && model.isResponding
+            if !showingConversation { search() }
+        }
+        .onChange(of: model.messages.isEmpty) {
+            if model.messages.isEmpty { showingConversation = false; search() }
+        }
         .onChange(of: query) {
             selection = 0
             if !showingConversation {
@@ -90,7 +98,7 @@ private struct QuickRecallContent: View {
                     .foregroundStyle(.tint)
             }
             TextField(
-                showingConversation ? "Ask a follow-up…" : "Search or ask anything…",
+                showingConversation ? "Ask a follow-up…" : "Search your memory…",
                 text: $query)
                 .textFieldStyle(.plain)
                 .font(.title3)
@@ -122,7 +130,7 @@ private struct QuickRecallContent: View {
                 .help("Open full Ask")
                 .accessibilityLabel("Open full Ask")
             }
-            Text(QuickRecallHotKeyController.shortcutLabel)
+            Text(app.settings.quickRecallEnabled ? QuickRecallHotKeyController.shortcutLabel : "Shortcut off")
                 .font(.caption.monospaced())
                 .foregroundStyle(.tertiary)
         }
@@ -143,7 +151,7 @@ private struct QuickRecallContent: View {
             ContentUnavailableView {
                 Label("Ask anything", systemImage: "sparkle.magnifyingglass")
             } description: {
-                Text("Type a question and press Return. Local meeting, screen, and saved-moment matches appear as you type.")
+                Text("Type to search meetings, screens, and saved moments. Return opens a result; Ask is a separate action.")
                     .frame(maxWidth: 420)
             } actions: {
                 VStack(spacing: 7) {
@@ -173,9 +181,15 @@ private struct QuickRecallContent: View {
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
-                    if let askRow {
-                        displayedRow(askRow)
-                            .padding(.bottom, 4)
+                    if !trimmedQuery.isEmpty {
+                        Button { ask(trimmedQuery) } label: {
+                            Label("Ask about “\(trimmedQuery)”", systemImage: "sparkles")
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("quickRecall.ask")
+                        .disabled(isSearching)
+                        Text(InferencePresentation(settings: app.settings).label)
+                            .font(WorkspaceTypography.metadata)
                     }
 
                     if isSearching {
@@ -222,10 +236,7 @@ private struct QuickRecallContent: View {
         if trimmedQuery.isEmpty {
             saved = savedMoments.prefix(12).map(savedRow)
         } else {
-            saved = savedMoments.filter { moment in
-                [moment.note, moment.app, moment.windowTitle]
-                    .contains { $0.localizedCaseInsensitiveContains(trimmedQuery) }
-            }.map(savedRow)
+            saved = savedMoments.filter { matchingScreenIDs.contains($0.snapshotID) }.map(savedRow)
         }
 
         let savedIDs = Set(saved.compactMap(\.snapshotID))
@@ -274,7 +285,7 @@ private struct QuickRecallContent: View {
     }
 
     private var rows: [QuickRecallRowModel] {
-        [askRow].compactMap { $0 } + sections.flatMap(\.rows)
+        sections.flatMap(\.rows)
     }
 
     private func displayedRow(_ row: QuickRecallRowModel) -> some View {
@@ -330,12 +341,16 @@ private struct QuickRecallContent: View {
         }
         meetingHits = []
         screenHits = []
+        matchingScreenIDs = []
         isSearching = true
         searchTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(120))
             guard !Task.isCancelled, currentQuery == trimmedQuery else { return }
-            screenHits = app.activityStore.searchOCR(currentQuery, limit: 12)
-            meetingHits = app.searchIndex.search(currentQuery, limit: 10)
+            let result = await RecallSearch.search(currentQuery, state: app.recallState, day: app.askDayScope, app: app)
+            guard !Task.isCancelled else { return }
+            screenHits = result.screens.map(\.primary)
+            matchingScreenIDs = Set(result.screens.flatMap(\.matches).map(\.snapshotID))
+            meetingHits = result.meetings.map(\.primary)
             guard !Task.isCancelled, currentQuery == trimmedQuery else { return }
             isSearching = false
         }
@@ -354,9 +369,6 @@ private struct QuickRecallContent: View {
         }
         if rows.indices.contains(selection) {
             run(rows[selection])
-        } else {
-            guard !value.isEmpty else { return }
-            run(.ask(query: value, title: value, subtitle: ""))
         }
     }
 
@@ -377,15 +389,31 @@ private struct QuickRecallContent: View {
     private func ask(_ question: String) {
         let value = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, !model.isResponding else { return }
-        searchTask?.cancel()
         if !showingConversation {
-            recalledQuery = query
+            app.recallState.meetingIDs = Set(meetingHits.map(\.meetingID))
+            app.recallState.screenIDs = matchingScreenIDs
+            app.recallState.sources = []
+            if !meetingHits.isEmpty { app.recallState.sources.insert(.meetings) }
+            if !screenHits.isEmpty { app.recallState.sources.insert(.screen) }
+            if app.recallState.sources.isEmpty { app.recallState.sources = [.meetings] }
+            app.recallQuery = value
+            app.openAsk(query: value, dayScope: app.askDayScope,
+                        screenSnapshotIDs: Array(app.recallState.screenIDs ?? []),
+                        meetingIDs: app.recallState.meetingIDs)
+            WindowAccess.shared.open("main")
+            dismiss()
+            return
         }
+        searchTask?.cancel()
         isSearching = false
         showingConversation = true
         query = ""
         selection = 0
-        model.send(value)
+        let scope = model.currentQuestionScope
+        model.send(value,
+                   sourceScopes: scope?.sources ?? AskSourceScope.defaults,
+                   dayScope: scope?.dayScopeKey.flatMap { AskDayScope.date(for: $0) },
+                   meetingIDs: scope?.meetingIDs, screenSnapshotIDs: scope?.screenSnapshotIDs)
         inputFocused = true
     }
 
@@ -399,7 +427,15 @@ private struct QuickRecallContent: View {
     }
 
     private func openFullAsk() {
-        app.openAsk()
+        // Both surfaces share this conversation; opening it never re-submits.
+        if showingConversation {
+            app.askMode = .ask
+            app.navSection = .ask
+        } else {
+            app.recallQuery = query
+            app.openAsk(query: query, dayScope: app.askDayScope, screenSnapshotIDs: Array(app.recallState.screenIDs ?? []),
+                        meetingIDs: app.recallState.meetingIDs, mode: .keyword)
+        }
         WindowAccess.shared.open("main")
         dismiss()
     }

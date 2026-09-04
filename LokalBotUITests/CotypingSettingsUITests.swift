@@ -20,6 +20,7 @@ final class CotypingSettingsUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["today.header"]
             .waitForExistence(timeout: 10), "main window never rendered")
         UITestHarness.clickSidebar("sidebar.type", in: app)
+        UITestHarness.selectSegment("Autocomplete", pickerIdentifier: "type.tab", in: app)
         XCTAssertTrue(app.descendants(matching: .any)["autocomplete.home"]
             .waitForExistence(timeout: 8), "Autocomplete did not lead Type for a new install")
     }
@@ -31,12 +32,12 @@ final class CotypingSettingsUITests: XCTestCase {
     }
 
     func testAutocompleteExperienceShowsReadinessPreviewAndPrivacy() {
-        XCTAssertTrue(staticText("Ready to type").exists)
+        XCTAssertTrue(staticText("Off · model ready").exists)
         XCTAssertTrue(staticText("Try the real autocomplete").exists)
         XCTAssertTrue(staticText("Two-step rehearsal").exists)
         XCTAssertTrue(staticText("Private by design").exists)
         XCTAssertTrue(app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH 'Accept '")).firstMatch.exists)
+            NSPredicate(format: "label == 'Insert suggestion'")).firstMatch.exists)
         XCTAssertFalse(staticText("Cotyping").exists,
                        "legacy internal name leaked into the user-facing Type surface")
     }

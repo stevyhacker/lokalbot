@@ -34,6 +34,8 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     /// Civil days represented by screen moments explicitly attached to the
     /// prompt. OCR itself remains ephemeral; these keys preserve provenance.
     var attachedScreenDayKeys: [String]
+    var meetingIDs: Set<UUID>?
+    var screenSnapshotIDs: Set<Int64>?
     /// Version-1 turns did not persist enough source/day/attachment provenance
     /// to replay or retry them safely under a narrower modern scope.
     fileprivate var legacyScopeIsAmbiguous: Bool
@@ -47,11 +49,14 @@ struct ChatMessage: Identifiable, Equatable, Codable {
          sourceScopes: [AskSourceScope] = [], dayScope: Date? = nil,
          dayScopeKey: String? = nil, createdAtIsEstimated: Bool = false,
          attachedScreenDayKeys: [String] = [],
+         meetingIDs: Set<UUID>? = nil, screenSnapshotIDs: Set<Int64>? = nil,
          isPending: Bool = false, isError: Bool = false) {
         self.id = id; self.role = role; self.text = text
         self.createdAt = createdAt; self.createdAtIsEstimated = createdAtIsEstimated
         self.activity = activity; self.sourceScopes = sourceScopes
         self.dayScopeKey = dayScopeKey ?? dayScope.map { AskDayScope.key(for: $0) }
+        self.meetingIDs = meetingIDs
+        self.screenSnapshotIDs = screenSnapshotIDs
         self.attachedScreenDayKeys = attachedScreenDayKeys
         legacyScopeIsAmbiguous = false
         sourceScopeSchemaVersion = Self.currentSourceScopeSchemaVersion
@@ -60,7 +65,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
 
     private enum CodingKeys: String, CodingKey {
         case id, role, text, createdAt, createdAtIsEstimated, activity, sourceScopes
-        case dayScope, attachedScreenDayKeys, sourceScopeSchemaVersion
+        case dayScope, attachedScreenDayKeys, sourceScopeSchemaVersion, meetingIDs, screenSnapshotIDs
         case legacyScopeIsAmbiguous, isError
     }
 
@@ -96,6 +101,8 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         sourceScopeSchemaVersion = try c.decodeIfPresent(
             Int.self, forKey: .sourceScopeSchemaVersion) ?? 1
         isError = try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false
+        meetingIDs = try c.decodeIfPresent(Set<UUID>.self, forKey: .meetingIDs)
+        screenSnapshotIDs = try c.decodeIfPresent(Set<Int64>.self, forKey: .screenSnapshotIDs)
         isPending = false
     }
 
@@ -111,6 +118,8 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         if !activity.isEmpty { try c.encode(activity, forKey: .activity) }
         if !sourceScopes.isEmpty { try c.encode(sourceScopes, forKey: .sourceScopes) }
         try c.encodeIfPresent(dayScopeKey, forKey: .dayScope)
+        try c.encodeIfPresent(meetingIDs, forKey: .meetingIDs)
+        try c.encodeIfPresent(screenSnapshotIDs, forKey: .screenSnapshotIDs)
         if !attachedScreenDayKeys.isEmpty {
             try c.encode(attachedScreenDayKeys, forKey: .attachedScreenDayKeys)
         }
@@ -293,6 +302,8 @@ final class ChatViewModel: ObservableObject {
     struct QuestionScope: Equatable {
         var sources: Set<AskSourceScope>
         var dayScopeKey: String?
+        var meetingIDs: Set<UUID>?
+        var screenSnapshotIDs: Set<Int64>?
     }
     enum ResponsePhase: Equatable {
         case preparingEngine
@@ -307,6 +318,7 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var conversations: [Conversation] = []
     /// The conversation currently shown in the transcript.
     @Published private(set) var currentID: UUID
+    var readingOffsets: [UUID: CGFloat] = [:]
 
     var currentQuestionScope: QuestionScope? {
         guard let question = messages.last(where: { $0.role == .user }) else { return nil }
@@ -314,10 +326,11 @@ final class ChatViewModel: ObservableObject {
             sources: question.sourceScopes.isEmpty
                 ? AskSourceScope.defaults
                 : Set(question.sourceScopes),
-            dayScopeKey: question.dayScopeKey)
+            dayScopeKey: question.dayScopeKey,
+            meetingIDs: question.meetingIDs, screenSnapshotIDs: question.screenSnapshotIDs)
     }
 
-    nonisolated static let newChatTitle = "New chat"
+    nonisolated static let newChatTitle = "New conversation"
 
     /// Prompt chips shown on the empty state.
     let suggestions = [
@@ -339,6 +352,8 @@ final class ChatViewModel: ObservableObject {
         var scopes: Set<AskSourceScope>
         var dayScopeKey: String?
         var attachedScreenDayKeys: [String]
+        var meetingIDs: Set<UUID>?
+        var screenSnapshotIDs: Set<Int64>?
     }
     private var retryPayloads: [UUID: RetryPayload] = [:]
     private var activeAssistantID: UUID?
@@ -372,14 +387,16 @@ final class ChatViewModel: ObservableObject {
     func send(_ prompt: String? = nil, displayText: String? = nil,
               sourceScopes: Set<AskSourceScope> = AskSourceScope.defaults,
               dayScope: Date? = nil,
-              attachedScreenDates: [Date] = []) {
+              attachedScreenDates: [Date] = [],
+              meetingIDs: Set<UUID>? = nil, screenSnapshotIDs: Set<Int64>? = nil) {
         sendResolved(
             prompt,
             displayText: displayText,
             sourceScopes: sourceScopes,
             dayScopeKey: dayScope.map { AskDayScope.key(for: $0) },
             attachedScreenDayKeys: Array(Set(
-                attachedScreenDates.map { AskDayScope.key(for: $0) })).sorted())
+                attachedScreenDates.map { AskDayScope.key(for: $0) })).sorted(),
+            meetingIDs: meetingIDs, screenSnapshotIDs: screenSnapshotIDs)
     }
 
     private func sendResolved(
@@ -387,7 +404,8 @@ final class ChatViewModel: ObservableObject {
         displayText: String?,
         sourceScopes: Set<AskSourceScope>,
         dayScopeKey: String?,
-        attachedScreenDayKeys: [String]
+        attachedScreenDayKeys: [String],
+        meetingIDs: Set<UUID>?, screenSnapshotIDs: Set<Int64>?
     ) {
         let text = (prompt ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isResponding else { return }
@@ -404,7 +422,10 @@ final class ChatViewModel: ObservableObject {
         // failed or stopped answer must not leave its unanswered question as
         // implicit context for the next request.
         let history = Self.finalizedHistoryForKey(
-            from: messages,
+            from: messages.filter { message in
+                (meetingIDs == nil || (message.meetingIDs.map { $0.isSubset(of: meetingIDs ?? []) } ?? false))
+                    && (screenSnapshotIDs == nil || (message.screenSnapshotIDs.map { $0.isSubset(of: screenSnapshotIDs ?? []) } ?? false))
+            },
             allowedScopes: sourceScopes,
             dayScopeKey: dayScopeKey)
 
@@ -413,11 +434,13 @@ final class ChatViewModel: ObservableObject {
         messages.append(ChatMessage(
             role: .user, text: visibleText, createdAt: sentAt,
             sourceScopes: orderedScopes, dayScopeKey: dayScopeKey,
-            attachedScreenDayKeys: attachedScreenDayKeys))
+            attachedScreenDayKeys: attachedScreenDayKeys,
+            meetingIDs: meetingIDs, screenSnapshotIDs: screenSnapshotIDs))
         let assistant = ChatMessage(
             role: .assistant, text: "", createdAt: sentAt,
             sourceScopes: orderedScopes, dayScopeKey: dayScopeKey,
-            attachedScreenDayKeys: attachedScreenDayKeys, isPending: true)
+            attachedScreenDayKeys: attachedScreenDayKeys,
+            meetingIDs: meetingIDs, screenSnapshotIDs: screenSnapshotIDs, isPending: true)
         let assistantID = assistant.id
         let conversationID = currentID
         messages.append(assistant)
@@ -426,7 +449,8 @@ final class ChatViewModel: ObservableObject {
         retryPayloads[assistantID] = .init(
             prompt: text, displayText: visibleText, scopes: sourceScopes,
             dayScopeKey: dayScopeKey,
-            attachedScreenDayKeys: attachedScreenDayKeys)
+            attachedScreenDayKeys: attachedScreenDayKeys,
+            meetingIDs: meetingIDs, screenSnapshotIDs: screenSnapshotIDs)
         activeAssistantID = assistantID
         persist()
 
@@ -437,7 +461,8 @@ final class ChatViewModel: ObservableObject {
                 assistantID: assistantID,
                 conversationID: conversationID,
                 scopes: sourceScopes,
-                dayScopeKey: dayScopeKey)
+                dayScopeKey: dayScopeKey,
+                meetingIDs: meetingIDs, screenSnapshotIDs: screenSnapshotIDs)
         }
     }
 
@@ -485,7 +510,9 @@ final class ChatViewModel: ObservableObject {
                 scopes: Set(messages[userIndex].sourceScopes.isEmpty
                     ? AskSourceScope.allCases : messages[userIndex].sourceScopes),
                 dayScopeKey: messages[userIndex].dayScopeKey,
-                attachedScreenDayKeys: [])
+                attachedScreenDayKeys: [],
+                meetingIDs: messages[userIndex].meetingIDs,
+                screenSnapshotIDs: messages[userIndex].screenSnapshotIDs)
         messages.remove(at: assistantIndex)
         messages.remove(at: userIndex)
         retryPayloads[assistantID] = nil
@@ -494,7 +521,8 @@ final class ChatViewModel: ObservableObject {
             displayText: payload.displayText,
             sourceScopes: payload.scopes,
             dayScopeKey: payload.dayScopeKey,
-            attachedScreenDayKeys: payload.attachedScreenDayKeys)
+            attachedScreenDayKeys: payload.attachedScreenDayKeys,
+            meetingIDs: payload.meetingIDs, screenSnapshotIDs: payload.screenSnapshotIDs)
     }
 
     /// Start a new, empty conversation (persisting the current one first).
@@ -702,7 +730,8 @@ final class ChatViewModel: ObservableObject {
 
     private func run(latest: String, history: [ChatAgent.Turn], assistantID: UUID,
                      conversationID: UUID, scopes: Set<AskSourceScope>,
-                     dayScopeKey: String?) async {
+                     dayScopeKey: String?, meetingIDs: Set<UUID>?,
+                     screenSnapshotIDs: Set<Int64>?) async {
         defer {
             let stillOwnsGeneration = activeAssistantID == assistantID
             if stillOwnsGeneration {
@@ -727,12 +756,13 @@ final class ChatViewModel: ObservableObject {
             let scopedTools = ScopedChatToolRunner(
                 base: tools,
                 scopes: scopes,
-                dayScopeKey: dayScopeKey)
+                dayScopeKey: dayScopeKey,
+                meetingIDs: meetingIDs, screenSnapshotIDs: screenSnapshotIDs)
             var agent = ChatAgent(engine: engine, runner: scopedTools)
             // Dream memory is distilled from meetings, activity, and screen
             // context. Including it in a restricted question would bypass the
             // per-turn source/day boundary even though no tool could do so.
-            if scopes == AskSourceScope.defaults, dayScopeKey == nil {
+            if scopes == AskSourceScope.defaults, dayScopeKey == nil, meetingIDs == nil, screenSnapshotIDs == nil {
                 agent.workMemory = workMemory()
             }
             let answer = try await agent.respond(history: history, latest: latest) { [weak self] event in

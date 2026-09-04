@@ -16,6 +16,8 @@ struct LiveMeetingDetailView: View {
     let meeting: Meeting
 
     @State private var notes = ""
+    @State private var followingLive = true
+    @State private var notesSaveState = "Saved on this Mac"
     @State private var notesLoaded = false
     @State private var saveTask: Task<Void, Never>?
 
@@ -38,7 +40,6 @@ struct LiveMeetingDetailView: View {
         .padding(WorkspaceMetric.sectionGap)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
-            transcriber.activate()   // opting in starts the ASR passes
             loadNotes()
         }
         .onDisappear {
@@ -63,6 +64,13 @@ struct LiveMeetingDetailView: View {
                 .tint(.red)
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("live.stop")
+            }
+            RecordingHealthStrip(recording: app.recording)
+            if !transcriber.isRunning {
+                Button("Start live transcript preview") { transcriber.activate() }
+                    .accessibilityIdentifier("live.startPreview")
+                Text("Recording continues independently. Preview uses the speech model on this Mac.")
+                    .workspaceTextRole(.supporting)
             }
             HStack(spacing: 6) {
                 HStack(spacing: 6) {
@@ -129,8 +137,19 @@ struct LiveMeetingDetailView: View {
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .onScrollGeometryChange(for: Bool.self) {
+                        $0.contentSize.height - $0.visibleRect.maxY < 80
+                    } action: { _, nearEnd in followingLive = nearEnd }
+                    .overlay(alignment: .bottomTrailing) {
+                        if !followingLive {
+                            Button("Follow live") {
+                                followingLive = true
+                                if let last = transcriber.lines.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                            }.buttonStyle(.bordered).padding(8)
+                        }
+                    }
                     .onChange(of: transcriber.lines.count) {
-                        if let last = transcriber.lines.last {
+                        if followingLive, let last = transcriber.lines.last {
                             proxy.scrollTo(last.id, anchor: .bottom)
                         }
                     }
@@ -172,7 +191,7 @@ struct LiveMeetingDetailView: View {
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 9))
                 .accessibilityIdentifier("live.notes")
                 .onChange(of: notes) { scheduleSave() }
-            Text("Notes are saved with the meeting and folded into the summary.")
+            Text(notesSaveState)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -189,10 +208,12 @@ struct LiveMeetingDetailView: View {
     private func loadNotes() {
         guard !notesLoaded else { return }
         notesLoaded = true
-        notes = MeetingNotes.load(from: folder) ?? ""
+        notes = app.meetingNoteDrafts[meeting.id] ?? MeetingNotes.load(from: folder) ?? ""
     }
 
     private func scheduleSave() {
+        notesSaveState = "Saving…"
+        app.meetingNoteDrafts[meeting.id] = notes
         saveTask?.cancel()
         saveTask = Task {
             try? await Task.sleep(for: .milliseconds(600))
@@ -203,6 +224,12 @@ struct LiveMeetingDetailView: View {
 
     private func saveNotes() {
         guard notesLoaded else { return }
-        MeetingNotes.write(notes, to: folder)
+        do {
+            try MeetingNotes.writeChecked(notes, to: folder)
+            notesSaveState = "Saved on this Mac"
+            app.meetingNoteDrafts.removeValue(forKey: meeting.id)
+        } catch {
+            notesSaveState = "Not saved: \(error.localizedDescription)"
+        }
     }
 }

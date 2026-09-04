@@ -230,10 +230,13 @@ struct TimelineContextPanel: View {
                         }
                     }
 
+                SessionMomentBrowser(model: model, session: session)
+
                 Button {
                     app.openAsk(
                         query: "What matters from my work session on \(session.title)?",
-                        dayScope: model.day)
+                        dayScope: model.day,
+                        screenSnapshotIDs: model.shots.filter { $0.ts >= session.start && $0.ts <= session.end }.map(\.id))
                 } label: {
                     Label("Ask about this session", systemImage: "sparkles")
                         .frame(maxWidth: .infinity)

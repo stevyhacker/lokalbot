@@ -97,9 +97,9 @@ struct AppSettings: Codable, Equatable {
         var isWeekly: Bool { self == .weeklyWorkLog }
     }
 
-    /// New installs record detected meetings automatically. Users can switch
-    /// to notification approval or manual recording in Meeting settings.
-    var autoRecordMode: AutoRecordMode = .automatic
+    /// New installs ask before recording a detected meeting. Decoding old
+    /// settings preserves the previous automatic default.
+    var autoRecordMode: AutoRecordMode = .ask
     /// Seconds the meeting app's own audio must be gone before a meeting counts
     /// as ended.
     var stopDebounceSeconds: TimeInterval = Self.defaultStopDebounceSeconds
@@ -157,6 +157,8 @@ struct AppSettings: Codable, Equatable {
     /// Handy-style system-wide dictation: press the shortcut, speak, transcribe
     /// locally with the selected ASR engine, then deliver the text to the focused app.
     var dictationEnabled: Bool = false
+    var dictationIntent: DictationIntent = .transcribe
+    var dictationUseScreenContext = false
     var dictationTriggerMode: DictationTriggerMode = .pushToTalk
     var dictationOutputMode: DictationOutputMode = .pasteIntoFocusedApp
     var dictationShowOverlay: Bool = true
@@ -173,12 +175,12 @@ struct AppSettings: Codable, Equatable {
     /// M6: embedding-based semantic search (Qwen3-Embedding, downloaded on first use).
     var semanticSearchEnabled: Bool = true
 
-    // M5: screen context. Fresh installs select encrypted visual context, while
+    // M5: new installs start with activity only; text and pixels are opt-in, while
     // macOS Accessibility and Screen Recording permissions still gate capture.
     // The legacy boolean remains encoded so older builds can read a new settings
     // blob safely.
-    var screenContextCaptureMode: ScreenContextCaptureMode = .visualContext
-    var screenshotsEnabled: Bool = true
+    var screenContextCaptureMode: ScreenContextCaptureMode = .activityOnly
+    var screenshotsEnabled: Bool = false
     /// Compatibility bridge for callers/settings blobs that still set only the
     /// pre-mode screenshot switch.
     var effectiveScreenContextCaptureMode: ScreenContextCaptureMode {
@@ -621,6 +623,7 @@ struct AppSettings: Codable, Equatable {
         case speechVoice
         case speechSpeed
         case dictationEnabled
+        case dictationIntent, dictationUseScreenContext
         case dictationTriggerMode
         case dictationOutputMode
         case dictationShowOverlay
@@ -772,6 +775,8 @@ struct AppSettings: Codable, Equatable {
         try c.encode(speechVoice, forKey: .speechVoice)
         try c.encode(Self.clampedSpeechSpeed(speechSpeed), forKey: .speechSpeed)
         try c.encode(dictationEnabled, forKey: .dictationEnabled)
+        try c.encode(dictationIntent, forKey: .dictationIntent)
+        try c.encode(dictationUseScreenContext, forKey: .dictationUseScreenContext)
         try c.encode(dictationTriggerMode, forKey: .dictationTriggerMode)
         try c.encode(dictationOutputMode, forKey: .dictationOutputMode)
         try c.encode(dictationShowOverlay, forKey: .dictationShowOverlay)
@@ -876,7 +881,7 @@ struct AppSettings: Codable, Equatable {
         }
         let meetingSettingsVersion = decode(.meetingSettingsVersion, 0)
         echoCancellation = decode(.echoCancellation, defaults.echoCancellation)
-        autoRecordMode = decode(.autoRecordMode, defaults.autoRecordMode)
+        autoRecordMode = decode(.autoRecordMode, c.contains(.autoRecordMode) ? defaults.autoRecordMode : .automatic)
         stopDebounceSeconds = Self.migratedStopDebounceSeconds(
             decode(.stopDebounceSeconds, defaults.stopDebounceSeconds),
             decodedSettingsVersion: meetingSettingsVersion)
@@ -899,6 +904,9 @@ struct AppSettings: Codable, Equatable {
         speechVoice = decode(.speechVoice, defaults.speechVoice)
         speechSpeed = Self.clampedSpeechSpeed(decode(.speechSpeed, defaults.speechSpeed))
         dictationEnabled = decode(.dictationEnabled, defaults.dictationEnabled)
+        // Existing installations keep the original Compose behavior.
+        dictationIntent = decode(.dictationIntent, .compose)
+        dictationUseScreenContext = decode(.dictationUseScreenContext, true)
         dictationTriggerMode = decode(.dictationTriggerMode, defaults.dictationTriggerMode)
         dictationOutputMode = decode(.dictationOutputMode, defaults.dictationOutputMode)
         dictationShowOverlay = decode(.dictationShowOverlay, defaults.dictationShowOverlay)
@@ -908,10 +916,10 @@ struct AppSettings: Codable, Equatable {
             .dictationCompositionBuiltInModelID, defaults.dictationCompositionBuiltInModelID)
         trackingEnabled = decode(.trackingEnabled, defaults.trackingEnabled)
         semanticSearchEnabled = decode(.semanticSearchEnabled, defaults.semanticSearchEnabled)
-        let legacyScreenshotsEnabled = decode(.screenshotsEnabled, defaults.screenshotsEnabled)
+        let legacyScreenshotsEnabled = decode(.screenshotsEnabled, true)
         screenContextCaptureMode = decode(
             .screenContextCaptureMode,
-            legacyScreenshotsEnabled ? .visualContext : .activityOnly)
+            c.contains(.screenContextCaptureMode) ? defaults.screenContextCaptureMode : (legacyScreenshotsEnabled ? .visualContext : .activityOnly))
         screenshotsEnabled = screenContextCaptureMode.capturesPixels
         screenshotIntervalMinutes = decode(.screenshotIntervalMinutes, defaults.screenshotIntervalMinutes)
         meetingVisualContextEnabled = decode(

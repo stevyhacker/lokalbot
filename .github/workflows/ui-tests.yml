@@ -106,3 +106,12 @@ jobs:
           CODE_SIGNING_ALLOWED: "NO" # hosted runners hold no dev cert
           UI_TEST_FILTER: ${{ inputs.filter || '' }}
         run: Scripts/ui-tests.sh "$UI_TEST_FILTER"
+
+      - name: Save UI evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ui-test-results
+          path: .build/dd/Logs/Test/*.xcresult
+          if-no-files-found: warn
+          retention-days: 14

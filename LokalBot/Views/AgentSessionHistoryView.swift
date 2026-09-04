@@ -18,6 +18,7 @@ struct AgentSessionHistoryView: View {
         NavigationSplitView {
             sidebar
                 .navigationTitle("Saved Sessions")
+                .navigationSplitViewColumnWidth(min: 250, ideal: 300, max: 400)
         } detail: {
             detail
                 .navigationTitle("Session Details")
@@ -106,7 +107,11 @@ struct AgentSessionHistoryView: View {
                     }
 
                     Divider()
-
+                    if !session.preview.isEmpty {
+                        Text("Last message preview").font(WorkspaceTypography.sectionTitle)
+                        Text(session.preview).textSelection(.enabled)
+                        Text("Preview only. The session starts when you choose Open.").workspaceTextRole(.supporting)
+                    }
                     VStack(alignment: .leading, spacing: 9) {
                         Button {
                             open(session)
@@ -164,7 +169,7 @@ struct AgentSessionHistoryView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(session.title)
                     .font(WorkspaceTypography.rowTitle)
-                    .lineLimit(1)
+                    .lineLimit(2)
                 Text("\(sessions.workspaceDisplayName(for: session.workspace)) · \(formatted(session.modifiedAt))")
                     .font(WorkspaceTypography.metadata)
                     .foregroundStyle(.secondary)

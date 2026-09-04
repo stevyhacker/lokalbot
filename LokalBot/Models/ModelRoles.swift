@@ -59,6 +59,7 @@ struct ModelRolesSnapshot: Equatable, Sendable {
         statuses[role] ?? .unavailable
     }
 
+    var meetingReady: Bool { self[.transcribe].isReady && self[.think].isReady }
     var coreReady: Bool { ModelRole.allCases.allSatisfy { self[$0].isReady } }
     var headline: String { readiness.headline }
     var storageSummary: String { readiness.storageSummary }
@@ -66,7 +67,7 @@ struct ModelRolesSnapshot: Equatable, Sendable {
     var failedDownloads: Int { readiness.failedDownloads }
 
     var detail: String {
-        if coreReady { return readiness.detail }
+        if meetingReady { return readiness.detail }
         if let working = ModelRole.allCases.lazy.map({ self[$0] }).first(where: \.isWorking) {
             return working.label
         }
@@ -119,6 +120,7 @@ final class ModelRoles: ObservableObject {
     private let onReadinessChanged: () -> Void
     private var downloadObserver: AnyCancellable?
     private var preparationTask: (id: String, token: UUID, task: Task<Void, Never>)?
+    private var storageInfo: (date: Date, storedBytes: Int64, availableBytes: Int64?)?
 
     init(
         settings: @escaping () -> AppSettings,
@@ -158,11 +160,14 @@ final class ModelRoles: ObservableObject {
     var snapshot: ModelRolesSnapshot {
         let settings = settings()
         let downloadedTranscriptionModelIDs = downloadedTranscriptionModels(settings)
+        let cachedStorage = storageInfo.flatMap { Date().timeIntervalSince($0.date) < 30 ? ($0.storedBytes, $0.availableBytes) : nil }
         var readiness = ModelReadinessSnapshot.make(
             settings: settings,
             storage: storage,
             activeDownloads: downloadProgress.count,
-            failedDownloads: downloadErrors.values.filter { !$0.isEmpty }.count)
+            failedDownloads: downloadErrors.values.filter { !$0.isEmpty }.count,
+            storageInfo: cachedStorage)
+        if cachedStorage == nil { storageInfo = (Date(), readiness.storedBytes, readiness.availableBytes) }
         readiness.transcriptionReady = downloadedTranscriptionModelIDs.contains(
             settings.transcriptionModel.id)
         return ModelRolesSnapshot(
@@ -229,9 +234,9 @@ final class ModelRoles: ObservableObject {
         onReadinessChanged()
     }
 
-    func startCoreModelDownloads() {
+    func startCoreModelDownloads(includeAutocomplete: Bool = true) {
         let settings = settings()
-        var ids = [settings.cotypingBuiltInModelID]
+        var ids = includeAutocomplete ? [settings.cotypingBuiltInModelID] : []
         if settings.summarizerBackend == .builtIn { ids.append(settings.builtInModelID) }
         for id in ids {
             guard let entry = ModelCatalog.entry(
