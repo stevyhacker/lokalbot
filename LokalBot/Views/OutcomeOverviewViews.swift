@@ -42,13 +42,15 @@ struct ActionThreadRow: View {
     @EnvironmentObject var app: AppState
     let thread: ActionThread
     @State private var showingSources = false
+    @State private var showingStatusConfirmation = false
+    @State private var pendingStatus: OutcomeStatus = .done
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Button {
                 set(thread.status == .done ? .open : .done)
             } label: {
-                Image(systemName: thread.status == .done
+                Image(systemName: thread.hasMixedStatus ? "minus.circle" : thread.status == .done
                       ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(thread.status == .done ? Brand.teal : .secondary)
             }
@@ -61,6 +63,11 @@ struct ActionThreadRow: View {
                     .strikethrough(thread.status == .done)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 6) {
+                    if thread.hasMixedStatus {
+                        Text("Mixed status")
+                            .font(WorkspaceTypography.metadata)
+                            .foregroundStyle(.secondary)
+                    }
                     if thread.hasMultipleMeetings {
                         Button {
                             showingSources = true
@@ -138,10 +145,31 @@ struct ActionThreadRow: View {
         }
         .padding(.vertical, WorkspaceMetric.rowVerticalPadding)
         .accessibilityIdentifier("outcome.thread.\(thread.id)")
+        .confirmationDialog(
+            "Update actions in \(thread.meetingCount) meetings?",
+            isPresented: $showingStatusConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Mark all \(pendingStatus.label.lowercased())") { apply(pendingStatus) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(thread.references.map(\.meetingTitle).joined(separator: "\n"))
+        }
     }
 
     private func set(_ status: OutcomeStatus) {
-        _ = app.outcomeIndex.setStatus(status, thread: thread)
+        if thread.hasMultipleMeetings {
+            pendingStatus = status
+            showingStatusConfirmation = true
+        } else {
+            apply(status)
+        }
+    }
+
+    private func apply(_ status: OutcomeStatus) {
+        if !app.outcomeIndex.setStatus(status, thread: thread) {
+            app.lastError = app.outcomeIndex.lastError
+        }
     }
 }
 

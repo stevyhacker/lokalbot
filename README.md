@@ -81,7 +81,7 @@ The same private library connects four moves: **Remember** meetings and optional
 - **Records both sides of the call.** Auto-detects Zoom, Teams, Meet, Slack, Webex, and FaceTime, then captures *you* and *them* on two synced tracks — no bot in the participant list.
 - **Follows the call live.** A live meeting view while you talk: quick notes that land in the finished meeting, plus an opt-in rolling transcript.
 - **Transcribes locally.** IBM Granite Speech 4.1 by default; Parakeet for speed (up to ~190× realtime in local benchmarks), Whisper for 99 languages, Qwen3-ASR for harder recordings.
-- **Turns talk into outcomes.** After processing, you get a TL;DR, decisions, action items, and open questions. Repeated commitments become one action thread while every source meeting and citation stays available.
+- **Turns talk into outcomes.** After processing, you get a TL;DR, decisions, action items, and open questions. Matching source commitments become one action thread while every source meeting and citation stays available. Updating multiple meetings requires confirmation; checking an action inside a meeting changes only that meeting.
 - **Explains the day consistently.** Digest, Dream, exports, and local routines read the same daily evidence snapshot, including saved action corrections and completion state.
 
 ### Recall

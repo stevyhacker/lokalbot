@@ -143,15 +143,7 @@ final class OutcomeIndex: ObservableObject {
     @discardableResult
     func setStatus(_ status: OutcomeStatus, actionID: String,
                    meetingID: Meeting.ID) -> Bool {
-        if let thread = userActionThreads.first(where: { thread in
-            thread.references.contains {
-                $0.meetingID == meetingID && $0.action.id == actionID
-            }
-        }),
-           thread.hasMultipleMeetings {
-            return setStatus(status, thread: thread)
-        }
-        mutateAction(actionID: actionID, meetingID: meetingID) { state in
+        return mutateAction(actionID: actionID, meetingID: meetingID) { state in
             state.status = status
             state.userEdited = true
         }
@@ -159,6 +151,11 @@ final class OutcomeIndex: ObservableObject {
 
     @discardableResult
     func setStatus(_ status: OutcomeStatus, thread: ActionThread) -> Bool {
+        guard let current = userActionThreads.first(where: { $0.id == thread.id }),
+              current == thread else {
+            lastError = "The action thread changed. Review its sources and try again."
+            return false
+        }
         var changedMeetings: [Meeting] = []
         for reference in thread.references where reference.status != status {
             guard mutateAction(
@@ -222,7 +219,9 @@ final class OutcomeIndex: ObservableObject {
         rebuildThreads: Bool = true,
         change: (inout MeetingOutcomeState.ActionState) -> Void
     ) -> Bool {
-        guard var projection = projections[meetingID] else { return false }
+        guard var projection = projections[meetingID],
+              projection.outcomes.actionItems.contains(where: { $0.id == actionID })
+        else { return false }
         var actionState = projection.state.actions[actionID] ?? .init()
         change(&actionState)
         actionState.updatedAt = Date().outcomePersistedTimestamp
@@ -254,7 +253,7 @@ final class OutcomeIndex: ObservableObject {
 
     private func rebuildActionThreads() {
         userActionThreads = ActionThreadClusterer.cluster(
-            all.flatMap(\.actionReferences).filter(\.isForUser))
+            all.flatMap(\.actionReferences)).filter(\.isForUser)
     }
 
     private static func nilIfBlank(_ value: String?) -> String? {

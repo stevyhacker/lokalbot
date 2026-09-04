@@ -14,17 +14,17 @@ struct ActionThread: Identifiable, Equatable, Sendable {
     var meetingCount: Int { Set(references.map(\.meetingID)).count }
     var mentionCount: Int { references.count }
     var hasMultipleMeetings: Bool { meetingCount > 1 }
+    var hasMixedStatus: Bool { Set(references.map(\.status)).count > 1 }
+    var isForUser: Bool {
+        owner?.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare("Me") == .orderedSame
+    }
+    var statusLabel: String { hasMixedStatus ? "Mixed" : status.label }
 
+    /// A completed mention cannot hide unfinished work in another meeting.
     var status: OutcomeStatus {
-        references.max {
-            if $0.stateUpdatedAt != $1.stateUpdatedAt {
-                return $0.stateUpdatedAt < $1.stateUpdatedAt
-            }
-            if $0.meetingStartedAt != $1.meetingStartedAt {
-                return $0.meetingStartedAt < $1.meetingStartedAt
-            }
-            return $0.id < $1.id
-        }?.status ?? .open
+        if references.contains(where: { $0.status == .open }) { return .open }
+        if references.contains(where: { $0.status == .deferred }) { return .deferred }
+        return .done
     }
 
     var dueHistory: [String] {
@@ -79,9 +79,8 @@ struct ActionThread: Identifiable, Equatable, Sendable {
     }
 }
 
-/// Conservative lexical grouping for commitments. It deliberately
-/// avoids a model call: uncertain pairs stay separate, while every grouped
-/// reference remains available for inspection and navigation.
+/// Only equal canonical source commitments form threads. Similar wording is
+/// not sufficient authority to share status, ownership, or corrections.
 enum ActionThreadClusterer {
     static let maximumMeetingSpan: TimeInterval = 30 * 86_400
 
@@ -124,38 +123,37 @@ enum ActionThreadClusterer {
               compatibleOwners(lhs, rhs)
         else { return false }
 
-        let leftTokens = OutcomeTextSimilarity.significantTokens(lhs.text)
-        let rightTokens = OutcomeTextSimilarity.significantTokens(rhs.text)
+        let left = canonicalSourceText(lhs.action.displayText)
+        let right = canonicalSourceText(rhs.action.displayText)
         // Short generic commitments recur naturally and are unsafe to merge.
-        guard leftTokens.count >= 3, rightTokens.count >= 3 else { return false }
+        return OutcomeTextSimilarity.significantTokens(left).count >= 3 && left == right
+    }
 
-        let leftIdentifiers = OutcomeTextSimilarity.identifierTokens(lhs.text)
-        let rightIdentifiers = OutcomeTextSimilarity.identifierTokens(rhs.text)
-        if !leftIdentifiers.isEmpty,
-           !rightIdentifiers.isEmpty,
-           leftIdentifiers.isDisjoint(with: rightIdentifiers) {
-            return false
+    private static func canonicalSourceText(_ text: String) -> String {
+        let normalized = text.folding(options: [.caseInsensitive, .diacriticInsensitive],
+                                      locale: Locale(identifier: "en_US_POSIX"))
+            .replacingOccurrences(of: "’", with: "'")
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ".!?")))
+        var words = normalized.split(whereSeparator: \.isWhitespace).map(String.init)
+        // Remove only complete, harmless leading phrases; preserve verb,
+        // negation, word order, names, and identifiers everywhere else.
+        for prefix in [["i", "will"], ["i'll"], ["we", "will"], ["please"]]
+            where words.starts(with: prefix) {
+            words.removeFirst(prefix.count)
+            break
         }
-
-        if OutcomeTextSimilarity.normalized(lhs.text)
-            == OutcomeTextSimilarity.normalized(rhs.text) {
-            return true
-        }
-        let intersection = leftTokens.intersection(rightTokens).count
-        let union = leftTokens.union(rightTokens).count
-        guard union > 0 else { return false }
-        let jaccard = Double(intersection) / Double(union)
-        let containment = Double(intersection) / Double(min(leftTokens.count, rightTokens.count))
-        return jaccard >= 0.72 && containment >= 0.80
+        return words.joined(separator: " ")
     }
 
     private static func compatibleOwners(
         _ lhs: OutcomeActionReference,
         _ rhs: OutcomeActionReference
     ) -> Bool {
-        if lhs.isForUser || rhs.isForUser { return lhs.isForUser && rhs.isForUser }
-        guard let left = lhs.owner.map(OutcomeTextSimilarity.normalized),
-              let right = rhs.owner.map(OutcomeTextSimilarity.normalized),
+        if lhs.action.isForUser || rhs.action.isForUser {
+            return lhs.action.isForUser && rhs.action.isForUser
+        }
+        guard let left = lhs.action.owner.map(OutcomeTextSimilarity.normalized),
+              let right = rhs.action.owner.map(OutcomeTextSimilarity.normalized),
               !left.isEmpty,
               !right.isEmpty
         else { return false }

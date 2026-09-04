@@ -16,7 +16,7 @@ final class ActionThreadsTests: XCTestCase {
             startedAt: older.meetingStartedAt.addingTimeInterval(2 * 86_400),
             text: "Send the revised launch proposal",
             due: "Monday",
-            correctedText: "Send Acme the revised launch proposal",
+            correctedText: "Send Acme the revised launch proposal by email",
             correctedDue: "Tuesday")
 
         let threads = ActionThreadClusterer.cluster([older, newer])
@@ -25,7 +25,7 @@ final class ActionThreadsTests: XCTestCase {
         let thread = try XCTUnwrap(threads.first)
         XCTAssertEqual(thread.meetingCount, 2)
         XCTAssertEqual(thread.mentionCount, 2)
-        XCTAssertEqual(thread.text, "Send Acme the revised launch proposal")
+        XCTAssertEqual(thread.text, "Send Acme the revised launch proposal by email")
         XCTAssertEqual(thread.due, "Tuesday")
         XCTAssertEqual(thread.dueHistory, ["Tuesday", "Friday"])
         XCTAssertEqual(thread.references.map(\.meetingTitle), ["Client review", "Planning"])
@@ -61,7 +61,7 @@ final class ActionThreadsTests: XCTestCase {
         XCTAssertEqual(ActionThreadClusterer.cluster(references).count, references.count)
     }
 
-    func testMostRecentSavedStateControlsThreadStatus() throws {
+    func testMixedStatusPreservesUnfinishedWorkAndFiltersByEachSource() throws {
         let start = Date(timeIntervalSince1970: 1_780_000_000)
         let first = reference(
             meetingID: UUID(),
@@ -80,10 +80,15 @@ final class ActionThreadsTests: XCTestCase {
 
         let thread = try XCTUnwrap(ActionThreadClusterer.cluster([first, completed]).first)
 
-        XCTAssertEqual(thread.status, .done)
+        XCTAssertEqual(thread.status, .open)
+        XCTAssertTrue(thread.hasMixedStatus)
+        XCTAssertEqual(thread.statusLabel, "Mixed")
+        XCTAssertTrue(ActionStatusFilter.done.includes(thread))
+        XCTAssertTrue(ActionStatusFilter.active.includes(thread))
+        XCTAssertFalse(ActionStatusFilter.deferred.includes(thread))
     }
 
-    func testSourceCompletionPersistsWholeThreadAndNotifiesOncePerMeeting() throws {
+    func testSourceCompletionIsLocalAndExplicitThreadCompletionUpdatesAllSources() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("action-thread-index-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -115,6 +120,11 @@ final class ActionThreadsTests: XCTestCase {
             .done,
             actionID: source.action.id,
             meetingID: source.meetingID))
+        XCTAssertEqual(index.openUserActions.count, 1)
+        XCTAssertEqual(notifications, [source.meetingID])
+        XCTAssertTrue(index.userActionThreads[0].hasMixedStatus)
+        XCTAssertFalse(index.setStatus(.done, thread: thread), "Reject a stale UI snapshot")
+        XCTAssertTrue(index.setStatus(.done, thread: index.userActionThreads[0]))
         XCTAssertTrue(index.openUserActions.isEmpty)
         XCTAssertEqual(index.userActionThreads.map(\.status), [.done])
         XCTAssertEqual(Set(notifications), Set([firstID, secondID]))
@@ -123,6 +133,47 @@ final class ActionThreadsTests: XCTestCase {
             let state = MeetingOutcomeStore.loadState(from: meeting.folderURL(in: storage))
             XCTAssertEqual(state.actions.values.first?.status, .done)
         }
+    }
+
+    func testOppositeNegatedReorderedAndNumberedCommitmentsStaySeparate() {
+        let date = Date()
+        let texts = [
+            "Enable automatic daily export for all workspace users",
+            "Disable automatic daily export for all workspace users",
+            "Do not enable automatic daily export for all workspace users",
+            "Send the launch proposal to Alice from Bob",
+            "Send the launch proposal to Bob from Alice",
+            "Ship release 72 candidate today",
+            "Ship release 73 candidate today",
+            "Set the alert threshold to -5 degrees",
+            "Set the alert threshold to 5 degrees",
+            "Set the alert threshold to >= 5 degrees",
+            "Set the alert threshold to <= 5 degrees",
+        ]
+        let references = texts.enumerated().map { index, text in
+            reference(meetingID: UUID(), meetingTitle: text,
+                      startedAt: date.addingTimeInterval(Double(index)), text: text)
+        }
+        XCTAssertEqual(ActionThreadClusterer.cluster(references).count, texts.count)
+    }
+
+    func testCorrectionsKeepMembershipAndIDAcrossRefresh() throws {
+        let start = Date()
+        let first = reference(meetingID: UUID(), meetingTitle: "One", startedAt: start,
+                              text: "Send the revised launch proposal")
+        var second = reference(meetingID: UUID(), meetingTitle: "Two", startedAt: start.addingTimeInterval(60),
+                               text: "Send the revised launch proposal")
+        let original = try XCTUnwrap(ActionThreadClusterer.cluster([first, second]).first)
+        second.text = "Send Acme the revised launch proposal by email"
+        second.textWasCorrected = true
+        second.owner = "Alice"
+        second.ownerWasCorrected = true
+        let updated = ActionThreadClusterer.cluster([first, second])
+        XCTAssertEqual(updated.count, 1)
+        XCTAssertEqual(updated[0].id, original.id)
+        XCTAssertEqual(updated[0].owner, "Alice")
+        XCTAssertFalse(updated[0].isForUser)
+        XCTAssertEqual(updated[0].text, second.text)
     }
 
     private func reference(

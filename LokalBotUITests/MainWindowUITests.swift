@@ -560,6 +560,45 @@ final class MainWindowUITests: XCTestCase {
                        "completed action remained in Today attention")
     }
 
+    func testMultiMeetingThreadCompletionRequiresConfirmation() throws {
+        app.terminate()
+        let source = fixture.folder(for: fixture.designReview).appendingPathComponent("outcomes.json")
+        let target = fixture.folder(for: fixture.standup).appendingPathComponent("outcomes.json")
+        var outcomes = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: source)) as? [String: Any])
+        let actions = try XCTUnwrap(outcomes["actionItems"] as? [[String: Any]])
+        outcomes["actionItems"] = [try XCTUnwrap(actions.first)]
+        outcomes["decisionRecords"] = []
+        outcomes["openQuestions"] = []
+        try JSONSerialization.data(withJSONObject: outcomes).write(to: target, options: .atomic)
+        app = try UITestHarness.relaunch(storageRoot: fixture.root,
+                                        defaultsSuiteName: XCTUnwrap(defaultsSuiteName))
+        XCTAssertTrue(identified("today.header").waitForExistence(timeout: 10))
+        let toggle = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "outcome.thread.toggle.")).firstMatch
+        UITestHarness.scrollTo(toggle, in: app)
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        toggle.click()
+        let confirm = app.buttons["Mark all done"].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 4), "Multi-meeting completion needs explicit approval")
+        app.buttons["Cancel"].firstMatch.click()
+        let stateURLs = [fixture.designReview, fixture.standup].map {
+            fixture.folder(for: $0).appendingPathComponent("outcome-state.json")
+        }
+        XCTAssertTrue(stateURLs.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) },
+                      "Cancelling must not write either source overlay")
+        toggle.click()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 4))
+        confirm.click()
+        XCTAssertTrue(UITestHarness.waitUntil {
+            stateURLs.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }
+        })
+        for url in stateURLs {
+            let state = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+            let saved = try XCTUnwrap(state["actions"] as? [String: [String: Any]])
+            XCTAssertEqual(saved["fixture-action-design-1"]?["status"] as? String, "done")
+        }
+    }
+
     /// Full detail leads with actions and decisions, keeps the summary visible,
     /// and retains the transcript as an explicit evidence disclosure.
     func testMeetingDetailLoadsExpandedSummaryAndTranscript() {
