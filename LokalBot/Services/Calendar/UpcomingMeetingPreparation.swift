@@ -78,19 +78,23 @@ struct UpcomingMeetingEvidence: Equatable, Sendable {
     /// Stable within one process and deliberately includes extracted content,
     /// so a newly-written summary/outcomes file invalidates the in-memory brief.
     var signature: String {
-        let parts = [
+        let meetingParts = relatedMeetings.map { $0.meeting.id.uuidString + $0.summary }
+        let commitmentParts: [String] = commitments.map { commitment in
+            let fields = [commitment.text, commitment.owner ?? "", commitment.due ?? "",
+                          String(commitment.sourceMeetingCount)]
+            return ContentFingerprint.fields(fields)
+        }
+        let projectParts = projects.map { $0.name + $0.status + $0.lastActiveDay }
+        let parts: [String] = [
             event.externalID,
             event.title,
             String(event.startDate.timeIntervalSinceReferenceDate),
             String(event.endDate.timeIntervalSinceReferenceDate),
             event.participantNames.joined(separator: "|"),
-            relatedMeetings.map { $0.meeting.id.uuidString + $0.summary }.joined(separator: "|"),
+            meetingParts.joined(separator: "|"),
             decisions.map(\.text).joined(separator: "|"),
-            commitments.map {
-                $0.text + ($0.owner ?? "") + ($0.due ?? "")
-                    + String($0.sourceMeetingCount)
-            }.joined(separator: "|"),
-            projects.map { $0.name + $0.status + $0.lastActiveDay }.joined(separator: "|"),
+            commitmentParts.joined(separator: "|"),
+            projectParts.joined(separator: "|"),
         ]
         return parts.joined(separator: "\u{1f}")
     }

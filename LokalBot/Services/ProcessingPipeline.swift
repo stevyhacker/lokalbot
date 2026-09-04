@@ -1039,6 +1039,9 @@ final class ProcessingPipeline: ObservableObject {
         config: AppSettings
     ) async throws -> DayDigestGenerationResult {
         let evidence = snapshot.digestEvidence()
+        let name = DreamDay.key(for: snapshot.day)
+        let url = storage.rootURL.appendingPathComponent("journal/\(name).md")
+        let revision = try DayDigestJournalWriter.revision(at: url)
 
         let overview: DayDigestOverviewGeneration
         if evidence.isEmpty {
@@ -1068,17 +1071,8 @@ final class ProcessingPipeline: ObservableObject {
 
         try Task.checkCancellation()
         let text = evidence.renderDocument(summary: overview.summary)
-        let name = DreamDay.key(for: snapshot.day)
-        let url = storage.rootURL.appendingPathComponent("journal/\(name).md")
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try text.write(to: url, atomically: true, encoding: .utf8)
-        try DayDigestGenerationMetadataStore.record(
-            quality: overview.quality,
-            evidenceLatestAt: evidence.latestEvidenceAt,
-            evidenceSignature: evidence.contentSignature,
-            meetingEvidenceSignature: evidence.meetingSignature,
-            for: url)
+        try DayDigestJournalWriter.write(text, to: url, replacing: revision,
+                                        evidence: evidence, quality: overview.quality)
         return DayDigestGenerationResult(
             text: text,
             url: url,

@@ -31,6 +31,7 @@ final class DayDigestLifecycle {
     private let latestActivityEvidenceAt: (Date) -> Date?
     private let settings: () -> AppSettings
     private let generator: Generator
+    private let onGenerated: (Date) -> Void
     private let calendar: Calendar
     private let scheduler: DayDigestScheduler
     private var invalidatedDays: Set<String> = []
@@ -44,7 +45,8 @@ final class DayDigestLifecycle {
         meetings: @escaping () -> [Meeting],
         latestActivityEvidenceAt: @escaping (Date) -> Date?,
         settings: @escaping () -> AppSettings,
-        generator: @escaping Generator
+        generator: @escaping Generator,
+        onGenerated: @escaping (Date) -> Void = { _ in }
     ) {
         self.storageRoot = storageRoot
         self.calendar = calendar
@@ -55,6 +57,7 @@ final class DayDigestLifecycle {
         self.latestActivityEvidenceAt = latestActivityEvidenceAt
         self.settings = settings
         self.generator = generator
+        self.onGenerated = onGenerated
     }
 
     convenience init(
@@ -62,7 +65,8 @@ final class DayDigestLifecycle {
         activityStore: ActivityStore,
         pipeline: ProcessingPipeline,
         meetings: @escaping () -> [Meeting],
-        settings: @escaping () -> AppSettings
+        settings: @escaping () -> AppSettings,
+        onGenerated: @escaping (Date) -> Void = { _ in }
     ) {
         self.init(
             storageRoot: storage.rootURL,
@@ -75,7 +79,8 @@ final class DayDigestLifecycle {
                 try await pipeline.generateDayDigest(
                     from: evidence,
                     config: settings)
-            })
+            },
+            onGenerated: onGenerated)
     }
 
     func journalURL(for day: Date) -> URL {
@@ -120,9 +125,11 @@ final class DayDigestLifecycle {
         settings override: AppSettings? = nil
     ) async throws -> DayDigestGenerationResult {
         let evidence = try evidenceInput(for: day)
-        return try await generator(
+        let result = try await generator(
             evidence,
             override ?? settings())
+        onGenerated(evidence.day)
+        return result
     }
 
     func configureAutomaticGeneration(
@@ -157,6 +164,7 @@ final class DayDigestLifecycle {
                     evidence,
                     self.settings())
                 self.invalidatedDays.remove(DreamDay.key(for: day, calendar: self.calendar))
+                self.onGenerated(evidence.day)
                 return result.quality.needsRepair ? .needsRepair : .completed
             },
             onError: onError)
@@ -170,7 +178,11 @@ final class DayDigestLifecycle {
     /// without changing meeting metadata. Re-evaluate immediately instead of
     /// waiting for the next minute tick.
     func reconsiderEvidence(for day: Date? = nil) {
-        if let day { invalidatedDays.insert(DreamDay.key(for: day, calendar: calendar)) }
+        reconsiderEvidence(for: day.map { [$0] } ?? [])
+    }
+
+    func reconsiderEvidence(for days: [Date]) {
+        invalidatedDays.formUnion(days.map { DreamDay.key(for: $0, calendar: calendar) })
         scheduler.reconsiderEvidence()
     }
 

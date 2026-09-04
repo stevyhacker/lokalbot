@@ -317,8 +317,8 @@ final class AppState: ObservableObject {
     let storage = StorageManager()
     private(set) lazy var outcomeIndex = OutcomeIndex(
         storage: storage,
-        onEvidenceChanged: { [weak self] meeting in
-            self?.primaryEvidenceDidChange(for: meeting)
+        onEvidenceChanged: { [weak self] meetings in
+            self?.primaryEvidenceDidChange(for: meetings)
         })
     private(set) lazy var cotypingLearning = CotypingLearningStore(storageRoot: storage.rootURL)
     let detector = MeetingDetector()
@@ -440,7 +440,8 @@ final class AppState: ObservableObject {
             guard let self else { return [] }
             return (self.currentMeeting.map { [$0] } ?? []) + self.meetings
         },
-        settings: { [store = settingsStore] in store.current })
+        settings: { [store = settingsStore] in store.current },
+        onGenerated: { [weak self] day in self?.dayDigestDidChange(on: day) })
     /// Meeting-recording lifecycle: recorders, watchdog, timer tick, prewarm.
     private(set) lazy var recording = RecordingController(
         storage: storage,
@@ -1198,33 +1199,49 @@ final class AppState: ObservableObject {
     /// user outcome edits both reach this path, so derived Digest, Dream,
     /// export, and routine surfaces cannot silently diverge.
     private func primaryEvidenceDidChange(for meeting: Meeting) {
-        primaryEvidenceDidChange(on: meeting.startedAt)
+        primaryEvidenceDidChange(for: [meeting])
+    }
+
+    private func primaryEvidenceDidChange(for meetings: [Meeting]) {
+        primaryEvidenceDidChange(on: meetings.map(\.startedAt))
     }
 
     func primaryEvidenceDidChange(on day: Date) {
-        dayDigest.reconsiderEvidence(for: day)
+        primaryEvidenceDidChange(on: [day])
+    }
+
+    func primaryEvidenceDidChange(on days: [Date]) {
+        guard !days.isEmpty else { return }
+        dayDigest.reconsiderEvidence(for: days)
+        dailyMemoryExportScheduler.reconsider(days: days)
+        memoryRoutines.reconsiderEvidence()
+        invalidateDreams(affectedDays: days)
+    }
+
+    private func dayDigestDidChange(on day: Date) {
+        // Export may have run while the replacement digest was still awaiting
+        // a model. Reopen consumers after the journal and provenance are saved.
         dailyMemoryExportScheduler.reconsider(day: day)
         memoryRoutines.reconsiderEvidence()
+        invalidateDreams(affectedDays: [day], comparisonWindowDays: 1)
+    }
 
-        // A parked/failed recovery job or later user correction may arrive
-        // after Dreaming wrote that day's durable marker. Remove the stale
-        // report so the next quiet tick rebuilds it from the shared snapshot.
+    private func invalidateDreams(
+        affectedDays: [Date], comparisonWindowDays: Int = DreamCompiler.comparisonWindowDays
+    ) {
         let calendar = Calendar.current
-        let dayKey = DreamDay.key(for: day, calendar: calendar)
-        let reportURL = dreamStore.reportJSONURL(forDayKey: dayKey)
-        let activationKey = settings.dreamingFirstEligibleDayKey ?? dayKey
-        guard settings.dreamingEnabled,
-              dayKey >= activationKey,
-              FileManager.default.fileExists(atPath: reportURL.path)
-        else { return }
-        do {
-            try dreamStore.invalidateReport(forDayKey: dayKey)
-        } catch {
-            lastError = "Could not refresh the dream for \(dayKey): "
-                + error.localizedDescription
+        let affectedKeys = DreamEvidenceInvalidation.dayKeys(
+            affectedDays: affectedDays, through: Date(), calendar: calendar,
+            comparisonWindowDays: comparisonWindowDays)
+        for key in affectedKeys.sorted() {
+            do {
+                try dreamStore.invalidateReport(forDayKey: key)
+            } catch {
+                lastError = "Could not refresh the dream for \(key): " + error.localizedDescription
+            }
         }
         latestDreamReport = dreamStore.latestReport()
-        dreaming.reconsiderReports()
+        dreaming.reconsiderReports(invalidating: affectedKeys)
     }
 
     func applyTrackingSetting() {
@@ -1506,8 +1523,6 @@ final class AppState: ObservableObject {
         selectedMeetingIDs.subtract(deletedIDs)
         pipeline.forget(meetingIDs: deletedIDs)
         outcomeIndex.refresh(meetings: meetings)
-        for meeting in deletedCandidates where deletedIDs.contains(meeting.id) {
-            primaryEvidenceDidChange(for: meeting)
-        }
+        primaryEvidenceDidChange(for: deletedCandidates.filter { deletedIDs.contains($0.id) })
     }
 }

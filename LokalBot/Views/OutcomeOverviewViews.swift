@@ -79,6 +79,7 @@ struct ActionThreadRow: View {
                         .buttonStyle(.plain)
                         .font(WorkspaceTypography.metadata)
                         .foregroundStyle(Brand.teal)
+                        .accessibilityIdentifier("outcome.thread.sources.\(thread.id)")
                         .popover(isPresented: $showingSources) {
                             ActionThreadSourcesView(
                                 thread: thread,
@@ -124,6 +125,14 @@ struct ActionThreadRow: View {
                 }
                 if thread.hasMultipleMeetings {
                     Button("Review source meetings") { showingSources = true }
+                } else {
+                    let reference = thread.latestReference
+                    Button(reference.isThreadExcluded ? "Allow matching across meetings" : "Keep as separate action") {
+                        if !app.outcomeIndex.setThreadExcluded(
+                            !reference.isThreadExcluded, actionID: reference.action.id, meetingID: reference.meetingID) {
+                            app.lastError = app.outcomeIndex.lastError
+                        }
+                    }
                 }
                 Button("Open in Agent") {
                     let sourceNote = thread.meetingCount == 1
@@ -226,6 +235,17 @@ private struct ActionThreadSourcesView: View {
                             }
                             .font(WorkspaceTypography.metadata)
                             .foregroundStyle(.tertiary)
+                            Button("Keep as separate action") {
+                                if app.outcomeIndex.setThreadExcluded(
+                                    true, actionID: reference.action.id, meetingID: reference.meetingID) {
+                                    showingSources = false
+                                } else {
+                                    app.lastError = app.outcomeIndex.lastError
+                                }
+                            }
+                            .buttonStyle(.borderless)
+                            .font(WorkspaceTypography.metadata)
+                            .accessibilityIdentifier("outcome.thread.separate.\(reference.id)")
                             ForEach(reference.action.citations) { citation in
                                 Button {
                                     open(reference, seek: citation.start)

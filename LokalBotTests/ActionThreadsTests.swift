@@ -110,7 +110,11 @@ final class ActionThreadsTests: XCTestCase {
             ]).write(to: meeting.folderURL(in: storage))
         }
         var notifications: [Meeting.ID] = []
-        let index = OutcomeIndex(storage: storage) { notifications.append($0.id) }
+        var batches: [[Meeting.ID]] = []
+        let index = OutcomeIndex(storage: storage) { meetings in
+            notifications.append(contentsOf: meetings.map(\.id))
+            batches.append(meetings.map(\.id))
+        }
         index.refresh(meetings: meetings)
         let thread = try XCTUnwrap(index.openUserActionThreads.first)
         XCTAssertEqual(thread.meetingCount, 2)
@@ -133,6 +137,10 @@ final class ActionThreadsTests: XCTestCase {
             let state = MeetingOutcomeStore.loadState(from: meeting.folderURL(in: storage))
             XCTAssertEqual(state.actions.values.first?.status, .done)
         }
+        batches.removeAll()
+        XCTAssertTrue(index.setStatus(.open, thread: index.userActionThreads[0]))
+        XCTAssertEqual(batches.count, 1, "One bulk edit must invalidate derived consumers once")
+        XCTAssertEqual(Set(batches[0]), Set([firstID, secondID]))
     }
 
     func testOppositeNegatedReorderedAndNumberedCommitmentsStaySeparate() {

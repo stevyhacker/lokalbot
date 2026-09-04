@@ -23,7 +23,11 @@ struct MeetingOutcomeProjection: Identifiable, Equatable, Sendable {
                 stateUpdatedAt: userState.userEdited ? userState.updatedAt : meeting.startedAt,
                 textWasCorrected: userState.textCorrection != nil,
                 ownerWasCorrected: userState.ownerOverride != nil,
-                dueWasCorrected: userState.dueOverride != nil)
+                dueWasCorrected: userState.dueOverride != nil,
+                textCorrectedAt: userState.textCorrectedAt,
+                ownerCorrectedAt: userState.ownerCorrectedAt,
+                dueCorrectedAt: userState.dueCorrectedAt,
+                isThreadExcluded: userState.isThreadExcluded)
         }
     }
 
@@ -65,6 +69,10 @@ struct OutcomeActionReference: Identifiable, Equatable, Sendable {
     var textWasCorrected: Bool
     var ownerWasCorrected: Bool
     var dueWasCorrected: Bool
+    var textCorrectedAt: Date?
+    var ownerCorrectedAt: Date?
+    var dueCorrectedAt: Date?
+    var isThreadExcluded = false
 
     var id: String { "\(meetingID.uuidString):\(action.id)" }
     var isForUser: Bool {
@@ -91,12 +99,12 @@ final class OutcomeIndex: ObservableObject {
     @Published private(set) var userActionThreads: [ActionThread] = []
 
     private let storage: StorageManager
-    private let onEvidenceChanged: (Meeting) -> Void
+    private let onEvidenceChanged: ([Meeting]) -> Void
     private(set) var lastError: String?
 
     init(
         storage: StorageManager,
-        onEvidenceChanged: @escaping (Meeting) -> Void = { _ in }
+        onEvidenceChanged: @escaping ([Meeting]) -> Void = { _ in }
     ) {
         self.storage = storage
         self.onEvidenceChanged = onEvidenceChanged
@@ -185,9 +193,30 @@ final class OutcomeIndex: ObservableObject {
     func correctAction(actionID: String, meetingID: Meeting.ID,
                        text: String?, owner: String?, due: String?) -> Bool {
         mutateAction(actionID: actionID, meetingID: meetingID) { state in
-            state.textCorrection = Self.nilIfBlank(text)
-            state.ownerOverride = Self.nilIfBlank(owner)
-            state.dueOverride = Self.nilIfBlank(due)
+            let now = Date().outcomePersistedTimestamp
+            let text = Self.nilIfBlank(text)
+            let owner = Self.nilIfBlank(owner)
+            let due = Self.nilIfBlank(due)
+            if state.textCorrection != text {
+                state.textCorrection = text
+                state.textCorrectedAt = text == nil ? nil : now
+            }
+            if state.ownerOverride != owner {
+                state.ownerOverride = owner
+                state.ownerCorrectedAt = owner == nil ? nil : now
+            }
+            if state.dueOverride != due {
+                state.dueOverride = due
+                state.dueCorrectedAt = due == nil ? nil : now
+            }
+            state.userEdited = true
+        }
+    }
+
+    @discardableResult
+    func setThreadExcluded(_ excluded: Bool, actionID: String, meetingID: Meeting.ID) -> Bool {
+        mutateAction(actionID: actionID, meetingID: meetingID) { state in
+            state.isThreadExcluded = excluded
             state.userEdited = true
         }
     }
@@ -232,7 +261,7 @@ final class OutcomeIndex: ObservableObject {
             projections[meetingID] = projection
             if rebuildThreads { rebuildActionThreads() }
             lastError = nil
-            if notify { onEvidenceChanged(projection.meeting) }
+            if notify { onEvidenceChanged([projection.meeting]) }
             return true
         } catch {
             lastError = error.localizedDescription
@@ -246,9 +275,8 @@ final class OutcomeIndex: ObservableObject {
 
     private func notifyEvidenceChanged(_ meetings: [Meeting]) {
         var notified: Set<Meeting.ID> = []
-        for meeting in meetings where notified.insert(meeting.id).inserted {
-            onEvidenceChanged(meeting)
-        }
+        let changed = meetings.filter { notified.insert($0.id).inserted }
+        if !changed.isEmpty { onEvidenceChanged(changed) }
     }
 
     private func rebuildActionThreads() {

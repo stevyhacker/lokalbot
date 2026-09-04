@@ -72,8 +72,12 @@ final class DailyMemoryExportScheduler {
     /// export after its scheduled run. Reopen only the affected current day;
     /// historical exports remain user-controlled and collision-safe.
     func reconsider(day: Date) {
+        reconsider(days: [day])
+    }
+
+    func reconsider(days: [Date]) {
         let current = now()
-        guard calendar.isDate(day, inSameDayAs: current) else { return }
+        guard days.contains(where: { calendar.isDate($0, inSameDayAs: current) }) else { return }
         generation &+= 1
         exportTask?.cancel()
         exportTask = nil

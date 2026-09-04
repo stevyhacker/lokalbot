@@ -101,7 +101,7 @@ struct DailyEvidenceSnapshot: Equatable, Sendable {
                 let due = $0.due ?? ""
                 return "action|\($0.id)|\($0.status.rawValue)|\($0.text)|"
                     + "\(owner)|\(due)|"
-                    + "\($0.stateUpdatedAt.timeIntervalSinceReferenceDate)"
+                    + "\($0.stateUpdatedAt.timeIntervalSinceReferenceDate)|\($0.isThreadExcluded)"
             }
             fields += item.outcomes.decisions.map { "decision|\($0)" }
             fields += item.outcomes.openQuestions.map { "question|\($0)" }

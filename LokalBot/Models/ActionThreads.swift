@@ -49,7 +49,7 @@ struct ActionThread: Identifiable, Equatable, Sendable {
 
         let correctedText = sorted
             .filter(\.textWasCorrected)
-            .max { $0.stateUpdatedAt < $1.stateUpdatedAt }
+            .max { ($0.textCorrectedAt ?? $0.stateUpdatedAt) < ($1.textCorrectedAt ?? $1.stateUpdatedAt) }
         let descriptiveText = sorted.max {
             if $0.text.count != $1.text.count { return $0.text.count < $1.text.count }
             return $0.meetingStartedAt < $1.meetingStartedAt
@@ -57,11 +57,11 @@ struct ActionThread: Identifiable, Equatable, Sendable {
         text = (correctedText ?? descriptiveText ?? sorted[0]).text
         owner = sorted
             .filter(\.ownerWasCorrected)
-            .max { $0.stateUpdatedAt < $1.stateUpdatedAt }?.owner
+            .max { ($0.ownerCorrectedAt ?? $0.stateUpdatedAt) < ($1.ownerCorrectedAt ?? $1.stateUpdatedAt) }?.owner
             ?? sorted.compactMap(\.owner).first
         due = sorted
             .filter(\.dueWasCorrected)
-            .max { $0.stateUpdatedAt < $1.stateUpdatedAt }?.due
+            .max { ($0.dueCorrectedAt ?? $0.stateUpdatedAt) < ($1.dueCorrectedAt ?? $1.stateUpdatedAt) }?.due
             ?? sorted.compactMap { reference in
                 reference.due.map { (reference.meetingStartedAt, $0) }
             }.max { $0.0 < $1.0 }?.1
@@ -84,6 +84,18 @@ struct ActionThread: Identifiable, Equatable, Sendable {
 enum ActionThreadClusterer {
     static let maximumMeetingSpan: TimeInterval = 30 * 86_400
 
+    private struct SourceKey: Hashable {
+        var text: String
+        var owner: String
+        var isForUser: Bool
+    }
+
+    private struct Group {
+        var references: [OutcomeActionReference]
+        var meetingIDs: Set<UUID>
+        var latestDate: Date
+    }
+
     static func cluster(_ references: [OutcomeActionReference]) -> [ActionThread] {
         let sorted = references.sorted {
             if $0.meetingStartedAt != $1.meetingStartedAt {
@@ -91,22 +103,29 @@ enum ActionThreadClusterer {
             }
             return $0.id < $1.id
         }
-        var groups: [[OutcomeActionReference]] = []
+        var groups: [Group] = []
+        var candidates: [SourceKey: [Int]] = [:]
 
         for reference in sorted {
-            if let index = groups.firstIndex(where: { group in
-                guard let representative = group.first,
-                      !group.contains(where: { $0.meetingID == reference.meetingID })
-                else { return false }
-                return likelySameCommitment(reference, representative)
-            }) {
-                groups[index].append(reference)
-            } else {
-                groups.append([reference])
+            let key = sourceKey(reference)
+            var matching = key.flatMap { candidates[$0] } ?? []
+            // Input is newest first, so expired groups never become candidates
+            // again. Normalize once per reference, never once per pair.
+            matching.removeAll {
+                groups[$0].latestDate.timeIntervalSince(reference.meetingStartedAt) > maximumMeetingSpan
             }
+            if let index = matching.first(where: { !groups[$0].meetingIDs.contains(reference.meetingID) }) {
+                groups[index].references.append(reference)
+                groups[index].meetingIDs.insert(reference.meetingID)
+            } else {
+                matching.append(groups.count)
+                groups.append(Group(references: [reference], meetingIDs: [reference.meetingID],
+                                    latestDate: reference.meetingStartedAt))
+            }
+            if let key { candidates[key] = matching }
         }
 
-        return groups.map(ActionThread.init).sorted {
+        return groups.map { ActionThread(references: $0.references) }.sorted {
             if $0.latestReference.meetingStartedAt != $1.latestReference.meetingStartedAt {
                 return $0.latestReference.meetingStartedAt > $1.latestReference.meetingStartedAt
             }
@@ -114,19 +133,16 @@ enum ActionThreadClusterer {
         }
     }
 
-    private static func likelySameCommitment(
-        _ lhs: OutcomeActionReference,
-        _ rhs: OutcomeActionReference
-    ) -> Bool {
-        guard abs(lhs.meetingStartedAt.timeIntervalSince(rhs.meetingStartedAt))
-                <= maximumMeetingSpan,
-              compatibleOwners(lhs, rhs)
-        else { return false }
-
-        let left = canonicalSourceText(lhs.action.displayText)
-        let right = canonicalSourceText(rhs.action.displayText)
+    private static func sourceKey(_ reference: OutcomeActionReference) -> SourceKey? {
+        guard !reference.isThreadExcluded else { return nil }
+        let text = canonicalSourceText(reference.action.displayText)
         // Short generic commitments recur naturally and are unsafe to merge.
-        return OutcomeTextSimilarity.significantTokens(left).count >= 3 && left == right
+        guard OutcomeTextSimilarity.significantTokens(text).count >= 3 else { return nil }
+        if reference.action.isForUser { return SourceKey(text: text, owner: "", isForUser: true) }
+        guard let owner = reference.action.owner.map(OutcomeTextSimilarity.normalized), !owner.isEmpty else {
+            return nil
+        }
+        return SourceKey(text: text, owner: owner, isForUser: false)
     }
 
     private static func canonicalSourceText(_ text: String) -> String {
@@ -145,20 +161,6 @@ enum ActionThreadClusterer {
         return words.joined(separator: " ")
     }
 
-    private static func compatibleOwners(
-        _ lhs: OutcomeActionReference,
-        _ rhs: OutcomeActionReference
-    ) -> Bool {
-        if lhs.action.isForUser || rhs.action.isForUser {
-            return lhs.action.isForUser && rhs.action.isForUser
-        }
-        guard let left = lhs.action.owner.map(OutcomeTextSimilarity.normalized),
-              let right = rhs.action.owner.map(OutcomeTextSimilarity.normalized),
-              !left.isEmpty,
-              !right.isEmpty
-        else { return false }
-        return left == right
-    }
 }
 
 enum OutcomeTextSimilarity {

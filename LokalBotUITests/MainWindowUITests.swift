@@ -561,18 +561,7 @@ final class MainWindowUITests: XCTestCase {
     }
 
     func testMultiMeetingThreadCompletionRequiresConfirmation() throws {
-        app.terminate()
-        let source = fixture.folder(for: fixture.designReview).appendingPathComponent("outcomes.json")
-        let target = fixture.folder(for: fixture.standup).appendingPathComponent("outcomes.json")
-        var outcomes = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: source)) as? [String: Any])
-        let actions = try XCTUnwrap(outcomes["actionItems"] as? [[String: Any]])
-        outcomes["actionItems"] = [try XCTUnwrap(actions.first)]
-        outcomes["decisionRecords"] = []
-        outcomes["openQuestions"] = []
-        try JSONSerialization.data(withJSONObject: outcomes).write(to: target, options: .atomic)
-        app = try UITestHarness.relaunch(storageRoot: fixture.root,
-                                        defaultsSuiteName: XCTUnwrap(defaultsSuiteName))
-        XCTAssertTrue(identified("today.header").waitForExistence(timeout: 10))
+        try relaunchWithMatchingActions()
         let toggle = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH %@", "outcome.thread.toggle.")).firstMatch
         UITestHarness.scrollTo(toggle, in: app)
@@ -597,6 +586,62 @@ final class MainWindowUITests: XCTestCase {
             let saved = try XCTUnwrap(state["actions"] as? [String: [String: Any]])
             XCTAssertEqual(saved["fixture-action-design-1"]?["status"] as? String, "done")
         }
+    }
+
+    func testActionThreadSourceCanBeSeparatedAndRestored() throws {
+        try relaunchWithMatchingActions()
+        let sources = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "outcome.thread.sources.")).firstMatch
+        UITestHarness.scrollTo(sources, in: app)
+        XCTAssertTrue(sources.waitForExistence(timeout: 5))
+        sources.click()
+        let separate = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "outcome.thread.separate.")).firstMatch
+        XCTAssertTrue(separate.waitForExistence(timeout: 4))
+        separate.click()
+        let stateURLs = [fixture.designReview, fixture.standup].map {
+            fixture.folder(for: $0).appendingPathComponent("outcome-state.json")
+        }
+        XCTAssertTrue(UITestHarness.waitUntil {
+            stateURLs.filter { FileManager.default.fileExists(atPath: $0.path) }.count == 1
+        })
+        let stateURL = try XCTUnwrap(stateURLs.first { FileManager.default.fileExists(atPath: $0.path) })
+        let state = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as? [String: Any])
+        let actions = try XCTUnwrap(state["actions"] as? [String: [String: Any]])
+        XCTAssertEqual(actions["fixture-action-design-1"]?["isThreadExcluded"] as? Bool, true)
+        let toggles = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "outcome.thread.toggle."))
+        XCTAssertTrue(UITestHarness.waitUntil { toggles.count == 2 })
+        let menus = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "outcome.thread.status."))
+        var restored = false
+        for index in 0..<menus.count {
+            menus.element(boundBy: index).click()
+            let restore = app.menuItems["Allow matching across meetings"]
+            if restore.waitForExistence(timeout: 1) {
+                restore.click()
+                restored = true
+                break
+            }
+            app.typeKey(.escape, modifierFlags: [])
+        }
+        XCTAssertTrue(restored)
+        XCTAssertTrue(UITestHarness.waitUntil { toggles.count == 1 })
+    }
+
+    private func relaunchWithMatchingActions() throws {
+        app.terminate()
+        let source = fixture.folder(for: fixture.designReview).appendingPathComponent("outcomes.json")
+        let target = fixture.folder(for: fixture.standup).appendingPathComponent("outcomes.json")
+        var outcomes = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: source)) as? [String: Any])
+        let actions = try XCTUnwrap(outcomes["actionItems"] as? [[String: Any]])
+        outcomes["actionItems"] = [try XCTUnwrap(actions.first)]
+        outcomes["decisionRecords"] = []
+        outcomes["openQuestions"] = []
+        try JSONSerialization.data(withJSONObject: outcomes).write(to: target, options: .atomic)
+        app = try UITestHarness.relaunch(storageRoot: fixture.root,
+                                        defaultsSuiteName: XCTUnwrap(defaultsSuiteName))
+        XCTAssertTrue(identified("today.header").waitForExistence(timeout: 10))
     }
 
     /// Full detail leads with actions and decisions, keeps the summary visible,
