@@ -565,7 +565,7 @@ final class MainWindowUITests: XCTestCase {
         let toggle = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH %@", "outcome.thread.toggle.")).firstMatch
         UITestHarness.scrollTo(toggle, in: app)
-        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5), "Thread toggle missing: \(app.debugDescription)")
         toggle.click()
         let confirm = app.buttons["Mark all done"].firstMatch
         XCTAssertTrue(confirm.waitForExistence(timeout: 4), "Multi-meeting completion needs explicit approval")
@@ -593,7 +593,7 @@ final class MainWindowUITests: XCTestCase {
         let sources = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH %@", "outcome.thread.sources.")).firstMatch
         UITestHarness.scrollTo(sources, in: app)
-        XCTAssertTrue(sources.waitForExistence(timeout: 5))
+        XCTAssertTrue(sources.waitForExistence(timeout: 5), "Thread sources missing: \(app.debugDescription)")
         sources.click()
         let separate = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH %@", "outcome.thread.separate.")).firstMatch

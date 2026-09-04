@@ -55,6 +55,8 @@ struct ActionThreadRow: View {
                     .foregroundStyle(thread.status == .done ? Brand.teal : .secondary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(thread.status == .done ? "Reopen action thread" : "Mark action thread done")
+            .accessibilityValue(thread.text)
             .accessibilityIdentifier("outcome.thread.toggle.\(thread.id)")
 
             VStack(alignment: .leading, spacing: 4) {
@@ -150,9 +152,11 @@ struct ActionThreadRow: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
+            .accessibilityLabel("Action thread options")
             .accessibilityIdentifier("outcome.thread.status.\(thread.id)")
         }
         .padding(.vertical, WorkspaceMetric.rowVerticalPadding)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("outcome.thread.\(thread.id)")
         .confirmationDialog(
             "Update actions in \(thread.meetingCount) meetings?",
