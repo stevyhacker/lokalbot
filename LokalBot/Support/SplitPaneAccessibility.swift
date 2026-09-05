@@ -41,8 +41,19 @@ private struct SplitPaneAccessibility: NSViewRepresentable {
                 guard let self, self.window != nil else { return }
                 var child: NSView = self
                 while let parent = child.superview {
-                    if parent is NSSplitView {
+                    if let split = parent as? NSSplitView {
                         child.setAccessibilityLabel(self.label)
+                        // NSSplitView exposes pane proxies separately from
+                        // its arranged NSViews. The proxy, rather than the
+                        // child hosting view, is the group VoiceOver enters.
+                        let panes: [any NSAccessibilityProtocol] = (split.accessibilityChildren() ?? [])
+                            .compactMap { $0 as? any NSAccessibilityProtocol }
+                            .filter { $0.accessibilityRole() == .group }
+                        if panes.count == split.arrangedSubviews.count,
+                           let index = split.arrangedSubviews.firstIndex(where: { $0 === child }) {
+                            panes[index].setAccessibilityLabel(self.label)
+                            panes[index].setAccessibilityTitle(self.label)
+                        }
                         return
                     }
                     child = parent

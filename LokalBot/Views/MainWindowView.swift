@@ -161,8 +161,10 @@ struct MainWindowView: View {
                 MeetingListView(pendingDelete: $pendingDelete)
                     .frame(minWidth: 240, idealWidth: meetingColumnWidth, maxWidth: 440)
                     .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { meetingColumnWidth = $0 }
+                    .splitPaneAccessibilityLabel("Meeting library")
                 MeetingLibraryDetailView(pendingDelete: $pendingDelete)
                     .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                    .splitPaneAccessibilityLabel("Meeting details")
             }
         case .type:
             TypeView()
@@ -172,8 +174,10 @@ struct MainWindowView: View {
                     ChatConversationList()
                         .frame(minWidth: 200, idealWidth: conversationColumnWidth, maxWidth: 340)
                         .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { conversationColumnWidth = $0 }
+                        .splitPaneAccessibilityLabel("Conversations")
                 }
                 AskView().frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                    .splitPaneAccessibilityLabel(app.askMode == .ask ? "Conversation" : "Search memory")
             }
         case .agent:
             AgentView(sessions: app.agentSessions, installer: app.agentInstaller)

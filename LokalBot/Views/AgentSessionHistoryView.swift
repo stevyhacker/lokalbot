@@ -19,9 +19,11 @@ struct AgentSessionHistoryView: View {
             sidebar
                 .navigationTitle("Saved Sessions")
                 .navigationSplitViewColumnWidth(min: 250, ideal: 300, max: 400)
+                .splitPaneAccessibilityLabel("Saved Agent sessions")
         } detail: {
             detail
                 .navigationTitle("Session Details")
+                .splitPaneAccessibilityLabel("Session preview")
         }
         .searchable(text: $searchText, prompt: "Search sessions")
         .toolbar {

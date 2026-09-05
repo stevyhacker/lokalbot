@@ -68,14 +68,17 @@ struct ActionsWorkspaceView: View {
                 }
                 .frame(minWidth: 360, maxWidth: .infinity)
                 .accessibilityIdentifier("actions.list")
+                .accessibilityLabel("Actions")
                 .overlay {
                     if visible.isEmpty {
                         ContentUnavailableView("No matching actions", systemImage: "checklist",
                                                description: Text("Choose All statuses to review completed and deferred actions."))
                     }
                 }
+                .splitPaneAccessibilityLabel("Action list")
                 if let inspected {
                     inspector(inspected).frame(minWidth: 260, idealWidth: 300, maxWidth: 380)
+                        .splitPaneAccessibilityLabel("Action details")
                 }
             }
         }

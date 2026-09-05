@@ -531,26 +531,18 @@ private struct AskContent: View {
     }
 
     private var searchMatchingControl: some View {
-        Menu {
-            Button {
-                setMatchByMeaning(false)
-            } label: {
-                Label("Exact words", systemImage: matchByMeaning ? "text.magnifyingglass" : "checkmark")
-            }
-            Button {
-                setMatchByMeaning(true)
-            } label: {
-                Label("Match by meaning", systemImage: matchByMeaning ? "checkmark" : "atom")
-            }
-        } label: {
-            Label(matchByMeaning ? "Meaning" : "Exact words",
-                  systemImage: matchByMeaning ? "atom" : "text.magnifyingglass")
+        Picker("Search matching", selection: Binding(get: { matchByMeaning }, set: setMatchByMeaning)) {
+            Text("Exact words").tag(false)
+            Text("Match by meaning").tag(true)
         }
+        .pickerStyle(.menu)
+        .labelsHidden()
         .fixedSize()
         .help(matchByMeaning
             ? "Match concepts even when the words differ"
             : "Match the words you type")
         .accessibilityIdentifier("ask.searchMatching")
+        .accessibilityLabel("Search matching")
     }
 
     private func setMatchByMeaning(_ enabled: Bool) {
@@ -829,6 +821,7 @@ private struct AskContent: View {
             }
             .listStyle(.inset)
             .accessibilityIdentifier("search.results")
+            .accessibilityLabel("Search results")
             .onChange(of: selectedResult) { proxy.scrollTo(selectedResult) }
             .onChange(of: resultCount) { proxy.scrollTo(selectedResult) }
         }

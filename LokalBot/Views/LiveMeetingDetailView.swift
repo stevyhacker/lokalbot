@@ -31,8 +31,10 @@ struct LiveMeetingDetailView: View {
                 transcriptColumn
                     .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
                     .layoutPriority(1)
+                    .splitPaneAccessibilityLabel("Live transcript")
                 notesColumn
                     .frame(minWidth: 240, idealWidth: 300, maxHeight: .infinity)
+                    .splitPaneAccessibilityLabel("Meeting notes")
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
