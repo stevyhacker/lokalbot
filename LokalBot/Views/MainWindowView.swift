@@ -60,19 +60,6 @@ struct MainWindowView: View {
                 .accessibilityIdentifier("toolbar.record")
             }
         }
-        .overlay(alignment: .bottom) {
-            if app.micRecoveryNeeded {
-                ErrorToast(
-                    message: "Microphone access is off for LokalBot. Turn it on in System Settings to record.",
-                    actionTitle: "Open System Settings",
-                    action: {
-                        PermissionManager.shared.openSettings(for: .microphone)
-                        app.micRecoveryNeeded = false
-                    }) { app.micRecoveryNeeded = false }
-            } else if let error = app.lastError {
-                ErrorToast(message: error) { app.lastError = nil }
-            }
-        }
         .task {
             // Let non-View code (menu bar, AppDelegate reopen) open windows.
             // First-run permission onboarding is now triggered from AppState.
@@ -131,25 +118,44 @@ struct MainWindowView: View {
         } detail: {
             workspace
                 .workspaceSurface()
-                .safeAreaInset(edge: .bottom) {
-                    if !app.outcomeIndex.statusUndo.isEmpty {
-                        HStack {
-                            Text("Updated \(app.outcomeIndex.statusUndo.count) action(s)")
-                            Button("Undo") {
-                                app.outcomeIndex.undoStatusChange()
-                                if let error = app.outcomeIndex.lastError { app.lastError = error }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    VStack(spacing: 0) {
+                        errorFeedback
+                        if !app.outcomeIndex.statusUndo.isEmpty {
+                            HStack {
+                                Text("Updated \(app.outcomeIndex.statusUndo.count) action(s)")
+                                Button("Undo") {
+                                    app.outcomeIndex.undoStatusChange()
+                                    if let error = app.outcomeIndex.lastError { app.lastError = error }
+                                }
+                                    .accessibilityIdentifier("outcomes.undo")
+                                Spacer()
+                                Button("Dismiss") { app.outcomeIndex.dismissUndo() }
                             }
-                                .accessibilityIdentifier("outcomes.undo")
-                            Spacer()
-                            Button("Dismiss") { app.outcomeIndex.dismissUndo() }
+                            .font(WorkspaceTypography.control)
+                            .padding(12).background(.bar)
                         }
-                        .font(WorkspaceTypography.control)
-                        .padding(12).background(.bar)
                     }
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Workspace content")
                 .splitPaneAccessibilityLabel("Workspace content")
+        }
+    }
+
+    /// Reserve space for recovery feedback so it cannot cover Undo or a
+    /// workspace's composer, transport, or other bottom controls.
+    @ViewBuilder private var errorFeedback: some View {
+        if app.micRecoveryNeeded {
+            ErrorToast(
+                message: "Microphone access is off for LokalBot. Turn it on in System Settings to record.",
+                actionTitle: "Open System Settings",
+                action: {
+                    PermissionManager.shared.openSettings(for: .microphone)
+                    app.micRecoveryNeeded = false
+                }) { app.micRecoveryNeeded = false }
+        } else if let error = app.lastError {
+            ErrorToast(message: error) { app.lastError = nil }
         }
     }
 

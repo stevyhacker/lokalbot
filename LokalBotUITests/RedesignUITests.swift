@@ -208,10 +208,12 @@ final class RedesignUITests: XCTestCase {
         XCTAssertTrue(UITestHarness.waitUntil { !action.exists })
         try withBlockedStateFile(stateFile) {
             app.buttons["outcomes.undo"].click()
-            XCTAssertTrue(UITestHarness.staticText(containing: "Could not undo", in: app)
-                .waitForExistence(timeout: 4))
+            let undoFailure = UITestHarness.staticText(containing: "Could not undo", in: app)
+            XCTAssertTrue(undoFailure.waitForExistence(timeout: 4))
             XCTAssertTrue(app.buttons["outcomes.undo"].exists, "Failed Undo must remain retryable")
             XCTAssertFalse(action.exists, "A failed Undo must not pretend the state was restored")
+            XCTAssertLessThanOrEqual(undoFailure.frame.maxY, app.buttons["outcomes.undo"].frame.minY,
+                                     "The error must remain above the retry action without covering it")
             snapshot("action-undo-write-failure")
             app.buttons["Dismiss error"].click()
         }
