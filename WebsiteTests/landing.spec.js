@@ -20,7 +20,7 @@ for (const viewport of viewports) {
     await page.goto('/');
     await expect(page.locator('.intro__crop img')).toBeVisible();
     await expect(page.locator('.intro__crop img')).toHaveJSProperty('complete', true);
-    await expect(page.locator('.intro__result figcaption')).toContainText('6 apps. 5 saved moments. One workday.');
+    await expect(page.locator('.intro__result figcaption')).toContainText('6 apps. 5 moments. One workday.');
     await noOverflow(page);
     if (viewport.width === 1280) {
       const result = await page.locator('.intro__result').boundingBox();
