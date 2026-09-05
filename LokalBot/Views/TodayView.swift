@@ -388,6 +388,7 @@ struct TodayView: View {
                 if model.digestIsStale { Text("New evidence available") }
             }.font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
             DayDigestView(digest, mode: .today)
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("today.dayDigest.text")
         } else {
             HStack(spacing: 8) {

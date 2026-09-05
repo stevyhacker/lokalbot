@@ -44,12 +44,13 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(identified("today.dayDigest.generate").waitForExistence(timeout: 6))
         UITestHarness.scrollTo(identified("today.dayDigest.generate"), in: app)
         XCTAssertTrue(identified("today.dayDigest.actions").exists)
-        XCTAssertTrue(identified("today.fullBrief").exists)
         XCTAssertTrue(textWithContent("Updated the Timeline UI").firstMatch.exists)
         XCTAssertFalse(textWithContent("screen:4242").firstMatch.exists)
         XCTAssertTrue(textWithContent("Generated").firstMatch.exists)
         XCTAssertFalse(identified("dayDigest.fullActivityLog").exists)
         XCTAssertTrue(app.buttons["Review actions"].exists)
+        UITestHarness.scrollTo(identified("today.fullBrief"), in: app)
+        XCTAssertTrue(identified("today.fullBrief").exists)
     }
 
     // MARK: - Library

@@ -279,26 +279,20 @@ struct MainWindowView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(
                     selected
-                        ? Brand.teal
+                        ? (isScriptedCapture ? scriptedSidebarLabelColor : Color.primary)
                         : (isScriptedCapture ? scriptedSidebarHeaderColor : Color.secondary))
                 .frame(width: 18)
 
             Text(title)
                 .font(.system(size: 13, weight: selected ? .semibold : .medium))
-                .foregroundStyle(
-                    selected
-                        ? Brand.teal
-                        : (isScriptedCapture ? scriptedSidebarLabelColor : Color.primary))
+                .foregroundStyle(isScriptedCapture ? scriptedSidebarLabelColor : Color.primary)
 
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
-        .background(
-            selected ? Brand.teal.opacity(0.18) : Color.clear,
-            in: RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous))
-        .padding(.top, section == .ask || section == .settings ? 13 : 0)
-        .offset(y: section == .today ? -2 : 0)
+        // The native source list owns the single selection background. An
+        // additional rounded fill doubles the highlight and loses contrast.
         .contentShape(Rectangle())
     }
 

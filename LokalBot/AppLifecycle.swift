@@ -277,11 +277,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // the next settled turn, before the scripted rasterization delay.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 if let raw = env["LOKALBOT_CAPTURE_SIZE"] {
-                    // e.g. "1280x800" — wider than the default window so
-                    // detail-pane chips don't wrap in captures.
+                    // These are outer-window dimensions, matching the frame
+                    // view exported below (including its native titlebar).
                     let parts = raw.split(separator: "x").compactMap { Double($0) }
                     if parts.count == 2, let window = self?.uiTestWindow {
-                        window.setContentSize(NSSize(width: parts[0], height: parts[1]))
+                        window.setFrame(NSRect(origin: window.frame.origin,
+                                               size: NSSize(width: parts[0], height: parts[1])), display: true)
                         window.center()
                     }
                 }
@@ -398,6 +399,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// Edit-menu command in `LokalBotApp`.
 final class MeetingFindWindow: NSWindow {
     var meetingFindAction: (() -> Bool)?
+
+#if LOKALBOT_UI_TEST_HOST
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        // Self-captures rasterize the native frame view, including portions
+        // beyond the hosted desktop. Preserve the requested layout instead of
+        // silently clipping every large-window fixture to the runner's screen.
+        // Interactive UI tests retain ordinary on-screen window constraints.
+        if ProcessInfo.processInfo.environment["LOKALBOT_CAPTURE_FILE"] != nil {
+            return frameRect
+        }
+        return super.constrainFrameRect(frameRect, to: screen)
+    }
+#endif
 
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown,

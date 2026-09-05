@@ -53,6 +53,12 @@ struct AutocompleteExperienceView: View {
                 preview
                 rehearsal
                 privacy
+                DisclosureGroup("Lifetime usage") {
+                    HStack {
+                        StatTile(icon: "text.badge.plus", value: "\(stats.stats.generations)", label: "suggested")
+                        StatTile(icon: "checkmark", value: "\(stats.stats.accepts)", label: "accepted")
+                    }.padding(.top, 8)
+                }
             }
             .padding(WorkspaceMetric.pagePadding)
             .frame(maxWidth: WorkspaceMetric.contentMaxWidth, alignment: .leading)
@@ -106,9 +112,6 @@ struct AutocompleteExperienceView: View {
                     permissionLabel(.inputMonitoring),
                     ready: demoReady || (permissions.granted[.inputMonitoring] ?? false))
                 Spacer()
-                StatTile(icon: "text.badge.plus", value: "\(stats.stats.generations)",
-                         label: "suggested")
-                StatTile(icon: "checkmark", value: "\(stats.stats.accepts)", label: "accepted")
             }
             if !modelReady {
                 CotypingModelPreparationView(compact: true)
@@ -144,7 +147,7 @@ struct AutocompleteExperienceView: View {
                     .onChange(of: text) { _, _ in schedule() }
 
                 HStack {
-                    Text("Suggestion")
+                    Text("\(app.settings.cotypingAcceptKey.label) accepts · Esc dismisses")
                         .font(WorkspaceTypography.metadataEmphasis)
                         .foregroundStyle(.secondary)
                     if generating { ProgressView().controlSize(.small) }
@@ -156,25 +159,9 @@ struct AutocompleteExperienceView: View {
                 if let error {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(.callout).foregroundStyle(Brand.error)
-                } else {
-                    Text(previewAttributed)
-                        .font(WorkspaceTypography.body)
-                        .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
-                        .padding(10)
-                        .background(.quaternary.opacity(0.25),
-                                    in: RoundedRectangle(cornerRadius: Brand.Radius.control))
-                        .textSelection(.enabled)
                 }
             }
         }
-    }
-
-    private var previewAttributed: AttributedString {
-        var value = AttributedString(String(text.suffix(110)))
-        var ghost = AttributedString(suggestion)
-        ghost.foregroundColor = Brand.teal
-        value.append(ghost)
-        return value
     }
 
     private var rehearsal: some View {

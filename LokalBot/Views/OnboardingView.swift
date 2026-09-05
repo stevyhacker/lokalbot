@@ -140,6 +140,7 @@ struct OnboardingView: View {
                                 localText: "The configured Main LLM processes selected context on this Mac.",
                                 remoteText: "Selected transcript and work context is sent to the approved model server.")
             Toggle("Also prepare Autocomplete (optional)", isOn: $includeAutocomplete)
+                .accessibilityLabel("Also prepare Autocomplete (optional)")
             if includeAutocomplete { modelRow("Autocomplete", model: app.settings.cotypingBuiltInModelID, role: .autocomplete) }
             Button("Prepare selected models") {
                 app.modelRoles.startCoreModelDownloads(includeAutocomplete: includeAutocomplete)

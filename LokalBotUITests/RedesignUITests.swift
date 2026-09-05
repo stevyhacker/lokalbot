@@ -7,6 +7,7 @@ final class RedesignUITests: XCTestCase {
     private var fixture: SyntheticFixture.Library!
     private var app: XCUIApplication!
     private var suite: String?
+    private var previousVisualFixtures: [SyntheticFixture.Library] = []
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -16,6 +17,7 @@ final class RedesignUITests: XCTestCase {
         app?.terminate()
         UITestHarness.cleanUp(defaultsSuiteName: suite)
         fixture?.cleanUp()
+        previousVisualFixtures.forEach { $0.cleanUp() }
     }
 
     func testWorkspaceVisualMatrix() throws {
@@ -36,6 +38,13 @@ final class RedesignUITests: XCTestCase {
         for size in ["1000x700", "1180x740", "1440x900"] {
             for appearance in ["light", "dark"] {
                 for (route, state) in routes {
+                    // A complete matrix can cross midnight. Keep Today and
+                    // Timeline populated on the new civil day, while retaining
+                    // earlier attachment files until XCTest serializes them.
+                    if !Calendar.current.isDateInToday(fixture.designReview.startedAt) {
+                        previousVisualFixtures.append(fixture)
+                        fixture = try SyntheticFixture.plant()
+                    }
                     let name = "\(size)-\(appearance)-\(route)"
                     let destination = fixture.root.appendingPathComponent(name + ".png")
                     var environment = state
@@ -50,6 +59,7 @@ final class RedesignUITests: XCTestCase {
                                   "Native capture did not finish: \(name)")
                     let bitmap = try XCTUnwrap(NSBitmapImageRep(data: Data(contentsOf: destination)))
                     XCTAssertEqual(bitmap.pixelsWide, Int(size.split(separator: "x")[0]), "Capture width must match the requested layout")
+                    XCTAssertEqual(bitmap.pixelsHigh, Int(size.split(separator: "x")[1]), "Capture height must match the requested layout")
                     let attachment = XCTAttachment(contentsOfFile: destination)
                     attachment.name = name; attachment.lifetime = .keepAlways
                     add(attachment)

@@ -78,7 +78,24 @@ struct ModelStackOverviewView<Configuration: View>: View {
     }
 
     private var readinessBanner: some View {
-        HStack(spacing: 12) {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) {
+                readinessSummary.frame(minWidth: 300)
+                Spacer()
+                testControls.fixedSize()
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                readinessSummary
+                testControls
+            }
+        }
+        .workspacePanel()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("models.readiness")
+    }
+
+    private var readinessSummary: some View {
+        HStack(alignment: .top, spacing: 12) {
             Image(systemName: readinessIcon)
                 .font(.title2)
                 .foregroundStyle(readinessColor)
@@ -88,7 +105,11 @@ struct ModelStackOverviewView<Configuration: View>: View {
                 Text(snapshot.detail)
                     .font(WorkspaceTypography.body).foregroundStyle(.secondary)
             }
-            Spacer()
+        }
+    }
+
+    private var testControls: some View {
+        HStack {
             Button(smokeTesting ? "Testing..." : "Test configured models") {
                 smokeTask = Task { await runSmokeTests() }
             }
@@ -96,8 +117,6 @@ struct ModelStackOverviewView<Configuration: View>: View {
             .disabled(smokeTesting || !snapshot.meetingReady)
             if smokeTesting { Button("Cancel test") { smokeTask?.cancel() } }
         }
-        .workspacePanel()
-        .accessibilityIdentifier("models.readiness")
     }
 
     private var coreStack: some View {
@@ -134,26 +153,30 @@ struct ModelStackOverviewView<Configuration: View>: View {
     private func coreRow(icon: String, stackRole: ModelRole, role: String,
                          model: String, detail: String, status: ModelRoleStatus,
                          result: String?) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon).foregroundStyle(Brand.teal).frame(width: 22)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(role).font(WorkspaceTypography.rowTitle)
-                Text(detail).font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Image(systemName: icon).foregroundStyle(Brand.teal).frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(role).font(WorkspaceTypography.rowTitle)
+                    Text(detail).font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(expandedRoles.contains(stackRole) ? "Done" : "Change…") {
+                    toggle(stackRole)
+                }
+                .controlSize(.small)
+                .accessibilityIdentifier(changeButtonIdentifier(for: stackRole))
             }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(model).font(WorkspaceTypography.rowTitle).lineLimit(1)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model).font(WorkspaceTypography.bodyEmphasis)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 5) {
                     StatusDot(color: roleColor(status), size: 7)
                     Text(result ?? status.label)
                         .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
                 }
             }
-            Button(expandedRoles.contains(stackRole) ? "Done" : "Change…") {
-                toggle(stackRole)
-            }
-            .controlSize(.small)
-            .accessibilityIdentifier(changeButtonIdentifier(for: stackRole))
+            .padding(.leading, 34)
         }
         .padding(.vertical, 8)
     }

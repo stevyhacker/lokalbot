@@ -17,19 +17,11 @@ struct AgentSessionView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if controller.items.isEmpty {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        transcriptLead
-                        composer
-                    }.workspaceReadingWidth().padding(24)
-                        .frame(maxWidth: .infinity, alignment: .top)
-                }
-            } else {
-                transcript
-                Divider()
-                composer
-            }
+            transcript
+            Divider()
+            // Keep the draft and its authority context visible while the
+            // introduction, history, or a long response scrolls independently.
+            composer
         }
         .task {
             if isSelected { launchContext = app.navigationHandoff.agentContext }
@@ -231,7 +223,7 @@ struct AgentSessionView: View {
                     Label(controller.approvalMode.title,
                           systemImage: controller.approvalMode.systemImage)
                     Text(controller.approvalMode.detail)
-                    Text("Change this from the menu in the top-right. It resets when the session closes.")
+                    Text("Change this beside the composer. It resets when the session closes.")
                 }
                 .workspaceTextRole(.trust)
                 .padding(.top, 8)
