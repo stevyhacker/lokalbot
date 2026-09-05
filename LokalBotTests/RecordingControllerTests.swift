@@ -53,6 +53,68 @@ final class RecordingControllerTests: XCTestCase {
         XCTAssertNil(snapshot.lastRecoveryAt)
     }
 
+    func testHealthReportsSilenceAfterPreviouslyAudibleSystemAudio() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        XCTAssertEqual(health(at: now, lastAudible: now).systemAudioStatus, "Receiving audio")
+        XCTAssertEqual(health(at: now, lastAudible: now.addingTimeInterval(-11)).systemAudioStatus, "Silent")
+        XCTAssertEqual(health(at: now, lastAudible: nil).systemAudioStatus, "Silent")
+    }
+
+    func testHealthKeepsSourceLossIndependentOfTheOtherSource() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let staleMic = health(at: now, micWrite: now.addingTimeInterval(-11), lastAudible: now)
+        XCTAssertEqual(staleMic.microphoneStatus, "No recent audio")
+        XCTAssertEqual(staleMic.systemAudioStatus, "Receiving audio")
+
+        let staleSystem = health(at: now, systemWrite: now.addingTimeInterval(-11), lastAudible: now)
+        XCTAssertEqual(staleSystem.microphoneStatus, "Receiving audio")
+        XCTAssertEqual(staleSystem.systemAudioStatus, "No recent audio")
+        XCTAssertEqual(health(at: now, engineRunning: false).microphoneStatus, "Stopped")
+        XCTAssertEqual(health(at: now, attached: false).systemAudioStatus, "Not attached")
+    }
+
+    func testHealthExposesRecoveryAndDegradationEvenWithRecentWrites() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let recovering = health(at: now, recovery: .recovering(attempt: 2))
+        XCTAssertEqual(recovering.microphoneStatus, "Recovering (attempt 2)")
+        XCTAssertEqual(recovering.lastRecoveryAt, now)
+        XCTAssertEqual(recovering.microphoneDroppedBuffers, 3)
+        XCTAssertEqual(recovering.systemAudioDroppedBuffers, 2)
+        XCTAssertEqual(health(at: now, recovery: .degraded(errorDescription: "Input unavailable"))
+            .microphoneStatus, "Degraded: Input unavailable")
+    }
+
+    func testHealthDoesNotPresentUnstartedSourcesAsReceiving() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let snapshot = RecordingMemoryHealthSnapshot.recording(
+            microphone: .init(duration: 0, lastAudioWriteAt: nil, isEngineRunning: true,
+                              droppedBufferCount: 0, recoveryState: .healthy),
+            system: .init(duration: 0, audibleDuration: 0, framesSinceAttach: 0,
+                          lastAudioWriteAt: nil, lastAudibleWriteAt: nil, capturedPID: 42,
+                          lastRMSLevel: 0, peakRMSLevel: 0, droppedBufferCount: 0),
+            hasSystemTarget: true, lastRecoveryAt: nil, at: now)
+        XCTAssertEqual(snapshot.microphoneStatus, "Waiting for audio")
+        XCTAssertEqual(snapshot.systemAudioStatus, "Waiting for audio")
+    }
+
+    private func health(
+        at now: Date,
+        micWrite: Date? = nil,
+        systemWrite: Date? = nil,
+        lastAudible: Date? = nil,
+        engineRunning: Bool = true,
+        attached: Bool = true,
+        recovery: MicRecorder.RecoveryState = .healthy
+    ) -> RecordingMemoryHealthSnapshot {
+        .recording(
+            microphone: .init(duration: 30, lastAudioWriteAt: micWrite ?? now, isEngineRunning: engineRunning,
+                              droppedBufferCount: 3, recoveryState: recovery),
+            system: .init(duration: 30, audibleDuration: 20, framesSinceAttach: 48_000,
+                          lastAudioWriteAt: systemWrite ?? now, lastAudibleWriteAt: lastAudible,
+                          capturedPID: 42, lastRMSLevel: 0, peakRMSLevel: 0.5, droppedBufferCount: 2),
+            hasSystemTarget: attached, lastRecoveryAt: now, at: now)
+    }
+
     /// A stray stop (menu bar action racing a finished meeting) must be a
     /// no-op, not a crash or a phantom meeting.
     func testStopWhileIdleIsANoOp() {

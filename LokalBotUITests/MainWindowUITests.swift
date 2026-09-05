@@ -42,6 +42,7 @@ final class MainWindowUITests: XCTestCase {
     /// page's time chart or exposing capture/evidence bookkeeping.
     func testTodayUsesCompactDigestHierarchy() {
         XCTAssertTrue(identified("today.dayDigest.generate").waitForExistence(timeout: 6))
+        UITestHarness.scrollTo(identified("today.dayDigest.generate"), in: app)
         XCTAssertTrue(identified("today.dayDigest.actions").exists)
         XCTAssertTrue(identified("today.fullBrief").exists)
         XCTAssertTrue(textWithContent("Updated the Timeline UI").firstMatch.exists)
@@ -431,6 +432,13 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(textWithContent("Representative evidence").firstMatch.exists,
                       "session preview does not explain its evidence")
 
+        // Returning to Timeline should restore both the selected session and
+        // its inspector, including on the narrow hosted desktop.
+        clickSidebar("sidebar.ask")
+        clickSidebar("sidebar.timeline")
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.sessionPreview"]
+            .waitForExistence(timeout: 4), "navigation discarded the selected work session")
+
         let back = app.buttons["Back to day digest"].firstMatch
         XCTAssertTrue(back.waitForExistence(timeout: 3))
         back.click()
@@ -458,7 +466,7 @@ final class MainWindowUITests: XCTestCase {
     func testTimelineDateChangeRefreshesOverviewAndDigest() {
         openLibrary()
         selectMeeting(fixture.designReview)
-        XCTAssertTrue(app.staticTexts["detail.title"].waitForExistence(timeout: 4),
+        XCTAssertTrue(identified("detail.title").waitForExistence(timeout: 4),
                       "meeting detail did not open before changing the day")
 
         clickSidebar("sidebar.timeline")
@@ -538,7 +546,7 @@ final class MainWindowUITests: XCTestCase {
     func testMeetingDetailLoadsExpandedSummaryAndTranscript() {
         openLibrary()
         selectMeeting(fixture.designReview)
-        XCTAssertEqual(app.staticTexts["detail.title"].value as? String, fixture.designReview.title)
+        XCTAssertEqual(identified("detail.title").value as? String ?? identified("detail.title").label, fixture.designReview.title)
         XCTAssertTrue(textWithContent("Adopt Redis").firstMatch.waitForExistence(timeout: 4))
         XCTAssertTrue(identified("meeting.audioPlayer").exists)
         UITestHarness.selectSegment("Actions", pickerIdentifier: "meeting.contentTabs", in: app)
@@ -611,7 +619,7 @@ final class MainWindowUITests: XCTestCase {
     func testMeetingFindSearchesAllVisibleContent() {
         openLibrary()
         selectMeeting(fixture.designReview)
-        XCTAssertTrue(app.staticTexts["detail.title"].waitForExistence(timeout: 4))
+        XCTAssertTrue(identified("detail.title").waitForExistence(timeout: 4))
         XCTAssertTrue(identified("toolbar.meetingSearch").exists)
 
         app.typeKey("f", modifierFlags: .command)
@@ -671,9 +679,9 @@ final class MainWindowUITests: XCTestCase {
                       "expected design review segment hit for 'failover'")
         segmentHit.click()
 
-        let title = app.staticTexts["detail.title"]
+        let title = identified("detail.title")
         XCTAssertTrue(title.waitForExistence(timeout: 4))
-        XCTAssertEqual(title.value as? String, fixture.designReview.title)
+        XCTAssertEqual(title.value as? String ?? title.label, fixture.designReview.title)
     }
 
     /// The Ask section is reachable from the sidebar and renders its merged
@@ -917,7 +925,7 @@ final class MainWindowUITests: XCTestCase {
         // modifier-held ⌘-click can otherwise race an unsettled selection and
         // land as a plain click (leaving a single selection, so the aggregate
         // "Delete 2 meetings" button never appears).
-        _ = app.staticTexts["detail.title"].waitForExistence(timeout: 4)
+        _ = identified("detail.title").waitForExistence(timeout: 4)
         XCUIElement.perform(withKeyModifiers: .command) { meetingRow(for: b).click() }
         let deleteButton = app.buttons["Delete 2 meetings"]
         XCTAssertTrue(deleteButton.waitForExistence(timeout: 4),

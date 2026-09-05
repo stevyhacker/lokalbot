@@ -41,7 +41,7 @@ final class QuickRecallUITests: XCTestCase {
         XCTAssertTrue(meeting.waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["quickRecall.ask"].exists)
         input.typeKey(.return, modifierFlags: [])
-        XCTAssertTrue(app.staticTexts["detail.title"].waitForExistence(timeout: 6))
+        XCTAssertTrue(app.descendants(matching: .any)["detail.title"].firstMatch.waitForExistence(timeout: 6))
         XCTAssertFalse(app.staticTexts["chat.message.user"].exists)
     }
 

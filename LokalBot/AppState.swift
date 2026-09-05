@@ -220,10 +220,13 @@ final class AppState: ObservableObject {
     @Published var recallState = RecallWorkspaceState()
     @Published var evidenceMeetingID: UUID?
     @Published var evidenceReturnSection: NavSection?
+    private var evidenceReturnMeetingIDs: Set<Meeting.ID>?
     func returnFromEvidence() {
         guard let section = evidenceReturnSection else { return }
+        if let evidenceReturnMeetingIDs { selectedMeetingIDs = evidenceReturnMeetingIDs }
         navSection = section
         evidenceReturnSection = nil
+        evidenceReturnMeetingIDs = nil
     }
     @Published var meetingWorkspaceTabs: [UUID: MeetingWorkspaceTab] = [:]
     var meetingPlaybackPositions: [UUID: TimeInterval] = [:]
@@ -297,7 +300,10 @@ final class AppState: ObservableObject {
     /// for search hits, menu-bar recents, and palette recents.
     func openMeeting(_ id: Meeting.ID, seek: TimeInterval? = nil, intent: EvidenceIntent = .reveal) {
         evidenceMeetingID = id
-        if navSection != .meetings { evidenceReturnSection = navSection }
+        if navSection != .meetings {
+            evidenceReturnSection = navSection
+            evidenceReturnMeetingIDs = selectedMeetingIDs
+        }
         navigationHandoff.stageMeeting(id, seek: seek, intent: intent)
         selectedMeetingIDs = [id]
         navSection = .meetings
@@ -1481,7 +1487,10 @@ final class AppState: ObservableObject {
 
     /// Screen search/citation hit → open Timeline at the exact captured frame.
     func openScreenSnapshot(_ snapshotID: Int64) {
-        if navSection != .timeline { evidenceReturnSection = navSection }
+        if navSection != .timeline {
+            evidenceReturnSection = navSection
+            evidenceReturnMeetingIDs = selectedMeetingIDs
+        }
         navigationHandoff.stageScreenSnapshot(snapshotID)
         selectedMeetingIDs = []
         navSection = .timeline

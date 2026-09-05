@@ -3,22 +3,6 @@ import AppKit
 import AVFoundation
 import UniformTypeIdentifiers
 
-/// Lets the screenshot script cap the middle column so the inspector keeps a
-/// useful share of wide marketing captures. Production launches never set it.
-private struct ScriptedCaptureContentWidth: ViewModifier {
-    let maximum: CGFloat?
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if let maximum {
-            content.navigationSplitViewColumnWidth(
-                min: 300, ideal: min(380, maximum), max: maximum)
-        } else {
-            content.navigationSplitViewColumnWidth(min: 300, ideal: 380)
-        }
-    }
-}
-
 struct MainWindowView: View {
     @EnvironmentObject var app: AppState
     @Environment(\.openWindow) private var openWindow
@@ -345,16 +329,6 @@ struct MainWindowView: View {
         ProcessInfo.processInfo.environment["LOKALBOT_CAPTURE_FILE"] != nil
 #else
         false
-#endif
-    }
-
-    private var scriptedCaptureContentMaximum: CGFloat? {
-#if LOKALBOT_UI_TEST_HOST
-        guard let raw = ProcessInfo.processInfo.environment["LOKALBOT_CAPTURE_CONTENT_MAX"],
-              let value = Double(raw), value >= 300 else { return nil }
-        return CGFloat(value)
-#else
-        return nil
 #endif
     }
 

@@ -117,7 +117,7 @@ struct TrackingPauseButton: View {
     }
 
     private var actionTitle: String {
-        sampler.isPaused ? "Resume activity tracking" : "Pause activity tracking"
+        sampler.isPaused ? "Resume day memory" : "Pause day memory"
     }
 
     private func toggle() {

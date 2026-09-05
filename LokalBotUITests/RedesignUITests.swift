@@ -69,7 +69,7 @@ final class RedesignUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["transcript.segment.3.text"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["chat.message.user"].exists)
         XCTAssertTrue(app.buttons["Play"].exists, "Evidence should be paused until Play is chosen")
-        app.buttons["Back"].click()
+        app.buttons["Back"].firstMatch.click()
         XCTAssertTrue(input.waitForExistence(timeout: 5))
         XCTAssertEqual(input.value as? String, "failover")
         app.buttons["ask.escalate"].click()
@@ -137,7 +137,8 @@ final class RedesignUITests: XCTestCase {
         XCTAssertTrue(app.buttons["retention.confirm"].waitForExistence(timeout: 5))
         snapshot("retention-review-before-cancel")
         app.buttons["Cancel"].click()
-        XCTAssertFalse(app.buttons["retention.confirm"].exists)
+        XCTAssertTrue(UITestHarness.waitUntil { !self.app.buttons["retention.confirm"].exists },
+                      "Cancel should close retention review without applying its policy")
         XCTAssertEqual(UserDefaults(suiteName: suite!)?.data(forKey: "lokalbotv3.settings"), before)
     }
 
@@ -163,6 +164,34 @@ final class RedesignUITests: XCTestCase {
         app.buttons["outcomes.undo"].click()
         XCTAssertTrue(action.waitForExistence(timeout: 5))
         snapshot("four-hundred-actions-search-and-undo")
+    }
+
+    func testAgentApprovalDescribesEffectAndDenialAndStopReachTheController() throws {
+        try launch(["LOKALBOT_AGENT_UI_TEST_READY": "1", "LOKALBOT_AGENT_UI_TEST_APPROVAL": "1"])
+        UITestHarness.clickSidebar("sidebar.agent", in: app)
+        let composer = app.textFields["agent.composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 6))
+        composer.click(); composer.typeText("Draft a meeting follow-up")
+        app.buttons["agent.send"].click()
+        let deny = app.buttons["agent.approve.deny"]
+        XCTAssertTrue(deny.waitForExistence(timeout: 6))
+        XCTAssertTrue(UITestHarness.staticText(containing: "Create or replace the file", in: app).exists)
+        XCTAssertTrue(UITestHarness.staticText(containing: "reviewed-note.md", in: app).exists)
+        snapshot("agent-write-approval")
+        deny.click()
+        XCTAssertTrue(UITestHarness.staticText(containing: "You denied this write request", in: app)
+            .waitForExistence(timeout: 4))
+        XCTAssertFalse(deny.exists)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("reviewed-note.md").path))
+        app.buttons["agent.stop"].click()
+        XCTAssertTrue(UITestHarness.waitUntil { !self.app.buttons["agent.stop"].exists })
+        let lines = try String(contentsOf: fixture.root.appendingPathComponent("agent-ui-rpc.jsonl"), encoding: .utf8)
+        let commands = try lines.split(separator: "\n").map {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])
+        }
+        XCTAssertTrue(commands.contains { $0["type"] as? String == "extension_ui_response" && $0["confirmed"] as? Bool == false })
+        XCTAssertEqual(commands.last?["type"] as? String, "abort")
+        snapshot("agent-denied-and-stopped")
     }
 
     private func launch(_ environment: [String: String] = [:]) throws {

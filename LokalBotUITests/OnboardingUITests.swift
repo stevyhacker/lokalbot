@@ -52,7 +52,7 @@ final class OnboardingUITests: XCTestCase {
         app.buttons["Continue with current access"].click()
         assertPage(title: "Prepare your workflows", step: 3)
         XCTAssertTrue(app.buttons["onboarding.downloadModels"].exists)
-        XCTAssertTrue(text(containing: "Autocomplete (optional)").exists)
+        XCTAssertTrue(UITestHarness.toggle("Also prepare Autocomplete (optional)", in: app).exists)
         app.buttons["Continue"].click()
         assertPage(title: "Review and start", step: 4)
         XCTAssertTrue(app.buttons["onboarding.finish"].exists)

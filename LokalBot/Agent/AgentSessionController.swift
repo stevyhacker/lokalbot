@@ -85,6 +85,16 @@ final class AgentSessionController: ObservableObject {
         guard !failureTeardownInProgress,
               state == .idle || isFailed else { return }
 #if LOKALBOT_UI_TEST_HOST
+        if ProcessInfo.processInfo.environment["LOKALBOT_AGENT_UI_TEST_APPROVAL"] == "1" {
+            lifecycleGeneration += 1
+            let rpc = PiRPCClient(transport: AgentUITestTransport(workspace: storage.rootURL))
+            await rpc.run()
+            client = rpc
+            recoveryAction = nil
+            state = .ready
+            consumeEvents(from: rpc, generation: lifecycleGeneration)
+            return
+        }
         // Keep Agent Mode UI tests hermetic: no model warm-up, capability
         // issuance, subprocess, or network. Production builds never compile
         // this path, and host runs must opt in explicitly.

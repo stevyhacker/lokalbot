@@ -133,14 +133,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
-    private func openUITestWindow(app: AppState) {
-        if let uiTestWindow {
+    private func openUITestWindow(app: AppState, kind: String? = nil) {
+        let windowKind = kind ?? ProcessInfo.processInfo.environment["LOKALBOT_UI_TEST_WINDOW"] ?? "main"
+        if let uiTestWindow, uiTestWindow.identifier?.rawValue == "\(windowKind).window" {
             uiTestWindow.makeKeyAndOrderFront(nil)
             uiTestWindow.orderFrontRegardless()
             return
         }
 
-        let windowKind = ProcessInfo.processInfo.environment["LOKALBOT_UI_TEST_WINDOW"] ?? "main"
         let showsOnboarding = windowKind == "onboarding"
         let showsQuickRecall = windowKind == "quick-recall"
         let contentSize: NSSize
@@ -195,6 +195,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         window.makeMain()
         window.orderFrontRegardless()
+        if showsQuickRecall {
+            // The compact host has no menu-bar scene to register the normal
+            // window opener. Its explicit handoff must still create a main
+            // host before the compact window dismisses.
+            WindowAccess.shared.register { [weak self, weak app] id in
+                guard id == "main", let app else { return }
+                self?.openUITestWindow(app: app, kind: "main")
+            }
+        }
     }
 
     @MainActor
@@ -530,6 +539,12 @@ final class WindowAccess {
     /// `navigationTitle` retitles the window per tab (e.g. "Timeline"), so
     /// matching on the title silently stops finding it.
     static func visibleMainWindow(in application: NSApplication) -> NSWindow? {
-        application.windows.first { $0.isVisible && $0.identifier?.rawValue == "main" }
+        application.windows.first { window in
+            guard window.isVisible else { return false }
+#if LOKALBOT_UI_TEST_HOST
+            if window.identifier?.rawValue == "main.window" { return true }
+#endif
+            return window.identifier?.rawValue == "main"
+        }
     }
 }

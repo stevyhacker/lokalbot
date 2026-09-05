@@ -191,11 +191,12 @@ struct LiveMeetingDetailView: View {
                 .scrollContentBackground(.hidden)
                 .padding(6)
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 9))
+                .accessibilityLabel("Live meeting notes")
                 .accessibilityIdentifier("live.notes")
                 .onChange(of: notes) { scheduleSave() }
             Text(notesSaveState)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .font(WorkspaceTypography.metadata)
+                .foregroundStyle(notesSaveState.hasPrefix("Not saved:") ? Brand.error : .secondary)
         }
         .padding(.leading, 12)
     }

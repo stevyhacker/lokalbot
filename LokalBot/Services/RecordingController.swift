@@ -144,6 +144,51 @@ struct RecordingMemoryHealthSnapshot: Equatable, Sendable {
     var systemAudioLastWriteAt: Date?
     var systemAudioDroppedBuffers: Int
     var lastRecoveryAt: Date?
+
+    /// Presentation follows recent writes from each source independently.
+    /// A source that produced sound earlier can subsequently become silent;
+    /// historical audible data is not evidence that it is audible now.
+    static func recording(
+        microphone: MicRecorder.CaptureHealth,
+        system: SystemAudioRecorder.CaptureHealth,
+        hasSystemTarget: Bool,
+        lastRecoveryAt: Date?,
+        at current: Date
+    ) -> Self {
+        let microphoneStatus: String = switch microphone.recoveryState {
+        case .healthy:
+            !microphone.isEngineRunning ? "Stopped"
+                : microphone.lastAudioWriteAt == nil ? "Waiting for audio"
+                : isRecent(microphone.lastAudioWriteAt, at: current) ? "Receiving audio" : "No recent audio"
+        case .recovering(let attempt): "Recovering (attempt \(attempt))"
+        case .degraded(let description): "Degraded: \(description)"
+        }
+        let systemStatus: String
+        if !hasSystemTarget {
+            systemStatus = "Not attached"
+        } else if system.lastAudioWriteAt == nil {
+            systemStatus = "Waiting for audio"
+        } else if !isRecent(system.lastAudioWriteAt, at: current) {
+            systemStatus = "No recent audio"
+        } else if !isRecent(system.lastAudibleWriteAt, at: current) {
+            systemStatus = "Silent"
+        } else {
+            systemStatus = "Receiving audio"
+        }
+        return Self(
+            isRecording: true,
+            microphoneStatus: microphoneStatus,
+            microphoneLastWriteAt: microphone.lastAudioWriteAt,
+            microphoneDroppedBuffers: microphone.droppedBufferCount,
+            systemAudioStatus: systemStatus,
+            systemAudioLastWriteAt: system.lastAudioWriteAt,
+            systemAudioDroppedBuffers: system.droppedBufferCount,
+            lastRecoveryAt: lastRecoveryAt)
+    }
+
+    private static func isRecent(_ date: Date?, at current: Date) -> Bool {
+        date.map { current.timeIntervalSince($0) <= 10 } ?? false
+    }
 }
 
 /// Owns the meeting-recording lifecycle: the two recorders (mic + system tap),
@@ -286,39 +331,12 @@ final class RecordingController: ObservableObject {
                 systemAudioDroppedBuffers: 0,
                 lastRecoveryAt: latestRecoveryDate)
         }
-        let microphone = micRecorder.captureHealth()
-        let microphoneStatus: String = switch microphone.recoveryState {
-        case .healthy:
-            !microphone.isEngineRunning ? "Stopped"
-                : microphone.lastAudioWriteAt == nil ? "Waiting for audio"
-                : current.timeIntervalSince(microphone.lastAudioWriteAt ?? current) > 10 ? "No recent audio" : "Receiving audio"
-        case .recovering(let attempt):
-            "Recovering (attempt \(attempt))"
-        case .degraded(let description):
-            "Degraded: \(description)"
-        }
-        let system = systemRecorder.captureHealth()
-        let systemStatus: String
-        if systemAudioTarget == nil {
-            systemStatus = "Not attached"
-        } else if system.lastAudioWriteAt == nil {
-            systemStatus = "Waiting for audio"
-        } else if current.timeIntervalSince(system.lastAudioWriteAt ?? current) > 10 {
-            systemStatus = "No recent audio"
-        } else if system.lastAudibleWriteAt == nil {
-            systemStatus = "Silent"
-        } else {
-            systemStatus = "Receiving audio"
-        }
-        return RecordingMemoryHealthSnapshot(
-            isRecording: true,
-            microphoneStatus: microphoneStatus,
-            microphoneLastWriteAt: microphone.lastAudioWriteAt,
-            microphoneDroppedBuffers: microphone.droppedBufferCount,
-            systemAudioStatus: systemStatus,
-            systemAudioLastWriteAt: system.lastAudioWriteAt,
-            systemAudioDroppedBuffers: system.droppedBufferCount,
-            lastRecoveryAt: latestRecoveryDate)
+        return RecordingMemoryHealthSnapshot.recording(
+            microphone: micRecorder.captureHealth(),
+            system: systemRecorder.captureHealth(),
+            hasSystemTarget: systemAudioTarget != nil,
+            lastRecoveryAt: latestRecoveryDate,
+            at: current)
     }
 
     private var latestRecoveryDate: Date? {

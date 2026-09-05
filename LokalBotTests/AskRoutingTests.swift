@@ -47,6 +47,27 @@ final class AskRoutingTests: XCTestCase {
         XCTAssertNil(app.navigationHandoff.consumeAsk())
     }
 
+    func testReturningFromEvidenceRestoresOriginatingMeetingSelection() {
+        let app = AppState()
+        let origin = UUID()
+        let evidence = UUID()
+        app.navSection = .timeline
+        app.selectedMeetingIDs = [origin]
+        app.openMeeting(evidence, seek: 30)
+        XCTAssertEqual(app.selectedMeetingIDs, [evidence])
+        app.returnFromEvidence()
+        XCTAssertEqual(app.navSection, .timeline)
+        XCTAssertEqual(app.selectedMeetingIDs, [origin])
+        XCTAssertNil(app.evidenceReturnSection)
+
+        app.navSection = .ask
+        app.selectedMeetingIDs = []
+        app.openScreenSnapshot(42)
+        app.returnFromEvidence()
+        XCTAssertEqual(app.navSection, .ask)
+        XCTAssertTrue(app.selectedMeetingIDs.isEmpty)
+    }
+
     func testActivitySourceDoesNotGrantMeetingOrScreenAccess() async throws {
         let base = RecordingToolRunner()
         let day = try XCTUnwrap(Calendar.current.date(from: DateComponents(
