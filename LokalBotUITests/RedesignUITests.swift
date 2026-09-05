@@ -122,11 +122,7 @@ final class RedesignUITests: XCTestCase {
         app.textFields["settings.search"].typeText("retention")
         XCTAssertTrue(element("settings.searchResults").waitForExistence(timeout: 5))
         XCTAssertTrue(UITestHarness.staticText(containing: "Results across all categories", in: app).exists)
-        // Report every audit issue in one hosted result, retaining the failing
-        // status while avoiding serial runs to discover one missing name at a time.
-        continueAfterFailure = true
-        defer { continueAfterFailure = false }
-        try app.performAccessibilityAudit(for: [.sufficientElementDescription, .action])
+        try auditWorkspaceAccessibility()
         snapshot("settings-high-contrast")
     }
 
@@ -144,7 +140,7 @@ final class RedesignUITests: XCTestCase {
         app.textFields["search.field"].click()
         app.textFields["search.field"].typeText("failover")
         XCTAssertTrue(element("search.hit.\(fixture.designReview.id.uuidString).segment").waitForExistence(timeout: 6))
-        try app.performAccessibilityAudit(for: [.sufficientElementDescription, .action])
+        try auditWorkspaceAccessibility()
         snapshot("search-reduced-motion")
     }
 
@@ -235,6 +231,20 @@ final class RedesignUITests: XCTestCase {
     }
     private func element(_ id: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: id).firstMatch
+    }
+    private func auditWorkspaceAccessibility() throws {
+        // Report every app issue. The hosted virtual Mac also exposes a
+        // system-generated Touch Bar and its Emoji picker outside our window;
+        // neither is an app-owned control or a usable hosted input surface.
+        continueAfterFailure = true
+        defer { continueAfterFailure = false }
+        try app.performAccessibilityAudit(for: [.sufficientElementDescription, .action]) { issue in
+            guard let affected = issue.element, affected.exists else { return false }
+            if affected.elementType == .touchBar { return true }
+            let systemBar = self.app.descendants(matching: .touchBar).firstMatch
+            return affected.elementType == .popUpButton && affected.label == "emoji & symbols"
+                && systemBar.exists && systemBar.frame.contains(affected.frame)
+        }
     }
     private func snapshot(_ name: String) {
         let attachment = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())

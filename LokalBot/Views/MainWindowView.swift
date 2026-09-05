@@ -125,6 +125,8 @@ struct MainWindowView: View {
             get: { sidebarVisible ? .all : .detailOnly },
             set: { sidebarVisible = $0 != .detailOnly })) {
             sidebar
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Workspace navigation")
         } detail: {
             workspace
                 .workspaceSurface()
@@ -141,6 +143,8 @@ struct MainWindowView: View {
                         .padding(12).background(.bar)
                     }
                 }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Workspace content")
         }
     }
 
@@ -196,6 +200,8 @@ struct MainWindowView: View {
             } header: {
                 sidebarSectionHeader("Remember")
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Remember")
             Section {
                 sidebarDestination(
                     "Write", systemImage: "keyboard", section: .type,
@@ -206,6 +212,8 @@ struct MainWindowView: View {
             } header: {
                 sidebarSectionHeader("Tools")
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Tools")
             sidebarDestination(
                 "Settings", systemImage: "gearshape", section: .settings,
                 identifier: "sidebar.settings")
@@ -262,6 +270,8 @@ struct MainWindowView: View {
         .tag(section)
         .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: -5))
         .listRowBackground(Color.clear)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(title)
         .accessibilityIdentifier(identifier)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
@@ -282,6 +292,7 @@ struct MainWindowView: View {
                         ? (isScriptedCapture ? scriptedSidebarLabelColor : Color.primary)
                         : (isScriptedCapture ? scriptedSidebarHeaderColor : Color.secondary))
                 .frame(width: 18)
+                .accessibilityHidden(true)
 
             Text(title)
                 .font(.system(size: 13, weight: selected ? .semibold : .medium))

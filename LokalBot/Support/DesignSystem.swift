@@ -240,6 +240,8 @@ private struct WorkspaceControlModifier: ViewModifier {
                 shape.strokeBorder(
                     WorkspacePalette.border(for: colorScheme, contrast: contrast),
                     lineWidth: 1)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
     }
 }

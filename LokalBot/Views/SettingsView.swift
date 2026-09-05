@@ -28,9 +28,12 @@ struct SettingsView: View {
                     }
                 }
                 .listStyle(.sidebar)
+                .accessibilityLabel("Settings categories")
                 .accessibilityIdentifier("settings.categories")
             }
             .frame(minWidth: 175, idealWidth: 190, maxWidth: 230)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Settings navigation")
             VStack(alignment: .leading, spacing: 0) {
                 settingsHeaderTitle.padding(20)
                 Divider()
@@ -52,6 +55,8 @@ struct SettingsView: View {
                     }
                 }
             }.frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(queryIsEmpty ? app.settingsTab.displayName : "Search settings")
         }
         .frame(minWidth: 460)
         .navigationTitle("Settings")
@@ -176,6 +181,7 @@ struct SettingsView: View {
             if results.isEmpty { ContentUnavailableView.search(text: settingsQuery) }
         }
         .accessibilityIdentifier("settings.searchResults")
+        .accessibilityLabel("Matching settings")
     }
 
     private var exclusionsSection: some View {

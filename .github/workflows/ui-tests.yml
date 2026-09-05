@@ -101,19 +101,38 @@ jobs:
       - name: Fetch llama.cpp vendor
         run: bash Scripts/fetch-llama.sh
 
+      # Catch focused interaction/accessibility regressions before spending
+      # time rendering the full 72-window visual matrix.
+      - name: Verify workspace accessibility
+        if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+        run: Scripts/ui-tests.sh 'RedesignUITests/testHighContrastKeepsActionsAccessible'
+
+      - name: Verify critical interactions
+        if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+        run: |
+          Scripts/ui-tests.sh 'AgentModeUITests'
+          Scripts/ui-tests.sh 'RedesignUITests/testAgentApprovalDescribesEffectAndDenialAndStopReachTheController'
+          Scripts/ui-tests.sh 'RedesignUITests/testFourHundredActionsStaySearchableAndCompletionCanBeUndone'
+
+      - name: Verify Reduce Motion
+        if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+        run: |
+          trap 'defaults write com.apple.universalaccess reduceMotion -bool false; defaults write org.localhost.lokalbot.redesign-ci requiresReducedMotion -bool false' EXIT
+          defaults write com.apple.universalaccess reduceMotion -bool true
+          defaults write org.localhost.lokalbot.redesign-ci requiresReducedMotion -bool true
+          Scripts/ui-tests.sh 'RedesignUITests/testReducedMotionWorkspaceRemainsOperable'
+
       - name: Run UI tests
         env:
           CODE_SIGNING_ALLOWED: "NO" # hosted runners hold no dev cert
           UI_TEST_FILTER: ${{ inputs.filter || '' }}
         run: Scripts/ui-tests.sh "$UI_TEST_FILTER" 2>&1 | tee .build/ui-tests.log
-
-      - name: Verify Reduce Motion
-        env:
-          CODE_SIGNING_ALLOWED: "NO"
-        run: |
-          defaults write com.apple.universalaccess reduceMotion -bool true
-          defaults write org.localhost.lokalbot.redesign-ci requiresReducedMotion -bool true
-          Scripts/ui-tests.sh 'RedesignUITests/testReducedMotionWorkspaceRemainsOperable'
 
       - name: Save UI evidence
         if: always()
