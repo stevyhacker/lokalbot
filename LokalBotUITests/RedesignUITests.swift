@@ -193,6 +193,27 @@ final class RedesignUITests: XCTestCase {
         app.buttons["outcomes.undo"].click()
         XCTAssertTrue(action.waitForExistence(timeout: 5))
         snapshot("four-hundred-actions-search-and-undo")
+        let stateFile = folder.appendingPathComponent("outcome-state.json")
+        try withBlockedStateFile(stateFile) {
+            complete.click()
+            XCTAssertTrue(UITestHarness.staticText(containing: "Could not update this action", in: app)
+                .waitForExistence(timeout: 4))
+            XCTAssertTrue(action.exists, "A failed save must preserve the open action")
+            app.buttons["Dismiss error"].click()
+        }
+        complete.click()
+        XCTAssertTrue(UITestHarness.waitUntil { !action.exists })
+        try withBlockedStateFile(stateFile) {
+            app.buttons["outcomes.undo"].click()
+            XCTAssertTrue(UITestHarness.staticText(containing: "Could not undo", in: app)
+                .waitForExistence(timeout: 4))
+            XCTAssertTrue(app.buttons["outcomes.undo"].exists, "Failed Undo must remain retryable")
+            XCTAssertFalse(action.exists, "A failed Undo must not pretend the state was restored")
+            snapshot("action-undo-write-failure")
+            app.buttons["Dismiss error"].click()
+        }
+        app.buttons["outcomes.undo"].click()
+        XCTAssertTrue(action.waitForExistence(timeout: 5), "Retry should restore the action after storage recovers")
     }
 
     func testAgentApprovalDescribesEffectAndDenialAndStopReachTheController() throws {
@@ -229,6 +250,17 @@ final class RedesignUITests: XCTestCase {
         let run = try UITestHarness.launch(storageRoot: fixture.root, suitePrefix: "Redesign", environment: environment)
         app = run.app; suite = run.defaultsSuiteName
     }
+    private func withBlockedStateFile(_ file: URL, perform body: () throws -> Void) throws {
+        let contents = try Data(contentsOf: file)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: file)
+            try? contents.write(to: file, options: .atomic)
+        }
+        try body()
+    }
+
     private func element(_ id: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: id).firstMatch
     }

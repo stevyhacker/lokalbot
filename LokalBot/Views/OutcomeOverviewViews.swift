@@ -97,9 +97,12 @@ struct OutcomeOverviewActionRow: View {
     }
 
     private func set(_ status: OutcomeStatus) {
-        _ = app.outcomeIndex.setStatus(
+        if !app.outcomeIndex.setStatus(
             status,
             actionID: reference.action.id,
-            meetingID: reference.meetingID)
+            meetingID: reference.meetingID) {
+            app.lastError = "Could not update this action. "
+                + (app.outcomeIndex.lastError ?? "The action is no longer available.")
+        }
     }
 }

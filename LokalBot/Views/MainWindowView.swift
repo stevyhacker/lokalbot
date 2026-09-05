@@ -135,7 +135,10 @@ struct MainWindowView: View {
                     if !app.outcomeIndex.statusUndo.isEmpty {
                         HStack {
                             Text("Updated \(app.outcomeIndex.statusUndo.count) action(s)")
-                            Button("Undo") { app.outcomeIndex.undoStatusChange() }
+                            Button("Undo") {
+                                app.outcomeIndex.undoStatusChange()
+                                if let error = app.outcomeIndex.lastError { app.lastError = error }
+                            }
                                 .accessibilityIdentifier("outcomes.undo")
                             Spacer()
                             Button("Dismiss") { app.outcomeIndex.dismissUndo() }

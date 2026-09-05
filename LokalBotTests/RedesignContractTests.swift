@@ -180,6 +180,39 @@ final class RedesignContractTests: XCTestCase {
         XCTAssertEqual(index.projection(for: meetings[1].id)?.actionReferences.first?.status, .open)
     }
 
+    func testPartialUndoKeepsFailureVisibleAfterSuccessfulRestoresAndCanRetry() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("redesign-undo-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let storage = StorageManager(rootURL: root)
+        let meetings = ["blocked", "good"].map { name in
+            Meeting(id: UUID(), title: name, appName: "Meet", startedAt: Date(), endedAt: Date(), relativePath: "meetings/\(name)")
+        }
+        for meeting in meetings {
+            let folder = meeting.folderURL(in: storage)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try MeetingOutcomes(actionItems: [.init(text: meeting.title + " commitment", owner: "Me")]).write(to: folder)
+        }
+        let index = OutcomeIndex(storage: storage)
+        index.refresh(meetings: meetings)
+        let actions = meetings.compactMap { index.projection(for: $0.id)?.actionReferences.first }
+        XCTAssertTrue(index.setStatus(.done, for: actions).isEmpty)
+        let state = meetings[0].folderURL(in: storage).appendingPathComponent(MeetingOutcomeState.fileName)
+        let savedState = try Data(contentsOf: state)
+        try FileManager.default.removeItem(at: state)
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        index.undoStatusChange()
+        XCTAssertEqual(index.lastError, "Could not undo: blocked commitment")
+        XCTAssertEqual(index.statusUndo.map(\.meetingID), [meetings[0].id])
+        XCTAssertEqual(index.projection(for: meetings[0].id)?.actionReferences.first?.status, .done)
+        XCTAssertEqual(index.projection(for: meetings[1].id)?.actionReferences.first?.status, .open)
+        try FileManager.default.removeItem(at: state)
+        try savedState.write(to: state)
+        index.undoStatusChange()
+        XCTAssertNil(index.lastError)
+        XCTAssertTrue(index.statusUndo.isEmpty)
+        XCTAssertEqual(index.projection(for: meetings[0].id)?.actionReferences.first?.status, .open)
+    }
+
     func testOptionalWritingModelDoesNotBlockMeetingReadiness() {
         let readiness = ModelReadinessSnapshot(transcriptionReady: true, thinkReady: true, autocompleteReady: false,
             provenance: .externalThink("model.example"), storedBytes: 0, availableBytes: nil, activeDownloads: 0, failedDownloads: 1)

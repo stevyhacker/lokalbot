@@ -142,14 +142,18 @@ final class OutcomeIndex: ObservableObject {
 
     func undoStatusChange() {
         var remaining: [StatusChange] = []
+        var failures: [String] = []
         for change in statusUndo {
             guard let current = projection(for: change.meetingID)?.actionReferences.first(where: { $0.action.id == change.actionID }),
                   current.status == change.applied else { continue }
             if !mutateAction(actionID: change.actionID, meetingID: change.meetingID, change: { $0.status = change.previous }) {
                 remaining.append(change)
+                failures.append(current.text)
             }
         }
         statusUndo = remaining
+        // A later successful restore must not hide an earlier write failure.
+        lastError = failures.isEmpty ? nil : "Could not undo: " + failures.joined(separator: "; ")
     }
 
     @discardableResult

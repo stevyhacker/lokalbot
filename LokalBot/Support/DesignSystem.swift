@@ -488,7 +488,8 @@ struct ErrorToast: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Brand.error)
-            Text(message).font(.callout).lineLimit(2)
+                .accessibilityHidden(true)
+            Text(message).font(.callout).lineLimit(2).help(message)
             if let actionTitle, let action {
                 Button(actionTitle, action: action)
                     .buttonStyle(.bordered)
@@ -496,10 +497,15 @@ struct ErrorToast: View {
             }
             Button(action: dismiss) { Image(systemName: "xmark.circle.fill") }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
+                .accessibilityLabel("Dismiss error")
         }
         .padding(.horizontal, 14).padding(.vertical, 9)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
-        .overlay(RoundedRectangle(cornerRadius: Brand.Radius.panel).strokeBorder(Brand.error.opacity(0.4)))
+        .overlay {
+            RoundedRectangle(cornerRadius: Brand.Radius.panel).strokeBorder(Brand.error.opacity(0.4))
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
         .padding(12)
     }
 }
