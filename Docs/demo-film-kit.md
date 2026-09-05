@@ -11,8 +11,7 @@ loop without exposing a real library or overstating the privacy boundary.
 | Bot-free meeting proof | 40–50 s | Real capture → cited outcomes | consenting test call |
 | Built-in processing proof | 45–60 s | Reproducible network boundary | fresh test call + `nettop` |
 
-The 30-second promo is the canonical website cut. The longer
-`Video/hero-demo/` project is preserved as a legacy feature showcase.
+The 30-second promo is the canonical website and README cut.
 
 ## Shared preflight
 
