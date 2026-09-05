@@ -17,7 +17,10 @@ struct CaptureSetupDraft: Equatable {
         var result = settings
         result.autoRecordMode = meetingMode
         result.trackingEnabled = dayMemory
-        result.screenContextCaptureMode = dayMemory ? contextMode : .activityOnly
+        // The master switch gates capture independently. Turning memory off,
+        // or reopening setup while it is off, must retain the selected detail
+        // level for the next explicit enable action.
+        result.screenContextCaptureMode = contextMode
         result.screenshotsEnabled = result.screenContextCaptureMode.capturesPixels
         return result
     }

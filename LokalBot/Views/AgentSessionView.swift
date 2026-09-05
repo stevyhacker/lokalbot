@@ -516,6 +516,9 @@ struct AgentSessionView: View {
                 .accessibilityIdentifier("agent.send")
         }
         .padding(12)
+        .workspaceControl()
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
         }
     }
 

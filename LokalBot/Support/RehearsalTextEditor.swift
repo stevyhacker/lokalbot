@@ -112,13 +112,22 @@ private final class RehearsalNativeTextView: NSTextView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        guard canAccept, let window else { return }
-        let screenRect = firstRect(forCharacterRange: selectedRange(), actualRange: nil)
-        let caret = convert(window.convertFromScreen(screenRect), from: nil)
-        let ghost = NSAttributedString(string: suggestion, attributes: [
-            .font: font ?? NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.secondaryLabelColor])
-        ghost.draw(with: NSRect(x: caret.minX, y: caret.minY,
-                               width: max(0, bounds.width - caret.minX - 10), height: max(20, bounds.height - caret.minY)),
-                   options: [.usesLineFragmentOrigin, .usesFontLeading])
+        guard canAccept, let currentContainer = textContainer else { return }
+        // Layout the complete sentence so wrapped ghost lines return to the
+        // editor's left margin. Drawing into a caret-width rectangle indents
+        // every continuation line beneath the insertion point.
+        let preview = NSTextStorage(attributedString: attributedString())
+        let range = NSRange(location: preview.length, length: (suggestion as NSString).length)
+        var attributes = typingAttributes
+        attributes[.font] = font ?? NSFont.systemFont(ofSize: 14)
+        attributes[.foregroundColor] = NSColor.secondaryLabelColor
+        preview.append(NSAttributedString(string: suggestion, attributes: attributes))
+        let layout = NSLayoutManager()
+        let container = NSTextContainer(size: NSSize(width: currentContainer.size.width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = currentContainer.lineFragmentPadding
+        preview.addLayoutManager(layout)
+        layout.addTextContainer(container)
+        layout.ensureLayout(for: container)
+        layout.drawGlyphs(forGlyphRange: layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil), at: textContainerOrigin)
     }
 }

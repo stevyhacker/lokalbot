@@ -121,6 +121,11 @@ final class RedesignUITests: XCTestCase {
         app.textFields["settings.search"].click()
         app.textFields["settings.search"].typeText("retention")
         XCTAssertTrue(element("settings.searchResults").waitForExistence(timeout: 5))
+        XCTAssertTrue(UITestHarness.staticText(containing: "Results across all categories", in: app).exists)
+        // Report every audit issue in one hosted result, retaining the failing
+        // status while avoiding serial runs to discover one missing name at a time.
+        continueAfterFailure = true
+        defer { continueAfterFailure = false }
         try app.performAccessibilityAudit(for: [.sufficientElementDescription, .action])
         snapshot("settings-high-contrast")
     }

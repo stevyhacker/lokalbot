@@ -20,7 +20,7 @@ struct SettingsView: View {
         HSplitView {
             VStack(alignment: .leading, spacing: 12) {
                 settingsSearchField.padding(12)
-                List(selection: Binding(get: { Optional(app.settingsTab) }, set: {
+                List(selection: Binding(get: { queryIsEmpty ? Optional(app.settingsTab) : nil }, set: {
                     if let category = $0 { app.settingsTab = category; settingsQuery = ""; app.focusedSettingID = nil }
                 })) {
                     ForEach(AppState.SettingsTab.allCases, id: \.self) { category in
@@ -76,10 +76,10 @@ struct SettingsView: View {
     /// from any tab (including Models).
     private var settingsHeaderTitle: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(app.settingsTab.displayName)
+            Text(queryIsEmpty ? app.settingsTab.displayName : "Search settings")
                 .font(WorkspaceTypography.pageTitle)
                 .tracking(-0.35)
-            Text(settingsTabSubtitle)
+            Text(queryIsEmpty ? settingsTabSubtitle : "Results across all categories. Choose a setting to edit its value.")
                 .font(WorkspaceTypography.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -90,6 +90,7 @@ struct SettingsView: View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             TextField("Search settings…", text: $settingsQuery)
                 .textFieldStyle(.plain)
                 .font(WorkspaceTypography.control)
@@ -100,6 +101,7 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
+                .accessibilityLabel("Clear settings search")
             }
         }
         .padding(.horizontal, 10)

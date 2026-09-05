@@ -188,6 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.identifier = NSUserInterfaceItemIdentifier("\(windowKind).window")
         let hostingView = NSHostingView(rootView: uiTestRootView(app: app, windowKind: windowKind))
         hostingView.identifier = NSUserInterfaceItemIdentifier("\(windowKind).window.host")
+        hostingView.setAccessibilityLabel(showsOnboarding ? "LokalBot setup" : (showsQuickRecall ? "Quick Recall" : "LokalBot workspace"))
         window.contentView = hostingView
         window.center()
         window.isReleasedWhenClosed = false

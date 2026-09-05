@@ -32,6 +32,17 @@ final class RedesignContractTests: XCTestCase {
         XCTAssertEqual(applied.approvedRemoteInferenceOrigins, live.approvedRemoteInferenceOrigins)
     }
 
+    func testReopenedSetupPreservesDetailLevelWhileDayMemoryIsOff() {
+        for mode in AppSettings.ScreenContextCaptureMode.allCases {
+            var live = AppSettings()
+            live.trackingEnabled = false
+            live.screenContextCaptureMode = mode
+            live.screenshotsEnabled = mode.capturesPixels
+            let applied = CaptureSetupDraft(settings: live).applying(to: live)
+            XCTAssertEqual(applied, live, "Applying unchanged setup must preserve the disabled configuration")
+        }
+    }
+
     func testDayActivityClipsBoundariesAndUnionsOverlaps() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Europe/Paris")!
