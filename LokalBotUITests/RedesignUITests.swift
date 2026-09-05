@@ -173,7 +173,10 @@ final class RedesignUITests: XCTestCase {
         let search = app.textFields["actions.search"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         search.click(); search.typeText("Synthetic commitment 399")
-        let action = UITestHarness.staticText(containing: "Synthetic commitment 399", in: app)
+        // Failure messages repeat the action title; inspect only its list row.
+        let action = element("actions.list").staticTexts.matching(
+            NSPredicate(format: "label == %@ OR value == %@",
+                        "Synthetic commitment 399", "Synthetic commitment 399")).firstMatch
         XCTAssertTrue(action.waitForExistence(timeout: 5))
         action.click()
         search.click(); search.typeKey("a", modifierFlags: .command)
