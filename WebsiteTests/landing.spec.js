@@ -20,7 +20,7 @@ for (const viewport of viewports) {
     await page.goto('/');
     await expect(page.locator('.intro__crop img')).toBeVisible();
     await expect(page.locator('.intro__crop img')).toHaveJSProperty('complete', true);
-    await expect(page.locator('.intro__result figcaption')).toContainText('Assigned to Me · Source: 00:26');
+    await expect(page.locator('.intro__result figcaption')).toContainText('6 apps. 5 saved moments. One workday.');
     await noOverflow(page);
     if (viewport.width === 1280) {
       const result = await page.locator('.intro__result').boundingBox();
@@ -140,7 +140,7 @@ test('video waits for a user gesture, plays, and pauses out of view', async ({ p
   await video.focus();
   await page.keyboard.press('Space');
   await expect(video).toHaveJSProperty('paused', false);
-  await page.getByRole('heading', { name: 'Leave with more than a recording.' }).scrollIntoViewIfNeeded();
+  await page.locator('#download-title').scrollIntoViewIfNeeded();
   await expect(video).toHaveJSProperty('paused', true);
   await expect(page.getByText('Read the demo walkthrough', { exact: true })).toBeVisible();
 });
@@ -185,7 +185,7 @@ for (const route of ['guides', 'system-requirements', 'privacy', 'support', 'lok
       await page.screenshot({ path: info.outputPath(`${route}-${viewport.width}.png`), fullPage: true });
     }
     if (route === 'system-requirements') {
-      for (const id of ['first-meeting', 'capture-defaults']) await expect(page.locator(`[id="${id}"]`)).toHaveCount(1);
+      for (const id of ['first-memory', 'first-meeting', 'capture-defaults']) await expect(page.locator(`[id="${id}"]`)).toHaveCount(1);
       await expect(page.locator('article').first()).toContainText('v0.7.2');
     }
   });

@@ -4,7 +4,9 @@ Static site deployed to Vercel at https://www.lokalbot.com — no build step. `v
 
 Homepage composition is scoped in `landing.css`. Comparison and guide HTML is generated: edit `Scripts/*.template.html` and `Scripts/*_pages.py`, then run `python3 Scripts/render_web.py`. Set a guide's `updated` date when its content changes.
 
-The hero uses a WebP encoding of the existing, unchanged meeting screenshot. Regenerate it with `cwebp -q 82 -m 6 -sharp_yuv web/assets/screens/meetings-summary.jpg -o web/assets/screens/meetings-summary.webp` from the repo root. Keep the original JPEG as the full-screenshot link. The video waits until it enters the viewport to preload metadata, and playback always requires a user gesture.
+Position LokalBot as general work memory: Remember, Recall, Write, and Act. Meetings are one input alongside saved moments and selected workday context. Use Today and Quick Recall to show that breadth; keep the full day and writing/action capabilities central to the story.
+
+The hero uses a WebP encoding of the existing Today screenshot. Regenerate it with `cwebp -q 82 -m 6 -sharp_yuv web/assets/screens/today.jpg -o web/assets/screens/today.webp` from the repo root. Quick Recall is encoded the same way from `Assets/screenshots/quick-recall.png` into `web/assets/screens/quick-recall.webp`. Keep the original Today JPEG as the full-screenshot link. The video waits until it enters the viewport to preload metadata, and playback always requires a user gesture.
 
 Public capture-default claims describe the downloadable stable release, currently v0.7.2, rather than unreleased `master`. The release maintainer must check the tagged settings source and update the homepage FAQ, privacy page, and affected guide data together when publishing a new stable release. Keep defaults distinct from macOS permissions and preferences retained during upgrades. Primary download links use the stable `releases/latest/download/LokalBot.dmg` asset; keep release notes and installation help separately available.
 

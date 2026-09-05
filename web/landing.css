@@ -27,8 +27,8 @@
 .intro__result-label { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
 .intro__result-label .eyebrow { margin: 0; font-size: 0.65rem; letter-spacing: 0.08em; }
 .intro__result-label > span:last-child { color: var(--text-faint); font-size: 0.7rem; white-space: nowrap; }
-.intro__crop { display: block; position: relative; aspect-ratio: 2.9; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #101112; }
-.intro__crop img { position: absolute; width: 225%; height: auto; max-width: none; left: -79%; top: -124%; }
+.intro__crop { display: block; position: relative; aspect-ratio: 2.95; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #101112; }
+.intro__crop img { position: absolute; width: 119.6%; height: auto; max-width: none; left: -16.3%; top: -47%; }
 .intro__result figcaption { padding: 22px 10px 8px; color: var(--text-dim); }
 .intro__result figcaption strong { display: block; color: var(--text); font-size: 1.2rem; font-weight: 550; line-height: 1.4; }
 .intro__result figcaption > span { display: block; margin-top: 10px; color: var(--teal-bright); font-size: 0.85rem; }
@@ -36,6 +36,8 @@
 
 /* A real, user-initiated tour with its explanation outside the video. */
 .evidence__grid { display: grid; grid-template-columns: 1.4fr 1fr; align-items: start; gap: 48px; }
+.evidence__capture img { display: block; width: 100%; height: auto; border: 1px solid var(--glass-border); border-radius: 16px; }
+.evidence__capture figcaption { margin-top: 14px; color: var(--text-faint); font-size: 0.87rem; }
 .evidence__film { min-width: 0; scroll-margin-top: 110px; }
 .evidence__film video { display: block; width: 100%; height: auto; border: 1px solid var(--glass-border); border-radius: 16px; box-shadow: none; }
 .evidence__film figcaption { margin-top: 14px; color: var(--text-faint); font-size: 0.87rem; }
@@ -55,6 +57,9 @@
 .workflow h3 { font-size: 1.38rem; line-height: 1.2; }
 .workflow p { margin-top: 12px; color: var(--text-dim); }
 .section-link { margin-top: 28px; }
+.workflow-tour { display: grid; grid-template-columns: 1fr 1.4fr; align-items: center; gap: 48px; margin-top: 40px; padding-top: 40px; border-top: 1px solid var(--line); }
+.workflow-tour__copy h3 { font-size: 1.65rem; letter-spacing: -0.035em; }
+.workflow-tour__copy p { max-width: 35ch; margin-top: 14px; color: var(--text-dim); }
 
 /* One privacy explanation and a smaller, distinctive ownership note. */
 .ownership { display: grid; grid-template-columns: 1.35fr 1fr; gap: 80px; align-items: center; }
@@ -112,7 +117,8 @@
   .intro__lead { max-width: 60ch; }
   .intro__result { margin-top: 10px; width: 100%; }
   .intro__result-label { flex-direction: row; }
-  .evidence__grid, .ownership, .get-started { grid-template-columns: 1fr; }
+  .evidence__grid, .ownership, .get-started, .workflow-tour { grid-template-columns: 1fr; }
+  .workflow-tour { gap: 24px; }
   .ownership__note { max-width: 550px; }
   .workflow, .memory-extras { gap: 26px; }
 }
