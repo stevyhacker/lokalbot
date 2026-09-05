@@ -72,7 +72,7 @@
 .ownership__note > a { display: inline-block; margin-top: 26px; color: #18554c; font-weight: 600; text-decoration: underline; text-underline-offset: 4px; }
 
 .memory-extras { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; }
-.memory-extras article > i { display: block; font-size: 1.65rem; color: var(--teal-bright); margin-bottom: 18px; }
+.memory-extras article > i { display: inline-flex; font-size: 1.65rem; color: var(--teal-bright); margin-bottom: 18px; }
 .memory-extras h3 { font-size: 1.35rem; line-height: 1.2; }
 .memory-extras p { margin-top: 12px; color: var(--text-dim); }
 .more-memory__links { display: flex; flex-wrap: wrap; gap: 4px 28px; margin-top: 20px; }
@@ -81,6 +81,9 @@
 .writing-demo__body { display: grid; grid-template-columns: 1.5fr 1fr; gap: 32px; align-items: center; padding: 8px 0 28px; }
 .writing-demo__body > p { color: var(--text-dim); font-size: 0.95rem; }
 .writing-demo .cotype { min-width: 0; padding-top: 20px; }
+.writing-demo .cotype__editor { position: relative; }
+.writing-demo .ct-input { position: absolute; inset: 0; height: 100%; min-height: 44px; margin: 0; }
+.writing-demo .cotype:focus-within { outline: 2px solid var(--teal-bright); outline-offset: 3px; }
 .writing-demo .cotype__hint { margin-top: 16px; line-height: 1.8; }
 
 .get-started { display: grid; grid-template-columns: 1fr 1.2fr; gap: 70px; }

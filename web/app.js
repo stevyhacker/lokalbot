@@ -126,14 +126,9 @@
 
     /* seed with the static teaser so the field is meaningful before any motion */
     input.value = (typedEl.textContent || "").trim() === "" ? "" : typedEl.textContent;
+    input.disabled = false;
     render();
 
-    field.addEventListener("mousedown", function (e) {
-      e.preventDefault();
-      input.focus();
-      var L = input.value.length;
-      try { input.setSelectionRange(L, L); } catch (_) {}
-    });
     input.addEventListener("focus", function () { if (cotype) cotype.classList.add("is-focused"); });
     input.addEventListener("blur", function () { if (cotype) cotype.classList.remove("is-focused"); });
     input.addEventListener("input", function () { dismissed = false; render(); });

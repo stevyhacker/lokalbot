@@ -184,9 +184,12 @@
         <div class="writing-demo__body">
           <div class="cotype">
             <label class="cotype__label" for="ctInput">New message</label>
-            <div class="cotype__field" id="cotypeField" aria-hidden="true"><span class="ct-typed" id="ctTyped">Following up on</span><span class="ct-caret"></span><span class="ct-ghost" id="ctGhost"> our sync, the on-device build is ready to ship.</span></div>
-            <input id="ctInput" class="ct-input" type="text" value="Following up on" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Autocomplete demo. Type, then press Tab to accept the suggestion." aria-describedby="cotype-help" />
+            <div class="cotype__editor">
+              <div class="cotype__field" id="cotypeField" aria-hidden="true"><span class="ct-typed" id="ctTyped">Following up on</span><span class="ct-caret"></span><span class="ct-ghost" id="ctGhost"> our sync, the on-device build is ready to ship.</span></div>
+              <input id="ctInput" class="ct-input" type="text" value="Following up on" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Autocomplete demo. Type, then press Tab to accept the suggestion." aria-describedby="cotype-help" disabled />
+            </div>
             <p class="cotype__hint" id="cotype-help"><kbd>Tab</kbd> accepts a word. <kbd>Esc</kbd> dismisses. <kbd>Shift</kbd> + <kbd>Tab</kbd> moves back.</p>
+            <noscript><p class="cotype__hint">Enable JavaScript to try this interactive example.</p></noscript>
           </div>
           <p>This scripted example demonstrates the interaction. In the app, your selected autocomplete model generates suggestions on your Mac by default.</p>
         </div>

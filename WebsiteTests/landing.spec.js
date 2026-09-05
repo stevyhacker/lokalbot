@@ -73,7 +73,11 @@ test('autocomplete preserves backward navigation and supports accept, dismiss, a
   const disclosure = page.locator('.writing-demo > summary');
   await disclosure.click();
   const input = page.locator('#ctInput');
-  await input.focus();
+  await input.click();
+  await expect(input).toBeFocused();
+  const editor = await page.locator('.cotype__editor').boundingBox();
+  const hint = await page.locator('#cotype-help').boundingBox();
+  expect(editor.y + editor.height).toBeLessThanOrEqual(hint.y);
   const initial = await input.inputValue();
   await page.keyboard.press('Shift+Tab');
   await expect(input).toHaveValue(initial);
