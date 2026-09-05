@@ -532,10 +532,10 @@ private struct AskContent: View {
 
     private var searchMatchingControl: some View {
         Picker("Search matching", selection: Binding(get: { matchByMeaning }, set: setMatchByMeaning)) {
-            Text("Exact words").tag(false)
-            Text("Match by meaning").tag(true)
+            Text("Words").tag(false)
+            Text("Meaning").tag(true)
         }
-        .pickerStyle(.menu)
+        .pickerStyle(.segmented)
         .labelsHidden()
         .fixedSize()
         .help(matchByMeaning
