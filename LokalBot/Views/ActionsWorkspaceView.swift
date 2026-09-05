@@ -8,7 +8,8 @@ struct ActionsWorkspaceView: View {
     @SceneStorage("actions.status") private var status = "open"
     @SceneStorage("actions.due") private var dueFilter = "all"
     @SceneStorage("actions.sort") private var sort = "due"
-    @State private var meetingID: UUID?
+    @SceneStorage("actions.meetingID") private var storedMeetingID = ""
+    private var meetingID: UUID? { UUID(uuidString: storedMeetingID) }
     private var selection: Set<String> {
         get { app.actionSelection }
         nonmutating set { app.actionSelection = newValue }
@@ -39,6 +40,13 @@ struct ActionsWorkspaceView: View {
     private var inspected: OutcomeActionReference? {
         visible.first { selection.contains($0.id) }
     }
+    private var visibleSelection: [OutcomeActionReference] { visible.filter { selection.contains($0.id) } }
+    private var hiddenSelectionCount: Int { selection.count - visibleSelection.count }
+    private var listSelection: Binding<Set<String>> {
+        Binding(get: { Set(visibleSelection.map(\.id)) }, set: { updated in
+            selection = selection.subtracting(visible.map(\.id)).union(updated)
+        })
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,7 +57,7 @@ struct ActionsWorkspaceView: View {
                     .workspaceTextRole(.warning).padding(.horizontal, 20)
             }
             HSplitView {
-                List(selection: $app.actionSelection) {
+                List(selection: listSelection) {
                     ForEach(visible) { reference in
                         OutcomeOverviewActionRow(reference: reference).tag(reference.id)
                             .contextMenu {
@@ -72,7 +80,7 @@ struct ActionsWorkspaceView: View {
             }
         }
         .navigationTitle("Actions")
-        .onChange(of: visible.map(\.id)) { app.actionSelection.formIntersection(visible.map(\.id)) }
+        .onChange(of: all.map(\.id)) { app.actionSelection.formIntersection(all.map(\.id)) }
         .sheet(item: $correction) { reference in
             ActionEditorSheet(reference: reference)
         }
@@ -84,13 +92,14 @@ struct ActionsWorkspaceView: View {
             Text("Actions").font(WorkspaceTypography.pageTitle)
             Text("\(visible.count) of \(all.count)").foregroundStyle(.secondary)
             Spacer()
-            Menu("Change \(selection.count) selected") {
+            Menu("Change \(visibleSelection.count) selected") {
                 ForEach(OutcomeStatus.allCases, id: \.rawValue) { next in
                     Button(next.label) {
-                        failures = app.outcomeIndex.setStatus(next, for: visible.filter { selection.contains($0.id) })
+                        failures = app.outcomeIndex.setStatus(next, for: visibleSelection)
                     }
                 }
-            }.disabled(selection.isEmpty)
+            }.disabled(visibleSelection.isEmpty)
+                .accessibilityIdentifier("actions.batch")
         }.padding(20)
     }
 
@@ -101,6 +110,14 @@ struct ActionsWorkspaceView: View {
             ViewThatFits(in: .horizontal) {
                 HStack { statusPicker; duePicker; meetingPicker; sortPicker }
                 VStack { HStack { statusPicker; duePicker }; HStack { meetingPicker; sortPicker } }
+            }
+            if hiddenSelectionCount > 0 {
+                HStack {
+                    Text("\(hiddenSelectionCount) selected outside these filters.")
+                        .accessibilityIdentifier("actions.selection.hidden")
+                    Button("Clear selection") { selection = [] }
+                    Spacer()
+                }.font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
             }
         }.padding(.horizontal, 20).padding(.bottom, 12)
     }
@@ -119,7 +136,7 @@ struct ActionsWorkspaceView: View {
         }
     }
     private var meetingPicker: some View {
-        Picker("Meeting", selection: $meetingID) {
+        Picker("Meeting", selection: Binding(get: { meetingID }, set: { storedMeetingID = $0?.uuidString ?? "" })) {
             Text("All meetings").tag(nil as UUID?)
             ForEach(app.outcomeIndex.all) { Text($0.meeting.displayTitle).tag(Optional($0.id)) }
         }

@@ -84,6 +84,35 @@ final class AgentSessionControllerTests: XCTestCase {
         XCTAssertEqual(controller.state, .ready)
     }
 
+    func testActiveModelContextStaysWithTheResolvedConnectionUntilRestart() async {
+        var configuration = AppSettings()
+        configuration.summarizerBackend = .openAICompatible
+        configuration.openAIBaseURL = "http://localhost:1234/v1"
+        configuration.openAIModel = "original-model"
+        let controller = AgentSessionController(
+            settings: { configuration }, storage: StorageManager(),
+            makeTransport: { _ in FakeTransport() })
+        await controller.start()
+        XCTAssertEqual(controller.state, .ready)
+        XCTAssertEqual(controller.modelContext?.name, "original-model")
+        XCTAssertEqual(controller.modelContext?.destination, .onDevice)
+
+        configuration.openAIBaseURL = "https://reviewed.example/v1"
+        configuration.openAIModel = "next-model"
+        configuration.approvedRemoteInferenceOrigins = ["https://reviewed.example"]
+        XCTAssertEqual(controller.modelContext?.name, "original-model")
+        XCTAssertEqual(controller.modelContext?.destination, .onDevice)
+        XCTAssertNotEqual(controller.modelContext, .init(settings: configuration))
+
+        await controller.shutdown()
+        XCTAssertNil(controller.modelContext)
+        await controller.start()
+        XCTAssertEqual(controller.state, .ready)
+        XCTAssertEqual(controller.modelContext?.name, "next-model")
+        XCTAssertEqual(controller.modelContext?.destination, .remote(host: "reviewed.example"))
+        await controller.shutdown()
+    }
+
     func testUnsupportedBackendFailsWithoutSpawning() async throws {
         let controller = makeController(backend: .appleIntelligence)
         await controller.start()
@@ -92,6 +121,7 @@ final class AgentSessionControllerTests: XCTestCase {
         }
         XCTAssertTrue(reason.contains("Apple Intelligence"))
         XCTAssertEqual(controller.recoveryAction, .openModels)
+        XCTAssertNil(controller.modelContext)
     }
 
     func testShutdownDuringBuiltInEnsureReleasesLateLease() async throws {
@@ -138,6 +168,7 @@ final class AgentSessionControllerTests: XCTestCase {
         await controller.shutdown()
         await blocker.release()
         await starting.value
+        XCTAssertNil(controller.modelContext, "A canceled startup must not restore stale model context")
 
         var active = await broker.activeLeaseCount(.mainLLM)
         let deadline = Date().addingTimeInterval(3)

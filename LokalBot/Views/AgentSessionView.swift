@@ -255,9 +255,14 @@ struct AgentSessionView: View {
     }
 
     private var emptyStateDetail: String {
-        "Work in the selected folder across a continuing session. \(controller.approvalMode.runtimeSummary) "
-            + "\(InferencePresentation(settings: app.settings).label). The runtime starts after you press Send."
+        let readiness = controller.state == .idle ? "The session starts after you press Send."
+            : (controller.state == .starting ? "The session is starting." : "The session is ready.")
+        return "Work in the selected folder across a continuing session. \(controller.approvalMode.runtimeSummary) "
+            + "\(sessionModel.destination.label). \(readiness)"
     }
+
+    private var configuredModel: AgentSessionController.ModelContext { .init(settings: app.settings) }
+    private var sessionModel: AgentSessionController.ModelContext { controller.modelContext ?? configuredModel }
 
     private var approvalModeMenu: some View {
         Menu {
@@ -491,9 +496,14 @@ struct AgentSessionView: View {
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
-            HStack {
-                Label(InferencePresentation(settings: app.settings).label,
-                      systemImage: InferencePresentation(settings: app.settings).icon)
+            VStack(alignment: .leading, spacing: 4) {
+                Label("\(sessionModel.name) · \(sessionModel.destination.label)",
+                      systemImage: sessionModel.destination.icon)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("agent.model")
+                if controller.modelContext != nil, sessionModel != configuredModel {
+                    Text("New sessions use the model selected in Settings.").foregroundStyle(.secondary)
+                }
                 if let context = launchContext {
                     Text("Context: \(context.title)").lineLimit(2)
                 }

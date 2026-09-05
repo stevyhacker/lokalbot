@@ -17,11 +17,41 @@ final class AgentSessionController: ObservableObject {
         case restart
     }
 
+    struct ModelContext: Equatable {
+        let name: String
+        let destination: InferencePresentation
+
+        init(settings: AppSettings) {
+            switch ThinkExecution.agentResolution(settings: settings, includingCredentials: false) {
+            case .ready(let endpoint):
+                let resolved = ModelContext(endpoint: endpoint, settings: settings)
+                name = resolved.name
+                destination = resolved.destination
+            case .builtIn(let modelID):
+                name = ModelCatalog.entry(id: modelID, custom: settings.customBuiltInModels)?.displayName ?? modelID
+                destination = .onDevice
+            case .unsupported(let reason):
+                name = settings.thinkModelDisplayName
+                destination = .blocked(reason: reason)
+            }
+        }
+
+        init(endpoint: AgentLLMEndpoint, settings: AppSettings) {
+            name = settings.summarizerBackend == .builtIn
+                ? ModelCatalog.entry(id: endpoint.model, custom: settings.customBuiltInModels)?.displayName ?? endpoint.model
+                : endpoint.model
+            destination = InferenceEndpointPolicy.isLoopback(endpoint.baseURL)
+                ? .onDevice : .remote(host: endpoint.baseURL.host ?? "configured server")
+        }
+    }
+
     @Published private(set) var state: SessionState = .idle
     @Published private(set) var items: [AgentTranscriptItem] = []
     @Published private(set) var recoveryAction: RecoveryAction?
     @Published private(set) var sessionTitle: String?
     @Published private(set) var activeSessionFile: URL?
+    /// Bound to this process's connection, even if Settings changes later.
+    @Published private(set) var modelContext: ModelContext?
     @Published var workspace: URL
     @Published var draft = ""
     @Published private(set) var approvalMode: AgentApprovalMode = .askBeforeChanges {
@@ -84,6 +114,8 @@ final class AgentSessionController: ObservableObject {
     func start() async {
         guard !failureTeardownInProgress,
               state == .idle || isFailed else { return }
+        let configuration = settings()
+        modelContext = ModelContext(settings: configuration)
 #if LOKALBOT_UI_TEST_HOST
         if ProcessInfo.processInfo.environment["LOKALBOT_AGENT_UI_TEST_APPROVAL"] == "1" {
             lifecycleGeneration += 1
@@ -109,13 +141,14 @@ final class AgentSessionController: ObservableObject {
         state = .starting
         recoveryAction = nil
         do {
-            let endpoint = try await resolveEndpoint()
+            let endpoint = try await resolveEndpoint(settings: configuration)
             guard generation == lifecycleGeneration else {
                 // shutdown() may have run while the broker was still ensuring,
                 // before resolveEndpoint had assigned the lease.
                 releaseLLMLease()
                 return
             }
+            modelContext = ModelContext(endpoint: endpoint, settings: configuration)
             var capabilityToken: String?
             if makeTransport == nil {
                 accessGate.removeExpiredCapabilities()
@@ -185,6 +218,7 @@ final class AgentSessionController: ObservableObject {
         process = nil
         client = nil
         activeSessionFile = nil
+        modelContext = nil
         resetApprovalPolicy()
         releaseLLMLease()
         state = .idle
@@ -385,10 +419,10 @@ final class AgentSessionController: ObservableObject {
 
     // MARK: - Endpoint + plan
 
-    private func resolveEndpoint() async throws -> AgentLLMEndpoint {
+    private func resolveEndpoint(settings configuration: AppSettings) async throws -> AgentLLMEndpoint {
         releaseLLMLease()
         let connection = try await thinkExecution.prepareAgentConnection(
-            settings: settings(),
+            settings: configuration,
             broker: broker)
         llmLease = connection.lease
         return connection.endpoint
@@ -556,6 +590,7 @@ final class AgentSessionController: ObservableObject {
         process = nil
         client = nil
         activeSessionFile = nil
+        modelContext = nil
         folder.resolveAllApprovals()
         resetApprovalPolicy()
         revokeAccessCapability()
@@ -572,6 +607,7 @@ final class AgentSessionController: ObservableObject {
     private func setFailure(_ error: Error) {
         folder.resolveAllApprovals()
         activeSessionFile = nil
+        modelContext = nil
         resetApprovalPolicy()
         revokeAccessCapability()
         releaseLLMLease()

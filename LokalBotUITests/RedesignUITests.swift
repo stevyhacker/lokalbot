@@ -179,6 +179,17 @@ final class RedesignUITests: XCTestCase {
         search.click(); search.typeText("Synthetic commitment 399")
         let action = UITestHarness.staticText(containing: "Synthetic commitment 399", in: app)
         XCTAssertTrue(action.waitForExistence(timeout: 5))
+        action.click()
+        search.click(); search.typeKey("a", modifierFlags: .command)
+        search.typeText("Synthetic commitment 398")
+        XCTAssertTrue(element("actions.selection.hidden").waitForExistence(timeout: 5),
+                      "Filtering should preserve the selected action while excluding it from the batch")
+        XCTAssertFalse(element("actions.batch").isEnabled)
+        search.click(); search.typeKey("a", modifierFlags: .command)
+        search.typeText("Synthetic commitment 399")
+        XCTAssertTrue(action.waitForExistence(timeout: 5))
+        XCTAssertTrue(element("actions.batch").isEnabled, "Returning to the action should restore its selection")
+        XCTAssertFalse(element("actions.selection.hidden").exists)
         let complete = app.buttons["outcome.action.toggle.\(fixture.designReview.id.uuidString):large-action-399"]
         XCTAssertTrue(complete.waitForExistence(timeout: 4))
         complete.click()
