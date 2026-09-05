@@ -14,6 +14,17 @@ async function noOverflow(page) {
   expect(bounds.content).toBeLessThanOrEqual(bounds.viewport);
 }
 
+async function loadLandingImages(page) {
+  // Full-page screenshots do not scroll offscreen lazy images into view.
+  // Exercise that loading path and reject broken assets before capturing them.
+  for (const image of await page.locator('main img').all()) {
+    await image.scrollIntoViewIfNeeded();
+    await expect(image).toHaveJSProperty('complete', true);
+    await expect.poll(() => image.evaluate(element => element.naturalWidth)).toBeGreaterThan(0);
+  }
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+}
+
 for (const viewport of viewports) {
   test(`landing layout ${viewport.width} × ${viewport.height}`, async ({ page }, info) => {
     await page.setViewportSize(viewport);
@@ -27,6 +38,7 @@ for (const viewport of viewports) {
       expect(result.y + result.height).toBeLessThanOrEqual(viewport.height);
       expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(7000);
     }
+    await loadLandingImages(page);
     await page.screenshot({ path: info.outputPath(`after-${viewport.width}.png`), fullPage: true });
     await info.attach(`After ${viewport.width}`, { path: info.outputPath(`after-${viewport.width}.png`), contentType: 'image/png' });
     if (process.env.WEBSITE_BASELINE) {
@@ -169,6 +181,7 @@ test('reduced motion and 200% equivalent reflow remain usable', async ({ page },
   await expect(page.locator('html')).toHaveCSS('scroll-behavior', 'auto');
   await page.getByRole('button', { name: 'Menu', exact: true }).click();
   await expect(page.getByRole('navigation', { name: 'Primary', exact: true })).toBeVisible();
+  await loadLandingImages(page);
   await page.screenshot({ path: info.outputPath('200-percent-reflow.png'), fullPage: true });
   await info.attach('200% equivalent reflow', { path: info.outputPath('200-percent-reflow.png'), contentType: 'image/png' });
 });
