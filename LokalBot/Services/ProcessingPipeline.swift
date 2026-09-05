@@ -1035,17 +1035,13 @@ final class ProcessingPipeline: ObservableObject {
     /// directly as optional evidence, so filtering summary noise never loses
     /// the underlying workday record.
     func generateDayDigest(
-        for day: Date,
-        blocks: [ActivityBlock],
-        meetings: [Meeting],
-        screenContexts: [DayScreenContext],
+        from snapshot: DailyEvidenceSnapshot,
         config: AppSettings
     ) async throws -> DayDigestGenerationResult {
-        let evidence = DayDigestEvidence.build(
-            day: day,
-            blocks: blocks,
-            screenContexts: screenContexts,
-            meetings: dayMeetingEvidence(meetings))
+        let evidence = snapshot.digestEvidence()
+        let name = DreamDay.key(for: snapshot.day)
+        let url = storage.rootURL.appendingPathComponent("journal/\(name).md")
+        let revision = try DayDigestJournalWriter.revision(at: url)
 
         let overview: DayDigestOverviewGeneration
         if evidence.isEmpty {
@@ -1075,15 +1071,8 @@ final class ProcessingPipeline: ObservableObject {
 
         try Task.checkCancellation()
         let text = evidence.renderDocument(summary: overview.summary)
-        let name = DreamDay.key(for: day)
-        let url = storage.rootURL.appendingPathComponent("journal/\(name).md")
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try text.write(to: url, atomically: true, encoding: .utf8)
-        try DayDigestGenerationMetadataStore.record(
-            quality: overview.quality,
-            evidenceLatestAt: evidence.latestEvidenceAt,
-            for: url)
+        try DayDigestJournalWriter.write(text, to: url, replacing: revision,
+                                        evidence: evidence, quality: overview.quality)
         return DayDigestGenerationResult(
             text: text,
             url: url,
@@ -1101,49 +1090,6 @@ final class ProcessingPipeline: ObservableObject {
             evidence: evidence,
             engine: engine,
             customPrompt: customPrompt)
-    }
-
-    private func dayMeetingEvidence(_ meetings: [Meeting]) -> [DayDigestMeetingEvidence] {
-        meetings.compactMap { meeting in
-            guard let endedAt = meeting.endedAt else { return nil }
-            let folder = meeting.folderURL(in: storage)
-            let sourceSummary = (try? String(
-                contentsOf: folder.appendingPathComponent("summary.md"),
-                encoding: .utf8)) ?? ""
-            let outcomes = MeetingOutcomes.load(from: folder).map(Self.renderOutcomes) ?? ""
-            return DayDigestMeetingEvidence(
-                id: meeting.id,
-                title: meeting.title,
-                app: meeting.appName,
-                startedAt: meeting.startedAt,
-                endedAt: endedAt,
-                sourceSummary: sourceSummary,
-                outcomes: outcomes,
-                artifactModifiedAt: DayDigestMeetingArtifacts.latestModifiedAt(in: folder))
-        }
-    }
-
-    private nonisolated static func renderOutcomes(_ outcomes: MeetingOutcomes) -> String {
-        var lines: [String] = []
-        if !outcomes.actionItems.isEmpty {
-            lines.append("Action items:")
-            for item in outcomes.actionItems {
-                var details: [String] = []
-                if let owner = item.owner, !owner.isEmpty { details.append("owner: \(owner)") }
-                if let due = item.due, !due.isEmpty { details.append("due: \(due)") }
-                lines.append("- " + item.text
-                    + (details.isEmpty ? "" : " (\(details.joined(separator: ", ")))"))
-            }
-        }
-        if !outcomes.decisions.isEmpty {
-            lines.append("Decisions:")
-            lines += outcomes.decisions.map { "- \($0)" }
-        }
-        if !outcomes.openQuestions.isEmpty {
-            lines.append("Open questions:")
-            lines += outcomes.openQuestions.map { "- \($0)" }
-        }
-        return lines.joined(separator: "\n")
     }
 
     enum PipelineError: LocalizedError {

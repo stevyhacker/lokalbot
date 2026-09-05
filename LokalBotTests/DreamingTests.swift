@@ -400,6 +400,12 @@ final class DreamingTests: XCTestCase {
             to: journalDirectory.appendingPathComponent("\(target.dayKey).md"))
         try Data("wrong adjacent digest".utf8).write(
             to: journalDirectory.appendingPathComponent("\(ambientKey).md"))
+        let snapshot = try FileDailyEvidenceSource(root: root, calendar: target.calendar)
+            .snapshot(for: target.day)
+        try DayDigestGenerationMetadataStore.record(
+            quality: .complete, evidenceLatestAt: snapshot.latestEvidenceAt,
+            evidenceSignature: snapshot.digestEvidence(calendar: target.calendar).contentSignature,
+            for: journalDirectory.appendingPathComponent("\(target.dayKey).md"))
 
         let evidence = try DreamCompiler.compile(
             day: target.day,
@@ -647,7 +653,7 @@ final class DreamingTests: XCTestCase {
         XCTAssertEqual(report.topActions.count, 1)
         XCTAssertTrue(try XCTUnwrap(report.topActions.first)
             .contains("Send the launch checklist"))
-        XCTAssertTrue(try XCTUnwrap(report.topActions.first)
+        XCTAssertFalse(try XCTUnwrap(report.topActions.first)
             .contains("completion not tracked"))
         XCTAssertTrue(report.repeatedWork.isEmpty)
         XCTAssertTrue(report.suggestedChecks.isEmpty)
@@ -678,7 +684,7 @@ final class DreamingTests: XCTestCase {
         XCTAssertTrue(pack.contains("Release sync (`abcd1234`, 42 min)"))
         XCTAssertTrue(pack.contains("decision: Ship 0.5 next week"))
         XCTAssertTrue(pack.contains("comparison window only"))
-        XCTAssertTrue(pack.contains("completion is unknown"))
+        XCTAssertTrue(pack.contains("using saved corrections and status"))
         XCTAssertLessThanOrEqual(pack.count, DreamCompiler.evidenceCharacterLimit)
     }
 

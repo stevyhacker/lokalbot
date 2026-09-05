@@ -10,31 +10,19 @@ final class DayDigestLifecycle {
         var text: String?
         var modifiedAt: Date?
         var latestEvidenceAt: Date?
+        var evidenceMatches: Bool = true
 
         var isStale: Bool {
-            DayDigestFreshness.isStale(
+            !evidenceMatches || DayDigestFreshness.isStale(
                 digestModifiedAt: modifiedAt,
                 latestEvidenceAt: latestEvidenceAt)
         }
     }
 
     typealias Generator = @MainActor (
-        _ day: Date,
-        _ blocks: [ActivityBlock],
-        _ meetings: [Meeting],
-        _ screenContexts: [DayScreenContext],
+        _ evidence: DailyEvidenceSnapshot,
         _ settings: AppSettings
     ) async throws -> DayDigestGenerationResult
-
-    private struct EvidenceInput {
-        var blocks: [ActivityBlock]
-        var meetings: [Meeting]
-        var screenContexts: [DayScreenContext]
-
-        var isEmpty: Bool {
-            blocks.isEmpty && meetings.isEmpty && screenContexts.isEmpty
-        }
-    }
 
     private let storageRoot: URL
     private let blocks: (Date) -> [ActivityBlock]
@@ -43,8 +31,10 @@ final class DayDigestLifecycle {
     private let latestActivityEvidenceAt: (Date) -> Date?
     private let settings: () -> AppSettings
     private let generator: Generator
+    private let onGenerated: (Date) -> Void
     private let calendar: Calendar
     private let scheduler: DayDigestScheduler
+    private var invalidatedDays: Set<String> = []
 
     init(
         storageRoot: URL,
@@ -55,7 +45,8 @@ final class DayDigestLifecycle {
         meetings: @escaping () -> [Meeting],
         latestActivityEvidenceAt: @escaping (Date) -> Date?,
         settings: @escaping () -> AppSettings,
-        generator: @escaping Generator
+        generator: @escaping Generator,
+        onGenerated: @escaping (Date) -> Void = { _ in }
     ) {
         self.storageRoot = storageRoot
         self.calendar = calendar
@@ -66,6 +57,7 @@ final class DayDigestLifecycle {
         self.latestActivityEvidenceAt = latestActivityEvidenceAt
         self.settings = settings
         self.generator = generator
+        self.onGenerated = onGenerated
     }
 
     convenience init(
@@ -73,7 +65,8 @@ final class DayDigestLifecycle {
         activityStore: ActivityStore,
         pipeline: ProcessingPipeline,
         meetings: @escaping () -> [Meeting],
-        settings: @escaping () -> AppSettings
+        settings: @escaping () -> AppSettings,
+        onGenerated: @escaping (Date) -> Void = { _ in }
     ) {
         self.init(
             storageRoot: storage.rootURL,
@@ -82,14 +75,12 @@ final class DayDigestLifecycle {
             meetings: meetings,
             latestActivityEvidenceAt: { activityStore.latestEvidenceAt(on: $0) },
             settings: settings,
-            generator: { day, blocks, meetings, screenContexts, settings in
+            generator: { evidence, settings in
                 try await pipeline.generateDayDigest(
-                    for: day,
-                    blocks: blocks,
-                    meetings: meetings,
-                    screenContexts: screenContexts,
+                    from: evidence,
                     config: settings)
-            })
+            },
+            onGenerated: onGenerated)
     }
 
     func journalURL(for day: Date) -> URL {
@@ -100,10 +91,14 @@ final class DayDigestLifecycle {
         let url = journalURL(for: day)
         let text = try? String(contentsOf: url, encoding: .utf8)
         let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let signature = try? evidenceInput(for: day).digestEvidence(calendar: calendar).contentSignature
         return Snapshot(
             text: text,
             modifiedAt: attributes?[.modificationDate] as? Date,
-            latestEvidenceAt: latestEvidenceAt(for: day))
+            latestEvidenceAt: latestEvidenceAt(for: day),
+            evidenceMatches: text == nil || signature.map {
+                DayDigestGenerationMetadataStore.isCurrent(for: url, evidenceSignature: $0)
+            } == true)
     }
 
     func meetings(for day: Date, includeInProgress: Bool = true) -> [Meeting] {
@@ -129,13 +124,12 @@ final class DayDigestLifecycle {
         for day: Date,
         settings override: AppSettings? = nil
     ) async throws -> DayDigestGenerationResult {
-        let input = evidenceInput(for: day)
-        return try await generator(
-            day,
-            input.blocks,
-            input.meetings,
-            input.screenContexts,
+        let evidence = try evidenceInput(for: day)
+        let result = try await generator(
+            evidence,
             override ?? settings())
+        onGenerated(evidence.day)
+        return result
     }
 
     func configureAutomaticGeneration(
@@ -150,21 +144,27 @@ final class DayDigestLifecycle {
                 return self.automaticCompletionAt(for: day)
             },
             latestEvidenceAt: { [weak self] day in
-                self?.latestEvidenceAt(for: day)
+                guard let self else { return nil }
+                // A deleted last meeting still leaves an owned journal to repair.
+                return self.latestEvidenceAt(for: day)
+                    ?? DayDigestGenerationMetadataStore.load(for: self.journalURL(for: day))?.generatedAt
             },
             canRun: canRun,
             generate: { [weak self] day in
                 guard let self else {
                     throw TextEngineError.unavailable("LokalBot is shutting down.")
                 }
-                let input = self.evidenceInput(for: day)
-                guard !input.isEmpty else { return .deferred }
+                let evidence = try self.evidenceInput(for: day)
+                let url = self.journalURL(for: day)
+                let ownedJournal = DayDigestGenerationMetadataStore.load(for: url).map {
+                    DayDigestGenerationMetadataStore.journalMatches($0, at: url)
+                } == true
+                guard !evidence.isEmpty || ownedJournal else { return .deferred }
                 let result = try await self.generator(
-                    day,
-                    input.blocks,
-                    input.meetings,
-                    input.screenContexts,
+                    evidence,
                     self.settings())
+                self.invalidatedDays.remove(DreamDay.key(for: day, calendar: self.calendar))
+                self.onGenerated(evidence.day)
                 return result.quality.needsRepair ? .needsRepair : .completed
             },
             onError: onError)
@@ -174,17 +174,30 @@ final class DayDigestLifecycle {
         scheduler.stop()
     }
 
-    private func evidenceInput(for day: Date) -> EvidenceInput {
-        EvidenceInput(
-            blocks: blocks(day),
-            meetings: meetings(for: day, includeInProgress: false),
-            screenContexts: screenContexts(day))
+    /// A user correction or completion can make the current journal stale
+    /// without changing meeting metadata. Re-evaluate immediately instead of
+    /// waiting for the next minute tick.
+    func reconsiderEvidence(for day: Date? = nil) {
+        reconsiderEvidence(for: day.map { [$0] } ?? [])
     }
 
-    /// Summaries and outcomes are produced after a meeting ends, and both are
-    /// consumed by `ProcessingPipeline.generateDayDigest`. Their writes must
-    /// therefore advance the evidence watermark even though the meeting's
-    /// `endedAt` value is unchanged.
+    func reconsiderEvidence(for days: [Date]) {
+        invalidatedDays.formUnion(days.map { DreamDay.key(for: $0, calendar: calendar) })
+        scheduler.reconsiderEvidence()
+    }
+
+    private func evidenceInput(for day: Date) throws -> DailyEvidenceSnapshot {
+        try FileDailyEvidenceSource(root: storageRoot, calendar: calendar).snapshot(
+            for: day,
+            meetings: meetings(for: day, includeInProgress: false),
+            activityBlocks: blocks(day),
+            screenContexts: screenContexts(day),
+            includeScreenSummary: false)
+    }
+
+    /// Summaries, outcomes, and the user's outcome overlay are consumed by
+    /// `ProcessingPipeline.generateDayDigest`. Their writes must therefore
+    /// advance the evidence watermark even when `endedAt` is unchanged.
     private func latestArtifactWriteAt(for meeting: Meeting) -> Date? {
         let folder = storageRoot.appendingPathComponent(
             meeting.relativePath,
@@ -197,9 +210,25 @@ final class DayDigestLifecycle {
     /// artifacts it actually consumes. This makes the next quiet tick repair
     /// the journal without regenerating it for every later activity sample.
     private func automaticCompletionAt(for day: Date) -> Date? {
-        let completedAt = DayDigestGenerationMetadataStore.completedAt(
-            for: journalURL(for: day))
-        guard let completedAt else { return nil }
+        let url = journalURL(for: day)
+        if let metadata = DayDigestGenerationMetadataStore.load(for: url), metadata.journalDigest != nil {
+            // Preserve manual edits even if the file's timestamp is restored.
+            guard DayDigestGenerationMetadataStore.journalMatches(metadata, at: url) else {
+                return .distantFuture
+            }
+        }
+        // Ownership is checked before quality: editing even a degraded digest
+        // must opt it out of automatic replacement.
+        guard let completedAt = DayDigestGenerationMetadataStore.completedAt(for: url) else { return nil }
+        if let metadata = DayDigestGenerationMetadataStore.load(for: url), metadata.journalDigest != nil {
+            if let evidence = try? evidenceInput(for: day).digestEvidence(calendar: calendar) {
+                if let saved = metadata.meetingEvidenceSignature, saved != evidence.meetingSignature {
+                    return nil
+                }
+                if invalidatedDays.contains(DreamDay.key(for: day, calendar: calendar)),
+                   metadata.evidenceSignature != evidence.contentSignature { return nil }
+            }
+        }
         let latestArtifactWrite = meetings(for: day, includeInProgress: false)
             .compactMap(latestArtifactWriteAt(for:))
             .max()

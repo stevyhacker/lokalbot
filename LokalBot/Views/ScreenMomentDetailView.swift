@@ -249,6 +249,7 @@ struct ScreenMomentDetailView: View {
     private func deleteCapture() {
         do {
             try app.screenshots.deleteCapture(id: screenshot.id)
+            app.primaryEvidenceDidChange(on: screenshot.ts)
             onClear()
             onReload()
         } catch {

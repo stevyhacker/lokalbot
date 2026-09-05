@@ -73,7 +73,7 @@ final class QuickRecallUITests: XCTestCase {
             app.descendants(matching: .any)["quickRecall.noMatches"]
                 .waitForExistence(timeout: 8)
                 || text(containing: "Nothing in saved moments").exists,
-            "Quick Recall did not distinguish a completed empty search")
+            "Quick Recall did not distinguish a completed empty search: \(app.debugDescription)")
         // SwiftUI propagates the enclosing no-match state's accessibility ID
         // to descendants on macOS, so select this button by visible content.
         let askInstead = app.buttons.matching(NSPredicate(

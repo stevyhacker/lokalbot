@@ -560,6 +560,94 @@ final class MainWindowUITests: XCTestCase {
                        "completed action remained in Today attention")
     }
 
+    func testMultiMeetingThreadCompletionRequiresConfirmation() throws {
+        try relaunchWithMatchingActions()
+        let toggle = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "outcome.thread.toggle.")).firstMatch
+        UITestHarness.scrollTo(toggle, in: app)
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5), "Thread toggle missing: \(app.debugDescription)")
+        toggle.click()
+        // App-wide queries also include Touch Bar controls, which cannot be
+        // clicked through the normal macOS event path.
+        let confirm = app.windows.buttons["Mark all done"].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 4), "Multi-meeting completion needs explicit approval")
+        let cancel = app.windows.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 4))
+        cancel.click()
+        let stateURLs = [fixture.designReview, fixture.standup].map {
+            fixture.folder(for: $0).appendingPathComponent("outcome-state.json")
+        }
+        XCTAssertTrue(stateURLs.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) },
+                      "Cancelling must not write either source overlay")
+        toggle.click()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 4))
+        confirm.click()
+        XCTAssertTrue(UITestHarness.waitUntil {
+            stateURLs.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }
+        })
+        for url in stateURLs {
+            let state = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+            let saved = try XCTUnwrap(state["actions"] as? [String: [String: Any]])
+            XCTAssertEqual(saved["fixture-action-design-1"]?["status"] as? String, "done")
+        }
+    }
+
+    func testActionThreadSourceCanBeSeparatedAndRestored() throws {
+        try relaunchWithMatchingActions()
+        let sources = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "outcome.thread.sources.")).firstMatch
+        UITestHarness.scrollTo(sources, in: app)
+        XCTAssertTrue(sources.waitForExistence(timeout: 5), "Thread sources missing: \(app.debugDescription)")
+        sources.click()
+        let separate = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "outcome.thread.separate.")).firstMatch
+        XCTAssertTrue(separate.waitForExistence(timeout: 4))
+        separate.click()
+        let stateURLs = [fixture.designReview, fixture.standup].map {
+            fixture.folder(for: $0).appendingPathComponent("outcome-state.json")
+        }
+        XCTAssertTrue(UITestHarness.waitUntil {
+            stateURLs.filter { FileManager.default.fileExists(atPath: $0.path) }.count == 1
+        })
+        let stateURL = try XCTUnwrap(stateURLs.first { FileManager.default.fileExists(atPath: $0.path) })
+        let state = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as? [String: Any])
+        let actions = try XCTUnwrap(state["actions"] as? [String: [String: Any]])
+        XCTAssertEqual(actions["fixture-action-design-1"]?["isThreadExcluded"] as? Bool, true)
+        let toggles = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "outcome.thread.toggle."))
+        XCTAssertTrue(UITestHarness.waitUntil { toggles.count == 2 })
+        let menus = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "outcome.thread.status."))
+        var restored = false
+        for index in 0..<menus.count {
+            menus.element(boundBy: index).click()
+            let restore = app.menuItems["Allow matching across meetings"]
+            if restore.waitForExistence(timeout: 1) {
+                restore.click()
+                restored = true
+                break
+            }
+            app.typeKey(.escape, modifierFlags: [])
+        }
+        XCTAssertTrue(restored)
+        XCTAssertTrue(UITestHarness.waitUntil { toggles.count == 1 })
+    }
+
+    private func relaunchWithMatchingActions() throws {
+        app.terminate()
+        let source = fixture.folder(for: fixture.designReview).appendingPathComponent("outcomes.json")
+        let target = fixture.folder(for: fixture.standup).appendingPathComponent("outcomes.json")
+        var outcomes = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: source)) as? [String: Any])
+        let actions = try XCTUnwrap(outcomes["actionItems"] as? [[String: Any]])
+        outcomes["actionItems"] = [try XCTUnwrap(actions.first)]
+        outcomes["decisionRecords"] = []
+        outcomes["openQuestions"] = []
+        try JSONSerialization.data(withJSONObject: outcomes).write(to: target, options: .atomic)
+        app = try UITestHarness.relaunch(storageRoot: fixture.root,
+                                        defaultsSuiteName: XCTUnwrap(defaultsSuiteName))
+        XCTAssertTrue(identified("today.header").waitForExistence(timeout: 10))
+    }
+
     /// Full detail leads with actions and decisions, keeps the summary visible,
     /// and retains the transcript as an explicit evidence disclosure.
     func testMeetingDetailLoadsExpandedSummaryAndTranscript() {
