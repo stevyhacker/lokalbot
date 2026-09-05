@@ -126,7 +126,7 @@ struct MainWindowView: View {
                                 Text("Updated \(app.outcomeIndex.statusUndo.count) action(s)")
                                 Button("Undo") {
                                     app.outcomeIndex.undoStatusChange()
-                                    if let error = app.outcomeIndex.lastError { app.lastError = error }
+                                    app.lastError = app.outcomeIndex.lastError
                                 }
                                     .accessibilityIdentifier("outcomes.undo")
                                 Spacer()

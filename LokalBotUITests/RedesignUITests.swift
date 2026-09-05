@@ -202,10 +202,11 @@ final class RedesignUITests: XCTestCase {
             XCTAssertTrue(UITestHarness.staticText(containing: "Could not update this action", in: app)
                 .waitForExistence(timeout: 4))
             XCTAssertTrue(action.exists, "A failed save must preserve the open action")
-            app.buttons["Dismiss error"].click()
         }
         complete.click()
         XCTAssertTrue(UITestHarness.waitUntil { !action.exists })
+        XCTAssertFalse(UITestHarness.staticText(containing: "Could not update this action", in: app).exists,
+                       "A successful retry should clear the previous save error")
         try withBlockedStateFile(stateFile) {
             app.buttons["outcomes.undo"].click()
             let undoFailure = UITestHarness.staticText(containing: "Could not undo", in: app)
@@ -215,10 +216,11 @@ final class RedesignUITests: XCTestCase {
             XCTAssertLessThanOrEqual(undoFailure.frame.maxY, app.buttons["outcomes.undo"].frame.minY,
                                      "The error must remain above the retry action without covering it")
             snapshot("action-undo-write-failure")
-            app.buttons["Dismiss error"].click()
         }
         app.buttons["outcomes.undo"].click()
         XCTAssertTrue(action.waitForExistence(timeout: 5), "Retry should restore the action after storage recovers")
+        XCTAssertFalse(UITestHarness.staticText(containing: "Could not undo", in: app).exists,
+                       "A successful Undo should clear its previous error")
     }
 
     func testAgentApprovalDescribesEffectAndDenialAndStopReachTheController() throws {
