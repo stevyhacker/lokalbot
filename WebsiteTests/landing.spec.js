@@ -132,10 +132,11 @@ test('download CTAs use the installer and retain setup, release, and legacy dest
 test('video waits for a user gesture, plays, and pauses out of view', async ({ page }) => {
   await page.goto('/');
   const video = page.locator('video');
-  await expect(video).toHaveAttribute('preload', 'metadata');
+  await expect(video).toHaveAttribute('preload', 'none');
   await expect(video).not.toHaveAttribute('autoplay');
   await expect(video).toHaveJSProperty('paused', true);
   await page.getByRole('link', { name: 'Watch the 30-second demo' }).click();
+  await expect(video).toHaveAttribute('preload', 'metadata');
   await video.focus();
   await page.keyboard.press('Space');
   await expect(video).toHaveJSProperty('paused', false);
