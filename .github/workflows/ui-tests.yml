@@ -110,16 +110,18 @@ jobs:
         run: Scripts/ui-tests.sh 'RedesignUITests/testHighContrastKeepsActionsAccessible'
 
       - name: Verify critical interactions
-        if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
+        if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.filter == '') }}
         env:
           CODE_SIGNING_ALLOWED: "NO"
         run: |
-          Scripts/ui-tests.sh 'AgentModeUITests'
-          Scripts/ui-tests.sh 'RedesignUITests/testAgentApprovalDescribesEffectAndDenialAndStopReachTheController'
-          Scripts/ui-tests.sh 'RedesignUITests/testFourHundredActionsStaySearchableAndCompletionCanBeUndone'
+          interaction_status=0
+          Scripts/ui-tests.sh 'AgentModeUITests' || interaction_status=$?
+          Scripts/ui-tests.sh 'RedesignUITests/testAgentApprovalDescribesEffectAndDenialAndStopReachTheController' || interaction_status=$?
+          Scripts/ui-tests.sh 'RedesignUITests/testFourHundredActionsStaySearchableAndCompletionCanBeUndone' || interaction_status=$?
+          exit "$interaction_status"
 
       - name: Verify Reduce Motion
-        if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
+        if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.filter == '') }}
         env:
           CODE_SIGNING_ALLOWED: "NO"
         run: |

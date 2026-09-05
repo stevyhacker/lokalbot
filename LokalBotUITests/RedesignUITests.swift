@@ -238,12 +238,19 @@ final class RedesignUITests: XCTestCase {
         // neither is an app-owned control or a usable hosted input surface.
         continueAfterFailure = true
         defer { continueAfterFailure = false }
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "workspace-accessibility-hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
         try app.performAccessibilityAudit(for: [.sufficientElementDescription, .action]) { issue in
             guard let affected = issue.element, affected.exists else { return false }
             if affected.elementType == .touchBar { return true }
             let systemBar = self.app.descendants(matching: .touchBar).firstMatch
-            return affected.elementType == .popUpButton && affected.label == "emoji & symbols"
-                && systemBar.exists && systemBar.frame.contains(affected.frame)
+            guard affected.elementType == .popUpButton, affected.label == "emoji & symbols",
+                  systemBar.exists else { return false }
+            let systemPicker = systemBar.descendants(matching: .popUpButton)
+                .matching(NSPredicate(format: "label == %@", "emoji & symbols")).firstMatch
+            return systemPicker.exists && systemPicker.frame == affected.frame
         }
     }
     private func snapshot(_ name: String) {

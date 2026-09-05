@@ -127,6 +127,7 @@ struct MainWindowView: View {
             sidebar
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Workspace navigation")
+                .splitPaneAccessibilityLabel("Workspace navigation")
         } detail: {
             workspace
                 .workspaceSurface()
@@ -145,6 +146,7 @@ struct MainWindowView: View {
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Workspace content")
+                .splitPaneAccessibilityLabel("Workspace content")
         }
     }
 
@@ -185,35 +187,25 @@ struct MainWindowView: View {
             sidebarDestination(
                 "Today", systemImage: "sun.max", section: .today,
                 identifier: "sidebar.today")
-            Section {
-                sidebarDestination(
-                    "Meetings", systemImage: "waveform.circle", section: .meetings,
-                    identifier: "sidebar.meetings")
-                sidebarDestination(
-                    "Timeline",
-                    systemImage: "calendar.day.timeline.left",
-                    section: .timeline,
-                    identifier: "sidebar.timeline")
-                sidebarDestination(
-                    "Ask", systemImage: "sparkle.magnifyingglass", section: .ask,
-                    identifier: "sidebar.ask")
-            } header: {
-                sidebarSectionHeader("Remember")
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("Remember")
-            Section {
-                sidebarDestination(
-                    "Write", systemImage: "keyboard", section: .type,
-                    identifier: "sidebar.type")
-                sidebarDestination(
-                    "Agent", systemImage: "wand.and.sparkles", section: .agent,
-                    identifier: "sidebar.agent")
-            } header: {
-                sidebarSectionHeader("Tools")
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("Tools")
+            sidebarSectionHeader("Remember")
+            sidebarDestination(
+                "Meetings", systemImage: "waveform.circle", section: .meetings,
+                identifier: "sidebar.meetings")
+            sidebarDestination(
+                "Timeline",
+                systemImage: "calendar.day.timeline.left",
+                section: .timeline,
+                identifier: "sidebar.timeline")
+            sidebarDestination(
+                "Ask", systemImage: "sparkle.magnifyingglass", section: .ask,
+                identifier: "sidebar.ask")
+            sidebarSectionHeader("Tools")
+            sidebarDestination(
+                "Write", systemImage: "keyboard", section: .type,
+                identifier: "sidebar.type")
+            sidebarDestination(
+                "Agent", systemImage: "wand.and.sparkles", section: .agent,
+                identifier: "sidebar.agent")
             sidebarDestination(
                 "Settings", systemImage: "gearshape", section: .settings,
                 identifier: "sidebar.settings")
@@ -317,6 +309,8 @@ struct MainWindowView: View {
             .padding(.top, title == "Remember" ? 3 : 8)
             .padding(.bottom, title == "Remember" ? 10 : 5)
             .accessibilityAddTraits(.isHeader)
+            .selectionDisabled(true)
+            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
             .accessibilityIdentifier(
                 title == "Remember" ? "sidebar.section.remember" : "sidebar.section.writeAct")
     }

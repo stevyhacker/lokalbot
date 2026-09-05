@@ -36,7 +36,7 @@ The integrated non-UI suite passes with 1,804 tests passed, three skipped, and n
 
 Hosted XCUITest exercises the new navigation and interaction contracts with a synthetic library. `RedesignUITests` uses the existing native image exporter to attach full-size light/dark screenshots at 1000×700, 1180×740 and 1440×900, along with bounded drafts, keyboard rehearsal, retention cancellation, model/setup screens, contrast states, and scripted Agent approval/denial/Stop through the real RPC controller. A separate hosted run enables Reduce Motion and verifies the actual macOS accessibility setting. Accessibility audits check control descriptions and actions. Test result bundles are retained by the UI workflow for review. Local UI automation is not part of validation.
 
-Accessibility and critical interaction checks run before the long screenshot matrix. Audits retain every app-control issue; the hosted Mac's system-generated virtual Touch Bar and its Emoji picker are excluded by type and Touch Bar bounds. Exact-revision CI status and any remaining environment limitations belong in the PR's validation notes. This PR does not merge or release the application. The private audit screenshots are intentionally excluded from the repository.
+Accessibility and critical interaction checks run before the long screenshot matrix. Audits retain every app-control issue; the hosted Mac's system-generated virtual Touch Bar and its Emoji picker are excluded by type and membership in the native Touch Bar hierarchy. Exact-revision CI status and any remaining environment limitations belong in the PR's validation notes. This PR does not merge or release the application. The private audit screenshots are intentionally excluded from the repository.
 
 ## Recall performance
 
