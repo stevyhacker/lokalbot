@@ -118,6 +118,8 @@ jobs:
           Scripts/ui-tests.sh 'AgentModeUITests' || interaction_status=$?
           Scripts/ui-tests.sh 'RedesignUITests/testAgentApprovalDescribesEffectAndDenialAndStopReachTheController' || interaction_status=$?
           Scripts/ui-tests.sh 'RedesignUITests/testFourHundredActionsStaySearchableAndCompletionCanBeUndone' || interaction_status=$?
+          Scripts/ui-tests.sh 'MainWindowUITests/testMultiMeetingThreadCompletionRequiresConfirmation' || interaction_status=$?
+          Scripts/ui-tests.sh 'MainWindowUITests/testActionThreadSourceCanBeSeparatedAndRestored' || interaction_status=$?
           exit "$interaction_status"
 
       - name: Verify Reduce Motion

@@ -1,16 +1,16 @@
 import CoreGraphics
 import Foundation
 
-/// Cotyping — LokalBot's third major feature: on-device, inline AI autocomplete
-/// in (almost) any macOS text field, reusing the same local LLM backend that
-/// powers summarization. Modeled on Cotabby's suggestion pipeline but driven by
-/// LokalBot's HTTP `llama-server` (`/v1/completions`) instead of in-process
-/// llama.cpp.
-///
-/// This file holds the value types shared across the cotyping subsystem. They
-/// are deliberately `Sendable` value types so they can cross the async /
-/// main-actor boundaries the pipeline runs over (focus poll → debounce →
-/// generation → overlay → acceptance) without aliasing live AX handles.
+// Cotyping — LokalBot's third major feature: on-device, inline AI autocomplete
+// in (almost) any macOS text field, reusing the same local LLM backend that
+// powers summarization. Modeled on Cotabby's suggestion pipeline but driven by
+// LokalBot's HTTP `llama-server` (`/v1/completions`) instead of in-process
+// llama.cpp.
+//
+// This file holds the value types shared across the cotyping subsystem. They
+// are deliberately `Sendable` value types so they can cross the async /
+// main-actor boundaries the pipeline runs over (focus poll → debounce →
+// generation → overlay → acceptance) without aliasing live AX handles.
 
 /// Whether the currently focused element can host a suggestion.
 enum CotypingCapability: Equatable, Sendable {

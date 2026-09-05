@@ -18,22 +18,33 @@ struct MeetingOutcomeState: Codable, Equatable, Sendable {
         var ownerOverride: String?
         var dueOverride: String?
         var textCorrection: String?
+        var textCorrectedAt: Date?
+        var ownerCorrectedAt: Date?
+        var dueCorrectedAt: Date?
+        var isThreadExcluded: Bool
         var updatedAt: Date
         var userEdited: Bool
 
         init(status: OutcomeStatus = .open, ownerOverride: String? = nil,
              dueOverride: String? = nil, textCorrection: String? = nil,
-             updatedAt: Date = Date(), userEdited: Bool = false) {
+             updatedAt: Date = Date(), userEdited: Bool = false,
+             textCorrectedAt: Date? = nil, ownerCorrectedAt: Date? = nil,
+             dueCorrectedAt: Date? = nil, isThreadExcluded: Bool = false) {
             self.status = status
             self.ownerOverride = ownerOverride
             self.dueOverride = dueOverride
             self.textCorrection = textCorrection
             self.updatedAt = updatedAt.outcomePersistedTimestamp
+            self.textCorrectedAt = textCorrection.map { _ in (textCorrectedAt ?? updatedAt).outcomePersistedTimestamp }
+            self.ownerCorrectedAt = ownerOverride.map { _ in (ownerCorrectedAt ?? updatedAt).outcomePersistedTimestamp }
+            self.dueCorrectedAt = dueOverride.map { _ in (dueCorrectedAt ?? updatedAt).outcomePersistedTimestamp }
+            self.isThreadExcluded = isThreadExcluded
             self.userEdited = userEdited
         }
 
         private enum CodingKeys: String, CodingKey {
             case status, ownerOverride, dueOverride, textCorrection, updatedAt, userEdited
+            case textCorrectedAt, ownerCorrectedAt, dueCorrectedAt, isThreadExcluded
         }
 
         init(from decoder: Decoder) throws {
@@ -44,9 +55,18 @@ struct MeetingOutcomeState: Codable, Equatable, Sendable {
             textCorrection = try container.decodeIfPresent(String.self, forKey: .textCorrection)
             updatedAt = (try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date())
                 .outcomePersistedTimestamp
+            // Freeze legacy correction dates before a subsequent status write
+            // advances updatedAt. New records preserve each field independently.
+            textCorrectedAt = try container.decodeIfPresent(Date.self, forKey: .textCorrectedAt)
+                ?? (textCorrection == nil ? nil : updatedAt)
+            ownerCorrectedAt = try container.decodeIfPresent(Date.self, forKey: .ownerCorrectedAt)
+                ?? (ownerOverride == nil ? nil : updatedAt)
+            dueCorrectedAt = try container.decodeIfPresent(Date.self, forKey: .dueCorrectedAt)
+                ?? (dueOverride == nil ? nil : updatedAt)
+            isThreadExcluded = try container.decodeIfPresent(Bool.self, forKey: .isThreadExcluded) ?? false
             userEdited = try container.decodeIfPresent(Bool.self, forKey: .userEdited)
                 ?? (status != .open || ownerOverride != nil || dueOverride != nil
-                    || textCorrection != nil)
+                    || textCorrection != nil || isThreadExcluded)
         }
     }
 

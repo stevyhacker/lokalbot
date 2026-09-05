@@ -10,7 +10,6 @@ struct TodayView: View {
     @StateObject private var upcomingMeeting = UpcomingMeetingPreparationModel()
     @AppStorage("lokalbotv3.gettingStartedDismissed")
     private var gettingStartedDismissed = false
-    @State private var showingActionReview = false
 
     var body: some View {
         ScrollView {
@@ -20,9 +19,8 @@ struct TodayView: View {
                 TodayMemoryStatus(sampler: app.sampler)
                 UpcomingMeetingSection(model: upcomingMeeting)
                 NeedsAttentionSection(
-                    actions: app.outcomeIndex.openUserActions,
-                    limit: 3,
-                    showingReview: $showingActionReview)
+                    threads: app.outcomeIndex.openUserActionThreads,
+                    limit: 3)
                 summarySection
                 capturedSection
                 DisclosureGroup("Overnight and yesterday") { dreamCard }
@@ -100,15 +98,20 @@ struct TodayView: View {
             .buttonStyle(.borderedProminent)
             Menu {
                 Button("Plan open actions in Agent") {
-                    let openActions = app.outcomeIndex.openUserActions
-                    let lines = openActions.prefix(8).map { "- \($0.text)" }
+                    let threads = app.outcomeIndex.openUserActionThreads
+                    let lines = threads.prefix(8).map { thread in
+                        let sources = thread.meetingCount == 1
+                            ? "" : " (mentioned in \(thread.meetingCount) meetings)"
+                        return "- \(thread.text)\(sources)"
+                    }
                     app.openAgent(.init(
-                        title: "Today's open actions",
-                        prompt: "Help me plan today's open meeting actions:\n\(lines.joined(separator: "\n"))",
-                        meetingID: openActions.first?.meetingID,
-                        actionID: openActions.first?.action.id))
+                        title: "Today's action threads",
+                        prompt: "Help me plan today's open meeting action threads:\n"
+                            + lines.joined(separator: "\n"),
+                        meetingID: threads.first?.latestReference.meetingID,
+                        actionID: threads.first?.latestReference.action.id))
                 }
-                .disabled(app.outcomeIndex.openUserActions.isEmpty)
+                .disabled(app.outcomeIndex.openUserActionThreads.isEmpty)
             } label: {
                 Image(systemName: "ellipsis.circle")
             }

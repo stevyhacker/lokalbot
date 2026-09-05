@@ -54,6 +54,7 @@ final class DreamScheduler: ObservableObject {
     private var errorHandler: ((String) -> Void)?
     private var timer: Timer?
     private var dreamTask: Task<Void, Never>?
+    private var activeDayKey: String?
     private var lastFailure: Date?
     /// In-memory high-water mark for the current calendar snapshot. A launch
     /// may scan the persisted activation range once, but subsequent minute
@@ -89,6 +90,7 @@ final class DreamScheduler: ObservableObject {
             generation &+= 1
             dreamTask?.cancel()
             dreamTask = nil
+            activeDayKey = nil
             isDreaming = false
             lastFailure = nil
             scanCursorDayKey = nil
@@ -111,12 +113,21 @@ final class DreamScheduler: ObservableObject {
         timer = nil
         dreamTask?.cancel()
         dreamTask = nil
+        activeDayKey = nil
         isDreaming = false
     }
 
     /// A generated artifact changed behind the in-memory scan cursor. Reset
     /// the high-water mark so the next tick can find and repair the hole.
-    func reconsiderReports() {
+    func reconsiderReports(invalidating dayKeys: Set<String> = []) {
+        if let activeDayKey, dayKeys.contains(activeDayKey) {
+            generation &+= 1
+            dreamTask?.cancel()
+            dreamTask = nil
+            self.activeDayKey = nil
+            isDreaming = false
+        }
+        lastFailure = nil
         scanCursorDayKey = nil
         scanCalendar = nil
         tick()
@@ -185,6 +196,7 @@ final class DreamScheduler: ObservableObject {
         guard let dream else { return }
         let runGeneration = generation
         isDreaming = true
+        activeDayKey = target.dayKey
         lastError = nil
         dreamTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -211,6 +223,7 @@ final class DreamScheduler: ObservableObject {
             guard generation == runGeneration else { return }
             isDreaming = false
             dreamTask = nil
+            activeDayKey = nil
             if continueCatchUp { tick() }
         }
     }

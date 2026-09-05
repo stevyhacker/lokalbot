@@ -27,7 +27,11 @@ struct DayDigestMeetingEvidence: Equatable, Sendable {
 }
 
 enum DayDigestMeetingArtifacts {
-    static let fileNames = ["summary.md", MeetingOutcomes.fileName]
+    static let fileNames = [
+        "summary.md",
+        MeetingOutcomes.fileName,
+        MeetingOutcomeState.fileName,
+    ]
 
     static func latestModifiedAt(in folder: URL) -> Date? {
         fileNames.compactMap { name -> Date? in
@@ -1504,7 +1508,7 @@ enum DayDigestOverviewGenerator {
 }
 
 struct DayDigestGenerationMetadata: Codable, Equatable, Sendable {
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     var version: Int
     var quality: DayDigestGenerationQuality
@@ -1512,6 +1516,9 @@ struct DayDigestGenerationMetadata: Codable, Equatable, Sendable {
     var journalModifiedAt: Date
     var evidenceLatestAt: Date?
     var degradedAttemptCount: Int
+    var evidenceSignature: String?
+    var meetingEvidenceSignature: String?
+    var journalDigest: String?
 }
 
 enum DayDigestGenerationMetadataStore {
@@ -1527,7 +1534,7 @@ enum DayDigestGenerationMetadataStore {
               let metadata = try? JSONDecoder().decode(
                 DayDigestGenerationMetadata.self,
                 from: data),
-              metadata.version == DayDigestGenerationMetadata.currentVersion
+              (1...DayDigestGenerationMetadata.currentVersion).contains(metadata.version)
         else { return nil }
         return metadata
     }
@@ -1539,11 +1546,14 @@ enum DayDigestGenerationMetadataStore {
     static func record(
         quality: DayDigestGenerationQuality,
         evidenceLatestAt: Date?,
+        evidenceSignature: String? = nil,
+        meetingEvidenceSignature: String? = nil,
         for journalURL: URL,
         generatedAt: Date = Date()
     ) throws -> DayDigestGenerationMetadata {
         let previous = load(for: journalURL)
-        let sameEvidence = previous?.evidenceLatestAt == evidenceLatestAt
+        let sameEvidence = evidenceSignature.map { previous?.evidenceSignature == $0 }
+            ?? (previous?.evidenceLatestAt == evidenceLatestAt)
         let degradedAttemptCount: Int
         if quality.needsRepair {
             let previousCount = previous?.quality.needsRepair == true && sameEvidence
@@ -1564,10 +1574,25 @@ enum DayDigestGenerationMetadataStore {
             generatedAt: generatedAt,
             journalModifiedAt: journalModifiedAt,
             evidenceLatestAt: evidenceLatestAt,
-            degradedAttemptCount: degradedAttemptCount)
+            degradedAttemptCount: degradedAttemptCount,
+            evidenceSignature: evidenceSignature,
+            meetingEvidenceSignature: meetingEvidenceSignature,
+            journalDigest: ContentFingerprint.digest(try Data(contentsOf: journalURL)))
         let data = try JSONEncoder().encode(metadata)
         try data.write(to: metadataURL(for: journalURL), options: .atomic)
         return metadata
+    }
+
+    static func journalMatches(_ metadata: DayDigestGenerationMetadata, at url: URL) -> Bool {
+        guard let digest = metadata.journalDigest,
+              let data = try? Data(contentsOf: url) else { return false }
+        return ContentFingerprint.digest(data) == digest
+    }
+
+    static func isCurrent(for journalURL: URL, evidenceSignature: String) -> Bool {
+        guard let metadata = load(for: journalURL),
+              metadata.evidenceSignature == evidenceSignature else { return false }
+        return journalMatches(metadata, at: journalURL)
     }
 
     /// Legacy or externally edited journals keep their modification-time

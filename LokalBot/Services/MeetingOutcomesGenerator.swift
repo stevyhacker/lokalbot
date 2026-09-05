@@ -554,25 +554,15 @@ enum MeetingOutcomesGenerator {
         _ rhs: String,
         threshold: Double
     ) -> Bool {
-        let left = tokens(lhs)
-        let right = tokens(rhs)
-        let union = left.union(right)
-        guard !union.isEmpty else { return false }
-        let score = Double(left.intersection(right).count) / Double(union.count)
-        return score >= threshold
+        OutcomeTextSimilarity.isSimilar(lhs, rhs, threshold: threshold)
     }
 
     private static func normalized(_ text: String) -> String {
-        text.folding(
-            options: [.caseInsensitive, .diacriticInsensitive],
-            locale: Locale(identifier: "en_US_POSIX"))
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
+        OutcomeTextSimilarity.normalized(text)
     }
 
     private static func tokens(_ text: String) -> Set<String> {
-        Set(normalized(text).split(separator: " ").map(String.init))
+        OutcomeTextSimilarity.tokens(text)
     }
 
     private static func actionOrder(

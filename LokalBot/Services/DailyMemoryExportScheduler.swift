@@ -68,6 +68,27 @@ final class DailyMemoryExportScheduler {
         exportTask = nil
     }
 
+    /// An action correction or late meeting artifact can change today's
+    /// export after its scheduled run. Reopen only the affected current day;
+    /// historical exports remain user-controlled and collision-safe.
+    func reconsider(day: Date) {
+        reconsider(days: [day])
+    }
+
+    func reconsider(days: [Date]) {
+        let current = now()
+        guard days.contains(where: { calendar.isDate($0, inSameDayAs: current) }) else { return }
+        generation &+= 1
+        exportTask?.cancel()
+        exportTask = nil
+        if let lastSuccessfulDay,
+           calendar.isDate(lastSuccessfulDay, inSameDayAs: current) {
+            self.lastSuccessfulDay = nil
+        }
+        lastAttempt = nil
+        tick()
+    }
+
     func tick() {
         guard exportTask == nil,
               let configuration,

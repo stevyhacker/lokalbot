@@ -7,7 +7,7 @@ This change implements the app-wide redesign as one pull request. The main flow 
 | Area | Result |
 | --- | --- |
 | Today | Current capture, expandable day-memory state and next meeting lead; three personal actions link to the complete review; brief details are collapsed; generation and capture timestamps are distinct. |
-| Actions | Search, retained status/due/meeting filters and selection, sorting, full personal-action lists, corrections, batch status updates and Undo. Hidden selections are reported and excluded from the visible batch. Save and Undo failures are visible; failed Undo entries remain retryable. Relative due phrases retain the meeting date. |
+| Actions | Search, retained status/due/meeting filters and selection, sorting, full personal-action lists, corrections, batch status updates and Undo. Actions and Threads share one workspace; matching threads retain all source meetings and require confirmation before a multi-meeting status change. Hidden selections are reported and excluded from the visible batch. Save and Undo failures are visible; failed Undo entries remain retryable. Relative due phrases retain the meeting date. |
 | Meetings | Searchable library; persistent transport; Overview, Actions, Transcript and Notes tabs; grouped speaker turns; cross-tab Find; Ask, Export and More. |
 | Search and Ask | Explicit submission behavior, grouped results, retained filters and draft, bounded source IDs, scope-aware retries/history, silent source jumps and conversation reading positions. |
 | Quick Recall | Shared retrieval/grouping, Return opens evidence, new conversations reset view identity, explicit bounded draft handoff to Ask. |
@@ -26,13 +26,14 @@ This change implements the app-wide redesign as one pull request. The main flow 
 - Processing labels resolve the configured endpoint and approval policy. A local Dictation override is presented independently of the Main LLM.
 - Reducing retention or disabling indefinite text retention reviews affected images, text, vectors, saved exceptions, dates and disk space before committing policy. New eligible data requires a new review; partial failures are reported.
 - Manual capture cleanup has a separate range review. Saved moments are excluded unless explicitly included. Deletion works per moment so a failure does not misreport the whole batch.
+- Action changes, thread completion, Undo and reviewed cleanup refresh the affected daily evidence. Thread Undo restores each successfully written source to its own previous status, including partial writes, while retaining the extracted commitments and correction history.
 - Today and Timeline use the same clipped union of valid, non-system activity intervals. Meeting duration remains a separate metric.
 - New settings use Ask first, app activity without screen text/images, and Transcribe. Legacy settings missing the new keys retain their previous behavior. Reopened onboarding stages existing choices rather than resetting them.
 - Navigation alone does not prepare models, generate a brief, start an Agent session or run live transcription.
 
 ## Verification
 
-The integrated non-UI suite passes with 1,805 tests passed, three skipped, and no failures. It covers the existing library/runtime contracts plus the new migration, draft setup, bounded scope, grouping, calendar-day union, manual/retention review, active Agent connection, and 0/40/400-action persistence/Undo cases. SwiftLint and whitespace validation apply to the entire patch.
+The non-UI suite covers the existing library/runtime contracts plus the new migration, draft setup, bounded scope, grouping, calendar-day union, manual/retention review, active Agent connection, and 0/40/400-action persistence/Undo cases. Integration checks cover individual source status restoration and partial thread completion with retry. SwiftLint and whitespace validation apply to the entire patch. Exact-revision results are recorded in the PR.
 
 Hosted XCUITest exercises the new navigation and interaction contracts with a synthetic library. `RedesignUITests` uses the existing native image exporter to attach full-size light/dark screenshots at 1000×700, 1180×740 and 1440×900, along with bounded drafts, keyboard rehearsal, retention cancellation, model/setup screens, contrast states, and scripted Agent approval/denial/Stop through the real RPC controller. A separate hosted run enables Reduce Motion and verifies the actual macOS accessibility setting. Accessibility audits check control descriptions and actions. Test result bundles are retained by the UI workflow for review. Local UI automation is not part of validation.
 

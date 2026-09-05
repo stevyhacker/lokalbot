@@ -8,6 +8,7 @@ struct ActionsWorkspaceView: View {
     @SceneStorage("actions.status") private var status = "open"
     @SceneStorage("actions.due") private var dueFilter = "all"
     @SceneStorage("actions.sort") private var sort = "due"
+    @SceneStorage("actions.reviewMode") private var reviewMode = "actions"
     @SceneStorage("actions.meetingID") private var storedMeetingID = ""
     private var meetingID: UUID? { UUID(uuidString: storedMeetingID) }
     private var selection: Set<String> {
@@ -40,6 +41,13 @@ struct ActionsWorkspaceView: View {
     private var inspected: OutcomeActionReference? {
         visible.first { selection.contains($0.id) }
     }
+    private var visibleThreads: [ActionThread] {
+        let positions = Dictionary(uniqueKeysWithValues: visible.enumerated().map { ($0.element.id, $0.offset) })
+        return app.outcomeIndex.userActionThreads.compactMap { thread -> (ActionThread, Int)? in
+            guard let position = thread.references.compactMap({ positions[$0.id] }).min() else { return nil }
+            return (thread, position)
+        }.sorted { $0.1 < $1.1 }.map(\.0)
+    }
     private var visibleSelection: [OutcomeActionReference] { visible.filter { selection.contains($0.id) } }
     private var hiddenSelectionCount: Int { selection.count - visibleSelection.count }
     private var listSelection: Binding<Set<String>> {
@@ -56,30 +64,10 @@ struct ActionsWorkspaceView: View {
                 Text("Could not update: " + failures.joined(separator: "; "))
                     .workspaceTextRole(.warning).padding(.horizontal, 20)
             }
-            HSplitView {
-                List(selection: listSelection) {
-                    ForEach(visible) { reference in
-                        OutcomeOverviewActionRow(reference: reference).tag(reference.id)
-                            .contextMenu {
-                                Button("Correct action…") { correction = reference }
-                                Button("Show details") { selection = [reference.id] }
-                            }
-                    }
-                }
-                .frame(minWidth: 360, maxWidth: .infinity)
-                .accessibilityIdentifier("actions.list")
-                .accessibilityLabel("Actions")
-                .overlay {
-                    if visible.isEmpty {
-                        ContentUnavailableView("No matching actions", systemImage: "checklist",
-                                               description: Text("Choose All statuses to review completed and deferred actions."))
-                    }
-                }
-                .splitPaneAccessibilityLabel("Action list")
-                if let inspected {
-                    inspector(inspected).frame(minWidth: 260, idealWidth: 300, maxWidth: 380)
-                        .splitPaneAccessibilityLabel("Action details")
-                }
+            if reviewMode == "threads" {
+                threadList
+            } else {
+                actionList
             }
         }
         .navigationTitle("Actions")
@@ -89,32 +77,88 @@ struct ActionsWorkspaceView: View {
         }
     }
 
+    private var threadList: some View {
+        VStack(spacing: 8) {
+            Text("Matching threads retain all linked sources. Review their source meetings before applying a status to the whole thread.")
+                .workspaceTextRole(.supporting).padding(.horizontal, 20)
+            List(visibleThreads) { thread in
+                ActionThreadRow(thread: thread)
+            }
+            .accessibilityIdentifier("actions.threads")
+            .accessibilityLabel("Action threads")
+            .overlay {
+                if visibleThreads.isEmpty {
+                    ContentUnavailableView("No matching threads", systemImage: "checklist",
+                                           description: Text("Choose All statuses to review completed and deferred actions."))
+                }
+            }
+        }
+    }
+
+    private var actionList: some View {
+        HSplitView {
+            List(selection: listSelection) {
+                ForEach(visible) { reference in
+                    OutcomeOverviewActionRow(reference: reference).tag(reference.id)
+                        .contextMenu {
+                            Button("Correct action…") { correction = reference }
+                            Button("Show details") { selection = [reference.id] }
+                        }
+                }
+            }
+            .frame(minWidth: 360, maxWidth: .infinity)
+            .accessibilityIdentifier("actions.list")
+            .accessibilityLabel("Actions")
+            .overlay {
+                if visible.isEmpty {
+                    ContentUnavailableView("No matching actions", systemImage: "checklist",
+                                           description: Text("Choose All statuses to review completed and deferred actions."))
+                }
+            }
+            .splitPaneAccessibilityLabel("Action list")
+            if let inspected {
+                inspector(inspected).frame(minWidth: 260, idealWidth: 300, maxWidth: 380)
+                    .splitPaneAccessibilityLabel("Action details")
+            }
+        }
+    }
+
     private var header: some View {
         HStack(spacing: 12) {
             Button { app.showingActions = false } label: { Label("Today", systemImage: "chevron.left") }
             Text("Actions").font(WorkspaceTypography.pageTitle)
-            Text("\(visible.count) of \(all.count)").foregroundStyle(.secondary)
+            Text(reviewMode == "threads" ? "\(visibleThreads.count) threads" : "\(visible.count) of \(all.count)")
+                .foregroundStyle(.secondary)
             Spacer()
-            Menu("Change \(visibleSelection.count) selected") {
-                ForEach(OutcomeStatus.allCases, id: \.rawValue) { next in
-                    Button(next.label) {
-                        failures = app.outcomeIndex.setStatus(next, for: visibleSelection)
+            if reviewMode == "actions" {
+                Menu("Change \(visibleSelection.count) selected") {
+                    ForEach(OutcomeStatus.allCases, id: \.rawValue) { next in
+                        Button(next.label) {
+                            failures = app.outcomeIndex.setStatus(next, for: visibleSelection)
+                        }
                     }
-                }
-            }.disabled(visibleSelection.isEmpty)
-                .accessibilityIdentifier("actions.batch")
+                }.disabled(visibleSelection.isEmpty)
+                    .accessibilityIdentifier("actions.batch")
+            }
         }.padding(20)
     }
 
     private var filters: some View {
         VStack(spacing: 10) {
-            TextField("Search actions and meetings", text: $query).textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("actions.search")
+            HStack {
+                Picker("Review", selection: $reviewMode) {
+                    Text("Actions").tag("actions")
+                    Text("Threads").tag("threads")
+                }.pickerStyle(.segmented).frame(width: 180)
+                    .accessibilityIdentifier("actions.reviewMode")
+                TextField("Search actions and meetings", text: $query).textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("actions.search")
+            }
             ViewThatFits(in: .horizontal) {
                 HStack { statusPicker; duePicker; meetingPicker; sortPicker }
                 VStack { HStack { statusPicker; duePicker }; HStack { meetingPicker; sortPicker } }
             }
-            if hiddenSelectionCount > 0 {
+            if hiddenSelectionCount > 0 && reviewMode == "actions" {
                 HStack {
                     Text("\(hiddenSelectionCount) selected outside these filters.")
                         .accessibilityIdentifier("actions.selection.hidden")

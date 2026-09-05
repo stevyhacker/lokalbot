@@ -396,6 +396,8 @@ struct ScreenRewindView: View {
         do {
             deletionFailures = try app.screenshots.applyCaptureDeletionReview(review)
             deletionReview = nil
+            let days = Set(review.captures.map { Calendar.current.startOfDay(for: $0.ts) })
+            app.primaryEvidenceDidChange(on: Array(days))
             selectedSnapshotID = nil
             isSelectingRange = !deletionFailures.isEmpty
             isPlaying = false

@@ -1,14 +1,14 @@
 import CoreGraphics
 import Foundation
 
-/// "What am I writing in?" context that conditions cotyping's suggestions on the
-/// focused app + window. Ported from Cotabby's `AppSurfaceClassifier` +
-/// `SurfaceContextComposer`: the window title carries the email subject, doc
-/// name, chat channel, or page title — the single strongest situational cue a
-/// small local model gets. Suppressed for code editors and terminals, where app
-/// metadata biases the model toward code/numbers over prose.
-///
-/// Pure value logic — no AX, no I/O — so it is unit-testable.
+// "What am I writing in?" context that conditions cotyping's suggestions on the
+// focused app + window. Ported from Cotabby's `AppSurfaceClassifier` +
+// `SurfaceContextComposer`: the window title carries the email subject, doc
+// name, chat channel, or page title — the single strongest situational cue a
+// small local model gets. Suppressed for code editors and terminals, where app
+// metadata biases the model toward code/numbers over prose.
+//
+// Pure value logic — no AX, no I/O — so it is unit-testable.
 
 /// The coarse kind of writing surface the focused app presents.
 enum CotypingSurfaceClass: Equatable, Sendable {

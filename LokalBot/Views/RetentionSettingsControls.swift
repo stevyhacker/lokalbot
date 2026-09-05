@@ -50,6 +50,8 @@ struct RetentionSettingsControls: View {
     private func apply(_ proposal: RetentionReview) {
         do {
             let failures = try app.screenshots.applyRetentionReview(proposal)
+            let days = Set(proposal.candidates.map { Calendar.current.startOfDay(for: $0.timestamp) })
+            app.primaryEvidenceDidChange(on: Array(days))
             app.settings.retentionDays = proposal.days
             app.settings.keepOCRTextForever = proposal.keepTextForever
             review = nil

@@ -137,7 +137,55 @@ final class UpcomingMeetingPreparationTests: XCTestCase {
         XCTAssertEqual(evidence.commitments.first?.owner, "Me")
         XCTAssertEqual(evidence.projects.map(\.name), ["Atlas"])
         XCTAssertTrue(evidence.fallbackBrief.contains("Keep the Atlas rollout staged"))
-        XCTAssertTrue(evidence.promptContext.contains("completion is not tracked"))
+        XCTAssertTrue(evidence.promptContext.contains("using saved corrections and status"))
+    }
+
+    func testCompilerDeduplicatesCommitmentsAndKeepsLatestCorrection() throws {
+        let earlierAction = MeetingOutcomes.ActionItem(
+            text: "I will send the revised launch proposal",
+            owner: "Me",
+            due: "Friday")
+        let laterAction = MeetingOutcomes.ActionItem(
+            text: "Send the revised launch proposal",
+            owner: "Me",
+            due: "Monday")
+        _ = try meeting(
+            title: "Atlas planning",
+            daysAgo: 7,
+            participants: ["Ana"],
+            summary: "Reviewed the Atlas proposal.",
+            outcomes: MeetingOutcomes(actionItems: [earlierAction]))
+        let latest = try meeting(
+            title: "Atlas review",
+            daysAgo: 2,
+            participants: ["Ana"],
+            summary: "Reviewed the revised Atlas proposal.",
+            outcomes: MeetingOutcomes(actionItems: [laterAction]))
+        var state = MeetingOutcomeState()
+        state.actions[laterAction.id] = .init(
+            dueOverride: "Tuesday",
+            textCorrection: "Send Acme the revised launch proposal",
+            userEdited: true)
+        try MeetingOutcomeStore.writeState(
+            state,
+            to: latest.folderURL(in: StorageManager(rootURL: root)))
+
+        let evidence = UpcomingMeetingPreparationCompiler.compile(
+            event: event(
+                id: "atlas",
+                title: "Atlas launch review",
+                startsIn: 900,
+                duration: 1_800,
+                participants: ["Ana"]),
+            meetings: loadMeetings(),
+            storageRoot: root,
+            memory: nil,
+            now: now)
+
+        XCTAssertEqual(evidence.commitments.count, 1)
+        XCTAssertEqual(evidence.commitments[0].text, "Send Acme the revised launch proposal")
+        XCTAssertEqual(evidence.commitments[0].due, "Tuesday")
+        XCTAssertEqual(evidence.commitments[0].sourceMeetingCount, 2)
     }
 
     func testCompilerFallsBackToRecurringCalendarTitleWithoutParticipants() throws {

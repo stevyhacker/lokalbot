@@ -41,7 +41,7 @@ struct ScreenMemorySearchHit: Codable, Equatable {
     }
 }
 
-struct ScreenMemoryActivityBlock: Codable, Equatable {
+struct ScreenMemoryActivityBlock: Codable, Equatable, Sendable {
     var id: Int64
     var app: String
     var windowTitle: String
@@ -57,6 +57,16 @@ struct ScreenMemoryActivityBlock: Codable, Equatable {
         case endedAt = "ended_at"
         case durationSeconds = "duration_seconds"
     }
+}
+
+/// Full retained text for one capture. This lives in CLISupport so the shared
+/// read-only database layer does not depend on app-only digest model types.
+struct ScreenMemoryTextContext: Equatable, Sendable {
+    var snapshotID: Int64
+    var capturedAt: Date
+    var app: String
+    var windowTitle: String
+    var text: String
 }
 
 struct ScreenMemoryScreenshotSummary: Codable, Equatable {
@@ -96,7 +106,7 @@ struct ScreenMemoryTimeline: Codable, Equatable {
     var screenshots: [ScreenMemoryScreenshotSummary]
 }
 
-struct ScreenMemoryAppUsage: Codable, Equatable {
+struct ScreenMemoryAppUsage: Codable, Equatable, Sendable {
     var app: String
     var durationSeconds: TimeInterval
     var blockCount: Int
@@ -144,7 +154,7 @@ struct ScreenMemoryScreenshotDetail: Codable, Equatable {
     }
 }
 
-struct ScreenMemorySavedMoment: Codable, Equatable {
+struct ScreenMemorySavedMoment: Codable, Equatable, Sendable {
     var snapshotID: Int64
     var capturedAt: Date
     var app: String
@@ -166,7 +176,7 @@ struct ScreenMemorySavedMoment: Codable, Equatable {
     }
 }
 
-struct ScreenMemoryDaySummary: Codable, Equatable {
+struct ScreenMemoryDaySummary: Codable, Equatable, Sendable {
     var trackedSeconds: TimeInterval
     var appCount: Int
     var activityBlockCount: Int
@@ -182,7 +192,7 @@ struct ScreenMemoryDaySummary: Codable, Equatable {
     }
 }
 
-/// Read-only query seam shared by MCP and daily memory export.
+/// Read-only query seam shared by MCP and the canonical daily evidence loader.
 protocol ScreenMemoryReading {
     func search(_ request: ScreenMemorySearchRequest) throws -> [ScreenMemorySearchHit]
     func timeline(from start: Date, to end: Date, limit: Int) throws -> ScreenMemoryTimeline
@@ -192,6 +202,11 @@ protocol ScreenMemoryReading {
     func savedMoments(from start: Date, to end: Date, limit: Int) throws
         -> [ScreenMemorySavedMoment]
     func daySummary(from start: Date, to end: Date) throws -> ScreenMemoryDaySummary
+    func activityBlocks(from start: Date, to end: Date) throws
+        -> [ScreenMemoryActivityBlock]
+    func screenContexts(from start: Date, to end: Date, maxCharactersPerCapture: Int) throws
+        -> [ScreenMemoryTextContext]
+    func latestEvidenceAt(from start: Date, to end: Date) throws -> Date?
 }
 
 /// Opens LokalBot's SQLite store in `SQLITE_OPEN_READONLY` mode for every
@@ -354,6 +369,113 @@ struct SQLiteScreenMemoryReader: ScreenMemoryReading {
                     durationSeconds: sqlite3_column_double(row, 1),
                     blockCount: Int(sqlite3_column_int64(row, 2)))
             }
+        }
+    }
+
+    func activityBlocks(from start: Date, to end: Date) throws
+        -> [ScreenMemoryActivityBlock] {
+        try withConnection { connection in
+            guard try connection.tableExists("activity_blocks") else { return [] }
+            return try connection.query("""
+                SELECT id, app, title, start, end FROM activity_blocks
+                WHERE end > ?1 AND start < ?2 ORDER BY start, id
+                """, bindings: [
+                    .double(start.timeIntervalSince1970),
+                    .double(end.timeIntervalSince1970),
+                ]) { row in
+                let blockStart = Date(
+                    timeIntervalSince1970: sqlite3_column_double(row, 3))
+                let blockEnd = Date(
+                    timeIntervalSince1970: sqlite3_column_double(row, 4))
+                return ScreenMemoryActivityBlock(
+                    id: sqlite3_column_int64(row, 0),
+                    app: Self.text(row, 1),
+                    windowTitle: Self.text(row, 2),
+                    startedAt: blockStart,
+                    endedAt: blockEnd,
+                    durationSeconds: max(0, blockEnd.timeIntervalSince(blockStart)))
+            }
+        }
+    }
+
+    func screenContexts(
+        from start: Date,
+        to end: Date,
+        maxCharactersPerCapture: Int
+    ) throws -> [ScreenMemoryTextContext] {
+        guard maxCharactersPerCapture > 0 else { return [] }
+        return try withConnection { connection in
+            guard try connection.tableExists("ocr_fts") else { return [] }
+            return try connection.query("""
+                SELECT CAST(snapshot_id AS INTEGER), CAST(ts AS REAL), app,
+                       window_title, text
+                FROM ocr_fts
+                WHERE CAST(ts AS REAL) >= ?1 AND CAST(ts AS REAL) < ?2
+                ORDER BY CAST(ts AS REAL), CAST(snapshot_id AS INTEGER), rowid
+                """, bindings: [
+                    .double(start.timeIntervalSince1970),
+                    .double(end.timeIntervalSince1970),
+                ]) { row in
+                ScreenMemoryTextContext(
+                    snapshotID: sqlite3_column_int64(row, 0),
+                    capturedAt: Date(
+                        timeIntervalSince1970: sqlite3_column_double(row, 1)),
+                    app: Self.text(row, 2),
+                    windowTitle: Self.text(row, 3),
+                    text: String(Self.text(row, 4).prefix(maxCharactersPerCapture)))
+            }
+        }
+    }
+
+    func latestEvidenceAt(from start: Date, to end: Date) throws -> Date? {
+        try withConnection { connection in
+            let intervalBindings: [SQLiteReadValue] = [
+                .double(start.timeIntervalSince1970),
+                .double(end.timeIntervalSince1970),
+            ]
+            var timestamps: [TimeInterval] = []
+            if try connection.tableExists("activity_blocks") {
+                let value = try connection.query("""
+                    SELECT COALESCE(MAX(MIN(end, ?2)), 0)
+                    FROM activity_blocks WHERE end > ?1 AND start < ?2
+                    """, bindings: intervalBindings) {
+                    sqlite3_column_double($0, 0)
+                }.first ?? 0
+                if value > 0 { timestamps.append(value) }
+            }
+            if try connection.tableExists("ocr_fts") {
+                let value = try connection.query("""
+                    SELECT COALESCE(MAX(CAST(ts AS REAL)), 0)
+                    FROM ocr_fts WHERE CAST(ts AS REAL) >= ?1
+                      AND CAST(ts AS REAL) < ?2
+                    """, bindings: intervalBindings) {
+                    sqlite3_column_double($0, 0)
+                }.first ?? 0
+                if value > 0 { timestamps.append(value) }
+            }
+            if try connection.tableExists("screenshots") {
+                let value = try connection.query("""
+                    SELECT COALESCE(MAX(ts), 0)
+                    FROM screenshots WHERE ts >= ?1 AND ts < ?2
+                    """, bindings: intervalBindings) {
+                    sqlite3_column_double($0, 0)
+                }.first ?? 0
+                if value > 0 { timestamps.append(value) }
+            }
+            if try connection.tableExists("screen_bookmarks"),
+               try connection.tableExists("screenshots") {
+                let value = try connection.query("""
+                    SELECT COALESCE(MAX(b.created_at), 0)
+                    FROM screen_bookmarks b
+                    JOIN screenshots s ON s.id = b.snapshot_id
+                    WHERE s.ts >= ?1 AND s.ts < ?2
+                    """, bindings: intervalBindings) {
+                    sqlite3_column_double($0, 0)
+                }.first ?? 0
+                if value > 0 { timestamps.append(value) }
+            }
+            guard let latest = timestamps.max() else { return nil }
+            return Date(timeIntervalSince1970: latest)
         }
     }
 

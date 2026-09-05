@@ -97,6 +97,56 @@ enum MeetingChatFormat {
         return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    static func threadedOutcomes(
+        _ projections: [MeetingOutcomeProjection],
+        statusFilter: ActionStatusFilter = .all
+    ) -> String {
+        let threads = ActionThreadClusterer.cluster(
+            projections.flatMap(\.actionReferences))
+            .filter(statusFilter.includes)
+        var sections: [String] = []
+        if !threads.isEmpty {
+            var lines = ["# Action threads"]
+            for thread in threads {
+                var notes: [String] = []
+                if let owner = thread.owner, !thread.isForUser {
+                    notes.append("owner: \(owner)")
+                }
+                if let due = thread.due { notes.append("due: \(due)") }
+                notes.append("status: \(thread.statusLabel.lowercased())")
+                let sources = thread.references.map {
+                    SessionLookup.shortID($0.meetingID)
+                }.reduce(into: [String]()) { result, id in
+                    if !result.contains(id) { result.append(id) }
+                }
+                notes.append("sources: " + sources.map { "[\($0)]" }.joined(separator: ", "))
+                if thread.hasMixedStatus {
+                    notes.append(thread.references.map {
+                        "[\(SessionLookup.shortID($0.meetingID))]: \($0.status.rawValue)"
+                    }.joined(separator: ", "))
+                }
+                lines.append("- \(thread.text) (\(notes.joined(separator: ", ")))")
+            }
+            sections.append(lines.joined(separator: "\n"))
+        }
+
+        let nonActionEntries = projections.compactMap { projection
+            -> (meeting: Meeting, outcomes: MeetingOutcomes)? in
+            var outcomes = projection.outcomes
+            outcomes.actionItems = []
+            return outcomes.isEmpty
+                ? nil
+                : (meeting: projection.meeting, outcomes: outcomes)
+        }
+        if !nonActionEntries.isEmpty {
+            sections.append(outcomes(nonActionEntries))
+        }
+        if sections.isEmpty, !projections.isEmpty {
+            return "No \(statusFilter.description)action items found in this scope."
+        }
+        return sections.isEmpty ? outcomes([]) : sections.joined(separator: "\n\n")
+    }
+
     static func meeting(_ meeting: Meeting, summary: String?, transcript: String?,
                         include: String) -> String {
         let want = include.lowercased()
@@ -265,10 +315,11 @@ final class MeetingChatTools: ChatToolRunner {
             ]),
         ChatToolSpec(
             name: "get_action_items",
-            summary: "Structured action items, decisions and open questions extracted from meetings. Give an id for one meeting, or scan the last few days.",
+            summary: "Saved action items with completion status, decisions and open questions. Use status=done for completed work, active for outstanding work, or all for history. Give an id for one meeting, or scan recent days.",
             arguments: [
                 .init(name: "id", description: "Meeting id, or 'latest'. Omit to scan recent meetings.", required: false),
                 .init(name: "days", description: "When no id: how many days back to scan (default 7).", required: false),
+                .init(name: "status", description: "all (default), active (open or deferred), open, deferred, or done. Mixed threads include each source status.", required: false),
             ]),
         ChatToolSpec(
             name: "search_screen",
@@ -365,6 +416,11 @@ final class MeetingChatTools: ChatToolRunner {
     }
 
     private func actionItems(_ call: ChatToolCall) -> ChatToolResult {
+        guard let statusFilter = ActionStatusFilter(rawValue: call.string("status")?.lowercased() ?? "all") else {
+            return ChatToolResult(
+                text: "Choose status: all, active, open, deferred, or done.",
+                summary: "invalid status filter")
+        }
         let meetings = scopedMeetings(meetingsProvider(), call: call)
         var scoped: [Meeting]
         var scopeLabel: String
@@ -391,13 +447,14 @@ final class MeetingChatTools: ChatToolRunner {
                 scopeLabel = "last \(days) days"
             }
         }
-        let entries = scoped.compactMap { meeting -> (meeting: Meeting, outcomes: MeetingOutcomes)? in
-            guard let outcomes = MeetingOutcomes.load(from: meeting.folderURL(in: storage)),
-                  !outcomes.isEmpty else { return nil }
-            return (meeting, outcomes)
+        let projections = scoped.compactMap { meeting in
+            MeetingOutcomeProjection.load(for: meeting, storage: storage)
         }
-        let count = entries.reduce(0) { $0 + $1.outcomes.actionItems.count }
-        return ChatToolResult(text: MeetingChatFormat.outcomes(entries),
+        let count = ActionThreadClusterer.cluster(
+            projections.flatMap(\.actionReferences))
+            .filter(statusFilter.includes)
+            .count
+        return ChatToolResult(text: MeetingChatFormat.threadedOutcomes(projections, statusFilter: statusFilter),
                               summary: "\(scopeLabel) — \(count) action item\(count == 1 ? "" : "s")")
     }
 
