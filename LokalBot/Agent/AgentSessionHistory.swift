@@ -11,9 +11,10 @@ struct AgentSavedSession: Identifiable, Equatable, Sendable {
     let createdAt: Date
     let modifiedAt: Date
     let messageCount: Int
+    var preview: String = ""
 
     var searchableText: String {
-        "\(title) \(workspace.lastPathComponent) \(workspace.path)"
+        "\(title) \(workspace.lastPathComponent) \(workspace.path) \(preview)"
     }
 }
 
@@ -147,6 +148,7 @@ enum AgentSessionHistory {
         private var explicitName: String?
         private var firstUserMessage: String?
         private var messageCount = 0
+        private var preview = ""
 
         init(fallbackCreatedAt: Date, fallbackModifiedAt: Date) {
             self.fallbackCreatedAt = fallbackCreatedAt
@@ -179,6 +181,8 @@ enum AgentSessionHistory {
                   let role = message["role"] as? String,
                   role == "user" || role == "assistant" else { return }
             messageCount += 1
+            let text = Self.text(from: message["content"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { preview = String(text.prefix(1_200)) }
             if let activity = date(from: message["timestamp"]) ?? date(from: object["timestamp"]),
                activity > (modifiedAt ?? .distantPast) {
                 modifiedAt = activity
@@ -200,7 +204,7 @@ enum AgentSessionHistory {
                 title: Self.displayTitle(titleSource),
                 createdAt: createdAt ?? fallbackCreatedAt,
                 modifiedAt: modifiedAt ?? createdAt ?? fallbackModifiedAt,
-                messageCount: messageCount)
+                messageCount: messageCount, preview: preview)
         }
 
         private func date(from value: Any?) -> Date? {

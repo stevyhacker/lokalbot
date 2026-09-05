@@ -83,6 +83,7 @@ final class ChatHistoryUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["ask.escalate"]
             .waitForExistence(timeout: 4), "keyword results did not appear")
 
+        UITestHarness.selectSegment("Ask", pickerIdentifier: "ask.retrieval", in: app)
         let older = conversationButton(olderConversationID)
         XCTAssertTrue(older.waitForExistence(timeout: 4), "older conversation missing")
         XCTAssertTrue(older.label.localizedCaseInsensitiveContains(olderConversationTitle),

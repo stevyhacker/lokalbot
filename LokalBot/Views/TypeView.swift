@@ -25,6 +25,6 @@ struct TypeView: View {
             case .cotyping: AutocompleteExperienceView()
             }
         }
-        .navigationTitle("Type")
+        .navigationTitle("Write")
     }
 }

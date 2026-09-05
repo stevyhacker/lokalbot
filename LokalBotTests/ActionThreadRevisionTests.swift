@@ -20,12 +20,14 @@ final class ActionThreadRevisionTests: XCTestCase {
         XCTAssertTrue(index.setStatus(.done, actionID: action.id, meetingID: meetings[0].id))
         XCTAssertEqual(index.userActionThreads.first?.text, original.text)
         XCTAssertEqual(index.userActionThreads.first?.due, "Friday")
+        XCTAssertEqual(index.userActionThreads.first?.dueSourceMeetingDate, meetings[1].startedAt)
 
         // Correct only the older source's deadline; keep its text correction.
         XCTAssertTrue(index.correctAction(actionID: action.id, meetingID: meetings[0].id,
                                           text: "Send the first draft", owner: nil, due: "Tuesday"))
         XCTAssertEqual(index.userActionThreads.first?.text, "Send the signed proposal")
         XCTAssertEqual(index.userActionThreads.first?.due, "Tuesday")
+        XCTAssertEqual(index.userActionThreads.first?.dueSourceMeetingDate, meetings[0].startedAt)
         index.refresh(meetings: meetings)
         XCTAssertEqual(index.userActionThreads.first?.text, "Send the signed proposal")
         XCTAssertEqual(index.userActionThreads.first?.due, "Tuesday")
@@ -109,6 +111,59 @@ final class ActionThreadRevisionTests: XCTestCase {
         let start = Date()
         XCTAssertEqual(ActionThreadClusterer.cluster(references).count, references.count)
         XCTAssertLessThan(Date().timeIntervalSince(start), 2, "Action edits must not scan and normalize every pair")
+    }
+
+    func testThreadUndoRestoresEachSourceStatusAndInvalidatesEvidence() throws {
+        let (storage, meetings, action) = try fixture()
+        var notifications: [[Meeting.ID]] = []
+        let index = OutcomeIndex(storage: storage) { notifications.append($0.map(\.id)) }
+        index.refresh(meetings: meetings)
+        XCTAssertTrue(index.setStatus(.deferred, actionID: action.id, meetingID: meetings[0].id))
+        notifications = []
+        let sources = try meetings.map {
+            try Data(contentsOf: $0.folderURL(in: storage).appendingPathComponent(MeetingOutcomes.fileName))
+        }
+        XCTAssertTrue(index.setStatus(.done, thread: try XCTUnwrap(index.userActionThreads.first)))
+        XCTAssertEqual(index.statusUndo.count, 2)
+        XCTAssertEqual(notifications.count, 1)
+        XCTAssertEqual(Set(notifications[0]), Set(meetings.map(\.id)))
+        index.undoStatusChange()
+        XCTAssertTrue(index.statusUndo.isEmpty)
+        XCTAssertNil(index.lastError)
+        XCTAssertEqual(index.projection(for: meetings[0].id)?.actionReferences.first?.status, .deferred)
+        XCTAssertEqual(index.projection(for: meetings[1].id)?.actionReferences.first?.status, .open)
+        XCTAssertEqual(Set(notifications.dropFirst().flatMap { $0 }), Set(meetings.map(\.id)))
+        for (offset, meeting) in meetings.enumerated() {
+            XCTAssertEqual(try Data(contentsOf: meeting.folderURL(in: storage)
+                .appendingPathComponent(MeetingOutcomes.fileName)), sources[offset])
+        }
+    }
+
+    func testPartialThreadCompletionKeepsSuccessfulSourcesUndoableAndCanRetry() throws {
+        let (storage, meetings, _) = try fixture()
+        let index = OutcomeIndex(storage: storage)
+        index.refresh(meetings: meetings)
+        let thread = try XCTUnwrap(index.userActionThreads.first)
+        let blocked = try XCTUnwrap(thread.references.last)
+        let folder = try XCTUnwrap(index.projection(for: blocked.meetingID)?.meeting.folderURL(in: storage))
+        let stateURL = folder.appendingPathComponent(MeetingOutcomeState.fileName)
+        try FileManager.default.createDirectory(at: stateURL, withIntermediateDirectories: true)
+        XCTAssertFalse(index.setStatus(.done, thread: thread))
+        XCTAssertNotNil(index.lastError)
+        XCTAssertEqual(index.statusUndo.count, 1)
+        XCTAssertEqual(index.statusUndo.first?.meetingID, thread.references.first?.meetingID)
+        XCTAssertTrue(index.userActionThreads[0].hasMixedStatus)
+        index.undoStatusChange()
+        XCTAssertEqual(index.openUserActions.count, 2)
+        XCTAssertNil(index.lastError)
+        try FileManager.default.removeItem(at: stateURL)
+        XCTAssertTrue(index.setStatus(.done, thread: try XCTUnwrap(index.userActionThreads.first)))
+        XCTAssertTrue(index.openUserActions.isEmpty)
+        XCTAssertEqual(index.statusUndo.count, 2)
+        index.undoStatusChange()
+        let reopened = OutcomeIndex(storage: storage)
+        reopened.refresh(meetings: meetings)
+        XCTAssertEqual(reopened.openUserActions.count, 2)
     }
 
     private func fixture() throws -> (StorageManager, [Meeting], MeetingOutcomes.ActionItem) {

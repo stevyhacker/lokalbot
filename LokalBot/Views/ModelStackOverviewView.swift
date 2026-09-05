@@ -8,6 +8,7 @@ struct ModelStackOverviewView<Configuration: View>: View {
 
     @State private var pendingPreset: ModelStackPreset?
     @State private var smokeTesting = false
+    @State private var smokeTask: Task<Void, Never>?
     @State private var smokeResults: [String: String] = [:]
 
     init(
@@ -45,6 +46,9 @@ struct ModelStackOverviewView<Configuration: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             readinessBanner
+            InferenceDisclosure(settings: app.settings,
+                localText: "Tests use a synthetic audio tone and a fixed prompt on this Mac. Ready means available; Passed is a separate test result.",
+                remoteText: "The test sends a fixed synthetic prompt to your approved server. It does not include private content. Ready and Passed are separate states.")
             coreStack
             if !expandedRoles.isEmpty {
                 configuration
@@ -52,6 +56,11 @@ struct ModelStackOverviewView<Configuration: View>: View {
             presets
             storage
         }
+        .onChange(of: app.settings) {
+            smokeTask?.cancel()
+            smokeResults = [:]
+        }
+        .onDisappear { smokeTask?.cancel() }
         .confirmationDialog(
             pendingPreset.map { "Apply \($0.title) preset?" } ?? "Apply preset?",
             isPresented: Binding(
@@ -69,25 +78,45 @@ struct ModelStackOverviewView<Configuration: View>: View {
     }
 
     private var readinessBanner: some View {
-        HStack(spacing: 12) {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) {
+                readinessSummary.frame(minWidth: 300)
+                Spacer()
+                testControls.fixedSize()
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                readinessSummary
+                testControls
+            }
+        }
+        .workspacePanel()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("models.readiness")
+    }
+
+    private var readinessSummary: some View {
+        HStack(alignment: .top, spacing: 12) {
             Image(systemName: readinessIcon)
                 .font(.title2)
                 .foregroundStyle(readinessColor)
             VStack(alignment: .leading, spacing: 2) {
-                Text(snapshot.headline)
+                Text(snapshot.meetingReady ? "Meeting models ready" : snapshot.headline)
                     .font(WorkspaceTypography.sectionTitle)
                 Text(snapshot.detail)
                     .font(WorkspaceTypography.body).foregroundStyle(.secondary)
             }
-            Spacer()
-            Button(smokeTesting ? "Testing..." : "Test local stack") {
-                Task { await runSmokeTests() }
+        }
+    }
+
+    private var testControls: some View {
+        HStack {
+            Button(smokeTesting ? "Testing..." : "Test configured models") {
+                smokeTask = Task { await runSmokeTests() }
             }
             .buttonStyle(.borderedProminent)
-            .disabled(smokeTesting || !snapshot.coreReady)
+            .disabled(smokeTesting || !snapshot.meetingReady)
+            if smokeTesting { Button("Cancel test") { smokeTask?.cancel() } }
         }
-        .workspacePanel()
-        .accessibilityIdentifier("models.readiness")
     }
 
     private var coreStack: some View {
@@ -124,26 +153,30 @@ struct ModelStackOverviewView<Configuration: View>: View {
     private func coreRow(icon: String, stackRole: ModelRole, role: String,
                          model: String, detail: String, status: ModelRoleStatus,
                          result: String?) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon).foregroundStyle(Brand.teal).frame(width: 22)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(role).font(WorkspaceTypography.rowTitle)
-                Text(detail).font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Image(systemName: icon).foregroundStyle(Brand.teal).frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(role).font(WorkspaceTypography.rowTitle)
+                    Text(detail).font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(expandedRoles.contains(stackRole) ? "Done" : "Change…") {
+                    toggle(stackRole)
+                }
+                .controlSize(.small)
+                .accessibilityIdentifier(changeButtonIdentifier(for: stackRole))
             }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(model).font(WorkspaceTypography.rowTitle).lineLimit(1)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model).font(WorkspaceTypography.bodyEmphasis)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 5) {
                     StatusDot(color: roleColor(status), size: 7)
                     Text(result ?? status.label)
                         .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
                 }
             }
-            Button(expandedRoles.contains(stackRole) ? "Done" : "Change…") {
-                toggle(stackRole)
-            }
-            .controlSize(.small)
-            .accessibilityIdentifier(changeButtonIdentifier(for: stackRole))
+            .padding(.leading, 34)
         }
         .padding(.vertical, 8)
     }
@@ -251,6 +284,7 @@ struct ModelStackOverviewView<Configuration: View>: View {
     }
 
     private func runSmokeTests() async {
+        let config = app.settings
         smokeTesting = true
         smokeResults = [:]
         defer { smokeTesting = false }
@@ -263,32 +297,38 @@ struct ModelStackOverviewView<Configuration: View>: View {
                 Float(sin(Double(index) / 16_000 * 440 * 2 * .pi) * 0.02)
             }
             try OnnxTranscriptionEngine.writeWav(samples, to: fixture)
-            let engine = app.settings.transcriptionEngine()
+            let engine = config.transcriptionEngine()
             try await engine.prepare()
             _ = try await engine.transcribe(audio: fixture, language: nil)
-            smokeResults["Transcribe"] = "Passed"
+            guard !Task.isCancelled, config == app.settings else { return }
+            smokeResults["Transcribe"] = "Passed · " + Date().formatted(date: .omitted, time: .shortened)
         } catch {
-            smokeResults["Transcribe"] = "Failed"
+            guard !Task.isCancelled, config == app.settings else { return }
+            smokeResults["Transcribe"] = "Failed: \(error.localizedDescription)"
         }
 
         do {
             let engine = try await app.thinkExecution.makeTextEngine(
-                app.settings, priority: .interactive, purpose: "model stack smoke test")
+                config, priority: .interactive, purpose: "model stack smoke test")
             _ = try await engine.generate(
                 system: PromptTemplates.connectivityTestSystem,
                 prompt: PromptTemplates.connectivityTestPrompt,
                 context: [])
-            smokeResults["Think"] = "Passed"
+            guard !Task.isCancelled, config == app.settings else { return }
+            smokeResults["Think"] = "Passed · " + Date().formatted(date: .omitted, time: .shortened)
         } catch {
-            smokeResults["Think"] = "Failed"
+            guard !Task.isCancelled, config == app.settings else { return }
+            smokeResults["Think"] = "Failed: \(error.localizedDescription)"
         }
-
+        guard snapshot[.autocomplete].isReady else { return }
         do {
             _ = try await app.cotyping.previewSuggestion(
                 precedingText: "The local model stack is")
-            smokeResults["Autocomplete"] = "Passed"
+            guard !Task.isCancelled, config == app.settings else { return }
+            smokeResults["Autocomplete"] = "Passed · " + Date().formatted(date: .omitted, time: .shortened)
         } catch {
-            smokeResults["Autocomplete"] = "Failed"
+            guard !Task.isCancelled, config == app.settings else { return }
+            smokeResults["Autocomplete"] = "Failed: \(error.localizedDescription)"
         }
     }
 }
@@ -333,6 +373,6 @@ enum ModelStackPreset: String, CaseIterable, Identifiable {
         let size = ByteCountFormatter.string(fromByteCount: missingBytes, countStyle: .file)
         return "Transcribe: \(app.settings.transcriptionModelDisplayName) -> \(transcription.displayName)\n"
             + "Think: \(currentMain) -> \(nextMain)\n"
-            + "Autocomplete: \(nextAutocomplete)\nEstimated new download: \(size)."
+            + "Autocomplete: \(nextAutocomplete)\nEstimated new GGUF download: \(size), plus the selected speech model if missing. Existing models are kept."
     }
 }

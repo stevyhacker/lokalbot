@@ -100,7 +100,14 @@ final class OutcomeIndex: ObservableObject {
 
     private let storage: StorageManager
     private let onEvidenceChanged: ([Meeting]) -> Void
-    private(set) var lastError: String?
+    @Published private(set) var lastError: String?
+    struct StatusChange {
+        let meetingID: UUID
+        let actionID: String
+        let previous: OutcomeStatus
+        let applied: OutcomeStatus
+    }
+    @Published private(set) var statusUndo: [StatusChange] = []
 
     init(
         storage: StorageManager,
@@ -117,7 +124,11 @@ final class OutcomeIndex: ObservableObject {
     var openUserActions: [OutcomeActionReference] {
         all.flatMap(\.actionReferences)
             .filter { $0.isForUser && $0.status == .open }
-            .sorted { $0.meetingStartedAt > $1.meetingStartedAt }
+            .sorted {
+                let first = ActionDuePresentation.date($0.due) ?? .distantFuture
+                let second = ActionDuePresentation.date($1.due) ?? .distantFuture
+                return first == second ? $0.meetingStartedAt > $1.meetingStartedAt : first < second
+            }
     }
 
     var openUserActionThreads: [ActionThread] {
@@ -151,10 +162,47 @@ final class OutcomeIndex: ObservableObject {
     @discardableResult
     func setStatus(_ status: OutcomeStatus, actionID: String,
                    meetingID: Meeting.ID) -> Bool {
-        return mutateAction(actionID: actionID, meetingID: meetingID) { state in
+        guard let previous = projection(for: meetingID)?.actionReferences.first(where: { $0.action.id == actionID })?.status else { return false }
+        let success = mutateAction(actionID: actionID, meetingID: meetingID) { state in
             state.status = status
             state.userEdited = true
         }
+        if success {
+            statusUndo = [StatusChange(meetingID: meetingID, actionID: actionID, previous: previous, applied: status)]
+        }
+        return success
+    }
+
+    @discardableResult
+    func setStatus(_ status: OutcomeStatus, for references: [OutcomeActionReference]) -> [String] {
+        var changes: [StatusChange] = []
+        var failed: [String] = []
+        for reference in references {
+            if setStatus(status, actionID: reference.action.id, meetingID: reference.meetingID) {
+                changes += statusUndo
+            } else { failed.append(reference.text) }
+        }
+        statusUndo = changes
+        if !failed.isEmpty { lastError = "Could not update: " + failed.joined(separator: "; ") }
+        return failed
+    }
+
+    func dismissUndo() { statusUndo = [] }
+
+    func undoStatusChange() {
+        var remaining: [StatusChange] = []
+        var failures: [String] = []
+        for change in statusUndo {
+            guard let current = projection(for: change.meetingID)?.actionReferences.first(where: { $0.action.id == change.actionID }),
+                  current.status == change.applied else { continue }
+            if !mutateAction(actionID: change.actionID, meetingID: change.meetingID, change: { $0.status = change.previous }) {
+                remaining.append(change)
+                failures.append(current.text)
+            }
+        }
+        statusUndo = remaining
+        // A later successful restore must not hide an earlier write failure.
+        lastError = failures.isEmpty ? nil : "Could not undo: " + failures.joined(separator: "; ")
     }
 
     @discardableResult
@@ -165,6 +213,10 @@ final class OutcomeIndex: ObservableObject {
             return false
         }
         var changedMeetings: [Meeting] = []
+        var changes: [StatusChange] = []
+        defer {
+            if !changes.isEmpty { statusUndo = changes }
+        }
         for reference in thread.references where reference.status != status {
             guard mutateAction(
                 actionID: reference.action.id,
@@ -180,12 +232,15 @@ final class OutcomeIndex: ObservableObject {
                 notifyEvidenceChanged(changedMeetings)
                 return false
             }
+            changes.append(StatusChange(meetingID: reference.meetingID, actionID: reference.action.id,
+                                        previous: reference.status, applied: status))
             if let meeting = projections[reference.meetingID]?.meeting {
                 changedMeetings.append(meeting)
             }
         }
         rebuildActionThreads()
         notifyEvidenceChanged(changedMeetings)
+        lastError = nil
         return true
     }
 

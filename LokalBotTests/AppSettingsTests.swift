@@ -266,11 +266,11 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.transcriptionModel, TranscriptionModelChoice.recommended)
     }
 
-    func testDayTrackingAndVisualContextDefaultOn() {
+    func testFreshDayMemoryDefaultsToActivityOnly() {
         let settings = AppSettings()
         XCTAssertTrue(settings.trackingEnabled)
-        XCTAssertTrue(settings.screenshotsEnabled)
-        XCTAssertEqual(settings.screenContextCaptureMode, .visualContext)
+        XCTAssertFalse(settings.screenshotsEnabled)
+        XCTAssertEqual(settings.screenContextCaptureMode, .activityOnly)
         XCTAssertFalse(settings.meetingVisualContextEnabled)
         XCTAssertFalse(settings.capturePrivateWindows)
     }
@@ -289,8 +289,8 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(decoded.screenContextCaptureMode, .activityOnly)
     }
 
-    func testFreshInstallRecordsMeetingsAutomatically() {
-        XCTAssertEqual(AppSettings().autoRecordMode, .automatic)
+    func testFreshInstallAsksBeforeRecordingMeetings() {
+        XCTAssertEqual(AppSettings().autoRecordMode, .ask)
     }
 
     func testPersistedManualMeetingRecordingSurvivesDefaultFlip() throws {

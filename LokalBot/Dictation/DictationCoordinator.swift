@@ -50,7 +50,7 @@ final class DictationCoordinator: ObservableObject {
 
     private let storageRoot: URL
     private let settingsProvider: () -> AppSettings
-    private let makeTextEngine: () async throws -> TextEngine
+    private let makeTextEngine: (AppSettings) async throws -> TextEngine
     private let screenContextProvider:
         (DictationScreenTarget, [String]) async -> DictationScreenContext?
     private let canStart: () -> Bool
@@ -92,7 +92,7 @@ final class DictationCoordinator: ObservableObject {
     init(
         storageRoot: URL,
         settingsProvider: @escaping () -> AppSettings,
-        makeTextEngine: @escaping () async throws -> TextEngine,
+        makeTextEngine: @escaping (AppSettings) async throws -> TextEngine,
         canStart: @escaping () -> Bool,
         onBusy: @escaping () -> Void,
         onError: @escaping (String) -> Void,
@@ -228,6 +228,15 @@ final class DictationCoordinator: ObservableObject {
         prewarmTask = nil
     }
 
+    private var activeConfig: AppSettings?
+
+    /// Describe the same intent, context and models that the in-flight
+    /// recording will use, even if the user edits Settings in another view.
+    var presentedConfiguration: AppSettings {
+        if isStarting || state.isWorking, let activeConfig { return activeConfig }
+        return settingsProvider()
+    }
+
     func toggle(source: String = "ui") {
         if isStarting {
             invalidateStartingSession()
@@ -254,14 +263,16 @@ final class DictationCoordinator: ObservableObject {
         let session = generation
         startTaskGeneration = session
         isStarting = true
-        let initialConfig = settingsProvider()
+        var initialConfig = settingsProvider()
+        if source == "rehearsal" { initialConfig.dictationOutputMode = .showInLokalBot }
+        activeConfig = initialConfig
         let outputMode = initialConfig.dictationOutputMode
         let screenTarget = DictationScreenTarget.frontmost()
         let focusCaptureTask = Task { [focusSnapshotExecutor] in
             await focusSnapshotExecutor.capture()
         }
         discardScreenContext()
-        if let screenTarget {
+        if initialConfig.dictationIntent == .compose, initialConfig.dictationUseScreenContext, let screenTarget {
             let excludedApps = initialConfig.excludedAppList
             screenContextTask = Task { [screenContextProvider] in
                 let capture = await focusCaptureTask.value
@@ -469,7 +480,7 @@ final class DictationCoordinator: ObservableObject {
                 try? FileManager.default.removeItem(at: audioURL)
             }
         }
-        let config = settingsProvider()
+        let config = activeConfig ?? settingsProvider()
         let choice = config.transcriptionModel
         let engine = config.transcriptionEngine()
         beginModelPreparation()
@@ -518,46 +529,27 @@ final class DictationCoordinator: ObservableObject {
             if isLivePreviewEnabled {
                 liveTranscript = .init(committed: spokenText, tentative: "")
             }
-            state = .composing(startedAt: startedAt)
-            if isLivePreviewEnabled {
-                livePreviewStatus = "Composing"
+            if config.dictationIntent == .compose {
+                state = .composing(startedAt: startedAt)
+                if isLivePreviewEnabled { livePreviewStatus = "Composing" }
+                refreshOverlay()
             }
-            refreshOverlay()
-
             let contextTask = screenContextTask
             screenContextTask = nil
-            let screenContext: DictationScreenContext?
-            if let contextTask {
-                screenContext = await contextTask.value
-            } else {
-                screenContext = nil
-            }
-            try Task.checkCancellation()
+            if config.dictationIntent == .transcribe { contextTask?.cancel() }
+            let prepared = try await DictationTextPreparation.prepare(
+                speech: spokenText, settings: config,
+                screenContext: { await contextTask?.value }, makeEngine: makeTextEngine)
             guard generation == session else { return }
-
-            let engine = try await makeTextEngine()
-            let prompt = DictationComposePrompt.userPrompt(
-                spokenText: spokenText,
-                context: screenContext,
-                profile: DictationComposeProfile(
-                    personalization: config.cotypingPersonalization))
-            let rawOutput = try await engine.generate(
-                system: DictationComposePrompt.system,
-                prompt: prompt,
-                context: [])
-            try Task.checkCancellation()
-            guard generation == session else { return }
-
-            let text = DictationComposePrompt.normalizedOutput(rawOutput)
-            guard !text.isEmpty else { throw DictationComposeError.emptyOutput }
+            let text = prepared.text
             lastComposedText = text
-            lastEngine = "\(transcript.engine) → \(engine.displayName)"
+            lastEngine = prepared.compositionModel.map { "\(transcript.engine) → \($0)" } ?? transcript.engine
             switch await deliver(
                 text,
                 mode: config.dictationOutputMode,
                 generation: session
             ) {
-            case .inserted, .copied:
+            case .inserted, .copied, .displayed:
                 break
             case .focusChanged:
                 onError("Dictation finished after focus moved, so the text was copied to the clipboard instead of being inserted into another app.")
@@ -571,8 +563,7 @@ final class DictationCoordinator: ObservableObject {
             complete()
             lokalbotLog(
                 "dictation composed source=\(source) chars=\(text.count) "
-                    + "asr=\(transcript.engine) llm=\(engine.displayName) "
-                    + "screenChars=\(screenContext?.visibleText.count ?? 0)")
+                    + "asr=\(transcript.engine) intent=\(config.dictationIntent.rawValue)")
         } catch is CancellationError {
             guard generation == session else { return }
             complete()
@@ -589,6 +580,7 @@ final class DictationCoordinator: ObservableObject {
     }
 
     private enum DeliveryResult {
+        case displayed
         case inserted
         case copied
         case focusChanged
@@ -603,6 +595,8 @@ final class DictationCoordinator: ObservableObject {
     ) async -> DeliveryResult {
         guard !Task.isCancelled, generation == session else { return .cancelled }
         switch mode {
+        case .showInLokalBot:
+            return .displayed
         case .pasteIntoFocusedApp:
             let targetMatches = await deliveryTargetMatchesCurrentFocus()
             guard !Task.isCancelled, generation == session else { return .cancelled }

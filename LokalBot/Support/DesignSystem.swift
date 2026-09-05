@@ -70,7 +70,7 @@ enum WorkspaceMetric {
     static let readingMaxWidth: CGFloat = 780
     /// Timeline context remains useful beside the chronology before it drawers.
     static let timelineContextMinWidth: CGFloat = 420
-    static let timelineDrawerBreakpoint: CGFloat = 980
+    static let timelineDrawerBreakpoint: CGFloat = 820
     static let timelineDrawerMaxWidth: CGFloat = 520
 }
 
@@ -116,17 +116,26 @@ private struct WorkspaceTextRoleModifier: ViewModifier {
 /// One honest local/remote inference disclosure. Callers provide copy tailored
 /// to the surface while this view owns readable type and semantic icon color.
 struct InferenceDisclosure: View {
-    let usesRemote: Bool
+    let destination: InferencePresentation
     let localText: String
     let remoteText: String
 
+    init(settings: AppSettings, localText: String, remoteText: String) {
+        destination = InferencePresentation(settings: settings)
+        self.localText = localText
+        self.remoteText = remoteText
+    }
+
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: usesRemote ? "network" : "lock.shield")
-                .foregroundStyle(usesRemote ? Brand.amber : Brand.teal)
-            Text(usesRemote ? remoteText : localText)
-                .workspaceTextRole(.trust)
-                .fixedSize(horizontal: false, vertical: true)
+            Image(systemName: destination.icon)
+                .foregroundStyle(destination == .onDevice ? Brand.teal : Brand.amber)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(destination.label).font(WorkspaceTypography.metadataEmphasis)
+                Text(destination.detail(local: localText, remote: remoteText))
+                    .workspaceTextRole(destination.isBlocked ? .warning : .trust)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .accessibilityElement(children: .combine)
     }
@@ -231,6 +240,8 @@ private struct WorkspaceControlModifier: ViewModifier {
                 shape.strokeBorder(
                     WorkspacePalette.border(for: colorScheme, contrast: contrast),
                     lineWidth: 1)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
     }
 }
@@ -477,7 +488,8 @@ struct ErrorToast: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Brand.error)
-            Text(message).font(.callout).lineLimit(2)
+                .accessibilityHidden(true)
+            Text(message).font(.callout).lineLimit(2).help(message)
             if let actionTitle, let action {
                 Button(actionTitle, action: action)
                     .buttonStyle(.bordered)
@@ -485,10 +497,15 @@ struct ErrorToast: View {
             }
             Button(action: dismiss) { Image(systemName: "xmark.circle.fill") }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
+                .accessibilityLabel("Dismiss error")
         }
         .padding(.horizontal, 14).padding(.vertical, 9)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
-        .overlay(RoundedRectangle(cornerRadius: Brand.Radius.panel).strokeBorder(Brand.error.opacity(0.4)))
+        .overlay {
+            RoundedRectangle(cornerRadius: Brand.Radius.panel).strokeBorder(Brand.error.opacity(0.4))
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
         .padding(12)
     }
 }
@@ -554,5 +571,16 @@ struct StatTile: View {
         }
         .fixedSize()
         .chipChrome()
+    }
+}
+
+extension View {
+    /// Search scrolls to the exact editable control, then leaves a visible
+    /// highlight until another setting/category is chosen.
+    func settingTarget(_ id: String, selected: String?) -> some View {
+        self.id(id)
+            .padding(selected == id ? 6 : 0)
+            .background(selected == id ? Brand.teal.opacity(0.14) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: Brand.Radius.control))
     }
 }

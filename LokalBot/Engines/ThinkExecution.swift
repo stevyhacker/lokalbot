@@ -180,7 +180,8 @@ final class ThinkExecution {
     /// Pure settings-to-endpoint resolution shared by Agent Mode and the
     /// external agent-access wake path. Runtime acquisition remains explicit.
     nonisolated static func agentResolution(
-        settings: AppSettings
+        settings: AppSettings,
+        includingCredentials: Bool = true
     ) -> AgentLLMResolution {
         switch settings.summarizerBackend {
         case .builtIn:
@@ -243,7 +244,9 @@ final class ThinkExecution {
                 return .unsupported(
                     reason: "Set a model name for the OpenAI-compatible server under Settings → Models.")
             }
-            let key = settings.openAIAPIKey
+            // Presentation can validate the same destination without reading
+            // Keychain on every view update. Launch resolution keeps credentials.
+            let key = includingCredentials ? settings.openAIAPIKey : ""
             return .ready(AgentLLMEndpoint(
                 baseURL: base,
                 model: settings.openAIModel,

@@ -27,7 +27,7 @@ final class CaptureModel: ObservableObject {
     }
 
     var workSessions: [TimelineWorkSession] {
-        TimelineWorkSession.sessions(from: blocks)
+        DayActivityProjection(blocks: blocks, day: day).sessions
     }
 
     var selectedSession: TimelineWorkSession? {
@@ -80,6 +80,19 @@ final class CaptureModel: ObservableObject {
 
     func reload(app: AppState) {
         let retainedSnapshotID = selectedSnapshotID
+        let retainedBlockID = selection
+        let retainedSessionID = selectedSessionID
+        refreshOverview(app: app)
+        digestError = nil
+        selection = blocks.contains { $0.id == retainedBlockID } ? retainedBlockID : nil
+        selectedSessionID = workSessions.contains { $0.id == retainedSessionID } ? retainedSessionID : nil
+        selectedSnapshotID = shots.contains { $0.id == retainedSnapshotID }
+            ? retainedSnapshotID : nil
+    }
+
+    /// Updates a mounted overview without resetting its generation state or
+    /// hiding an error from the last explicit generation attempt.
+    func refreshOverview(app: AppState) {
         blocks = app.activityStore.blocks(on: day)
         // The Timeline is the canonical home for both visual captures and
         // accessibility-only moments. Other callers keep the historical
@@ -91,11 +104,6 @@ final class CaptureModel: ObservableObject {
         digest = digestSnapshot.text
         digestUpdatedAt = digestSnapshot.modifiedAt
         latestDigestEvidenceAt = digestSnapshot.latestEvidenceAt
-        digestError = nil
-        selection = nil
-        selectedSessionID = nil
-        selectedSnapshotID = shots.contains { $0.id == retainedSnapshotID }
-            ? retainedSnapshotID : nil
     }
 
     /// The selected day's meetings, live recording included, for the track
@@ -260,19 +268,24 @@ struct TimelineContentView: View {
                     }
                 } else {
                     HSplitView {
-                        TimelineContextPanel(model: model, onDismiss: nil)
-                            .frame(
-                                minWidth: WorkspaceMetric.timelineContextMinWidth,
-                                idealWidth: 520,
-                                maxWidth: WorkspaceMetric.readingMaxWidth)
                         CaptureDayView(model: model, onOpenContext: {})
-                            .frame(minWidth: 480, idealWidth: 760, maxWidth: .infinity)
+                            .frame(minWidth: 360, idealWidth: 460, maxWidth: .infinity)
+                            .splitPaneAccessibilityLabel("Day timeline")
+                        TimelineContextPanel(model: model, onDismiss: nil)
+                            .frame(minWidth: 340, idealWidth: 520, maxWidth: WorkspaceMetric.readingMaxWidth)
+                            .splitPaneAccessibilityLabel("Timeline evidence")
                     }
                 }
             }
             .animation(
                 WorkspaceMotion.animation(.drawer, reduceMotion: reduceMotion),
                 value: contextDrawerPresented)
+            .onAppear {
+                if usesDrawer, model.selection != nil || model.selectedSessionID != nil
+                    || model.selectedSnapshotID != nil || !app.selectedMeetingIDs.isEmpty {
+                    contextDrawerPresented = true
+                }
+            }
             .onChange(of: model.selection) { _, selection in
                 if usesDrawer, selection != nil { contextDrawerPresented = true }
             }

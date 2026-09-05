@@ -26,6 +26,9 @@ final class SettingsUITests: XCTestCase {
     func testPermissionRepairPaneRendersCorePermissions() {
         UITestHarness.clickSidebar("sidebar.settings", in: app)
 
+        UITestHarness.selectSettingsCategory("Privacy & Data", in: app)
+        let microphone = UITestHarness.staticText(containing: "Microphone", in: app)
+        UITestHarness.scrollTo(microphone, in: app)
         // Gate on the Microphone row, not the "Permissions" section header:
         // Form section headers surface as label-only StaticTexts that live
         // predicate queries never match on macOS, even though failure-time
@@ -44,12 +47,7 @@ final class SettingsUITests: XCTestCase {
 
     func testResourceMonitorRendersUsageAndModelState() {
         UITestHarness.clickSidebar("sidebar.settings", in: app)
-        let tabs = app.descendants(matching: .any)["settings.tab"]
-        XCTAssertTrue(tabs.waitForExistence(timeout: 8), "settings tab strip missing")
-        let segment = tabs.buttons["Advanced"].exists
-            ? tabs.buttons["Advanced"] : tabs.radioButtons["Advanced"]
-        XCTAssertTrue(segment.waitForExistence(timeout: 4), "Advanced segment missing")
-        segment.click()
+        UITestHarness.selectSettingsCategory("Advanced", in: app)
 
         let cpu = app.descendants(matching: .any)["settings.resourceMonitor.cpu"]
         UITestHarness.scrollTo(cpu, in: app)
@@ -67,7 +65,7 @@ final class SettingsUITests: XCTestCase {
         UITestHarness.clickSidebar("sidebar.settings", in: app)
         XCTAssertTrue(app.descendants(matching: .any)["settings.form"]
             .waitForExistence(timeout: 6), "settings pane did not render")
-        UITestHarness.typeInFirstTextField("calendar", in: app)
+        UITestHarness.selectSettingsCategory("Meetings", in: app)
 
         XCTAssertTrue(UITestHarness.staticText(containing: "Use calendar to improve detection", in: app)
             .waitForExistence(timeout: 6), "calendar master toggle missing")
@@ -94,7 +92,7 @@ final class SettingsUITests: XCTestCase {
         UITestHarness.clickSidebar("sidebar.settings", in: app)
         XCTAssertTrue(app.descendants(matching: .any)["settings.form"]
             .waitForExistence(timeout: 6), "settings pane did not render")
-        UITestHarness.typeInFirstTextField("calendar", in: app)
+        UITestHarness.selectSettingsCategory("Meetings", in: app)
 
         XCTAssertTrue(UITestHarness.staticText(containing: "Use calendar titles for recordings", in: app)
             .waitForExistence(timeout: 6), "calendar title toggle missing when calendar detection is on")

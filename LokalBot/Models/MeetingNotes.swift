@@ -20,13 +20,16 @@ enum MeetingNotes {
     /// Best-effort save; clearing the text removes the file so empty notes
     /// never haunt the summary prompt.
     static func write(_ text: String, to folder: URL) {
+        do { try writeChecked(text, to: folder) } catch { lokalbotLog("Meeting notes could not be saved: \(error.localizedDescription)") }
+    }
+
+    static func writeChecked(_ text: String, to folder: URL) throws {
         let url = folder.appendingPathComponent(fileName)
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            try? FileManager.default.removeItem(at: url)
-            return
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+        } else {
+            try Data(text.utf8).write(to: url, options: .atomic)
         }
-        try? text.data(using: .utf8)?.write(to: url, options: .atomic)
     }
 
     /// Generation-context block for the summary/outcomes prompts; empty when

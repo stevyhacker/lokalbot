@@ -134,12 +134,14 @@ struct MemoryHealthSection: View {
     }
 
     private var accessibilityStatus: String {
-        guard app.settings.effectiveScreenContextCaptureMode.capturesText else { return "Off" }
+        guard app.settings.trackingEnabled, app.settings.effectiveScreenContextCaptureMode.capturesText else { return "Off" }
+        guard !app.sampler.isPaused else { return "Paused" }
         return AppPermission.accessibility.isGranted ? "Healthy" : "Permission needed"
     }
 
     private var visualStatus: String {
-        guard app.settings.effectiveScreenContextCaptureMode.capturesPixels else { return "Off" }
+        guard app.settings.trackingEnabled, app.settings.effectiveScreenContextCaptureMode.capturesPixels else { return "Off" }
+        guard !app.sampler.isPaused else { return "Paused" }
         return AppPermission.screenRecording.isGranted ? "Encrypted" : "Text-only fallback"
     }
 

@@ -81,9 +81,11 @@ struct TimelineWorkSession: Identifiable, Equatable, Sendable {
         }
         let primaryApp = apps.first ?? first.app
         let notableTitles = rankedTitles(in: blocks)
-        let title = rankedTitles(in: blocks.filter { $0.app == primaryApp }).first
-            ?? notableTitles.first
-            ?? "\(primaryApp) session"
+        // A single document can name a session; mixed activity keeps factual
+        // app labels instead of attributing the whole period to one window.
+        let title = apps.count == 1 && notableTitles.count == 1
+            ? notableTitles[0]
+            : apps.prefix(3).joined(separator: " and ") + (apps.count > 3 ? " and more" : "")
 
         return TimelineWorkSession(
             id: first.id,

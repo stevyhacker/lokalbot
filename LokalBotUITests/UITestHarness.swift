@@ -164,6 +164,10 @@ enum UITestHarness {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
+        if pickerIdentifier == "settings.tab" {
+            selectSettingsCategory(name, in: app, file: file, line: line)
+            return
+        }
         let picker = app.descendants(matching: .any)[pickerIdentifier]
         XCTAssertTrue(picker.waitForExistence(timeout: 8),
                       "segmented picker \(pickerIdentifier) missing", file: file, line: line)
@@ -171,6 +175,22 @@ enum UITestHarness {
         XCTAssertTrue(segment.waitForExistence(timeout: 4),
                       "segment \(name) missing", file: file, line: line)
         segment.click()
+    }
+
+    static func toggle(_ label: String, in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(
+            format: "label == %@ AND (elementType == %d OR elementType == %d)", label,
+            XCUIElement.ElementType.checkBox.rawValue, XCUIElement.ElementType.switch.rawValue)).firstMatch
+    }
+
+    static func selectSettingsCategory(_ name: String, in app: XCUIApplication,
+                                       file: StaticString = #filePath, line: UInt = #line) {
+        let title = name == "Recording" ? "Meetings" : (name == "Privacy" ? "Privacy & Data" : name)
+        let list = app.descendants(matching: .any)["settings.categories"].firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 6), file: file, line: line)
+        let row = list.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", title, title)).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 4), "Settings category missing: \(title)", file: file, line: line)
+        row.click()
     }
 
     static func segment(

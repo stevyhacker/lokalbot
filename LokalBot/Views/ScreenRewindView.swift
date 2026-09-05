@@ -24,7 +24,9 @@ struct ScreenRewindView: View {
     @State private var isSelectingRange = false
     @State private var rangeStartIndex = 0
     @State private var rangeEndIndex = 0
-    @State private var confirmingRangeDeletion = false
+    @State private var deletionReview: CaptureDeletionReview?
+    @State private var includeSavedMoments = false
+    @State private var deletionFailures: [String] = []
 
     private let playbackTimer = Timer.publish(every: 1.2, on: .main, in: .common).autoconnect()
 
@@ -74,13 +76,21 @@ struct ScreenRewindView: View {
             .onChange(of: selectedSnapshotID) { synchronizeSelection() }
             .onReceive(playbackTimer) { _ in advancePlayback() }
             .onDisappear { isPlaying = false }
-            .confirmationDialog(
-                "Delete \(selectedCaptureCount) context moment\(selectedCaptureCount == 1 ? "" : "s")?",
-                isPresented: $confirmingRangeDeletion) {
-                    Button("Delete selected range", role: .destructive, action: deleteSelectedRange)
-                } message: {
-                    Text("This permanently removes the selected pixels and captured text.")
-                }
+            .sheet(item: $deletionReview) { review in
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Review capture deletion").font(WorkspaceTypography.sectionTitle)
+                    Text("\(review.interval.start.formatted(date: .abbreviated, time: .standard)) – \(review.interval.end.addingTimeInterval(-0.001).formatted(date: .omitted, time: .standard))")
+                    Text("\(review.captures.count) moments, including \(review.pixelCount) image records. Their captured text, search vectors and saved notes will also be removed permanently.")
+                    Text("\(review.savedExcluded) saved moments excluded · \(review.savedIncluded) saved moments included")
+                    Text("This cannot be undone.").foregroundStyle(Brand.error)
+                    HStack {
+                        Button("Cancel") { deletionReview = nil }.keyboardShortcut(.cancelAction)
+                        Spacer()
+                        Button("Delete reviewed moments", role: .destructive) { deleteSelectedRange(review) }
+                            .disabled(review.captures.isEmpty)
+                    }
+                }.padding(24).frame(width: 470)
+            }
         }
     }
 
@@ -260,20 +270,28 @@ struct ScreenRewindView: View {
                 Text("From").font(.caption2).foregroundStyle(.secondary).frame(width: 28)
                 Slider(value: rangeStartBinding,
                        in: 0...Double(max(frames.count - 1, 1)), step: 1)
-                Text(timeLabel(at: rangeStartIndex))
-                    .font(.caption2.monospacedDigit()).frame(width: 48, alignment: .trailing)
+                DatePicker("From", selection: rangeDateBinding(isStart: true), displayedComponents: .hourAndMinute)
+                    .labelsHidden().accessibilityLabel("Delete range from time")
             }
             HStack(spacing: 7) {
                 Text("To").font(.caption2).foregroundStyle(.secondary).frame(width: 28)
                 Slider(value: rangeEndBinding,
                        in: 0...Double(max(frames.count - 1, 1)), step: 1)
-                Text(timeLabel(at: rangeEndIndex))
-                    .font(.caption2.monospacedDigit()).frame(width: 48, alignment: .trailing)
+                DatePicker("To", selection: rangeDateBinding(isStart: false), displayedComponents: .hourAndMinute)
+                    .labelsHidden().accessibilityLabel("Delete range to time")
             }
+            Toggle("Include saved moments", isOn: $includeSavedMoments)
+                .font(.caption)
+            Text("Times snap to the nearest captured scene. Review shows the exact affected moments.")
+                .font(.caption).foregroundStyle(.secondary)
+            ForEach(deletionFailures, id: \.self) { Text($0).foregroundStyle(Brand.error) }
             HStack {
                 Spacer()
-                Button("Delete range", role: .destructive) {
-                    confirmingRangeDeletion = true
+                Button("Review deletion") {
+                    guard let interval = selectedInterval else { return }
+                    do {
+                        deletionReview = try app.activityStore.captureDeletionReview(in: interval, includesSaved: includeSavedMoments)
+                    } catch { deletionFailures = ["Could not prepare review: \(error.localizedDescription)"] }
                 }
                 .disabled(selectedCaptureCount == 0)
                 .accessibilityIdentifier("rewind.deleteRange")
@@ -301,8 +319,10 @@ struct ScreenRewindView: View {
     }
 
     private var selectedCaptureCount: Int {
-        ScreenRewindSequence.captureCount(
-            frames: frames, firstIndex: rangeStartIndex, lastIndex: rangeEndIndex)
+        guard let interval = selectedInterval else { return 0 }
+        return Set(frames.flatMap(\.screenshots).filter {
+            $0.ts >= interval.start && $0.ts < interval.end && (includeSavedMoments || !$0.isBookmarked)
+        }.map(\.id)).count
     }
 
     private func synchronizeSelection() {
@@ -357,20 +377,35 @@ struct ScreenRewindView: View {
         }
     }
 
-    private func deleteSelectedRange() {
-        guard let interval = ScreenRewindSequence.deletionInterval(
-            frames: frames, firstIndex: rangeStartIndex, lastIndex: rangeEndIndex) else { return }
+    private var selectedInterval: DateInterval? {
+        ScreenRewindSequence.deletionInterval(frames: frames, firstIndex: rangeStartIndex, lastIndex: rangeEndIndex)
+    }
+
+    private func rangeDateBinding(isStart: Bool) -> Binding<Date> {
+        Binding(get: {
+            frames[ScreenRewindSequence.clampedIndex(isStart ? rangeStartIndex : rangeEndIndex, count: frames.count)].screenshot.ts
+        }, set: { value in
+            guard let nearest = frames.indices.min(by: {
+                abs(frames[$0].screenshot.ts.timeIntervalSince(value)) < abs(frames[$1].screenshot.ts.timeIntervalSince(value))
+            }) else { return }
+            if isStart { rangeStartIndex = nearest } else { rangeEndIndex = nearest }
+        })
+    }
+
+    private func deleteSelectedRange(_ review: CaptureDeletionReview) {
         do {
-            try app.screenshots.deleteCaptures(in: interval)
-            let days = Set(frames.filter { interval.contains($0.screenshot.ts) }
-                .map { Calendar.current.startOfDay(for: $0.screenshot.ts) })
+            deletionFailures = try app.screenshots.applyCaptureDeletionReview(review)
+            deletionReview = nil
+            let days = Set(review.captures.map { Calendar.current.startOfDay(for: $0.ts) })
             app.primaryEvidenceDidChange(on: Array(days))
             selectedSnapshotID = nil
-            isSelectingRange = false
+            isSelectingRange = !deletionFailures.isEmpty
             isPlaying = false
             onReload()
         } catch {
-            app.lastError = "Could not delete captured moments: \(error.localizedDescription)"
+            deletionFailures = [error.localizedDescription]
+            deletionReview = nil
+            onReload()
         }
     }
 

@@ -28,6 +28,14 @@ final class NavigationHandoffTests: XCTestCase {
         XCTAssertNil(handoff.consumeAsk())
     }
 
+    func testEmptyScreenBoundaryDoesNotBecomeUnrestrictedDuringHandoff() {
+        let handoff = NavigationHandoff()
+        handoff.stageAsk(query: "No matches", dayScope: nil, screenSnapshotIDs: [], submit: false)
+        XCTAssertEqual(handoff.consumeAsk()?.screenSnapshotIDs, [])
+        handoff.stageAsk(query: "All screens", dayScope: nil, screenSnapshotIDs: nil, submit: false)
+        XCTAssertNil(handoff.consumeAsk()?.screenSnapshotIDs)
+    }
+
     func testMeetingSeekOnlyMatchesItsDestination() {
         let handoff = NavigationHandoff()
         let expectedMeetingID = UUID()
@@ -37,6 +45,15 @@ final class NavigationHandoffTests: XCTestCase {
         XCTAssertNil(handoff.consumeMeetingSeek(for: UUID()))
         XCTAssertEqual(handoff.consumeMeetingSeek(for: expectedMeetingID), 42)
         XCTAssertNil(handoff.consumeMeetingSeek(for: expectedMeetingID))
+    }
+
+    func testEvidenceDefaultsToRevealAndExplicitPlayIsPreserved() {
+        let handoff = NavigationHandoff()
+        let meetingID = UUID()
+        handoff.stageMeeting(meetingID, seek: 42)
+        XCTAssertEqual(handoff.consumeMeetingEvidence(for: meetingID)?.intent, .reveal)
+        handoff.stageMeeting(meetingID, seek: 42, intent: .play)
+        XCTAssertEqual(handoff.consumeMeetingEvidence(for: meetingID)?.intent, .play)
     }
 
     func testOpeningMeetingWithoutSeekClearsOlderRequest() {

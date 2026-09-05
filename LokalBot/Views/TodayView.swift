@@ -10,21 +10,21 @@ struct TodayView: View {
     @StateObject private var upcomingMeeting = UpcomingMeetingPreparationModel()
     @AppStorage("lokalbotv3.gettingStartedDismissed")
     private var gettingStartedDismissed = false
-    @State private var showingActionReview = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
                 header
                 nowCard
-                dreamCard
-                summarySection
+                TodayMemoryStatus(sampler: app.sampler)
+                UpcomingMeetingSection(model: upcomingMeeting)
                 NeedsAttentionSection(
                     threads: app.outcomeIndex.openUserActionThreads,
-                    limit: 3,
-                    showingReview: $showingActionReview)
-                UpcomingMeetingSection(model: upcomingMeeting)
+                    limit: 3)
+                summarySection
                 capturedSection
+                DisclosureGroup("Overnight and yesterday") { dreamCard }
+                BriefContextView()
                 if !gettingStartedDismissed { GettingStartedCard() }
             }
             .padding(WorkspaceMetric.pagePadding)
@@ -35,12 +35,18 @@ struct TodayView: View {
         .task(id: app.navSection) {
             guard app.navSection == .today else { return }
             reloadCurrentDay(at: Date())
+            app.refreshDreamMemory()
             while !Task.isCancelled {
                 await upcomingMeeting.refresh(app: app)
                 do {
                     try await Task.sleep(for: .seconds(30))
                 } catch {
                     return
+                }
+                if !Calendar.current.isDateInToday(model.day) {
+                    reloadCurrentDay(at: Date())
+                } else if !model.generating {
+                    model.refreshOverview(app: app)
                 }
             }
         }
@@ -80,11 +86,10 @@ struct TodayView: View {
             }
             Spacer()
             Button {
-                showingActionReview = true
+                app.openActions()
             } label: {
                 Label("Review actions", systemImage: "checklist")
             }
-            .disabled(app.outcomeIndex.openUserActionThreads.isEmpty)
             Button {
                 app.openAsk(dayScope: model.day)
             } label: {
@@ -112,6 +117,8 @@ struct TodayView: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
+            .accessibilityLabel("More Today actions")
+            .help("More Today actions")
         }
     }
 
@@ -311,15 +318,13 @@ struct TodayView: View {
     // MARK: Day so far
 
     private var perApp: [(key: String, value: TimeInterval)] {
-        Dictionary(grouping: model.blocks, by: \.app)
-            .mapValues { $0.reduce(0) { $0 + $1.duration } }
-            .sorted { $0.value > $1.value }
+        DayActivityProjection(blocks: model.blocks, day: model.day).perApp
     }
 
     @ViewBuilder private var daySoFar: some View {
         let apps = perApp
         let todaysMeetings = model.meetings(in: app)
-        if !model.blocks.isEmpty || !model.shots.isEmpty || model.digest != nil {
+        if !model.blocks.isEmpty || !model.shots.isEmpty || model.digest != nil || !todaysMeetings.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text("Day so far").font(WorkspaceTypography.sectionTitle)
@@ -329,7 +334,7 @@ struct TodayView: View {
                         .foregroundStyle(Brand.teal)
                 }
                 DayStatRow(
-                    trackedSeconds: apps.reduce(0) { $0 + $1.value },
+                    trackedSeconds: DayActivityProjection(blocks: model.blocks, day: model.day).activeSeconds,
                     appCount: apps.count,
                     momentCount: model.shots.count,
                     meetingCount: todaysMeetings.count)
@@ -343,6 +348,10 @@ struct TodayView: View {
                 }
                 digestBlock
             }
+        } else {
+            Text("Your brief will draw on today's meetings and captured activity. Record a meeting or set up day memory to get started.")
+                .workspaceTextRole(.supporting)
+            Button("Set up day memory") { app.openSettings(tab: .dayMemory) }
         }
     }
 
@@ -376,7 +385,13 @@ struct TodayView: View {
                 .accessibilityLabel("Day digest actions")
                 .accessibilityIdentifier("today.dayDigest.actions")
             }
+            HStack {
+                if let generated = model.digestUpdatedAt { Text("Generated " + generated.formatted(date: .omitted, time: .shortened)) }
+                if let latest = model.latestDigestEvidenceAt { Text("Latest capture " + latest.formatted(date: .omitted, time: .shortened)) }
+                if model.digestIsStale { Text("New evidence available") }
+            }.font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
             DayDigestView(digest, mode: .today)
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("today.dayDigest.text")
         } else {
             HStack(spacing: 8) {
@@ -418,10 +433,6 @@ struct TodayView: View {
                         } label: {
                             HStack(spacing: 8) {
                                 MeetingRowView(meeting: meeting)
-                                if meeting.endedAt != nil,
-                                   app.pipeline.stages[meeting.id] == nil {
-                                    BrandChip(icon: "checkmark.circle", text: "Ready", size: .compact)
-                                }
                                 let ownedCount = app.outcomeIndex.projection(for: meeting.id)?
                                     .actionReferences.filter(\.isForUser).count ?? 0
                                 BrandChip(
@@ -441,11 +452,51 @@ struct TodayView: View {
     }
 
     private var summarySection: some View {
-        WorkspaceSection(title: "Summary", icon: "chart.bar") {
+        WorkspaceSection(title: "Today’s brief", icon: "chart.bar") {
             daySoFar
         }
     }
 
+}
+
+private struct TodayMemoryStatus: View {
+    @EnvironmentObject private var app: AppState
+    @ObservedObject var sampler: ActivitySampler
+
+    private var enabled: Bool {
+        app.settings.trackingEnabled
+    }
+    private var status: String {
+        !enabled ? "Off" : sampler.isPaused ? "Paused" : "Enabled"
+    }
+
+    var body: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 8) {
+                LabeledContent("App activity", value: app.settings.trackingEnabled ? status : "Off")
+                LabeledContent("Visible text", value: captureStatus(
+                    enabled: app.settings.effectiveScreenContextCaptureMode.capturesText,
+                    permission: .accessibility))
+                LabeledContent("Images", value: captureStatus(
+                    enabled: app.settings.effectiveScreenContextCaptureMode.capturesPixels,
+                    permission: .screenRecording))
+                HStack {
+                    if enabled { TrackingPauseButton(sampler: sampler, presentation: .toolbar) }
+                    Button("Day memory settings") { app.openSettings(tab: .dayMemory) }
+                }
+            }.padding(.top, 8)
+        } label: {
+            Label("Day memory · \(status)", systemImage: "clock.arrow.circlepath")
+                .font(WorkspaceTypography.metadata)
+        }
+        .accessibilityIdentifier("today.memoryStatus")
+    }
+
+    private func captureStatus(enabled: Bool, permission: AppPermission) -> String {
+        guard app.settings.trackingEnabled, enabled else { return "Off" }
+        guard !sampler.isPaused else { return "Paused" }
+        return permission.isGranted ? "Enabled" : "Permission needed"
+    }
 }
 
 /// Pure report selection keeps the overnight/current-day boundary testable

@@ -139,7 +139,7 @@ final class ProcessingPipeline: ObservableObject {
     /// automation gate without touching real model folders (or the network).
     struct AutomationReadiness {
         var transcription: (AppSettings) -> Bool
-        var think: (AppSettings, StorageManager) -> Bool
+        var think: @MainActor (AppSettings, StorageManager) -> Bool
 
         static let live = AutomationReadiness(
             transcription: ModelReadinessSnapshot.transcriptionReady,

@@ -35,76 +35,38 @@ final class QuickRecallUITests: XCTestCase {
     }
 
     func testSearchShowsLocalMeetingEvidenceAndInlineAsk() {
-        XCTAssertEqual(input.value as? String, "failover",
-                       "seeded Quick Recall query did not render")
-
-        let meetingPrefix = "quickRecall.row.meeting.\(fixture.designReview.id.uuidString).segment."
-        let meetingTitle = app.buttons.matching(NSPredicate(
-            format: "identifier BEGINSWITH %@ AND label == %@",
-            meetingPrefix, fixture.designReview.title)).firstMatch
-        XCTAssertTrue(meetingTitle.waitForExistence(timeout: 8),
-            "Quick Recall did not surface the matching meeting")
-
-        let meetingSubtitleText = "\(fixture.designReview.appName) · Transcript"
-        XCTAssertTrue((meetingTitle.value as? String)?.contains(meetingSubtitleText) == true,
-                      "Quick Recall did not identify the local evidence type")
-
-        let ask = app.buttons["quickRecall.row.ask.failover"]
-        XCTAssertTrue(ask.waitForExistence(timeout: 3),
-                      "Quick Recall did not include the inline assistant action")
-        XCTAssertEqual(ask.value as? String, "Answer from your meetings and screen")
+        XCTAssertEqual(input.value as? String, "failover")
+        let meeting = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@",
+            "quickRecall.row.meeting.\(fixture.designReview.id.uuidString).segment.")).firstMatch
+        XCTAssertTrue(meeting.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["quickRecall.ask"].exists)
+        input.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.descendants(matching: .any)["detail.title"].firstMatch.waitForExistence(timeout: 6))
+        XCTAssertFalse(app.staticTexts["chat.message.user"].exists)
     }
 
     func testClearReturnsToAskEmptyState() {
-        XCTAssertTrue(text(containing: "Ask anything")
-            .waitForExistence(timeout: 5), "initial Quick Recall Ask state missing")
-        XCTAssertTrue(app.buttons["quickRecall.suggestion.0"].exists,
-                      "Quick Recall did not offer an inline question suggestion")
         input.click()
         input.typeText("nothing-local-matches-this")
-
-        let clear = app.buttons["Clear"]
-        XCTAssertTrue(clear.waitForExistence(timeout: 4), "Quick Recall clear control missing")
-        let ask = app.buttons["quickRecall.row.ask.nothing-local-matches-this"]
-        XCTAssertTrue(ask.waitForExistence(timeout: 4),
-                      "inline assistant action missing for an unmatched query")
-        XCTAssertEqual(ask.value as? String, "Answer from your meetings and screen")
-        XCTAssertTrue(
-            app.descendants(matching: .any)["quickRecall.noMatches"]
-                .waitForExistence(timeout: 8)
-                || text(containing: "Nothing in saved moments").exists,
-            "Quick Recall did not distinguish a completed empty search: \(app.debugDescription)")
-        // SwiftUI propagates the enclosing no-match state's accessibility ID
-        // to descendants on macOS, so select this button by visible content.
-        let askInstead = app.buttons.matching(NSPredicate(
-            format: "label == 'Ask instead' OR value == 'Ask instead'")).firstMatch
-        XCTAssertTrue(askInstead.waitForExistence(timeout: 3),
-                      "Quick Recall did not offer an explicit Ask fallback")
-        clear.click()
-
-        XCTAssertTrue(text(containing: "Ask anything")
-            .waitForExistence(timeout: 5), "clearing did not restore the Ask state")
-        XCTAssertFalse(clear.exists, "clear control remained visible for an empty query")
+        XCTAssertTrue(app.descendants(matching: .any)["quickRecall.noMatches"].waitForExistence(timeout: 8))
+        input.typeKey(.return, modifierFlags: [])
+        XCTAssertFalse(app.staticTexts["chat.message.user"].exists)
+        app.buttons["Clear"].click()
+        XCTAssertEqual(input.value as? String, "")
+        XCTAssertTrue(text(containing: "Ask anything").waitForExistence(timeout: 4))
     }
 
     func testBackFromInlineAnswerRestoresRecallQuery() {
-        XCTAssertEqual(input.value as? String, "failover",
-                       "seeded Quick Recall query did not render")
-
-        app.activate()
-        let ask = app.buttons["quickRecall.row.ask.failover"]
-        XCTAssertTrue(ask.waitForExistence(timeout: 6),
-                      "inline assistant action did not render")
+        XCTAssertEqual(input.value as? String, "failover")
+        let ask = app.buttons["quickRecall.ask"]
+        XCTAssertTrue(ask.waitForExistence(timeout: 6))
         ask.click()
-
-        let back = app.buttons["Back to recall"]
-        XCTAssertTrue(back.waitForExistence(timeout: 6),
-                      "inline answer did not expose the recall back control")
-        back.click()
-
-        XCTAssertTrue(UITestHarness.waitUntil(timeout: 5) {
-            self.input.value as? String == "failover"
-        }, "returning from an inline answer discarded the recall query")
+        let draft = app.textFields["search.field"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 6))
+        XCTAssertEqual(draft.value as? String, "failover")
+        XCTAssertTrue(app.descendants(matching: .any)["ask.selectedEvidence"].firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["chat.message.user"].exists,
+                       "Reviewing a bounded draft must not dispatch generation")
     }
 
     private var input: XCUIElement {

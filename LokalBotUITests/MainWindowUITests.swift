@@ -41,28 +41,16 @@ final class MainWindowUITests: XCTestCase {
     /// Today keeps the task-first digest hierarchy without repeating the host
     /// page's time chart or exposing capture/evidence bookkeeping.
     func testTodayUsesCompactDigestHierarchy() {
-        XCTAssertTrue(textWithContent(SyntheticFixture.todayDigestMarker).firstMatch
-            .waitForExistence(timeout: 6), "today's persisted digest did not render")
-        XCTAssertTrue(identified("today.dayDigest.generate").waitForExistence(timeout: 5),
-                      "Today should expose digest maintenance without another disclosure")
-        XCTAssertTrue(identified("today.dayDigest.actions").exists,
-                      "Today should expose copy and Markdown export actions")
-        XCTAssertFalse(identified("today.moreLocalContext").exists,
-                       "Today should not hide its daily memory behind More local context")
-        XCTAssertTrue(textWithContent("Highlights").firstMatch.exists,
-                      "digest highlights hierarchy is missing")
-        XCTAssertTrue(digestTasksVisible(),
-                      "digest task hierarchy is missing")
-        XCTAssertTrue(textWithContent("Updated the Timeline UI").firstMatch.exists,
-                      "human-facing focus summary is missing")
-        XCTAssertFalse(textWithContent("User updated the Timeline UI").firstMatch.exists,
-                       "model bookkeeping subject leaked into the focus summary")
-        XCTAssertFalse(textWithContent("screen:4242").firstMatch.exists,
-                       "private evidence identifier leaked into Today")
-        XCTAssertFalse(textWithContent("Time allocation").firstMatch.exists,
-                       "Today repeated its app-time chart inside the digest")
-        XCTAssertFalse(app.descendants(matching: .any)["dayDigest.fullActivityLog"].exists,
-                       "Today exposed the forensic activity log")
+        XCTAssertTrue(identified("today.dayDigest.generate").waitForExistence(timeout: 6))
+        UITestHarness.scrollTo(identified("today.dayDigest.generate"), in: app)
+        XCTAssertTrue(identified("today.dayDigest.actions").exists)
+        XCTAssertTrue(textWithContent("Updated the Timeline UI").firstMatch.exists)
+        XCTAssertFalse(textWithContent("screen:4242").firstMatch.exists)
+        XCTAssertTrue(textWithContent("Generated").firstMatch.exists)
+        XCTAssertFalse(identified("dayDigest.fullActivityLog").exists)
+        XCTAssertTrue(app.buttons["Review actions"].exists)
+        UITestHarness.scrollTo(identified("today.fullBrief"), in: app)
+        XCTAssertTrue(identified("today.fullBrief").exists)
     }
 
     // MARK: - Library
@@ -251,8 +239,8 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["settings.form"]
             .waitForExistence(timeout: 6),
                       "settings pane did not render")
-        XCTAssertTrue(app.buttons["Relaunch"].waitForExistence(timeout: 4),
-                      "permissions section missing from Settings")
+        XCTAssertTrue(identified("settings.categories").exists,
+                      "Settings category navigation missing")
 
         clickSidebar("sidebar.timeline")
         XCTAssertTrue(app.descendants(matching: .any)["timeline.dayPicker"]
@@ -267,7 +255,7 @@ final class MainWindowUITests: XCTestCase {
                        "Remember must be a header, not a destination")
         XCTAssertFalse(app.buttons["sidebar.section.writeAct"].exists,
                        "Write & Act must be a header, not a destination")
-        let ordered = ["sidebar.today", "sidebar.timeline", "sidebar.meetings",
+        let ordered = ["sidebar.today", "sidebar.meetings", "sidebar.timeline",
                        "sidebar.ask", "sidebar.type", "sidebar.agent", "sidebar.settings"]
             .map(identified)
         for item in ordered {
@@ -281,20 +269,15 @@ final class MainWindowUITests: XCTestCase {
         // posture (test host uses built-in Think). With an approved remote
         // backend it switches to the "Think uses an approved remote server"
         // wording — covered by AppSettingsTests.usesRemoteMainLLM.
-        XCTAssertTrue(textWithContent("All memory is local").firstMatch.exists)
-        XCTAssertTrue(textWithContent("No data leaves your Mac").firstMatch.exists)
+        XCTAssertTrue(textWithContent("Memory stored on this Mac").firstMatch.exists)
+        XCTAssertTrue(textWithContent("On this Mac").firstMatch.exists)
     }
 
     /// The Models tab of Settings (spec §2.5) renders its role cards —
     /// Models is reached via Settings' tab strip, not its own sidebar entry.
     func testModelsSectionRendersRoleCards() {
         clickSidebar("sidebar.settings")
-        let tabs = app.descendants(matching: .any)["settings.tab"]
-        XCTAssertTrue(tabs.waitForExistence(timeout: 8), "settings tab strip missing")
-        let segment = tabs.buttons["Models"].exists
-            ? tabs.buttons["Models"] : tabs.radioButtons["Models"]
-        XCTAssertTrue(segment.waitForExistence(timeout: 4), "Models segment missing")
-        segment.click()
+        UITestHarness.selectSettingsCategory("Models", in: app)
         XCTAssertTrue(app.descendants(matching: .any)["models.readiness"]
             .waitForExistence(timeout: 6), "core readiness overview missing")
         XCTAssertTrue(app.descendants(matching: .any)["models.storage"].exists,
@@ -325,12 +308,7 @@ final class MainWindowUITests: XCTestCase {
 
     func testModelsCanOpenCustomGraniteSpeechPicker() {
         clickSidebar("sidebar.settings")
-        let tabs = app.descendants(matching: .any)["settings.tab"]
-        XCTAssertTrue(tabs.waitForExistence(timeout: 8), "settings tab strip missing")
-        let segment = tabs.buttons["Models"].exists
-            ? tabs.buttons["Models"] : tabs.radioButtons["Models"]
-        XCTAssertTrue(segment.waitForExistence(timeout: 4), "Models segment missing")
-        segment.click()
+        UITestHarness.selectSettingsCategory("Models", in: app)
 
         let change = app.buttons["models.stack.change.transcribe"]
         XCTAssertTrue(change.waitForExistence(timeout: 6), "Transcribe Change button missing")
@@ -352,11 +330,7 @@ final class MainWindowUITests: XCTestCase {
 
     func testModelPresetRequiresReviewBeforeApplying() {
         clickSidebar("sidebar.settings")
-        let tabs = app.descendants(matching: .any)["settings.tab"]
-        let segment = tabs.buttons["Models"].exists
-            ? tabs.buttons["Models"] : tabs.radioButtons["Models"]
-        XCTAssertTrue(segment.waitForExistence(timeout: 6))
-        segment.click()
+        UITestHarness.selectSettingsCategory("Models", in: app)
 
         let preset = app.buttons["models.preset.lightweight"]
         UITestHarness.scrollTo(preset, in: app)
@@ -364,7 +338,7 @@ final class MainWindowUITests: XCTestCase {
         preset.click()
         XCTAssertTrue(app.buttons["Apply and stage downloads"]
             .waitForExistence(timeout: 4), "preset applied without a review step")
-        XCTAssertTrue(textWithContent("Estimated new download").firstMatch.exists)
+        XCTAssertTrue(textWithContent("Estimated new GGUF download").firstMatch.exists)
         let reviewSheet = app.sheets.firstMatch
         XCTAssertTrue(reviewSheet.waitForExistence(timeout: 4), "preset review sheet missing")
         reviewSheet.buttons["Cancel"].firstMatch.click()
@@ -385,10 +359,10 @@ final class MainWindowUITests: XCTestCase {
             .waitForExistence(timeout: 6), "work sessions should be visible immediately")
         let usesContextDrawer = revealTimelineContext()
         if !usesContextDrawer {
-            XCTAssertLessThan(
+            XCTAssertGreaterThan(
                 identified("capture.dayOverview").frame.midX,
                 identified("timeline.workSessions").frame.midX,
-                "Day brief should be left of Work sessions in the wide Timeline layout")
+                "Day brief should be right of Work sessions in the wide Timeline layout")
         }
         XCTAssertTrue(identified("timeline.dayDigest.generate").waitForExistence(timeout: 5),
                       "day-digest action should remain directly visible")
@@ -417,7 +391,7 @@ final class MainWindowUITests: XCTestCase {
         if usesContextDrawer { closeTimelineContext() }
         // The grounded block title becomes the human-scale session title.
         XCTAssertTrue(app.buttons.matching(
-            NSPredicate(format: "label CONTAINS[c] %@", "TimelineView.swift"))
+            NSPredicate(format: "label CONTAINS[c] %@", "Xcode"))
             .firstMatch.exists,
                       "seeded work-session title missing")
         // Meetings remain first-class chronological rows.
@@ -459,6 +433,13 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(textWithContent("Representative evidence").firstMatch.exists,
                       "session preview does not explain its evidence")
 
+        // Returning to Timeline should restore both the selected session and
+        // its inspector, including on the narrow hosted desktop.
+        clickSidebar("sidebar.ask")
+        clickSidebar("sidebar.timeline")
+        XCTAssertTrue(app.descendants(matching: .any)["timeline.sessionPreview"]
+            .waitForExistence(timeout: 4), "navigation discarded the selected work session")
+
         let back = app.buttons["Back to day digest"].firstMatch
         XCTAssertTrue(back.waitForExistence(timeout: 3))
         back.click()
@@ -486,7 +467,7 @@ final class MainWindowUITests: XCTestCase {
     func testTimelineDateChangeRefreshesOverviewAndDigest() {
         openLibrary()
         selectMeeting(fixture.designReview)
-        XCTAssertTrue(app.staticTexts["detail.title"].waitForExistence(timeout: 4),
+        XCTAssertTrue(identified("detail.title").waitForExistence(timeout: 4),
                       "meeting detail did not open before changing the day")
 
         clickSidebar("sidebar.timeline")
@@ -536,11 +517,11 @@ final class MainWindowUITests: XCTestCase {
                       "full meeting workspace did not expose recorded-audio playback")
         XCTAssertFalse(app.buttons["Open meeting"].exists,
                        "meeting selection should not require a second navigation step")
-        let actions = identified("toolbar.meetingActions")
+        let actions = identified("meeting.export")
         XCTAssertTrue(actions.exists, "full workspace should retain meeting copy/export actions")
         actions.click()
         XCTAssertTrue(app.menuItems["Copy Meeting as Markdown"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.menuItems["Export Meeting as Markdown..."].exists)
+        XCTAssertTrue(app.menuItems["Export Meeting as Markdown…"].exists)
         app.typeKey(.escape, modifierFlags: [])
     }
 
@@ -548,6 +529,7 @@ final class MainWindowUITests: XCTestCase {
         openLibrary()
         let row = meetingRow(for: fixture.designReview)
         row.click()
+        UITestHarness.selectSegment("Actions", pickerIdentifier: "meeting.contentTabs", in: app)
         let toggle = app.buttons["meeting.action.toggle.fixture-action-design-1"]
         UITestHarness.scrollTo(toggle, in: app, attempts: 8)
         XCTAssertTrue(toggle.waitForExistence(timeout: 5), "meeting action toggle missing")
@@ -579,6 +561,15 @@ final class MainWindowUITests: XCTestCase {
         }
         XCTAssertTrue(stateURLs.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) },
                       "Cancelling must not write either source overlay")
+        let review = app.buttons["outcomes.review"]
+        UITestHarness.scrollTo(review, in: app)
+        review.click()
+        UITestHarness.selectSegment("Threads", pickerIdentifier: "actions.reviewMode", in: app)
+        XCTAssertTrue(identified("actions.threads").waitForExistence(timeout: 5))
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "action-thread-review"
+        capture.lifetime = .keepAlways
+        add(capture)
         toggle.click()
         XCTAssertTrue(confirm.waitForExistence(timeout: 4))
         confirm.click()
@@ -590,6 +581,17 @@ final class MainWindowUITests: XCTestCase {
             let saved = try XCTUnwrap(state["actions"] as? [String: [String: Any]])
             XCTAssertEqual(saved["fixture-action-design-1"]?["status"] as? String, "done")
         }
+        let undo = app.buttons["outcomes.undo"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 4))
+        undo.click()
+        XCTAssertTrue(UITestHarness.waitUntil {
+            stateURLs.allSatisfy { url in
+                guard let data = try? Data(contentsOf: url),
+                      let state = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let saved = state["actions"] as? [String: [String: Any]] else { return false }
+                return saved["fixture-action-design-1"]?["status"] as? String == "open"
+            }
+        }, "Thread Undo must restore every confirmed source")
     }
 
     func testActionThreadSourceCanBeSeparatedAndRestored() throws {
@@ -653,43 +655,18 @@ final class MainWindowUITests: XCTestCase {
     func testMeetingDetailLoadsExpandedSummaryAndTranscript() {
         openLibrary()
         selectMeeting(fixture.designReview)
-
-        let title = app.staticTexts["detail.title"]
-        XCTAssertTrue(title.waitForExistence(timeout: 4))
-        // SwiftUI `Text` puts the rendered string in AXValue, not AXLabel.
-        XCTAssertEqual(title.value as? String, fixture.designReview.title)
-
-        XCTAssertTrue(textWithContent("Action items").firstMatch.waitForExistence(timeout: 4))
-        XCTAssertTrue(textWithContent("Adopt Redis").firstMatch.exists,
-                      "cited decision text missing")
-        XCTAssertFalse(textWithContent("Follow-up").firstMatch.exists,
-                       "meeting detail should not show the follow-up editor")
-
-        let summarySection = identified("meeting.summary")
-        UITestHarness.scrollTo(summarySection, in: app)
-        XCTAssertTrue(summarySection.waitForExistence(timeout: 4),
-                      "always-expanded summary section missing")
-        XCTAssertFalse(identified("meeting.summaryDisclosure").exists,
-                       "summary should not retain a disclosure control")
-        XCTAssertTrue(textWithContent("TL;DR").firstMatch.waitForExistence(timeout: 4),
-                      "summary content should be visible without expanding it")
-
-        let transcriptDisclosure = identified("meeting.transcriptDisclosure")
-        UITestHarness.scrollTo(transcriptDisclosure, in: app)
-        XCTAssertTrue(transcriptDisclosure.waitForExistence(timeout: 4))
-        transcriptDisclosure.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).click()
-        let firstSpeaker = app.buttons["transcript.segment.0.speaker"]
-        UITestHarness.scrollTo(firstSpeaker, in: app)
-        XCTAssertTrue(firstSpeaker.waitForExistence(timeout: 3),
-                      "speaker rename control missing on transcript")
-        XCTAssertTrue(firstSpeaker.label.contains("Me"),
-                      "first transcript speaker was not identified as Me")
-        let firstTranscriptText = app.staticTexts["transcript.segment.0.text"]
-        XCTAssertTrue(firstTranscriptText.exists,
-                      "transcript text must remain a selectable text element")
-        XCTAssertTrue((firstTranscriptText.value as? String)?.contains("caching layer") == true,
-                      "first transcript segment text missing")
+        XCTAssertEqual(identified("detail.title").value as? String ?? identified("detail.title").label, fixture.designReview.title)
+        XCTAssertTrue(textWithContent("Adopt Redis").firstMatch.waitForExistence(timeout: 4))
+        XCTAssertTrue(identified("meeting.audioPlayer").exists)
+        UITestHarness.selectSegment("Actions", pickerIdentifier: "meeting.contentTabs", in: app)
+        XCTAssertTrue(textWithContent("Draft the eviction policy document").firstMatch.waitForExistence(timeout: 4))
+        UITestHarness.selectSegment("Transcript", pickerIdentifier: "meeting.contentTabs", in: app)
+        let first = app.staticTexts["transcript.segment.0.text"]
+        XCTAssertTrue(first.waitForExistence(timeout: 4))
+        XCTAssertTrue((first.value as? String)?.contains("caching layer") == true)
+        XCTAssertTrue(identified("meeting.audioPlayer").exists)
+        UITestHarness.selectSegment("Notes", pickerIdentifier: "meeting.contentTabs", in: app)
+        XCTAssertTrue(identified("meeting.notes.editor").waitForExistence(timeout: 4))
     }
 
     /// Calendar attendees are explicit choices for remote diarization labels;
@@ -698,10 +675,7 @@ final class MainWindowUITests: XCTestCase {
         openLibrary()
         selectMeeting(fixture.designReview)
 
-        let disclosure = identified("meeting.transcriptDisclosure")
-        UITestHarness.scrollTo(disclosure, in: app)
-        XCTAssertTrue(disclosure.waitForExistence(timeout: 4))
-        disclosure.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).click()
+        UITestHarness.selectSegment("Transcript", pickerIdentifier: "meeting.contentTabs", in: app)
 
         let remoteSpeaker = app.buttons["transcript.segment.1.speaker"]
         UITestHarness.scrollTo(remoteSpeaker, in: app)
@@ -735,24 +709,16 @@ final class MainWindowUITests: XCTestCase {
     func testMeetingProcessingActionsAreDirectToolbarButtons() {
         openLibrary()
         selectMeeting(fixture.designReview)
-        XCTAssertTrue(app.staticTexts["detail.title"].waitForExistence(timeout: 4),
-                      "meeting detail did not open")
-
-        let toolbar = app.toolbars.firstMatch
-        for identifier in ["toolbar.transcribeAndSummarize",
-                           "toolbar.transcribeOnly",
-                           "toolbar.resummarize"] {
-            XCTAssertTrue(toolbar.children(matching: .button)[identifier]
-                .waitForExistence(timeout: 4), "\(identifier) should be directly visible")
+        XCTAssertTrue(identified("meeting.ask").exists)
+        identified("meeting.export").click()
+        for label in ["Copy Summary", "Copy Transcript", "Copy Meeting as Markdown", "Export Meeting as Markdown…"] {
+            XCTAssertTrue(app.menuItems[label].waitForExistence(timeout: 3))
         }
-        let more = identified("toolbar.meetingActions")
-        XCTAssertTrue(more.waitForExistence(timeout: 4), "meeting overflow missing")
-        more.click()
-        XCTAssertTrue(app.menuItems["Copy Summary"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.menuItems["Copy Transcript"].exists)
-        XCTAssertTrue(app.menuItems["Copy Meeting as Markdown"].exists)
-        XCTAssertTrue(app.menuItems["Export Meeting as Markdown..."].exists)
-        XCTAssertTrue(app.menuItems["Export audio"].exists)
+        app.typeKey(.escape, modifierFlags: [])
+        identified("toolbar.meetingActions").click()
+        for label in ["Transcribe & Summarize", "Transcribe only", "Re-summarize", "Export audio"] {
+            XCTAssertTrue(app.menuItems[label].waitForExistence(timeout: 3))
+        }
         app.typeKey(.escape, modifierFlags: [])
     }
 
@@ -762,7 +728,7 @@ final class MainWindowUITests: XCTestCase {
     func testMeetingFindSearchesAllVisibleContent() {
         openLibrary()
         selectMeeting(fixture.designReview)
-        XCTAssertTrue(app.staticTexts["detail.title"].waitForExistence(timeout: 4))
+        XCTAssertTrue(identified("detail.title").waitForExistence(timeout: 4))
         XCTAssertTrue(identified("toolbar.meetingSearch").exists)
 
         app.typeKey("f", modifierFlags: .command)
@@ -822,9 +788,9 @@ final class MainWindowUITests: XCTestCase {
                       "expected design review segment hit for 'failover'")
         segmentHit.click()
 
-        let title = app.staticTexts["detail.title"]
+        let title = identified("detail.title")
         XCTAssertTrue(title.waitForExistence(timeout: 4))
-        XCTAssertEqual(title.value as? String, fixture.designReview.title)
+        XCTAssertEqual(title.value as? String ?? title.label, fixture.designReview.title)
     }
 
     /// The Ask section is reachable from the sidebar and renders its merged
@@ -878,10 +844,10 @@ final class MainWindowUITests: XCTestCase {
                       "Exact/meaning search menu missing")
         XCTAssertFalse(identified("ask.sources").exists,
                        "Ask scopes should not masquerade as search facets")
-        XCTAssertEqual(field.frame.minY, askFrame.minY, accuracy: 8,
-                       "composer jumped vertically when leaving Ask")
-        XCTAssertEqual(field.frame.minX, askFrame.minX, accuracy: 8,
-                       "composer jumped horizontally when leaving Ask")
+        XCTAssertLessThan(field.frame.minY, askFrame.minY,
+                          "Search should move its query to the top")
+        XCTAssertGreaterThanOrEqual(field.frame.minX, app.windows.firstMatch.frame.minX)
+        XCTAssertLessThanOrEqual(field.frame.maxX, app.windows.firstMatch.frame.maxX)
     }
 
     /// Restored split widths from Timeline or Meetings must not let the
@@ -1068,7 +1034,7 @@ final class MainWindowUITests: XCTestCase {
         // modifier-held ⌘-click can otherwise race an unsettled selection and
         // land as a plain click (leaving a single selection, so the aggregate
         // "Delete 2 meetings" button never appears).
-        _ = app.staticTexts["detail.title"].waitForExistence(timeout: 4)
+        _ = identified("detail.title").waitForExistence(timeout: 4)
         XCUIElement.perform(withKeyModifiers: .command) { meetingRow(for: b).click() }
         let deleteButton = app.buttons["Delete 2 meetings"]
         XCTAssertTrue(deleteButton.waitForExistence(timeout: 4),

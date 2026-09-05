@@ -9,6 +9,7 @@ struct ActionThread: Identifiable, Equatable, Sendable {
     let text: String
     let owner: String?
     let due: String?
+    let dueSourceMeetingDate: Date?
 
     var latestReference: OutcomeActionReference { references[0] }
     var meetingCount: Int { Set(references.map(\.meetingID)).count }
@@ -59,12 +60,12 @@ struct ActionThread: Identifiable, Equatable, Sendable {
             .filter(\.ownerWasCorrected)
             .max { ($0.ownerCorrectedAt ?? $0.stateUpdatedAt) < ($1.ownerCorrectedAt ?? $1.stateUpdatedAt) }?.owner
             ?? sorted.compactMap(\.owner).first
-        due = sorted
-            .filter(\.dueWasCorrected)
-            .max { ($0.dueCorrectedAt ?? $0.stateUpdatedAt) < ($1.dueCorrectedAt ?? $1.stateUpdatedAt) }?.due
-            ?? sorted.compactMap { reference in
-                reference.due.map { (reference.meetingStartedAt, $0) }
-            }.max { $0.0 < $1.0 }?.1
+        let dueReference = sorted
+            .filter { $0.dueWasCorrected && $0.due != nil }
+            .max { ($0.dueCorrectedAt ?? $0.stateUpdatedAt) < ($1.dueCorrectedAt ?? $1.stateUpdatedAt) }
+            ?? sorted.first { $0.due != nil }
+        due = dueReference?.due
+        dueSourceMeetingDate = dueReference?.meetingStartedAt
         id = Self.stableID(for: sorted)
     }
 

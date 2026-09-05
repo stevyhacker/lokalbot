@@ -7,6 +7,7 @@ struct ModelReadinessSnapshot: Equatable, Sendable {
     enum Provenance: Equatable, Sendable {
         case local
         case externalThink(String)
+        case blockedThink(String)
     }
 
     var transcriptionReady: Bool
@@ -22,32 +23,26 @@ struct ModelReadinessSnapshot: Equatable, Sendable {
         transcriptionReady && thinkReady && autocompleteReady
     }
 
+    var meetingReady: Bool { transcriptionReady && thinkReady }
+
     var headline: String {
-        if coreReady {
-            switch provenance {
-            case .local: "Ready on this Mac"
-            case .externalThink: "Core stack configured"
-            }
-        } else {
-            "Finish preparing this Mac"
-        }
+        meetingReady ? "Meeting models available" : "Prepare meeting models"
     }
 
     var detail: String {
-        if coreReady {
+        if case .blockedThink(let reason) = provenance { return reason }
+        if meetingReady {
+            let location: String
             switch provenance {
-            case .local:
-                return "Transcribe, Think, and Autocomplete are available locally."
-            case .externalThink(let name):
-                return "Transcribe and Autocomplete are local. Think uses \(name)."
+            case .local: location = "Transcription and Think run on this Mac."
+            case .externalThink(let host): location = "Transcription runs on this Mac. Think uses \(host)."
+            case .blockedThink: location = ""
             }
-        } else if activeDownloads > 0 {
-            return "\(activeDownloads) selected model download\(activeDownloads == 1 ? " is" : "s are") in progress."
-        } else if failedDownloads > 0 {
-            return "A selected model needs attention before the stack is ready."
-        } else {
-            return "Missing models stay staged locally and download only after confirmation."
+            return location + (autocompleteReady ? " Autocomplete is also available." : " Autocomplete can be prepared separately.")
         }
+        if activeDownloads > 0 { return "Selected models are downloading. Available roles can still be used." }
+        if failedDownloads > 0 { return "Review the affected role below and retry its preparation." }
+        return "Prepare the missing roles below. Availability does not mean a model test has passed."
     }
 
     var storageSummary: String {
@@ -70,8 +65,11 @@ struct ModelReadinessSnapshot: Equatable, Sendable {
     }
 
     /// True when the Think role can run without triggering a model download.
-    /// Remote backends are always "ready" — their approval flow is separate.
+    /// External endpoints must be approved; Apple Intelligence must be available.
+    @MainActor
     static func thinkReady(_ settings: AppSettings, storage: StorageManager) -> Bool {
+        guard !InferencePresentation(settings: settings).isBlocked else { return false }
+        if settings.summarizerBackend == .appleIntelligence { return FoundationModelAvailability.current().isAvailable }
         guard settings.summarizerBackend == .builtIn else { return true }
         guard let entry = ModelCatalog.entry(
             id: settings.builtInModelID,
@@ -96,6 +94,8 @@ struct ModelReadinessSnapshot: Equatable, Sendable {
             || old.summarizerBackend != new.summarizerBackend
             || old.builtInModelID != new.builtInModelID
             || old.customBuiltInModels != new.customBuiltInModels
+            || old.approvedRemoteInferenceOrigins != new.approvedRemoteInferenceOrigins
+            || old.openAIBaseURL != new.openAIBaseURL || old.ollamaBaseURL != new.ollamaBaseURL
     }
 
     /// Total bytes of the core GGUF models (Think when built-in, Autocomplete)
@@ -111,25 +111,34 @@ struct ModelReadinessSnapshot: Equatable, Sendable {
         }.reduce(Int64(0)) { $0 + Int64($1.sizeBytes ?? 0) }
     }
 
+    @MainActor
     static func make(
         settings: AppSettings,
         storage: StorageManager,
         activeDownloads: Int,
-        failedDownloads: Int
+        failedDownloads: Int,
+        storageInfo: (storedBytes: Int64, availableBytes: Int64?)? = nil
     ) -> Self {
         let transcriptionReady = transcriptionReady(settings)
         let thinkReady = thinkReady(settings, storage: storage)
         let autocompleteReady = autocompleteReady(settings, storage: storage)
-        let provenance: Provenance = settings.summarizerBackend == .builtIn
-            ? .local : .externalThink(settings.summarizerBackend.displayName)
+        var provenance: Provenance
+        switch InferencePresentation(settings: settings) {
+        case .onDevice: provenance = .local
+        case .remote(let host): provenance = .externalThink(host)
+        case .blocked(let reason): provenance = .blockedThink(reason)
+        }
+        if settings.summarizerBackend == .appleIntelligence, !thinkReady {
+            provenance = .blockedThink(FoundationModelAvailability.current().reason ?? "Apple Intelligence is unavailable.")
+        }
         let modelsFolder = storage.rootURL.appendingPathComponent("models", isDirectory: true)
         return Self(
             transcriptionReady: transcriptionReady,
             thinkReady: thinkReady,
             autocompleteReady: autocompleteReady,
             provenance: provenance,
-            storedBytes: directoryBytes(modelsFolder),
-            availableBytes: DiskSpacePrecheck.availableBytes(at: modelsFolder),
+            storedBytes: storageInfo?.storedBytes ?? directoryBytes(modelsFolder),
+            availableBytes: storageInfo?.availableBytes ?? DiskSpacePrecheck.availableBytes(at: modelsFolder),
             activeDownloads: activeDownloads,
             failedDownloads: failedDownloads)
     }

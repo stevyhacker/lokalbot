@@ -622,6 +622,14 @@ final class EmbeddingIndex {
 
         var conditions = ["embedded.model_id = ?1"]
         var bindings: [Any] = [Self.indexVersion]
+        if let ids = filter.snapshotIDs {
+            guard !ids.isEmpty else { return [] }
+            let placeholders = ids.sorted().map { id -> String in
+                bindings.append(id)
+                return "?\(bindings.count)"
+            }
+            conditions.append("embedded.snapshot_id IN (\(placeholders.joined(separator: ",")))")
+        }
         if let interval = filter.interval {
             let startParameter = bindings.count + 1
             bindings.append(interval.start.timeIntervalSince1970)

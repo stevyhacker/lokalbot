@@ -133,14 +133,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
-    private func openUITestWindow(app: AppState) {
-        if let uiTestWindow {
+    private func openUITestWindow(app: AppState, kind: String? = nil) {
+        let windowKind = kind ?? ProcessInfo.processInfo.environment["LOKALBOT_UI_TEST_WINDOW"] ?? "main"
+        if let uiTestWindow, uiTestWindow.identifier?.rawValue == "\(windowKind).window" {
             uiTestWindow.makeKeyAndOrderFront(nil)
             uiTestWindow.orderFrontRegardless()
             return
         }
 
-        let windowKind = ProcessInfo.processInfo.environment["LOKALBOT_UI_TEST_WINDOW"] ?? "main"
         let showsOnboarding = windowKind == "onboarding"
         let showsQuickRecall = windowKind == "quick-recall"
         let contentSize: NSSize
@@ -188,6 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.identifier = NSUserInterfaceItemIdentifier("\(windowKind).window")
         let hostingView = NSHostingView(rootView: uiTestRootView(app: app, windowKind: windowKind))
         hostingView.identifier = NSUserInterfaceItemIdentifier("\(windowKind).window.host")
+        hostingView.setAccessibilityLabel(showsOnboarding ? "LokalBot setup" : (showsQuickRecall ? "Quick Recall" : "LokalBot workspace"))
         window.contentView = hostingView
         window.center()
         window.isReleasedWhenClosed = false
@@ -195,6 +196,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         window.makeMain()
         window.orderFrontRegardless()
+        if showsQuickRecall {
+            // The compact host has no menu-bar scene to register the normal
+            // window opener. Its explicit handoff must still create a main
+            // host before the compact window dismisses.
+            WindowAccess.shared.register { [weak self, weak app] id in
+                guard id == "main", let app else { return }
+                self?.openUITestWindow(app: app, kind: "main")
+            }
+        }
     }
 
     @MainActor
@@ -231,7 +241,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // sidebar colors resolve per scheme. Pin the app-level appearance
             // before the capture window exists so exports are reproducible.
             NSApp.appearance = NSAppearance(
-                named: style == "dark" ? .darkAqua : .aqua)
+                named: style == "contrast-dark" ? .accessibilityHighContrastDarkAqua : (style == "dark" ? .darkAqua : .aqua))
         }
         if let raw = env["LOKALBOT_INITIAL_SECTION"],
            let section = AppState.NavSection(captureName: raw) {
@@ -255,6 +265,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if env["LOKALBOT_DISMISS_ONBOARDING"] == "1" {
             UserDefaults.standard.set(true, forKey: "lokalbotv3.gettingStartedDismissed")
         }
+        if let name = env["LOKALBOT_INITIAL_SETTINGS_CATEGORY"], let category = AppState.SettingsTab(captureName: name) {
+            app.settingsTab = category
+        }
+        if env["LOKALBOT_INITIAL_ACTIONS"] == "1" { app.openActions() }
+        if env["LOKALBOT_INITIAL_ASK_MODE"] == "search" { app.askMode = .keyword }
         if env["LOKALBOT_SHOW_GETTING_STARTED"] == "1" {
             UserDefaults.standard.set(false, forKey: "lokalbotv3.gettingStartedDismissed")
         }
@@ -263,11 +278,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // the next settled turn, before the scripted rasterization delay.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 if let raw = env["LOKALBOT_CAPTURE_SIZE"] {
-                    // e.g. "1280x800" — wider than the default window so
-                    // detail-pane chips don't wrap in captures.
+                    // These are outer-window dimensions, matching the frame
+                    // view exported below (including its native titlebar).
                     let parts = raw.split(separator: "x").compactMap { Double($0) }
                     if parts.count == 2, let window = self?.uiTestWindow {
-                        window.setContentSize(NSSize(width: parts[0], height: parts[1]))
+                        window.setFrame(NSRect(origin: window.frame.origin,
+                                               size: NSSize(width: parts[0], height: parts[1])), display: true)
                         window.center()
                     }
                 }
@@ -356,7 +372,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                           renderingIntent: .relativeColorimetric) else { return }
         export.size = bounds.size
         if let png = export.representation(using: .png, properties: [:]) {
-            try? png.write(to: URL(fileURLWithPath: path))
+            // Readers treat the destination's appearance as completion.
+            try? png.write(to: URL(fileURLWithPath: path), options: .atomic)
         }
     }
 #endif
@@ -384,6 +401,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// Edit-menu command in `LokalBotApp`.
 final class MeetingFindWindow: NSWindow {
     var meetingFindAction: (() -> Bool)?
+
+#if LOKALBOT_UI_TEST_HOST
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        // Self-captures rasterize the native frame view, including portions
+        // beyond the hosted desktop. Preserve the requested layout instead of
+        // silently clipping every large-window fixture to the runner's screen.
+        // Interactive UI tests retain ordinary on-screen window constraints.
+        if ProcessInfo.processInfo.environment["LOKALBOT_CAPTURE_FILE"] != nil {
+            return frameRect
+        }
+        return super.constrainFrameRect(frameRect, to: screen)
+    }
+#endif
 
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown,
@@ -525,6 +555,12 @@ final class WindowAccess {
     /// `navigationTitle` retitles the window per tab (e.g. "Timeline"), so
     /// matching on the title silently stops finding it.
     static func visibleMainWindow(in application: NSApplication) -> NSWindow? {
-        application.windows.first { $0.isVisible && $0.identifier?.rawValue == "main" }
+        application.windows.first { window in
+            guard window.isVisible else { return false }
+#if LOKALBOT_UI_TEST_HOST
+            if window.identifier?.rawValue == "main.window" { return true }
+#endif
+            return window.identifier?.rawValue == "main"
+        }
     }
 }

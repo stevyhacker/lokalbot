@@ -101,8 +101,52 @@ jobs:
       - name: Fetch llama.cpp vendor
         run: bash Scripts/fetch-llama.sh
 
+      # Catch focused interaction/accessibility regressions before spending
+      # time rendering the full 72-window visual matrix.
+      - name: Verify workspace accessibility
+        if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+        run: Scripts/ui-tests.sh 'RedesignUITests/testHighContrastKeepsActionsAccessible'
+
+      - name: Verify critical interactions
+        if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.filter == '') }}
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+        run: |
+          interaction_status=0
+          Scripts/ui-tests.sh 'AgentModeUITests' || interaction_status=$?
+          Scripts/ui-tests.sh 'RedesignUITests/testAgentApprovalDescribesEffectAndDenialAndStopReachTheController' || interaction_status=$?
+          Scripts/ui-tests.sh 'RedesignUITests/testFourHundredActionsStaySearchableAndCompletionCanBeUndone' || interaction_status=$?
+          Scripts/ui-tests.sh 'MainWindowUITests/testMultiMeetingThreadCompletionRequiresConfirmation' || interaction_status=$?
+          Scripts/ui-tests.sh 'MainWindowUITests/testActionThreadSourceCanBeSeparatedAndRestored' || interaction_status=$?
+          exit "$interaction_status"
+
+      - name: Verify Reduce Motion
+        if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.filter == '') }}
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+        run: |
+          trap 'defaults write com.apple.universalaccess reduceMotion -bool false; defaults write org.localhost.lokalbot.redesign-ci requiresReducedMotion -bool false' EXIT
+          defaults write com.apple.universalaccess reduceMotion -bool true
+          defaults write org.localhost.lokalbot.redesign-ci requiresReducedMotion -bool true
+          Scripts/ui-tests.sh 'RedesignUITests/testReducedMotionWorkspaceRemainsOperable'
+
       - name: Run UI tests
         env:
           CODE_SIGNING_ALLOWED: "NO" # hosted runners hold no dev cert
           UI_TEST_FILTER: ${{ inputs.filter || '' }}
-        run: Scripts/ui-tests.sh "$UI_TEST_FILTER"
+        run: |
+          set -o pipefail
+          Scripts/ui-tests.sh "$UI_TEST_FILTER" 2>&1 | tee .build/ui-tests.log
+
+      - name: Save UI evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ui-test-results
+          path: |
+            .build/dd/Logs/Test/*.xcresult
+            .build/ui-tests.log
+          if-no-files-found: warn
+          retention-days: 14

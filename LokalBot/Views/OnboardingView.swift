@@ -1,1074 +1,179 @@
 import SwiftUI
-import AppKit
 
-/// First-run onboarding and permission repair.
-///
-/// The structure mirrors CoTabby's polished setup flow while staying native to
-/// LokalBot's product: a value-first wizard, a live-looking local demo, a
-/// material backdrop, progress pips, and permission cards that update as macOS
-/// grants arrive. Permission behavior remains owned by `PermissionManager`.
+/// Four deliberate steps. Capture preferences remain a draft until Review;
+/// permissions and model downloads happen only through their named actions.
 struct OnboardingView: View {
     enum Mode { case welcome, permissions }
-
-    private enum WelcomeStep: Int, CaseIterable, Comparable {
-        case welcome
-        case flow
-        case privacy
-        case dayMemory
-        case models
-        case permissions
-
-        static func < (lhs: WelcomeStep, rhs: WelcomeStep) -> Bool {
-            lhs.rawValue < rhs.rawValue
+    enum Step: Int, CaseIterable {
+        case capture, permissions, models, review
+        var title: String {
+            switch self {
+            case .capture: "Choose what to remember"
+            case .permissions: "Enable the access you need"
+            case .models: "Prepare your workflows"
+            case .review: "Review and start"
+            }
         }
-
-        var next: WelcomeStep? { WelcomeStep(rawValue: rawValue + 1) }
-        var previous: WelcomeStep? { WelcomeStep(rawValue: rawValue - 1) }
-        var progressIndex: Int { rawValue + 1 }
     }
-
     var mode: Mode = .welcome
-
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var app: AppState
-    @StateObject private var permissions = PermissionManager.shared
-    @State private var step: WelcomeStep = .welcome
-    @State private var navigatesForward = true
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var permissions = PermissionManager.shared
+    @State private var step: Step = .capture
+    @State private var draft = CaptureSetupDraft(settings: AppSettings())
+    @State private var initialGrants: [AppPermission: Bool] = [:]
+    @State private var includeAutocomplete = false
 
-    private var isWelcomeMode: Bool { mode == .welcome }
-    private var contentWidth: CGFloat { isWelcomeMode ? 640 : 560 }
-
-    private var requiredPermissions: [AppPermission] {
-        AppPermission.coreCases
+    private var relevantPermissions: [AppPermission] {
+        if mode == .permissions { return AppPermission.allCases }
+        var result: [AppPermission] = [.microphone]
+        if draft.dayMemory { result.append(.accessibility) }
+        if draft.dayMemory && draft.contextMode.capturesPixels { result.append(.screenRecording) }
+        return result
     }
-
-    /// Welcome mode shows only the optional grants the current settings make
-    /// relevant (Accessibility always helps meeting detection; Screen Recording
-    /// when visual context is selected). Input Monitoring waits until dictation
-    /// or cotyping is enabled in the Type tab. Repair mode lists every optional
-    /// grant so nothing is unreachable.
-    private var optionalPermissions: [AppPermission] {
-        guard isWelcomeMode else {
-            return AppPermission.allCases.filter(\.isOptionalOnboardingEnhancement)
+    private var newlyGrantedRestartPermission: Bool {
+        [.accessibility, .inputMonitoring, .screenRecording].contains {
+            initialGrants[$0] != true && permissions.granted[$0] == true
         }
-        var relevant: [AppPermission] = [.accessibility]
-        if app.settings.effectiveScreenContextCaptureMode.capturesPixels {
-            relevant.append(.screenRecording)
-        }
-        return relevant
-    }
-
-    private var missingRequiredCount: Int {
-        requiredPermissions.filter { permissions.granted[$0] != true }.count
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if isWelcomeMode {
-                OnboardingProgressPips(
-                    current: step.progressIndex,
-                    total: WelcomeStep.allCases.count
-                )
-                .padding(.top, 24)
-                .transition(.opacity)
-            }
-
-            ZStack {
-                currentPage
-                    .id(isWelcomeMode ? step.rawValue : WelcomeStep.permissions.rawValue)
-                    .transition(pageTransition)
-            }
-
-            if isWelcomeMode {
-                footer
-            }
-        }
-        .frame(width: contentWidth)
-        .background(OnboardingBackdrop())
-        .onAppear {
-            if mode == .permissions { step = .permissions }
-            permissions.startPolling()
-        }
-        .onDisappear {
-            permissions.stopPolling()
-            PermissionGuidanceController.shared.dismiss()
-        }
-    }
-
-    @ViewBuilder
-    private var currentPage: some View {
-        switch isWelcomeMode ? step : .permissions {
-        case .welcome:
-            welcomePage
-        case .flow:
-            flowPage
-        case .privacy:
-            privacyPage
-        case .dayMemory:
-            dayMemoryPage
-        case .models:
-            modelsPage
-        case .permissions:
-            permissionPage
-        }
-    }
-
-    private var pageTransition: AnyTransition {
-        guard isWelcomeMode, !reduceMotion else { return .identity }
-        return .asymmetric(
-            insertion: .move(edge: navigatesForward ? .trailing : .leading).combined(with: .opacity),
-            removal: .move(edge: navigatesForward ? .leading : .trailing).combined(with: .opacity)
-        )
-    }
-
-    private func go(to next: WelcomeStep) {
-        navigatesForward = next > step
-        guard !reduceMotion else {
-            step = next
-            return
-        }
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.88)) {
-            step = next
-        }
-    }
-}
-
-// MARK: - Pages
-
-private extension OnboardingView {
-    var welcomePage: some View {
-        VStack(spacing: WorkspaceMetric.pagePadding) {
-            appIcon
-                .onboardingReveal(0)
-
-            VStack(spacing: 8) {
-                Text("Welcome to LokalBot")
-                    .font(.system(size: 26, weight: .bold, design: .rounded))
-
-                Text("Your private AI memory for work. Remember meetings and the context you choose, ask with evidence, write anywhere, and automate — on-device by default.")
-                    .font(.system(size: 14, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .onboardingReveal(1)
-
-            LokalBotHeroDemo()
-                .frame(maxWidth: 460)
-                .onboardingReveal(2)
-
-            HStack(spacing: 8) {
-                OnboardingFeatureChip(systemImage: "waveform.circle", label: "Remember")
-                OnboardingFeatureChip(systemImage: "sparkle.magnifyingglass", label: "Ask")
-                OnboardingFeatureChip(systemImage: "keyboard", label: "Write")
-                OnboardingFeatureChip(systemImage: "arrow.up.forward.app", label: "Act")
-            }
-            .onboardingReveal(3)
-        }
-        .padding(.horizontal, 46)
-        .padding(.top, 34)
-        .padding(.bottom, 22)
-    }
-
-    var flowPage: some View {
-        VStack(spacing: WorkspaceMetric.pagePadding) {
-            OnboardingStepHeader(
-                systemImage: "waveform.badge.magnifyingglass",
-                title: "Remember. Ask. Write. Act.",
-                subtitle: "One private memory, organized around what you want to do next."
-            )
-            .onboardingReveal(0)
-
-            VStack(spacing: 10) {
-                TimelineCard(
-                    number: "1",
-                    systemImage: "waveform.circle",
-                    tint: Brand.teal,
-                    title: "Remember",
-                    subtitle: "Meetings and the day context you choose, captured and organized locally."
-                )
-                .onboardingReveal(1)
-
-                TimelineCard(
-                    number: "2",
-                    systemImage: "sparkle.magnifyingglass",
-                    tint: Brand.tealBright,
-                    title: "Ask",
-                    subtitle: "Search by words or meaning, ask your library, and open the evidence behind an answer."
-                )
-                .onboardingReveal(2)
-
-                TimelineCard(
-                    number: "3",
-                    systemImage: "keyboard",
-                    tint: Brand.teal,
-                    title: "Write",
-                    subtitle: "Dictation and autocomplete bring local assistance anywhere you type."
-                )
-                .onboardingReveal(3)
-
-                TimelineCard(
-                    number: "4",
-                    systemImage: "arrow.up.forward.app",
-                    tint: Brand.amber,
-                    title: "Act",
-                    subtitle: "Turn remembered work into inspectable drafts, exports, routines, and approved agent sessions."
-                )
-                .onboardingReveal(4)
-            }
-        }
-        .pagePadding()
-    }
-
-    var privacyPage: some View {
-        VStack(spacing: WorkspaceMetric.pagePadding) {
-            OnboardingStepHeader(
-                systemImage: "lock.shield.fill",
-                title: "Private by default",
-                subtitle: "The setup asks for macOS access only where the local workflow needs it."
-            )
-            .onboardingReveal(0)
-
-            VStack(spacing: 10) {
-                PrivacyCard(
-                    systemImage: "externaldrive.fill",
-                    tint: Brand.teal,
-                    title: "Stored locally",
-                    subtitle: "Audio, transcripts, summaries, search indexes, and screenshots live under LokalBot's local app support folder."
-                )
-                .onboardingReveal(1)
-
-                PrivacyCard(
-                    systemImage: "record.circle",
-                    tint: Brand.amber,
-                    title: "Record with consent",
-                    subtitle: "Detected meetings record automatically by default — switch to ask-first or manual anytime in Settings → Recording. Tell everyone when you record and follow the consent rules that apply to your meeting and location."
-                )
-                .onboardingReveal(2)
-
-                PrivacyCard(
-                    systemImage: "network.slash",
-                    tint: Brand.teal,
-                    title: "No account required",
-                    subtitle: "Downloads and update checks use the network. Remote model servers are blocked until you explicitly approve sending context to their host."
-                )
-                .onboardingReveal(3)
-
-                PrivacyCard(
-                    systemImage: "menubar.rectangle",
-                    tint: Brand.amber,
-                    title: "Runs from the menu bar",
-                    subtitle: "After setup, LokalBot can stay out of the way and keep working from the menu bar."
-                )
-                .onboardingReveal(4)
-            }
-        }
-        .pagePadding()
-    }
-
-    var dayMemoryPage: some View {
-        VStack(spacing: WorkspaceMetric.sectionGap) {
-            OnboardingStepHeader(
-                systemImage: "calendar.day.timeline.left",
-                tint: Brand.teal,
-                title: "Remember your day?",
-                subtitle: "The Timeline starts with app activity, visible text, and encrypted visual context selected. Turn off any layer you do not want before granting its macOS permission."
-            )
-            .onboardingReveal(0)
-
-            VStack(spacing: 10) {
-                OnboardingOptInCard(
-                    systemImage: "macwindow.on.rectangle",
-                    tint: Brand.teal,
-                    title: "Track app & window activity",
-                    subtitle: "Logs the frontmost app and window title to build the day timeline. Excluded apps (password managers preseeded) show only as \u{201C}Private\u{201D}.",
-                    isOn: Binding(
-                        get: { app.settings.trackingEnabled },
-                        set: { on in
-                            app.settings.trackingEnabled = on
-                            if !on {
-                                app.settings.screenContextCaptureMode = .activityOnly
-                                app.settings.screenshotsEnabled = false
-                            }
-                        }
-                    )
-                )
-                .onboardingReveal(1)
-
-                OnboardingOptInCard(
-                    systemImage: "text.viewfinder",
-                    tint: Brand.teal,
-                    title: "Capture visible text context",
-                    subtitle: "Reads visible interface text through Accessibility after meaningful changes. No screenshot pixels are stored; local OCR is not needed when this text is rich enough.",
-                    isOn: Binding(
-                        get: { app.settings.effectiveScreenContextCaptureMode.capturesText },
-                        set: { on in
-                            app.settings.screenContextCaptureMode = on
-                                ? .accessibleText : .activityOnly
-                            app.settings.screenshotsEnabled = false
-                            if on { app.settings.trackingEnabled = true }
-                        }
-                    )
-                )
-                .onboardingReveal(2)
-
-                OnboardingOptInCard(
-                    systemImage: "camera.viewfinder",
-                    tint: Brand.amber,
-                    title: "Add encrypted visual context",
-                    subtitle: "Pairs visible text with an encrypted screen capture and uses local OCR only for gaps. Pixels delete after \(app.settings.retentionDays) days by default and need Screen Recording permission.",
-                    isOn: Binding(
-                        get: { app.settings.effectiveScreenContextCaptureMode.capturesPixels },
-                        set: { on in
-                            app.settings.screenshotsEnabled = on
-                            app.settings.screenContextCaptureMode = on
-                                ? .visualContext : .accessibleText
-                            if on { app.settings.trackingEnabled = true }
-                        }
-                    )
-                )
-                .onboardingReveal(3)
-            }
-
-            Text("You can change both anytime in Settings → Day tracking. Everything stays in LokalBot's local library folder.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .onboardingReveal(4)
-        }
-        .pagePadding()
-    }
-
-    var modelsPage: some View {
-        let snapshot = app.modelRoles.snapshot
-        return VStack(spacing: WorkspaceMetric.sectionGap) {
-            OnboardingStepHeader(
-                systemImage: "square.stack.3d.up",
-                title: "Prepare on-device models",
-                subtitle: "Meetings transcribe and summarize with local models. Download them now so your first meeting is processed the moment it ends — recordings made before then wait safely until models arrive."
-            )
-            .onboardingReveal(0)
-
-            VStack(spacing: 10) {
-                OnboardingModelRow(
-                    systemImage: "waveform",
-                    role: "Transcribe",
-                    model: app.settings.transcriptionModelDisplayName,
-                    ready: snapshot[.transcribe].isReady)
-                .onboardingReveal(1)
-
-                OnboardingModelRow(
-                    systemImage: "brain",
-                    role: "Think",
-                    model: onboardingThinkModelName,
-                    ready: snapshot[.think].isReady)
-                .onboardingReveal(2)
-
-                OnboardingModelRow(
-                    systemImage: "text.cursor",
-                    role: "Autocomplete",
-                    model: onboardingAutocompleteModelName,
-                    ready: snapshot[.autocomplete].isReady)
-                .onboardingReveal(3)
-            }
-
-            modelDownloadAction(snapshot)
-                .onboardingReveal(4)
-
-            Text("You can skip this — everything is also available later in Settings → Models. Models download from Hugging Face; your content never leaves this Mac.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .onboardingReveal(5)
-        }
-        .pagePadding()
-    }
-
-    @ViewBuilder
-    private func modelDownloadAction(_ snapshot: ModelRolesSnapshot) -> some View {
-        switch snapshot.primaryActionStatus {
-        case .ready:
-            HStack(spacing: 7) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                Text("Ready on this Mac")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-            }
-        case .downloading, .preparing:
-            LoadingStateLabel(
-                snapshot.primaryActionStatus.label,
-                font: .system(size: 13, weight: .medium, design: .rounded))
-        case .needsAttention(let error):
-            VStack(spacing: 8) {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(Brand.error)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Retry model downloads") {
-                    app.modelRoles.startCoreModelDownloads()
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 9) {
+                if mode == .welcome {
+                    Text("Step \(step.rawValue + 1) of 4")
+                        .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+                    ProgressView(value: Double(step.rawValue + 1), total: 4)
+                        .accessibilityIdentifier("onboarding.progress")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Brand.teal)
-                .controlSize(.large)
-                .accessibilityIdentifier("onboarding.downloadModels")
-            }
-        case .unavailable:
-            Button(modelDownloadButtonTitle(snapshot)) {
-                app.modelRoles.startCoreModelDownloads()
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(Brand.teal)
-            .controlSize(.large)
-            .accessibilityIdentifier("onboarding.downloadModels")
-        }
-    }
-
-    private var onboardingThinkModelName: String {
-        app.settings.thinkModelDisplayName
-    }
-
-    private var onboardingAutocompleteModelName: String {
-        ModelCatalog.entry(
-            id: app.settings.cotypingBuiltInModelID,
-            custom: app.settings.customBuiltInModels)?.displayName
-            ?? "LFM2.5 1.2B Instruct"
-    }
-
-    private func modelDownloadButtonTitle(_ snapshot: ModelRolesSnapshot) -> String {
-        let ggufBytes = ModelReadinessSnapshot.missingCoreModelBytes(
-            app.settings, storage: app.storage)
-        guard ggufBytes > 0 else { return "Download models" }
-        let size = ByteCountFormatter.string(fromByteCount: ggufBytes, countStyle: .file)
-        // The Transcribe model downloads through its engine and has no exact
-        // byte count here — say so instead of pretending the total is exact.
-        return snapshot[.transcribe].isReady
-            ? "Download models (\(size))"
-            : "Download models (\(size) + speech model)"
-    }
-
-    var permissionPage: some View {
-        VStack(spacing: WorkspaceMetric.sectionGap) {
-            OnboardingStepHeader(
-                systemImage: missingRequiredCount == 0 ? "checkmark.shield.fill" : "lock.shield.fill",
-                tint: missingRequiredCount == 0 ? .green : Brand.teal,
-                title: isWelcomeMode ? "Grant LokalBot access" : "Permissions",
-                subtitle: permissionSubtitle
-            )
-            .onboardingReveal(0)
-
-            VStack(spacing: 10) {
-                ForEach(Array(requiredPermissions.enumerated()), id: \.element) { index, permission in
-                    PermissionSetupCard(
-                        permission: permission,
-                        granted: permissions.granted[permission] ?? permission.isGranted
-                    )
-                    .onboardingReveal(1 + index)
-                }
-
-                ForEach(Array(optionalPermissions.enumerated()), id: \.element) { index, permission in
-                    PermissionSetupCard(
-                        permission: permission,
-                        granted: permissions.granted[permission] ?? permission.isGranted,
-                        isOptional: true
-                    )
-                    .onboardingReveal(1 + requiredPermissions.count + index)
-                }
-            }
-
-            permissionTrustNote
-                .onboardingReveal(2 + requiredPermissions.count + optionalPermissions.count)
-
-            relaunchCard
-                .onboardingReveal(3 + requiredPermissions.count + optionalPermissions.count)
-        }
-        .pagePadding(top: isWelcomeMode ? 18 : 28, bottom: isWelcomeMode ? 14 : 28)
-    }
-
-    var permissionSubtitle: String {
-        if missingRequiredCount == 0 {
-            return "The microphone is granted — you're ready. Optional grants control day-memory detail and can be skipped."
-        }
-        return "Microphone uses the macOS prompt. For list-based permissions, LokalBot opens the right pane and shows exactly where to drag the app."
-    }
-}
-
-// MARK: - Footer
-
-private extension OnboardingView {
-    /// The wizard counts as seen only when the user explicitly finishes or
-    /// defers it — quitting mid-wizard re-opens onboarding next launch, so the
-    /// privacy and day-memory education can't be lost to an accidental close.
-    func markOnboardingSeen() {
-        UserDefaults.standard.set(true, forKey: AppState.onboardingShownKey)
-    }
-
-    var footer: some View {
-        HStack(spacing: 10) {
-            if let previous = step.previous {
-                Button("Back") { go(to: previous) }
-                    .controlSize(.large)
-            }
-
-            Spacer(minLength: 0)
-
-            if step == .permissions {
-                Button("I'll do this later") {
-                    markOnboardingSeen()
-                    dismiss()
-                }
-                .controlSize(.large)
-
-                Button("Start using LokalBot") {
-                    markOnboardingSeen()
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Brand.teal)
-                .controlSize(.large)
-                .disabled(!permissions.allGranted)
-                .help(permissions.allGranted ? "" : "Grant microphone access to finish setup.")
-            } else if let next = step.next {
-                Button(step == .models ? "Continue to permissions" : "Continue") {
-                    go(to: next)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Brand.teal)
-                .controlSize(.large)
-                .keyboardShortcut(.return, modifiers: [])
-            }
-        }
-        .padding(.horizontal, 36)
-        .padding(.top, 10)
-        .padding(.bottom, 26)
-    }
-
-    var appIcon: some View {
-        Image(nsImage: NSApp.applicationIconImage ?? NSImage())
-            .resizable()
-            .scaledToFit()
-            .frame(width: 84, height: 84)
-            .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
-            .shadow(color: Brand.teal.opacity(0.45), radius: 22, y: 8)
-    }
-
-    var permissionTrustNote: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "lock.fill")
-                .foregroundStyle(Brand.teal)
-            Text("Permission access stays local unless you explicitly approve a remote model.")
-        }
-        .font(.system(size: 11, weight: .medium, design: .rounded))
-        .foregroundStyle(.secondary)
-        .multilineTextAlignment(.center)
-    }
-
-    var relaunchCard: some View {
-        HStack(spacing: 12) {
-            IconTile(systemImage: "arrow.triangle.2.circlepath", tint: Brand.amber, size: 34)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Relaunch after granting access")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                Text("Some macOS permissions only take effect after the app starts again.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 0)
-
-            Button("Relaunch") { PermissionManager.relaunch() }
-                .controlSize(.regular)
-        }
-        .padding(16)
-        .onboardingCard(cornerRadius: 14)
-    }
-}
-
-// MARK: - Hero Demo
-
-private struct LokalBotHeroDemo: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    @State private var phase = 0
-
-    private let phases = [
-        ("Remember", "Google Meet · recording", "Mic + system audio, organized locally"),
-        ("Ask", "What did we promise Alex?", "Evidence from your private work memory"),
-        ("Write", "Following up on our decision…", "Dictation and autocomplete, on-device"),
-        ("Act", "Weekly work log ready", "A local routine drafted it for review")
-    ]
-
-    var body: some View {
-        HeroPanel(radius: 14) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 6) {
-                    Circle().fill(Color(red: 1.0, green: 0.37, blue: 0.34))
-                    Circle().fill(Color(red: 1.0, green: 0.74, blue: 0.18))
-                    Circle().fill(Color(red: 0.16, green: 0.78, blue: 0.25))
-                }
-                .frame(height: 7)
-                .opacity(0.85)
-
-                HStack(alignment: .center, spacing: 14) {
-                    IconTile(
-                        systemImage: phaseIcon,
-                        tint: phaseTint,
-                        size: 42
-                    )
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(phases[phase].0)
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.65))
-                        Text(phases[phase].1)
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
-                        Text(phases[phase].2)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.white.opacity(0.65))
-                            .lineLimit(1)
+                Text(step.title).font(WorkspaceTypography.display)
+            }.padding(24)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    switch step {
+                    case .capture: captureChoices
+                    case .permissions: permissionChoices
+                    case .models: modelChoices
+                    case .review: review
                     }
-
-                    Spacer(minLength: 0)
+                }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Divider()
+            HStack {
+                if mode == .welcome, step != .capture {
+                    Button("Back") { step = Step(rawValue: step.rawValue - 1) ?? .capture }
                 }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .fill(Color.white.opacity(0.08))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .strokeBorder(Brand.teal.opacity(0.24), lineWidth: 1)
-                )
-                .animation(.spring(response: 0.4, dampingFraction: 0.82), value: phase)
-            }
-        }
-        .task(id: reduceMotion) {
-            guard !reduceMotion else {
-                phase = 1
-                return
-            }
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_550_000_000)
-                if Task.isCancelled { return }
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
-                    phase = (phase + 1) % phases.count
-                }
-            }
-        }
-        .accessibilityHidden(true)
-    }
-
-    private var phaseIcon: String {
-        switch phase {
-        case 0: "waveform.circle"
-        case 1: "sparkle.magnifyingglass"
-        case 2: "keyboard"
-        default: "arrow.up.forward.app"
-        }
-    }
-
-    private var phaseTint: Color {
-        phase == 3 ? Brand.amber : Brand.teal
-    }
-}
-
-// MARK: - Cards
-
-private struct PermissionSetupCard: View {
-    let permission: AppPermission
-    let granted: Bool
-    var isOptional = false
-    @State private var actionButtonFrame = CGRect.zero
-
-    private var tileTint: Color {
-        if granted || isOptional { return permission.onboardingTint }
-        return .orange
-    }
-
-    var body: some View {
-        let needsRecovery = permission.requiresSettingsRecovery
-
-        HStack(spacing: 14) {
-            IconTile(systemImage: permission.systemImageName, tint: tileTint)
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(permission.title)
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-
-                    if isOptional {
-                        Text("Optional")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(.quaternary, in: Capsule())
-                    }
-                }
-
-                Text(needsRecovery
-                     ? "Access was denied. Re-enable LokalBot in System Settings to continue."
-                     : permission.onboardingSubtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(needsRecovery ? .orange : .secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 0)
-
-            if granted {
-                PermissionDoneBadge()
-                    .transition(.scale(scale: 0.6).combined(with: .opacity))
-            } else {
-                if isOptional {
-                    Button(needsRecovery ? "Open System Settings" : "Allow") {
-                        requestAccess()
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(permission.onboardingTint)
-                    .controlSize(.regular)
-                    .background(PermissionScreenFrameReader(frameInScreen: $actionButtonFrame))
-                    .help(permission.guidanceHint)
+                Spacer()
+                if mode == .permissions {
+                    Button("Done") { dismiss() }.buttonStyle(.borderedProminent)
+                } else if step == .review {
+                    Button("Apply choices and start") {
+                        app.settings = draft.applying(to: app.settings)
+                        UserDefaults.standard.set(true, forKey: AppState.onboardingShownKey)
+                        dismiss()
+                    }.buttonStyle(.borderedProminent).accessibilityIdentifier("onboarding.finish")
                 } else {
-                    Button(needsRecovery ? "Open System Settings" : "Allow") {
-                        requestAccess()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.orange)
-                    .controlSize(.regular)
-                    .background(PermissionScreenFrameReader(frameInScreen: $actionButtonFrame))
-                    .help(permission.guidanceHint)
+                    Button(step == .permissions ? "Continue with current access" : "Continue") {
+                        step = Step(rawValue: step.rawValue + 1) ?? .review
+                    }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
                 }
-            }
+            }.padding(24)
         }
-        .padding(WorkspaceMetric.panelPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .onboardingCard()
-        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: granted)
-    }
-
-    private func requestAccess() {
-        PermissionGuidanceController.shared.requestAccess(
-            for: permission,
-            sourceFrameInScreen: actionButtonFrame)
-    }
-}
-
-private struct PermissionDoneBadge: View {
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 16, weight: .semibold))
-            Text("Done")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .frame(width: 650, height: 640)
+        .workspaceSurface()
+        .onAppear {
+            draft = CaptureSetupDraft(settings: app.settings)
+            permissions.refresh()
+            initialGrants = permissions.granted
+            permissions.startPolling()
+            if mode == .permissions { step = .permissions }
         }
-        .foregroundStyle(.green)
+        .onDisappear { permissions.stopPolling(); PermissionGuidanceController.shared.dismiss() }
     }
-}
 
-private struct TimelineCard: View {
-    let number: String
-    let systemImage: String
-    let tint: Color
-    let title: String
-    let subtitle: String
+    private var captureChoices: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Keep meeting evidence and a useful memory of your day. You can change each choice later in Settings.")
+                .font(WorkspaceTypography.body)
+            Picker("Detected meetings", selection: $draft.meetingMode) {
+                ForEach(AppSettings.AutoRecordMode.allCases) { Text($0.rawValue).tag($0) }
+            }.accessibilityIdentifier("onboarding.meetingMode")
+            Text("Ask via notification waits for you to start recording. Manual mode keeps Record now available.")
+                .workspaceTextRole(.supporting)
+            Divider()
+            Toggle("Remember app and window activity", isOn: $draft.dayMemory)
+            Picker("Day-memory detail", selection: $draft.contextMode) {
+                ForEach(AppSettings.ScreenContextCaptureMode.allCases) { Text($0.rawValue).tag($0) }
+            }.disabled(!draft.dayMemory)
+            Text(draft.contextMode.detail).workspaceTextRole(.trust)
+            Text("Text and images build on app activity. Images are encrypted on disk; captured text remains searchable under your retention policy.")
+                .workspaceTextRole(.supporting)
+            Label("These choices are applied on the final Review step.", systemImage: "checklist")
+                .workspaceTextRole(.supporting)
+        }
+    }
 
-    var body: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                IconTile(systemImage: systemImage, tint: tint, size: 42)
-                Text(number)
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .padding(5)
+    private var permissionChoices: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Grant only what you need now. You can finish setup with missing permissions and enable the corresponding feature later.")
+                .workspaceTextRole(.trust)
+            ForEach(relevantPermissions, id: \.self) { permission in
+                PermissionRow(permission: permission)
             }
+            if newlyGrantedRestartPermission {
+                Text("A newly granted permission may require a relaunch. Finish setup first; relaunch from Settings if the feature remains unavailable.")
+                    .workspaceTextRole(.supporting)
+            }
+            Text("Autocomplete and global dictation shortcuts can be enabled later from Write.")
+                .workspaceTextRole(.supporting)
+        }
+    }
 
+    private var modelChoices: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Meeting processing needs speech recognition and a Main LLM. Downloads can be deferred; captured meetings wait for their selected models.")
+                .workspaceTextRole(.trust)
+            modelRow("Speech recognition", model: app.settings.transcriptionModelDisplayName, role: .transcribe)
+            modelRow("Summaries and Ask", model: app.settings.thinkModelDisplayName, role: .think)
+            InferenceDisclosure(settings: app.settings,
+                                localText: "The configured Main LLM processes selected context on this Mac.",
+                                remoteText: "Selected transcript and work context is sent to the approved model server.")
+            Toggle("Also prepare Autocomplete (optional)", isOn: $includeAutocomplete)
+                .accessibilityLabel("Also prepare Autocomplete (optional)")
+            if includeAutocomplete { modelRow("Autocomplete", model: app.settings.cotypingBuiltInModelID, role: .autocomplete) }
+            Button("Prepare selected models") {
+                app.modelRoles.startCoreModelDownloads(includeAutocomplete: includeAutocomplete)
+            }.buttonStyle(.bordered).accessibilityIdentifier("onboarding.downloadModels")
+            Text("Downloads use the model provider. They do not send your meeting content. Existing downloaded models are kept.")
+                .workspaceTextRole(.supporting)
+        }
+    }
+
+    private func modelRow(_ title: String, model: String, role: ModelRole) -> some View {
+        HStack {
             VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text(title).font(WorkspaceTypography.bodyEmphasis)
+                Text(model).font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
             }
-
-            Spacer(minLength: 0)
+            Spacer()
+            Text(app.modelRoles.snapshot[role].label).font(WorkspaceTypography.metadataEmphasis)
         }
-        .padding(WorkspaceMetric.panelPadding)
-        .onboardingCard()
     }
-}
 
-private struct OnboardingOptInCard: View {
-    let systemImage: String
-    let tint: Color
-    let title: String
-    let subtitle: String
-    @Binding var isOn: Bool
-
-    var body: some View {
-        HStack(spacing: 14) {
-            IconTile(systemImage: systemImage, tint: tint, size: 40)
-            VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+    private var review: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            LabeledContent("Meeting recording", value: draft.meetingMode.rawValue)
+            LabeledContent("Day memory", value: draft.dayMemory ? draft.contextMode.rawValue : "Off")
+            LabeledContent("Main LLM", value: InferencePresentation(settings: app.settings).label)
+            LabeledContent("Meeting models", value: app.modelRoles.snapshot.meetingReady ? "Ready to use · not a test result" : "Preparation can continue later")
+            let missing = relevantPermissions.filter { permissions.granted[$0] != true }
+            if !missing.isEmpty {
+                Text("Still unavailable: " + missing.map(\.title).joined(separator: ", ") + ". Features needing this access stay unavailable until you grant it.")
+                    .workspaceTextRole(.supporting)
             }
-            Spacer(minLength: 0)
-            Toggle(title, isOn: $isOn)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .accessibilityIdentifier("onboarding.optIn.\(title)")
-        }
-        .padding(WorkspaceMetric.panelPadding)
-        .onboardingCard()
-    }
-}
-
-private struct PrivacyCard: View {
-    let systemImage: String
-    let tint: Color
-    let title: String
-    let subtitle: String
-
-    var body: some View {
-        HStack(spacing: 14) {
-            IconTile(systemImage: systemImage, tint: tint, size: 40)
-            VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(WorkspaceMetric.panelPadding)
-        .onboardingCard()
-    }
-}
-
-private struct OnboardingModelRow: View {
-    let systemImage: String
-    let role: String
-    let model: String
-    let ready: Bool
-
-    var body: some View {
-        HStack(spacing: 14) {
-            IconTile(systemImage: systemImage, tint: Brand.teal, size: 40)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(role)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                Text(model)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(ready ? Color.green : Color.orange)
-                    .frame(width: 7, height: 7)
-                Text(ready ? "Ready" : "Download needed")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(role): \(ready ? "ready" : "download needed")")
-        }
-        .padding(WorkspaceMetric.panelPadding)
-        .onboardingCard()
-    }
-}
-
-private struct OnboardingFeatureChip: View {
-    let systemImage: String
-    let label: String
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: systemImage)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Brand.teal)
-
-            Text(label)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(Capsule().fill(.quaternary.opacity(0.5)))
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
-    }
-}
-
-// MARK: - Shared Onboarding Chrome
-
-private struct OnboardingBackdrop: View {
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        ZStack {
-            Rectangle().fill(.ultraThinMaterial)
-
-            RadialGradient(
-                colors: [Brand.tealBright.opacity(colorScheme == .dark ? 0.26 : 0.14), .clear],
-                center: UnitPoint(x: 0.12, y: -0.08),
-                startRadius: 8,
-                endRadius: 460
-            )
-
-            RadialGradient(
-                colors: [Brand.teal.opacity(colorScheme == .dark ? 0.16 : 0.09), .clear],
-                center: UnitPoint(x: 0.96, y: 0.03),
-                startRadius: 8,
-                endRadius: 420
-            )
-        }
-        .ignoresSafeArea()
-    }
-}
-
-private struct OnboardingStepHeader: View {
-    var systemImage: String?
-    var tint: Color = Brand.teal
-    let title: String
-    let subtitle: String
-
-    var body: some View {
-        VStack(spacing: 10) {
-            if let systemImage {
-                IconTile(systemImage: systemImage, tint: tint, size: 44)
-                    .padding(.bottom, 4)
-            }
-
-            Text(title)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
-                .multilineTextAlignment(.center)
-
-            Text(subtitle)
-                .font(.system(size: 13, design: .rounded))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
-
-private struct OnboardingProgressPips: View {
-    let current: Int
-    let total: Int
-
-    var body: some View {
-        HStack(spacing: 7) {
-            ForEach(1...total, id: \.self) { index in
-                Capsule()
-                    .fill(fillStyle(for: index))
-                    .frame(width: index == current ? 26 : 7, height: 7)
-            }
-        }
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: current)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Step \(current) of \(total)")
-        .accessibilityIdentifier("onboarding.progress")
-    }
-
-    private func fillStyle(for index: Int) -> AnyShapeStyle {
-        if index == current {
-            return AnyShapeStyle(
-                LinearGradient(
-                    colors: [Brand.tealBright, Brand.teal],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-        }
-        if index < current {
-            return AnyShapeStyle(Brand.teal.opacity(0.55))
-        }
-        return AnyShapeStyle(Color.secondary.opacity(0.22))
-    }
-}
-
-private struct OnboardingCardChrome: ViewModifier {
-    var cornerRadius: CGFloat = 16
-
-    func body(content: Content) -> some View {
-        content
-            .background(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(.regularMaterial)
-                    .shadow(color: .black.opacity(0.07), radius: 3, y: 1)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5)
-            )
-    }
-}
-
-private struct OnboardingReveal: ViewModifier {
-    let index: Int
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var revealed = false
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(revealed ? 1 : 0)
-            .offset(y: revealed ? 0 : 14)
-            .onAppear {
-                guard !reduceMotion else {
-                    revealed = true
-                    return
-                }
-                withAnimation(.spring(response: 0.55, dampingFraction: 0.85).delay(Double(index) * 0.06)) {
-                    revealed = true
-                }
-            }
-    }
-}
-
-private extension View {
-    func onboardingCard(cornerRadius: CGFloat = 16) -> some View {
-        modifier(OnboardingCardChrome(cornerRadius: cornerRadius))
-    }
-
-    func onboardingReveal(_ index: Int) -> some View {
-        modifier(OnboardingReveal(index: index))
-    }
-
-    func pagePadding(top: CGFloat = 24, bottom: CGFloat = 18) -> some View {
-        padding(.horizontal, 36)
-            .padding(.top, top)
-            .padding(.bottom, bottom)
-    }
-}
-
-private extension AppPermission {
-    var onboardingTint: Color {
-        switch self {
-        case .microphone:
-            Brand.teal
-        case .screenRecording:
-            Brand.tealBright
-        case .accessibility:
-            Brand.teal
-        case .inputMonitoring:
-            Brand.amber
+            Text("You can browse, search and edit your existing local library immediately. Setup does not delete any content or change existing remote-server approvals.")
+                .workspaceTextRole(.trust)
         }
     }
 }

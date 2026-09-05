@@ -8,7 +8,6 @@ struct NeedsAttentionSection: View {
     let threads: [ActionThread]
     var title = "Needs attention"
     var limit = 4
-    @Binding var showingReview: Bool
 
     /// Nothing to act on means no card at all — an empty "Needs attention"
     /// section is dead weight on a glanceable page (the Timeline test pins the
@@ -22,17 +21,11 @@ struct NeedsAttentionSection: View {
                         if thread.id != threads.prefix(limit).last?.id { Divider() }
                     }
                 }
-                Button(
-                    "Review \(threads.count) action thread\(threads.count == 1 ? "" : "s")"
-                ) {
-                    showingReview = true
+                Button("Review all actions") {
+                    app.openActions()
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("outcomes.review")
-            }
-            .sheet(isPresented: $showingReview) {
-                ActionReviewView()
-                    .environmentObject(app)
             }
         }
     }
@@ -96,8 +89,8 @@ struct ActionThreadRow: View {
                         .font(WorkspaceTypography.metadata)
                         .foregroundStyle(Brand.teal)
                     }
-                    if let due = thread.due {
-                        Text("Due \(due)")
+                    if let due = thread.due, let spokenAt = thread.dueSourceMeetingDate {
+                        Text(ActionDuePresentation.label(due, spokenAt: spokenAt))
                             .font(WorkspaceTypography.metadata)
                             .foregroundStyle(.secondary)
                     }
@@ -180,8 +173,11 @@ struct ActionThreadRow: View {
     }
 
     private func apply(_ status: OutcomeStatus) {
-        if !app.outcomeIndex.setStatus(status, thread: thread) {
-            app.lastError = app.outcomeIndex.lastError
+        if app.outcomeIndex.setStatus(status, thread: thread) {
+            app.lastError = nil
+        } else {
+            app.lastError = "Could not update this action thread. "
+                + (app.outcomeIndex.lastError ?? "The action is no longer available.")
         }
     }
 }
@@ -282,49 +278,78 @@ private struct ActionThreadSourcesView: View {
     }
 }
 
-struct ActionReviewView: View {
+struct OutcomeOverviewActionRow: View {
     @EnvironmentObject var app: AppState
-    @Environment(\.dismiss) private var dismiss
-    @State private var status: OutcomeStatus = .open
-
-    private var visible: [ActionThread] {
-        app.outcomeIndex.userActionThreads.filter { $0.status == status }
-    }
-
-    private var visibleIsEmpty: Bool {
-        visible.isEmpty
-    }
+    let reference: OutcomeActionReference
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading) {
-                    Text("Review action items").font(WorkspaceTypography.pageTitle)
-                    Text("Status is stored locally and never changes the extracted source.")
-                        .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: 10) {
+            Button {
+                set(reference.status == .done ? .open : .done)
+            } label: {
+                Image(systemName: reference.status == .done
+                      ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(reference.status == .done ? Brand.teal : .secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("outcome.action.toggle.\(reference.id)")
+            .accessibilityLabel(reference.status == .done ? "Reopen action" : "Complete action")
+            VStack(alignment: .leading, spacing: 4) {
+                Text(reference.text)
+                    .font(WorkspaceTypography.bodyEmphasis)
+                    .strikethrough(reference.status == .done)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 6) {
+                    Button(reference.meetingTitle) { app.openMeeting(reference.meetingID) }
+                        .buttonStyle(.plain)
+                        .font(WorkspaceTypography.metadata)
+                        .foregroundStyle(Brand.teal)
+                    if let due = reference.due {
+                        Text(ActionDuePresentation.label(due, spokenAt: reference.meetingStartedAt))
+                            .font(WorkspaceTypography.metadata)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let citation = reference.action.citations.first {
+                        EvidencePill(citation: citation) {
+                            app.openMeeting(reference.meetingID, seek: citation.start)
+                        }
+                    }
                 }
-                Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
-            .padding(20)
-            Divider()
-            Picker("Status", selection: $status) {
-                ForEach(OutcomeStatus.allCases, id: \.rawValue) { item in
-                    Text(item.label).tag(item)
+            Menu {
+                ForEach(OutcomeStatus.allCases, id: \.rawValue) { status in
+                    Button(status.label) { set(status) }
                 }
-            }
-            .pickerStyle(.segmented)
-            .padding()
-            List(visible) { thread in
-                ActionThreadRow(thread: thread)
-            }
-            .overlay {
-                if visibleIsEmpty {
-                    ContentUnavailableView("No \(status.label.lowercased()) items",
-                                           systemImage: "checklist")
+                Divider()
+                Button("Open meeting") { app.openMeeting(reference.meetingID) }
+                Button("Open in Agent") {
+                    app.openAgent(.init(
+                        title: reference.text,
+                        prompt: "Help me complete this action from \(reference.meetingTitle): \(reference.text)",
+                        meetingID: reference.meetingID,
+                        actionID: reference.action.id))
                 }
+            } label: {
+                Image(systemName: "ellipsis")
             }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .accessibilityIdentifier("outcome.action.status.\(reference.id)")
         }
-        .frame(minWidth: 720, minHeight: 560)
+        .padding(.vertical, WorkspaceMetric.rowVerticalPadding)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("outcome.action.\(reference.id)")
+    }
+
+    private func set(_ status: OutcomeStatus) {
+        if app.outcomeIndex.setStatus(
+            status,
+            actionID: reference.action.id,
+            meetingID: reference.meetingID) {
+            app.lastError = nil
+        } else {
+            app.lastError = "Could not update this action. "
+                + (app.outcomeIndex.lastError ?? "The action is no longer available.")
+        }
     }
 }

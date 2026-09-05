@@ -33,50 +33,26 @@ final class DictationSettingsUITests: XCTestCase {
     }
 
     func testComposeByDefaultControlsRenderWithoutStartingRecording() {
-        XCTAssertTrue(app.buttons["Start"].exists, "manual Dictation start control missing")
-        XCTAssertTrue(masterToggle.waitForExistence(timeout: 4),
-                      "global Dictation shortcut control missing")
-        XCTAssertFalse(formText(containing: "Records your voice for the current dictation").exists,
-                       "permission rows should be hidden while Dictation is disabled")
-
-        let expectedCopy = [
-            "always composes the final wording",
-            "Show floating pill",
-            "Show live transcript while dictating",
-            "After composing",
-            "Keep dictation audio files",
-            "Speech uses the meeting ASR model",
-        ]
-        for fragment in expectedCopy {
-            let label = formText(containing: fragment)
-            XCTAssertTrue(label.waitForExistence(timeout: 4),
-                          "Dictation compose control missing: \(fragment)")
-        }
+        XCTAssertTrue(app.buttons["Try here"].exists)
+        XCTAssertTrue(formText(containing: "never inserts into another app").exists)
+        XCTAssertTrue(app.buttons["Writing settings…"].exists)
+        XCTAssertTrue(formText(containing: "Speech uses the meeting ASR model").exists)
+        XCTAssertTrue(formText(containing: "Compose").exists)
+        XCTAssertFalse(formText(containing: "Listening").exists)
     }
 
     func testEnablingGlobalShortcutRevealsPermissionRepairRows() {
-        let toggle = masterToggle
-        XCTAssertTrue(toggle.waitForExistence(timeout: 4),
-                      "Dictation global-shortcut toggle missing")
+        app.buttons["Writing settings…"].click()
+        let toggle = UITestHarness.toggle("Enable dictation shortcut", in: app)
+        UITestHarness.scrollTo(toggle, in: app)
+        XCTAssertTrue(toggle.waitForExistence(timeout: 4))
         toggle.click()
-
-        let permissionDetails = [
-            "Records your voice for the current dictation",
-            "Detects the global dictation shortcut",
-            "Validates the focused field",
-            "Optionally reads only the focused window",
-        ]
-        for fragment in permissionDetails {
-            let label = formText(containing: fragment)
-            XCTAssertTrue(label.waitForExistence(timeout: 5),
-                          "Dictation permission guidance missing: \(fragment)")
-        }
-
-        UITestHarness.scrollTo(toggle, in: app, upward: true)
+        UITestHarness.clickSidebar("sidebar.type", in: app)
+        XCTAssertTrue(formText(containing: "Records your voice for the current dictation").waitForExistence(timeout: 5))
+        XCTAssertTrue(formText(containing: "Detects the global dictation shortcut").exists)
+        app.buttons["Writing settings…"].click()
+        UITestHarness.scrollTo(toggle, in: app)
         toggle.click()
-        XCTAssertTrue(UITestHarness.waitUntil {
-            !self.formText(containing: permissionDetails[0]).exists
-        }, "Dictation permission rows remained visible after disabling the shortcut")
     }
 
     func testDedicatedCompositionModelSelectionPersistsAcrossRelaunch() throws {

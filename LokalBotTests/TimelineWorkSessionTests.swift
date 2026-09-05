@@ -64,7 +64,7 @@ final class TimelineWorkSessionTests: XCTestCase {
         ])
 
         XCTAssertEqual(sessions.first?.primaryApp, "Xcode")
-        XCTAssertEqual(sessions.first?.title, "CaptureView.swift")
+        XCTAssertEqual(sessions.first?.title, "Xcode and Safari")
         XCTAssertEqual(sessions.first?.notableTitles.first, "CaptureView.swift")
     }
 

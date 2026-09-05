@@ -8,7 +8,9 @@ import SwiftUI
 struct MeetingListView: View {
     @EnvironmentObject var app: AppState
     @Binding var pendingDelete: Set<Meeting.ID>?
-    @State private var query = ""
+    @SceneStorage("meeting.library.query") private var query = ""
+    @State private var contentMatches: Set<UUID> = []
+    @State private var searchTask: Task<Void, Never>?
     @State private var filter: StatusFilter = .all
 
     private enum StatusFilter: String, CaseIterable, Identifiable {
@@ -26,6 +28,10 @@ struct MeetingListView: View {
                     .textFieldStyle(.roundedBorder)
                     .font(WorkspaceTypography.control)
                     .accessibilityIdentifier("meeting.search")
+                if app.evidenceMeetingID != nil, !query.isEmpty || filter != .all {
+                    Text("The opened source remains visible outside these filters.")
+                        .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+                }
                 Picker("Status", selection: $filter) {
                     ForEach(StatusFilter.allCases) { item in Text(item.rawValue).tag(item) }
                 }
@@ -70,7 +76,10 @@ struct MeetingListView: View {
         .onDeleteCommand {
             if !app.selectedMeetingIDs.isEmpty { pendingDelete = app.selectedMeetingIDs }
         }
-        .task { app.selectDefaultMeetingIfNeeded() }
+        .task { app.selectDefaultMeetingIfNeeded(); searchContent() }
+        .onChange(of: query) { app.evidenceMeetingID = nil; searchContent() }
+        .onChange(of: filter) { app.evidenceMeetingID = nil; searchContent() }
+        .onDisappear { searchTask?.cancel() }
         .onChange(of: app.libraryReady) { _, ready in
             if ready { app.selectDefaultMeetingIfNeeded() }
         }
@@ -94,7 +103,7 @@ struct MeetingListView: View {
             ContentUnavailableView(
                 "No matching meetings",
                 systemImage: "waveform.circle",
-                description: Text("Try a different title, app, or status."))
+                description: Text("Try different words, a meeting title, app, or status."))
         }
     }
 
@@ -106,8 +115,7 @@ struct MeetingListView: View {
     private var groupedMeetings: [(label: String, items: [Meeting])] {
         let calendar = Calendar.current
         let all = ((app.currentMeeting.map { [$0] } ?? []) + app.meetings)
-            .filter(matchesQuery)
-            .filter(matchesFilter)
+            .filter { (matchesQuery($0) && matchesFilter($0)) || $0.id == app.evidenceMeetingID }
         let groups = Dictionary(grouping: all) { calendar.startOfDay(for: $0.startedAt) }
         return groups.keys.sorted(by: >).map { day in
             (Self.dayLabel(day), groups[day]!.sorted { $0.startedAt > $1.startedAt })
@@ -119,6 +127,20 @@ struct MeetingListView: View {
         guard !needle.isEmpty else { return true }
         return meeting.displayTitle.localizedCaseInsensitiveContains(needle)
             || meeting.appName.localizedCaseInsensitiveContains(needle)
+            || contentMatches.contains(meeting.id)
+    }
+
+    private func searchContent() {
+        searchTask?.cancel()
+        let needle = query
+        searchTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(160))
+            guard !Task.isCancelled else { return }
+            let allowed = Set(app.meetings.filter(matchesFilter).map(\.id))
+            contentMatches = Set(RecallSearch.meetings(needle, index: app.searchIndex, meetingIDs: allowed).map(\.id))
+            let visible = Set(groupedMeetings.flatMap(\.items).map(\.id))
+            app.selectedMeetingIDs.formIntersection(visible)
+        }
     }
 
     private func matchesFilter(_ meeting: Meeting) -> Bool {

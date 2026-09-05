@@ -117,7 +117,7 @@ struct TrackingPauseButton: View {
     }
 
     private var actionTitle: String {
-        sampler.isPaused ? "Resume activity tracking" : "Pause activity tracking"
+        sampler.isPaused ? "Resume day memory" : "Pause day memory"
     }
 
     private func toggle() {
@@ -137,6 +137,7 @@ struct MenuBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             statusCard
+            if app.isRecording { RecordingHealthStrip(recording: app.recording) }
 
             if let error = app.lastError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
@@ -304,7 +305,7 @@ struct MenuBarView: View {
         if app.dictation.isStarting { return "Cancel dictation" }
         switch app.dictation.state {
         case .idle: return "Record now"
-        case .recording: return "Stop & compose"
+        case .recording: return "Stop dictation"
         case .transcribing, .composing: return "Cancel dictation"
         }
     }
