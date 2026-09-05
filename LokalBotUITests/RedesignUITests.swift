@@ -103,6 +103,13 @@ final class RedesignUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertFalse(app.buttons["Insert suggestion"].isEnabled)
         XCTAssertFalse(UITestHarness.staticText(containing: "Rehearsal complete", in: app).exists)
+        let editor = app.textViews["autocomplete.rehearsal.editor"]
+        let textBeforeNavigation = editor.value as? String
+        XCTAssertNotNil(textBeforeNavigation)
+        app.typeKey(.tab, modifierFlags: [])
+        XCTAssertEqual(editor.value as? String, textBeforeNavigation, "Tab without a suggestion should navigate, not insert a tab")
+        app.typeKey(.tab, modifierFlags: .shift)
+        XCTAssertEqual(editor.value as? String, textBeforeNavigation, "Shift-Tab should preserve the rehearsal text")
         snapshot("autocomplete-keyboard-rehearsal")
     }
 

@@ -95,6 +95,14 @@ private final class RehearsalNativeTextView: NSTextView {
             onAccept?()
             return
         }
+        if event.keyCode == 48, !hasMarkedText(), !inputSource.isComposingIMEActive,
+           modifiers.isEmpty || modifiers == .shift {
+            // Once there is no acceptable ghost, this short rehearsal follows
+            // the window's key-view loop instead of inserting indentation.
+            // Shift-Tab always navigates back; IME composition keeps its keys.
+            if modifiers == .shift { window?.selectPreviousKeyView(self) } else { window?.selectNextKeyView(self) }
+            return
+        }
         if !hasMarkedText(), event.keyCode == 53, !suggestion.isEmpty {
             onReject?()
             return
