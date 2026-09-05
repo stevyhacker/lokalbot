@@ -5,6 +5,8 @@ struct DictationView: View {
     @ObservedObject var dictation: DictationCoordinator
     @StateObject private var permissions = PermissionManager.shared
 
+    private var operation: AppSettings { dictation.presentedConfiguration }
+
     var body: some View {
         Form {
             statusSection
@@ -56,12 +58,13 @@ struct DictationView: View {
                     .controlSize(.large)
                     .tint(app.dictation.state.isRecording || app.dictation.isStarting ? .red : Brand.teal)
             }
-            Picker("Intent", selection: $app.settings.dictationIntent) {
+            Picker("Intent", selection: Binding(get: { operation.dictationIntent }, set: { app.settings.dictationIntent = $0 })) {
                 ForEach(DictationIntent.allCases) { Text($0.rawValue).tag($0) }
             }.pickerStyle(.segmented).disabled(app.dictation.state != .idle || app.dictation.isStarting)
-            Text(app.settings.dictationIntent.detail)
-            if app.settings.dictationIntent == .compose {
-                Toggle("Use the focused window as context", isOn: $app.settings.dictationUseScreenContext)
+            Text(operation.dictationIntent.detail)
+            if operation.dictationIntent == .compose {
+                Toggle("Use the focused window as context", isOn: Binding(
+                    get: { operation.dictationUseScreenContext }, set: { app.settings.dictationUseScreenContext = $0 }))
                     .disabled(app.dictation.state != .idle || app.dictation.isStarting)
             }
             Text("Try here shows the result below. It never inserts into another app or changes your clipboard.")
@@ -73,24 +76,24 @@ struct DictationView: View {
     private var modelSection: some View {
         Section("Model") {
             LabeledContent("Transcription") {
-                Text(app.settings.transcriptionModelDisplayName)
+                Text(operation.transcriptionModelDisplayName)
                     .foregroundStyle(.secondary)
             }
             LabeledContent("Language") {
-                Text(app.settings.transcriptionLanguage.displayName)
+                Text(operation.transcriptionLanguage.displayName)
                     .foregroundStyle(.secondary)
             }
-            if app.settings.dictationIntent == .compose {
+            if operation.dictationIntent == .compose {
             LabeledContent("Compose") {
-                Text(app.settings.dictationCompositionTextEngineSettings.thinkModelDisplayName)
+                Text(operation.dictationCompositionTextEngineSettings.thinkModelDisplayName)
                     .foregroundStyle(.secondary)
             }
             // Where the words go changes what dictation means, so the remote
             // case reads as a first-class notice, not caption fine print.
             InferenceDisclosure(
-                settings: app.settings.dictationCompositionTextEngineSettings,
+                settings: operation.dictationCompositionTextEngineSettings,
                 localText: "Speech uses the meeting ASR model; final wording uses your configured local composition model and writing profile. Everything stays on this Mac.",
-                remoteText: "Final wording uses your approved remote Main LLM (\(app.settings.summarizerBackend.displayName)). What you dictate — and any screen context it composes with — is sent to that server.")
+                remoteText: "Final wording uses your approved remote Main LLM (\(operation.summarizerBackend.displayName)). What you dictate — and any screen context it composes with — is sent to that server.")
                 .accessibilityIdentifier("dictation.remoteNotice")
             } else {
                 Label("Speech recognition runs on this Mac. No screen context or rewrite model is used.", systemImage: "desktopcomputer")

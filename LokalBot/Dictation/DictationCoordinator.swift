@@ -230,6 +230,13 @@ final class DictationCoordinator: ObservableObject {
 
     private var activeConfig: AppSettings?
 
+    /// Describe the same intent, context and models that the in-flight
+    /// recording will use, even if the user edits Settings in another view.
+    var presentedConfiguration: AppSettings {
+        if isStarting || state.isWorking, let activeConfig { return activeConfig }
+        return settingsProvider()
+    }
+
     func toggle(source: String = "ui") {
         if isStarting {
             invalidateStartingSession()
