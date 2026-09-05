@@ -372,7 +372,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                           renderingIntent: .relativeColorimetric) else { return }
         export.size = bounds.size
         if let png = export.representation(using: .png, properties: [:]) {
-            try? png.write(to: URL(fileURLWithPath: path))
+            // Readers treat the destination's appearance as completion.
+            try? png.write(to: URL(fileURLWithPath: path), options: .atomic)
         }
     }
 #endif

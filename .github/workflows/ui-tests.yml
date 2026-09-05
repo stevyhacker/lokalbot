@@ -134,7 +134,9 @@ jobs:
         env:
           CODE_SIGNING_ALLOWED: "NO" # hosted runners hold no dev cert
           UI_TEST_FILTER: ${{ inputs.filter || '' }}
-        run: Scripts/ui-tests.sh "$UI_TEST_FILTER" 2>&1 | tee .build/ui-tests.log
+        run: |
+          set -o pipefail
+          Scripts/ui-tests.sh "$UI_TEST_FILTER" 2>&1 | tee .build/ui-tests.log
 
       - name: Save UI evidence
         if: always()
