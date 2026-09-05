@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -128,7 +129,7 @@ def guide_structured_data(page: dict) -> str:
                 "headline": page["h1"],
                 "description": page["description"],
                 "datePublished": "2026-07-13",
-                "dateModified": "2026-07-13",
+                "dateModified": page.get("updated", "2026-07-13"),
                 "mainEntityOfPage": url,
                 "image": "https://www.lokalbot.com/assets/og-image.png",
                 "author": {
@@ -167,6 +168,7 @@ def guide_structured_data(page: dict) -> str:
 
 
 def render_guide_page(template: str, page: dict) -> str:
+    updated = date.fromisoformat(page.get("updated", "2026-07-13"))
     replacements = {
         "{{SLUG}}": page["slug"],
         "{{TITLE}}": page["title"],
@@ -175,6 +177,8 @@ def render_guide_page(template: str, page: dict) -> str:
         "{{H1}}": page["h1"],
         "{{LEAD}}": page["lead"],
         "{{READ_TIME}}": page["read_time"],
+        "{{UPDATED_ISO}}": updated.isoformat(),
+        "{{UPDATED_LABEL}}": f"{updated.strftime('%B')} {updated.day}, {updated.year}",
         "{{BODY}}": page["body"].strip(),
         "{{FAQ_ITEMS}}": render_faq_items(page["faq"]),
         "{{RELATED_LINKS}}": render_related_links(page),
@@ -214,12 +218,14 @@ def render_sitemap() -> str:
         *(page["slug"] for page in PAGES),
     ]
     entries = []
+    modified = {guide["slug"]: guide.get("updated", "2026-07-13") for guide in GUIDES}
+    modified.update({"": "2026-09-05", "privacy": "2026-09-05"})
     for path in paths:
         url = f"https://www.lokalbot.com/{path}"
         entries.append(
             "  <url>\n"
             f"    <loc>{url}</loc>\n"
-            "    <lastmod>2026-07-13</lastmod>\n"
+            f"    <lastmod>{modified.get(path, '2026-07-13')}</lastmod>\n"
             "  </url>"
         )
     return (
