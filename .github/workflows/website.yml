@@ -1,0 +1,74 @@
+name: Website
+
+on:
+  pull_request:
+    paths:
+      - 'web/**'
+      - 'Scripts/*pages.py'
+      - 'Scripts/*.template.html'
+      - 'Scripts/render_web.py'
+      - 'Scripts/serve-web.py'
+      - 'WebsiteTests/**'
+      - '.github/workflows/website.yml'
+  push:
+    branches: [master, dev]
+    paths:
+      - 'web/**'
+      - 'Scripts/*pages.py'
+      - 'Scripts/*.template.html'
+      - 'Scripts/render_web.py'
+      - 'Scripts/serve-web.py'
+      - 'WebsiteTests/**'
+      - '.github/workflows/website.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    name: Website browser checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: WebsiteTests/package-lock.json
+      - name: Check generated pages and JavaScript
+        run: |
+          python3 Scripts/render_web.py --check
+          node --check web/app.js
+          node --check web/landing.js
+          git diff --check
+      - name: Prepare the base revision for comparison
+        env:
+          BASE_REVISION: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/website-baseline"
+          git archive "$BASE_REVISION" web | tar -x -C "$RUNNER_TEMP/website-baseline"
+          echo "WEBSITE_BASELINE=$RUNNER_TEMP/website-baseline/web" >> "$GITHUB_ENV"
+      - name: Install browser-check dependencies
+        working-directory: WebsiteTests
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Check layouts, interactions, accessibility fallbacks, and performance
+        working-directory: WebsiteTests
+        run: npm test
+      - name: Upload screenshots, traces, and performance samples
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: website-review
+          path: |
+            WebsiteTests/playwright-report/
+            WebsiteTests/test-results/
+          retention-days: 14

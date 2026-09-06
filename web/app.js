@@ -13,10 +13,10 @@
   } else {
     var io = new IntersectionObserver(function (entries) {
       entries.forEach(function (e) {
-        if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+        if (e.isIntersecting) { e.target.classList.remove("reveal--pending"); e.target.classList.add("in"); io.unobserve(e.target); }
       });
     }, { threshold: 0.15, rootMargin: "0px 0px -7% 0px" });
-    reveals.forEach(function (el) { io.observe(el); });
+    reveals.forEach(function (el) { el.classList.add("reveal--pending"); io.observe(el); });
   }
 
   /* ---------- hero demo video: never autoplay; pause if the user scrolls away ---------- */
@@ -24,7 +24,9 @@
   if (heroDemo && "IntersectionObserver" in window) {
     var heroIO = new IntersectionObserver(function (entries) {
       entries.forEach(function (e) {
-        if (!e.isIntersecting) { heroDemo.pause(); }
+        if (!e.isIntersecting) {
+          heroDemo.pause();
+        }
       });
     }, { threshold: 0.05 });
     heroIO.observe(heroDemo);
@@ -78,19 +80,14 @@
 
     /* seed with the static teaser so the field is meaningful before any motion */
     input.value = (typedEl.textContent || "").trim() === "" ? "" : typedEl.textContent;
+    input.disabled = false;
     render();
 
-    field.addEventListener("mousedown", function (e) {
-      e.preventDefault();
-      input.focus();
-      var L = input.value.length;
-      try { input.setSelectionRange(L, L); } catch (_) {}
-    });
     input.addEventListener("focus", function () { if (cotype) cotype.classList.add("is-focused"); });
     input.addEventListener("blur", function () { if (cotype) cotype.classList.remove("is-focused"); });
     input.addEventListener("input", function () { dismissed = false; render(); });
     input.addEventListener("keydown", function (e) {
-      if (e.key === "Tab" && ghostFor(input.value)) {
+      if (e.key === "Tab" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && ghostFor(input.value)) {
         e.preventDefault();
         acceptWord();
       } else if (e.key === "Escape") {
