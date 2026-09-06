@@ -45,11 +45,11 @@ test('record cold-load performance before and after', async ({ browser }, info) 
           completedTransferKB: Math.round((navigation.transferSize + resources.reduce((sum, item) => sum + item.transferSize, 0)) / 1024),
           resources: resources.length,
           pageHeight: document.documentElement.scrollHeight,
-          videoPaused: document.querySelector('video').paused
+          playingMedia: [...document.querySelectorAll('audio, video')].filter(media => !media.paused).length
         };
       });
       expect(measurement.lcpMs).toBeGreaterThan(0);
-      expect(measurement.videoPaused).toBe(true);
+      expect(measurement.playingMedia).toBe(0);
       results[label].push(measurement);
       await context.close();
     }

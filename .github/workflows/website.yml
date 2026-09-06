@@ -46,6 +46,7 @@ jobs:
         run: |
           python3 Scripts/render_web.py --check
           node --check web/app.js
+          node --check web/landing.js
           git diff --check
       - name: Prepare the base revision for comparison
         env:

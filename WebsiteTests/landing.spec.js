@@ -1,5 +1,6 @@
 const { test, expect } = require('@playwright/test');
 const installer = 'https://github.com/stevyhacker/lokalbot/releases/latest/download/LokalBot.dmg';
+const origin = 'http://127.0.0.1:8793';
 const viewports = [
   { width: 390, height: 844 },
   { width: 768, height: 1024 },
@@ -14,36 +15,35 @@ async function noOverflow(page) {
   expect(bounds.content).toBeLessThanOrEqual(bounds.viewport);
 }
 
-async function loadLandingImages(page) {
-  // Full-page screenshots do not scroll offscreen lazy images into view.
-  // Exercise that loading path and reject broken assets before capturing them.
-  for (const image of await page.locator('main img').all()) {
-    await image.scrollIntoViewIfNeeded();
-    await expect(image).toHaveJSProperty('complete', true);
-    await expect.poll(() => image.evaluate(element => element.naturalWidth)).toBeGreaterThan(0);
+async function prepareCapture(page) {
+  for (const element of await page.locator('[data-reveal], .reveal').all()) {
+    await element.scrollIntoViewIfNeeded();
+    await expect(element).toHaveCSS('opacity', '1');
   }
+  await expect.poll(() => page.locator('#app-image').evaluate(image => image.complete && image.naturalWidth > 0)).toBe(true);
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
 }
 
 for (const viewport of viewports) {
   test(`landing layout ${viewport.width} × ${viewport.height}`, async ({ page }, info) => {
+    const failures = [];
+    page.on('pageerror', error => failures.push(error.message));
     await page.setViewportSize(viewport);
     await page.goto('/');
-    await expect(page.locator('.intro__crop img')).toBeVisible();
-    await expect(page.locator('.intro__crop img')).toHaveJSProperty('complete', true);
-    await expect(page.locator('.intro__result figcaption')).toContainText('6 apps. 5 moments. One workday.');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveAccessibleName('A memory for all your work.');
+    await expect(page.locator('#app-image')).toBeVisible();
     await noOverflow(page);
     if (viewport.width === 1280) {
-      const result = await page.locator('.intro__result').boundingBox();
-      expect(result.y + result.height).toBeLessThanOrEqual(viewport.height);
-      expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(7000);
+      const product = await page.locator('.hero-product').boundingBox();
+      expect(product.y + product.height).toBeLessThanOrEqual(viewport.height);
+      expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThan(5000);
     }
-    await loadLandingImages(page);
+    await prepareCapture(page);
+    expect(failures).toEqual([]);
     await page.screenshot({ path: info.outputPath(`after-${viewport.width}.png`), fullPage: true });
     await info.attach(`After ${viewport.width}`, { path: info.outputPath(`after-${viewport.width}.png`), contentType: 'image/png' });
     if (process.env.WEBSITE_BASELINE) {
       await page.goto('http://127.0.0.1:8794/');
-      // Trigger the old page's lazy images and reveals before the reference capture.
       for (let y = 0; y < await page.evaluate(() => document.documentElement.scrollHeight); y += viewport.height) {
         await page.evaluate(y => window.scrollTo(0, y), y);
         await page.waitForTimeout(80);
@@ -56,132 +56,182 @@ for (const viewport of viewports) {
   });
 }
 
-test('mobile menu supports focus, Escape, links, and resizing', async ({ page }) => {
-  await page.setViewportSize(viewports[0]);
+test('keyboard skip link reaches the main content', async ({ page }) => {
   await page.goto('/');
-  const menu = page.locator('.nav-toggle');
-  const nav = page.getByRole('navigation', { name: 'Primary', exact: true });
-  await expect(nav).toBeHidden();
-  await menu.click();
-  await expect(menu).toHaveAttribute('aria-expanded', 'true');
-  await expect(nav.getByRole('link', { name: 'Product', exact: true })).toBeFocused();
-  await page.keyboard.press('Escape');
-  await expect(nav).toBeHidden();
-  await expect(menu).toBeFocused();
-  await menu.click();
-  await nav.getByRole('link', { name: 'Privacy', exact: true }).click();
-  await expect(page).toHaveURL(/#proof$/);
-  await expect(page.locator('#proof')).toBeFocused();
-  await expect(menu).toHaveAttribute('aria-expanded', 'false');
-  await page.setViewportSize(viewports[2]);
-  await expect(nav).toBeVisible();
-  await expect(menu).toBeHidden();
-  await page.setViewportSize(viewports[0]);
-  await expect(nav).toBeHidden();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('link', { name: 'Skip to content' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('main')).toBeFocused();
 });
 
-test('autocomplete preserves backward navigation and supports accept, dismiss, and exit', async ({ page }) => {
+test('app gallery loads each view and restores focus after the full image closes', async ({ page }) => {
   await page.goto('/');
-  const disclosure = page.locator('.writing-demo > summary');
-  await disclosure.click();
-  const input = page.locator('#ctInput');
-  await input.click();
-  await expect(input).toBeFocused();
-  const editor = await page.locator('.cotype__editor').boundingBox();
-  const hint = await page.locator('#cotype-help').boundingBox();
-  expect(editor.y + editor.height).toBeLessThanOrEqual(hint.y);
-  const initial = await input.inputValue();
-  await page.keyboard.press('Shift+Tab');
-  await expect(input).toHaveValue(initial);
-  await expect(disclosure).toBeFocused();
-  await input.focus();
-  await page.keyboard.press('Tab');
-  await expect(input).toHaveValue(`${initial} our`);
-  await expect(input).toBeFocused();
-  await page.keyboard.press('Escape');
-  await expect(page.locator('#ctGhost')).toHaveText('');
-  await page.keyboard.press('Tab');
-  await expect(input).not.toBeFocused();
-  await expect(input).toHaveValue(`${initial} our`);
+  for (const [key, filename, title] of [
+    ['recall', 'quick-recall.webp', 'Quick Recall'],
+    ['write', 'cotyping.webp', 'Write'],
+    ['timeline', 'timeline-workspace.webp', 'Timeline']
+  ]) {
+    const choice = page.locator(`[data-view="${key}"]`);
+    await choice.focus();
+    await page.keyboard.press('Enter');
+    await expect(choice).toHaveAttribute('aria-current', 'true');
+    await expect(page.locator('#app-image')).toHaveAttribute('src', `assets/screens/${filename}`);
+    await expect.poll(() => page.locator('#app-image').evaluate(image => image.complete && image.naturalWidth > 0)).toBe(true);
+    const fullImage = page.getByRole('link', { name: `Open the full ${title} screenshot`, exact: true });
+    await fullImage.click();
+    await expect(page.locator('#image-dialog')).toBeVisible();
+    await expect(page.locator('#full-image')).toHaveAttribute('src', `assets/screens/${filename}`);
+    await expect(page.getByRole('button', { name: 'Close screenshot', exact: true })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#image-dialog')).not.toBeVisible();
+    await expect(fullImage).toBeFocused();
+  }
 });
 
-test('FAQ opens by keyboard and explains the downloadable release', async ({ page }) => {
+test('a late gallery image cannot replace the newest selection', async ({ page }) => {
+  let releaseRecall;
+  const gate = new Promise(resolve => { releaseRecall = resolve; });
+  await page.route('**/quick-recall.webp', async route => { await gate; await route.continue(); });
   await page.goto('/');
-  const summary = page.getByText('What gets recorded by default?', { exact: true });
+  const pending = page.waitForResponse('**/quick-recall.webp');
+  await page.locator('[data-view="recall"]').click();
+  await page.locator('[data-view="write"]').click();
+  await expect(page.locator('[data-view="write"]')).toHaveAttribute('aria-current', 'true');
+  releaseRecall();
+  await (await pending).finished();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(page.locator('#app-image')).toHaveAttribute('src', 'assets/screens/cotyping.webp');
+  await expect(page.locator('[data-view="write"]')).toHaveAttribute('aria-current', 'true');
+});
+
+test('a failed gallery image keeps the usable current view', async ({ page }) => {
+  await page.route('**/cotyping.webp', route => route.abort());
+  await page.goto('/');
+  await page.locator('[data-view="write"]').click();
+  await expect(page.locator('#gallery-status')).toContainText('Couldn’t load Write');
+  await expect(page.locator('#app-image')).toHaveAttribute('src', 'assets/screens/timeline-workspace.webp');
+  await expect(page.locator('[data-view="timeline"]')).toHaveAttribute('aria-current', 'true');
+  await expect(page.locator('#open-app')).not.toHaveClass(/is-changing/);
+});
+
+test('example recall searches across sources, handles empty results, and sends no queries', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('.memory-result')).toHaveCount(3);
+  const requests = [];
+  page.on('request', request => requests.push(request.url()));
+  await page.getByRole('button', { name: 'onboarding', exact: true }).click();
+  await expect(page.locator('.memory-result')).toHaveCount(3);
+  await expect(page.locator('#memory-results')).toContainText('Notes');
+  await expect(page.locator('#memory-results')).toContainText('Safari');
+  await expect(page.locator('#memory-results')).toContainText('Slack');
+  const input = page.getByRole('searchbox', { name: 'Search the example memory' });
+  await input.fill('no-matching-context');
+  await input.press('Enter');
+  await expect(page.locator('#result-count')).toHaveText('0 moments');
+  await expect(page.locator('#memory-results')).toContainText('Try “launch”, “onboarding”, or “Friday”');
+  await input.fill('');
+  await expect(page.locator('.memory-result')).toHaveCount(6);
+  await page.getByRole('button', { name: 'Friday', exact: true }).click();
+  await expect(page.locator('.memory-result')).toHaveCount(3);
+  expect(requests.filter(url => !url.endsWith('/favicon.ico') && !url.endsWith('/assets/lokalbot-icon.svg'))).toEqual([]);
+});
+
+test('source dialogs support keyboard open, Escape, outside click, and focus return', async ({ page }) => {
+  await page.goto('/');
+  const source = page.getByRole('button', { name: 'Open The launch checklist, Notion', exact: true });
+  await source.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#source-dialog')).toBeVisible();
+  await expect(page.locator('#source-title')).toHaveText('The launch checklist');
+  await expect(page.locator('#source-text')).toContainText('Friday’s launch');
+  await expect(page.getByRole('button', { name: 'Close source', exact: true })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#source-dialog')).not.toBeVisible();
+  await expect(source).toBeFocused();
+  await source.click();
+  await page.mouse.click(5, 5);
+  await expect(page.locator('#source-dialog')).not.toBeVisible();
+  await expect(source).toBeFocused();
+});
+
+test('network disclosure opens and closes by keyboard', async ({ page }) => {
+  await page.goto('/');
+  const summary = page.locator('.ownership-principles summary');
   await summary.focus();
   await page.keyboard.press('Enter');
-  const answer = page.locator('.landing-faq details').filter({ has: summary });
-  await expect(answer).toHaveAttribute('open', '');
-  await expect(answer).toContainText('v0.7.2');
-  await expect(answer).toContainText('automatic meeting detection');
-  await expect(answer).toContainText('macOS permissions');
+  await expect(page.locator('.ownership-principles details')).toHaveAttribute('open', '');
+  await expect(page.locator('.ownership-principles details')).toContainText('require your approval');
+  await expect(page.locator('.ownership-principles details a')).toHaveAttribute('href', 'privacy');
   await page.keyboard.press('Enter');
-  await expect(answer).not.toHaveAttribute('open');
+  await expect(page.locator('.ownership-principles details')).not.toHaveAttribute('open');
 });
 
-test('download CTAs use the installer and retain setup, release, and legacy destinations', async ({ page, request }) => {
+test('production metadata, installer links, guide routes, and existing fragments remain valid', async ({ page, request }) => {
   await page.goto('/');
-  const downloads = page.getByRole('link', { name: /^Download( for macOS)?$/ });
+  await expect(page.locator('meta[name="robots"][content*="noindex"]')).toHaveCount(0);
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', 'https://www.lokalbot.com/');
+  await expect(page.locator('meta[property="og:title"]')).toHaveAttribute('content', 'LokalBot — A memory for all your work.');
+  const downloads = page.locator(`a[href="${installer}"]`);
   await expect(downloads).toHaveCount(3);
-  for (const link of await downloads.all()) await expect(link).toHaveAttribute('href', installer);
-  await expect(page.getByRole('link', { name: 'Release notes and all downloads' })).toHaveAttribute('href', /\/releases$/);
   const anchors = await page.locator('a[href]').evaluateAll(links => links.map(link => link.href));
   for (const href of new Set(anchors)) {
     const url = new URL(href);
-    if (url.origin !== 'http://127.0.0.1:8793') continue;
-    expect((await request.get(url.pathname)).ok(), url.pathname).toBeTruthy();
-    if (url.pathname === '/' && url.hash) {
-      await expect(page.locator(`[id="${url.hash.slice(1)}"]`)).toHaveCount(1);
+    if (url.origin !== origin) continue;
+    const response = await request.get(url.pathname);
+    expect(response.ok(), url.pathname).toBeTruthy();
+    if (url.hash) {
+      if (url.pathname === '/') await expect(page.locator(`[id="${url.hash.slice(1)}"]`)).toHaveCount(1);
+      else expect(await response.text(), href).toContain(`id="${url.hash.slice(1)}"`);
     }
   }
-  for (const id of ['features', 'how', 'proof', 'eviction', 'write', 'download', 'guides', 'compare']) {
+  for (const id of ['features', 'how', 'proof', 'eviction', 'write', 'demo', 'download', 'guides', 'compare']) {
     await expect(page.locator(`[id="${id}"]`)).toHaveCount(1);
   }
   const data = JSON.parse(await page.locator('script[type="application/ld+json"]').textContent());
-  expect(data['@graph'].find(item => item['@type'] === 'SoftwareApplication').downloadUrl).toBe(installer);
+  const app = data['@graph'].find(item => item['@type'] === 'SoftwareApplication');
+  expect(app.downloadUrl).toBe(installer);
+  expect((await request.get(new URL(app.screenshot).pathname)).ok()).toBeTruthy();
 });
 
-test('video waits for a user gesture, plays, and pauses out of view', async ({ page }) => {
-  await page.goto('/');
-  const video = page.locator('video');
-  await expect(video).toHaveAttribute('preload', 'none');
-  await expect(video).not.toHaveAttribute('autoplay');
-  await expect(video).toHaveJSProperty('paused', true);
-  await page.getByRole('link', { name: 'Watch the 30-second demo' }).click();
-  await expect(video).toHaveAttribute('preload', 'metadata');
-  await video.focus();
-  await page.keyboard.press('Space');
-  await expect(video).toHaveJSProperty('paused', false);
-  await page.locator('#download-title').scrollIntoViewIfNeeded();
-  await expect(video).toHaveJSProperty('paused', true);
-  await expect(page.getByText('Read the demo walkthrough', { exact: true })).toBeVisible();
-});
-
-test('no JavaScript keeps mobile navigation, product evidence, and downloads available', async ({ browser }) => {
+test('no JavaScript keeps the gallery, product copy, setup, and downloads useful', async ({ browser }) => {
   const context = await browser.newContext({ javaScriptEnabled: false, viewport: viewports[0] });
   const page = await context.newPage();
-  await page.goto('http://127.0.0.1:8793/');
-  await expect(page.getByRole('navigation', { name: 'Primary', exact: true })).toBeVisible();
-  await expect(page.locator('.nav-toggle')).toBeHidden();
-  await expect(page.locator('.intro__result figcaption')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Download', exact: true })).toHaveAttribute('href', installer);
+  await page.goto(origin);
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Download for Mac', exact: true })).toHaveAttribute('href', installer);
+  await expect(page.locator('#recall-form')).toBeHidden();
+  await expect(page.getByRole('link', { name: 'See Quick Recall in the app.', exact: true })).toBeVisible();
+  await expect(page.locator('#open-app')).toHaveAttribute('href', 'assets/screens/timeline-workspace.webp');
+  for (const element of await page.locator('[data-reveal]').all()) await expect(element).toHaveCSS('opacity', '1');
   await noOverflow(page);
-  await page.goto('http://127.0.0.1:8793/lokalbot-vs-granola');
-  for (const item of await page.locator('.reveal').all()) await expect(item).toHaveCSS('opacity', '1');
+  await page.locator('[data-view="recall"]').click();
+  await expect(page).toHaveURL(/\/assets\/screens\/quick-recall.webp$/);
+  await page.goto(`${origin}/lokalbot-vs-granola`);
+  for (const element of await page.locator('.reveal').all()) await expect(element).toHaveCSS('opacity', '1');
   await context.close();
+});
+
+test('a blocked homepage script still leaves a usable static fallback', async ({ page }) => {
+  await page.route('**/landing.js', route => route.abort());
+  await page.goto('/');
+  await expect(page.locator('#recall-form')).toBeHidden();
+  await expect(page.getByRole('link', { name: 'See Quick Recall in the app.', exact: true })).toBeVisible();
+  await expect(page.locator('#open-app')).toHaveAttribute('href', 'assets/screens/timeline-workspace.webp');
+  await expect(page.getByRole('link', { name: 'Download for Mac', exact: true })).toHaveAttribute('href', installer);
 });
 
 test('reduced motion and 200% equivalent reflow remain usable', async ({ page }, info) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  // Browser zoom to 200% halves the CSS viewport. Check that reflow at 640 × 360;
-  // this is a layout equivalent, not a claim of physical-device or browser zoom testing.
+  // Halving the CSS viewport checks reflow equivalent to 200% zoom. This is not
+  // a claim of physical-device, actual browser-zoom, or screen-reader testing.
   await page.setViewportSize({ width: 640, height: 360 });
   await page.goto('/');
   await noOverflow(page);
   await expect(page.locator('html')).toHaveCSS('scroll-behavior', 'auto');
-  await page.getByRole('button', { name: 'Menu', exact: true }).click();
-  await expect(page.getByRole('navigation', { name: 'Primary', exact: true })).toBeVisible();
-  await loadLandingImages(page);
+  await expect(page.locator('.wordmark')).toHaveCSS('animation-name', 'none');
+  await page.locator('[data-view="recall"]').click();
+  await expect(page.locator('[data-view="recall"]')).toHaveAttribute('aria-current', 'true');
+  await prepareCapture(page);
   await page.screenshot({ path: info.outputPath('200-percent-reflow.png'), fullPage: true });
   await info.attach('200% equivalent reflow', { path: info.outputPath('200-percent-reflow.png'), contentType: 'image/png' });
 });
@@ -195,6 +245,11 @@ for (const route of ['guides', 'system-requirements', 'privacy', 'support', 'lok
       await expect(page.locator('h1')).toBeVisible();
       await noOverflow(page);
       await expect(page.getByRole('link', { name: 'Download', exact: true }).first()).toHaveAttribute('href', installer);
+      for (const element of await page.locator('.reveal').all()) {
+        await element.scrollIntoViewIfNeeded();
+        await expect(element).toHaveCSS('opacity', '1');
+      }
+      await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
       await page.screenshot({ path: info.outputPath(`${route}-${viewport.width}.png`), fullPage: true });
     }
     if (route === 'system-requirements') {

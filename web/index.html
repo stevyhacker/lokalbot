@@ -1,32 +1,30 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>LokalBot — Your workday, remembered.</title>
+  <title>LokalBot — A memory for all your work.</title>
   <meta name="description" content="Private AI work memory for Mac. Keep context across apps, saved moments, and conversations. Recall what you need and put it to work, on-device by default." />
-  <meta name="theme-color" content="#0b1119" />
+  <meta name="theme-color" content="#090e10" />
   <meta name="google-site-verification" content="lFM4iF9Ki1rYDro5yRHgbWsy0_kwdIkXOhAOcM-oVP0" />
 
   <link rel="canonical" href="https://www.lokalbot.com/" />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://www.lokalbot.com/" />
-  <meta property="og:title" content="LokalBot — Your workday, remembered." />
-  <meta property="og:description" content="Your workday, remembered. Find context across apps, saved moments, and conversations, then use it to keep working. Free and open source for Mac." />
+  <meta property="og:title" content="LokalBot — A memory for all your work." />
+  <meta property="og:description" content="A memory for all your work. Keep useful context across apps, saved moments, and conversations, then pick up where you left off. Free and open source for Mac." />
   <meta property="og:image" content="https://www.lokalbot.com/assets/og-image.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
   <meta property="og:image:alt" content="LokalBot — your private AI memory for work, on-device by default." />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="LokalBot — Your workday, remembered." />
+  <meta name="twitter:title" content="LokalBot — A memory for all your work." />
   <meta name="twitter:description" content="Your private AI memory for work. Remember the day, recall the context, and use it to write and act. Free and open source for Mac." />
   <meta name="twitter:image" content="https://www.lokalbot.com/assets/og-image.png" />
 
   <link rel="icon" href="assets/lokalbot-icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="assets/lokalbot-icon.svg" />
 
-  <link rel="stylesheet" href="styles.css" />
-  <link rel="stylesheet" href="icons.css" />
   <link rel="stylesheet" href="landing.css" />
   <script type="application/ld+json">
   {
@@ -59,177 +57,96 @@
           "priceCurrency": "USD"
         },
         "image": "https://www.lokalbot.com/assets/og-image.png",
-        "screenshot": "https://www.lokalbot.com/assets/screens/today.jpg",
+        "screenshot": "https://www.lokalbot.com/assets/screens/timeline-workspace.webp",
         "sameAs": ["https://github.com/stevyhacker/lokalbot"]
       }
     ]
   }
   </script>
-  <script src="app.js" defer></script>
+  <script src="landing.js" defer></script>
 </head>
-<body class="landing-page">
-  <a class="skip-link" href="#features">Skip to product overview</a>
-  <div class="bg-field" aria-hidden="true"></div>
+<body>
+  <svg class="symbol-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="arrow" viewBox="0 0 24 24"><path d="M4 12h15M13 5l7 7-7 7"/></symbol>
+    <symbol id="diagonal" viewBox="0 0 24 24"><path d="M6 18 18 6M6 6h12v12"/></symbol>
+    <symbol id="search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="page" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 8h16M8 12h8M8 16h5"/></symbol>
+    <symbol id="message" viewBox="0 0 24 24"><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-6 4V6a2 2 0 0 1 2-2Z"/><path d="M7 9h10M7 13h6"/></symbol>
+    <symbol id="bookmark" viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4V3Z"/></symbol>
+    <symbol id="wave" viewBox="0 0 24 24"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></symbol>
+    <symbol id="lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></symbol>
+    <symbol id="apple" viewBox="0 0 24 24"><path d="M15 3c0 2-1 3-3 3 0-2 1-3 3-3ZM18.5 16c-.7 2.4-2.4 5-3.8 5-1 0-1.5-.6-2.7-.6s-1.9.6-2.7.6C7.5 21 5 17.5 5 13.8 5 10.2 7.2 8 9.5 8c1 0 1.8.6 2.5.6S13.7 8 14.8 8c1.6 0 2.8.8 3.5 1.8-3 1.6-2.9 4.8.2 6.2Z"/></symbol>
+  </svg>
+  <a class="skip-link" href="#main">Skip to content</a>
 
-  <header class="nav nav--landing" id="top">
-    <a class="brand" href="#top" aria-label="LokalBot home">
-      <img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="32" height="32" />
-      <span class="brand__name">LokalBot</span>
-    </a>
-    <nav class="nav__links" id="primary-navigation" aria-label="Primary">
-      <a href="#features">Product</a>
-      <a href="#how">How it works</a>
-      <a href="#proof">Privacy</a>
-      <a href="guides">Guides</a>
-    </nav>
-    <div class="nav__actions">
-      <a class="btn btn--primary btn--sm" href="https://github.com/stevyhacker/lokalbot/releases/latest/download/LokalBot.dmg">Download</a>
-      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="primary-navigation" hidden>Menu</button>
+  <main id="main" tabindex="-1">
+  <section class="hero" id="top" aria-label="LokalBot">
+    <header class="nav wrap">
+      <a class="nav-mark" href="#top" aria-label="LokalBot home"><span class="memory-mark" aria-hidden="true"><span></span><span></span><span></span></span><span>Private work memory</span></a>
+      <nav aria-label="Main navigation"><a href="#remember">Your day</a><a href="#recall">Recall</a><a href="#ownership">Your Mac</a></nav>
+      <a class="nav-download" href="https://github.com/stevyhacker/lokalbot/releases/latest/download/LokalBot.dmg">Get LokalBot <svg aria-hidden="true"><use href="#diagonal"/></svg></a>
+    </header>
+    <div class="hero-content wrap">
+      <p class="wordmark" aria-label="LokalBot">LokalBot<span class="wordmark-dot" aria-hidden="true"></span></p>
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <h1 aria-label="A memory for all your work.">A memory for<br> <em>all your work.</em></h1>
+          <p>Pages, messages, conversations, passing ideas.<br class="desktop-break"> Keep the context. Pick up where you left off.</p>
+          <div class="hero-actions"><a class="button button-paper" href="https://github.com/stevyhacker/lokalbot/releases/latest/download/LokalBot.dmg"><svg aria-hidden="true"><use href="#apple"/></svg>Download for Mac <svg aria-hidden="true" class="button-arrow"><use href="#arrow"/></svg></a><a class="quiet-link" href="#recall">Try a little recall <span aria-hidden="true">↓</span></a></div>
+          <p class="compat">Free & open source <span>·</span> Apple Silicon <span>·</span> macOS 15+</p>
+        </div>
+        <figure class="hero-product">
+          <div class="product-toolbar"><span class="product-label"><span class="status-dot"></span>A place to come back to</span><span class="product-caption" id="gallery-status" role="status" aria-live="polite">The Mac app</span></div>
+          <a class="app-stage" id="open-app" href="assets/screens/timeline-workspace.webp" aria-label="Open the full Timeline screenshot">
+            <img id="app-image" src="assets/screens/timeline-workspace.webp" width="2800" height="1864" alt="LokalBot Timeline shows work sessions across apps, a day digest, and tasks alongside conversations." fetchpriority="high">
+            <span class="image-expand"><svg aria-hidden="true"><use href="#diagonal"/></svg><span>Take a closer look</span></span>
+          </a>
+          <figcaption class="app-selector" aria-label="Choose an app view"><a href="assets/screens/timeline-workspace.webp" class="active" aria-current="true" data-view="timeline"><span>01</span>Your day</a><a href="assets/screens/quick-recall.webp" data-view="recall"><span>02</span>Quick Recall</a><a href="assets/screens/cotyping.webp" data-view="write"><span>03</span>Write</a><span class="example-label">Example library</span></figcaption>
+        </figure>
+      </div>
     </div>
-  </header>
+    <div class="hero-bottom wrap"><span>Made for the way your mind works.</span><a href="#remember">A little less to keep in your head <span aria-hidden="true">↓</span></a></div>
+  </section>
 
-  <main class="landing-shell">
-    <section class="intro" aria-labelledby="intro-title">
-      <div class="intro__copy">
-        <p class="eyebrow">Private AI work memory for Mac</p>
-        <h1 id="intro-title">Your workday,<br /><span>remembered.</span></h1>
-        <p class="intro__lead">Keep the context of your work across apps, saved moments, and conversations. Find what you need, ask about your day, and use that memory to keep working — on your Mac by default.</p>
-        <div class="intro__actions">
-          <a class="btn btn--primary" href="https://github.com/stevyhacker/lokalbot/releases/latest/download/LokalBot.dmg"><i class="ph ph-apple-logo" aria-hidden="true"></i>Download for macOS</a>
-          <a class="text-link" href="#demo"><i class="ph ph-play" aria-hidden="true"></i>Watch the 30-second demo</a>
-        </div>
-        <p class="intro__compat">Free and open source · Apple Silicon · macOS 15+</p>
-        <p class="intro__setup">Models download during setup. <a href="system-requirements#first-memory">Installation help</a> · <a href="#proof">How privacy works</a></p>
+    <section class="remember section wrap" id="remember" aria-labelledby="remember-title"><span id="features" class="fragment-target"></span><span id="how" class="fragment-target"></span>
+      <div class="section-top"><p class="eyebrow"><span>01 /</span> Remember</p><p class="small-note">The useful parts of an ordinary day.</p></div>
+      <div class="section-heading" data-reveal><h2 id="remember-title">Good work leaves<br><em>little traces.</em></h2><p>A page you found. A message you saved. An idea you talked through. Bring the useful parts of your work into one private memory.</p></div>
+      <div class="day-line" aria-label="An illustrative workday">
+        <article class="day-moment" data-reveal><p class="moment-time">09:12<span class="timeline-dot"></span></p><svg aria-hidden="true" class="moment-icon"><use href="#page"/></svg><h3>The page<br>that clicked.</h3><p>Find the useful detail in the app context you choose to keep.</p><span class="moment-kind">App context</span></article>
+        <article class="day-moment" data-reveal><p class="moment-time">11:26<span class="timeline-dot"></span></p><svg aria-hidden="true" class="moment-icon"><use href="#bookmark"/></svg><h3>The thought<br>worth saving.</h3><p>Mark a moment now. Come back to it when it matters.</p><span class="moment-kind">Saved moments</span></article>
+        <article class="day-moment" data-reveal><p class="moment-time">14:05<span class="timeline-dot"></span></p><svg aria-hidden="true" class="moment-icon"><use href="#message"/></svg><h3>The thread<br>you need again.</h3><p>Recall the context of a message without retracing your day.</p><span class="moment-kind">Captured text</span></article>
+        <article class="day-moment" data-reveal><p class="moment-time">16:40<span class="timeline-dot"></span></p><svg aria-hidden="true" class="moment-icon"><use href="#wave"/></svg><h3>The decision<br>behind the work.</h3><p>Keep a conversation and the next steps that came from it.</p><span class="moment-kind">Conversations</span></article>
       </div>
-      <figure class="intro__result">
-        <div class="intro__result-label"><span class="eyebrow">Your day, with the context attached</span><span>Example workday</span></div>
-        <a class="intro__crop" href="assets/screens/today.jpg" aria-label="View the complete example workday screenshot">
-          <img src="assets/screens/today.webp" width="1800" height="1198" fetchpriority="high" alt="LokalBot Today showing a workday across six apps, five captured moments, and two meetings, with a day digest and tasks." />
-        </a>
-        <figcaption><strong>6 apps. 5 moments. One workday.</strong><span>Review the digest. Follow open tasks. Find the source.</span><a href="assets/screens/today.jpg">Explore the example day <span aria-hidden="true">↗</span></a></figcaption>
-      </figure>
+      <div class="remember-foot"><span>One day. A little easier to return to.</span><a class="text-link" href="system-requirements#capture-defaults" target="_blank" rel="noopener">Choose what you remember <svg aria-hidden="true"><use href="#diagonal"/></svg></a></div>
     </section>
 
-    <section class="landing-section evidence" id="features" aria-labelledby="evidence-title">
-      <header class="landing-heading">
-        <p class="eyebrow">One memory across your work</p>
-        <h2 id="evidence-title">Find the thread across your day.</h2>
-        <p>A message you saved, a page you viewed, something someone said. Quick Recall brings the relevant context together so you can pick up the thread.</p>
-      </header>
-      <div class="evidence__grid">
-        <figure class="evidence__capture">
-          <a href="assets/screens/quick-recall.webp" aria-label="View the complete Quick Recall example"><img src="assets/screens/quick-recall.webp" width="1320" height="1024" loading="lazy" decoding="async" alt="Quick Recall finds Redis across a saved Slack moment, a captured Safari page, and meeting transcripts." /></a>
-          <figcaption>Saved moments, captured text, and conversations in one search.</figcaption>
-        </figure>
-        <div class="evidence__story">
-          <p class="eyebrow">Quick Recall</p>
-          <h3>“Where did I see that?”</h3>
-          <ol>
-            <li><strong>A moment you saved.</strong><p>Bring back the useful message or idea you marked for later.</p></li>
-            <li><strong>Context from an app.</strong><p>Search captured text from your work and revisit the source.</p></li>
-            <li><strong>A conversation you had.</strong><p>Find a related meeting transcript and open the supporting moment.</p></li>
-          </ol>
-          <p class="evidence__note">Illustrative search with saved Slack context, captured Safari text, and meeting transcripts.</p>
+    <section class="recall-section" id="recall" aria-labelledby="recall-title"><span id="write" class="fragment-target"></span><span id="demo" class="fragment-target"></span>
+      <div class="recall-layout wrap">
+        <div class="recall-copy"><p class="eyebrow"><span>02 /</span> Recall & carry on</p><h2 id="recall-title">“Where did<br>I see <em>that?</em>”</h2><p>You remember the idea.<br>LokalBot helps you find the rest.</p><p class="recall-detail">Search across the context you’ve kept, return to the source, and put it back to work in a draft, a daily recap, or your next step.</p><a class="text-link" href="#ownership">With your memory on your Mac <svg aria-hidden="true"><use href="#arrow"/></svg></a></div>
+        <div class="recall-demo" data-reveal>
+          <div class="demo-top"><span class="memory-mark" aria-hidden="true"><span></span><span></span><span></span></span><span>A little recall</span><span class="demo-badge">Example memory</span></div>
+          <form id="recall-form" data-enhance hidden role="search"><label class="sr-only" for="memory-query">Search the example memory</label><svg aria-hidden="true" class="search-icon"><use href="#search"/></svg><input id="memory-query" type="search" value="launch" placeholder="What are you looking for?" autocomplete="off" maxlength="120"><button type="submit" aria-label="Search memory"><svg aria-hidden="true"><use href="#arrow"/></svg></button></form>
+          <div class="query-examples" data-enhance hidden><span>Try a thread:</span><button type="button" class="selected" data-query="launch">launch</button><button type="button" data-query="onboarding">onboarding</button><button type="button" data-query="Friday">Friday</button></div>
+          <div class="result-heading" data-enhance hidden><span>Back in context</span><span id="result-count" role="status" aria-live="polite">3 moments</span></div>
+          <div id="memory-results" data-enhance hidden class="memory-results"></div>
+          <p class="no-script-note" data-recall-fallback><a href="assets/screens/quick-recall.webp">See Quick Recall in the app.</a></p>
+          <div class="demo-footer" data-enhance hidden><svg aria-hidden="true"><use href="#lock"/></svg><span>Open a moment to see its source.</span><span aria-hidden="true">↵</span></div>
         </div>
       </div>
     </section>
 
-    <section class="landing-section" id="how" aria-labelledby="how-title">
-      <header class="landing-heading"><p class="eyebrow">How it works</p><h2 id="how-title">Remember. Recall. Put it to work.</h2></header>
-      <ol class="workflow">
-        <li><span class="workflow__number" aria-hidden="true">01</span><h3>Choose what to remember.</h3><p>Keep selected app and window context, save useful moments, or record a conversation. Review capture settings and macOS permissions first.</p></li>
-        <li><span class="workflow__number" aria-hidden="true">02</span><h3>Find the context again.</h3><p>Browse your day in Timeline, search across your library, or ask in plain language. Follow the evidence back to its source.</p></li>
-        <li><span class="workflow__number" aria-hidden="true">03</span><h3>Use it to keep moving.</h3><p>Review a daily digest, prepare a work log or follow-up, and carry source context into actions you approve.</p></li>
-      </ol>
-      <a class="text-link section-link" href="system-requirements#capture-defaults">Choose your capture settings <span aria-hidden="true">↗</span></a>
-      <div class="workflow-tour">
-        <div class="workflow-tour__copy"><h3>See memory in motion.</h3><p>A 30-second tour of recall, conversation capture, and writing with local AI.</p></div>
-        <figure class="evidence__film" id="demo">
-          <video class="hero__demo" controls playsinline preload="none" poster="assets/hero-poster.jpg" width="936" height="527" aria-label="30-second LokalBot tour" aria-describedby="demo-description">
-            <source src="assets/hero-demo.mp4" type="video/mp4" />
-            <a href="assets/hero-demo.mp4">Download the 30-second demo</a>
-          </video>
-          <figcaption id="demo-description">A short tour of cited recall, meeting capture, and local writing.</figcaption>
-          <details class="demo-transcript">
-            <summary>Read the demo walkthrough</summary>
-            <p>In this illustrative stand-up, the beta cut moves to Friday. Quick Recall answers a question about the agreement, includes the supporting quote, and links back to the meeting timestamp. The tour then shows bot-free capture, dictation, autocomplete, and an example network check with the built-in backend after model downloads.</p>
-          </details>
-        </figure>
-      </div>
+    <section class="ownership section wrap" id="ownership" aria-labelledby="ownership-title"><span id="proof" class="fragment-target"></span><span id="eviction" class="fragment-target"></span>
+      <p class="eyebrow"><span>03 /</span> Yours to keep</p>
+      <div class="ownership-grid"><div data-reveal><h2 id="ownership-title">Your memory.<br><em>Your rules.</em></h2><p class="ownership-intro">A personal tool should feel personal.<br>Right down to where your data lives.</p><div class="local-signature"><svg aria-hidden="true"><use href="#lock"/></svg><span>Local by default.<br><strong>Built for your Mac.</strong></span></div></div>
+        <div class="ownership-principles"><article><span>01</span><div><h3>Close to you.</h3><p>Built-in AI runs on your Mac. Your library lives locally, ready to return to after the day is done.</p></div></article><article><span>02</span><div><h3>Open from the start.</h3><p>Free, open-source software. No LokalBot account or subscription standing between you and your memory.</p></div></article><article><span>03</span><div><h3>You choose what stays.</h3><p>Review capture settings, grant the permissions you want, and control what you keep.</p></div></article><details><summary>What needs an internet connection?<span aria-hidden="true">+</span></summary><p>Initial model downloads and updates need a connection. Optional remote inference and network-capable Agent Mode commands require your approval. <a href="privacy">Read the privacy details.</a></p></details></div></div>
     </section>
 
-    <section class="landing-section ownership" id="proof" aria-labelledby="privacy-title">
-      <div class="ownership__copy">
-        <p class="eyebrow">Your work stays yours</p>
-        <h2 id="privacy-title">Private by default.<br />Yours to keep.</h2>
-        <p>Built-in transcription and AI run on your Mac. Your library lives in local files and SQLite, with no LokalBot account, subscription, or telemetry.</p>
-        <ul class="privacy-points">
-          <li><i class="ph ph-check" aria-hidden="true"></i><span><strong>A clear network boundary.</strong> Models and updates need a connection. A remote inference server receives request context only after you approve its origin.</span></li>
-          <li><i class="ph ph-check" aria-hidden="true"></i><span><strong>Capture settings you can review.</strong> Recording and screen context depend on your settings and macOS permissions. <a href="system-requirements#capture-defaults">Check the release defaults before setup.</a></span></li>
-          <li><i class="ph ph-check" aria-hidden="true"></i><span><strong>Source you can inspect.</strong> The app is open source under GPLv3. Optional Agent Mode commands can use files or the network when you approve them.</span></li>
-        </ul>
-        <div class="ownership__links"><a class="text-link" href="privacy">Read the privacy policy <span aria-hidden="true">↗</span></a><a class="text-link" href="open-source-ai-meeting-notes">How to verify the boundary <span aria-hidden="true">↗</span></a></div>
-      </div>
-      <aside class="ownership__note" id="eviction" aria-labelledby="ownership-title">
-        <p class="ownership__note-label">A note on ownership</p>
-        <h3 id="ownership-title">Memory shouldn’t<br />have a landlord.</h3>
-        <p>Subscriptions end. Tools change. Your archive should still be yours.</p>
-        <p>Keep your recordings, transcripts, and exports on your own Mac — with no service account to keep open.</p>
-        <a href="enshittification-proof">Why ownership matters <span aria-hidden="true">↗</span></a>
-      </aside>
-    </section>
-
-    <section class="landing-section more-memory" id="write" aria-labelledby="memory-title">
-      <header class="landing-heading"><p class="eyebrow">Put memory to work</p><h2 id="memory-title">Continue with context.</h2><p>Your local library supports daily summaries, writing, and actions you can review.</p></header>
-      <div class="memory-extras">
-        <article><i class="ph ph-clock-countdown" aria-hidden="true"></i><h3>See what needs attention.</h3><p>Today brings together your day digest and outstanding actions. Understand what happened and what still needs your attention.</p></article>
-        <article><i class="ph ph-waveform" aria-hidden="true"></i><h3>Write where you work.</h3><p>Dictate at your cursor or accept an inline autocomplete suggestion. Each task uses its own local model role.</p></article>
-        <article><i class="ph ph-file-text" aria-hidden="true"></i><h3>Start from a useful draft.</h3><p>Turn your work context into stand-ups, weekly work logs, and follow-ups. Review drafts and approve any Agent Mode actions.</p></article>
-      </div>
-      <details class="writing-demo">
-        <summary>Try the autocomplete example</summary>
-        <div class="writing-demo__body">
-          <div class="cotype">
-            <label class="cotype__label" for="ctInput">New message</label>
-            <div class="cotype__editor">
-              <div class="cotype__field" id="cotypeField" aria-hidden="true"><span class="ct-typed" id="ctTyped">Following up on</span><span class="ct-caret"></span><span class="ct-ghost" id="ctGhost"> our sync, the on-device build is ready to ship.</span></div>
-              <input id="ctInput" class="ct-input" type="text" value="Following up on" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Autocomplete demo. Type, then press Tab to accept the suggestion." aria-describedby="cotype-help" disabled />
-            </div>
-            <p class="cotype__hint" id="cotype-help"><kbd>Tab</kbd> accepts a word. <kbd>Esc</kbd> dismisses. <kbd>Shift</kbd> + <kbd>Tab</kbd> moves back.</p>
-            <noscript><p class="cotype__hint">Enable JavaScript to try this interactive example.</p></noscript>
-          </div>
-          <p>This scripted example demonstrates the interaction. In the app, your selected autocomplete model generates suggestions on your Mac by default.</p>
-        </div>
-      </details>
-      <div class="more-memory__links"><a class="text-link" href="local-transcription-models-mac">Explore local models <span aria-hidden="true">↗</span></a><a class="text-link" href="guides">Browse the guides <span aria-hidden="true">↗</span></a></div>
-    </section>
-
-    <section class="landing-section get-started" id="download" aria-labelledby="download-title">
-      <div class="get-started__intro">
-        <p class="eyebrow">Make room for the work ahead</p>
-        <h2 id="download-title">Keep your context.<br />Keep moving.</h2>
-        <p>Download LokalBot, finish model setup, and choose what to remember. Save a useful moment, explore your day, and try recalling something you want to come back to.</p>
-        <a class="btn btn--primary" href="https://github.com/stevyhacker/lokalbot/releases/latest/download/LokalBot.dmg"><i class="ph ph-apple-logo" aria-hidden="true"></i>Download for macOS</a>
-        <p class="intro__compat">Free · Apple Silicon · macOS 15+</p>
-        <div class="get-started__links"><a href="system-requirements#first-memory">Installation and first-memory checklist</a><a href="https://github.com/stevyhacker/lokalbot/releases">Release notes and all downloads</a></div>
-      </div>
-      <div class="landing-faq" aria-label="Frequently asked questions">
-        <details><summary>Does anything leave my Mac?</summary><p>With the built-in backend, captured app context, saved moments, meeting audio, and generated summaries are processed locally. Model downloads, updates, optional Agent Mode setup, and approved network commands use the internet. A remote inference origin you approve receives the context for that request. <a href="privacy">Read the full boundary.</a></p></details>
-        <details><summary>What gets recorded by default?</summary><p>In v0.7.2, a fresh install selects automatic meeting detection and encrypted visual context. Capture still requires the corresponding macOS permissions. Review these settings before granting access; you can disable automatic recording or visual context. Upgrades retain saved preferences. <a href="system-requirements#capture-defaults">See capture settings and retention.</a></p></details>
-        <details><summary>Which Macs can run it?</summary><p>An Apple Silicon Mac (M1 or later) with macOS 15 or newer. Your selected models determine the memory and disk space needed. <a href="system-requirements">Check your setup.</a></p></details>
-        <details><summary>What do I need to download first?</summary><p>Install the app, then finish the model downloads for the features you want to use. Built-in processing works offline once the required models are ready. <a href="system-requirements#first-memory">Follow the installation checklist.</a></p></details>
-        <details><summary>Is it really free?</summary><p>Yes. No LokalBot account or subscription. The full app is open source under GPLv3, and you can keep using your local library. <a href="https://github.com/stevyhacker/lokalbot">Read the source.</a></p></details>
-        <details><summary>Can I choose my own models?</summary><p>Yes. Transcription, summaries, and autocomplete have separate model roles. Use the built-in choices or configure supported alternatives. Non-loopback inference requires approval for the exact server origin. <a href="local-transcription-models-mac">Read the model guide.</a></p></details>
-      </div>
-    </section>
+    <section class="closing" id="download" aria-labelledby="closing-title"><div class="wrap closing-content"><p class="eyebrow">Make a little room for what’s next.</p><h2 id="closing-title">Keep the context.<br><em>Free your head.</em></h2><a class="button button-blue" href="https://github.com/stevyhacker/lokalbot/releases/latest/download/LokalBot.dmg"><svg aria-hidden="true"><use href="#apple"/></svg>Get LokalBot for Mac<svg aria-hidden="true" class="button-arrow"><use href="#arrow"/></svg></a><p class="closing-note">Free & open source · Apple Silicon · macOS 15+<br>Models download during setup. <a href="system-requirements#first-memory">Installation help ↗</a></p></div></section>
   </main>
 
-  <footer class="footer">
-    <div class="footer__brand"><a class="brand" href="#top"><img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="30" height="30" /><span>LokalBot</span></a><p>Private work memory for Mac.<br />Remember the work. Find the context.</p><p class="footer__meta">Free and open source · Apple Silicon · macOS 15+</p></div>
-    <nav class="footer__col" id="guides" aria-label="Learn"><h3>Learn</h3><a href="guides">All guides</a><a href="system-requirements">Installation and requirements</a><a href="system-requirements#capture-defaults">Workday capture settings</a><a href="local-transcription-models-mac">Model setup</a></nav>
-    <nav class="footer__col" id="compare" aria-label="Compare"><h3>Compare</h3><a href="lokalbot-vs-granola">vs Granola</a><a href="lokalbot-vs-rewind">vs Rewind</a><a href="lokalbot-vs-superwhisper">vs Superwhisper</a><a href="lokalbot-vs-hyprnote">vs Hyprnote</a></nav>
-    <nav class="footer__col" aria-label="Project"><h3>Project</h3><a href="https://github.com/stevyhacker/lokalbot">GitHub</a><a href="https://github.com/stevyhacker/lokalbot/releases">Release notes</a><a href="privacy">Privacy</a><a href="terms">Terms</a><a href="support">Support</a></nav>
-    <p class="footer__legal">Local by default. Record with consent. Your work memory is yours.</p>
-  </footer>
+  <footer class="footer wrap" id="guides"><a class="footer-brand" href="#top">LokalBot<span aria-hidden="true">.</span></a><p>Your work. A little easier to remember.</p><nav aria-label="Footer navigation"><a href="guides">Guides</a><a href="guides#compare-title" id="compare">Compare</a><a href="https://github.com/stevyhacker/lokalbot" target="_blank" rel="noopener">Source ↗</a><a href="privacy">Privacy ↗</a><a href="support">Help ↗</a></nav></footer>
+
+  <dialog id="source-dialog" aria-labelledby="source-title"><div class="dialog-top"><span class="eyebrow">Example memory · Source</span><button class="dialog-close" type="button" aria-label="Close source">×</button></div><p id="source-meta" class="source-meta"></p><h2 id="source-title"></h2><blockquote id="source-text"></blockquote><p class="source-note">An illustrative moment to show how recall brings you back to the original context.</p></dialog>
+  <dialog id="image-dialog" class="image-dialog" aria-label="LokalBot app screenshot"><div class="dialog-top"><span id="image-title">LokalBot · Timeline</span><button class="dialog-close" type="button" aria-label="Close screenshot">×</button></div><img id="full-image" src="assets/screens/timeline-workspace.webp" alt="The full LokalBot Timeline example"></dialog>
 </body>
 </html>

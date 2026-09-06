@@ -41,5 +41,3 @@
 .ph-terminal-window { --ph-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='4' width='20' height='16' rx='2'/%3E%3Cpath d='m7 9 3 3-3 3M13 15h4'/%3E%3C/svg%3E"); }
 .ph-translate { --ph-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 5h8M8 3v2m3 0c-1 4-3 7-7 9m2-5c1 2 3 4 6 5M14 21l4-10 4 10m-6.5-4h5'/%3E%3C/svg%3E"); }
 .ph-waveform { --ph-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M3 10v4M7 7v10M11 3v18M15 6v12M19 9v6M23 11v2'/%3E%3C/svg%3E"); }
-
-.ph-play { --ph-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='m7 3 14 9-14 9Z'/%3E%3C/svg%3E"); }

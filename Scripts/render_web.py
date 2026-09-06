@@ -219,7 +219,7 @@ def render_sitemap() -> str:
     ]
     entries = []
     modified = {guide["slug"]: guide.get("updated", "2026-07-13") for guide in GUIDES}
-    modified.update({"": "2026-09-05", "privacy": "2026-09-05"})
+    modified.update({"": "2026-09-06", "privacy": "2026-09-05"})
     for path in paths:
         url = f"https://www.lokalbot.com/{path}"
         entries.append(
