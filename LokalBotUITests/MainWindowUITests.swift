@@ -514,15 +514,23 @@ final class MainWindowUITests: XCTestCase {
         let position = app.sliders["meeting.playbackPosition"]
         XCTAssertTrue(position.waitForExistence(timeout: 5),
                       "waveform must retain native slider accessibility")
+        func assertPosition(_ seconds: Double, displayedTime: String) {
+            // macOS exposes a native slider's AXValue as a number. The
+            // formatted accessibility description is not its numeric value.
+            XCTAssertEqual((position.value as? NSNumber)?.doubleValue, seconds,
+                           "Unexpected slider value: \(String(describing: position.value))")
+            XCTAssertTrue(app.staticTexts["\(displayedTime) / 00:01:00"].exists,
+                          "the visible playback time must follow keyboard seeking")
+        }
         position.click()
         app.typeKey(.home, modifierFlags: [])
-        XCTAssertEqual(position.value as? String, "00:00:00 of 00:01:00")
+        assertPosition(0, displayedTime: "00:00:00")
         app.typeKey(.rightArrow, modifierFlags: [])
-        XCTAssertEqual(position.value as? String, "00:00:05 of 00:01:00")
+        assertPosition(5, displayedTime: "00:00:05")
         app.typeKey(.leftArrow, modifierFlags: [])
-        XCTAssertEqual(position.value as? String, "00:00:00 of 00:01:00")
+        assertPosition(0, displayedTime: "00:00:00")
         app.typeKey(.end, modifierFlags: [])
-        XCTAssertEqual(position.value as? String, "00:01:00 of 00:01:00")
+        assertPosition(60, displayedTime: "00:01:00")
     }
 
     func testMeetingRowOpensFullWorkspaceWithAudioPlayer() {

@@ -115,6 +115,7 @@ jobs:
           CODE_SIGNING_ALLOWED: "NO"
         run: |
           interaction_status=0
+          Scripts/ui-tests.sh 'MainWindowUITests/testMeetingWaveformExposesSliderAndSupportsKeyboardSeeking' || interaction_status=$?
           Scripts/ui-tests.sh 'AgentModeUITests' || interaction_status=$?
           Scripts/ui-tests.sh 'RedesignUITests/testAgentApprovalDescribesEffectAndDenialAndStopReachTheController' || interaction_status=$?
           Scripts/ui-tests.sh 'RedesignUITests/testFourHundredActionsStaySearchableAndCompletionCanBeUndone' || interaction_status=$?
