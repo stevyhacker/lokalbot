@@ -506,6 +506,25 @@ final class MainWindowUITests: XCTestCase {
 
     // MARK: - Detail tabs
 
+    func testMeetingWaveformExposesSliderAndSupportsKeyboardSeeking() {
+        openLibrary()
+        let row = meetingRow(for: fixture.designReview)
+        XCTAssertTrue(row.waitForExistence(timeout: 4))
+        row.click()
+        let position = app.sliders["meeting.playbackPosition"]
+        XCTAssertTrue(position.waitForExistence(timeout: 5),
+                      "waveform must retain native slider accessibility")
+        position.click()
+        app.typeKey(.home, modifierFlags: [])
+        XCTAssertEqual(position.value as? String, "00:00:00 of 00:01:00")
+        app.typeKey(.rightArrow, modifierFlags: [])
+        XCTAssertEqual(position.value as? String, "00:00:05 of 00:01:00")
+        app.typeKey(.leftArrow, modifierFlags: [])
+        XCTAssertEqual(position.value as? String, "00:00:00 of 00:01:00")
+        app.typeKey(.end, modifierFlags: [])
+        XCTAssertEqual(position.value as? String, "00:01:00 of 00:01:00")
+    }
+
     func testMeetingRowOpensFullWorkspaceWithAudioPlayer() {
         openLibrary()
         let row = meetingRow(for: fixture.designReview)

@@ -29,18 +29,7 @@ actor LiveMeetingAudioPreparationWorker {
         try Task.checkCancellation()
         guard FileManager.default.fileExists(atPath: source.path) else { return .noWork }
 
-        // Opening the append-only CAF just long enough to inspect its current
-        // readable frame count avoids allocating a chunk before four fresh
-        // seconds are available.
-        if let availability = try? Self.availableAudio(at: source),
-           LiveTranscriptChunker.nextChunk(
-               processedFrames: processedFrames,
-               totalFrames: availability.frames,
-               sampleRate: availability.sampleRate) == nil {
-            return .noWork
-        }
-
-        try Task.checkCancellation()
+        // One bounded reader supplies both availability and the audio suffix.
         let reader = try AVAudioFile(forReading: source)
         let sampleRate = reader.fileFormat.sampleRate
         guard let range = LiveTranscriptChunker.nextChunk(
@@ -77,7 +66,7 @@ actor LiveMeetingAudioPreparationWorker {
         let chunkEnd = range.lowerBound + Int64(samples.count)
 
         try Task.checkCancellation()
-        guard let speechSamples = LiveTranscriptChunker.speechSamples(
+        guard let speechSamples = LiveTranscriptChunker.speechCandidate(
             from: samples,
             sampleRate: sampleRate
         ) else {
@@ -104,14 +93,22 @@ actor LiveMeetingAudioPreparationWorker {
         try? FileManager.default.removeItem(at: url)
     }
 
-    private struct AvailableAudio {
-        let frames: Int64
-        let sampleRate: Double
-    }
-
-    private static func availableAudio(at source: URL) throws -> AvailableAudio {
-        let reader = try AVAudioFile(forReading: source)
-        return AvailableAudio(frames: reader.length, sampleRate: reader.fileFormat.sampleRate)
+    /// Recent preview uses one shared time origin, even when one track is
+    /// shorter or temporarily missing. Lagging tracks wait for that origin so
+    /// they cannot backfill audio older than the disclosed preview start.
+    func initialCursors(in folder: URL, fileNames: [String], recent: Bool) throws -> [Int64] {
+        try Task.checkCancellation()
+        guard recent else { return Array(repeating: 0, count: fileNames.count) }
+        let readers = fileNames.map { try? AVAudioFile(forReading: folder.appendingPathComponent($0)) }
+        let duration = readers.compactMap { reader -> Double? in
+            guard let reader, reader.processingFormat.sampleRate > 0 else { return nil }
+            return Double(reader.length) / reader.processingFormat.sampleRate
+        }.max() ?? 0
+        let start = max(0, duration - LiveTranscriptChunker.targetChunkSeconds)
+        return readers.map { reader in
+            let sampleRate = reader?.processingFormat.sampleRate ?? 16_000
+            return Int64(start * sampleRate)
+        }
     }
 
     private func scratchDirectory() throws -> URL {
@@ -155,173 +152,251 @@ actor LiveMeetingAudioPreparationWorker {
     }
 }
 
-/// Rolling transcript of the meeting being recorded right now. The recorders
-/// mirror their audio into snapshot-safe PCM tees (`mic.live.caf` /
-/// `system.live.caf`, see `AudioPreviewTee`); this poller snapshots each tee,
-/// cuts the unprocessed audio into small chunks at quiet points
-/// (`LiveTranscriptChunker`), transcribes them with the user's selected ASR
-/// engine, and publishes timestamped lines for the live meeting view.
-///
-/// This is a preview: the authoritative transcript is still produced by the
-/// full pipeline (with diarization) after the recording stops.
-///
-/// Lifecycle: `AppState` calls `prepare(folder:)` when a recording starts and
-/// `stop()` when it ends, but transcription only actually runs after
-/// `activate()` — the live meeting view calls it on first show, so meetings
-/// nobody watches cost zero ASR cycles. Once activated, the opt-in
-/// carries across calendar-handoff splits (a fresh `prepare` resumes).
+/// Explicitly enabled preview. Cursors belong to a recording, rather than to
+/// a polling task, so pause/retry cannot replay already accepted chunks.
 @MainActor
 final class LiveMeetingTranscriber: ObservableObject {
-
     struct Line: Identifiable, Equatable {
         let id = UUID()
-        /// Seconds since the recording started.
         let time: TimeInterval
-        /// "me" (mic) or "them" (system audio).
         let speaker: String
         let text: String
     }
 
+    enum State: Equatable {
+        case off, running, paused
+        case failed(String)
+    }
+
+    enum StartPosition { case recent, beginning }
+
+    struct Timing {
+        var idlePoll: Duration = .seconds(1)
+        var retryBaseSeconds: Double = 1
+    }
+
+    typealias SpeechDetector = @MainActor (URL) async throws -> Bool
+    typealias Transcribe = @MainActor (URL, AppSettings) async throws -> Transcript
+
     @Published private(set) var lines: [Line] = []
+    @Published private(set) var state: State = .off
     @Published private(set) var isWorking = false
-    @Published private(set) var isRunning = false
-    /// Surfaced in the panel when transcription keeps failing.
     @Published private(set) var statusMessage: String?
+    @Published private(set) var previewStartTime: TimeInterval?
+
+    var isRunning: Bool { state == .running }
+    var errorMessage: String? {
+        if case .failed(let message) = state { return message }
+        return nil
+    }
 
     private let settings: () -> AppSettings
     private let audioPreparationWorker: LiveMeetingAudioPreparationWorker
+    private let detectSpeech: SpeechDetector
+    private let transcribe: Transcribe
+    private let timing: Timing
     private var task: Task<Void, Never>?
     private var generation = 0
     private var pendingFolder: URL?
     private var hasTranscribedOnce = false
-    /// Keep the panel bounded on very long meetings.
+    private var initializedCursors = false
+    private var resumeAfterHandoff = false
+    private var tracks: [TrackState]
     private static let maxLines = 400
     private static let maxConsecutiveFailures = 3
 
     nonisolated static let scratchDirectoryName = "live-previews"
 
-    init(storageRoot: URL, settings: @escaping () -> AppSettings) {
+    init(storageRoot: URL,
+         detectSpeech: SpeechDetector? = nil,
+         transcribe: Transcribe? = nil,
+         timing: Timing = Timing(),
+         settings: @escaping () -> AppSettings) {
         self.settings = settings
+        self.tracks = Self.newTracks()
         self.audioPreparationWorker = LiveMeetingAudioPreparationWorker(storageRoot: storageRoot)
+        self.detectSpeech = detectSpeech ?? { url in
+            let seconds = await SpeechActivity.shared.speechSeconds(in: url)
+            try Task.checkCancellation()
+            guard let seconds else { throw PreviewError.speechDetectionUnavailable }
+            return seconds > 0
+        }
+        self.transcribe = transcribe ?? { url, config in
+            try await config.transcriptionEngine().transcribe(
+                audio: url, language: config.transcriptionLanguage.code,
+                prompt: config.transcriptionPrompt)
+        }
+        self.timing = timing
     }
 
-    /// Snapshots are deleted per-use, but a crash mid-chunk orphans them —
-    /// call once at launch to reclaim the scratch directory.
+    private enum PreviewError: LocalizedError {
+        case speechDetectionUnavailable
+        var errorDescription: String? {
+            "Speech detection is unavailable. Retry preview when the speech model is ready."
+        }
+    }
+
     static func sweepOrphanedSnapshots(storageRoot: URL) {
         try? FileManager.default.removeItem(
             at: storageRoot.appendingPathComponent(scratchDirectoryName, isDirectory: true))
     }
 
-    /// A recording started (or split to a new meeting folder). Doesn't
-    /// transcribe yet — that costs ASR passes for the whole meeting — but if
-    /// the user had already opened the panel this session, resume seamlessly.
     func prepare(folder: URL) {
-        let resume = isRunning
+        let resume = isRunning || resumeAfterHandoff
         cancelWork()
         pendingFolder = folder
+        tracks = Self.newTracks()
+        initializedCursors = false
+        hasTranscribedOnce = false
+        resumeAfterHandoff = false
         lines = []
-        statusMessage = nil
-        if resume { activate() }
+        previewStartTime = nil
+        state = .off
+        if resume { activate(from: .beginning) }
     }
 
-    /// The live meeting view appeared: actually start transcribing. Idempotent
-    /// while running; a no-op when no recording is prepared.
-    func activate() {
+    /// The start choice applies only to the first activation. Retry and resume
+    /// retain their cursors even if the recording has grown in the meantime.
+    func activate(from position: StartPosition = .recent) {
         guard !isRunning, let folder = pendingFolder else { return }
         generation += 1
         let session = generation
-        hasTranscribedOnce = false
-        isRunning = true
+        for index in tracks.indices {
+            tracks[index].failures = 0
+            tracks[index].retryAfter = nil
+        }
+        state = .running
+        statusMessage = nil
         task = Task { [weak self] in
-            await self?.run(folder: folder, session: session)
+            await self?.run(folder: folder, session: session, position: position)
         }
     }
 
-    /// The recording ended.
-    func stop() {
+    func pause() {
+        guard isRunning else { return }
         cancelWork()
+        state = .paused
+    }
+
+    /// Only a known calendar stop/start may carry the opt-in forward. An idle
+    /// transition after a failed start or an ordinary stop clears it again.
+    func stop(preservingHandoff: Bool = false) {
+        let resume = preservingHandoff && isRunning
+        cancelWork()
+        resumeAfterHandoff = resume
         pendingFolder = nil
+        tracks = Self.newTracks()
+        initializedCursors = false
         lines = []
-        statusMessage = nil
+        previewStartTime = nil
+        state = .off
     }
 
     private func cancelWork() {
         task?.cancel()
         task = nil
         generation += 1
-        isRunning = false
         isWorking = false
+        statusMessage = nil
     }
-
-    // MARK: - Poll loop
 
     private struct TrackState {
         let fileName: String
         let speaker: String
         var processedFrames: Int64 = 0
+        var failures = 0
+        var retryAfter: ContinuousClock.Instant?
     }
 
-    private func run(folder: URL, session: Int) async {
-        defer {
-            if generation == session {
-                isRunning = false
-                isWorking = false
+    private static func newTracks() -> [TrackState] {
+        [TrackState(fileName: AudioPreviewTee.micFileName, speaker: "me"),
+         TrackState(fileName: AudioPreviewTee.systemFileName, speaker: "them")]
+    }
+
+    private func isCurrent(_ session: Int) -> Bool {
+        !Task.isCancelled && generation == session && isRunning
+    }
+
+    private func run(folder: URL, session: Int, position: StartPosition) async {
+        do {
+            if !initializedCursors {
+                let cursors = try await audioPreparationWorker.initialCursors(
+                    in: folder, fileNames: tracks.map(\.fileName), recent: position == .recent)
+                guard isCurrent(session) else { return }
+                for index in tracks.indices { tracks[index].processedFrames = cursors[index] }
+                // Both tee formats are fixed at 16 kHz. Actual chunk timestamps
+                // still use the reader's sample rate.
+                previewStartTime = Double(cursors.max() ?? 0) / 16_000
+                initializedCursors = true
             }
-        }
-        var tracks = [TrackState(fileName: AudioPreviewTee.micFileName, speaker: "me"),
-                      TrackState(fileName: AudioPreviewTee.systemFileName, speaker: "them")]
-        var consecutiveFailures = 0
-        try? await Task.sleep(for: .seconds(LiveTranscriptChunker.minChunkSeconds))
-        while !Task.isCancelled, generation == session {
-            var didWork = false
-            for index in tracks.indices {
-                guard !Task.isCancelled, generation == session else { return }
-                do {
-                    if let advanced = try await transcribeNextChunk(of: tracks[index],
-                                                                    folder: folder,
-                                                                    session: session) {
-                        tracks[index].processedFrames = advanced
-                        didWork = true
-                        consecutiveFailures = 0
-                    }
-                } catch is CancellationError {
-                    return
-                } catch {
-                    consecutiveFailures += 1
-                    lokalbotLog("live transcript chunk failed track=\(tracks[index].fileName) error=\(error.localizedDescription)")
-                    if consecutiveFailures >= Self.maxConsecutiveFailures {
-                        statusMessage = "Live transcription is unavailable — the full transcript still arrives after the meeting."
-                        return
+            while isCurrent(session) {
+                var didWork = false
+                for index in tracks.indices {
+                    guard isCurrent(session) else { return }
+                    if let deadline = tracks[index].retryAfter, ContinuousClock.now < deadline { continue }
+                    do {
+                        let result = try await transcribeNextChunk(of: tracks[index], folder: folder, session: session)
+                        guard isCurrent(session) else { return }
+                        if let result {
+                            tracks[index].processedFrames = result.frame
+                            if !result.fresh.isEmpty {
+                                lines = Array(((lines + result.fresh).sorted { $0.time < $1.time }).suffix(Self.maxLines))
+                            }
+                            didWork = true
+                            if result.transcribed {
+                                tracks[index].failures = 0
+                                tracks[index].retryAfter = nil
+                            }
+                        }
+                    } catch {
+                        guard isCurrent(session) else { return }
+                        tracks[index].failures += 1
+                        let failures = tracks[index].failures
+                        lokalbotLog("live transcript failed track=\(tracks[index].fileName) attempt=\(failures) error=\(error.localizedDescription)")
+                        if failures >= Self.maxConsecutiveFailures {
+                            let message = "Live preview could not continue. Retry from this point; recording is still running."
+                            state = .failed(message)
+                            statusMessage = message
+                            return
+                        }
+                        let delay = timing.retryBaseSeconds * pow(2, Double(failures - 1))
+                        tracks[index].retryAfter = ContinuousClock.now.advanced(by: .seconds(delay))
+                        statusMessage = "Retrying live preview… (\(failures)/\(Self.maxConsecutiveFailures))"
                     }
                 }
+                // Already-buffered audio can be processed immediately. Once
+                // caught up, poll without spinning; backoff is per track.
+                if !didWork { try await Task.sleep(for: timing.idlePoll) }
             }
-            isWorking = false
-            try? await Task.sleep(for: .seconds(didWork ? 0.5 : 2.0))
+        } catch {
+            guard isCurrent(session) else { return }
+            let message = "Live preview was interrupted. Retry to continue; recording is still running."
+            state = .failed(message)
+            statusMessage = message
         }
     }
 
-    /// Prepare one tee's next chunk off-main, transcribe it, and append lines.
-    /// Returns the new processed-frame position, or nil when there's nothing
-    /// new to do (tee missing, or not enough fresh audio yet).
-    private func transcribeNextChunk(of track: TrackState, folder: URL,
-                                     session: Int) async throws -> Int64? {
-        let source = folder.appendingPathComponent(track.fileName)
+    private struct Advance {
+        let frame: Int64
+        let transcribed: Bool
+        var fresh: [Line] = []
+    }
+
+    private func transcribeNextChunk(of track: TrackState, folder: URL, session: Int) async throws -> Advance? {
         let preparation = try await audioPreparationWorker.prepareNextChunk(
-            source: source,
-            processedFrames: track.processedFrames)
+            source: folder.appendingPathComponent(track.fileName), processedFrames: track.processedFrames)
         switch preparation {
-        case .noWork:
-            return nil
-        case .advance(let frame):
-            return frame
+        case .noWork: return nil
+        case .advance(let frame): return Advance(frame: frame, transcribed: false)
         case .ready(let prepared):
             do {
-                let advanced = try await transcribePreparedChunk(
-                    prepared,
-                    track: track,
-                    session: session)
+                guard isCurrent(session) else {
+                    await audioPreparationWorker.removePreparedChunk(at: prepared.url)
+                    return nil
+                }
+                let result = try await transcribePreparedChunk(prepared, track: track, session: session)
                 await audioPreparationWorker.removePreparedChunk(at: prepared.url)
-                return advanced
+                return result
             } catch {
                 await audioPreparationWorker.removePreparedChunk(at: prepared.url)
                 throw error
@@ -329,38 +404,28 @@ final class LiveMeetingTranscriber: ObservableObject {
         }
     }
 
-    private func transcribePreparedChunk(
-        _ prepared: LiveMeetingPreparedAudioChunk,
-        track: TrackState,
-        session: Int
-    ) async throws -> Int64? {
+    private func transcribePreparedChunk(_ prepared: LiveMeetingPreparedAudioChunk,
+                                         track: TrackState, session: Int) async throws -> Advance? {
+        guard isCurrent(session) else { return nil }
         isWorking = true
-        // The first pass may block on model load for a while — say so instead
-        // of leaving the panel on a bare "Listening…".
-        if !hasTranscribedOnce {
-            statusMessage = "Preparing the transcription model…"
+        defer { if generation == session { isWorking = false } }
+        if !hasTranscribedOnce { statusMessage = "Preparing speech detection…" }
+        let hasSpeech = try await detectSpeech(prepared.url)
+        guard isCurrent(session) else { return nil }
+        guard hasSpeech else {
+            statusMessage = nil
+            return Advance(frame: prepared.processedFrames, transcribed: false)
         }
-        let config = settings()
-        let transcript = try await config.transcriptionEngine().transcribe(
-            audio: prepared.url,
-            language: config.transcriptionLanguage.code,
-            prompt: config.transcriptionPrompt)
-        try Task.checkCancellation()
-        guard generation == session else { return nil }
+        if !hasTranscribedOnce { statusMessage = "Preparing the transcription model…" }
+        let transcript = try await transcribe(prepared.url, settings())
+        guard isCurrent(session) else { return nil }
         hasTranscribedOnce = true
         statusMessage = nil
-
         let fresh = transcript.segments.compactMap { segment -> Line? in
             let text = segment.displayText
             guard !text.isEmpty else { return nil }
-            return Line(
-                time: prepared.startTime + segment.start,
-                speaker: track.speaker,
-                text: text)
+            return Line(time: prepared.startTime + segment.start, speaker: track.speaker, text: text)
         }
-        if !fresh.isEmpty {
-            lines = Array(((lines + fresh).sorted { $0.time < $1.time }).suffix(Self.maxLines))
-        }
-        return prepared.processedFrames
+        return Advance(frame: prepared.processedFrames, transcribed: true, fresh: fresh)
     }
 }

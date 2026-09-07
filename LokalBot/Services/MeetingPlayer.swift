@@ -26,6 +26,13 @@ final class MeetingPlayer: NSObject, ObservableObject {
     private var players: [AVAudioPlayer] = []
     private var ticker: Timer?
 
+    /// Use exactly the tracks and gains that loaded successfully for playback.
+    var waveformSources: [WaveformAnalysis.Source] {
+        players.compactMap { player in
+            player.url.map { WaveformAnalysis.Source(url: $0, gain: player.volume) }
+        }
+    }
+
     /// The longest source owns the meeting timeline. The system track can end
     /// before the mic (or vice versa); clocking from `players.first` freezes or
     /// jumps the scrubber as soon as that shorter player finishes.

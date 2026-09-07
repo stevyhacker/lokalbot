@@ -64,25 +64,24 @@ final class LiveTranscriptChunkerTests: XCTestCase {
         XCTAssertLessThanOrEqual(cut, tail.count)
     }
 
-    // MARK: - hasSpeech
+    // MARK: - Conservative prefilter (VAD makes the speech decision)
 
     func testPureSilenceHasNoSpeech() {
         // A dead input (several seconds of digital zeros) must never reach the ASR.
-        XCTAssertFalse(LiveTranscriptChunker.hasSpeech(
+        XCTAssertFalse(isCandidate(
             [Float](repeating: 0, count: Int(4 * rate)), sampleRate: rate))
     }
 
-    func testStationaryRoomToneHasNoSpeech() {
-        // THE regression case: a muted participant's mic feeds hot room tone
-        // (RMS ≈ 0.014, far above the old 0.001 whole-chunk threshold) that
-        // Whisper hallucinated "Me" lines from.
-        XCTAssertFalse(LiveTranscriptChunker.hasSpeech(
+    func testStationaryRoomToneIsLeftForVAD() {
+        // Room tone reaches the speech detector; energy alone cannot reliably
+        // distinguish steady speech from steady background noise.
+        XCTAssertTrue(isCandidate(
             tone(amplitude: 0.02, seconds: 4), sampleRate: rate))
     }
 
-    func testLoudStationaryHumHasNoSpeech() {
-        // No dynamics means no speech, no matter how loud the hum is.
-        XCTAssertFalse(LiveTranscriptChunker.hasSpeech(
+    func testStationaryHumIsLeftForVAD() {
+        // A steady signal must not be rejected solely for lacking dynamics.
+        XCTAssertTrue(isCandidate(
             tone(amplitude: 0.25, seconds: 4), sampleRate: rate))
     }
 
@@ -99,8 +98,8 @@ final class LiveTranscriptChunkerTests: XCTestCase {
                 amplitude: 0.04,
                 frequency: 15)
         }
-        XCTAssertFalse(LiveTranscriptChunker.hasSpeech(samples, sampleRate: rate))
-        XCTAssertNil(LiveTranscriptChunker.speechSamples(from: samples, sampleRate: rate))
+        XCTAssertFalse(isCandidate(samples, sampleRate: rate))
+        XCTAssertNil(LiveTranscriptChunker.speechCandidate(from: samples, sampleRate: rate))
     }
 
     func testSpeechLikeBurstsOverQuietFloorHaveSpeech() {
@@ -109,7 +108,7 @@ final class LiveTranscriptChunkerTests: XCTestCase {
         for second in [1.0, 3.0, 5.0] {
             burst(into: &samples, at: second, seconds: 0.3, amplitude: 0.1)
         }
-        XCTAssertTrue(LiveTranscriptChunker.hasSpeech(samples, sampleRate: rate))
+        XCTAssertTrue(isCandidate(samples, sampleRate: rate))
     }
 
     func testQuietBurstsJustAboveAbsoluteFloorHaveSpeech() {
@@ -119,7 +118,7 @@ final class LiveTranscriptChunkerTests: XCTestCase {
         for second in [1.0, 3.0, 5.0] {
             burst(into: &samples, at: second, seconds: 0.3, amplitude: 0.02)
         }
-        XCTAssertTrue(LiveTranscriptChunker.hasSpeech(samples, sampleRate: rate))
+        XCTAssertTrue(isCandidate(samples, sampleRate: rate))
     }
 
     func testSpeechOverHotRoomToneHasSpeech() {
@@ -129,7 +128,7 @@ final class LiveTranscriptChunkerTests: XCTestCase {
         for second in [1.0, 3.0, 5.0] {
             burst(into: &samples, at: second, seconds: 0.3, amplitude: 0.2)
         }
-        XCTAssertTrue(LiveTranscriptChunker.hasSpeech(samples, sampleRate: rate))
+        XCTAssertTrue(isCandidate(samples, sampleRate: rate))
     }
 
     func testLowVoiceFundamentalAndHarmonicsStillHaveSpeech() {
@@ -139,37 +138,63 @@ final class LiveTranscriptChunkerTests: XCTestCase {
         for second in [1.0, 3.0, 5.0] {
             voicedBurst(into: &samples, at: second, seconds: 0.45)
         }
-        XCTAssertTrue(LiveTranscriptChunker.hasSpeech(samples, sampleRate: rate))
-        XCTAssertNotNil(LiveTranscriptChunker.speechSamples(from: samples, sampleRate: rate))
+        XCTAssertTrue(isCandidate(samples, sampleRate: rate))
+        XCTAssertNotNil(LiveTranscriptChunker.speechCandidate(from: samples, sampleRate: rate))
     }
 
-    func testSingleShortBurstIsBelowMinimumActiveTime() {
-        // One hop-aligned 0.2 s burst activates only 0.3 s of windows — under
-        // the 0.4 s minimum — so a stray thump or click doesn't trigger the ASR.
+    func testShortBurstIsLeftForVAD() {
+        // Do not reject brief replies based on duration. VAD distinguishes
+        // an actual short utterance from a thump or keyboard click.
         var samples = tone(amplitude: 0.002, seconds: 6)
         burst(into: &samples, at: 3.0, seconds: 0.2, amplitude: 0.1)
-        XCTAssertFalse(LiveTranscriptChunker.hasSpeech(samples, sampleRate: rate))
+        XCTAssertTrue(isCandidate(samples, sampleRate: rate))
+    }
+
+    func testBriefQuietSpeechIsNotDilutedByTheWholeChunk() {
+        var samples = [Float](repeating: 0, count: Int(12 * rate))
+        burst(into: &samples, at: 4, seconds: 0.3, amplitude: 0.015)
+        XCTAssertTrue(isCandidate(samples, sampleRate: rate))
+    }
+
+    func testContinuousVoiceCandidateDoesNotRequireTenDecibelsOfVariation() {
+        var samples = [Float](repeating: 0, count: Int(6 * rate))
+        for i in samples.indices {
+            let t = Double(i) / rate
+            let envelope = 0.08 + 0.02 * sin(2 * .pi * 3 * t)
+            samples[i] = Float(envelope * (sin(2 * .pi * 190 * t) + 0.5 * sin(2 * .pi * 380 * t)))
+        }
+        XCTAssertTrue(isCandidate(samples, sampleRate: rate))
+    }
+
+    func testInvalidChunkBoundsReturnNoWork() {
+        XCTAssertNil(LiveTranscriptChunker.nextChunk(processedFrames: -1, totalFrames: 100, sampleRate: rate))
+        XCTAssertNil(LiveTranscriptChunker.nextChunk(processedFrames: 200, totalFrames: 100, sampleRate: rate))
+        XCTAssertNil(LiveTranscriptChunker.nextChunk(processedFrames: 0, totalFrames: 100, sampleRate: .infinity))
     }
 
     func testEmptyChunkHasNoSpeech() {
-        XCTAssertFalse(LiveTranscriptChunker.hasSpeech([], sampleRate: rate))
+        XCTAssertFalse(isCandidate([], sampleRate: rate))
     }
 
     func testZeroSampleRateHasNoSpeech() {
-        XCTAssertFalse(LiveTranscriptChunker.hasSpeech(
+        XCTAssertFalse(isCandidate(
             [Float](repeating: 0.1, count: 16_000), sampleRate: 0))
     }
 
     func testSubWindowChunkAboveAbsoluteFloorHasSpeech() {
         // Shorter than one 200 ms window: falls back to whole-chunk RMS.
-        XCTAssertTrue(LiveTranscriptChunker.hasSpeech(
+        XCTAssertTrue(isCandidate(
             tone(amplitude: 0.1, seconds: 0.1), sampleRate: rate))
     }
 
     func testSubWindowChunkBelowAbsoluteFloorHasNoSpeech() {
         // Shorter than one window and below the absolute floor: not speech.
-        XCTAssertFalse(LiveTranscriptChunker.hasSpeech(
+        XCTAssertFalse(isCandidate(
             tone(amplitude: 0.002, seconds: 0.1), sampleRate: rate))
+    }
+
+    private func isCandidate(_ samples: [Float], sampleRate: Double) -> Bool {
+        LiveTranscriptChunker.speechCandidate(from: samples, sampleRate: sampleRate) != nil
     }
 
     // MARK: - Synthesis helpers

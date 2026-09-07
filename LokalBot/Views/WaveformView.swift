@@ -1,128 +1,164 @@
 import SwiftUI
-import AVFoundation
 
-/// A clickable waveform scrubber for the meeting player. Peaks are computed
-/// once from the audio file (downsampled so ~`bins` bars span the width),
-/// cached per path so re-showing a meeting is instant. Played bars use the
-/// brand teal; unplayed are muted — the same Me/Them identity the rest of the
-/// app uses. Dragging scrubs; clicking seeks.
-///
-/// For a two-track meeting the mic track (Me) drives the shape; it's the one
-/// you can rely on, and rendering both as one waveform keeps the scrubber
-/// readable at small heights.
+/// A compact audio overview with pointer scrubbing and a native accessibility
+/// slider. The drag previews locally; releasing seeks once, preserving playback.
 struct WaveformView: View {
-    let url: URL?
-    let progress: Double          // 0…1 of the track played
-    let onSeek: (Double) -> Void  // progress 0…1
+    let sources: [WaveformAnalysis.Source]
+    let currentTime: TimeInterval
+    let duration: TimeInterval
+    let onSeek: (TimeInterval) -> Void
 
     @State private var peaks: [Float]?
-    private let bins = 160
+    @State private var loadedRequest: WaveformAnalysis.Request?
+    @State private var isLoading = true
+    @State private var hoverProgress: Double?
+    @State private var scrubProgress: Double?
+    @FocusState private var isFocused: Bool
+
+    private var request: WaveformAnalysis.Request {
+        .init(sources: sources, duration: duration)
+    }
+    private var progress: Double {
+        WaveformAnalysis.clamp(duration > 0 ? currentTime / duration : 0)
+    }
+    private var displayedProgress: Double { scrubProgress ?? progress }
+    private var previewProgress: Double? { scrubProgress ?? hoverProgress }
+    private var availablePeaks: [Float]? { loadedRequest == request ? peaks : nil }
 
     var body: some View {
         GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                if let peaks {
-                    barLayer(peaks, in: geo.size, played: false)
-                    barLayer(peaks, in: geo.size, played: true)
-                } else {
-                    // Cheap placeholder until the (off-main) analysis lands.
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(.quaternary.opacity(0.4))
+            ZStack(alignment: .topLeading) {
+                waveform(in: geo.size)
+                if let previewProgress {
+                    Text(Transcript.stamp(previewProgress * duration))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 3))
+                        .fixedSize()
+                        .position(x: min(max(28, previewProgress * geo.size.width),
+                                         max(28, geo.size.width - 28)), y: 5)
+                        .allowsHitTesting(false)
+                } else if isLoading && availablePeaks == nil {
+                    ProgressView().controlSize(.mini)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
                 }
             }
             .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        let p = max(0, min(1, value.location.x / max(geo.size.width, 1)))
-                        onSeek(p)
-                    }
-            )
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    isFocused = true
+                    scrubProgress = position(value.location.x, width: geo.size.width)
+                }
+                .onEnded { value in
+                    seek(position(value.location.x, width: geo.size.width))
+                    scrubProgress = nil
+                })
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let location):
+                    hoverProgress = position(location.x, width: geo.size.width)
+                case .ended:
+                    hoverProgress = nil
+                }
+            }
         }
+        .frame(minWidth: 80)
         .frame(height: 40)
-        .task(id: url?.path) { await load() }
+        .focusable()
+        .focused($isFocused)
+        .focusEffectDisabled()
+        .overlay {
+            RoundedRectangle(cornerRadius: 5)
+                .strokeBorder(isFocused ? Color.accentColor : .clear, lineWidth: 2)
+                .padding(-3)
+                .allowsHitTesting(false)
+        }
+        .onKeyPress(.leftArrow) { adjust(by: -5); return .handled }
+        .onKeyPress(.rightArrow) { adjust(by: 5); return .handled }
+        .onKeyPress(.home) { seek(0); return .handled }
+        .onKeyPress(.end) { seek(1); return .handled }
+        .accessibilityRepresentation {
+            Slider(value: Binding(get: { currentTime }, set: { onSeek($0) }),
+                   in: 0...max(1, duration)) {
+                Text("Playback position")
+            }
+            .accessibilityValue("\(Transcript.stamp(currentTime)) of \(Transcript.stamp(duration))")
+            .accessibilityHint("Adjust to seek through the recording")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: adjust(by: 5)
+                case .decrement: adjust(by: -5)
+                @unknown default: break
+                }
+            }
+            .accessibilityIdentifier("meeting.playbackPosition")
+        }
+        .help("Click or drag to seek. Left and Right arrows move 5 seconds.")
+        .task(id: request) { await load(request) }
     }
 
-    /// Mirrored bars around the horizontal centerline — the classic waveform.
-    private func barLayer(_ peaks: [Float], in size: CGSize, played: Bool) -> some View {
-        let count = peaks.count
-        let spacing: CGFloat = 2
-        let barWidth = max(1, (size.width - spacing * CGFloat(count - 1)) / CGFloat(count))
-        let cut = Int(Double(count) * progress)
-        return Canvas { ctx, _ in
-            for (index, peak) in peaks.enumerated() {
-                let isPlayed = index < cut
-                guard played == isPlayed else { continue }
-                let h = max(2, CGFloat(peak) * size.height)
-                let x = CGFloat(index) * (barWidth + spacing)
-                let rect = CGRect(x: x, y: (size.height - h) / 2, width: barWidth, height: h)
-                ctx.fill(Path(roundedRect: rect, cornerRadius: barWidth / 2),
-                         with: .color(played ? Brand.teal : Color.secondary.opacity(0.35)))
+    private func waveform(in size: CGSize) -> some View {
+        let bars = WaveformAnalysis.resample(availablePeaks ?? [], width: size.width)
+        return Canvas { context, _ in
+            let center = size.height / 2
+            let cut = size.width * displayedProgress
+            var shape = Path()
+            if bars.isEmpty {
+                shape.addRoundedRect(in: CGRect(x: 0, y: center - 1, width: size.width, height: 2),
+                                     cornerSize: CGSize(width: 1, height: 1))
+            } else {
+                let step = size.width / CGFloat(bars.count)
+                let barWidth = max(1, step - 2)
+                for (index, peak) in bars.enumerated() {
+                    let height = max(2, CGFloat(peak) * (size.height - 10))
+                    shape.addRoundedRect(
+                        in: CGRect(x: CGFloat(index) * step, y: center - height / 2,
+                                   width: barWidth, height: height),
+                        cornerSize: CGSize(width: barWidth / 2, height: barWidth / 2))
+                }
+            }
+            context.fill(shape, with: .color(.secondary.opacity(0.45)))
+            var played = context
+            played.clip(to: Path(CGRect(x: 0, y: 0, width: cut, height: size.height)))
+            played.fill(shape, with: .color(Brand.teal))
+            // A playhead makes position readable without relying on color alone.
+            let playheadX = min(max(0, cut - 1), max(0, size.width - 2))
+            context.fill(Path(roundedRect: CGRect(x: playheadX, y: 3, width: 2, height: size.height - 6),
+                              cornerRadius: 1), with: .color(.primary))
+            if let hoverProgress, scrubProgress == nil {
+                let x = min(max(0, size.width * hoverProgress), max(0, size.width - 1))
+                context.fill(Path(CGRect(x: x, y: 10, width: 1, height: size.height - 15)),
+                             with: .color(.secondary))
             }
         }
+        .clipped()
+        .allowsHitTesting(false)
     }
 
-    /// Downsample the file to `bins` peak values, off the main actor. Reads in
-    /// bounded chunks so long meetings do not allocate a full decoded PCM file.
-    private func load() async {
-        guard let url, FileManager.default.fileExists(atPath: url.path) else { return }
-        if let cached = WaveformCache.shared.object(forKey: url.path as NSString) {
-            peaks = cached.peaks
-            return
-        }
-        let path = url.path
-        let binCount = bins
-        let computed = await Task.detached(priority: .utility) { () -> [Float]? in
-            guard let file = try? AVAudioFile(forReading: URL(fileURLWithPath: path)) else { return nil }
-            let totalFrames = max(Int64(file.length), 1)
-            let format = file.processingFormat
-            let channelCount = max(1, Int(format.channelCount))
-            let chunkFrames: AVAudioFrameCount = 32_768
-            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames) else { return nil }
-            var out = [Float](repeating: 0, count: binCount)
-            var absoluteFrame: Int64 = 0
-
-            while absoluteFrame < totalFrames {
-                if Task.isCancelled { return nil }
-                buffer.frameLength = 0
-                let remaining = AVAudioFrameCount(min(Int64(chunkFrames), totalFrames - absoluteFrame))
-                do {
-                    try file.read(into: buffer, frameCount: remaining)
-                } catch {
-                    return nil
-                }
-                let frameLength = Int(buffer.frameLength)
-                guard frameLength > 0 else { break }
-                guard let channels = buffer.floatChannelData else { return nil }
-
-                for frame in 0..<frameLength {
-                    var peak: Float = 0
-                    for channel in 0..<channelCount {
-                        peak = max(peak, abs(channels[channel][frame]))
-                    }
-                    let bin = min(binCount - 1, Int((absoluteFrame + Int64(frame)) * Int64(binCount) / totalFrames))
-                    out[bin] = max(out[bin], peak)
-                }
-                absoluteFrame += Int64(frameLength)
-            }
-            // Normalize so the quietest-recorded file still fills the bar height.
-            let maxPeak = out.max() ?? 1
-            return maxPeak > 0 ? out.map { $0 / maxPeak } : out
-        }.value
-        if let computed {
-            WaveformCache.shared.setObject(PeaksBox(computed), forKey: path as NSString)
-            peaks = computed
-        }
+    private func position(_ x: CGFloat, width: CGFloat) -> Double {
+        WaveformAnalysis.clamp(x / max(width, 1))
     }
-}
 
-/// `NSCache` requires a class; wrap the peaks array so a session can memoize
-/// the (relatively) expensive audio decode per file.
-private final class PeaksBox {
-    let peaks: [Float]
-    init(_ peaks: [Float]) { self.peaks = peaks }
-}
+    private func seek(_ progress: Double) {
+        onSeek(WaveformAnalysis.clamp(progress) * max(0, duration))
+    }
 
-private enum WaveformCache {
-    static let shared = NSCache<NSString, PeaksBox>()
+    private func adjust(by seconds: TimeInterval) {
+        scrubProgress = nil
+        onSeek(min(max(0, currentTime + seconds), max(0, duration)))
+    }
+
+    private func load(_ request: WaveformAnalysis.Request) async {
+        peaks = nil
+        loadedRequest = nil
+        isLoading = true
+        scrubProgress = nil
+        hoverProgress = nil
+        let result = await WaveformAnalysis.load(request)
+        guard !Task.isCancelled else { return }
+        peaks = result
+        loadedRequest = request
+        isLoading = false
+    }
 }

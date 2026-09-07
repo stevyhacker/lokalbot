@@ -13,14 +13,15 @@ import SwiftUI
 struct LiveMeetingDetailView: View {
     @EnvironmentObject var app: AppState
     let meeting: Meeting
+    @ObservedObject var transcriber: LiveMeetingTranscriber
 
     @State private var notes = ""
     @State private var followingLive = true
+    @State private var userIsScrolling = false
     @State private var notesSaveState = "Saved on this Mac"
     @State private var notesLoaded = false
     @State private var saveTask: Task<Void, Never>?
 
-    private var transcriber: LiveMeetingTranscriber { app.liveTranscriber }
     private var folder: URL { meeting.folderURL(in: app.storage) }
 
     var body: some View {
@@ -67,12 +68,7 @@ struct LiveMeetingDetailView: View {
                 .accessibilityIdentifier("live.stop")
             }
             RecordingHealthStrip(recording: app.recording)
-            if !transcriber.isRunning {
-                Button("Start live transcript preview") { transcriber.activate() }
-                    .accessibilityIdentifier("live.startPreview")
-                Text("Recording continues independently. Preview uses the speech model on this Mac.")
-                    .workspaceTextRole(.supporting)
-            }
+            previewControls
             HStack(spacing: 6) {
                 HStack(spacing: 6) {
                     StatusDot(color: Brand.recording, size: 7, pulses: true)
@@ -95,11 +91,50 @@ struct LiveMeetingDetailView: View {
 
     // MARK: - Transcript
 
+    private var previewControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                switch transcriber.state {
+                case .running:
+                    Button("Pause preview") { transcriber.pause() }
+                        .accessibilityIdentifier("live.pausePreview")
+                case .paused:
+                    Button("Resume preview") { transcriber.activate() }
+                        .accessibilityIdentifier("live.resumePreview")
+                case .failed:
+                    Button("Retry preview") { transcriber.activate() }
+                        .accessibilityIdentifier("live.retryPreview")
+                case .off:
+                    Button("Start live transcript preview") { transcriber.activate() }
+                        .accessibilityIdentifier("live.startPreview")
+                    Button("From beginning") { transcriber.activate(from: .beginning) }
+                        .accessibilityIdentifier("live.previewFromBeginning")
+                }
+            }
+            .buttonStyle(.bordered)
+            if transcriber.state == .off {
+                Text("Preview starts with the latest 12 seconds. The full transcript covers the whole recording.")
+                    .workspaceTextRole(.supporting)
+            } else if transcriber.state == .paused {
+                Text("Preview paused. Recording continues; resume picks up where you left off.")
+                    .workspaceTextRole(.supporting)
+            } else if let start = transcriber.previewStartTime, start > 0 {
+                Text("Preview starts at \(Self.timestamp(start)). Earlier audio remains in the full recording.")
+                    .workspaceTextRole(.supporting)
+            }
+        }
+    }
+
     private var transcriptColumn: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Live transcript")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
+            if let error = transcriber.errorMessage, !transcriber.lines.isEmpty {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.callout).foregroundStyle(Brand.error)
+                    .accessibilityIdentifier("live.previewError")
+            }
             transcript
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 9))
@@ -112,19 +147,23 @@ struct LiveMeetingDetailView: View {
 
     private var transcript: some View {
         Group {
-            if !transcriber.isRunning && !transcriber.isWorking {
-                ContentUnavailableView("Preview is off", systemImage: "text.bubble",
-                                       description: Text("Start live transcript preview to read along. Recording continues independently."))
-            } else if transcriber.lines.isEmpty {
+            if transcriber.lines.isEmpty {
                 Group {
-                    if transcriber.isWorking || transcriber.statusMessage == nil {
+                    switch transcriber.state {
+                    case .off:
+                        ContentUnavailableView("Preview is off", systemImage: "text.bubble",
+                                               description: Text("Start live transcript preview to read along. Recording continues independently."))
+                    case .paused:
+                        ContentUnavailableView("Preview paused", systemImage: "pause.circle",
+                                               description: Text("Resume preview when you want to read along. Recording continues."))
+                    case .failed(let message):
+                        ContentUnavailableView("Preview interrupted", systemImage: "exclamationmark.triangle",
+                                               description: Text(message))
+                            .accessibilityIdentifier("live.previewError")
+                    case .running:
                         LoadingStateLabel(
                             transcriber.statusMessage ?? "Listening…",
                             font: .callout)
-                    } else {
-                        Text(transcriber.statusMessage ?? "Listening…")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
                     }
                 }
                 .multilineTextAlignment(.center)
@@ -143,7 +182,15 @@ struct LiveMeetingDetailView: View {
                     }
                     .onScrollGeometryChange(for: Bool.self) {
                         $0.contentSize.height - $0.visibleRect.maxY < 80
-                    } action: { _, nearEnd in followingLive = nearEnd }
+                    } action: { _, nearEnd in
+                        if userIsScrolling { followingLive = nearEnd }
+                    }
+                    .onScrollPhaseChange { _, phase in
+                        switch phase {
+                        case .tracking, .interacting, .decelerating: userIsScrolling = true
+                        default: userIsScrolling = false
+                        }
+                    }
                     .overlay(alignment: .bottomTrailing) {
                         if !followingLive {
                             Button("Follow live") {
@@ -152,7 +199,7 @@ struct LiveMeetingDetailView: View {
                             }.buttonStyle(.bordered).padding(8)
                         }
                     }
-                    .onChange(of: transcriber.lines.count) {
+                    .onChange(of: transcriber.lines.last?.id) {
                         if followingLive, let last = transcriber.lines.last {
                             proxy.scrollTo(last.id, anchor: .bottom)
                         }

@@ -123,7 +123,10 @@ final class MeetingAudioAssetTests: XCTestCase {
         XCTAssertTrue(player.isLoaded, "player should load both tracks despite differing formats")
         XCTAssertEqual(player.currentTime, 0)
         XCTAssertEqual(player.duration, 0.5, accuracy: 0.15)   // the longer (system) track
+        XCTAssertEqual(player.waveformSources.count, 2)
+        XCTAssertEqual(Set(player.waveformSources.map { $0.url.lastPathComponent }), ["mic.m4a", "system.m4a"])
         player.stop()
+        XCTAssertTrue(player.waveformSources.isEmpty)
     }
 
     @MainActor

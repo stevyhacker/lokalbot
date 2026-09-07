@@ -23,7 +23,7 @@ struct MeetingLibraryDetailView: View {
             }
         } else if let meeting = app.selectedMeeting {
             if meeting.endedAt == nil {
-                LiveMeetingDetailView(meeting: meeting).id(meeting.id)
+                LiveMeetingDetailView(meeting: meeting, transcriber: app.liveTranscriber).id(meeting.id)
             } else {
                 MeetingWorkspaceDetail(meeting: meeting).id(meeting.id)
             }
@@ -1106,11 +1106,12 @@ private struct MeetingAudioBar: View {
             .keyboardShortcut(.space, modifiers: [])
             .help("Play / pause (Space)")
             .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
-            Slider(value: Binding(get: { player.currentTime }, set: { player.seek(to: $0) }),
-                   in: 0...max(1, player.duration)) { Text("Playback position") }
-                .labelsHidden()
-                .accessibilityValue(Transcript.stamp(player.currentTime))
-                .accessibilityIdentifier("meeting.playbackPosition")
+            WaveformView(
+                sources: player.waveformSources,
+                currentTime: player.currentTime,
+                duration: player.duration,
+                onSeek: { player.seek(to: $0) })
+                .id(folder)
             Text("\(Transcript.stamp(player.currentTime)) / \(Transcript.stamp(player.duration))")
                 .font(WorkspaceTypography.metadata.monospacedDigit()).foregroundStyle(.secondary)
                 .fixedSize()

@@ -210,6 +210,8 @@ final class RecordingController: ObservableObject {
     @Published private(set) var currentMeeting: Meeting?
     /// Drives `elapsed`; bumped each second by `recordingTick`.
     @Published private(set) var now = Date()
+    /// True only around the synchronous stop/start boundary of a calendar split.
+    private(set) var isSplittingForCalendarHandoff = false
 
     private let storage: StorageManager
     private let settingsStore: SettingsStore
@@ -583,6 +585,8 @@ final class RecordingController: ObservableObject {
         }
         lokalbotLog(
             "calendar handoff split old=\(currentMeeting.calendarEventID ?? "?") new=\(nextEventID)")
+        isSplittingForCalendarHandoff = true
+        defer { isSplittingForCalendarHandoff = false }
         stop()
         start(
             context: context,

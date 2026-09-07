@@ -678,7 +678,7 @@ final class AppState: ObservableObject {
         if active, let meeting = recording.currentMeeting {
             liveTranscriber.prepare(folder: meeting.folderURL(in: storage))
         } else {
-            liveTranscriber.stop()
+            liveTranscriber.stop(preservingHandoff: recording.isSplittingForCalendarHandoff)
         }
     }
 
@@ -755,14 +755,14 @@ final class AppState: ObservableObject {
         // change the meeting ID mid-recording): pause cotyping and run the
         // live transcriber against the active meeting folder.
         recordingStatusObserver = recording.$status
-            .map { status -> UUID? in
-                if case .recording(let meetingID) = status { return meetingID }
-                return nil
-            }
             .removeDuplicates()
             .dropFirst()
-            .sink { [weak self] meetingID in
-                self?.meetingRecordingStateDidChange(active: meetingID != nil)
+            .sink { [weak self] status in
+                switch status {
+                case .recording: self?.meetingRecordingStateDidChange(active: true)
+                case .idle: self?.meetingRecordingStateDidChange(active: false)
+                case .starting: break
+                }
             }
         audioMonitorChangeForwarder = audioMonitor.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
