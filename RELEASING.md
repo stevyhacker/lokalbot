@@ -149,7 +149,7 @@ Run from the repo root. Replace `1.0.0` / `100` with the version you are shippin
 
 ### 1. Bump the version
 
-Edit `LokalBot/Info.plist`:
+Edit both `project.yml` and `LokalBot/Info.plist`:
 
 - `CFBundleShortVersionString` → marketing version, e.g. `1.0.0`
 - `CFBundleVersion` → build number, e.g. `100` (monotonic; Sparkle compares this)
@@ -159,6 +159,83 @@ Then regenerate the project:
 ```sh
 xcodegen generate
 ```
+
+Prepare `Scripts/release-notes/v<version>.md` at the same time, including a
+human-readable summary and the full comparison from the previous stable tag.
+Before committing a stable release candidate, fetch current tags and validate
+the three metadata files together (replace the version below):
+
+```sh
+git fetch origin --tags
+git add project.yml LokalBot/Info.plist Scripts/release-notes/v0.8.1.md
+python3 Scripts/release-preflight.py --version 0.8.1 --candidate --staged
+git diff --cached
+```
+
+This read-only preflight checks both version sources, the notes and changelog
+base, increasing build numbers, local/remote tag availability, and that the
+staged snapshot contains exactly the three validated metadata files. Complete
+feature/fix commits separately before preparing this candidate. It never
+commits, tags, or publishes. Without `--candidate --staged`, the script checks
+metadata consistency and stable-release notes, including for already-released
+versions. General PR/push CI uses `--metadata-only` to validate version/build
+consistency without requiring stable-release notes. That mode cannot be combined
+with `--candidate` or `--staged`; candidate preparation and stable publication
+still require the notes and changelog. Prerelease publication retains its
+tag-specific notes path and generated-notes fallback.
+
+Validation and release currently use Xcode **26.3** (0.8.0 used build **17C529**).
+Update the explicit version in Build (including its Tests job), UI Tests and Release together after
+hosted validation. The Build gate compiles the production app and its unit-test
+target. The UI workflow builds its separate host once, runs the critical group,
+then Reduce Motion, then independent functional and visual shards covering all
+72 captures. A shared inventory and aggregate result verification prevent missing
+or duplicate tests. Filtered manual UI
+dispatches remain focused checks and do not constitute the full release gate.
+Test products are shared only within the same workflow attempt and exact SHA,
+with clean build inputs, matching toolchain and digest verification; missing or
+stale products fail instead of rebuilding silently. Use **Re-run all jobs** when
+retrying a shared-products workflow: a failed-jobs-only retry cannot consume
+artifacts from the preceding attempt. Every master/dev push runs full UI
+validation so a release tip always has an eligible push gate.
+
+### Optional: prepare the signed archive while CI validates
+
+After pushing the complete candidate commit to `master`, run:
+
+```bash
+Scripts/prepare-release.sh 0.8.1
+```
+
+This explicitly dispatches the Release workflow in preparation mode. It validates
+candidate metadata and signs/exports the app while the normal push CI runs. It
+creates no tag, sends nothing to notarization and publishes no release. Wait for
+preparation and all five exact-commit push gates before creating the release tag.
+
+Build and unit execution are separate jobs in `build.yml`, sharing one compile.
+The UI aggregate checks smoke, Reduce Motion, both functional shards, all three
+visual sizes and every capture. Filtered or legacy-comparison runs cannot replace
+the complete UI gate. All UI execution remains on hosted runners.
+
+On a tag push, Release requires the candidate to remain the current `master` tip
+and verifies successful **push** runs for Build (both jobs), UI Tests, Lint and
+XcodeGen. It retrieves prepared apps only from successful `release.yml` manual
+runs on that exact trusted master SHA and verifies source/tree, version/build,
+Xcode, architecture, lockfile, run identity and archive digest before reuse.
+A missing/expired preparation uses the existing cold archive flow; a mismatched
+artifact fails. A changed candidate requires new push validation and preparation.
+Preparation artifacts expire after seven days. Final signing/notarization,
+stapling, Sparkle signing and independent download verification remain mandatory.
+
+For hosted comparison of the retained capture timer:
+
+```bash
+gh workflow run ui-tests.yml --ref BRANCH -f capture_mode=legacy
+```
+
+Its visual artifacts retain all 72 cases under a separate comparison check; it
+cannot satisfy the default full UI release gate. Default captures require ready route content and
+window geometry before the preserved one-second compositing delay.
 
 ### 2. Archive + export a Developer ID build
 

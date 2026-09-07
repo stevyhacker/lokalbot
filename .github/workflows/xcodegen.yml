@@ -30,6 +30,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Verify CI helpers and release metadata
+        run: |
+          python3 -m unittest discover -s Scripts/tests -v
+          python3 Scripts/release-preflight.py --metadata-only
+          bash -n Scripts/ui-tests.sh Scripts/prepare-release.sh
+
       - name: Install / verify XcodeGen
         run: |
           if ! command -v xcodegen >/dev/null; then

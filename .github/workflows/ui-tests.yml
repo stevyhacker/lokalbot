@@ -9,7 +9,7 @@
 # dies with "Timed out while enabling automation mode.", the runner lost the
 # TCC grant — that is an infrastructure failure, not a test regression.
 #
-# Runs automatically when app/UI-test code changes on a PR or on master/dev,
+# Runs for app/UI-test PR changes and every master/dev push (exact-SHA gates),
 # plus weekly and manual dispatches. Whether it blocks merging remains a branch
 # protection decision; the workflow itself does not mutate repository state.
 
@@ -22,12 +22,18 @@ on:
         description: "Optional single test, e.g. MainWindowUITests/testSearchFindsTranscriptHitAndDeepLinks"
         required: false
         default: ""
+      capture_mode:
+        description: "Capture readiness or legacy timer (comparison runs are not release gates)"
+        type: choice
+        options: [ready, legacy]
+        default: ready
   pull_request:
     paths:
       - "LokalBot/**"
       - "LokalBotUITests/**"
       - "project.yml"
       - "Scripts/ui-tests.sh"
+      - "Scripts/ci/**"
       - "Scripts/fetch-llama.sh"
       - "Scripts/fetch-sherpa.sh"
       - ".github/workflows/ui-tests.yml"
@@ -35,14 +41,6 @@ on:
     branches:
       - master
       - dev
-    paths:
-      - "LokalBot/**"
-      - "LokalBotUITests/**"
-      - "project.yml"
-      - "Scripts/ui-tests.sh"
-      - "Scripts/fetch-llama.sh"
-      - "Scripts/fetch-sherpa.sh"
-      - ".github/workflows/ui-tests.yml"
   schedule:
     - cron: "0 5 * * 1" # Mondays 05:00 UTC, runs against the default branch
 
@@ -53,9 +51,13 @@ concurrency:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash # enable -e -o pipefail, including outer evidence/log pipelines
+
 jobs:
-  ui-tests:
-    name: XCUITest (macOS)
+  build-smoke:
+    name: UI build and critical tests
     # Move to a self-hosted Mac (runs-on: [self-hosted, macOS]) once one
     # exists — see the TCC note at the top of this file.
     runs-on: macos-15
@@ -69,7 +71,7 @@ jobs:
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          xcode-version: latest-stable
+          xcode-version: "26.3"
 
       - name: Install build tools
         run: |
@@ -101,53 +103,133 @@ jobs:
       - name: Fetch llama.cpp vendor
         run: bash Scripts/fetch-llama.sh
 
-      # Catch focused interaction/accessibility regressions before spending
-      # time rendering the full 72-window visual matrix.
-      - name: Verify workspace accessibility
-        if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
-        env:
-          CODE_SIGNING_ALLOWED: "NO"
-        run: Scripts/ui-tests.sh 'RedesignUITests/testHighContrastKeepsActionsAccessible'
+      - name: Cache Swift packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .build/SourcePackages
+          key: packages-${{ runner.os }}-${{ runner.arch }}-xcode26.3-${{ hashFiles('**/Package.resolved') }}
 
-      - name: Verify critical interactions
-        if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.filter == '') }}
+      # Compile once for every phase in this job, with provenance checked on reuse.
+      - name: Build UI test targets
         env:
           CODE_SIGNING_ALLOWED: "NO"
         run: |
-          interaction_status=0
-          Scripts/ui-tests.sh 'MainWindowUITests/testMeetingWaveformExposesSliderAndSupportsKeyboardSeeking' || interaction_status=$?
-          Scripts/ui-tests.sh 'AgentModeUITests' || interaction_status=$?
-          Scripts/ui-tests.sh 'RedesignUITests/testAgentApprovalDescribesEffectAndDenialAndStopReachTheController' || interaction_status=$?
-          Scripts/ui-tests.sh 'RedesignUITests/testFourHundredActionsStaySearchableAndCompletionCanBeUndone' || interaction_status=$?
-          Scripts/ui-tests.sh 'MainWindowUITests/testMultiMeetingThreadCompletionRequiresConfirmation' || interaction_status=$?
-          Scripts/ui-tests.sh 'MainWindowUITests/testActionThreadSourceCanBeSeparatedAndRestored' || interaction_status=$?
-          exit "$interaction_status"
+          mkdir -p .build/ui-results
+          xcodebuild -version | tee .build/ui-results/toolchain.txt
+          printf '| UI phase | Duration | Result |\n| --- | ---: | --- |\n' >> "$GITHUB_STEP_SUMMARY"
+          Scripts/ui-tests.sh --build-only 2>&1 | tee .build/ui-results/build.log
+
+      # Stop before the visual matrix if a critical interaction fails. These
+      # filters are reused as exclusions for the remainder, avoiding duplicates.
+      - name: Verify critical interactions
+        if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+        run: python3 Scripts/ci/ui-shards.py run smoke
 
       - name: Verify Reduce Motion
-        if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.filter == '') }}
+        if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
         env:
           CODE_SIGNING_ALLOWED: "NO"
         run: |
           trap 'defaults write com.apple.universalaccess reduceMotion -bool false; defaults write org.localhost.lokalbot.redesign-ci requiresReducedMotion -bool false' EXIT
           defaults write com.apple.universalaccess reduceMotion -bool true
           defaults write org.localhost.lokalbot.redesign-ci requiresReducedMotion -bool true
-          Scripts/ui-tests.sh 'RedesignUITests/testReducedMotionWorkspaceRemainsOperable'
+          python3 Scripts/ci/ui-shards.py run reduced-motion
 
-      - name: Run UI tests
+      - name: Run requested single test
+        if: github.event_name == 'workflow_dispatch' && inputs.filter != ''
         env:
-          CODE_SIGNING_ALLOWED: "NO" # hosted runners hold no dev cert
-          UI_TEST_FILTER: ${{ inputs.filter || '' }}
-        run: |
-          set -o pipefail
-          Scripts/ui-tests.sh "$UI_TEST_FILTER" 2>&1 | tee .build/ui-tests.log
+          CODE_SIGNING_ALLOWED: "NO"
+          UI_TEST_FILTER: ${{ inputs.filter }}
+          CAPTURE_MODE: ${{ inputs.capture_mode || 'ready' }}
+        run: python3 Scripts/ci/ui-shards.py run single "$UI_TEST_FILTER"
 
-      - name: Save UI evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - name: Package UI products
+        if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+        run: |
+          python3 Scripts/ci/ui-shards.py plan > .build/ui-results/inventory.json
+          python3 Scripts/ci/test-products.py pack ui
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
         with:
-          name: ui-test-results
-          path: |
-            .build/dd/Logs/Test/*.xcresult
-            .build/ui-tests.log
-          if-no-files-found: warn
+          overwrite: true # full reruns replace artifacts from earlier attempts
+          name: ui-products
+          path: .build/transfer
+          retention-days: 2
+          compression-level: 0
+          if-no-files-found: error
+      - name: Save smoke evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          overwrite: true # full reruns replace artifacts from earlier attempts
+          name: ui-results-smoke
+          path: .build/ui-results
           retention-days: 14
+
+  shards:
+    name: UI ${{ matrix.phase }}
+    needs: build-smoke
+    if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
+    runs-on: macos-15
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [functional-1, functional-2, visual-1000x700, visual-1180x740, visual-1440x900]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
+        with:
+          xcode-version: "26.3"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ui-products
+          path: .build/transfer
+      - name: Verify and restore compiled UI tests
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+        run: python3 Scripts/ci/test-products.py unpack ui
+      - name: Run shard
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+          UI_PHASE: ${{ matrix.phase }}
+          CAPTURE_MODE: ${{ inputs.capture_mode || 'ready' }}
+        run: python3 Scripts/ci/ui-shards.py run "$UI_PHASE"
+      - name: Save shard evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          overwrite: true # full reruns replace artifacts from earlier attempts
+          name: ui-results-${{ matrix.phase }}
+          path: .build/ui-results
+          retention-days: 14
+
+  complete:
+    name: ${{ (inputs.filter != '' || inputs.capture_mode == 'legacy') && 'UI focused / comparison (macOS)' || 'XCUITest (macOS)' }}
+    needs: [build-smoke, shards]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Require successful selected jobs
+        env:
+          BUILD_RESULT: ${{ needs.build-smoke.result }}
+          SHARD_RESULT: ${{ needs.shards.result }}
+          FILTER: ${{ inputs.filter || '' }}
+          CAPTURE_MODE: ${{ inputs.capture_mode || 'ready' }}
+        run: |
+          test "$BUILD_RESULT" = success
+          if [[ -z "$FILTER" ]]; then test "$SHARD_RESULT" = success; fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: inputs.filter == ''
+        with:
+          pattern: ui-results-*
+          path: .build/evidence
+      - name: Verify complete test and capture coverage
+        if: inputs.filter == ''
+        run: python3 Scripts/ci/ui-shards.py verify .build/evidence

@@ -251,7 +251,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         applyCaptureMeetingSelection(to: app, environment: env)
         applyRedesignCaptureState(to: app, environment: env)
-        if env["LOKALBOT_SELECT_FIRST"] == "1" || env["LOKALBOT_SELECT_INDEX"] != nil {
+        if env["LOKALBOT_CAPTURE_READY_FILE"] == nil,
+           env["LOKALBOT_SELECT_FIRST"] == "1" || env["LOKALBOT_SELECT_INDEX"] != nil {
             // Storage discovery and NavigationSplitView restoration can both
             // update the selection after AppState is created. Reapply once the
             // synthetic library and list have settled so marketing captures
@@ -272,6 +273,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if env["LOKALBOT_INITIAL_ASK_MODE"] == "search" { app.askMode = .keyword }
         if env["LOKALBOT_SHOW_GETTING_STARTED"] == "1" {
             UserDefaults.standard.set(false, forKey: "lokalbotv3.gettingStartedDismissed")
+        }
+        if let readyPath = env["LOKALBOT_CAPTURE_READY_FILE"], let path = env["LOKALBOT_CAPTURE_FILE"] {
+            awaitCaptureReadiness(app: app, environment: env, readyPath: readyPath,
+                                  capturePath: path, deadline: Date().addingTimeInterval(20))
+            return
         }
         if env["LOKALBOT_CAPTURE_SIZE"] != nil {
             // Window creation happens immediately after this method. Resize on
@@ -318,15 +324,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// The harness acknowledges populated route content after the window reaches
+    /// its requested geometry. Keep the existing material settle after activation.
+    @MainActor
+    private func awaitCaptureReadiness(app: AppState, environment env: [String: String],
+                                       readyPath: String, capturePath: String, deadline: Date) {
+        guard Date() < deadline else {
+            try? Data("Capture readiness timed out".utf8).write(
+                to: URL(fileURLWithPath: capturePath + ".error"), options: .atomic)
+            NSApp.terminate(nil)
+            return
+        }
+        if let window = uiTestWindow, !app.meetings.isEmpty {
+            applyCaptureMeetingSelection(to: app, environment: env)
+            let parts = (env["LOKALBOT_CAPTURE_SIZE"] ?? "").split(separator: "x").compactMap { Double($0) }
+            if parts.count == 2 {
+                let size = NSSize(width: parts[0], height: parts[1])
+                if window.frame.size != size {
+                    window.setFrame(NSRect(origin: window.frame.origin, size: size), display: true)
+                    window.center()
+                }
+            }
+            window.contentView?.layoutSubtreeIfNeeded()
+            if FileManager.default.fileExists(atPath: readyPath) {
+                window.makeKeyAndOrderFront(nil)
+                window.makeMain()
+                window.orderFrontRegardless()
+                NSApp.activate(ignoringOtherApps: true)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    Self.writeWindowCapture(window, to: capturePath)
+                    NSApp.terminate(nil)
+                }
+                return
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak app] in
+            guard let self, let app else { return }
+            self.awaitCaptureReadiness(app: app, environment: env, readyPath: readyPath,
+                                       capturePath: capturePath, deadline: deadline)
+        }
+    }
+
     @MainActor
     private func applyCaptureMeetingSelection(to app: AppState,
                                               environment env: [String: String]) {
         if env["LOKALBOT_SELECT_FIRST"] == "1", let first = app.meetings.first {
-            app.selectedMeetingIDs = [first.id]
+            if app.selectedMeetingIDs != [first.id] { app.selectedMeetingIDs = [first.id] }
         }
         if let raw = env["LOKALBOT_SELECT_INDEX"], let idx = Int(raw) {
             let ordered = app.meetings.sorted { $0.startedAt > $1.startedAt }
-            if ordered.indices.contains(idx) { app.selectedMeetingIDs = [ordered[idx].id] }
+            if ordered.indices.contains(idx), app.selectedMeetingIDs != [ordered[idx].id] {
+                app.selectedMeetingIDs = [ordered[idx].id]
+            }
         }
     }
 

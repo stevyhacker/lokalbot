@@ -21,6 +21,12 @@
 name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Prepare this candidate version on master while validation runs; does not publish"
+        required: true
+        type: string
   push:
     tags: ["v*"]
 
@@ -32,26 +38,55 @@ concurrency:
 
 permissions:
   contents: write # create the Release and upload DMG + appcast
+  actions: read # verify validation provenance and retrieve trusted preparation
+
+defaults:
+  run:
+    shell: bash # enable -e -o pipefail, including outer evidence/log pipelines
 
 jobs:
   release:
-    name: Archive, notarize, publish
+    if: github.event_name == 'push' || github.ref == 'refs/heads/master'
+    name: Prepare or publish exact candidate
     runs-on: macos-15
     # A cache miss includes a full llama.cpp source build before archive,
     # export, two notarization submissions, stapling, and publication.
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # candidate preflight checks the preceding release tag
 
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          xcode-version: latest-stable
+          xcode-version: "26.3"
+
+      - name: Validate trusted candidate preparation
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_VERSION: ${{ inputs.version }}
+        run: python3 Scripts/ci/release-candidate.py prepare
+
+      - name: Require all five exact-commit release gates
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 Scripts/ci/release-candidate.py gates
+
+      - name: Restore a trusted prepared app when available
+        id: prepared
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 Scripts/ci/release-candidate.py restore
 
       # Fail fast if the tag doesn't match the Info.plist marketing version —
       # Sparkle's enclosure URL embeds the tag, so a mismatch ships a feed
       # pointing at the wrong asset path.
       - name: Verify tag matches CFBundleShortVersionString
+        if: github.event_name == 'push'
         run: |
           short_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' LokalBot/Info.plist)
           tag="${GITHUB_REF_NAME#v}"
@@ -59,6 +94,12 @@ jobs:
             echo "::error::Tag $GITHUB_REF_NAME does not match CFBundleShortVersionString $short_version. Bump LokalBot/Info.plist first (RELEASING.md step 1)." >&2
             exit 1
           fi
+
+      - name: Verify release metadata and notes
+        if: github.event_name == 'push' && !contains(github.ref_name, '-')
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python3 Scripts/release-preflight.py --version "${version%%-*}"
 
       - name: Validate release secrets
         env:
@@ -111,6 +152,7 @@ jobs:
           fi
 
       - name: Install build tools
+        if: steps.prepared.outputs.reused != 'true'
         run: |
           if ! command -v xcodegen >/dev/null; then
             brew install xcodegen
@@ -126,19 +168,30 @@ jobs:
       # generate. Empty dirs satisfy generation; the contents arrive via the
       # cache/fetch steps below and the pre-build fetch phases.
       - name: Create vendor dirs for XcodeGen
+        if: steps.prepared.outputs.reused != 'true'
         run: mkdir -p Vendor/llama-cpp Vendor/sherpa-onnx
 
       - name: Generate project
+        if: steps.prepared.outputs.reused != 'true'
         run: xcodegen generate
 
       - name: Cache native vendors
+        if: steps.prepared.outputs.reused != 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: Vendor
           key: vendor-${{ runner.os }}-${{ hashFiles('Scripts/fetch-llama.sh', 'Scripts/fetch-sherpa.sh') }}
 
       - name: Fetch llama.cpp vendor
+        if: steps.prepared.outputs.reused != 'true'
         run: bash Scripts/fetch-llama.sh
+
+      - name: Cache Swift packages
+        if: steps.prepared.outputs.reused != 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .build/SourcePackages
+          key: packages-${{ runner.os }}-${{ runner.arch }}-xcode26.3-${{ hashFiles('**/Package.resolved') }}
 
       # Hardened Runtime must be ON for notarization; the project default is
       # OFF (project.yml) so local dev builds stay fast. LokalBot's bundled
@@ -147,6 +200,7 @@ jobs:
       # unsupported x86_64 slice. Overriding here is the release-time setup
       # RELEASING.md step 2 documents.
       - name: Archive (Release, Hardened Runtime ON)
+        if: steps.prepared.outputs.reused != 'true'
         env:
           APPLE_TEAM_ID: ${{ secrets.NOTARY_APPLE_TEAM_ID }}
         run: |
@@ -154,6 +208,7 @@ jobs:
             -project LokalBot.xcodeproj \
             -scheme LokalBot \
             -configuration Release \
+            -clonedSourcePackagesDirPath .build/SourcePackages \
             -archivePath build/LokalBot.xcarchive \
             ENABLE_HARDENED_RUNTIME=YES \
             ARCHS=arm64 \
@@ -162,6 +217,7 @@ jobs:
             CODE_SIGN_IDENTITY="Developer ID Application"
 
       - name: Export Developer ID app
+        if: steps.prepared.outputs.reused != 'true'
         env:
           APPLE_TEAM_ID: ${{ secrets.NOTARY_APPLE_TEAM_ID }}
         run: |
@@ -182,7 +238,11 @@ jobs:
             -exportOptionsPlist build/exportOptions.plist
 
       - name: Verify exported signatures and secure timestamps
+        env:
+          APPLE_TEAM_ID: ${{ secrets.NOTARY_APPLE_TEAM_ID }}
         run: |
+          python3 Scripts/ci/release-candidate.py verify-app
+          codesign --display --verbose=2 build/export/LokalBot.app 2>&1 | grep -Fx "TeamIdentifier=$APPLE_TEAM_ID"
           codesign --verify --deep --strict --verbose=2 build/export/LokalBot.app
           missing_timestamp=0
           while IFS= read -r -d '' item; do
@@ -194,9 +254,30 @@ jobs:
           done < <(find build/export/LokalBot.app -type f \( -perm -111 -o -name '*.dylib' \) -print0)
           if (( missing_timestamp )); then exit 1; fi
 
+      - name: Package signed candidate for later publication
+        if: github.event_name == 'workflow_dispatch'
+        run: python3 Scripts/ci/release-candidate.py pack
+      - name: Save prepared candidate
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          overwrite: true # full reruns replace artifacts from earlier attempts
+          name: prepared-app-${{ github.sha }}
+          path: build/prepared
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Recheck release authorization after archive preparation
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 Scripts/ci/release-candidate.py gates
+
       # Staple the app itself (not just the DMG) so first launch succeeds
       # offline after drag-install.
       - name: Notarize + staple the app
+        if: github.event_name == 'push'
         env:
           NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
           NOTARY_APPLE_TEAM_ID: ${{ secrets.NOTARY_APPLE_TEAM_ID }}
@@ -213,6 +294,7 @@ jobs:
           spctl --assess --type execute --verbose=2 build/export/LokalBot.app
 
       - name: Build styled DMG
+        if: github.event_name == 'push'
         run: |
           dmgbuild_venv="$RUNNER_TEMP/dmgbuild-venv"
           python3 -m venv "$dmgbuild_venv"
@@ -222,6 +304,7 @@ jobs:
             --output build/LokalBot.dmg
 
       - name: Notarize + staple the DMG
+        if: github.event_name == 'push'
         env:
           NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
           NOTARY_APPLE_TEAM_ID: ${{ secrets.NOTARY_APPLE_TEAM_ID }}
@@ -243,6 +326,7 @@ jobs:
       # used for the app build doesn't expose it on PATH. Same 2.9.6 pin as
       # project.yml so the signing tool matches the framework we embed.
       - name: Fetch Sparkle sign_update
+        if: github.event_name == 'push'
         run: |
           curl -fsSL -o "$RUNNER_TEMP/Sparkle.tar.xz" \
             https://github.com/sparkle-project/Sparkle/releases/download/2.9.6/Sparkle-2.9.6.tar.xz
@@ -255,6 +339,7 @@ jobs:
       # bytes, so nothing may touch the DMG after this. The private key exists
       # only as a temp file for the duration of this step.
       - name: Sparkle-sign + generate appcast
+        if: github.event_name == 'push'
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
@@ -280,9 +365,11 @@ jobs:
       # pre-releases and never become "latest" (RELEASING.md step 7).
       # Prefer Scripts/release-notes/<tag>.md as the Release body when present.
       - name: Publish GitHub Release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          python3 Scripts/ci/release-candidate.py gates
           prerelease_flag=""
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then
             prerelease_flag="--prerelease"
