@@ -68,6 +68,9 @@ struct LiveMeetingDetailView: View {
                 .accessibilityIdentifier("live.stop")
             }
             RecordingHealthStrip(recording: app.recording)
+            if app.settings.identifySpeakersFromVisuals {
+                MeetingSpeakerObserverStatus(observer: app.speakerObserver)
+            }
             previewControls
             HStack(spacing: 6) {
                 HStack(spacing: 6) {

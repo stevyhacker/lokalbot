@@ -174,6 +174,7 @@ final class ProcessingPipeline: ObservableObject {
     var hasActiveWork: Bool { isDraining || activeMeetingID != nil }
     var hasJobsWaitingForModels: Bool { !waitingForModelsJobs.isEmpty }
     private let diarizer = NeuralDiarizationEngine()
+    private let speakerIdentity: MeetingSpeakerIdentityService?
     private let jobStore: PipelineJobStore?
     /// Fired after transcript/summary files land on disk (search re-index).
     var onArtifactsWritten: ((Meeting) -> Void)?
@@ -181,6 +182,7 @@ final class ProcessingPipeline: ObservableObject {
     init(storage: StorageManager, jobStore: PipelineJobStore? = nil,
          settings: @escaping () -> AppSettings,
          thinkExecution: ThinkExecution? = nil,
+         speakerIdentity: MeetingSpeakerIdentityService? = nil,
          builtInModelPreparer: @escaping BuiltInModelPreparer = { entry, storage in
              try await ModelDownloadManager.shared.ensureAvailable(entry, storage: storage)
          },
@@ -188,6 +190,7 @@ final class ProcessingPipeline: ObservableObject {
          transcriptionStarted: ((Meeting.ID) async -> Void)? = nil) {
         self.storage = storage
         self.jobStore = jobStore
+        self.speakerIdentity = speakerIdentity
         self.settings = settings
         self.thinkExecution = thinkExecution ?? ThinkExecution(
             storage: storage,
@@ -515,21 +518,28 @@ final class ProcessingPipeline: ObservableObject {
                         "transcript speaker bleed removedSegments=\(bleed.removedSegments) "
                             + "removedWords=\(bleed.removedWords)")
                 }
+                var speakerTurns: [SpeakerAudioTurn] = []
+                var voiceSamples: [SpeakerVoiceSample] = []
                 if config.multiSpeakerDiarization,
                    MeetingAudioFiles.transcribableURL(for: .system, in: folder) != nil {
                     stages[meeting.id] = .preparingDiarizationModel
                     await prepareDiarizationModels()
                     stages[meeting.id] = .diarizing
-                    transcript = await refineSpeakers(
+                    (transcript, speakerTurns, voiceSamples) = await refineSpeakers(
                         transcript: transcript,
                         meeting: meeting,
                         folder: folder,
                         config: config,
                         modelsPrepared: true)
                 }
-                transcript = SpeakerAutoNamer.applyingAliases(
-                    to: transcript,
-                    participants: meeting.resolvedCalendarParticipantIdentities)
+                if let speakerIdentity,
+                   let audioURL = MeetingAudioFiles.transcribableURL(for: .system, in: folder) {
+                    transcript = await speakerIdentity.process(transcript: transcript, meeting: meeting,
+                        turns: speakerTurns, samples: voiceSamples, audioURL: audioURL)
+                } else {
+                    transcript = SpeakerAutoNamer.applyingAliases(to: transcript,
+                        participants: meeting.resolvedCalendarParticipantIdentities)
+                }
                 let mergedSanitization = TranscriptSanitizer.sanitize(transcript)
                 transcript = mergedSanitization.transcript
                 if mergedSanitization.changed {
@@ -539,6 +549,7 @@ final class ProcessingPipeline: ObservableObject {
                             + "\(mergedSanitization.removedWords) removedCharacters="
                             + "\(mergedSanitization.removedCharacters)")
                 }
+                transcript = speakerIdentity?.applyingLatestDecision(to: transcript, meetingID: meeting.id) ?? transcript
                 try write(transcript, to: folder)
                 // A finalized AAC track makes its CAF duplicate redundant. A
                 // crash-recovery CAF remains when the AAC container is broken,
@@ -572,6 +583,12 @@ final class ProcessingPipeline: ObservableObject {
                 }
                 stages[meeting.id] = .summarizing
                 var transcript = try loadTranscript(from: folder)
+                if let speakerIdentity,
+                   FileManager.default.fileExists(atPath: folder.appendingPathComponent("speaker-evidence/identity.sealed").path) {
+                    transcript = try await speakerIdentity.recover(meeting: meeting, transcript: transcript)
+                    transcript = speakerIdentity.applyingLatestDecision(to: transcript, meetingID: meeting.id)
+                    try write(transcript, to: folder)
+                }
                 let sanitization = TranscriptSanitizer.sanitize(transcript)
                 if sanitization.changed {
                     transcript = sanitization.transcript
@@ -852,14 +869,15 @@ final class ProcessingPipeline: ObservableObject {
                                 meeting: Meeting,
                                 folder: URL,
                                 config: AppSettings,
-                                modelsPrepared: Bool = false) async -> Transcript {
-        guard config.multiSpeakerDiarization else { return transcript }
+                                modelsPrepared: Bool = false) async -> (Transcript, [SpeakerAudioTurn], [SpeakerVoiceSample]) {
+        guard config.multiSpeakerDiarization else { return (transcript, [], []) }
         guard let systemURL = MeetingAudioFiles.transcribableURL(for: .system, in: folder) else {
-            return transcript
+            return (transcript, [], [])
         }
         if !modelsPrepared { await prepareDiarizationModels() }
-        let segments = await diarizer.diarize(url: systemURL)
-        guard !segments.isEmpty else { return transcript }
+        let result = await diarizer.diarizeDetailed(url: systemURL, includeVoiceSamples: config.rememberSpeakersOnMac)
+        let segments = result.segments
+        guard !segments.isEmpty else { return (transcript, [], []) }
 
         // Stable speaker-id → "Them N" mapping in first-appearance order.
         var order: [String] = []
@@ -881,7 +899,17 @@ final class ProcessingPipeline: ObservableObject {
                 labelled.segments[index].speaker = label
             }
         }
-        return labelled
+        let turns = segments.compactMap { segment -> SpeakerAudioTurn? in
+            guard let label = mapping[segment.speakerId] else { return nil }
+            return SpeakerAudioTurn(speaker: label, range: .init(start: segment.start, end: segment.end))
+        }
+        let samples = result.samples.compactMap { sample -> SpeakerVoiceSample? in
+            guard let label = mapping[sample.speaker] else { return nil }
+            var mapped = sample
+            mapped.speaker = label
+            return mapped
+        }
+        return (labelled, turns, samples)
     }
 
     /// Shared by recording-time prewarm and the post-meeting stage. The

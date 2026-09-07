@@ -1,0 +1,83 @@
+import Foundation
+
+enum SpeakerVoiceMatcher {
+    static func normalized(_ vector: [Float]) -> [Float]? {
+        guard vector.count == 256, vector.allSatisfy(\.isFinite) else { return nil }
+        let norm = sqrt(vector.reduce(Double(0)) { $0 + Double($1) * Double($1) })
+        guard norm > 0.00001, norm.isFinite else { return nil }
+        return vector.map { Float(Double($0) / norm) }
+    }
+
+    static func cosine(_ lhs: [Float], _ rhs: [Float]) -> Double {
+        guard let a = normalized(lhs), let b = normalized(rhs) else { return -1 }
+        return zip(a, b).reduce(0) { $0 + Double($1.0) * Double($1.1) }
+    }
+
+    /// Select at most one disjoint chunk from each independent, uncontaminated
+    /// speaking turn. Overlapping diarizer windows are never extra votes.
+    static func eligible(_ samples: [SpeakerVoiceSample], turns: [SpeakerAudioTurn], speaker: String) -> [SpeakerVoiceSample] {
+        let cleanTurns = VisualSpeakerMatcher.mergedTurns(turns).filter {
+            $0.speaker == speaker && $0.range.duration >= 3
+        }
+        var selected: [SpeakerVoiceSample] = []
+        for turn in cleanTurns {
+            let candidates = samples.filter { sample in
+                sample.speaker == speaker && sample.model == SpeakerVoiceSample.fingerprint
+                    && sample.range.isValid && sample.range.duration >= 3
+                    && sample.range.overlap(turn.range) >= sample.range.duration * 0.95
+                    && !turns.contains { $0.speaker != speaker && $0.range.overlap(sample.range) > 0.02 }
+                    && !selected.contains { $0.range.overlap(sample.range) > 0 }
+                    && normalized(sample.vector) != nil
+            }.sorted { $0.range.duration > $1.range.duration }
+            if var best = candidates.first, let normalized = normalized(best.vector) {
+                best.vector = normalized
+                selected.append(best)
+            }
+            if selected.count == 8 { break }
+        }
+        // A mixed cluster is unsafe to enroll, even if some of its samples agree.
+        guard selected.allSatisfy({ a in selected.allSatisfy { cosine(a.vector, $0.vector) >= 0.75 } }) else { return [] }
+        return selected
+    }
+
+    static func canEnroll(_ samples: [SpeakerVoiceSample]) -> Bool {
+        guard samples.count >= 3, samples.count <= 8,
+              samples.allSatisfy({ $0.model == SpeakerVoiceSample.fingerprint && $0.range.isValid && normalized($0.vector) != nil }),
+              Set(samples.map(\.speaker)).count == 1,
+              samples.reduce(0, { $0 + $1.range.duration }) >= 15 else { return false }
+        for index in samples.indices {
+            for other in samples.indices where other > index {
+                if samples[index].range.overlap(samples[other].range) > 0
+                    || cosine(samples[index].vector, samples[other].vector) < 0.75 { return false }
+            }
+        }
+        return true
+    }
+
+    static func matches(samples: [SpeakerVoiceSample], profiles: [SpeakerVoiceProfile]) -> [SpeakerNameMatch] {
+        guard !samples.isEmpty,
+              samples.allSatisfy({ $0.model == SpeakerVoiceSample.fingerprint && $0.range.isValid && normalized($0.vector) != nil }) else { return [] }
+        var scored: [(SpeakerVoiceProfile, Double, Double)] = []
+        for profile in profiles where profile.model == SpeakerVoiceSample.fingerprint {
+            let exemplars = profile.contributions.flatMap(\.samples).filter {
+                $0.model == SpeakerVoiceSample.fingerprint && normalized($0.vector) != nil
+            }
+            guard exemplars.count >= 3 else { continue }
+            let scores = samples.map { sample in
+                exemplars.map { cosine(sample.vector, $0.vector) }.max() ?? -1
+            }
+            scored.append((profile, scores.reduce(0, +) / Double(scores.count), scores.min() ?? -1))
+        }
+        scored.sort { $0.1 > $1.1 }
+        return Array(scored.prefix(3)).compactMap { profile, mean, minimum in
+            guard mean >= 0.72, minimum >= 0.65 else { return nil } // unknown, including the single-profile case
+            let next = scored.filter { $0.0.id != profile.id }.map(\.1).max() ?? -1
+            let automatic = canEnroll(samples) && mean >= 0.88 && minimum >= 0.82 && mean - next >= 0.08
+            return SpeakerNameMatch(name: profile.name, participantReference: profile.id.uuidString,
+                tier: automatic ? .automatic : .suggested, source: .profile,
+                supportSeconds: samples.reduce(0) { $0 + $1.range.duration }, independentTurns: samples.count,
+                supportFraction: mean, contradictionSeconds: 0, evidence: Array(samples.map(\.range).prefix(8)),
+                profileID: profile.id, profileRevision: profile.revision)
+        }
+    }
+}

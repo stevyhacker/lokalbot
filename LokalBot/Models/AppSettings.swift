@@ -355,6 +355,10 @@ struct AppSettings: Codable, Equatable {
     /// similarity. On by default — the model is ~100 MB and adds 30-60 s
     /// of post-processing per meeting.
     var multiSpeakerDiarization: Bool = true
+    /// Independently opted-in local Meet observation; never enables Day Memory.
+    var identifySpeakersFromVisuals: Bool = false
+    /// User-confirmed voices only. No automatic enrollment from inferred names.
+    var rememberSpeakersOnMac: Bool = false
 
     // MARK: - Cotyping (inline AI autocomplete)
 
@@ -668,6 +672,8 @@ struct AppSettings: Codable, Equatable {
         case approvedRemoteInferenceOrigins
         case noteTemplate
         case summaryLanguage
+        case identifySpeakersFromVisuals
+        case rememberSpeakersOnMac
         case multiSpeakerDiarization
         case cotypingEnabled
         case cotypingUserName
@@ -826,6 +832,8 @@ struct AppSettings: Codable, Equatable {
         try c.encode(noteTemplate, forKey: .noteTemplate)
         try c.encode(summaryLanguage, forKey: .summaryLanguage)
         try c.encode(multiSpeakerDiarization, forKey: .multiSpeakerDiarization)
+        try c.encode(identifySpeakersFromVisuals, forKey: .identifySpeakersFromVisuals)
+        try c.encode(rememberSpeakersOnMac, forKey: .rememberSpeakersOnMac)
         try c.encode(cotypingEnabled, forKey: .cotypingEnabled)
         try c.encode(cotypingUserName, forKey: .cotypingUserName)
         try c.encode(cotypingStyleNote, forKey: .cotypingStyleNote)
@@ -965,6 +973,8 @@ struct AppSettings: Codable, Equatable {
         noteTemplate = decode(.noteTemplate, defaults.noteTemplate)
         summaryLanguage = decode(.summaryLanguage, defaults.summaryLanguage)
         multiSpeakerDiarization = decode(.multiSpeakerDiarization, defaults.multiSpeakerDiarization)
+        identifySpeakersFromVisuals = decode(.identifySpeakersFromVisuals, defaults.identifySpeakersFromVisuals)
+        rememberSpeakersOnMac = decode(.rememberSpeakersOnMac, defaults.rememberSpeakersOnMac)
         cotypingEnabled = decode(.cotypingEnabled, defaults.cotypingEnabled)
         cotypingUserName = decode(.cotypingUserName, defaults.cotypingUserName)
         cotypingStyleNote = decode(.cotypingStyleNote, defaults.cotypingStyleNote)
