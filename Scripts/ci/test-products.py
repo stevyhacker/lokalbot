@@ -38,7 +38,9 @@ def transfer(mode, kind):
         folder.mkdir(parents=True, exist_ok=True)
         subprocess.run(['tar', '-cf', str(archive), '-C', str(products), '.'], check=True)
         manifest.write_text(json.dumps(dict(identity=identity(), sha256=digest(archive),
-                                           root=str(Path.cwd()), kind=kind), indent=2))
+                                           root=str(Path.cwd()), kind=kind,
+                                           runner_image=dict(os=os.environ.get('ImageOS', ''),
+                                                             version=os.environ.get('ImageVersion', ''))), indent=2))
     elif mode == 'unpack':
         saved = json.loads(manifest.read_text())
         if saved['identity'] != identity() or saved['kind'] != kind or saved['sha256'] != digest(archive):

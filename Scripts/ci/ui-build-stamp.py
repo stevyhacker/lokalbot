@@ -23,6 +23,7 @@ def identity():
         "commit": output("git", "rev-parse", "HEAD"),
         "root": str(root),
         "xcode": output("xcodebuild", "-version"),
+        "sdk": output("xcrun", "--sdk", "macosx", "--show-sdk-version"),
         "architecture": output("uname", "-m"),
         "signing": os.environ.get("CODE_SIGNING_ALLOWED", ""),
         "lock": hashlib.sha256((root / paths[-1]).read_bytes()).hexdigest(),

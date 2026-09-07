@@ -21,6 +21,10 @@ final class RedesignUITests: XCTestCase {
     }
 
     func testWorkspaceVisualMatrix() throws {
+        // Collect route assertion failures across the matrix for review. Any
+        // failed assertion still fails this test and the aggregate release gate.
+        continueAfterFailure = true
+        defer { continueAfterFailure = false }
         let routes: [(String, [String: String])] = [
             ("today", ["LOKALBOT_INITIAL_SECTION": "today"]),
             ("actions", ["LOKALBOT_INITIAL_ACTIONS": "1"]),
@@ -99,8 +103,11 @@ final class RedesignUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts["Try the real autocomplete"].waitForExistence(timeout: 10))
         }
         if route == "meeting" || route == "transcript" {
-            XCTAssertTrue(app.staticTexts["detail.title"].label.contains(fixture.designReview.title),
-                          "Capture must select the requested meeting")
+            let title = element("detail.title")
+            let expectedTitle = fixture.designReview.title
+            XCTAssertTrue(UITestHarness.waitUntil(timeout: 5) {
+                (title.value as? String ?? title.label) == expectedTitle
+            }, "Capture must select the requested meeting")
         }
         let dimensions = size.split(separator: "x").compactMap { Double($0) }
         XCTAssertTrue(UITestHarness.waitUntil(timeout: 5) {

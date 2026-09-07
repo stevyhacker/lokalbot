@@ -34,7 +34,7 @@ jobs:
         run: |
           python3 -m unittest discover -s Scripts/tests -v
           python3 Scripts/release-preflight.py
-          bash -n Scripts/ui-tests.sh Scripts/ci/run-ui-suite.sh
+          bash -n Scripts/ui-tests.sh Scripts/prepare-release.sh
 
       - name: Install / verify XcodeGen
         run: |

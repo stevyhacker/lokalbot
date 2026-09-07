@@ -25,10 +25,13 @@ def api(path):
 
 
 def checkout_identity():
+    if command('git', 'status', '--porcelain', '--untracked-files=no'):
+        raise ValueError('Release artifact provenance requires clean tracked source inputs')
     info = plistlib.loads(Path('LokalBot/Info.plist').read_bytes())
     lock = Path('LokalBot.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved')
     return dict(commit=command('git', 'rev-parse', 'HEAD'), tree=command('git', 'rev-parse', 'HEAD^{tree}'),
-                xcode=command('xcodebuild', '-version'), architecture=command('uname', '-m'),
+                xcode=command('xcodebuild', '-version'), sdk=command('xcrun', '--sdk', 'macosx', '--show-sdk-version'),
+                architecture=command('uname', '-m'),
                 version=info['CFBundleShortVersionString'], build=info['CFBundleVersion'],
                 lock=hashlib.sha256(lock.read_bytes()).hexdigest(), repository=os.environ['GITHUB_REPOSITORY'])
 
@@ -95,7 +98,8 @@ def pack():
     archive.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(['ditto', '-c', '-k', '--keepParent', 'build/export/LokalBot.app', str(archive)], check=True)
     saved = dict(identity=checkout_identity(), run=os.environ['GITHUB_RUN_ID'],
-                 attempt=os.environ['GITHUB_RUN_ATTEMPT'], sha256=digest(archive))
+                 attempt=os.environ['GITHUB_RUN_ATTEMPT'], sha256=digest(archive),
+                 runner_image=dict(os=os.environ.get('ImageOS', ''), version=os.environ.get('ImageVersion', '')))
     archive.with_suffix('.json').write_text(json.dumps(saved, indent=2))
 
 

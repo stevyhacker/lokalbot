@@ -87,10 +87,11 @@ class HostedRunnerTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        for name in ["Scripts/ui-tests.sh", "Scripts/ci/ui-build-stamp.py", "Scripts/ci/run-ui-suite.sh"]:
+        for name in ["Scripts/ui-tests.sh", "Scripts/ci/ui-build-stamp.py", "Scripts/ci/ui-shards.py", "Scripts/ci/ui-durations.json"]:
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(SOURCE / name, target)
+        shutil.copytree(SOURCE / "LokalBotUITests", self.root / "LokalBotUITests")
         lock = self.root / "LokalBot.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
         lock.parent.mkdir(parents=True)
         lock.write_text('{}\n')
@@ -119,6 +120,9 @@ if 'build-for-testing' in args:
 sys.exit(int(os.environ.get('FAKE_TEST_EXIT', '0')))
 ''')
         fake.chmod(0o755)
+        sdk = fake.with_name('xcrun')
+        sdk.write_text('#!/bin/sh\nprintf "%s\\n" "${FAKE_SDK:-test-sdk}"\n')
+        sdk.chmod(0o755)
         self.env = dict(os.environ, PATH=f"{fake.parent}:{os.environ['PATH']}", CI="true",
                         GITHUB_RUN_ID="fixture", GITHUB_RUN_ATTEMPT="1", GITHUB_JOB="ui",
                         CODE_SIGNING_ALLOWED="NO", GITHUB_STEP_SUMMARY=str(self.root / '.build/summary'))
@@ -127,7 +131,8 @@ sys.exit(int(os.environ.get('FAKE_TEST_EXIT', '0')))
         return subprocess.check_output(['git', '-C', str(self.root), *args], text=True)
 
     def run_script(self, *args, script="Scripts/ui-tests.sh", **environment):
-        return subprocess.run(['bash', script, *args], cwd=self.root,
+        interpreter = 'python3' if script.endswith('.py') else 'bash'
+        return subprocess.run([interpreter, script, *args], cwd=self.root,
                               env=dict(self.env, **environment), text=True,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
@@ -155,7 +160,7 @@ sys.exit(int(os.environ.get('FAKE_TEST_EXIT', '0')))
 
     def test_stale_job_toolchain_and_dirty_inputs_are_rejected(self):
         self.build()
-        for env in [dict(GITHUB_RUN_ATTEMPT='2'), dict(FAKE_XCODE='different compiler')]:
+        for env in [dict(GITHUB_RUN_ATTEMPT='2'), dict(FAKE_XCODE='different compiler'), dict(FAKE_SDK='different SDK')]:
             self.assertNotEqual(self.run_script('--test-only', **env).returncode, 0)
         (self.root / 'Scripts/ui-tests.sh').write_text((self.root / 'Scripts/ui-tests.sh').read_text() + '\n# changed\n')
         self.assertNotEqual(self.run_script('--test-only').returncode, 0)
@@ -176,22 +181,22 @@ sys.exit(int(os.environ.get('FAKE_TEST_EXIT', '0')))
         self.assertNotEqual(self.run_script('--test-only').returncode, 0)
         self.assertFalse(any('test-without-building' in call for call in self.calls()))
 
-    def test_phase_filters_partition_smoke_and_remainder(self):
-        self.build()
-        for phase in ['smoke', 'reduced-motion', 'remainder']:
-            result = self.run_script(phase, script='Scripts/ci/run-ui-suite.sh')
-            self.assertEqual(result.returncode, 0, result.stdout)
-        smoke, reduced, remainder = self.calls()[1:]
-        selected = {a.removeprefix('-only-testing:') for a in smoke + reduced if a.startswith('-only-testing:')}
-        excluded = {a.removeprefix('-skip-testing:') for a in remainder if a.startswith('-skip-testing:')}
-        self.assertEqual(selected, excluded)
-        self.assertIn('-only-testing:LokalBotUITests', remainder)
-        self.assertIn('-resultBundlePath', remainder)
-        self.assertEqual(remainder[remainder.index('-resultBundlePath') + 1], '.build/ui-results/remainder.xcresult')
+    def test_ci_logging_pipeline_stops_before_smoke_when_compilation_fails(self):
+        workflow = (SOURCE / '.github/workflows/ui-tests.yml').read_text()
+        self.assertIn('shell: bash', workflow)  # GHA enables -e -o pipefail for an explicit Bash shell.
+        step = workflow.split('      - name: Build UI test targets\n', 1)[1].split('      - name:', 1)[0]
+        run = step.split('        run: |\n', 1)[1]
+        run = '\n'.join(line[10:] for line in run.splitlines() if line.startswith('          '))
+        result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c',
+                                 run + '\npython3 Scripts/ci/ui-shards.py run smoke'],
+                                cwd=self.root, env=dict(self.env, FAKE_BUILD_EXIT='71'),
+                                text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.assertEqual(result.returncode, 71, result.stdout)
+        self.assertFalse(any('test-without-building' in call for call in self.calls()))
 
     def test_test_failure_survives_log_pipe_and_summary(self):
         self.build()
-        result = self.run_script('smoke', script='Scripts/ci/run-ui-suite.sh', FAKE_TEST_EXIT='42')
+        result = self.run_script('run', 'smoke', script='Scripts/ci/ui-shards.py', FAKE_TEST_EXIT='42')
         self.assertEqual(result.returncode, 42, result.stdout)
         self.assertIn('exit 42', (self.root / '.build/summary').read_text())
 
