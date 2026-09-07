@@ -93,7 +93,7 @@ final class RedesignUITests: XCTestCase {
         let anchors = [
             "today": "today.dayDigest.text", "actions": "actions.search",
             "meeting": "meeting.audioPlayer", "transcript": "transcript.segment.0.text",
-            "timeline": "timeline.track", "search": "search.hit.\(fixture.designReview.id.uuidString).segment",
+            "timeline": "timeline.workSessions", "search": "search.hit.\(fixture.designReview.id.uuidString).segment",
             "ask": "ask.submit", "settings": "settings.retention", "models": "models.readiness",
             "dictation": "dictation.form", "agent": "agent.composer",
         ]
@@ -101,6 +101,12 @@ final class RedesignUITests: XCTestCase {
             XCTAssertTrue(element(identifier).waitForExistence(timeout: 10), "Capture content not ready: \(route)")
         } else {
             XCTAssertTrue(app.staticTexts["Try the real autocomplete"].waitForExistence(timeout: 10))
+        }
+        if route == "timeline" {
+            XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Xcode"))
+                .firstMatch.waitForExistence(timeout: 5), "Capture must include the seeded work session")
+            XCTAssertTrue(element("capture.meeting.\(fixture.designReview.id.uuidString)").exists,
+                          "Capture must include the seeded meeting")
         }
         if route == "meeting" || route == "transcript" {
             let title = element("detail.title")
