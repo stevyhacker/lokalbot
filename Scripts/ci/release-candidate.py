@@ -71,8 +71,8 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
-def validate_prepared(saved, current, run_id, archive):
-    if saved['identity'] != current or saved['run'] != str(run_id) or saved['sha256'] != digest(archive):
+def validate_prepared(saved, current, run_id, archive, attempt):
+    if saved['identity'] != current or saved['run'] != str(run_id) or saved['attempt'] != str(attempt) or saved['sha256'] != digest(archive):
         raise ValueError('Prepared app commit, metadata, toolchain, run or digest mismatch')
 
 
@@ -81,6 +81,13 @@ def prepare():
     if os.environ['GITHUB_EVENT_NAME'] != 'workflow_dispatch' or os.environ['GITHUB_REF'] != 'refs/heads/master':
         raise ValueError('Archive preparation requires an explicit dispatch on master')
     subprocess.run(['python3', 'Scripts/release-preflight.py', '--candidate', '--version', os.environ['CANDIDATE_VERSION']], check=True)
+
+
+def verify_app():
+    current = checkout_identity()
+    app = plistlib.loads(Path('build/export/LokalBot.app/Contents/Info.plist').read_bytes())
+    if (app['CFBundleShortVersionString'], app['CFBundleVersion']) != (current['version'], current['build']):
+        raise ValueError('Exported app version/build differs from candidate metadata')
 
 
 def pack():
@@ -110,7 +117,7 @@ def restore():
         subprocess.run(['gh', 'run', 'download', str(run['id']), '--repo', os.environ['GITHUB_REPOSITORY'],
                         '--name', name, '--dir', 'build/prepared'], check=True)
         archive = Path('build/prepared/app.zip')
-        validate_prepared(json.loads(archive.with_suffix('.json').read_text()), identity, run['id'], archive)
+        validate_prepared(json.loads(archive.with_suffix('.json').read_text()), identity, run['id'], archive, run['run_attempt'])
         subprocess.run(['ditto', '-x', '-k', str(archive), 'build/export'], check=True)
         with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
             stream.write('reused=true\n')
@@ -121,6 +128,6 @@ def restore():
 
 if __name__ == '__main__':
     try:
-        {'gates': gates, 'prepare': prepare, 'pack': pack, 'restore': restore}[sys.argv[1]]()
+        {'gates': gates, 'prepare': prepare, 'pack': pack, 'restore': restore, 'verify-app': verify_app}[sys.argv[1]]()
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         sys.exit(str(error))

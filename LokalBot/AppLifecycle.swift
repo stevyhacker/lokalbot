@@ -369,11 +369,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyCaptureMeetingSelection(to app: AppState,
                                               environment env: [String: String]) {
         if env["LOKALBOT_SELECT_FIRST"] == "1", let first = app.meetings.first {
-            app.selectedMeetingIDs = [first.id]
+            if app.selectedMeetingIDs != [first.id] { app.selectedMeetingIDs = [first.id] }
         }
         if let raw = env["LOKALBOT_SELECT_INDEX"], let idx = Int(raw) {
             let ordered = app.meetings.sorted { $0.startedAt > $1.startedAt }
-            if ordered.indices.contains(idx) { app.selectedMeetingIDs = [ordered[idx].id] }
+            if ordered.indices.contains(idx), app.selectedMeetingIDs != [ordered[idx].id] {
+                app.selectedMeetingIDs = [ordered[idx].id]
+            }
         }
     }
 

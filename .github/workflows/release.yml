@@ -50,6 +50,8 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # candidate preflight checks the preceding release tag
 
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
@@ -232,7 +234,11 @@ jobs:
             -exportOptionsPlist build/exportOptions.plist
 
       - name: Verify exported signatures and secure timestamps
+        env:
+          APPLE_TEAM_ID: ${{ secrets.NOTARY_APPLE_TEAM_ID }}
         run: |
+          python3 Scripts/ci/release-candidate.py verify-app
+          codesign --display --verbose=2 build/export/LokalBot.app 2>&1 | grep -Fx "TeamIdentifier=$APPLE_TEAM_ID"
           codesign --verify --deep --strict --verbose=2 build/export/LokalBot.app
           missing_timestamp=0
           while IFS= read -r -d '' item; do

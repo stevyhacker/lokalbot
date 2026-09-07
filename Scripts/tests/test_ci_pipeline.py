@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import struct
+import plistlib
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -61,17 +62,17 @@ class PublicationGateTests(unittest.TestCase):
             archive = Path(temp) / 'app.zip'
             archive.write_bytes(b'candidate')
             identity = dict(commit='exact', tree='source', version='0.8.1', build='31', xcode='26.3')
-            saved = dict(identity=identity, run='12', sha256=release.digest(archive))
-            release.validate_prepared(saved, identity, 12, archive)
+            saved = dict(identity=identity, run='12', attempt='1', sha256=release.digest(archive))
+            release.validate_prepared(saved, identity, 12, archive, 1)
             for key in identity:
                 changed = dict(identity, **{key: 'different'})
                 with self.assertRaises(ValueError):
-                    release.validate_prepared(saved, changed, 12, archive)
+                    release.validate_prepared(saved, changed, 12, archive, 1)
             with self.assertRaises(ValueError):
-                release.validate_prepared(saved, identity, 13, archive)
+                release.validate_prepared(saved, identity, 13, archive, 1)
             archive.write_bytes(b'tampered')
             with self.assertRaises(ValueError):
-                release.validate_prepared(saved, identity, 12, archive)
+                release.validate_prepared(saved, identity, 12, archive, 1)
 
     def test_no_prepare_artifact_uses_explicit_cold_fallback(self):
         with patch.object(release, 'checkout_identity', return_value={'commit': 'sha'}), patch.object(
@@ -156,6 +157,43 @@ class TestArtifactTests(unittest.TestCase):
         with patch.object(products.stamp, 'identity', return_value=dict(identity)):
             actual = products.identity()
         self.assertEqual(set(actual), set(identity) - {'root', 'job'})
+
+    def test_tar_round_trip_preserves_executables_and_rejects_stale_or_tampered_products(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            producer, consumer = root / 'producer', root / 'consumer'
+            source = producer / '.build/dd/Build/Products'
+            source.mkdir(parents=True)
+            binary = source / 'Debug/Runner.app/Contents/MacOS/Runner'
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b'compiled executable')
+            binary.chmod(0o755)
+            (source / 'Fixture.xctestrun').write_bytes(plistlib.dumps({'path': str(binary)}))
+            original = Path.cwd()
+            identity = dict(commit='sha', run='42', attempt='1', xcode='26.3')
+            try:
+                os.chdir(producer)
+                with patch.object(products, 'identity', return_value=identity):
+                    products.transfer('pack', 'unit')
+                import shutil
+                shutil.copytree(producer / '.build/transfer', consumer / '.build/transfer')
+                os.chdir(consumer)
+                with patch.object(products, 'identity', return_value=dict(identity, attempt='2')):
+                    with self.assertRaises(ValueError):
+                        products.transfer('unpack', 'unit')
+                self.assertFalse((consumer / '.build/dd').exists())
+                with patch.object(products, 'identity', return_value=identity):
+                    products.transfer('unpack', 'unit')
+                restored = consumer / '.build/dd/Build/Products'
+                self.assertTrue(os.access(restored / binary.relative_to(source), os.X_OK))
+                self.assertEqual(plistlib.loads((restored / 'Fixture.xctestrun').read_bytes())['path'],
+                                 '__TESTROOT__/Debug/Runner.app/Contents/MacOS/Runner')
+                (consumer / '.build/transfer/unit.tar').write_bytes(b'tampered')
+                with patch.object(products, 'identity', return_value=identity):
+                    with self.assertRaises(ValueError):
+                        products.transfer('unpack', 'unit')
+            finally:
+                os.chdir(original)
 
 
 if __name__ == '__main__':

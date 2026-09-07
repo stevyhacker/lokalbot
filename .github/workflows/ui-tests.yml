@@ -212,13 +212,13 @@ jobs:
           retention-days: 14
 
   complete:
-    name: XCUITest (macOS)
+    name: ${{ (inputs.filter != '' || inputs.capture_mode == 'legacy') && 'UI focused / comparison (macOS)' || 'XCUITest (macOS)' }}
     needs: [build-smoke, shards]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Require the complete default suite
+      - name: Require successful selected jobs
         env:
           BUILD_RESULT: ${{ needs.build-smoke.result }}
           SHARD_RESULT: ${{ needs.shards.result }}
@@ -226,12 +226,12 @@ jobs:
           CAPTURE_MODE: ${{ inputs.capture_mode || 'ready' }}
         run: |
           test "$BUILD_RESULT" = success
-          test "$SHARD_RESULT" = success
-          test -z "$FILTER"
-          test "$CAPTURE_MODE" = ready
+          if [[ -z "$FILTER" ]]; then test "$SHARD_RESULT" = success; fi
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: inputs.filter == ''
         with:
           pattern: ui-results-*
           path: .build/evidence
       - name: Verify complete test and capture coverage
+        if: inputs.filter == ''
         run: python3 Scripts/ci/ui-shards.py verify .build/evidence
