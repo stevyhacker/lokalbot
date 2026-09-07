@@ -144,6 +144,12 @@ class CompleteCoverageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.verify()
 
+    def test_nested_test_sources_are_included(self):
+        nested = self.root / 'LokalBotUITests/Navigation/NestedTests.swift'
+        nested.parent.mkdir(parents=True)
+        nested.write_text('final class NestedTests: XCTestCase {\n    func testNewRoute() {}\n}\n')
+        self.assertEqual(shards.inventory(self.root), ['NestedTests/testNewRoute'])
+
     def test_test_result_parser_reads_leaf_statuses(self):
         tree = {'testNodes': [{'children': [{'nodeType': 'Test Case', 'nodeIdentifier': 'Suite/testOne()',
                                           'result': 'Passed'}]}]}

@@ -31,7 +31,7 @@ def inventory(root=Path('.')):
     # XCTest methods are parameterless Swift methods in final XCTestCase classes.
     # Reject new test syntax rather than silently omitting it from the inventory.
     result = []
-    for path in sorted((root / 'LokalBotUITests').glob('*.swift')):
+    for path in sorted((root / 'LokalBotUITests').rglob('*.swift')):
         current = None
         for line in path.read_text().splitlines():
             match = re.match(r'final class (\w+): XCTestCase', line)
