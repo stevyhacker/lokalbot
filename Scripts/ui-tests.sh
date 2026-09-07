@@ -26,6 +26,9 @@
 #   Scripts/ui-tests.sh --remote       # explicit form of the default above
 #   Scripts/ui-tests.sh --remote MainWindowUITests/testSearchFindsTranscriptHitAndDeepLinks
 #   Scripts/ui-tests.sh --build-only   # compile without launching the app
+#   Scripts/ui-tests.sh --test-only --only MainWindowUITests/testSearchFindsTranscriptHitAndDeepLinks
+#                                     # hosted CI: reuse this job's build
+#   Scripts/ui-tests.sh --foreground --skip RedesignUITests/testWorkspaceVisualMatrix
 #   Scripts/ui-tests.sh --foreground   # run all tests in this login session
 #   Scripts/ui-tests.sh --foreground MainWindowUITests/testSearchFindsTranscriptHitAndDeepLinks
 set -euo pipefail
@@ -35,7 +38,11 @@ DERIVED=".build/dd"
 SCHEME="LokalBot UI Test Host"
 
 MODE=""
-FILTER=""
+ONLY=()
+SKIP=()
+RESULT=""
+ROOT="$(dirname "$PROJECT")"
+STAMP="$ROOT/$DERIVED/ui-build.json"
 
 usage() {
   sed -n '2,/^set -euo pipefail$/p' "$0" \
@@ -52,6 +59,19 @@ while [ "$#" -gt 0 ]; do
       [ -z "$MODE" ] || { echo "Choose only one execution mode." >&2; exit 2; }
       MODE="build"
       ;;
+    --test-only)
+      [ -z "$MODE" ] || { echo "Choose only one execution mode." >&2; exit 2; }
+      MODE="test"
+      ;;
+    --only|--skip|--result)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || { echo "$1 requires a value" >&2; exit 2; }
+      case "$1" in
+        --only) ONLY+=("${2#LokalBotUITests/}") ;;
+        --skip) SKIP+=("${2#LokalBotUITests/}") ;;
+        --result) RESULT="$2" ;;
+      esac
+      shift
+      ;;
     --foreground)
       [ -z "$MODE" ] || { echo "Choose only one execution mode." >&2; exit 2; }
       MODE="foreground"
@@ -66,15 +86,17 @@ while [ "$#" -gt 0 ]; do
       exit 2
       ;;
     *)
-      if [ -n "$FILTER" ]; then
-        echo "Only one test filter may be supplied." >&2
-        exit 2
-      fi
-      FILTER="$1"
+      if [ -n "$1" ]; then ONLY+=("${1#LokalBotUITests/}"); fi
       ;;
   esac
   shift
 done
+
+# A reuse request must never implicitly take control of a developer's desktop.
+if [ "$MODE" = "test" ] && [ "${CI:-}" != "true" ]; then
+  echo "--test-only is for hosted CI; use --foreground for an explicit local run." >&2
+  exit 2
+fi
 
 # A developer invocation is remote by default. CI keeps running the suite on
 # its hosted macOS session, where foreground ownership cannot disturb anyone.
@@ -83,6 +105,10 @@ if [ -z "$MODE" ] && [ -z "${CI:-}" ]; then
 fi
 
 if [ "$MODE" = "remote" ]; then
+  if [ "${#ONLY[@]}" -gt 1 ] || [ "${#SKIP[@]}" -gt 0 ] || [ -n "$RESULT" ]; then
+    echo "Remote dispatch accepts one filter; multiple filters/results are hosted-runner options." >&2
+    exit 2
+  fi
   command -v gh >/dev/null 2>&1 || {
     echo "GitHub CLI (gh) is required for --remote." >&2
     exit 2
@@ -101,6 +127,7 @@ if [ "$MODE" = "remote" ]; then
     LokalBotUITests
     project.yml
     Scripts/ui-tests.sh
+    Scripts/ci
     .github/workflows/ui-tests.yml
   )
   if ! git -C "$(dirname "$PROJECT")" diff --quiet HEAD -- "${UI_PATHS[@]}" \
@@ -117,8 +144,10 @@ if [ "$MODE" = "remote" ]; then
     exit 2
   fi
 
-  exec gh workflow run ui-tests.yml --ref "$BRANCH" --raw-field "filter=$FILTER"
+  exec gh workflow run ui-tests.yml --ref "$BRANCH" --raw-field "filter=${ONLY[0]:-}"
 fi
+
+cd "$ROOT"
 
 ARGS=(
   -project "$PROJECT"
@@ -133,19 +162,38 @@ if [ "${CODE_SIGNING_ALLOWED:-}" != "" ]; then
   ARGS+=("CODE_SIGNING_ALLOWED=${CODE_SIGNING_ALLOWED}")
 fi
 
-if [ -n "$FILTER" ]; then
-  FILTER="${FILTER#LokalBotUITests/}"
-  ARGS+=(-only-testing:"LokalBotUITests/$FILTER")
+TEST_ARGS=()
+if [ "${#ONLY[@]}" -gt 0 ]; then
+  for filter in "${ONLY[@]}"; do
+    TEST_ARGS+=(-only-testing:"LokalBotUITests/$filter")
+  done
 else
-  ARGS+=(-only-testing:LokalBotUITests)
+  TEST_ARGS+=(-only-testing:LokalBotUITests)
+fi
+if [ "${#SKIP[@]}" -gt 0 ]; then
+  for filter in "${SKIP[@]}"; do
+    TEST_ARGS+=(-skip-testing:"LokalBotUITests/$filter")
+  done
+fi
+if [ -n "$RESULT" ]; then
+  TEST_ARGS+=(-resultBundlePath "$RESULT")
 fi
 
-echo "→ building for testing…"
-xcodebuild "${ARGS[@]}" build-for-testing | tail -3
+if [ "$MODE" = "test" ]; then
+  python3 Scripts/ci/ui-build-stamp.py verify "$STAMP"
+else
+  # A failed build must invalidate the preceding build's reuse stamp.
+  rm -f "$STAMP"
+  echo "→ building for testing…"
+  xcodebuild "${ARGS[@]}" -only-testing:LokalBotUITests build-for-testing | tail -3
+  if [ "${CI:-}" = "true" ]; then
+    python3 Scripts/ci/ui-build-stamp.py write "$STAMP"
+  fi
+fi
 
 if [ "$MODE" = "build" ]; then
   exit 0
 fi
 
 echo "→ running UI tests…"
-xcodebuild "${ARGS[@]}" test-without-building
+xcodebuild "${ARGS[@]}" "${TEST_ARGS[@]}" test-without-building

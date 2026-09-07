@@ -39,7 +39,7 @@ jobs:
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          xcode-version: latest-stable
+          xcode-version: "26.3"
 
       - name: Toolchain info
         run: |
@@ -84,7 +84,8 @@ jobs:
       - name: Fetch llama.cpp vendor
         run: bash Scripts/fetch-llama.sh
 
-      - name: Build
+      # Compile the app and its tests: app-only builds miss test compiler errors.
+      - name: Build app and unit-test targets
         run: |
           xcodebuild \
             -project LokalBot.xcodeproj \
@@ -92,4 +93,5 @@ jobs:
             -configuration Debug \
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO \
-            build
+            -only-testing:LokalBotTests \
+            build-for-testing

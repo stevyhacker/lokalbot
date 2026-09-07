@@ -28,6 +28,7 @@ on:
       - "LokalBotUITests/**"
       - "project.yml"
       - "Scripts/ui-tests.sh"
+      - "Scripts/ci/**"
       - "Scripts/fetch-llama.sh"
       - "Scripts/fetch-sherpa.sh"
       - ".github/workflows/ui-tests.yml"
@@ -40,6 +41,7 @@ on:
       - "LokalBotUITests/**"
       - "project.yml"
       - "Scripts/ui-tests.sh"
+      - "Scripts/ci/**"
       - "Scripts/fetch-llama.sh"
       - "Scripts/fetch-sherpa.sh"
       - ".github/workflows/ui-tests.yml"
@@ -69,7 +71,7 @@ jobs:
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          xcode-version: latest-stable
+          xcode-version: "26.3"
 
       - name: Install build tools
         run: |
@@ -101,45 +103,44 @@ jobs:
       - name: Fetch llama.cpp vendor
         run: bash Scripts/fetch-llama.sh
 
-      # Catch focused interaction/accessibility regressions before spending
-      # time rendering the full 72-window visual matrix.
-      - name: Verify workspace accessibility
-        if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
-        env:
-          CODE_SIGNING_ALLOWED: "NO"
-        run: Scripts/ui-tests.sh 'RedesignUITests/testHighContrastKeepsActionsAccessible'
-
-      - name: Verify critical interactions
-        if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.filter == '') }}
+      # Compile once for every phase in this job, with provenance checked on reuse.
+      - name: Build UI test targets
         env:
           CODE_SIGNING_ALLOWED: "NO"
         run: |
-          interaction_status=0
-          Scripts/ui-tests.sh 'MainWindowUITests/testMeetingWaveformExposesSliderAndSupportsKeyboardSeeking' || interaction_status=$?
-          Scripts/ui-tests.sh 'AgentModeUITests' || interaction_status=$?
-          Scripts/ui-tests.sh 'RedesignUITests/testAgentApprovalDescribesEffectAndDenialAndStopReachTheController' || interaction_status=$?
-          Scripts/ui-tests.sh 'RedesignUITests/testFourHundredActionsStaySearchableAndCompletionCanBeUndone' || interaction_status=$?
-          Scripts/ui-tests.sh 'MainWindowUITests/testMultiMeetingThreadCompletionRequiresConfirmation' || interaction_status=$?
-          Scripts/ui-tests.sh 'MainWindowUITests/testActionThreadSourceCanBeSeparatedAndRestored' || interaction_status=$?
-          exit "$interaction_status"
+          mkdir -p .build/ui-results
+          xcodebuild -version | tee .build/ui-results/toolchain.txt
+          printf '| UI phase | Duration | Result |\n| --- | ---: | --- |\n' >> "$GITHUB_STEP_SUMMARY"
+          Scripts/ui-tests.sh --build-only 2>&1 | tee .build/ui-results/build.log
+
+      # Stop before the visual matrix if a critical interaction fails. These
+      # filters are reused as exclusions for the remainder, avoiding duplicates.
+      - name: Verify critical interactions
+        if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+        run: bash Scripts/ci/run-ui-suite.sh smoke
 
       - name: Verify Reduce Motion
-        if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.filter == '') }}
+        if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
         env:
           CODE_SIGNING_ALLOWED: "NO"
         run: |
           trap 'defaults write com.apple.universalaccess reduceMotion -bool false; defaults write org.localhost.lokalbot.redesign-ci requiresReducedMotion -bool false' EXIT
           defaults write com.apple.universalaccess reduceMotion -bool true
           defaults write org.localhost.lokalbot.redesign-ci requiresReducedMotion -bool true
-          Scripts/ui-tests.sh 'RedesignUITests/testReducedMotionWorkspaceRemainsOperable'
+          bash Scripts/ci/run-ui-suite.sh reduced-motion
 
-      - name: Run UI tests
+      - name: Run remaining UI tests
         env:
-          CODE_SIGNING_ALLOWED: "NO" # hosted runners hold no dev cert
+          CODE_SIGNING_ALLOWED: "NO"
           UI_TEST_FILTER: ${{ inputs.filter || '' }}
         run: |
-          set -o pipefail
-          Scripts/ui-tests.sh "$UI_TEST_FILTER" 2>&1 | tee .build/ui-tests.log
+          if [[ -n "$UI_TEST_FILTER" ]]; then
+            bash Scripts/ci/run-ui-suite.sh single "$UI_TEST_FILTER"
+          else
+            bash Scripts/ci/run-ui-suite.sh remainder
+          fi
 
       - name: Save UI evidence
         if: always()
@@ -147,7 +148,7 @@ jobs:
         with:
           name: ui-test-results
           path: |
-            .build/dd/Logs/Test/*.xcresult
-            .build/ui-tests.log
+            .build/ui-results
+            .build/dd/ui-build.json
           if-no-files-found: warn
           retention-days: 14

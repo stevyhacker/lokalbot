@@ -46,7 +46,7 @@ jobs:
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          xcode-version: latest-stable
+          xcode-version: "26.3"
 
       # Fail fast if the tag doesn't match the Info.plist marketing version —
       # Sparkle's enclosure URL embeds the tag, so a mismatch ships a feed
@@ -59,6 +59,12 @@ jobs:
             echo "::error::Tag $GITHUB_REF_NAME does not match CFBundleShortVersionString $short_version. Bump LokalBot/Info.plist first (RELEASING.md step 1)." >&2
             exit 1
           fi
+
+      - name: Verify release metadata and notes
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python3 Scripts/release-preflight.py --version "${version%%-*}"
 
       - name: Validate release secrets
         env:

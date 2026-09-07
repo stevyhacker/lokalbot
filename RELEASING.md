@@ -149,7 +149,7 @@ Run from the repo root. Replace `1.0.0` / `100` with the version you are shippin
 
 ### 1. Bump the version
 
-Edit `LokalBot/Info.plist`:
+Edit both `project.yml` and `LokalBot/Info.plist`:
 
 - `CFBundleShortVersionString` → marketing version, e.g. `1.0.0`
 - `CFBundleVersion` → build number, e.g. `100` (monotonic; Sparkle compares this)
@@ -159,6 +159,37 @@ Then regenerate the project:
 ```sh
 xcodegen generate
 ```
+
+Prepare `Scripts/release-notes/v<version>.md` at the same time, including a
+human-readable summary and the full comparison from the previous stable tag.
+Before committing a stable release candidate, fetch current tags and validate
+the three metadata files together (replace the version below):
+
+```sh
+git fetch origin --tags
+git add project.yml LokalBot/Info.plist Scripts/release-notes/v0.8.1.md
+python3 Scripts/release-preflight.py --version 0.8.1 --candidate --staged
+git diff --cached
+```
+
+This read-only preflight checks both version sources, the notes and changelog
+base, increasing build numbers, local/remote tag availability, and that the
+staged snapshot contains exactly the three validated metadata files. Complete
+feature/fix commits separately before preparing this candidate. It never
+commits, tags, or publishes. Without `--candidate --staged`, the script checks
+metadata consistency and notes only, so CI can also validate already-released
+versions. Existing prerelease publication retains its tag-specific notes path
+and generated-notes fallback.
+
+Validation and release currently use Xcode **26.3** (0.8.0 used build **17C529**).
+Update the explicit version in Build, Tests, UI Tests and Release together after
+hosted validation. The Build gate compiles the production app and its unit-test
+target. The UI workflow builds its separate host once, runs the critical group,
+then Reduce Motion, then the remaining tests including all 72 visual captures.
+The shared phase filter list avoids duplicate execution. Filtered manual UI
+dispatches remain focused checks and do not constitute the full release gate.
+Reuse is confined to the same job, SHA, clean build inputs and toolchain; a
+missing or stale build fails instead of rebuilding silently.
 
 ### 2. Archive + export a Developer ID build
 
