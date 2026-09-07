@@ -35,7 +35,12 @@ final class RedesignUITests: XCTestCase {
             ("autocomplete", ["LOKALBOT_INITIAL_SECTION": "autocomplete", "LOKALBOT_COTYPING_DEMO": "1"]),
             ("agent", ["LOKALBOT_INITIAL_SECTION": "agent", "LOKALBOT_AGENT_DEMO": "1"]),
         ]
-        for size in ["1000x700", "1180x740", "1440x900"] {
+        let processEnvironment = ProcessInfo.processInfo.environment
+        let requestedSize = processEnvironment["LOKALBOT_VISUAL_SIZE"] ?? ""
+        let allSizes = ["1000x700", "1180x740", "1440x900"]
+        XCTAssertTrue(requestedSize.isEmpty || allSizes.contains(requestedSize), "Unknown visual shard")
+        let sizes = requestedSize.isEmpty ? allSizes : [requestedSize]
+        for size in sizes {
             for appearance in ["light", "dark"] {
                 for (route, state) in routes {
                     // A complete matrix can cross midnight. Keep Today and
@@ -54,7 +59,14 @@ final class RedesignUITests: XCTestCase {
                         "LOKALBOT_CAPTURE_APPEARANCE": appearance, "LOKALBOT_SCREEN_MEMORY_DEMO": "1",
                         "LOKALBOT_AGENT_UI_TEST_READY": "1",
                     ]) { _, value in value }
+                    let readyFile = destination.appendingPathExtension("ready")
+                    if processEnvironment["LOKALBOT_CAPTURE_MODE"] != "legacy" {
+                        environment["LOKALBOT_CAPTURE_READY_FILE"] = readyFile.path
+                    }
                     try launch(environment)
+                    if environment["LOKALBOT_CAPTURE_READY_FILE"] != nil {
+                        try acknowledgeCaptureReadiness(route: route, size: size, readyFile: readyFile)
+                    }
                     XCTAssertTrue(UITestHarness.waitUntil(timeout: 20) { FileManager.default.fileExists(atPath: destination.path) },
                                   "Native capture did not finish: \(name)")
                     let bitmap = try XCTUnwrap(NSBitmapImageRep(data: Data(contentsOf: destination)))
@@ -63,9 +75,39 @@ final class RedesignUITests: XCTestCase {
                     let attachment = XCTAttachment(contentsOfFile: destination)
                     attachment.name = name; attachment.lifetime = .keepAlways
                     add(attachment)
+                    if let evidencePath = processEnvironment["LOKALBOT_VISUAL_EVIDENCE"] {
+                        let directory = URL(fileURLWithPath: evidencePath, isDirectory: true)
+                        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                        try FileManager.default.copyItem(at: destination, to: directory.appendingPathComponent(name + ".png"))
+                    }
                 }
             }
         }
+    }
+
+    private func acknowledgeCaptureReadiness(route: String, size: String, readyFile: URL) throws {
+        let anchors = [
+            "today": "today.dayDigest.text", "actions": "actions.search",
+            "meeting": "meeting.audioPlayer", "transcript": "transcript.segment.0.text",
+            "timeline": "timeline.track", "search": "search.hit.\(fixture.designReview.id.uuidString).segment",
+            "ask": "ask.submit", "settings": "settings.retention", "models": "models.readiness",
+            "dictation": "dictation.form", "agent": "agent.composer",
+        ]
+        if let identifier = anchors[route] {
+            XCTAssertTrue(element(identifier).waitForExistence(timeout: 10), "Capture content not ready: \(route)")
+        } else {
+            XCTAssertTrue(app.staticTexts["Try the real autocomplete"].waitForExistence(timeout: 10))
+        }
+        if route == "meeting" || route == "transcript" {
+            XCTAssertTrue(app.staticTexts["detail.title"].label.contains(fixture.designReview.displayTitle),
+                          "Capture must select the requested meeting")
+        }
+        let dimensions = size.split(separator: "x").compactMap { Double($0) }
+        XCTAssertTrue(UITestHarness.waitUntil(timeout: 5) {
+            let frame = self.app.windows.firstMatch.frame
+            return abs(frame.width - dimensions[0]) < 1 && abs(frame.height - dimensions[1]) < 1
+        }, "Capture window has not reached the requested geometry")
+        try Data("ready".utf8).write(to: readyFile, options: .atomic)
     }
 
     func testSearchReturnIsSilentAndExplicitAskReviewsScope() throws {

@@ -154,6 +154,7 @@ ARGS=(
   -scheme "$SCHEME"
   -destination 'platform=macOS'
   -derivedDataPath "$DERIVED"
+  -clonedSourcePackagesDirPath .build/SourcePackages
 )
 
 # CI runners hold no signing certificate; let workflows opt out of signing
@@ -196,4 +197,10 @@ if [ "$MODE" = "build" ]; then
 fi
 
 echo "→ running UI tests…"
-xcodebuild "${ARGS[@]}" "${TEST_ARGS[@]}" test-without-building
+# Consume the portable run configuration directly; downstream runners need no
+# generated project, native vendor build or Swift package resolution.
+RUN_FILES=("$DERIVED"/Build/Products/*.xctestrun)
+[ "${#RUN_FILES[@]}" -eq 1 ] && [ -f "${RUN_FILES[0]}" ] || { echo "Expected one xctestrun" >&2; exit 2; }
+xcodebuild test-without-building -xctestrun "${RUN_FILES[0]}" \
+  -destination 'platform=macOS' -derivedDataPath "$DERIVED" \
+  -parallel-testing-enabled NO "${TEST_ARGS[@]}"

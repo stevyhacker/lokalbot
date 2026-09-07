@@ -2,7 +2,7 @@
 
 Rollout plan based on the successful 0.8.0 candidate `8f39eb213e528b80005531e374040f0c35b1a433` and its hosted runs on 7 September 2026.
 
-The first implementation PR adds atomic metadata preflight, explicit Xcode 26.3 selection, unit-test target compilation in the Build gate, within-job UI build reuse, a batched critical group, and disjoint smoke/remainder selections. It preserves the dedicated Reduce Motion run and all visual captures. Cross-workflow dependency changes, parallel shards, package caches, cross-runner artifacts, archive overlap and capture-readiness changes remain subsequent work. The timing targets below refer to the complete rollout; the first PR must be measured independently.
+PR #65 implements all four phases: atomic metadata preflight, pinned Xcode, shared production/unit and UI build products, disjoint smoke and parallel UI shards, Swift package caching, trusted archive preparation/reuse, and capture readiness with a retained legacy comparison mode. Hosted validation and timing evidence are recorded below; the time targets remain hypotheses until the required measurements are complete.
 
 ## Objective
 
@@ -86,8 +86,20 @@ Acceptance: compare the complete 72-image output against the existing path on ho
 
 ## Rollout and measurement
 
-Implement as four small changes in the order above. Measure the same representative source revision before and after, using at least three warm-cache runs and one cold-cache run. Record queue time separately from execution time, time to first actionable failure, total runner minutes, cache hit/transfer costs, and retries. Validate artifact rejection and gate failures using deliberately failing fixtures.
+The four phases are implemented together in PR #65; measure them independently where possible. Measure the same representative source revision before and after, using at least three warm-cache runs and one cold-cache run. Record queue time separately from execution time, time to first actionable failure, total runner minutes, cache hit/transfer costs, and retries. Validate artifact rejection and gate failures using deliberately failing fixtures.
 
 Initial targets: actionable failures in 6–10 minutes; complete candidate validation in 15–25 minutes; first-attempt public release and verification in 25–35 minutes once archive overlap is enabled. Do not claim success from averages alone: keep per-stage timings and failure/skip counts visible.
 
 Preserve the tag-triggered cold release route during rollout. Disable artifact reuse or parallel scheduling independently if needed. Do not weaken release coverage or use local UI automation to meet a timing target.
+
+## Implemented controls and operation
+
+- `build.yml` now owns the separately visible **xcodebuild (macOS)** and **xcodebuild test (macOS)** jobs. `tests.yml` is retired. Only the build job compiles; the test job verifies and consumes its complete test products.
+- UI builds once, runs 10 critical tests plus Reduce Motion, then starts two functional shards and three size-based visual shards. The functional split uses durations from baseline run `34118306359` (`Scripts/ci/ui-durations.json`); unknown new tests default to 30 seconds.
+- `ui-shards.py` inventories parameterless XCTest methods, rejects unsupported test declarations, and verifies actual `.xcresult` leaf results against each shard. The aggregate requires all 65 current tests, no unexpected skips or duplicates, and all 72 exported PNGs with correct dimensions. Each visual method executes once per size.
+- Portable tar artifacts carry the complete Products directory, including executable permissions, native libraries and `.xctestrun`. Consumers validate commit, lock, architecture, Xcode, signing mode, workflow run/attempt and SHA-256 before relocation. UI consumers never regenerate the project or rebuild.
+- `Scripts/prepare-release.sh VERSION` explicitly dispatches signed archive preparation on the current pushed `master` candidate. It can run while push validation is active. It does not tag, notarize or publish. The tag route verifies all five gate jobs from exact-SHA trusted master push workflows, rejects superseded candidates, then consumes a verified prepared app or cold-builds if none exists. Corrupt/mismatched artifacts fail rather than falling back.
+- Capture readiness waits for populated route-specific accessibility content and requested window dimensions, then acknowledges an in-process capture. Meeting selection is reapplied while waiting; the existing one-second activation/material settle is preserved. A bounded timeout fails without publishing a PNG. `capture_mode=legacy` retains the original eight-second timer for hosted comparison; comparison and filtered workflows deliberately cannot satisfy the aggregate release gate.
+- Keep the five check names in branch protection. Their Build/Tests workflow grouping changed; repository protection settings are not changed by this PR.
+
+Validation status: local control-flow tests and workflow/static checks pass. Hosted portability, full capture validation and comparison are being run on this PR. Real signing, notarization and publication are not triggered by this implementation PR. Three warm-cache runs, one cold-cache run and a real candidate release remain measurement work; no speed target is claimed yet.

@@ -23,6 +23,9 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: xcodebuild (macOS)
@@ -84,6 +87,12 @@ jobs:
       - name: Fetch llama.cpp vendor
         run: bash Scripts/fetch-llama.sh
 
+      - name: Cache Swift packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .build/SourcePackages
+          key: packages-${{ runner.os }}-${{ runner.arch }}-xcode26.3-${{ hashFiles('**/Package.resolved') }}
+
       # Compile the app and its tests: app-only builds miss test compiler errors.
       - name: Build app and unit-test targets
         run: |
@@ -91,7 +100,57 @@ jobs:
             -project LokalBot.xcodeproj \
             -scheme LokalBot \
             -configuration Debug \
+            -derivedDataPath .build/dd \
+            -clonedSourcePackagesDirPath .build/SourcePackages \
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO \
             -only-testing:LokalBotTests \
             build-for-testing
+
+      - name: Package unit-test products
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+        run: python3 Scripts/ci/test-products.py pack unit
+
+      - name: Upload unit-test products
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: unit-products
+          path: .build/transfer
+          retention-days: 2
+          compression-level: 0
+          if-no-files-found: error
+
+  tests:
+    name: xcodebuild test (macOS)
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
+        with:
+          xcode-version: "26.3"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: unit-products
+          path: .build/transfer
+      - name: Verify and restore compiled tests
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+        run: python3 Scripts/ci/test-products.py unpack unit
+      - name: Run unit tests without rebuilding
+        run: |
+          runs=(.build/dd/Build/Products/*.xctestrun)
+          test "${#runs[@]}" -eq 1
+          xcodebuild test-without-building -xctestrun "${runs[0]}" \
+            -destination 'platform=macOS' -derivedDataPath .build/dd \
+            -only-testing:LokalBotTests -resultBundlePath .build/unit.xcresult
+      - name: Save unit results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: unit-results
+          path: .build/unit.xcresult
+          retention-days: 14

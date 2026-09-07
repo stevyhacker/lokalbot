@@ -22,6 +22,11 @@ on:
         description: "Optional single test, e.g. MainWindowUITests/testSearchFindsTranscriptHitAndDeepLinks"
         required: false
         default: ""
+      capture_mode:
+        description: "Capture readiness or legacy timer (comparison runs are not release gates)"
+        type: choice
+        options: [ready, legacy]
+        default: ready
   pull_request:
     paths:
       - "LokalBot/**"
@@ -56,8 +61,8 @@ permissions:
   contents: read
 
 jobs:
-  ui-tests:
-    name: XCUITest (macOS)
+  build-smoke:
+    name: UI build and critical tests
     # Move to a self-hosted Mac (runs-on: [self-hosted, macOS]) once one
     # exists — see the TCC note at the top of this file.
     runs-on: macos-15
@@ -103,6 +108,12 @@ jobs:
       - name: Fetch llama.cpp vendor
         run: bash Scripts/fetch-llama.sh
 
+      - name: Cache Swift packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .build/SourcePackages
+          key: packages-${{ runner.os }}-${{ runner.arch }}-xcode26.3-${{ hashFiles('**/Package.resolved') }}
+
       # Compile once for every phase in this job, with provenance checked on reuse.
       - name: Build UI test targets
         env:
@@ -119,7 +130,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
         env:
           CODE_SIGNING_ALLOWED: "NO"
-        run: bash Scripts/ci/run-ui-suite.sh smoke
+        run: python3 Scripts/ci/ui-shards.py run smoke
 
       - name: Verify Reduce Motion
         if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
@@ -129,26 +140,98 @@ jobs:
           trap 'defaults write com.apple.universalaccess reduceMotion -bool false; defaults write org.localhost.lokalbot.redesign-ci requiresReducedMotion -bool false' EXIT
           defaults write com.apple.universalaccess reduceMotion -bool true
           defaults write org.localhost.lokalbot.redesign-ci requiresReducedMotion -bool true
-          bash Scripts/ci/run-ui-suite.sh reduced-motion
+          python3 Scripts/ci/ui-shards.py run reduced-motion
 
-      - name: Run remaining UI tests
+      - name: Run requested single test
+        if: github.event_name == 'workflow_dispatch' && inputs.filter != ''
         env:
           CODE_SIGNING_ALLOWED: "NO"
-          UI_TEST_FILTER: ${{ inputs.filter || '' }}
-        run: |
-          if [[ -n "$UI_TEST_FILTER" ]]; then
-            bash Scripts/ci/run-ui-suite.sh single "$UI_TEST_FILTER"
-          else
-            bash Scripts/ci/run-ui-suite.sh remainder
-          fi
+          UI_TEST_FILTER: ${{ inputs.filter }}
+          CAPTURE_MODE: ${{ inputs.capture_mode || 'ready' }}
+        run: python3 Scripts/ci/ui-shards.py run single "$UI_TEST_FILTER"
 
-      - name: Save UI evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - name: Package UI products
+        if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+        run: |
+          python3 Scripts/ci/ui-shards.py plan > .build/ui-results/inventory.json
+          python3 Scripts/ci/test-products.py pack ui
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
         with:
-          name: ui-test-results
-          path: |
-            .build/ui-results
-            .build/dd/ui-build.json
-          if-no-files-found: warn
+          name: ui-products
+          path: .build/transfer
+          retention-days: 2
+          compression-level: 0
+          if-no-files-found: error
+      - name: Save smoke evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ui-results-smoke
+          path: .build/ui-results
           retention-days: 14
+
+  shards:
+    name: UI ${{ matrix.phase }}
+    needs: build-smoke
+    if: github.event_name != 'workflow_dispatch' || inputs.filter == ''
+    runs-on: macos-15
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [functional-1, functional-2, visual-1000x700, visual-1180x740, visual-1440x900]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
+        with:
+          xcode-version: "26.3"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ui-products
+          path: .build/transfer
+      - name: Verify and restore compiled UI tests
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+        run: python3 Scripts/ci/test-products.py unpack ui
+      - name: Run shard
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+          UI_PHASE: ${{ matrix.phase }}
+          CAPTURE_MODE: ${{ inputs.capture_mode || 'ready' }}
+        run: python3 Scripts/ci/ui-shards.py run "$UI_PHASE"
+      - name: Save shard evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ui-results-${{ matrix.phase }}
+          path: .build/ui-results
+          retention-days: 14
+
+  complete:
+    name: XCUITest (macOS)
+    needs: [build-smoke, shards]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Require the complete default suite
+        env:
+          BUILD_RESULT: ${{ needs.build-smoke.result }}
+          SHARD_RESULT: ${{ needs.shards.result }}
+          FILTER: ${{ inputs.filter || '' }}
+          CAPTURE_MODE: ${{ inputs.capture_mode || 'ready' }}
+        run: |
+          test "$BUILD_RESULT" = success
+          test "$SHARD_RESULT" = success
+          test -z "$FILTER"
+          test "$CAPTURE_MODE" = ready
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: ui-results-*
+          path: .build/evidence
+      - name: Verify complete test and capture coverage
+        run: python3 Scripts/ci/ui-shards.py verify .build/evidence

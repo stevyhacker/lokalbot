@@ -55,6 +55,44 @@ git remote add origin git@github.com:OWNER/REPO.git
 git push -u origin main
 ```
 
+### Optional: prepare the signed archive while CI validates
+
+After pushing the complete candidate commit to `master`, run:
+
+```bash
+Scripts/prepare-release.sh 0.8.1
+```
+
+This explicitly dispatches the Release workflow in preparation mode. It validates
+candidate metadata and signs/exports the app while the normal push CI runs. It
+creates no tag, sends nothing to notarization and publishes no release. Wait for
+preparation and all five exact-commit push gates before creating the release tag.
+
+Build and unit execution are separate jobs in `build.yml`, sharing one compile.
+The UI aggregate checks smoke, Reduce Motion, both functional shards, all three
+visual sizes and every capture. Filtered or legacy-comparison runs cannot replace
+the complete UI gate. All UI execution remains on hosted runners.
+
+On a tag push, Release requires the candidate to remain the current `master` tip
+and verifies successful **push** runs for Build (both jobs), UI Tests, Lint and
+XcodeGen. It retrieves prepared apps only from successful `release.yml` manual
+runs on that exact trusted master SHA and verifies source/tree, version/build,
+Xcode, architecture, lockfile, run identity and archive digest before reuse.
+A missing/expired preparation uses the existing cold archive flow; a mismatched
+artifact fails. A changed candidate requires new push validation and preparation.
+Preparation artifacts expire after seven days. Final signing/notarization,
+stapling, Sparkle signing and independent download verification remain mandatory.
+
+For hosted comparison of the retained capture timer:
+
+```bash
+gh workflow run ui-tests.yml --ref BRANCH -f capture_mode=legacy
+```
+
+Its visual artifacts retain all 72 cases, but its aggregate is intentionally red
+because it is a comparison run. Default captures require ready route content and
+window geometry before the preserved one-second compositing delay.
+
 ### 2. Generate the Sparkle key pair (ONCE, ever)
 
 Sparkle ships the key tools as binaries inside its SwiftPM artifact. After an
@@ -182,7 +220,7 @@ versions. Existing prerelease publication retains its tag-specific notes path
 and generated-notes fallback.
 
 Validation and release currently use Xcode **26.3** (0.8.0 used build **17C529**).
-Update the explicit version in Build, Tests, UI Tests and Release together after
+Update the explicit version in Build (including its Tests job), UI Tests and Release together after
 hosted validation. The Build gate compiles the production app and its unit-test
 target. The UI workflow builds its separate host once, runs the critical group,
 then Reduce Motion, then the remaining tests including all 72 visual captures.
