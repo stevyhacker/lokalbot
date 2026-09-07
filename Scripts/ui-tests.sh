@@ -186,7 +186,7 @@ else
   # A failed build must invalidate the preceding build's reuse stamp.
   rm -f "$STAMP"
   echo "→ building for testing…"
-  xcodebuild "${ARGS[@]}" -only-testing:LokalBotUITests build-for-testing | tail -3
+  xcodebuild "${ARGS[@]}" -only-testing:LokalBotUITests build-for-testing
   if [ "${CI:-}" = "true" ]; then
     python3 Scripts/ci/ui-build-stamp.py write "$STAMP"
   fi

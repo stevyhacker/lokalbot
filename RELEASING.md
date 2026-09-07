@@ -191,7 +191,10 @@ or duplicate tests. Filtered manual UI
 dispatches remain focused checks and do not constitute the full release gate.
 Test products are shared only within the same workflow attempt and exact SHA,
 with clean build inputs, matching toolchain and digest verification; missing or
-stale products fail instead of rebuilding silently.
+stale products fail instead of rebuilding silently. Use **Re-run all jobs** when
+retrying a shared-products workflow: a failed-jobs-only retry cannot consume
+artifacts from the preceding attempt. Every master/dev push runs full UI
+validation so a release tip always has an eligible push gate.
 
 ### Optional: prepare the signed archive while CI validates
 

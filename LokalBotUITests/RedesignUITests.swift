@@ -99,7 +99,7 @@ final class RedesignUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts["Try the real autocomplete"].waitForExistence(timeout: 10))
         }
         if route == "meeting" || route == "transcript" {
-            XCTAssertTrue(app.staticTexts["detail.title"].label.contains(fixture.designReview.displayTitle),
+            XCTAssertTrue(app.staticTexts["detail.title"].label.contains(fixture.designReview.title),
                           "Capture must select the requested meeting")
         }
         let dimensions = size.split(separator: "x").compactMap { Double($0) }
