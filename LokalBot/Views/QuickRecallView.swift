@@ -205,7 +205,12 @@ private struct QuickRecallContent: View {
                             .padding(.horizontal, 12)
                             .padding(.top, 10)
                             .accessibilityAddTraits(.isHeader)
-                        ForEach(section.rows) { row in
+                        ForEach(Array(section.rows.enumerated()), id: \.element.id) { index, row in
+                            if index > 0 {
+                                Divider()
+                                    .padding(.horizontal, 12)
+                                    .accessibilityHidden(true)
+                            }
                             displayedRow(row)
                         }
                     }

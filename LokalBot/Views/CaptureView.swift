@@ -268,12 +268,12 @@ struct TimelineContentView: View {
                     }
                 } else {
                     HSplitView {
-                        CaptureDayView(model: model, onOpenContext: {})
-                            .frame(minWidth: 360, idealWidth: 460, maxWidth: .infinity)
-                            .splitPaneAccessibilityLabel("Day timeline")
                         TimelineContextPanel(model: model, onDismiss: nil)
                             .frame(minWidth: 340, idealWidth: 520, maxWidth: WorkspaceMetric.readingMaxWidth)
                             .splitPaneAccessibilityLabel("Timeline evidence")
+                        CaptureDayView(model: model, onOpenContext: {})
+                            .frame(minWidth: 360, idealWidth: 460, maxWidth: .infinity)
+                            .splitPaneAccessibilityLabel("Day timeline")
                     }
                 }
             }
