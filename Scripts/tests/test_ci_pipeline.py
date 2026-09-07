@@ -160,7 +160,7 @@ class TestArtifactTests(unittest.TestCase):
 
     def test_tar_round_trip_preserves_executables_and_rejects_stale_or_tampered_products(self):
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
+            root = Path(temp).resolve()
             producer, consumer = root / 'producer', root / 'consumer'
             source = producer / '.build/dd/Build/Products'
             source.mkdir(parents=True)
