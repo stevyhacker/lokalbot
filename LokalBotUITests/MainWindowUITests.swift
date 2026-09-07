@@ -529,7 +529,6 @@ final class MainWindowUITests: XCTestCase {
         openLibrary()
         let row = meetingRow(for: fixture.designReview)
         row.click()
-        UITestHarness.selectSegment("Actions", pickerIdentifier: "meeting.contentTabs", in: app)
         let toggle = app.buttons["meeting.action.toggle.fixture-action-design-1"]
         UITestHarness.scrollTo(toggle, in: app, attempts: 8)
         XCTAssertTrue(toggle.waitForExistence(timeout: 5), "meeting action toggle missing")
@@ -650,16 +649,18 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(identified("today.header").waitForExistence(timeout: 10))
     }
 
-    /// Full detail leads with actions and decisions, keeps the summary visible,
-    /// and retains the transcript as an explicit evidence disclosure.
-    func testMeetingDetailLoadsExpandedSummaryAndTranscript() {
+    /// Full detail leads with actions and keeps the full summary and transcript
+    /// in their own tabs.
+    func testMeetingDetailLeadsWithActionsAndHasFullSummaryTab() {
         openLibrary()
         selectMeeting(fixture.designReview)
         XCTAssertEqual(identified("detail.title").value as? String ?? identified("detail.title").label, fixture.designReview.title)
         XCTAssertTrue(textWithContent("Adopt Redis").firstMatch.waitForExistence(timeout: 4))
         XCTAssertTrue(identified("meeting.audioPlayer").exists)
-        UITestHarness.selectSegment("Actions", pickerIdentifier: "meeting.contentTabs", in: app)
         XCTAssertTrue(textWithContent("Draft the eviction policy document").firstMatch.waitForExistence(timeout: 4))
+        XCTAssertFalse(identified("meeting.summary").exists)
+        UITestHarness.selectSegment("Full Summary", pickerIdentifier: "meeting.contentTabs", in: app)
+        XCTAssertTrue(identified("meeting.summary").waitForExistence(timeout: 4))
         UITestHarness.selectSegment("Transcript", pickerIdentifier: "meeting.contentTabs", in: app)
         let first = app.staticTexts["transcript.segment.0.text"]
         XCTAssertTrue(first.waitForExistence(timeout: 4))

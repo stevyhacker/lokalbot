@@ -62,7 +62,6 @@ private struct MeetingWorkspaceDetail: View {
     @State private var speechPlayer: AVAudioPlayer?
     @State private var speechTask: Task<Void, Never>?
     @State private var searchQuery = ""
-    @State private var originalSummaryExpanded = false
     private var tab: MeetingWorkspaceTab {
         get { app.meetingWorkspaceTabs[meeting.id] ?? .overview }
         nonmutating set { app.meetingWorkspaceTabs[meeting.id] = newValue }
@@ -114,7 +113,7 @@ private struct MeetingWorkspaceDetail: View {
                     VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
                         switch tab {
                         case .overview: overviewContent
-                        case .actions: actionItemsSection
+                        case .summary: summarySection
                         case .transcript: transcriptSection
                         case .notes:
                             MeetingNotesEditor(meeting: meeting, searchQuery: visibleSearchQuery, activeMatchIndex: activeOccurrence(at: .notes)) {
@@ -341,18 +340,13 @@ private struct MeetingWorkspaceDetail: View {
     }
 
     @ViewBuilder private var overviewContent: some View {
+        if let summary, let recap = SummaryPresentation.recap(summary) {
+            WorkspaceSection(title: "Recap", icon: "text.alignleft") {
+                SelectableDigestText(recap)
+            }
+        }
+        actionItemsSection
         if let projection, !projection.outcomes.isEmpty {
-            if let summary, let recap = SummaryPresentation.recap(summary) {
-                WorkspaceSection(title: "Recap", icon: "text.alignleft") {
-                    SelectableDigestText(recap)
-                }
-            }
-            HStack {
-                Text("\(projection.outcomes.actionItems.count) actions · \(projection.outcomes.decisionRecords.count) decisions")
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Review actions") { tab = .actions }
-            }
             decisionsSection
             if !projection.outcomes.openQuestions.isEmpty {
                 WorkspaceSection(title: "Open questions", icon: "questionmark.bubble") {
@@ -361,13 +355,6 @@ private struct MeetingWorkspaceDetail: View {
                     }
                 }
             }
-            WorkspaceDisclosure(isExpanded: $originalSummaryExpanded, identifier: "meeting.originalSummary") {
-                summarySection
-            } label: {
-                Label("Original summary", systemImage: "doc.text")
-            }
-        } else {
-            summarySection
         }
     }
 
@@ -535,7 +522,6 @@ private struct MeetingWorkspaceDetail: View {
         using scrollProxy: ScrollViewProxy
     ) {
         tab = MeetingWorkspaceTab.containing(match.location)
-        if tab == .overview { originalSummaryExpanded = true }
         let needsTranscriptLayout: Bool
         if match.location.requiresTranscriptExpansion {
             needsTranscriptLayout = !transcriptExpanded

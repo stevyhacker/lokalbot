@@ -21,9 +21,9 @@ struct TodayView: View {
                 NeedsAttentionSection(
                     threads: app.outcomeIndex.openUserActionThreads,
                     limit: 3)
+                dreamCard
                 summarySection
                 capturedSection
-                DisclosureGroup("Overnight and yesterday") { dreamCard }
                 BriefContextView()
                 if !gettingStartedDismissed { GettingStartedCard() }
             }
@@ -172,21 +172,18 @@ struct TodayView: View {
                             for: dream, referenceDate: model.day))
                             .font(.system(size: 16, weight: .semibold))
                         ForEach(Array(dream.topActions.enumerated()), id: \.offset) { index, action in
-                            Text("\(index + 1). \(action)")
-                                .font(.system(size: 15))
-                                .textSelection(.enabled)
+                            DreamBriefText(text: "\(index + 1). \(action)", font: .system(size: 15))
                         }
                     }
                 }
                 if !dream.narrative.isEmpty {
-                    Text(displayedNarrative(dream))
-                        .font(WorkspaceTypography.body)
+                    DreamBriefText(text: displayedNarrative(dream))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
                 }
                 if let retrospective = retrospectiveMarkdown(dream) {
-                    MarkdownText(retrospective)
+                    DreamBriefText(text: retrospective)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
                 }

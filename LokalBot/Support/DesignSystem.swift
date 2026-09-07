@@ -176,13 +176,13 @@ enum WorkspaceMotion {
 enum WorkspacePalette {
     static func canvas(for colorScheme: ColorScheme) -> Color {
         colorScheme == .dark
-            ? Color(red: 0.050, green: 0.055, blue: 0.057)
+            ? Color(red: 0.140, green: 0.145, blue: 0.150)
             : Color(red: 0.970, green: 0.968, blue: 0.958)
     }
 
     static func surface(for colorScheme: ColorScheme) -> Color {
         colorScheme == .dark
-            ? Color(red: 0.085, green: 0.089, blue: 0.091)
+            ? Color(red: 0.180, green: 0.185, blue: 0.190)
             : Color(red: 0.995, green: 0.994, blue: 0.988)
     }
 
@@ -191,19 +191,19 @@ enum WorkspacePalette {
     /// material changing the visual hierarchy between OS releases.
     static func sidebar(for colorScheme: ColorScheme) -> Color {
         colorScheme == .dark
-            ? Color(red: 0.035, green: 0.052, blue: 0.057)
+            ? Color(red: 0.120, green: 0.130, blue: 0.135)
             : Color(red: 0.935, green: 0.946, blue: 0.944)
     }
 
     static func conversationColumn(for colorScheme: ColorScheme) -> Color {
         colorScheme == .dark
-            ? Color(red: 0.105, green: 0.108, blue: 0.110)
+            ? Color(red: 0.165, green: 0.170, blue: 0.175)
             : Color(red: 0.950, green: 0.949, blue: 0.944)
     }
 
     static func control(for colorScheme: ColorScheme) -> Color {
         colorScheme == .dark
-            ? Color(red: 0.105, green: 0.111, blue: 0.114)
+            ? Color(red: 0.210, green: 0.215, blue: 0.220)
             : Color(red: 0.945, green: 0.943, blue: 0.934)
     }
 

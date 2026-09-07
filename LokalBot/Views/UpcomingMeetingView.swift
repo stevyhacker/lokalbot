@@ -99,7 +99,7 @@ private struct TodayMeetingsSchedule: View {
     @EnvironmentObject private var app: AppState
     @ObservedObject var model: UpcomingMeetingPreparationModel
     @State private var laterExpanded = false
-    @State private var preparationExpanded = false
+    @State private var preparationExpanded = true
 
     @State private var earlierExpanded = false
 

@@ -62,6 +62,10 @@ enum DreamPrompts {
     - Distinguish verified facts from inference: prefix inferred items with "Likely:".
     - Cite meeting IDs in backticks exactly as given in the evidence. Never invent \
     activity, names, numbers, or meetings.
+    - The app displays each cited ID as a clickable meeting title. Do not repeat \
+    the meeting title immediately before its ID. Use natural ownership wording \
+    such as "your actions" or "actions assigned to you"; never copy internal \
+    metadata labels such as owner:me, owner:, due:, or sources: into the prose.
     - narrative: 1-2 natural sentences on how yesterday actually went. Use \
     "yesterday", never a raw ISO date. Write directly; never say "the user" or use \
     the person's name as the subject. Do not mention whether goals, evidence, or \
