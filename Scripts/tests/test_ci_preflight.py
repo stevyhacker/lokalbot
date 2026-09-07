@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -33,14 +34,52 @@ class ReleaseMetadataTests(unittest.TestCase):
     def test_consistent_metadata(self):
         self.assertEqual(preflight.validate(self.root), ("0.8.1", "31", "v0.8.0"))
 
+    def test_general_ci_accepts_prerelease_notes_or_generated_notes(self):
+        shutil.copy2(SOURCE / "Scripts/release-preflight.py", self.root / "Scripts/release-preflight.py")
+        workflow = (SOURCE / ".github/workflows/xcodegen.yml").read_text()
+        command = next(line.strip() for line in workflow.splitlines()
+                       if line.strip().startswith("python3 Scripts/release-preflight.py"))
+        self.notes.unlink()
+        beta_notes = self.notes.with_name("v0.8.1-beta.md")
+        for has_notes in [True, False]:
+            with self.subTest(prerelease_notes=has_notes):
+                if has_notes:
+                    beta_notes.write_text("- Beta release with tag-specific notes.\n")
+                else:
+                    beta_notes.unlink()
+                result = subprocess.run(shlex.split(command), cwd=self.root, text=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_stable_validation_still_requires_stable_notes(self):
+        self.notes.rename(self.notes.with_name("v0.8.1-beta.md"))
+        for mode in [{}, {"candidate": True}, {"staged": True}]:
+            with self.subTest(mode=mode), self.assertRaises(FileNotFoundError):
+                preflight.validate(self.root, **mode)
+
+    def test_metadata_only_cannot_skip_candidate_or_staged_validation(self):
+        for mode in [{"candidate": True}, {"staged": True}]:
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, "cannot be combined"):
+                preflight.validate(self.root, metadata_only=True, **mode)
+
+    def test_metadata_only_rejects_invalid_versions_and_builds(self):
+        for version, build in [("0.8", "31"), ("0.8.1", "0"), ("0.8.1", "invalid")]:
+            with self.subTest(version=version, build=build):
+                (self.root / "LokalBot/Info.plist").write_bytes(plistlib.dumps({
+                    "CFBundleShortVersionString": version, "CFBundleVersion": build}))
+                with self.assertRaises(ValueError):
+                    preflight.validate(self.root, metadata_only=True)
+
     def test_version_source_disagreement(self):
         (self.root / "project.yml").write_text('        CFBundleVersion: "30"\n')
-        with self.assertRaisesRegex(ValueError, "disagree"):
-            preflight.validate(self.root)
+        for metadata_only in [False, True]:
+            with self.subTest(metadata_only=metadata_only), self.assertRaisesRegex(ValueError, "disagree"):
+                preflight.validate(self.root, metadata_only=metadata_only)
 
     def test_wrong_requested_version(self):
-        with self.assertRaisesRegex(ValueError, "Requested"):
-            preflight.validate(self.root, version="0.9.0")
+        for metadata_only in [False, True]:
+            with self.subTest(metadata_only=metadata_only), self.assertRaisesRegex(ValueError, "Requested"):
+                preflight.validate(self.root, version="0.9.0", metadata_only=metadata_only)
 
     def test_missing_human_summary(self):
         self.notes.write_text('https://github.com/stevyhacker/lokalbot/compare/v0.8.0...v0.8.1\n')

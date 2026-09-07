@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only release metadata validation; --candidate also checks publication refs."""
+"""Read-only release validation; --metadata-only checks version/build consistency for general CI."""
 import argparse
 import plistlib
 from pathlib import Path
@@ -12,7 +12,9 @@ def git(root, *args):
     return subprocess.check_output(["git", "-C", str(root), *args], text=True).strip()
 
 
-def validate(root, *, version=None, candidate=False, staged=False, remote="origin"):
+def validate(root, *, version=None, candidate=False, staged=False, remote="origin", metadata_only=False):
+    if metadata_only and (candidate or staged):
+        raise ValueError("--metadata-only cannot be combined with --candidate or --staged")
     info = plistlib.loads((root / "LokalBot/Info.plist").read_bytes())
     actual = info["CFBundleShortVersionString"]
     build = info["CFBundleVersion"]
@@ -27,6 +29,8 @@ def validate(root, *, version=None, candidate=False, staged=False, remote="origi
         matches = re.findall(rf'^\s+{key}:\s*["\']?([^\s"\'#]+)["\']?\s*(?:#.*)?$', project, re.MULTILINE)
         if matches != [value]:
             raise ValueError(f"project.yml and Info.plist disagree on {key}")
+    if metadata_only:
+        return actual, build, None
     notes_path = f"Scripts/release-notes/v{actual}.md"
     notes = (root / notes_path).read_text()
     if not re.search(r"^- \S", notes, re.MULTILINE):
@@ -69,14 +73,17 @@ def validate(root, *, version=None, candidate=False, staged=False, remote="origi
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version")
+    parser.add_argument("--metadata-only", action="store_true",
+                        help="Check version/build consistency without requiring stable-release notes")
     parser.add_argument("--candidate", action="store_true")
     parser.add_argument("--staged", action="store_true")
     parser.add_argument("--remote", default="origin")
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     version, build, base = validate(root, version=args.version, candidate=args.candidate,
-                                    staged=args.staged, remote=args.remote)
-    print(f"Release metadata valid: {version} ({build}), changelog from {base}")
+                                    staged=args.staged, remote=args.remote, metadata_only=args.metadata_only)
+    changelog = f", changelog from {base}" if base else ""
+    print(f"Release metadata valid: {version} ({build}){changelog}")
 
 
 if __name__ == "__main__":

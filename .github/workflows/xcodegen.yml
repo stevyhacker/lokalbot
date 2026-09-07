@@ -33,7 +33,7 @@ jobs:
       - name: Verify CI helpers and release metadata
         run: |
           python3 -m unittest discover -s Scripts/tests -v
-          python3 Scripts/release-preflight.py
+          python3 Scripts/release-preflight.py --metadata-only
           bash -n Scripts/ui-tests.sh Scripts/prepare-release.sh
 
       - name: Install / verify XcodeGen

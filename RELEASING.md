@@ -177,9 +177,12 @@ base, increasing build numbers, local/remote tag availability, and that the
 staged snapshot contains exactly the three validated metadata files. Complete
 feature/fix commits separately before preparing this candidate. It never
 commits, tags, or publishes. Without `--candidate --staged`, the script checks
-metadata consistency and notes only, so CI can also validate already-released
-versions. Existing prerelease publication retains its tag-specific notes path
-and generated-notes fallback.
+metadata consistency and stable-release notes, including for already-released
+versions. General PR/push CI uses `--metadata-only` to validate version/build
+consistency without requiring stable-release notes. That mode cannot be combined
+with `--candidate` or `--staged`; candidate preparation and stable publication
+still require the notes and changelog. Prerelease publication retains its
+tag-specific notes path and generated-notes fallback.
 
 Validation and release currently use Xcode **26.3** (0.8.0 used build **17C529**).
 Update the explicit version in Build (including its Tests job), UI Tests and Release together after
