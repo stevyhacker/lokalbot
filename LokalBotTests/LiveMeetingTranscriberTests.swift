@@ -200,7 +200,8 @@ final class LiveMeetingTranscriberTests: XCTestCase {
         let worker = LiveMeetingAudioPreparationWorker(storageRoot: root)
         let cursors = try await worker.initialCursors(in: root,
             fileNames: [AudioPreviewTee.micFileName, AudioPreviewTee.systemFileName], recent: true)
-        XCTAssertEqual(cursors, [18 * 16_000, 18 * 16_000])
+        let expectedCursor = Int64(18 * 16_000)
+        XCTAssertEqual(cursors, [expectedCursor, expectedCursor])
         let waiting = try await worker.prepareNextChunk(
             source: root.appendingPathComponent(AudioPreviewTee.systemFileName), processedFrames: cursors[1])
         XCTAssertEqual(waiting, .noWork)
@@ -211,7 +212,8 @@ final class LiveMeetingTranscriberTests: XCTestCase {
         let worker = LiveMeetingAudioPreparationWorker(storageRoot: root)
         let cursors = try await worker.initialCursors(in: root,
             fileNames: [AudioPreviewTee.micFileName, AudioPreviewTee.systemFileName], recent: true)
-        XCTAssertEqual(cursors, [18 * 16_000, 18 * 16_000])
+        let expectedCursor = Int64(18 * 16_000)
+        XCTAssertEqual(cursors, [expectedCursor, expectedCursor])
     }
 
     func testObsoleteInferenceCannotPublishIntoNewRecording() async throws {
