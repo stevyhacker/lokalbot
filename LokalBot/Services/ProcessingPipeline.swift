@@ -506,7 +506,6 @@ final class ProcessingPipeline: ObservableObject {
                 let engine = config.transcriptionEngine()   // engines prepare lazily inside transcribe
 
                 stages[meeting.id] = .transcribing
-                if config.multiSpeakerDiarization { await prepareDiarizationModels() }
                 let batch = try await transcribeTracks(meeting: meeting, folder: folder, engine: engine, config: config)
                 var transcript = batch.transcript
                 // Lexical similarity only marks uncertainty. Removing a full
@@ -760,6 +759,13 @@ final class ProcessingPipeline: ObservableObject {
 
     private func transcribeTracks(meeting: Meeting, folder: URL,
                                   engine: TranscriptionEngine, config: AppSettings) async throws -> TranscribedTracks {
+        let sources = [MeetingAudioFiles.Track.mic, .system].compactMap { track -> (MeetingAudioFiles.Track, URL)? in
+            guard let url = MeetingAudioFiles.transcribableURL(for: track, in: folder) else { return nil }
+            return (track, url)
+        }
+        // Reject missing or unreadable recordings before any model download.
+        guard !sources.isEmpty else { throw PipelineError.noAudio }
+        if config.multiSpeakerDiarization { await prepareDiarizationModels() }
         let language = config.transcriptionLanguage.code
         var tracks: [Transcript] = []
         var voiceSamples: [SpeakerVoiceSample] = []
@@ -769,9 +775,9 @@ final class ProcessingPipeline: ObservableObject {
             try MeetingSpeakerIdentityService.recordingRevision(folder: folder)
         }.value
 
-        for (track, speaker) in [(MeetingAudioFiles.Track.mic, "me"),
-                                 (MeetingAudioFiles.Track.system, "them")] {
+        for (track, url) in sources {
             let name = track.rawValue
+            let speaker = track == .mic ? "me" : "them"
             // Per-track checkpoint: a finished track's transcript survives a
             // crash — and the *other* track failing — so a retry never redoes
             // an hour of completed transcription.
@@ -780,7 +786,6 @@ final class ProcessingPipeline: ObservableObject {
                 let checkpointInput = try JSONEncoder().encode([audioRevision, name, engine.displayName,
                     language ?? "", config.transcriptionPrompt,
                     String(config.multiSpeakerDiarization), String(config.echoCancellation)])
-                guard let url = MeetingAudioFiles.transcribableURL(for: track, in: folder) else { continue }
                 let prepared = track == .mic
                     ? try await Self.echoCancelledMicrophone(in: folder, microphone: url, config: config)
                     : (nil, TranscriptEchoReport(status: .noReference))

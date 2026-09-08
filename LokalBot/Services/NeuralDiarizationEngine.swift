@@ -4,9 +4,9 @@ import os.log
 
 private let logger = Logger(subsystem: AppIdentifiers.appBundleID, category: "NeuralDiarization")
 
-/// Acoustic speaker labelling on top of the system-audio track. Mic vs system
-/// already tells us "Me" vs "Them"; this engine refines the "Them" side into
-/// "Them 1" / "Them 2" / … when several remote participants are on the call.
+/// Acoustic speaker clustering for microphone and system-audio tracks.
+/// Clusters identify distinct voices within a track; confirmation and identity
+/// evidence determine whether a voice belongs to the user or someone else.
 ///
 /// Wraps FluidAudio's pyannote-community-1 offline pipeline with the tuned
 /// config Seminarly arrived at (threshold 0.70, finer step ratio, low minimum
