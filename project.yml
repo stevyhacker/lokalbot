@@ -101,6 +101,8 @@ targetTemplates:
       - package: WhisperKit
       - package: Qwen3Speech
         product: Qwen3ASR
+      - package: MLXSwift
+        product: MLX
       - package: Sparkle
         product: Sparkle
       - package: swift-log

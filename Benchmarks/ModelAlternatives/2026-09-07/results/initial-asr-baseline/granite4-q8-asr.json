@@ -1,0 +1,511 @@
+{
+  "model": "granite4-q8",
+  "normalization": "NFKC lower-case; strip markup/punctuation; preserve apostrophes and disfluencies",
+  "rows": [
+    {
+      "id": "ami-15",
+      "dataset": "edinburghcstr/ami",
+      "reference": "WE CAN ALWAYS DECIDE THEN I MEAN YEAH",
+      "duration_seconds": 2.61,
+      "text": "we can always decide then, I mean, you know.",
+      "seconds": 0.1341188750229776,
+      "reference_words": 8,
+      "edit_distance": 2
+    },
+    {
+      "id": "ami-25",
+      "dataset": "edinburghcstr/ami",
+      "reference": "SO EVEN IF IT DOESN'T WORK YOU CAN JIGGERY POKERY AROUND AND MAKE IT WORK",
+      "duration_seconds": 3.17,
+      "text": "So even if it doesn't work you can jiggery pokery around and make it work",
+      "seconds": 0.1784609580063261,
+      "reference_words": 15,
+      "edit_distance": 0
+    },
+    {
+      "id": "ami-27",
+      "dataset": "edinburghcstr/ami",
+      "reference": "BUT MOST WILL PROBABLY WANT TO GO WITH DEFAULTS",
+      "duration_seconds": 2.8099375,
+      "text": "But most will probably want to go with the false",
+      "seconds": 0.11997695901663974,
+      "reference_words": 9,
+      "edit_distance": 2
+    },
+    {
+      "id": "ami-28",
+      "dataset": "edinburghcstr/ami",
+      "reference": "YOU OPEN THE WINDOW YOU READ THROUGH IT YOU MIGHT CLICK ON YOU KNOW CLOSE IT AGAIN STRAIGHT AWAY",
+      "duration_seconds": 5.14,
+      "text": "You open the window, you read through it, you might click o, you know, close it again straight away.",
+      "seconds": 0.22843870799988508,
+      "reference_words": 19,
+      "edit_distance": 1
+    },
+    {
+      "id": "ami-31",
+      "dataset": "edinburghcstr/ami",
+      "reference": "I MEAN IF YOU ALREADY STARTED ON ON DOING YOUR STUFF I GUESS WE CAN",
+      "duration_seconds": 5.01,
+      "text": "I mean if you already started on on doing stuff I guess we can",
+      "seconds": 0.16686329199001193,
+      "reference_words": 15,
+      "edit_distance": 1
+    },
+    {
+      "id": "ami-35",
+      "dataset": "edinburghcstr/ami",
+      "reference": "SO WHAT DO WE NEED TO TALK ABOUT",
+      "duration_seconds": 2.9,
+      "text": "So what do we need to talk about",
+      "seconds": 0.11172712501138449,
+      "reference_words": 8,
+      "edit_distance": 0
+    },
+    {
+      "id": "ami-500",
+      "dataset": "edinburghcstr/ami",
+      "reference": "AND I HAVEN'T DARED THROWING OUT TO THROUGH OUT ALL THE FUNCTIONS I HAVEN'T YOU KNOW THAT I DON'T NEED",
+      "duration_seconds": 4.02,
+      "text": "And I haven't dared throw it out to throw out all the functions I ha you know that I don't need.",
+      "seconds": 0.2222973330062814,
+      "reference_words": 20,
+      "edit_distance": 4
+    },
+    {
+      "id": "ami-503",
+      "dataset": "edinburghcstr/ami",
+      "reference": "ACTUALLY MONDAY MONDAY MIGHT BE GOOD D UM",
+      "duration_seconds": 2.1,
+      "text": "actually Monday Monday might be good so",
+      "seconds": 0.09962083399295807,
+      "reference_words": 8,
+      "edit_distance": 2
+    },
+    {
+      "id": "ami-505",
+      "dataset": "edinburghcstr/ami",
+      "reference": "'CAUSE OTHERWISE PHOTOSHOP HAS A LOT OF WINDOWS IF YOU EVER USE PHOTOSHOP IT'S GOT LOADS",
+      "duration_seconds": 3.5,
+      "text": "'Cause otherwise Photoshop has a lot of windows if you ever use Photoshop it's got loads of",
+      "seconds": 0.1817367500043474,
+      "reference_words": 16,
+      "edit_distance": 1
+    },
+    {
+      "id": "ami-510",
+      "dataset": "edinburghcstr/ami",
+      "reference": "IT WAS THERE WHEN I TOOK IT UM USES THE UM THE N. X. T. SEARCH TO GET THE DATA OUT OF THE OUT THE FILES",
+      "duration_seconds": 10.56,
+      "text": "it was there when I took it um it uses the um the N. x. t. search to get the data out of the out of the files",
+      "seconds": 0.313386540976353,
+      "reference_words": 26,
+      "edit_distance": 2
+    },
+    {
+      "id": "ami-511",
+      "dataset": "edinburghcstr/ami",
+      "reference": "WORDS OR TEXT OR SOMETHING IN IT SO IT JUST SEARCHES FOR THOSE FILES",
+      "duration_seconds": 3.83,
+      "text": "Words or text or something in it so it just searches for those files",
+      "seconds": 0.156636375002563,
+      "reference_words": 14,
+      "edit_distance": 0
+    },
+    {
+      "id": "ami-522",
+      "dataset": "edinburghcstr/ami",
+      "reference": "LIKE I DON'T KNOW SHOW THE SPEAKER CHARACTERISATION FOR INSTANCE",
+      "duration_seconds": 3.14,
+      "text": "like I dunno, show the speaker characteristic, for instance.",
+      "seconds": 0.14802391704870388,
+      "reference_words": 10,
+      "edit_distance": 3
+    },
+    {
+      "id": "ami-1503",
+      "dataset": "edinburghcstr/ami",
+      "reference": "PRINT IT ON BOTH BOTH PANES AND IF IT'S NOT A PROPER WORD THEN PRINT IT ONLY ON ONE",
+      "duration_seconds": 4.34,
+      "text": "Print it on both both panes and if it's not proper word then print it only on one.",
+      "seconds": 0.20148295804392546,
+      "reference_words": 19,
+      "edit_distance": 1
+    },
+    {
+      "id": "ami-1509",
+      "dataset": "edinburghcstr/ami",
+      "reference": "YEAH I MEAN THE WHOLE UM THE M WHAT FILLS THE TRANSCRIPTION BOX AND ALL OF THESE BOXES IS A SPECIAL SORT OF PANE MADE BY NITE",
+      "duration_seconds": 9.08,
+      "text": "Yeah I mean the whole um um what fills the transcription box and all of these boxes is a special sort of pain made by night",
+      "seconds": 0.26031887502176687,
+      "reference_words": 27,
+      "edit_distance": 4
+    },
+    {
+      "id": "ami-1513",
+      "dataset": "edinburghcstr/ami",
+      "reference": "I JUST SAID I SAID WHAT I'VE DONE SO FAR AND WHAT I'M GONNA DO AND SOME PRO SOME ISSUES",
+      "duration_seconds": 9.92,
+      "text": "I just said I said what I've done so far and what I'm gonna do and some pro some issues and then it was",
+      "seconds": 0.28009074996225536,
+      "reference_words": 20,
+      "edit_distance": 4
+    },
+    {
+      "id": "ami-1526",
+      "dataset": "edinburghcstr/ami",
+      "reference": "THAT'S WHAT I THOUGHT AS WELL I MEAN DO WE ARE WE ARE WE ACTUALLY GONNA ATTEMPT THAT",
+      "duration_seconds": 3.62,
+      "text": "That was what I thought as well I mean do we are we are we actually gonna attempt that",
+      "seconds": 0.18824383296305314,
+      "reference_words": 18,
+      "edit_distance": 2
+    },
+    {
+      "id": "ami-1531",
+      "dataset": "edinburghcstr/ami",
+      "reference": "YOU KNOW THE CHOP FILE THEN YOU DON'T EVER HAVE TO PRODUCE IT",
+      "duration_seconds": 2.23,
+      "text": "you know the chop file then you don't ever have to produce it",
+      "seconds": 0.14210254204226658,
+      "reference_words": 13,
+      "edit_distance": 0
+    },
+    {
+      "id": "ami-1537",
+      "dataset": "edinburghcstr/ami",
+      "reference": "H UM IS ARE ONE OF THOSE SOMETHING THAT YOU WANNA CHANGE AND DELETE FROM OUR LIST OF EXPECTATIONS",
+      "duration_seconds": 6.16,
+      "text": "It um is are one of those something that you wanna change and delete from our list of expectations?",
+      "seconds": 0.20196808298351243,
+      "reference_words": 19,
+      "edit_distance": 1
+    },
+    {
+      "id": "ami-2502",
+      "dataset": "edinburghcstr/ami",
+      "reference": "AND THAT WAY IF THEY KNOW SPECIFICALLY WHICH MEANING IT IS THEN THAT'LL SAVE THE TIME",
+      "duration_seconds": 3.46,
+      "text": "and that way if they know specifically which meeting it is then they'll save the time",
+      "seconds": 0.16900204203557223,
+      "reference_words": 16,
+      "edit_distance": 2
+    },
+    {
+      "id": "ami-2507",
+      "dataset": "edinburghcstr/ami",
+      "reference": "'CAUSE SOME THINGS YOU'RE GONNA GET A LOT OF RESULTS FOR",
+      "duration_seconds": 2.53,
+      "text": "'cause some things you're gonna get a lot of results for",
+      "seconds": 0.1386066249688156,
+      "reference_words": 11,
+      "edit_distance": 0
+    },
+    {
+      "id": "ami-2508",
+      "dataset": "edinburghcstr/ami",
+      "reference": "AND YOU CAN RECALL THEY CAN WRITE THE IT WRITES THE OBJECTS AND THEN YOU CALL THE OBJECTS BACK AND THEY HA THOSE RETURNED OBJECTS HAVE ALL THE INFORMATION THAT THEY NEED",
+      "duration_seconds": 7.44,
+      "text": "And you can re co and you can write the writes the objects and then you call the objects back and they ha those returned objects have all the information that they need.",
+      "seconds": 0.30430524999974295,
+      "reference_words": 32,
+      "edit_distance": 5
+    },
+    {
+      "id": "ami-2511",
+      "dataset": "edinburghcstr/ami",
+      "reference": "UM WELL IT WAS WOULD'VE BEEN LIKE A LIST OF",
+      "duration_seconds": 2.7,
+      "text": "Um well it wou woulda been like a list of",
+      "seconds": 0.13135595800122246,
+      "reference_words": 10,
+      "edit_distance": 2
+    },
+    {
+      "id": "ami-2514",
+      "dataset": "edinburghcstr/ami",
+      "reference": "WELL THING IS IF IT'S BEING DONE THERE WERE THERE WAS",
+      "duration_seconds": 2.76,
+      "text": "well thing if it's being done there were there was",
+      "seconds": 0.12544662499567494,
+      "reference_words": 11,
+      "edit_distance": 1
+    },
+    {
+      "id": "ami-2516",
+      "dataset": "edinburghcstr/ami",
+      "reference": "SEARCH FOR STUFF OR START WORKING OR NO",
+      "duration_seconds": 3.54,
+      "text": "Search for stuff or start working",
+      "seconds": 0.10301987500861287,
+      "reference_words": 8,
+      "edit_distance": 2
+    },
+    {
+      "id": "librispeech-0",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "MISTER QUILTER IS THE APOSTLE OF THE MIDDLE CLASSES AND WE ARE GLAD TO WELCOME HIS GOSPEL",
+      "duration_seconds": 5.855,
+      "text": "mister Quilter is the apostle of the middle classes, and we are glad to welcome his gospel.",
+      "seconds": 0.2126123330090195,
+      "reference_words": 17,
+      "edit_distance": 0
+    },
+    {
+      "id": "librispeech-1",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "NOR IS MISTER QUILTER'S MANNER LESS INTERESTING THAN HIS MATTER",
+      "duration_seconds": 4.815,
+      "text": "Nor is mister Quilter's manner less interesting than his matter.",
+      "seconds": 0.16657333401963115,
+      "reference_words": 10,
+      "edit_distance": 0
+    },
+    {
+      "id": "librispeech-2",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "HE TELLS US THAT AT THIS FESTIVE SEASON OF THE YEAR WITH CHRISTMAS AND ROAST BEEF LOOMING BEFORE US SIMILES DRAWN FROM EATING AND ITS RESULTS OCCUR MOST READILY TO THE MIND",
+      "duration_seconds": 12.485,
+      "text": "He tells us that at this festive season of the year, with Christmas and roast beef looming before us, similes drawn from eating and its results occur most readily to the mind.",
+      "seconds": 0.3542107079993002,
+      "reference_words": 32,
+      "edit_distance": 0
+    },
+    {
+      "id": "librispeech-3",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "HE HAS GRAVE DOUBTS WHETHER SIR FREDERICK LEIGHTON'S WORK IS REALLY GREEK AFTER ALL AND CAN DISCOVER IN IT BUT LITTLE OF ROCKY ITHACA",
+      "duration_seconds": 9.9,
+      "text": "He has grave doubts whether Sir Frederic Leighton's work is really Greek after all, and can discover in it but little of rocky Ithaca.",
+      "seconds": 0.3065869170241058,
+      "reference_words": 24,
+      "edit_distance": 1
+    },
+    {
+      "id": "librispeech-5",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "IT IS OBVIOUSLY UNNECESSARY FOR US TO POINT OUT HOW LUMINOUS THESE CRITICISMS ARE HOW DELICATE IN EXPRESSION",
+      "duration_seconds": 9.01,
+      "text": "It is obviously unnecessary for us to point out how luminous these criticisms are, how delicate in expression.",
+      "seconds": 0.23439045797567815,
+      "reference_words": 18,
+      "edit_distance": 0
+    },
+    {
+      "id": "librispeech-6",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "ON THE GENERAL PRINCIPLES OF ART MISTER QUILTER WRITES WITH EQUAL LUCIDITY",
+      "duration_seconds": 5.64,
+      "text": "On the general principles of art mister Quilter writes with equal lucidity.",
+      "seconds": 0.17769049998605624,
+      "reference_words": 12,
+      "edit_distance": 0
+    },
+    {
+      "id": "librispeech-7",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "PAINTING HE TELLS US IS OF A DIFFERENT QUALITY TO MATHEMATICS AND FINISH IN ART IS ADDING MORE FACT",
+      "duration_seconds": 9.24,
+      "text": "Painting, he tells us, is of a different quality to mathematics and finish in art is adding mora facto,",
+      "seconds": 0.24502879101783037,
+      "reference_words": 19,
+      "edit_distance": 2
+    },
+    {
+      "id": "librispeech-8",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "AS FOR ETCHINGS THEY ARE OF TWO KINDS BRITISH AND FOREIGN",
+      "duration_seconds": 5.12,
+      "text": "As for etchings, they are of two kinds, British and foreign",
+      "seconds": 0.1655148749705404,
+      "reference_words": 11,
+      "edit_distance": 0
+    },
+    {
+      "id": "librispeech-9",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "HE LAMENTS MOST BITTERLY THE DIVORCE THAT HAS BEEN MADE BETWEEN DECORATIVE ART AND WHAT WE USUALLY CALL PICTURES MAKES THE CUSTOMARY APPEAL TO THE LAST JUDGMENT AND REMINDS US THAT IN THE GREAT DAYS OF ART MICHAEL ANGELO WAS THE FURNISHING UPHOLSTERER",
+      "duration_seconds": 18.29,
+      "text": "He laments most bitterly the divorce that has been made between decorative art and--what we usually call pictures. He makes a customary appeal to the Last Judgment, and reminds us that in the great days of art Michael Angelo was the furnishing upholsterer",
+      "seconds": 0.4806428750162013,
+      "reference_words": 43,
+      "edit_distance": 2
+    },
+    {
+      "id": "librispeech-10",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "NEAR THE FIRE AND THE ORNAMENTS FRED BROUGHT HOME FROM INDIA ON THE MANTEL BOARD",
+      "duration_seconds": 5.6,
+      "text": "near the fire, and the ornaments Fred brought home from India on the mantel board.",
+      "seconds": 0.1878854999667965,
+      "reference_words": 15,
+      "edit_distance": 0
+    },
+    {
+      "id": "librispeech-11",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "IN FACT HE IS QUITE SEVERE ON MISTER RUSKIN FOR NOT RECOGNISING THAT A PICTURE SHOULD DENOTE THE FRAILTY OF MAN AND REMARKS WITH PLEASING COURTESY AND FELICITOUS GRACE THAT MANY PHASES OF FEELING",
+      "duration_seconds": 15.115,
+      "text": "In fact, he is quite severe on mister Ruskin for not recognizing that a picture should denote the frailty of man, and remarks with pleasing courtesy and felicitous grace that many phases of feeling",
+      "seconds": 0.3954626669874415,
+      "reference_words": 34,
+      "edit_distance": 1
+    },
+    {
+      "id": "librispeech-12",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "ONLY UNFORTUNATELY HIS OWN WORK NEVER DOES GET GOOD",
+      "duration_seconds": 5.38,
+      "text": "Only, unfortunately, his own work never does get good.",
+      "seconds": 0.1531306660035625,
+      "reference_words": 9,
+      "edit_distance": 0
+    },
+    {
+      "id": "librispeech-13",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "MISTER QUILTER HAS MISSED HIS CHANCE FOR HE HAS FAILED EVEN TO MAKE HIMSELF THE TUPPER OF PAINTING",
+      "duration_seconds": 7.1,
+      "text": "mister Quilter has missed his chance, for he has failed even to make himself the tupper of painting.",
+      "seconds": 0.2327372920117341,
+      "reference_words": 18,
+      "edit_distance": 0
+    },
+    {
+      "id": "librispeech-15",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "BECAUSE YOU WERE SLEEPING INSTEAD OF CONQUERING THE LOVELY ROSE PRINCESS HAS BECOME A FIDDLE WITHOUT A BOW WHILE POOR SHAGGY SITS THERE A COOING DOVE",
+      "duration_seconds": 10.885,
+      "text": "Because you were sleeping instead of conquering, The lovely rose princess has become a fiddle without a bow, While poor Shaggy sits there a cooing dove.",
+      "seconds": 0.3279235830414109,
+      "reference_words": 26,
+      "edit_distance": 0
+    },
+    {
+      "id": "librispeech-16",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "HE HAS GONE AND GONE FOR GOOD ANSWERED POLYCHROME WHO HAD MANAGED TO SQUEEZE INTO THE ROOM BESIDE THE DRAGON AND HAD WITNESSED THE OCCURRENCES WITH MUCH INTEREST",
+      "duration_seconds": 11.13,
+      "text": "He has gone, and gone for good, answered Polychrome, who had managed to squeeze into the room beside the dragon, and had witnessed the occurrences with much interest.",
+      "seconds": 0.32790025003487244,
+      "reference_words": 28,
+      "edit_distance": 0
+    },
+    {
+      "id": "librispeech-17",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "I HAVE REMAINED A PRISONER ONLY BECAUSE I WISHED TO BE ONE AND WITH THIS HE STEPPED FORWARD AND BURST THE STOUT CHAINS AS EASILY AS IF THEY HAD BEEN THREADS",
+      "duration_seconds": 11.475,
+      "text": "I have remained a prisoner only because I wished to be one. And with this he stepped forward and burst the stout chains as easily as if they had been threads.",
+      "seconds": 0.31885304203024134,
+      "reference_words": 31,
+      "edit_distance": 0
+    },
+    {
+      "id": "librispeech-18",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "THE LITTLE GIRL HAD BEEN ASLEEP BUT SHE HEARD THE RAPS AND OPENED THE DOOR",
+      "duration_seconds": 4.755,
+      "text": "The little girl had been asleep, but she heard the raps and opened the door.",
+      "seconds": 0.18505358300171793,
+      "reference_words": 15,
+      "edit_distance": 0
+    },
+    {
+      "id": "librispeech-19",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "THE KING HAS FLED IN DISGRACE AND YOUR FRIENDS ARE ASKING FOR YOU",
+      "duration_seconds": 4.225,
+      "text": "The King has fled in disgrace, and your friends are asking for you.",
+      "seconds": 0.16524133295752108,
+      "reference_words": 13,
+      "edit_distance": 0
+    },
+    {
+      "id": "librispeech-20",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "I BEGGED RUGGEDO LONG AGO TO SEND HIM AWAY BUT HE WOULD NOT DO SO",
+      "duration_seconds": 4.625,
+      "text": "I begged Ruggedo long ago to send him away, but he would not do so.",
+      "seconds": 0.18938416702440009,
+      "reference_words": 15,
+      "edit_distance": 0
+    },
+    {
+      "id": "librispeech-21",
+      "dataset": "hf-internal-testing/librispeech_asr_dummy",
+      "reference": "I ALSO OFFERED TO HELP YOUR BROTHER TO ESCAPE BUT HE WOULD NOT GO",
+      "duration_seconds": 4.09,
+      "text": "I also offered to help your brother to escape but he would not go.",
+      "seconds": 0.16389312501996756,
+      "reference_words": 14,
+      "edit_distance": 0
+    }
+  ],
+  "warmup_seconds": 0.5744539590086788,
+  "summary": {
+    "all": {
+      "clips": 44,
+      "words": 776,
+      "errors": 48,
+      "wer": 0.061855670103092786,
+      "audio_seconds": 271.3049375,
+      "inference_seconds": 9.297947082202882,
+      "rtfx": 29.17901501281959,
+      "p50_clip_seconds": 0.1864695414842572
+    },
+    "ami": {
+      "clips": 24,
+      "words": 372,
+      "errors": 42,
+      "wer": 0.11290322580645161,
+      "audio_seconds": 106.5699375,
+      "inference_seconds": 4.307231083104853,
+      "rtfx": 24.742098913155925,
+      "p50_clip_seconds": 0.16793266701279208
+    },
+    "librispeech": {
+      "clips": 20,
+      "words": 404,
+      "errors": 6,
+      "wer": 0.01485148514851485,
+      "audio_seconds": 164.73499999999999,
+      "inference_seconds": 4.990715999098029,
+      "rtfx": 33.00828979845227,
+      "p50_clip_seconds": 0.2226748125103768
+    }
+  },
+  "runtime": {
+    "model": "granite4-q8",
+    "kind": "asr",
+    "runtime": "llama.cpp b10173",
+    "context": 4096,
+    "pid": 65089,
+    "model_bytes": 1956154944,
+    "arguments": [
+      "/Applications/LokalBot.app/Contents/Resources/llama-cpp/llama-server",
+      "-m",
+      "/Users/0xmithrandir/Library/Application Support/me.dotenv.LokalBot/granite-speech/4.1-2b/granite-speech-4.1-2b-Q8_0.gguf",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "18782",
+      "-c",
+      "4096",
+      "-ngl",
+      "99",
+      "--parallel",
+      "1",
+      "--jinja",
+      "--no-webui",
+      "--api-key",
+      "<benchmark-local-token>",
+      "--mmproj",
+      "/Users/0xmithrandir/Library/Application Support/me.dotenv.LokalBot/granite-speech/4.1-2b/mmproj-model-f16.gguf"
+    ],
+    "startup_seconds": 1.4573162909946404,
+    "peak_sampled_rss_bytes": 3970351104,
+    "shutdown_returncode": 0
+  }
+}

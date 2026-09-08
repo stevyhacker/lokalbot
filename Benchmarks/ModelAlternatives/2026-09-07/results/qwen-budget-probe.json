@@ -1,0 +1,156 @@
+{
+  "model": "qwen",
+  "cases": [
+    {
+      "seconds": 2.654784375044983,
+      "text": "",
+      "reasoning": "Thinking Process:\n\n1.  **Analyze the Request:**\n    *   Input: \"Please send the report to ana dot petrovic at example dot com before Tuesday.\"\n    *   Task: Return only the corrected sentence.\n    *   Constraint: \"Return only the corrected sentence.\" (No explanations, no markdown blocks unless part of the sentence, etc.)\n\n2.  **Identify Errors in the Input:**\n    *   \"ana dot petrovic\" -> This is a placeholder for an email address where \"dot\" represents \"@\". It should be \"ana.petrovic\" or \"ana@petrovic\". Given the context \"at example dot com\", \"dot\" is clearly a placeholder for the \"@\" symbol.\n    *   \"example dot com\" -> Similarly, \"dot\" represents \".\". It should be \"example.com\".\n    *   The sentence structure is otherwise fine.\n\n3.  **Determine the Correction:**\n    *   \"ana dot petrovic\" -> \"ana.petrovic\" (assuming the user meant an email address format like name@domain, but the input says \"to ana dot petrovic at example dot com\". This implies the email is ana.petro",
+      "finish_reason": "length",
+      "usage": {
+        "completion_tokens": 256,
+        "prompt_tokens": 38,
+        "total_tokens": 294,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 38,
+        "prompt_ms": 131.603,
+        "prompt_per_token_ms": 3.4632368421052635,
+        "prompt_per_second": 288.7472170087308,
+        "predicted_n": 256,
+        "predicted_ms": 2515.284,
+        "predicted_per_token_ms": 9.825328125,
+        "predicted_per_second": 101.77777141666706
+      },
+      "request_overrides": {},
+      "id": "budget-0"
+    },
+    {
+      "seconds": 0.30423429096117616,
+      "text": "Please send the report to ana.petrovic@example.com before Tuesday.",
+      "reasoning": "",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 17,
+        "prompt_tokens": 38,
+        "total_tokens": 55,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 38,
+        "prompt_ms": 108.241,
+        "prompt_per_token_ms": 2.8484473684210525,
+        "prompt_per_second": 351.0684491089329,
+        "predicted_n": 17,
+        "predicted_ms": 165.396,
+        "predicted_per_token_ms": 9.729176470588234,
+        "predicted_per_second": 102.78362233669498
+      },
+      "request_overrides": {
+        "reasoning_budget_tokens": 1
+      },
+      "id": "native-budget-1"
+    },
+    {
+      "seconds": 0.25848887499887496,
+      "text": "Please send the report to ana.petrovic@example.com before Tuesday.",
+      "reasoning": "",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 15,
+        "prompt_tokens": 40,
+        "total_tokens": 55,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 40,
+        "prompt_ms": 107.51,
+        "prompt_per_token_ms": 2.6877500000000003,
+        "prompt_per_second": 372.05841317086777,
+        "predicted_n": 15,
+        "predicted_ms": 144.203,
+        "predicted_per_token_ms": 9.613533333333333,
+        "predicted_per_second": 104.02002732259385
+      },
+      "request_overrides": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      },
+      "id": "template-disabled"
+    },
+    {
+      "seconds": 2.7419883340480737,
+      "text": "",
+      "reasoning": "Thinking Process:\n\n1.  **Analyze the Request:**\n    *   Input: \"Please send the report to ana dot petrovic at example dot com before Tuesday.\"\n    *   Task: Return only the corrected sentence.\n    *   Constraint: \"Return only the corrected sentence.\" (No explanations, no markdown blocks unless part of the sentence, etc.)\n\n2.  **Identify Errors in the Input:**\n    *   \"ana dot petrovic\" -> This is a placeholder for an email address where \"dot\" represents \"@\". It should be \"ana.petrovic\" or \"ana@petrovic\". Given the context \"at example dot com\", \"dot\" is clearly a placeholder for the \"@\" symbol.\n    *   \"example dot com\" -> Similarly, \"dot\" represents \".\". It should be \"example.com\".\n    *   The sentence structure is otherwise fine.\n\n3.  **Determine the Correction:**\n    *   \"ana dot petrovic\" -> \"ana.petrovic\" (assuming the user meant an email address format like name@domain, but the input says \"to ana dot petrovic at example dot com\". This implies the email is ana.petro",
+      "finish_reason": "length",
+      "usage": {
+        "completion_tokens": 256,
+        "prompt_tokens": 38,
+        "total_tokens": 294,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 38,
+        "prompt_ms": 108.107,
+        "prompt_per_token_ms": 2.844921052631579,
+        "prompt_per_second": 351.5036029119299,
+        "predicted_n": 256,
+        "predicted_ms": 2626.933,
+        "predicted_per_token_ms": 10.26145703125,
+        "predicted_per_second": 97.45204769211853
+      },
+      "request_overrides": {
+        "reasoning_effort": "none",
+        "thinking_budget_tokens": -1
+      },
+      "id": "effort-none-unlimited-budget"
+    }
+  ],
+  "runtime": {
+    "model": "qwen",
+    "kind": "generation",
+    "runtime": "llama.cpp b10173",
+    "context": 32768,
+    "pid": 65316,
+    "model_bytes": 2740937888,
+    "arguments": [
+      "/Applications/LokalBot.app/Contents/Resources/llama-cpp/llama-server",
+      "-m",
+      "/Users/0xmithrandir/Library/Application Support/me.dotenv.LokalBot/models/Qwen3.5-4B-Q4_K_M.gguf",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "18782",
+      "-c",
+      "32768",
+      "-ngl",
+      "99",
+      "--parallel",
+      "1",
+      "--jinja",
+      "--no-webui",
+      "--api-key",
+      "<benchmark-local-token>",
+      "--reasoning",
+      "on",
+      "--cache-ram",
+      "2048"
+    ],
+    "startup_seconds": 1.8599226250080392,
+    "peak_sampled_rss_bytes": 4165730304,
+    "shutdown_returncode": 0
+  }
+}
