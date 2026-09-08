@@ -37,6 +37,8 @@ Native commands used `xcodebuild -scheme LokalBot -destination 'platform=macOS' 
 
 The suite uses synthetic audio and model-output fixtures. These establish code invariants; they do not measure human voice recognition, real ASR, or the accuracy of generated paraphrases. Hosted UI results are reported on the PR at its current head. The repository's Build, Lint, and XcodeGen workflows only trigger for PRs targeting `master` or `dev`; this stacked base does not receive those hosted gates until retargeted. Their local results are reported independently above. Workflow files are unchanged.
 
+The [first hosted UI run](https://github.com/stevyhacker/lokalbot/actions/runs/34216518145) passed the build/critical tests and all three visual shards, but failed two functional assertions. The toolbar assertion still expected `Re-summarize` after the action was renamed to `Repair summary and action owners`. The speaker-settings assertion searched by label, while the saved accessibility hierarchy exposed the two switches with identifiers and values but no labels. The follow-up supplies explicit accessibility labels, addresses the switches by their stable identifiers, asserts their labels and independent opt-in values, and updates the expected repair action. Current hosted rerun results are recorded on [PR #68](https://github.com/stevyhacker/lokalbot/pull/68).
+
 ## Open release gates
 
 | Metric or gate | Result | Consequence |
@@ -51,7 +53,7 @@ The suite uses synthetic audio and model-output fixtures. These establish code i
 | Unresolved attribution coverage | Not measured | Review burden and useful coverage need measurement. |
 | End-to-end processing time | Not measured on representative long recordings | Extra diarization, bounded ASR calls, and audio hashing need benchmarking. |
 | Peak resident memory | Not measured | Bounded file processing does not substitute for a Release benchmark. |
-| Hosted UI suite | Pending PR execution | Local UI tests were not run. |
+| Hosted UI suite | See current-head checks on PR #68 | Local UI tests were not run. |
 | Real capture modes/device changes | Not exercised in this task | Remote staged recordings are required. |
 | Narrative paraphrase entailment | Model-dependent; no annotated evaluation | Exact quotes and speaker IDs constrain attribution, but do not establish every paraphrase's semantics. |
 
