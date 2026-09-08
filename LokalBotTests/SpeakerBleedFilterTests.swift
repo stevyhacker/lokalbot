@@ -34,7 +34,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             segment("them", 5, 17, prompt),
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertEqual(result.removedSegments, 1)
         XCTAssertEqual(result.transcript.segments.map(\.speaker), ["me", "them"])
@@ -53,7 +53,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             confidence: 0.73)
         let input = transcript([remote, mic])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertFalse(result.changed)
         XCTAssertEqual(result.transcript.segments, input.segments)
@@ -70,7 +70,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             mic,
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertFalse(result.changed)
         XCTAssertEqual(result.transcript.segments.last, mic)
@@ -84,7 +84,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             mic,
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertFalse(result.changed)
         XCTAssertEqual(result.transcript.segments.last, mic)
@@ -101,7 +101,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             mic,
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertFalse(result.changed)
         XCTAssertEqual(result.transcript.segments.last, mic)
@@ -114,7 +114,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             segment("me", 0, 10, line, timing: .coarse),
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertFalse(result.changed)
         XCTAssertEqual(result.transcript.segments, input.segments)
@@ -127,7 +127,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             segment("me", 0, 10, line, timing: nil),
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertFalse(result.changed)
         XCTAssertEqual(result.transcript.segments, input.segments)
@@ -141,7 +141,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             mic,
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertFalse(result.changed)
         XCTAssertEqual(result.transcript.segments.last, mic)
@@ -153,7 +153,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             segment("me", 3.1, 5.9, "That's right"),
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertFalse(result.changed)
         XCTAssertEqual(result.transcript.segments.count, 2)
@@ -166,7 +166,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             segment("me", 3, 8, "we can skip the build"),
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertFalse(result.changed)
         XCTAssertEqual(result.transcript.segments.count, 2)
@@ -179,7 +179,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             segment("me", 14.5, 18.5, line),
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertFalse(result.changed)
         XCTAssertEqual(result.transcript.segments.count, 2)
@@ -193,7 +193,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             remote,
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertEqual(result.removedSegments, 1)
         XCTAssertEqual(result.transcript.segments, [remote])
@@ -205,7 +205,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             segment("me", 4, 8, "this remains completely local microphone speech"),
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertFalse(result.changed)
         XCTAssertEqual(result.transcript.segments, input.segments)
@@ -228,7 +228,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             segment("me", 0, 30, line, timing: .token),
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertFalse(result.changed)
         XCTAssertEqual(result.transcript.segments, input.segments)
@@ -255,7 +255,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             segment("me", 10, 20, line, timing: .token),
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertEqual(result.removedSegments, 1)
         XCTAssertEqual(result.transcript.segments.map(\.speaker), ["them"])
@@ -269,7 +269,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             mic,
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertFalse(result.changed)
         XCTAssertEqual(result.transcript.segments.last, mic)
@@ -281,7 +281,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             segment("me", 3, 6, "好的谢谢"),
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertFalse(result.changed)
         XCTAssertEqual(result.transcript.segments.count, 2)
@@ -297,7 +297,7 @@ final class SpeakerBleedFilterTests: XCTestCase {
             segment("me", 0, 10, line, timing: .token),
         ])
 
-        let result = SpeakerBleedFilter.filter(input)
+        let result = SpeakerBleedFilter.filter(input, acousticallyVerifiedIndices: Set(input.segments.indices))
 
         XCTAssertFalse(result.changed)
         XCTAssertEqual(result.transcript.segments, input.segments)

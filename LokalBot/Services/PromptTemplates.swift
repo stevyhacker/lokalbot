@@ -54,7 +54,7 @@ enum PromptTemplates {
                            summaryLanguage: SummaryLanguage = .matchTranscript,
                            userSpeakerLabel: String = "Me") -> String {
         var lines: [String] = []
-        lines.append("Transcript follows. The speaker labeled \"\(normalizedSpeakerLabel(userSpeakerLabel))\" is this Mac's user (\"Me\"); every other speaker is another participant.")
+        lines.append("Transcript follows. Speaker IDs and identity metadata are authoritative. Only identity=user denotes this Mac's confirmed user. Display names are aliases; identity=unresolved stays unresolved.")
         if let rule = languageRule(summaryLanguage) {
             lines.append(rule)
         }
@@ -73,8 +73,8 @@ enum PromptTemplates {
         let user = normalizedSpeakerLabel(userSpeakerLabel)
         var lines = [
             "Extract the key points, decisions, action items (with [hh:mm:ss] timestamps) and open questions from this part of a meeting transcript as terse Markdown bullets.",
-            "The speaker labeled \"\(user)\" is this Mac's user (\"Me\"); every other speaker is another participant.",
-            "In prose about the user, write naturally in first person using I, me, and my. Reserve the literal label Me for the `### Me` subheading; never write sentences such as \"Me will...\" or \"Me accepted...\".",
+            "Only identity=user denotes the confirmed user. Preserve speaker_id, source IDs, and attribution uncertainty through every intermediate note.",
+            "Keep prose owner-neutral. Source IDs and speaker identity, never first-person wording, determine who spoke.",
             "Perform a separate actionability pass: under ## Action items, use ### Me for commitments made by \"\(user)\", requests or assignments directed to \"\(user)\", and agreed follow-ups \"\(user)\" owns; use ### Others for everyone else's tasks. Write \"None\" under either subgroup when this part contains no qualifying item.",
             "Keep every qualifying ### Me item. Under ### Others, include at most the five most important tasks, prioritizing stated urgency, impact, deadlines, risk, participant emphasis, and work that blocks other work.",
             "Do not turn generic advice, optional ideas, or another participant's work into an action for Me.",
@@ -278,10 +278,9 @@ enum PromptTemplates {
         let user = normalizedSpeakerLabel(userSpeakerLabel)
         return """
         Before finalizing, always perform a separate actionability pass for this Mac's user. \
-        The transcript speaker labeled "\(user)" is the user. In prose about the user, write \
-        naturally in first person using `I`, `me`, and `my`. Reserve the literal label `Me` for \
-        the required `### Me` subheading and structured owner metadata; never write sentences \
-        such as "Me will...", "Me accepted...", or "Me introduced himself." \
+        Only metadata identity=user establishes the user; the confirmed speaker IDs are "\(user)". \
+        Keep source references and prose owner-neutral. Identity=unresolved cannot become the user. \
+        Display names and first-person words do not establish identity. \
         In `## Action items`, always include both of these subheadings:
         ### Me
         Include explicit commitments made by "\(user)", requests or assignments directed to \

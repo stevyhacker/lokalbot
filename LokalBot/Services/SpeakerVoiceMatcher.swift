@@ -25,7 +25,10 @@ enum SpeakerVoiceMatcher {
                 sample.speaker == speaker && sample.model == SpeakerVoiceSample.fingerprint
                     && sample.range.isValid && sample.range.duration >= 3
                     && sample.range.overlap(turn.range) >= sample.range.duration * 0.95
-                    && !turns.contains { $0.speaker != speaker && $0.range.overlap(sample.range) > 0.02 }
+                    && !turns.contains {
+                        $0.speaker != speaker && $0.resolvedSource == (sample.source ?? .system)
+                            && $0.range.overlap(sample.range) > 0.02
+                    }
                     && !selected.contains { $0.range.overlap(sample.range) > 0 }
                     && normalized(sample.vector) != nil
             }.sorted { $0.range.duration > $1.range.duration }
@@ -44,6 +47,7 @@ enum SpeakerVoiceMatcher {
         guard samples.count >= 3, samples.count <= 8,
               samples.allSatisfy({ $0.model == SpeakerVoiceSample.fingerprint && $0.range.isValid && normalized($0.vector) != nil }),
               Set(samples.map(\.speaker)).count == 1,
+              Set(samples.map { $0.source ?? .system }).count == 1,
               samples.reduce(0, { $0 + $1.range.duration }) >= 15 else { return false }
         for index in samples.indices {
             for other in samples.indices where other > index {
@@ -57,10 +61,13 @@ enum SpeakerVoiceMatcher {
     static func matches(samples: [SpeakerVoiceSample], profiles: [SpeakerVoiceProfile]) -> [SpeakerNameMatch] {
         guard !samples.isEmpty,
               samples.allSatisfy({ $0.model == SpeakerVoiceSample.fingerprint && $0.range.isValid && normalized($0.vector) != nil }) else { return [] }
+        let domain = samples[0].source ?? .system
+        guard samples.allSatisfy({ ($0.source ?? .system) == domain }) else { return [] }
         var scored: [(SpeakerVoiceProfile, Double, Double)] = []
         for profile in profiles where profile.model == SpeakerVoiceSample.fingerprint {
             let exemplars = profile.contributions.flatMap(\.samples).filter {
                 $0.model == SpeakerVoiceSample.fingerprint && normalized($0.vector) != nil
+                    && ($0.source ?? .system) == domain
             }
             guard exemplars.count >= 3 else { continue }
             let scores = samples.map { sample in
@@ -72,7 +79,9 @@ enum SpeakerVoiceMatcher {
         return Array(scored.prefix(3)).compactMap { profile, mean, minimum in
             guard mean >= 0.72, minimum >= 0.65 else { return nil } // unknown, including the single-profile case
             let next = scored.filter { $0.0.id != profile.id }.map(\.1).max() ?? -1
-            let automatic = canEnroll(samples) && mean >= 0.88 && minimum >= 0.82 && mean - next >= 0.08
+            // Microphone recognition requires its own held-out calibration.
+            let automatic = domain == .system && canEnroll(samples)
+                && mean >= 0.88 && minimum >= 0.82 && mean - next >= 0.08
             return SpeakerNameMatch(name: profile.name, participantReference: profile.id.uuidString,
                 tier: automatic ? .automatic : .suggested, source: .profile,
                 supportSeconds: samples.reduce(0) { $0 + $1.range.duration }, independentTurns: samples.count,

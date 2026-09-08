@@ -1,0 +1,78 @@
+import Foundation
+
+struct StatementAttribution: Codable, Equatable, Sendable {
+    var speakerID: String
+    var speakerLabel: String
+    var identity: SpeakerAttribution.Identity
+    var quote: String
+}
+
+/// Public, meeting-local provenance. Voice vectors and cross-meeting profile
+/// identifiers remain in the encrypted identity store.
+struct SpeakerAttribution: Codable, Equatable, Sendable {
+    enum Source: String, Codable, Sendable { case microphone, system, unknown }
+    enum Identity: String, Codable, Sendable { case user, other, unresolved }
+    enum Method: String, Codable, Sendable {
+        case track, diarization, overlappingSpeech, suspectedEcho, confirmation, profile, legacy
+    }
+    var source: Source
+    var identity: Identity
+    var method: Method
+
+    static func legacy(speaker: String) -> Self {
+        let key = Transcript.canonicalSpeakerKey(speaker)
+        return Self(source: key == "me" ? .microphone : .unknown,
+                    identity: key == "me" ? .unresolved : .other, method: .legacy)
+    }
+}
+
+struct TranscriptEchoReport: Codable, Equatable, Sendable {
+    enum Status: String, Codable, Sendable {
+        case disabled, noReference, applied, uncertain, failed
+    }
+    var status: Status
+    var reductionDB: Double?
+    var delaySeconds: Double?
+    var alignmentVerified: Bool = false
+
+    var explanation: String {
+        switch status {
+        case .disabled: "Echo removal is off. Microphone speech needs speaker confirmation."
+        case .noReference: "Remote audio is unavailable for echo removal."
+        case .applied: "Echo removal applied. Speaker identity is checked separately."
+        case .uncertain: "Echo removal was uncertain. Original speech was preserved."
+        case .failed: "Echo removal could not finish. Original speech was preserved."
+        }
+    }
+}
+
+struct OutcomeAttribution: Codable, Equatable, Sendable {
+    enum Resolution: String, Codable, Sendable { case user, other, unresolved }
+    enum Basis: String, Codable, Sendable { case commitment, assignment, request, unclear, legacy }
+    var resolution: Resolution
+    var speakerID: String?
+    var basis: Basis
+    var quote: String?
+
+    func consistent(with forUser: Bool?) -> Self {
+        guard let forUser, forUser != (resolution == .user) else { return self }
+        return Self(resolution: .unresolved, speakerID: speakerID, basis: .unclear, quote: quote)
+    }
+
+    static func legacy(owner: String?, forUser: Bool?, userLabel: String = "Me") -> Self {
+        let name = owner.flatMap { value -> String? in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        let user = name.map {
+            $0.caseInsensitiveCompare("Me") == .orderedSame
+                || $0.caseInsensitiveCompare(userLabel) == .orderedSame
+        } ?? false
+        let conflict = forUser.map { flag in
+            flag ? (name != nil && !user) : user
+        } ?? false
+        let resolution: Resolution = conflict ? .unresolved
+            : (forUser ?? user) ? .user : name == nil ? .unresolved : .other
+        return Self(resolution: resolution, basis: .legacy)
+    }
+}

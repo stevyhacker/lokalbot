@@ -1217,6 +1217,7 @@ final class AppState: ObservableObject {
     func saveTranscript(_ transcript: Transcript, for meeting: Meeting) throws {
         let transcript = speakerIdentity.applyingLatestDecision(to: transcript, meetingID: meeting.id)
         try pipeline.saveTranscript(transcript, for: meeting)
+        outcomeIndex.refresh(meeting: meeting)
         primaryEvidenceDidChange(for: meeting)
         reindexSearchInBackground(meeting)
         if settings.semanticSearchEnabled {

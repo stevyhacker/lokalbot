@@ -72,7 +72,7 @@ final class MeetingOutcomesGeneratorTests: XCTestCase {
         let empty = #"{"action_items":[],"decisions":[],"open_questions":[]}"#
         let action = """
             {"action_items":[{"text":"Send the launch plan","owner":"Me","due":"",
-            "for_user":true,"importance":5,"source_segment_ids":["\(tailID)"]}],
+            "for_user":true,"importance":5,"source_segment_ids":["\(tailID)"], "owner_speaker_id":"me", "ownership_basis":"commitment", "ownership_quote":"I will send the launch plan after this call."}],
             "decisions":[],"open_questions":[]}
             """
         let responses = chunks.indices.map { index in
@@ -104,7 +104,7 @@ final class MeetingOutcomesGeneratorTests: XCTestCase {
     func testTruncatedChunkRetriesCompactlyWithoutReasoning() async throws {
         let transcript = Transcript(
             segments: [
-                .init(start: 12, end: 18, speaker: "me", text: "I will send the plan."),
+                .init(start: 12, end: 18, speaker: "me", text: "I will send the plan.", attribution: .init(source: .microphone, identity: .user, method: .confirmation)),
             ],
             engine: "fixture")
         let sourceID = transcript.segmentID(at: 0)
@@ -112,7 +112,7 @@ final class MeetingOutcomesGeneratorTests: XCTestCase {
             .failure(.outputTruncated),
             .value("""
                 {"action_items":[{"text":"Send the plan","owner":"Me","due":"",
-                "for_user":true,"importance":5,"source_segment_ids":["\(sourceID)"]}],
+                "for_user":true,"importance":5,"source_segment_ids":["\(sourceID)"], "owner_speaker_id":"me", "ownership_basis":"commitment", "ownership_quote":"I will send the plan."}],
                 "decisions":[],"open_questions":[]}
                 """),
         ])
@@ -246,7 +246,7 @@ final class MeetingOutcomesGeneratorTests: XCTestCase {
             end: 1_324,
             speaker: "me",
             text: "I will send the launch plan after this call.",
-            confidence: nil))
+            confidence: nil, attribution: .init(source: .microphone, identity: .user, method: .confirmation)))
         return Transcript(segments: segments, engine: "fixture")
     }
 

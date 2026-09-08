@@ -39,6 +39,12 @@ struct MeetingOutcomeProjection: Identifiable, Equatable, Sendable {
         return result
     }
 
+    var correctedOutcomes: MeetingOutcomes {
+        var result = outcomes
+        result.actionItems = actionReferences.map(\.effectiveAction)
+        return result
+    }
+
     /// One loader for UI surfaces and background routines. Keeping the merge
     /// here prevents exports from silently falling back to immutable extraction
     /// after the user has completed or corrected an action in the app.
@@ -76,8 +82,11 @@ struct OutcomeActionReference: Identifiable, Equatable, Sendable {
 
     var id: String { "\(meetingID.uuidString):\(action.id)" }
     var isForUser: Bool {
-        owner?.trimmingCharacters(in: .whitespacesAndNewlines)
-            .caseInsensitiveCompare("Me") == .orderedSame
+        if ownerWasCorrected {
+            return owner?.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare("Me") == .orderedSame
+        }
+        return action.isForUser && !action.ownershipIsUnclear
     }
 
     var effectiveAction: MeetingOutcomes.ActionItem {
@@ -86,6 +95,10 @@ struct OutcomeActionReference: Identifiable, Equatable, Sendable {
         result.owner = owner
         result.due = due
         result.isForUser = isForUser
+        if ownerWasCorrected {
+            result.attribution = OutcomeAttribution(resolution: isForUser ? .user : .other,
+                basis: action.attribution?.basis ?? .assignment)
+        }
         return result
     }
 }
@@ -307,12 +320,16 @@ final class OutcomeIndex: ObservableObject {
               projection.outcomes.actionItems.contains(where: { $0.id == actionID })
         else { return false }
         var actionState = projection.state.actions[actionID] ?? .init()
+        let previous = actionState
         change(&actionState)
         actionState.updatedAt = Date().outcomePersistedTimestamp
         projection.state.actions[actionID] = actionState
         do {
             try MeetingOutcomeStore.writeState(
                 projection.state, to: projection.meeting.folderURL(in: storage))
+            if previous.ownerOverride != actionState.ownerOverride || previous.textCorrection != actionState.textCorrection {
+                try MeetingAttributionArtifacts.invalidate(in: projection.meeting.folderURL(in: storage), preservingOutcomes: true)
+            }
             projections[meetingID] = projection
             if rebuildThreads { rebuildActionThreads() }
             lastError = nil

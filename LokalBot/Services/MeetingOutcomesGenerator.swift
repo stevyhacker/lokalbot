@@ -13,7 +13,7 @@ enum MeetingOutcomesGenerator {
     private static let maximumChunkInputTokens = 6_000
     private static let boundaryOverlapUnits = 2
     private static let maximumSplitDepth = 4
-    private static let checkpointVersion = 1
+    private static let checkpointVersion = 2
 
     struct EvidenceUnit: Equatable {
         var segmentIndex: Int
@@ -86,7 +86,7 @@ enum MeetingOutcomesGenerator {
         contextTokens: Int,
         outputLanguage: SummaryLanguage = .matchTranscript
     ) -> [EvidenceChunk] {
-        let system = OutcomesExtractor.systemPrompt(
+        let system = rosterPrompt(transcript) + "\n\n" + OutcomesExtractor.systemPrompt(
             userSpeakerLabel: userSpeakerLabel,
             outputLanguage: outputLanguage)
         let inputBudget = chunkInputBudget(
@@ -251,9 +251,10 @@ enum MeetingOutcomesGenerator {
                     maxTokens: recoveryOutputTokens,
                     reasoningBudgetTokens: 0,
                     temperature: 0)
+            let evidencePrompt = rosterPrompt(transcript) + "\n\n" + chunk.prompt
             let prompt = attempt == 0
-                ? chunk.prompt
-                : recoveryInstruction + "\n\n" + chunk.prompt
+                ? evidencePrompt
+                : recoveryInstruction + "\n\n" + evidencePrompt
             do {
                 let output = try await engine.generate(
                     system: system,
@@ -266,7 +267,8 @@ enum MeetingOutcomesGenerator {
                     userSpeakerLabel: userSpeakerLabel,
                     sourceSegments: sourceSegments,
                     meetingID: meetingID,
-                    requireEvidence: true) else {
+                    requireEvidence: true,
+                    speakerRoster: transcript.speakerRoster) else {
                     lastFailure = TextEngineError.badResponse(
                         "outcomes extraction returned invalid structured output")
                     continue
@@ -339,6 +341,11 @@ enum MeetingOutcomesGenerator {
         return max(512, min(maximumChunkInputTokens, contextTokens - fixed))
     }
 
+    private static func rosterPrompt(_ transcript: Transcript) -> String {
+        "Speaker roster (only identity=user is the user):\n" + transcript.speakerRoster.keys.sorted()
+            .prefix(128).map { transcript.promptSpeaker(for: $0) }.joined(separator: "\n")
+    }
+
     private static var schemaTokenEstimate: Int {
         guard let data = try? JSONSerialization.data(
             withJSONObject: OutcomesExtractor.schema,
@@ -354,13 +361,14 @@ enum MeetingOutcomesGenerator {
         targetTokens: Int
     ) -> [EvidenceUnit] {
         var units: [EvidenceUnit] = []
+        let roster = transcript.speakerRoster
         for index in transcript.segments.indices {
             let segment = transcript.segments[index]
             let text = segment.displayText
             guard !text.isEmpty else { continue }
             let segmentID = transcript.segmentID(at: index)
             let prefix = "[\(segmentID)] [\(Transcript.stamp(segment.start))] "
-                + "\(transcript.displaySpeaker(for: segment.speaker)): "
+                + "\(transcript.promptSpeaker(for: segment.speaker, roster: roster)): "
             let available = max(64, targetTokens - TokenCountEstimator.estimate(prefix))
             let parts = splitText(text, targetTokens: available)
             units += parts.map { part in
@@ -464,7 +472,8 @@ enum MeetingOutcomesGenerator {
         _ lhs: MeetingOutcomes.Decision,
         _ rhs: MeetingOutcomes.Decision
     ) -> Bool {
-        normalized(lhs.text) == normalized(rhs.text)
+        guard lhs.attribution?.speakerID == rhs.attribution?.speakerID else { return false }
+        return normalized(lhs.text) == normalized(rhs.text)
             || (sharesEvidence(lhs.citations, rhs.citations)
                 && duplicateText(lhs.text, rhs.text, threshold: 0.65))
     }
@@ -473,7 +482,10 @@ enum MeetingOutcomesGenerator {
         _ lhs: MeetingOutcomes.ActionItem,
         _ rhs: MeetingOutcomes.ActionItem
     ) -> Bool {
-        guard lhs.isForUser == rhs.isForUser else { return false }
+        guard lhs.isForUser == rhs.isForUser,
+              lhs.ownershipIsUnclear == rhs.ownershipIsUnclear,
+              lhs.attribution?.speakerID == rhs.attribution?.speakerID,
+              lhs.attribution?.basis == rhs.attribution?.basis else { return false }
         if lhs.isForUser { return true }
         let left = normalized(lhs.owner ?? "")
         let right = normalized(rhs.owner ?? "")
@@ -491,7 +503,7 @@ enum MeetingOutcomesGenerator {
             due: lhs.due ?? rhs.due,
             isForUser: isForUser,
             importance: max(lhs.importance, rhs.importance),
-            citations: mergedCitations(lhs.citations, rhs.citations))
+            citations: mergedCitations(lhs.citations, rhs.citations), attribution: lhs.attribution)
     }
 
     private static func rebuiltAction(
@@ -503,7 +515,7 @@ enum MeetingOutcomesGenerator {
             due: action.due,
             isForUser: action.isForUser,
             importance: action.importance,
-            citations: mergedCitations(action.citations, []))
+            citations: mergedCitations(action.citations, []), attribution: action.attribution)
     }
 
     private static func mergedDecision(
@@ -512,7 +524,7 @@ enum MeetingOutcomesGenerator {
     ) -> MeetingOutcomes.Decision {
         .init(
             text: preferredText(lhs.text, rhs.text),
-            citations: mergedCitations(lhs.citations, rhs.citations))
+            citations: mergedCitations(lhs.citations, rhs.citations), attribution: lhs.attribution)
     }
 
     private static func rebuiltDecision(
@@ -520,7 +532,7 @@ enum MeetingOutcomesGenerator {
     ) -> MeetingOutcomes.Decision {
         .init(
             text: decision.text,
-            citations: mergedCitations(decision.citations, []))
+            citations: mergedCitations(decision.citations, []), attribution: decision.attribution)
     }
 
     private static func preferredText(_ lhs: String, _ rhs: String) -> String {

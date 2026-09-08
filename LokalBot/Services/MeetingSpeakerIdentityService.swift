@@ -3,6 +3,12 @@ import Foundation
 
 @MainActor
 final class MeetingSpeakerIdentityService: ObservableObject {
+    enum IdentityError: LocalizedError {
+        case unseparatedAudio
+        var errorDescription: String? {
+            "This audio has not been separated into a reliable speaker. Reprocess transcription before confirming who spoke."
+        }
+    }
     @Published private(set) var notice: String?
     @Published private(set) var revision = 0
     private let storage: StorageManager
@@ -47,7 +53,18 @@ final class MeetingSpeakerIdentityService: ObservableObject {
     }
 
     private func timeline(_ transcript: Transcript) -> [SpeakerAudioTurn] {
-        transcript.segments.map { SpeakerAudioTurn(speaker: Transcript.canonicalSpeakerKey($0.speaker), range: .init(start: $0.start, end: $0.end)) }
+        transcript.segments.map { SpeakerAudioTurn(speaker: Transcript.canonicalSpeakerKey($0.speaker),
+            range: .init(start: $0.start, end: $0.end), source: $0.resolvedAttribution.source == .unknown
+                ? SpeakerAudioTurn.legacySource($0.speaker) : $0.resolvedAttribution.source) }
+    }
+
+    nonisolated static func recordingRevision(folder: URL, fallback: URL? = nil) throws -> String {
+        let parts = try [MeetingAudioFiles.Track.mic, .system].compactMap { track -> String? in
+            guard let url = MeetingAudioFiles.transcribableURL(for: track, in: folder) else { return nil }
+            return "\(track.rawValue):\(try audioRevision(url: url))"
+        }
+        if parts.isEmpty, let fallback { return try audioRevision(url: fallback) }
+        return parts.joined(separator: "|")
     }
 
     private func projection(_ state: MeetingSpeakerIdentityState, on transcript: Transcript) -> Transcript {
@@ -55,6 +72,11 @@ final class MeetingSpeakerIdentityService: ObservableObject {
         let labels = Set(transcript.segments.map { Transcript.canonicalSpeakerKey($0.speaker) })
         for assignment in state.assignments where labels.contains(assignment.label) {
             result.setSpeakerAlias(assignment.name, for: assignment.label, calendarIdentityID: assignment.calendarIdentityID)
+            if let isUser = assignment.isLocalUser {
+                result.confirmSpeaker(assignment.label, isUser: isUser)
+            } else if assignment.automaticDisabled {
+                result.confirmSpeaker(assignment.label, isUser: nil)
+            }
         }
         return result
     }
@@ -80,9 +102,9 @@ final class MeetingSpeakerIdentityService: ObservableObject {
     /// ordinal mapping to a different transcription.
     func recover(meeting: Meeting, transcript: Transcript) async throws -> Transcript {
         let saved = try await state(for: meeting)
-        guard !saved.audioRevision.isEmpty,
-              let audioURL = MeetingAudioFiles.transcribableURL(for: .system, in: meeting.folderURL(in: storage)) else { return transcript }
-        let currentAudio = try await Task.detached(priority: .utility) { try Self.audioRevision(url: audioURL) }.value
+        guard !saved.audioRevision.isEmpty else { return transcript }
+        let folder = meeting.folderURL(in: storage)
+        let currentAudio = try await Task.detached(priority: .utility) { try Self.recordingRevision(folder: folder) }.value
         guard currentAudio == saved.audioRevision else { return transcript }
         let currentTurns = timeline(transcript)
         let remapped = SpeakerIdentityResolver.remap(saved.assignments, turns: currentTurns, audioRevision: saved.audioRevision)
@@ -92,13 +114,8 @@ final class MeetingSpeakerIdentityService: ObservableObject {
     }
 
     func process(transcript: Transcript, meeting: Meeting, turns: [SpeakerAudioTurn], samples: [SpeakerVoiceSample], audioURL: URL) async -> Transcript {
-        let sidecar = meeting.folderURL(in: storage).appendingPathComponent("speaker-evidence/identity.sealed")
         unverifiedProcessing.insert(meeting.id)
         let config = settings()
-        guard config.identifySpeakersFromVisuals || config.rememberSpeakersOnMac
-                || FileManager.default.fileExists(atPath: sidecar.path) else {
-            return SpeakerAutoNamer.applyingAliases(to: transcript, participants: meeting.resolvedCalendarParticipantIdentities)
-        }
         do {
             let store = try store()
             if sealing.removeValue(forKey: meeting.id) != nil {
@@ -107,10 +124,17 @@ final class MeetingSpeakerIdentityService: ObservableObject {
                     try await Task.sleep(for: .milliseconds(100))
                 }
             }
-            let audioRevision = try await Task.detached(priority: .utility) { try Self.audioRevision(url: audioURL) }.value
+            let folder = meeting.folderURL(in: storage)
+            let audioRevision = try await Task.detached(priority: .utility) { try Self.recordingRevision(folder: folder, fallback: audioURL) }.value
+            let usableTurns = timeline(transcript)
+            // ASR spans are not independent acoustic observations. Only the
+            // supplied diarization turns may support automatic visual naming.
+            let remoteTurns = turns.filter { $0.resolvedSource == .system }
+            let hasRemoteAudio = usableTurns.contains { $0.resolvedSource == .system }
+                || MeetingAudioFiles.transcribableURL(for: .system, in: folder) != nil
             var (evidence, evidenceRevision) = try await store.matchingInput(meeting: meeting, retentionDays: config.retentionDays)
             var visual = config.identifySpeakersFromVisuals
-                ? VisualSpeakerMatcher.matches(turns: turns, intervals: evidence?.intervals ?? []) : [:]
+                ? VisualSpeakerMatcher.matches(turns: remoteTurns, intervals: evidence?.intervals ?? []) : [:]
             var remembered = config.rememberSpeakersOnMac && settings().rememberSpeakersOnMac
             var database = remembered ? try await store.profiles() : SpeakerVoiceProfileDatabase()
             var compatibleSamples = remembered ? samples : []
@@ -119,14 +143,19 @@ final class MeetingSpeakerIdentityService: ObservableObject {
                 guard !deleted.contains(meeting.id) else { return transcript }
                 let previous = try await store.state(meeting: meeting)
                 var next = previous
-                let usableTurns = turns.isEmpty ? timeline(transcript) : turns + timeline(transcript).filter { $0.speaker == "me" }
                 next.assignments = SpeakerIdentityResolver.remap(previous.assignments, turns: usableTurns, audioRevision: audioRevision)
                 next.audioRevision = audioRevision
                 next.transcriptSignature = Self.transcriptSignature(transcript)
                 next.timeline = usableTurns
+                next.acousticTimeline = turns
                 next.providerVerified = evidence?.providerVerified == true || previous.providerVerified
-                next.voiceSamples = settings().rememberSpeakersOnMac && next.providerVerified ? Set(turns.map(\.speaker)).sorted().prefix(60).flatMap {
-                    SpeakerVoiceMatcher.eligible(compatibleSamples, turns: turns, speaker: $0)
+                next.voiceSamples = settings().rememberSpeakersOnMac ? Set(usableTurns.map(\.speaker)).sorted().prefix(60).flatMap {
+                    SpeakerVoiceMatcher.eligible(compatibleSamples.filter { sample in
+                        if sample.source == .microphone {
+                            return !hasRemoteAudio || transcript.echoReport?.alignmentVerified == true
+                        }
+                        return next.providerVerified
+                    }, turns: turns, speaker: $0)
                 } : []
                 next.suggestions = [:]
                 next.analyzedAt = Date()
@@ -148,9 +177,11 @@ final class MeetingSpeakerIdentityService: ObservableObject {
                             audioRevision: audioRevision, anchors: VisualSpeakerMatcher.union(speakerTurns.map(\.range))))
                     }
                     guard let index = next.assignments.firstIndex(where: { $0.label == label }) else { continue }
+                    next.assignments[index].source = speakerTurns.first?.resolvedSource
                     var candidates = settings().identifySpeakersFromVisuals ? visual[label, default: []] : []
-                    if remembered, settings().rememberSpeakersOnMac, next.providerVerified, label != "me" {
-                        let eligible = SpeakerVoiceMatcher.eligible(compatibleSamples, turns: turns, speaker: label)
+                    if remembered, settings().rememberSpeakersOnMac,
+                       next.providerVerified || speakerTurns.first?.resolvedSource == .microphone {
+                        let eligible = SpeakerVoiceMatcher.eligible(next.voiceSamples, turns: usableTurns, speaker: label)
                         candidates += SpeakerVoiceMatcher.matches(samples: eligible, profiles: database.profiles)
                     }
                     next.suggestions[label] = SpeakerIdentityResolver.apply(candidates: candidates, to: &next.assignments[index], profiles: database.profiles)
@@ -227,14 +258,18 @@ final class MeetingSpeakerIdentityService: ObservableObject {
         if let expected = choice.expectedRevision, expected != current.revision { throw MeetingSpeakerEvidenceStore.Failure.stale }
         current.transcriptSignature = Self.transcriptSignature(transcript)
         let label = Transcript.canonicalSpeakerKey(choice.label)
-        if current.audioRevision.isEmpty,
-           let url = MeetingAudioFiles.transcribableURL(for: .system, in: meeting.folderURL(in: storage)) {
-            current.audioRevision = try await Task.detached(priority: .utility) { try Self.audioRevision(url: url) }.value
+        if current.audioRevision.isEmpty {
+            let folder = meeting.folderURL(in: storage)
+            current.audioRevision = try await Task.detached(priority: .utility) { try Self.recordingRevision(folder: folder) }.value
         }
         if current.timeline.isEmpty { current.timeline = timeline(transcript) }
         let original = current.assignments.first { $0.label == label }
         var assignment = original ?? SpeakerIdentityAssignment(label: label, origin: .legacy,
             audioRevision: current.audioRevision, anchors: current.timeline.filter { $0.speaker == label }.map(\.range))
+        assignment.source = current.timeline.first { $0.speaker == label }?.resolvedSource
+        if choice.action.confirmsIdentity, !transcript.canConfirmSpeaker(label) {
+            throw IdentityError.unseparatedAudio
+        }
         let enrollmentSpeakerID = assignment.id
         let rejected = choice.action == .dismiss ? choice.name : assignment.name ?? transcript.speakerAliases[label]
         if let rejected, choice.action != .assign || choice.name != rejected {
@@ -242,16 +277,21 @@ final class MeetingSpeakerIdentityService: ObservableObject {
             if !assignment.suppressedNames.contains(key) { assignment.suppressedNames.append(key) }
         }
         switch choice.action {
-        case .assign:
+        case .assign, .confirmUser, .confirmOther:
             assignment.name = choice.name.flatMap(ParticipantObservation.safeName)
             assignment.calendarIdentityID = choice.calendarIdentityID
             assignment.origin = original?.name == nil ? .userConfirmed : .userCorrected
             assignment.automaticDisabled = false
+            if choice.action.confirmsIdentity {
+                assignment.isLocalUser = choice.action == .confirmUser
+                if assignment.name == nil { assignment.name = choice.action == .confirmUser ? "Me" : transcript.displaySpeaker(for: label) }
+            }
         case .reset, .undo:
             assignment.name = nil
             assignment.calendarIdentityID = nil
             assignment.origin = .userCorrected
             assignment.automaticDisabled = true
+            assignment.isLocalUser = nil
         case .resume:
             assignment.automaticDisabled = false
             assignment.origin = .calendarAutomatic
@@ -271,7 +311,8 @@ final class MeetingSpeakerIdentityService: ObservableObject {
         }
         if current.assignments.contains(where: {
             $0.id == assignment.id && $0.label != label
-                && ($0.name != assignment.name || $0.automaticDisabled != assignment.automaticDisabled)
+                && ($0.name != assignment.name || $0.automaticDisabled != assignment.automaticDisabled
+                    || $0.isLocalUser != assignment.isLocalUser)
         }) {
             // A human distinguished two labels previously inferred to be a
             // clean split. Preserve that distinction on subsequent remapping.
@@ -279,7 +320,7 @@ final class MeetingSpeakerIdentityService: ObservableObject {
         }
         if choice.action == .resume {
             let evidence = try await store.evidence(meeting: meeting, retentionDays: settings().retentionDays)
-            let remoteTurns = current.timeline.filter { $0.speaker != "me" }
+            let remoteTurns = (current.acousticTimeline ?? []).filter { $0.resolvedSource == .system }
             var candidates = settings().identifySpeakersFromVisuals
                 ? VisualSpeakerMatcher.matches(turns: remoteTurns, intervals: evidence?.intervals ?? [])[label, default: []] : []
             let profiles = settings().rememberSpeakersOnMac ? try await store.profiles().profiles : []
@@ -305,8 +346,10 @@ final class MeetingSpeakerIdentityService: ObservableObject {
         rememberState(committed)
         unverifiedProcessing.remove(meeting.id)
         notice = nil
-        if choice.action == .assign, choice.remember, settings().rememberSpeakersOnMac, committed.providerVerified, label != "me" {
-            let samples = SpeakerVoiceMatcher.eligible(committed.voiceSamples, turns: committed.timeline.filter { $0.speaker != "me" }, speaker: label)
+        if choice.action == .assign || choice.action.confirmsIdentity,
+           choice.remember, settings().rememberSpeakersOnMac,
+           committed.providerVerified || assignment.source == .microphone {
+            let samples = SpeakerVoiceMatcher.eligible(committed.voiceSamples, turns: committed.timeline, speaker: label)
             if SpeakerVoiceMatcher.canEnroll(samples) {
                 do {
                     let database = try await store.profiles()

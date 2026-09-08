@@ -200,9 +200,10 @@ private struct MeetingWorkspaceDetail: View {
                 notice: speakerIdentityNotice,
                 busy: savingSpeakerIdentity,
                 onPlay: { player.play(at: $0) },
-                onAction: { action, name in
+                onAction: { action, name, remember, profileID in
                     performSpeakerChoice(.init(label: draft.speaker, name: name,
-                        action: action, expectedRevision: speakerIdentityState?.revision))
+                        action: action, remember: remember, profileID: profileID,
+                        expectedRevision: speakerIdentityState?.revision))
                 },
                 onDeleteEvidence: {
                     Task {
@@ -276,7 +277,7 @@ private struct MeetingWorkspaceDetail: View {
                         .accessibilityIdentifier("toolbar.transcribeAndSummarize")
                     Button("Transcribe only") { app.reprocess(meeting, transcribe: true, summarize: false) }
                         .accessibilityIdentifier("toolbar.transcribeOnly")
-                    Button("Re-summarize") { app.reprocess(meeting, transcribe: false, summarize: true) }
+                    Button("Repair summary and action owners") { app.reprocess(meeting, transcribe: false, summarize: true) }
                         .accessibilityIdentifier("toolbar.resummarize")
                     Divider()
                     Button(isExportingAudio ? "Exporting audio..." : "Export audio") {
@@ -308,12 +309,29 @@ private struct MeetingWorkspaceDetail: View {
         if let stage = app.pipeline.stages[meeting.id] {
             processingStageContent(stage)
         }
-        if speakerSummaryNeedsRefresh {
+        if speakerSummaryNeedsRefresh || MeetingAttributionArtifacts.needsRefresh(in: folder) {
             HStack {
-                Text("Speaker names changed after these notes were written.")
+                Text("Speaker attribution changed. Refresh these notes and action owners.")
                     .font(.caption).foregroundStyle(.secondary)
                 Button("Refresh summary") { app.reprocess(meeting, transcribe: false, summarize: true) }
                     .controlSize(.small)
+            }
+        }
+        if let report = transcript?.echoReport {
+            Text(report.explanation).font(.caption).foregroundStyle(.secondary)
+        }
+        if let unmatched = projection?.state.unmatchedActions, !unmatched.isEmpty {
+            DisclosureGroup("Review \(unmatched.count) unmatched action edits") {
+                Text("These saved edits did not match a single regenerated action. Apply them to the correct action after reviewing its source.")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(unmatched.keys.sorted(), id: \.self) { id in
+                    if let saved = unmatched[id] {
+                        Text(saved.textCorrection ?? projection?.state.unmatchedActionText?[id] ?? "Previous action")
+                            .textSelection(.enabled)
+                        Text([saved.status.label, saved.ownerOverride, saved.dueOverride].compactMap { $0 }.joined(separator: " · "))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
         }
         if let speakerIdentityNotice {
@@ -749,7 +767,8 @@ private struct MeetingWorkspaceDetail: View {
             speaker: speaker,
             defaultName: Transcript.defaultSpeakerName(for: speaker),
             currentName: transcript.displaySpeaker(for: speaker),
-            currentCalendarIdentityID: transcript.calendarIdentityID(for: speaker))
+            currentCalendarIdentityID: transcript.calendarIdentityID(for: speaker),
+            canConfirmIdentity: transcript.canConfirmSpeaker(speaker))
     }
 
     private var assignedCalendarIdentityIDs: Set<String> {
@@ -772,14 +791,17 @@ private struct MeetingWorkspaceDetail: View {
             speakerIdentityState = try await app.speakerIdentity.state(for: meeting)
             speakerProfiles = try await app.speakerIdentity.profiles()
             let latestChoice = speakerIdentityState?.decisions.filter {
-                $0.action == .assign || $0.action == .reset || $0.action == .undo
+                $0.action.changesAttribution
             }.map(\.confirmedAt).max()
             let summaryDate = (try? FileManager.default.attributesOfItem(atPath: folder.appendingPathComponent("summary.md").path))?[.modificationDate] as? Date
             speakerSummaryNeedsRefresh = latestChoice.map { choice in summaryDate.map { $0 < choice } ?? false } ?? false
             if recover, let current = transcript {
                 let recoveredValue = try await app.speakerIdentity.recover(meeting: meeting, transcript: current)
                 let recovered = app.speakerIdentity.applyingLatestDecision(to: recoveredValue, meetingID: meeting.id)
-                if recovered.speakerAliases != current.speakerAliases || recovered.speakerCalendarIdentityIDs != current.speakerCalendarIdentityIDs { try app.saveTranscript(recovered, for: meeting); transcript = recovered }
+                if recovered.segments != current.segments || recovered.speakerAliases != current.speakerAliases
+                    || recovered.speakerCalendarIdentityIDs != current.speakerCalendarIdentityIDs {
+                    try app.saveTranscript(recovered, for: meeting); transcript = recovered
+                }
             }
         } catch { speakerIdentityNotice = error.localizedDescription }
     }
@@ -804,7 +826,7 @@ private struct MeetingWorkspaceDetail: View {
                 exportError = nil
                 speakerIdentityNotice = app.speakerIdentity.notice
                 await refreshSpeakerIdentity()
-                if choice.action == .assign || choice.action == .reset || choice.action == .undo {
+                if choice.action.changesAttribution {
                     speakerRenameDraft = nil
                 }
             } catch { speakerIdentityNotice = "Could not save speaker name: \(error.localizedDescription)" }
@@ -1228,7 +1250,7 @@ private struct OutcomeActionRow: View {
                 HStack(spacing: 7) {
                     Button(action: onCorrect) {
                         SearchHighlightedText(
-                            reference.owner ?? "Unassigned",
+                            reference.owner ?? "Owner unclear",
                             query: searchQuery,
                             activeMatchIndex: activeOccurrence(for: .owner))
                             .id(MeetingPageSearchMatch.Location.action(
@@ -1521,6 +1543,7 @@ private struct WorkspaceSpeakerRenameDraft: Identifiable {
     let defaultName: String
     let currentName: String
     let currentCalendarIdentityID: String?
+    var canConfirmIdentity = false
 }
 
 private struct WorkspaceSpeakerRenameSheet: View {
@@ -1534,7 +1557,7 @@ private struct WorkspaceSpeakerRenameSheet: View {
     let notice: String?
     let busy: Bool
     let onPlay: (Double) -> Void
-    let onAction: (SpeakerAliasDecision.Action, String?) -> Void
+    let onAction: (SpeakerAliasDecision.Action, String?, Bool, UUID?) -> Void
     let onDeleteEvidence: () -> Void
     let onSave: (String, String?, Bool, UUID?) -> Void
     let onReset: () -> Void
@@ -1556,7 +1579,7 @@ private struct WorkspaceSpeakerRenameSheet: View {
         notice: String?,
         busy: Bool,
         onPlay: @escaping (Double) -> Void,
-        onAction: @escaping (SpeakerAliasDecision.Action, String?) -> Void,
+        onAction: @escaping (SpeakerAliasDecision.Action, String?, Bool, UUID?) -> Void,
         onDeleteEvidence: @escaping () -> Void,
         onSave: @escaping (String, String?, Bool, UUID?) -> Void,
         onReset: @escaping () -> Void,
@@ -1594,7 +1617,8 @@ private struct WorkspaceSpeakerRenameSheet: View {
             SpeakerIdentityReview(speaker: draft.speaker, state: identityState,
                 profiles: profiles, rememberingEnabled: rememberingEnabled,
                 name: $name, remember: $remember, profileID: $profileID,
-                onPlay: onPlay, onAction: onAction, onDeleteEvidence: onDeleteEvidence)
+                onPlay: onPlay, onAction: onAction, onDeleteEvidence: onDeleteEvidence,
+                canConfirmIdentity: draft.canConfirmIdentity)
             if let notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
 
 

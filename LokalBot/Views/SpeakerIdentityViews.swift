@@ -133,23 +133,36 @@ struct SpeakerIdentityReview: View {
     @Binding var remember: Bool
     @Binding var profileID: UUID?
     let onPlay: (Double) -> Void
-    let onAction: (SpeakerAliasDecision.Action, String?) -> Void
+    let onAction: (SpeakerAliasDecision.Action, String?, Bool, UUID?) -> Void
     let onDeleteEvidence: () -> Void
+    var canConfirmIdentity = false
     private var assignment: SpeakerIdentityAssignment? { state?.assignments.first { $0.label == speaker } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if canConfirmIdentity {
+                Text(assignment?.isLocalUser == true ? "Confirmed as you" : "Confirm who is speaking")
+                    .font(.subheadline.weight(.semibold))
+                HStack {
+                    if let time = assignment?.anchors.first?.start { Button("Play speech") { onPlay(time) } }
+                    Button("This is me") { onAction(.confirmUser, name, remember, profileID) }
+                    Button("Someone else") { onAction(.confirmOther, name, remember, profileID) }
+                }
+            } else {
+                Text("Identity is unresolved for audio without reliable speaker separation.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if let match = assignment?.match, assignment?.origin.isProtected == false {
                 Text("Automatically identified").font(.subheadline.weight(.semibold))
                 Text(match.explanation).font(.caption).foregroundStyle(.secondary)
                 HStack {
                     if let time = match.evidence.first?.start { Button("Play supporting speech") { onPlay(time) } }
-                    Button("Undo") { onAction(.undo, assignment?.name) }
+                    Button("Undo") { onAction(.undo, assignment?.name, false, nil) }
                 }
             }
             if assignment?.automaticDisabled == true {
                 Text("Automatic naming is paused for this speaker.").font(.caption).foregroundStyle(.secondary)
-                Button("Resume automatic identification") { onAction(.resume, nil) }
+                Button("Resume automatic identification") { onAction(.resume, nil, false, nil) }
             }
             if let candidates = state?.suggestions[speaker], !candidates.isEmpty, assignment?.origin.isProtected != true {
                 Text("Suggested names").font(.subheadline.weight(.semibold))
@@ -159,7 +172,7 @@ struct SpeakerIdentityReview: View {
                             Button(candidate.name) { name = candidate.name; profileID = candidate.profileID }
                             Spacer()
                             if let time = candidate.evidence.first?.start { Button("Play") { onPlay(time) } }
-                            Button("Dismiss") { onAction(.dismiss, candidate.name) }
+                            Button("Dismiss") { onAction(.dismiss, candidate.name, false, nil) }
                         }
                         Text(candidate.explanation).font(.caption).foregroundStyle(.secondary)
                     }

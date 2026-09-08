@@ -5,6 +5,7 @@ struct SpeakerVoiceSample: Codable, Equatable, Sendable {
     var speaker: String
     var range: SpeakerTurnAnchor
     var vector: [Float]
+    var source: SpeakerAttribution.Source?
     var model = fingerprint
 }
 
@@ -19,6 +20,7 @@ struct SpeakerVoiceProfile: Codable, Identifiable, Sendable {
     }
     var id = UUID()
     var name: String
+    var isLocalUser: Bool?
     var confirmedNames: [String]
     var revision = 1
     var contributions: [Contribution]

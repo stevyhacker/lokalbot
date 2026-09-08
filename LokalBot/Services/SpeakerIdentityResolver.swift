@@ -10,7 +10,8 @@ enum SpeakerIdentityResolver {
             let duration = anchors.reduce(0) { $0 + $1.duration }
             guard duration > 0 else { continue }
             let candidates = previous.filter {
-                $0.audioRevision == audioRevision && (($0.label == "me") == (label == "me"))
+                $0.audioRevision == audioRevision
+                    && ($0.source ?? SpeakerAudioTurn.legacySource($0.label)) == newTurns.first?.resolvedSource
             }.map { assignment in
                 let overlap = anchors.reduce(0) { sum, anchor in
                     sum + VisualSpeakerMatcher.union(assignment.anchors).reduce(0) { $0 + anchor.overlap($1) }

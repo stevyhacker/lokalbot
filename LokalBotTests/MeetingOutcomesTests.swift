@@ -73,20 +73,22 @@ final class MeetingOutcomesTests: XCTestCase {
             """, userSpeakerLabel: "Stevan"))
 
         XCTAssertEqual(outcomes.actionItems.map(\.text),
-                       ["Send the draft", "Book the room", "Review the rollout"])
-        XCTAssertEqual(outcomes.userActionItems.map(\.owner), ["Me", "Me"])
+                       ["Send the draft", "Review the rollout", "Book the room"])
+        XCTAssertEqual(outcomes.userActionItems.map(\.owner), ["Me"])
+        XCTAssertEqual(outcomes.unresolvedActionItems.map(\.text), ["Book the room"])
         XCTAssertEqual(outcomes.otherActionItems.map(\.owner), ["Ana"])
     }
 
-    func testFirstPersonActionRepairsInconsistentOwnerMetadata() throws {
+    func testFirstPersonActionPreservesExplicitRemoteOwner() throws {
         let outcomes = try XCTUnwrap(OutcomesExtractor.parse("""
             {"action_items": [
                 {"text": "I will review the hardening tasks", "owner": "Them 3", "due": "", "for_user": false, "importance": 5}
              ], "decisions": [], "open_questions": []}
             """))
 
-        XCTAssertEqual(outcomes.userActionItems.map(\.owner), ["Me"])
-        XCTAssertEqual(outcomes.userActionItems.map(\.importance), [5])
+        XCTAssertTrue(outcomes.userActionItems.isEmpty)
+        XCTAssertEqual(outcomes.otherActionItems.map(\.owner), ["Them 3"])
+        XCTAssertEqual(outcomes.otherActionItems.map(\.importance), [5])
         XCTAssertTrue(OutcomeProse.hasFirstPersonSubject("My next step is to send the plan"))
         XCTAssertFalse(OutcomeProse.hasFirstPersonSubject("I/O migration needs an owner"))
     }
@@ -106,7 +108,7 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertEqual(outcomes.actionItems.first?.id, persistedID)
         XCTAssertEqual(outcomes.actionItems.first?.owner, "Me")
         XCTAssertEqual(outcomes.actionItems.first?.text, "I will touch base on WhatsApp.")
-        XCTAssertEqual(outcomes.decisionRecords.first?.text, "I accepted the same terms.")
+        XCTAssertEqual(outcomes.decisionRecords.first?.text, "Me accepted the same terms.")
         XCTAssertEqual(
             OutcomeProse.firstPersonSubject("Me's next step is to send the plan."),
             "My next step is to send the plan.")
@@ -115,7 +117,7 @@ final class MeetingOutcomesTests: XCTestCase {
             "Them 1 will share the repo.")
     }
 
-    func testDecodingRepairsPersistedFirstPersonActionOwnership() throws {
+    func testDecodingPreservesPersistedRemoteFirstPersonOwnership() throws {
         let data = Data("""
             {"actionItems":[
                 {"text":"I will check the hardening tasks.",
@@ -125,8 +127,9 @@ final class MeetingOutcomesTests: XCTestCase {
 
         let outcomes = try JSONDecoder().decode(MeetingOutcomes.self, from: data)
 
-        XCTAssertEqual(outcomes.userActionItems.map(\.owner), ["Me"])
-        XCTAssertEqual(outcomes.userActionItems.map(\.text), [
+        XCTAssertTrue(outcomes.userActionItems.isEmpty)
+        XCTAssertEqual(outcomes.otherActionItems.map(\.owner), ["Them 3"])
+        XCTAssertEqual(outcomes.otherActionItems.map(\.text), [
             "I will check the hardening tasks.",
         ])
     }
@@ -145,7 +148,7 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertEqual(Set(item["required"] as? [String] ?? []),
                        [
                         "text", "owner", "due", "for_user", "importance",
-                        "source_segment_ids",
+                        "source_segment_ids", "owner_speaker_id", "ownership_basis", "ownership_quote",
                        ])
         XCTAssertEqual(item["additionalProperties"] as? Bool, false)
         let itemProperties = try XCTUnwrap(item["properties"] as? [String: Any])
@@ -168,7 +171,7 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertTrue(prompt.contains("at most the five highest-importance actions"), prompt)
         XCTAssertTrue(prompt.contains("Never drop a user action"), prompt)
         XCTAssertTrue(prompt.contains("I will"), prompt)
-        XCTAssertTrue(prompt.contains("Never use \"Me\" as a sentence subject"), prompt)
+        XCTAssertTrue(prompt.contains("owner-neutral task descriptions"), prompt)
         XCTAssertTrue(prompt.contains("text field in English"), prompt)
     }
 
@@ -277,7 +280,7 @@ final class MeetingOutcomesTests: XCTestCase {
         let meetingID = UUID(uuidString: "11111111-2222-4333-8444-555555555555")!
         let transcript = Transcript(
             segments: [
-                .init(start: 12, end: 18, speaker: "me", text: "I will send the plan."),
+                .init(start: 12, end: 18, speaker: "me", text: "I will send the plan. We chose the local store.", attribution: .init(source: .microphone, identity: .user, method: .confirmation)),
             ],
             engine: "fixture")
         let validID = transcript.segmentID(at: 0)
@@ -285,10 +288,10 @@ final class MeetingOutcomesTests: XCTestCase {
             """
             {"action_items": [
               {"text":"Send the plan","owner":"Me","due":"","for_user":true,
-               "source_segment_ids":["\(validID)"]},
+               "source_segment_ids":["\(validID)"], "owner_speaker_id":"me", "ownership_basis":"commitment", "ownership_quote":"I will send the plan."},
               {"text":"Invented task","owner":"Me","due":"","for_user":true,
                "source_segment_ids":["segment-does-not-exist"]}],
-             "decisions": [{"text":"Use the local store","source_segment_ids":["\(validID)"]}],
+             "decisions": [{"text":"Use the local store","source_segment_ids":["\(validID)"], "speaker_id":"me", "quote":"We chose the local store."}],
              "open_questions":[]}
             """,
             sourceSegments: transcript.segmentSourceMap,
@@ -309,7 +312,7 @@ final class MeetingOutcomesTests: XCTestCase {
     func testGroundedParseReportsRejectedEvidenceCandidates() throws {
         let transcript = Transcript(
             segments: [
-                .init(start: 12, end: 18, speaker: "me", text: "I will send the plan."),
+                .init(start: 12, end: 18, speaker: "me", text: "I will send the plan. We chose the local store.", attribution: .init(source: .microphone, identity: .user, method: .confirmation)),
             ],
             engine: "fixture")
         let parsed = try XCTUnwrap(OutcomesExtractor.parseResult(

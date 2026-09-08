@@ -16,7 +16,7 @@ final class TranscriptTests: XCTestCase {
             engine: "test"
         )
 
-        XCTAssertEqual(transcript.markdown, "**[00:01:05] Me:** Ship it.")
+        XCTAssertEqual(transcript.markdown, "**[00:01:05] Local speaker:** Ship it.")
     }
 
     func testDecodesLegacyTranscriptWithoutSpeakerAliases() throws {
@@ -127,7 +127,7 @@ final class TranscriptTests: XCTestCase {
             engine: "test"
         )
 
-        XCTAssertEqual(transcript.markdown, "**[00:00:01] Me:** Ship it.")
+        XCTAssertEqual(transcript.markdown, "**[00:00:01] Local speaker:** Ship it.")
     }
 
     func testMergedTranscriptSortsSegmentsByTimestamp() {
@@ -160,9 +160,10 @@ final class TranscriptTests: XCTestCase {
         XCTAssertEqual(transcript.summaryPromptTurns().count, 3)
         XCTAssertEqual(
             transcript.summaryPromptMarkdown,
-            "**[00:00:00] Me:** First point. Second point.\n\n"
-                + "**[00:00:04] Ana:** Reply.\n\n"
-                + "**[00:00:10] Ana:** Later.")
+            "[\(transcript.segmentID(at: 0)),\(transcript.segmentID(at: 1))] "
+                + "**[00:00:00] [speaker_id=me; identity=unresolved] Local speaker:** First point. Second point.\n\n"
+                + "[\(transcript.segmentID(at: 2))] **[00:00:04] [speaker_id=them; identity=other] Ana:** Reply.\n\n"
+                + "[\(transcript.segmentID(at: 3))] **[00:00:10] [speaker_id=them; identity=other] Ana:** Later.")
     }
 
     func testSummaryPromptSplitsOversizedLegacySegmentAtWordBoundaries() {
@@ -200,7 +201,7 @@ final class TranscriptTests: XCTestCase {
         XCTAssertEqual(display.segments.map(\.id), [0, 2],
                        "Filtering must retain source-order identities")
         XCTAssertEqual(display.segments.map(\.text), ["Ship it.", "Earlier update"])
-        XCTAssertEqual(display.segments.map(\.speakerLabel), ["Ana", "Me"])
+        XCTAssertEqual(display.segments.map(\.speakerLabel), ["Ana", "Local speaker"])
         XCTAssertEqual(display.segments.map(\.hasSpeakerAlias), [true, false])
         XCTAssertEqual(display.segments.map(\.speakerKey), ["them 1", "me"])
     }

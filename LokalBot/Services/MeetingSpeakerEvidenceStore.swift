@@ -201,7 +201,7 @@ actor MeetingSpeakerEvidenceStore {
         guard database.revision == expectedDatabaseRevision,
               !database.deletedMeetings.contains(meeting.id),
               !database.revokedDecisionIDs.contains(decision.id),
-              assignment.origin.isProtected, decision.action == .assign,
+              assignment.origin.isProtected, decision.action == .assign || decision.action.confirmsIdentity,
               let name = assignment.name, SpeakerVoiceMatcher.canEnroll(samples) else { throw Failure.stale }
         let durable = try state(meeting: meeting)
         guard durable.decisions.last(where: { $0.speakerID == assignment.id })?.id == decision.id,
@@ -212,6 +212,10 @@ actor MeetingSpeakerEvidenceStore {
             speakerID: assignment.id, decisionID: decision.id, confirmedAt: decision.confirmedAt, samples: Array(samples.prefix(8)))
         if let index = database.profiles.firstIndex(where: { $0.id == targetID }) {
             guard database.profiles[index].model == SpeakerVoiceSample.fingerprint else { throw Failure.stale }
+            let existingIdentity = database.profiles[index].isLocalUser
+            if let existingIdentity, let confirmed = assignment.isLocalUser,
+               existingIdentity != confirmed { throw Failure.stale }
+            if let confirmed = assignment.isLocalUser { database.profiles[index].isLocalUser = confirmed }
             database.profiles[index].contributions.removeAll { $0.meetingID == meeting.id && $0.speakerID == assignment.id }
             database.profiles[index].contributions.append(contribution)
             database.profiles[index].contributions = Array(database.profiles[index].contributions.suffix(8))
@@ -220,7 +224,8 @@ actor MeetingSpeakerEvidenceStore {
         } else {
             guard profileID == nil else { throw Failure.deleted }
             guard database.profiles.count < 100 else { throw Failure.tooLarge }
-            database.profiles.append(SpeakerVoiceProfile(id: targetID, name: name, confirmedNames: [name], contributions: [contribution]))
+            database.profiles.append(SpeakerVoiceProfile(id: targetID, name: name,
+                isLocalUser: assignment.isLocalUser, confirmedNames: [name], contributions: [contribution]))
         }
         database.revision += 1
         try write(database, at: profilesURL)

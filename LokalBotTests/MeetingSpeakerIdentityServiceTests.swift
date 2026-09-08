@@ -160,4 +160,41 @@ import XCTest
         XCTAssertEqual(retried.speakerAliases["them 1"], "Alex")
         XCTAssertEqual(retried.speakerAliases["them 2"], "Sam")
     }
+
+    func testMicrophoneOnlyConfirmationSurvivesRestartAndLabelReorderingWithoutEnrollment() async throws {
+        settings.identifySpeakersFromVisuals = false
+        settings.rememberSpeakersOnMac = false
+        let meeting = try storage.createMeetingFolder(title: "Two local voices", appName: "Manual")
+        let audio = meeting.folderURL(in: storage).appendingPathComponent("mic.m4a")
+        let writer = try WavWriter(url: audio, sampleRate: 16_000)
+        try writer.append(Array(repeating: 0, count: 160_000))
+        try writer.finish()
+        let transcript = Transcript(segments: [
+            .init(start: 1, end: 3, speaker: "local 1", text: "First local voice",
+                  attribution: .init(source: .microphone, identity: .unresolved, method: .diarization)),
+            .init(start: 5, end: 7, speaker: "local 2", text: "Second local voice",
+                  attribution: .init(source: .microphone, identity: .unresolved, method: .diarization)),
+        ], engine: "synthetic rule fixture")
+        let turns = transcript.segments.map { SpeakerAudioTurn(speaker: $0.speaker,
+            range: .init(start: $0.start, end: $0.end), source: .microphone) }
+        let initial = await service.process(transcript: transcript, meeting: meeting, turns: turns, samples: [], audioURL: audio)
+        let chosen = try await service.choose(.init(label: "local 1", name: "Stevan", action: .confirmUser),
+                                              meeting: meeting, transcript: initial)
+        XCTAssertEqual(chosen.segments[0].resolvedAttribution.identity, .user)
+        XCTAssertEqual(chosen.segments[1].resolvedAttribution.identity, .unresolved)
+        let restarted = MeetingSpeakerIdentityService(storage: storage, settings: { [unowned self] in settings },
+            keyProvider: { [unowned self] in key })
+        let recovered = try await restarted.recover(meeting: meeting, transcript: transcript)
+        XCTAssertEqual(recovered.segments[0].resolvedAttribution.identity, .user)
+        var reordered = transcript
+        reordered.segments[0].speaker = "local 2"
+        reordered.segments[1].speaker = "local 1"
+        let nextTurns = reordered.segments.map { SpeakerAudioTurn(speaker: $0.speaker,
+            range: .init(start: $0.start, end: $0.end), source: .microphone) }
+        let reprocessed = await restarted.process(transcript: reordered, meeting: meeting, turns: nextTurns, samples: [], audioURL: audio)
+        XCTAssertEqual(reprocessed.segments[0].resolvedAttribution.identity, .user)
+        XCTAssertEqual(reprocessed.segments[1].resolvedAttribution.identity, .unresolved)
+        let profiles = try await restarted.profiles()
+        XCTAssertTrue(profiles.isEmpty)
+    }
 }

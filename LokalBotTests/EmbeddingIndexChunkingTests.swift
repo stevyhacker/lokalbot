@@ -18,7 +18,7 @@ final class EmbeddingIndexChunkingTests: XCTestCase {
 
         XCTAssertEqual(chunks.count, 1)
         XCTAssertEqual(chunks[0].start, 10)
-        XCTAssertEqual(chunks[0].text, "Me: \(first)\nThem: \(second)\n")
+        XCTAssertEqual(chunks[0].text, "Local speaker: \(first)\nThem: \(second)\n")
     }
 
     func testOversizedSegmentIsSplitWithoutLosingSourceText() throws {
@@ -36,7 +36,7 @@ final class EmbeddingIndexChunkingTests: XCTestCase {
             $0.text.count <= EmbeddingIndex.transcriptChunkTargetCharacters
         })
         XCTAssertTrue(chunks.allSatisfy { $0.start == 42 })
-        XCTAssertEqual(chunks.map(\.text).joined(), "Me: \(longText)\n")
+        XCTAssertEqual(chunks.map(\.text).joined(), "Local speaker: \(longText)\n")
     }
 
     func testHardLimitFlushesExistingTextBeforeLargeValidSegment() throws {

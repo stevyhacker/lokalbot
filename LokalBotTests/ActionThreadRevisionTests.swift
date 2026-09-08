@@ -3,6 +3,25 @@ import XCTest
 
 @MainActor
 final class ActionThreadRevisionTests: XCTestCase {
+    func testOwnerCorrectionInvalidatesNarrativeAndSurvivesSummaryRepairProjection() throws {
+        let (storage, meetings, action) = try fixture()
+        let meeting = meetings[0]
+        let folder = meeting.folderURL(in: storage)
+        try Data("## TL;DR\nAn old attribution".utf8).write(to: folder.appendingPathComponent("summary.md"))
+        let index = OutcomeIndex(storage: storage)
+        index.refresh(meetings: meetings)
+        XCTAssertTrue(index.correctAction(actionID: action.id, meetingID: meeting.id,
+            text: "Send the corrected report", owner: "Alice", due: nil))
+        XCTAssertTrue(MeetingAttributionArtifacts.needsRefresh(in: folder))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("summary.md").path))
+        let projection = try XCTUnwrap(MeetingOutcomeProjection.load(for: meeting, storage: storage))
+        XCTAssertEqual(projection.correctedOutcomes.actionItems.first?.owner, "Alice")
+        XCTAssertFalse(try XCTUnwrap(projection.correctedOutcomes.actionItems.first).isForUser)
+        let summary = MeetingSummaryOutcomeSynchronizer.synchronize("## TL;DR\nRefreshed",
+            outcomes: projection.correctedOutcomes, template: .meeting)
+        XCTAssertTrue(summary.contains("Alice: Send the corrected report"))
+    }
+
     func testCompletionAndUnrelatedFieldEditsPreserveCorrectionPrecedence() throws {
         let (storage, meetings, action) = try fixture()
         let baseline = Date().addingTimeInterval(-3_600)

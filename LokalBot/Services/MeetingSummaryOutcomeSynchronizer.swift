@@ -96,6 +96,8 @@ enum MeetingSummaryOutcomeSynchronizer {
                 + actionLines(outcomes.userActionItems, includeOwner: false)
                 + ["", "### Others"]
                 + actionLines(outcomes.otherActionItems, includeOwner: true)
+                + (outcomes.unresolvedActionItems.isEmpty ? []
+                    : ["", "### Owner unclear"] + actionLines(outcomes.unresolvedActionItems, includeOwner: false))
         default:
             return [heading]
         }

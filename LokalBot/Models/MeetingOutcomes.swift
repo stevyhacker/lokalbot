@@ -31,7 +31,7 @@ struct OutcomeSourceCitation: Codable, Equatable, Hashable, Identifiable, Sendab
 /// extracted text and evidence are immutable source data; user corrections and
 /// workflow status live separately in `MeetingOutcomeState`.
 struct MeetingOutcomes: Codable, Equatable, Sendable {
-    static let currentSchemaVersion = 3
+    static let currentSchemaVersion = 4
     static let maximumActionItems = 10
     static let maximumOtherActionItems = 5
 
@@ -46,6 +46,8 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
         var due: String?
         /// Stored extraction judgment. Legacy records derive it from owner.
         var isForUser: Bool
+        var attribution: OutcomeAttribution?
+        var ownershipIsUnclear: Bool { attribution?.resolution == .unresolved || owner == nil }
         /// Relative meeting importance assigned by the grounded extraction
         /// pass. This is used only to select the most useful actions owned by
         /// other participants; every user-owned action is retained.
@@ -60,15 +62,18 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
              due: String? = nil, isForUser: Bool? = nil,
              importance: Int = defaultImportance,
              citations: [OutcomeSourceCitation] = [],
-             schemaVersion: Int = MeetingOutcomes.currentSchemaVersion) {
-            let resolvedIsForUser = isForUser ?? Self.ownerBelongsToUser(owner)
+             schemaVersion: Int = MeetingOutcomes.currentSchemaVersion,
+             attribution: OutcomeAttribution? = nil) {
+            self.attribution = attribution?.consistent(with: isForUser) ?? .legacy(owner: owner, forUser: isForUser)
+            let resolvedIsForUser = self.attribution.map { $0.resolution == .user }
+                ?? isForUser ?? Self.ownerBelongsToUser(owner)
             let proseText = OutcomeProse.actionText(text, isForUser: resolvedIsForUser)
             self.id = id ?? MeetingOutcomes.stableID(
                 kind: "action", text: proseText, owner: owner, due: due,
                 citationIDs: citations.map(\.segmentID))
             self.schemaVersion = schemaVersion
             self.text = proseText
-            self.owner = owner
+            self.owner = self.attribution?.resolution == .unresolved ? nil : resolvedIsForUser ? "Me" : owner
             self.due = due
             self.isForUser = resolvedIsForUser
             self.importance = Self.clampedImportance(importance)
@@ -76,7 +81,8 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
         }
 
         var displayText: String {
-            OutcomeProse.actionText(text, isForUser: isForUser)
+            let prose = OutcomeProse.actionText(text, isForUser: isForUser)
+            return attribution?.basis == .request && !prose.hasPrefix("Requested: ") ? "Requested: " + prose : prose
         }
 
         private static func ownerBelongsToUser(_ owner: String?) -> Bool {
@@ -91,7 +97,7 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
         }
 
         private enum CodingKeys: String, CodingKey {
-            case id, schemaVersion, text, owner, due, isForUser, importance, citations
+            case id, schemaVersion, text, owner, due, isForUser, importance, citations, attribution
         }
 
         init(from decoder: Decoder) throws {
@@ -105,9 +111,10 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
                 [OutcomeSourceCitation].self, forKey: .citations) ?? []
             let storedIsForUser = try container.decodeIfPresent(
                 Bool.self, forKey: .isForUser)
-            isForUser = storedIsForUser == true
-                || Self.ownerBelongsToUser(owner)
-                || OutcomeProse.hasFirstPersonSubject(decodedText)
+            attribution = try container.decodeIfPresent(OutcomeAttribution.self, forKey: .attribution)?.consistent(with: storedIsForUser)
+                ?? .legacy(owner: owner, forUser: storedIsForUser)
+            isForUser = attribution?.resolution == .user
+            if attribution?.resolution == .unresolved { owner = nil }
             if isForUser { owner = "Me" }
             importance = Self.clampedImportance(
                 try container.decodeIfPresent(Int.self, forKey: .importance)
@@ -126,23 +133,26 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
         var schemaVersion: Int
         var text: String
         var citations: [OutcomeSourceCitation]
+        var attribution: StatementAttribution?
 
         init(id: String? = nil, text: String,
              citations: [OutcomeSourceCitation] = [],
-             schemaVersion: Int = MeetingOutcomes.currentSchemaVersion) {
-            let proseText = OutcomeProse.firstPersonSubject(text)
+             schemaVersion: Int = MeetingOutcomes.currentSchemaVersion,
+             attribution: StatementAttribution? = nil) {
+            let proseText = text.trimmingCharacters(in: .whitespacesAndNewlines)
             self.id = id ?? MeetingOutcomes.stableID(
                 kind: "decision", text: proseText,
                 citationIDs: citations.map(\.segmentID))
             self.schemaVersion = schemaVersion
             self.text = proseText
             self.citations = citations
+            self.attribution = attribution
         }
 
-        var displayText: String { OutcomeProse.firstPersonSubject(text) }
+        var displayText: String { attribution.map { "\($0.speakerLabel): \(text)" } ?? text }
 
         private enum CodingKeys: String, CodingKey {
-            case id, schemaVersion, text, citations
+            case id, schemaVersion, text, citations, attribution
         }
 
         init(from decoder: Decoder) throws {
@@ -161,11 +171,13 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
                 text: decodedText,
                 citations: decodedCitations,
                 schemaVersion: try container.decodeIfPresent(
-                    Int.self, forKey: .schemaVersion) ?? 1)
+                    Int.self, forKey: .schemaVersion) ?? 1,
+                attribution: try container.decodeIfPresent(StatementAttribution.self, forKey: .attribution))
         }
     }
 
     var schemaVersion: Int = currentSchemaVersion
+    var transcriptRevision: String?
     var actionItems: [ActionItem] = []
     var decisionRecords: [Decision] = []
     var openQuestions: [String] = []
@@ -188,7 +200,8 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
         actionItems.isEmpty && decisionRecords.isEmpty && openQuestions.isEmpty
     }
     var userActionItems: [ActionItem] { actionItems.filter(\.isForUser) }
-    var otherActionItems: [ActionItem] { actionItems.filter { !$0.isForUser } }
+    var otherActionItems: [ActionItem] { actionItems.filter { !$0.isForUser && !$0.ownershipIsUnclear } }
+    var unresolvedActionItems: [ActionItem] { actionItems.filter(\.ownershipIsUnclear) }
 
     /// Keeps all of the user's work first, then fills the remaining room with
     /// at most five of everyone else's highest-importance actions. If the user
@@ -202,7 +215,7 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
         let otherItems = otherActionItems
             .sorted(by: Self.higherPriorityAction)
             .prefix(otherLimit)
-        prioritized.actionItems = userItems + otherItems
+        prioritized.actionItems = userItems + otherItems + unresolvedActionItems
         return prioritized
     }
 
@@ -212,8 +225,13 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
         guard let data = try? Data(contentsOf: folder.appendingPathComponent(fileName)) else {
             return nil
         }
-        return try? JSONDecoder().decode(MeetingOutcomes.self, from: data)
-            .prioritizingActionItems()
+        guard let outcomes = try? JSONDecoder().decode(MeetingOutcomes.self, from: data) else { return nil }
+        if let revision = outcomes.transcriptRevision {
+            guard let source = try? Data(contentsOf: folder.appendingPathComponent("transcript.json")),
+                  let transcript = try? JSONDecoder().decode(Transcript.self, from: source),
+                  transcript.evidenceRevision == revision else { return nil }
+        }
+        return outcomes.prioritizingActionItems()
     }
 
     func write(to folder: URL) throws {
@@ -224,7 +242,7 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, actionItems, decisionRecords, openQuestions
+        case schemaVersion, actionItems, decisionRecords, openQuestions, transcriptRevision
         case legacyActionItems = "action_items"
         case legacyDecisions = "decisions"
         case legacyOpenQuestions = "open_questions"
@@ -233,6 +251,7 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        transcriptRevision = try container.decodeIfPresent(String.self, forKey: .transcriptRevision)
         actionItems = try container.decodeIfPresent(
             [ActionItem].self, forKey: .actionItems)
             ?? container.decodeIfPresent([ActionItem].self, forKey: .legacyActionItems)
@@ -251,6 +270,7 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(Self.currentSchemaVersion, forKey: .schemaVersion)
+        try container.encodeIfPresent(transcriptRevision, forKey: .transcriptRevision)
         try container.encode(actionItems, forKey: .actionItems)
         try container.encode(decisionRecords, forKey: .decisionRecords)
         try container.encode(openQuestions, forKey: .openQuestions)

@@ -12,6 +12,13 @@ struct SpeakerTurnAnchor: Codable, Equatable, Sendable {
 struct SpeakerAudioTurn: Codable, Equatable, Sendable {
     var speaker: String
     var range: SpeakerTurnAnchor
+    var source: SpeakerAttribution.Source?
+
+    var resolvedSource: SpeakerAttribution.Source { source ?? Self.legacySource(speaker) }
+
+    static func legacySource(_ speaker: String) -> SpeakerAttribution.Source {
+        speaker == "me" || speaker.hasPrefix("local") ? .microphone : .system
+    }
 }
 
 struct ParticipantObservation: Codable, Equatable, Sendable {
@@ -82,6 +89,7 @@ struct SpeakerNameMatch: Codable, Equatable, Identifiable, Sendable {
     var contradictionSeconds: Double
     var evidence: [SpeakerTurnAnchor]
     var profileID: UUID?
+
     var profileRevision: Int?
     var policyVersion = "speaker-identity-1-experimental"
 
@@ -110,6 +118,9 @@ struct SpeakerIdentityAssignment: Codable, Equatable, Identifiable, Sendable {
     var match: SpeakerNameMatch?
     var supportingMatches: [SpeakerNameMatch]?
     var profileID: UUID?
+    /// Independent of a display alias, including an alias spelled "Me".
+    var isLocalUser: Bool?
+    var source: SpeakerAttribution.Source?
 
     var evidencePath: String? {
         let sources = Set((supportingMatches ?? []).filter { $0.tier == .automatic }.map { $0.source.rawValue })
@@ -119,7 +130,11 @@ struct SpeakerIdentityAssignment: Codable, Equatable, Identifiable, Sendable {
 }
 
 struct SpeakerAliasDecision: Codable, Sendable {
-    enum Action: String, Codable, Sendable { case assign, dismiss, reset, undo, resume }
+    enum Action: String, Codable, Sendable {
+        case assign, dismiss, reset, undo, resume, confirmUser, confirmOther
+        var confirmsIdentity: Bool { self == .confirmUser || self == .confirmOther }
+        var changesAttribution: Bool { self != .dismiss }
+    }
     var id = UUID()
     var speakerID: UUID
     var action: Action
@@ -136,6 +151,7 @@ struct MeetingSpeakerIdentityState: Codable, Sendable {
     var audioRevision = ""
     var transcriptSignature: String?
     var timeline: [SpeakerAudioTurn] = []
+    var acousticTimeline: [SpeakerAudioTurn]?
     var assignments: [SpeakerIdentityAssignment] = []
     var decisions: [SpeakerAliasDecision] = []
     var suggestions: [String: [SpeakerNameMatch]] = [:]

@@ -308,6 +308,7 @@ targets:
       - LokalBot/CLISupport
       - path: LokalBot/Models/Meeting.swift
       - path: LokalBot/Models/Transcript.swift
+      - path: LokalBot/Models/SpeakerAttribution.swift
       - path: LokalBot/Models/CalendarParticipantIdentity.swift
       - path: LokalBot/Models/AppIdentifiers.swift
       - path: LokalBot/Models/AppDirectories.swift

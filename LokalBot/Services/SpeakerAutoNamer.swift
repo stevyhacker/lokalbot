@@ -25,7 +25,7 @@ enum SpeakerAutoNamer {
               let participant = participants.first,
               let name = participant.name else { return transcript }
 
-        let remoteSpeakers = Set(transcript.segments.map {
+        let remoteSpeakers = Set(transcript.segments.filter { $0.resolvedAttribution.source != .microphone }.map {
             $0.speaker.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         }).subtracting(["me"])
         guard remoteSpeakers == ["them"] else { return transcript }

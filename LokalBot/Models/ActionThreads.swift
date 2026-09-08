@@ -17,7 +17,10 @@ struct ActionThread: Identifiable, Equatable, Sendable {
     var hasMultipleMeetings: Bool { meetingCount > 1 }
     var hasMixedStatus: Bool { Set(references.map(\.status)).count > 1 }
     var isForUser: Bool {
-        owner?.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare("Me") == .orderedSame
+        let correction = references.filter(\.ownerWasCorrected).max {
+            ($0.ownerCorrectedAt ?? $0.stateUpdatedAt) < ($1.ownerCorrectedAt ?? $1.stateUpdatedAt)
+        }
+        return correction?.isForUser ?? references.allSatisfy(\.isForUser)
     }
     var statusLabel: String { hasMixedStatus ? "Mixed" : status.label }
 

@@ -49,6 +49,10 @@ final class RecordingSpeakerClockTests: XCTestCase {
         XCTAssertNil(clock.map(hostStart: 111, hostEnd: 112))
         write(clock, host: 90, frame: 960_000)
         XCTAssertNil(clock.map(hostStart: 101, hostEnd: 102))
+        XCTAssertTrue(clock.snapshot().isEmpty)
+        XCTAssertEqual(clock.archive().count, 1, "Offline file anchors survive live-clock invalidation")
+        write(clock, host: 130, frame: 1_440_000)
+        XCTAssertNotNil(clock.map(hostStart: 131, hostEnd: 132))
     }
 }
 

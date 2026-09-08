@@ -50,6 +50,7 @@ final class MeetingSummaryGeneratorTests: XCTestCase {
             system: String,
             prompt: String,
             context: [String],
+            schema: [String: Any],
             options: TextGenerationOptions
         ) async throws -> String {
             try await script.next(prompt: prompt, options: options)
@@ -72,13 +73,14 @@ final class MeetingSummaryGeneratorTests: XCTestCase {
     func testOutputTruncationRetriesOnceWithoutReasoningAndWithMoreOutput() async throws {
         let script = Script([
             .failure(.outputTruncated),
-            .value("## TL;DR\nRecovered."),
+            .value(try claims("Recovered.")),
         ])
 
         let result = try await generate(script: script, checkpoint: makeCheckpointURL())
         let calls = await script.recordedCalls()
 
-        XCTAssertEqual(result, "## TL;DR\nRecovered.")
+        XCTAssertTrue(result.contains("Recovered."))
+        XCTAssertTrue(result.contains("identity unconfirmed"))
         XCTAssertEqual(calls.count, 2)
         XCTAssertEqual(calls[0].options.maxTokens, 4_096)
         XCTAssertEqual(calls[0].options.reasoningBudgetTokens, 1_024)
@@ -91,15 +93,16 @@ final class MeetingSummaryGeneratorTests: XCTestCase {
         let script = Script([
             .failure(.outputTruncated),
             .failure(.outputTruncated),
-            .value("- First-half notes"),
-            .value("- Second-half notes"),
-            .value("## TL;DR\nFinal synthesis."),
+            .value(try claims("First-half notes")),
+            .value(try claims("Second-half notes")),
+            .value(try claims("Final synthesis.")),
         ])
 
         let result = try await generate(script: script, checkpoint: makeCheckpointURL())
         let calls = await script.recordedCalls()
 
-        XCTAssertEqual(result, "## TL;DR\nFinal synthesis.")
+        XCTAssertTrue(result.contains("Final synthesis."))
+        XCTAssertTrue(result.contains("identity unconfirmed"))
         XCTAssertEqual(calls.count, 5)
         XCTAssertTrue(calls[4].prompt.contains("First-half notes"))
         XCTAssertTrue(calls[4].prompt.contains("Second-half notes"))
@@ -110,7 +113,7 @@ final class MeetingSummaryGeneratorTests: XCTestCase {
         let firstScript = Script([
             .failure(.outputTruncated),
             .failure(.outputTruncated),
-            .value("- Finished first part"),
+            .value(try claims("Finished first part")),
             .failure(.badResponse("interrupted")),
         ])
 
@@ -123,13 +126,14 @@ final class MeetingSummaryGeneratorTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: checkpoint.path))
 
         let resumedScript = Script([
-            .value("- Finished second part"),
-            .value("## TL;DR\nResumed final."),
+            .value(try claims("Finished second part")),
+            .value(try claims("Resumed final.")),
         ])
         let result = try await generate(script: resumedScript, checkpoint: checkpoint)
         let resumedCalls = await resumedScript.recordedCalls()
 
-        XCTAssertEqual(result, "## TL;DR\nResumed final.")
+        XCTAssertTrue(result.contains("Resumed final."))
+        XCTAssertTrue(result.contains("identity unconfirmed"))
         XCTAssertEqual(resumedCalls.count, 2, "the completed first part must come from disk")
         XCTAssertTrue(resumedCalls[1].prompt.contains("Finished first part"))
         XCTAssertTrue(resumedCalls[1].prompt.contains("Finished second part"))
@@ -137,7 +141,7 @@ final class MeetingSummaryGeneratorTests: XCTestCase {
 
     func testRepeatedSynthesisTruncationReturnsUsablePartNotes() async throws {
         let script = Script([
-            .value("- Grounded part note"),
+            .value(try claims("Grounded part note")),
             .failure(.outputTruncated),
             .failure(.outputTruncated),
         ])
@@ -147,8 +151,14 @@ final class MeetingSummaryGeneratorTests: XCTestCase {
             checkpoint: makeCheckpointURL(),
             contextTokens: 7_000)
 
-        XCTAssertTrue(result.hasPrefix("## Consolidated notes"))
+        XCTAssertTrue(result.hasPrefix("## TL;DR"))
         XCTAssertTrue(result.contains("Grounded part note"))
+    }
+
+    private func claims(_ text: String) throws -> String {
+        let source = sampleTranscript()
+        return try SummaryClaimEvidence.encode([.init(section: "TL;DR", text: text,
+            speakerID: "me", segmentID: source.segmentID(at: 0), quote: "topic1")])
     }
 
     private func generate(

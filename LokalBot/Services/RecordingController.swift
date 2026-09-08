@@ -237,6 +237,7 @@ final class RecordingController: ObservableObject {
     private let systemRecorder = SystemAudioRecorder()
     private let speakerObserver: MeetingSpeakerObserver?
     private var speakerAudioClock: RecordingAudioClock?
+    private var microphoneAudioClock: RecordingAudioClock?
 
     private struct SystemAudioTarget {
         var bundleID: String
@@ -433,10 +434,10 @@ final class RecordingController: ObservableObject {
                     try? storage.saveMeta(meeting)
                 }
                 created = meeting
-                if settings.identifySpeakersFromVisuals || settings.rememberSpeakersOnMac {
-                    speakerAudioClock = RecordingAudioClock()
-                    systemRecorder.speakerAudioClock = speakerAudioClock
-                }
+                speakerAudioClock = RecordingAudioClock()
+                microphoneAudioClock = RecordingAudioClock()
+                systemRecorder.speakerAudioClock = speakerAudioClock
+                micRecorder.speakerAudioClock = microphoneAudioClock
                 try Task.checkCancellation()
                 try micRecorder.start(
                     writingTo: meeting.folderURL(in: storage).appendingPathComponent("mic.m4a"),
@@ -510,9 +511,7 @@ final class RecordingController: ObservableObject {
                 // Don't leave a 0-minute husk in the library.
                 micRecorder.stop()
                 systemRecorder.stop()
-                speakerAudioClock?.invalidate()
-                speakerAudioClock = nil
-                systemRecorder.speakerAudioClock = nil
+                resetAudioClocks()
                 if let husk = created { try? storage.deleteMeeting(husk) }
             }
         }
@@ -538,9 +537,13 @@ final class RecordingController: ObservableObject {
         stopRecordingHealthWatchdog()
         micRecorder.stop()
         systemRecorder.stop()
-        speakerAudioClock?.invalidate()
-        speakerAudioClock = nil
-        systemRecorder.speakerAudioClock = nil
+        let timing = RecordingAudioTiming(microphone: microphoneAudioClock?.archive() ?? [],
+                                          system: speakerAudioClock?.archive() ?? [])
+        do {
+            try JSONEncoder().encode(timing).write(to: meeting.folderURL(in: storage)
+                .appendingPathComponent(RecordingAudioTiming.fileName), options: .atomic)
+        } catch { lokalbotLog("Recording timing could not be saved: \(error.localizedDescription)") }
+        resetAudioClocks()
         systemAudioTarget = nil
         audioMonitor.isRecordingActive = false
         audioMonitor.reseed()
@@ -612,14 +615,21 @@ final class RecordingController: ObservableObject {
             systemAudioPolicy: .meetingAppWhenAvailable)
     }
 
+    private func resetAudioClocks() {
+        speakerAudioClock?.invalidate()
+        microphoneAudioClock?.invalidate()
+        speakerAudioClock = nil
+        microphoneAudioClock = nil
+        systemRecorder.speakerAudioClock = nil
+        micRecorder.speakerAudioClock = nil
+    }
+
     private func cleanupCancelledStart(created: Meeting?) {
         speakerObserver?.stop()
         stopRecordingHealthWatchdog()
         micRecorder.stop()
         systemRecorder.stop()
-        speakerAudioClock?.invalidate()
-        speakerAudioClock = nil
-        systemRecorder.speakerAudioClock = nil
+        resetAudioClocks()
         systemAudioTarget = nil
         audioMonitor.isRecordingActive = false
         audioMonitor.reseed()

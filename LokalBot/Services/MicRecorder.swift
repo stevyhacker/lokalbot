@@ -243,6 +243,7 @@ final class MicRecorder {
     /// Audio taps run on a real-time Core Audio thread. Keep that callback to
     /// one bounded PCM copy, then serialize conversion, AAC encoding, preview
     /// resampling, and filesystem writes here.
+    var speakerAudioClock: RecordingAudioClock?
     private let ioQueue = DispatchQueue(label: "lokalbot.microphone.write",
                                         qos: .userInitiated)
     private static let bufferPoolSize = 16
@@ -488,9 +489,11 @@ final class MicRecorder {
         // device switch, `outputFormat(forBus:)` can briefly report a stale
         // client format while the input unit has already moved to the new
         // hardware rate, and passing that stale format makes installTap raise.
-        input.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self, broker] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self, broker] buffer, audioTime in
             guard let self else { return }
             let capturedAt = ContinuousClock.now
+            let sourceHostTime = audioTime.hostTime
+            let sourceHostValid = audioTime.isHostTimeValid
             let copy: AVAudioPCMBuffer
             let pool: MicAudioBufferPool
             switch broker.borrow(for: buffer) {
@@ -520,7 +523,7 @@ final class MicRecorder {
                 defer { pool.returnBuffer(copy) }
                 guard let self, self.activeCaptureGraphID == captureGraphID else { return }
                 do {
-                    try self.write(copy, capturedAt: capturedAt)
+                    try self.write(copy, capturedAt: capturedAt, hostTime: sourceHostTime, hostValid: sourceHostValid)
                 } catch {
                     NSLog("MicRecorder write failed: \(error.localizedDescription)")
                 }
@@ -762,6 +765,10 @@ final class MicRecorder {
                     NSLog("MicRecorder drain write failed: \(error.localizedDescription)")
                     return
                 }
+                healthLock.lock()
+                framesWritten += AVAudioFramePosition(tail.frameLength)
+                healthLock.unlock()
+                speakerAudioClock?.discontinuity()
             }
             if status == .endOfStream || status == .error || tail.frameLength == 0 {
                 return
@@ -771,7 +778,7 @@ final class MicRecorder {
 
     private func write(
         _ buffer: AVAudioPCMBuffer,
-        capturedAt: ContinuousClock.Instant
+        capturedAt: ContinuousClock.Instant, hostTime: UInt64, hostValid: Bool
     ) throws {
         guard let file else { return }
         let bufferDuration = buffer.format.sampleRate > 0
@@ -781,7 +788,7 @@ final class MicRecorder {
         guard let recordingFormat else {
             try file.write(from: buffer)
             previewTee?.write(buffer)
-            noteWrittenAudio(buffer, endedAt: capturedAt)
+            noteWrittenAudio(buffer, endedAt: capturedAt, hostTime: hostTime, hostValid: hostValid)
             return
         }
         guard buffer.format != recordingFormat else {
@@ -793,7 +800,7 @@ final class MicRecorder {
                 file: file)
             try file.write(from: buffer)
             previewTee?.write(buffer)
-            noteWrittenAudio(buffer, endedAt: capturedAt)
+            noteWrittenAudio(buffer, endedAt: capturedAt, hostTime: hostTime, hostValid: hostValid)
             return
         }
         if converter == nil || converterInputFormat != buffer.format {
@@ -833,7 +840,7 @@ final class MicRecorder {
                 file: file)
             try file.write(from: output)
             previewTee?.write(output)
-            noteWrittenAudio(output, endedAt: capturedAt)
+            noteWrittenAudio(output, endedAt: capturedAt, hostTime: hostTime, hostValid: hostValid)
         }
     }
 
@@ -933,16 +940,19 @@ final class MicRecorder {
 
     private func noteWrittenAudio(
         _ buffer: AVAudioPCMBuffer,
-        endedAt: ContinuousClock.Instant
+        endedAt: ContinuousClock.Instant, hostTime: UInt64, hostValid: Bool
     ) {
         guard buffer.frameLength > 0 else { return }
         healthLock.lock()
         if recordingSampleRate <= 0 {
             recordingSampleRate = buffer.format.sampleRate
         }
+        let startFrame = framesWritten
         framesWritten += AVAudioFramePosition(buffer.frameLength)
         lastAudioWriteAt = Date()
         lastAudioWriteInstant = endedAt
         healthLock.unlock()
+        speakerAudioClock?.record(hostTime: hostTime, valid: hostValid, startFrame: startFrame,
+            frames: Int64(buffer.frameLength), sampleRate: buffer.format.sampleRate)
     }
 }

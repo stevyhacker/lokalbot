@@ -17,7 +17,7 @@ enum MeetingSummaryGenerator {
     private static let chunkRecoveryOutputTokens = 3_072
     private static let maximumChunkInputTokens = 8_000
     private static let maximumSplitDepth = 4
-    private static let checkpointVersion = 1
+    private static let checkpointVersion = 2
 
     private enum RecoveryFailure: Error {
         case outputTruncated
@@ -74,8 +74,29 @@ enum MeetingSummaryGenerator {
         contextTokens: Int,
         checkpointURL: URL
     ) async throws -> String {
+        let raw = try await generateDraft(transcript: transcript, engine: engine,
+            systemPrompt: systemPrompt + "\n\n" + SummaryClaimEvidence.instructions
+                + "\n" + SummaryClaimEvidence.sectionInstruction(for: template),
+            template: template, language: language, userSpeakerLabel: userSpeakerLabel,
+            context: context, contextTokens: contextTokens, checkpointURL: checkpointURL)
+        let claims = try SummaryClaimEvidence.decode(raw, transcript: transcript, template: template)
+        try SummaryClaimEvidence.savePartial(claims, transcript: transcript, in: checkpointURL.deletingLastPathComponent())
+        return SummaryClaimEvidence.render(claims, transcript: transcript, template: template)
+    }
+
+    private static func generateDraft(
+        transcript: Transcript,
+        engine: TextEngine,
+        systemPrompt: String,
+        template: NoteTemplate,
+        language: SummaryLanguage,
+        userSpeakerLabel: String,
+        context: [String],
+        contextTokens: Int,
+        checkpointURL: URL
+    ) async throws -> String {
         let turns = transcript.summaryPromptTurns()
-        let compactTranscript = turns.map(transcript.summaryPromptLine)
+        let compactTranscript = transcript.summaryPromptLines(turns)
             .joined(separator: "\n\n")
         let directPrompt = PromptTemplates.userPrompt(
             transcript: compactTranscript,
@@ -171,7 +192,8 @@ enum MeetingSummaryGenerator {
     ) async throws -> String {
         let chunkSystem = PromptTemplates.chunkExtractionSystem(
             summaryLanguage: language,
-            userSpeakerLabel: userSpeakerLabel)
+            userSpeakerLabel: userSpeakerLabel) + "\n\n" + SummaryClaimEvidence.instructions
+            + "\n" + SummaryClaimEvidence.sectionInstruction(for: template)
         let inputBudget = chunkInputBudget(
             system: chunkSystem,
             contextTokens: contextTokens)
@@ -181,7 +203,7 @@ enum MeetingSummaryGenerator {
             targetTokens: inputBudget,
             forceMultipleChunks: forceMultipleChunks)
         guard !chunks.isEmpty else {
-            return "## Summary\n\nNo spoken transcript content was available."
+            return try SummaryClaimEvidence.encode([])
         }
 
         let fingerprint = checkpointFingerprint(
@@ -208,13 +230,17 @@ enum MeetingSummaryGenerator {
             let note = try await summarizeChunk(
                 chunks[index],
                 transcript: transcript,
+                template: template,
                 engine: engine,
                 system: chunkSystem,
                 partIndex: index,
                 partCount: chunks.count,
                 depth: 0)
-            notes.append(note)
-            checkpoint.notes[key] = note
+            let claims = try SummaryClaimEvidence.decode(note, transcript: transcript,
+                allowedIDs: Set(chunks[index].flatMap(\.sourceIDs)), template: template)
+            let validatedNote = try SummaryClaimEvidence.encode(claims)
+            notes.append(validatedNote)
+            checkpoint.notes[key] = validatedNote
             saveCheckpoint(checkpoint, to: checkpointURL)
         }
 
@@ -251,20 +277,22 @@ enum MeetingSummaryGenerator {
             // re-summarize attempt replace it if desired.
             lokalbotLog(
                 "meeting summary synthesis recovery exhausted; using consolidated part notes")
-            return "## Consolidated notes\n\n" + fittedNotes
+            let claims = try notes.flatMap { try SummaryClaimEvidence.decode($0, transcript: transcript, template: template) }
+            return try SummaryClaimEvidence.encode(claims)
         }
     }
 
     private static func summarizeChunk(
         _ turns: [Transcript.PromptTurn],
         transcript: Transcript,
+        template: NoteTemplate,
         engine: TextEngine,
         system: String,
         partIndex: Int,
         partCount: Int,
         depth: Int
     ) async throws -> String {
-        let prompt = turns.map(transcript.summaryPromptLine).joined(separator: "\n\n")
+        let prompt = transcript.summaryPromptLines(turns).joined(separator: "\n\n")
         let context = [
             "Part \(partIndex + 1) of \(partCount) from a longer meeting"
                 + (depth == 0 ? "." : "; recovery subpart depth \(depth)."),
@@ -298,6 +326,7 @@ enum MeetingSummaryGenerator {
             let first = try await summarizeChunk(
                 halves.0,
                 transcript: transcript,
+                template: template,
                 engine: engine,
                 system: system,
                 partIndex: partIndex,
@@ -306,12 +335,14 @@ enum MeetingSummaryGenerator {
             let second = try await summarizeChunk(
                 halves.1,
                 transcript: transcript,
+                template: template,
                 engine: engine,
                 system: system,
                 partIndex: partIndex,
                 partCount: partCount,
                 depth: depth + 1)
-            return first + "\n\n---\n\n" + second
+            let claims = try [first, second].flatMap { try SummaryClaimEvidence.decode($0, transcript: transcript, template: template) }
+            return try SummaryClaimEvidence.encode(claims)
         }
     }
 
@@ -330,6 +361,7 @@ enum MeetingSummaryGenerator {
                 system: system,
                 prompt: prompt,
                 context: context,
+                schema: SummaryClaimEvidence.schema,
                 options: initialOptions)
         } catch is CancellationError {
             throw CancellationError()
@@ -340,6 +372,7 @@ enum MeetingSummaryGenerator {
                     system: system,
                     prompt: recoveryInstruction + "\n\n" + prompt,
                     context: context,
+                    schema: SummaryClaimEvidence.schema,
                     options: recoveryOptions)
             } catch is CancellationError {
                 throw CancellationError()
@@ -378,9 +411,10 @@ enum MeetingSummaryGenerator {
         var chunks: [[Transcript.PromptTurn]] = []
         var current: [Transcript.PromptTurn] = []
         var currentTokens = 0
+        let roster = transcript.speakerRoster
 
         for turn in turns {
-            let tokens = max(1, TokenCountEstimator.estimate(transcript.summaryPromptLine(turn)))
+            let tokens = max(1, TokenCountEstimator.estimate(transcript.summaryPromptLine(turn, roster: roster)))
             if currentTokens + tokens > targetTokens, !current.isEmpty {
                 chunks.append(current)
                 current = []
@@ -426,58 +460,35 @@ enum MeetingSummaryGenerator {
     }
 
     private static func fittedNotes(_ notes: [String], tokenBudget: Int) -> String {
-        guard !notes.isEmpty else { return "No substantive notes were extracted." }
-        let labelAllowance = notes.count * 12
-        let contentBudget = max(notes.count, tokenBudget - labelAllowance)
-        let estimates = notes.map(TokenCountEstimator.estimate)
-        var allocations = Array(repeating: 0, count: notes.count)
-        var pending = Set(notes.indices)
-        var remaining = contentBudget
-
-        while !pending.isEmpty {
-            let share = max(1, remaining / pending.count)
-            let completed = pending.filter { estimates[$0] <= share }
-            if completed.isEmpty {
-                for index in pending { allocations[index] = share }
-                break
-            }
-            for index in completed {
-                allocations[index] = estimates[index]
-                remaining -= estimates[index]
-                pending.remove(index)
+        let parts = notes.map { note in
+            (try? JSONDecoder().decode(SummaryClaimEvidence.Envelope.self, from: Data(note.utf8)).claims) ?? []
+        }
+        var selected: [SummaryClaimEvidence.Claim] = []
+        // Allocate complete claim records across all parts. Truncating raw
+        // Markdown/JSON would separate a paraphrase from its speaker and quote.
+        for index in 0..<(parts.map(\.count).max() ?? 0) {
+            for part in parts where part.indices.contains(index) {
+                let candidate = selected + [part[index]]
+                guard let encoded = try? SummaryClaimEvidence.encode(candidate),
+                      TokenCountEstimator.estimate(encoded) <= tokenBudget else { continue }
+                selected = candidate
             }
         }
-
-        return notes.indices.map { index in
-            "### Part \(index + 1)\n\n"
-                + truncate(notes[index], toEstimatedTokens: allocations[index])
-        }.joined(separator: "\n\n---\n\n")
-    }
-
-    private static func truncate(_ text: String, toEstimatedTokens limit: Int) -> String {
-        guard limit > 0, TokenCountEstimator.estimate(text) > limit else { return text }
-        var lower = 0
-        var upper = text.count
-        while lower < upper {
-            let middle = lower + (upper - lower + 1) / 2
-            let candidate = String(text.prefix(middle))
-            if TokenCountEstimator.estimate(candidate) <= limit {
-                lower = middle
-            } else {
-                upper = middle - 1
-            }
-        }
-        let prefix = String(text.prefix(lower))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return prefix + "…"
+        return (try? SummaryClaimEvidence.encode(selected)) ?? "{\"claims\":[]}"
     }
 
     private static func deterministicExtract(
         _ turns: [Transcript.PromptTurn],
         transcript: Transcript
     ) -> String {
-        turns.map { "- " + transcript.summaryPromptLine($0) }
-            .joined(separator: "\n")
+        let sourceMap = transcript.segmentSourceMap
+        let claims = Set(turns.flatMap(\.sourceIDs)).sorted().compactMap { id -> SummaryClaimEvidence.Claim? in
+            guard let segment = sourceMap[id], !segment.displayText.isEmpty else { return nil }
+            let quote = String(segment.displayText.prefix(600))
+            return .init(section: "TL;DR", text: quote,
+                speakerID: Transcript.canonicalSpeakerKey(segment.speaker), segmentID: id, quote: quote)
+        }
+        return (try? SummaryClaimEvidence.encode(claims)) ?? "{\"claims\":[]}"
     }
 
     private static func checkpointFingerprint(
@@ -489,7 +500,7 @@ enum MeetingSummaryGenerator {
         language: SummaryLanguage
     ) -> String {
         let chunkText = chunks.map {
-            $0.map(transcript.summaryPromptLine).joined(separator: "\n\n")
+            transcript.summaryPromptLines($0).joined(separator: "\n\n")
         }.joined(separator: "\n\n<part>\n\n")
         let value = [
             "meeting-summary-v\(checkpointVersion)",
@@ -527,14 +538,14 @@ enum MeetingSummaryGenerator {
     }
 
     private static let directRecoveryInstruction = """
-        Retry compactly. Return the complete requested Markdown notes with no preamble. Use terse bullets, omit repetition, and finish every required section. Do not include hidden reasoning.
+        Retry compactly. Return complete claim JSON with source references and no preamble. Use terse bullets, omit repetition, and finish every required section. Do not include hidden reasoning.
         """
 
     private static let chunkRecoveryInstruction = """
-        Retry as a compact extraction. Use short bullets only, merge duplicates, preserve supported decisions and action items, and finish the response. Do not include hidden reasoning.
+        Retry as a compact extraction. Use short supported claims, merge duplicates, preserve supported decisions and action items, and finish the response. Do not include hidden reasoning.
         """
 
     private static let synthesisRecoveryInstruction = """
-        Retry the synthesis compactly. Merge duplicate part notes, use terse Markdown, include every required section, and finish the response. Do not include hidden reasoning.
+        Retry the synthesis compactly. Merge duplicate part notes, use complete claim JSON with citations, include every required section, and finish the response. Do not include hidden reasoning.
         """
 }

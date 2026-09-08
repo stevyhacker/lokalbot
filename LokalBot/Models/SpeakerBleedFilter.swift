@@ -14,8 +14,9 @@ enum SpeakerBleedFilter {
         var transcript: Transcript
         var removedSegments: Int
         var removedWords: Int
+        var suspectedIndices: Set<Int> = []
 
-        var changed: Bool { removedSegments > 0 }
+        var changed: Bool { removedSegments > 0 || !suspectedIndices.isEmpty }
     }
 
     /// Longer blocks may be whole-track or fixed-window fallbacks even when
@@ -46,9 +47,9 @@ enum SpeakerBleedFilter {
         var tokens: [Token]
     }
 
-    static func filter(_ transcript: Transcript) -> Result {
+    static func filter(_ transcript: Transcript, acousticallyVerifiedIndices: Set<Int> = []) -> Result {
         let remote = transcript.segments.compactMap { segment -> IndexedRemote? in
-            guard canonical(segment.speaker) == "them",
+            guard segment.resolvedAttribution.source == .system || canonical(segment.speaker) == "them",
                   isComparableSpan(segment),
                   let tokens = evidenceTokens(in: segment.text) else { return nil }
             return IndexedRemote(segment: segment, tokens: tokens)
@@ -67,27 +68,39 @@ enum SpeakerBleedFilter {
         kept.reserveCapacity(transcript.segments.count)
         var removedSegments = 0
         var removedWords = 0
+        var suspectedIndices = Set<Int>()
 
-        for segment in transcript.segments {
-            guard canonical(segment.speaker) == "me",
+        for (index, segment) in transcript.segments.enumerated() {
+            guard segment.resolvedAttribution.source == .microphone || canonical(segment.speaker) == "me",
                   isComparableSpan(segment),
                   let tokens = evidenceTokens(in: segment.text),
                   hasMatchingRemote(segment: segment, tokens: tokens, remote: remote) else {
                 kept.append(segment)
                 continue
             }
+            // A genuine repetition can have identical words and timing.
+            // Preserve it unless the waveform independently supports removal.
+            if !acousticallyVerifiedIndices.contains(index) || segment.resolvedAttribution.identity == .user {
+                var retained = segment
+                if segment.resolvedAttribution.identity != .user {
+                    retained.attribution = .init(source: .microphone, identity: .unresolved, method: .suspectedEcho)
+                    suspectedIndices.insert(index)
+                }
+                kept.append(retained)
+                continue
+            }
             removedSegments += 1
             removedWords += tokens.count
         }
 
-        guard removedSegments > 0 else {
+        guard removedSegments > 0 || !suspectedIndices.isEmpty else {
             return Result(transcript: transcript, removedSegments: 0, removedWords: 0)
         }
         var cleaned = transcript
         cleaned.segments = kept
         return Result(transcript: cleaned,
                       removedSegments: removedSegments,
-                      removedWords: removedWords)
+                      removedWords: removedWords, suspectedIndices: suspectedIndices)
     }
 
     private static func hasMatchingRemote(
