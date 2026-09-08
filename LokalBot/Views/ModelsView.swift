@@ -149,6 +149,7 @@ struct ModelsView: View {
                 }
             }
             .frame(maxWidth: 320)
+            .disabled(app.settings.transcriptionModel == .graniteTurbo)
             .settingTarget("settings.transcriptionLanguage", selected: app.focusedSettingID)
             TextField(
                 "Names, acronyms, and domain vocabulary",
@@ -156,6 +157,7 @@ struct ModelsView: View {
                 axis: .vertical)
                 .lineLimit(2...4)
                 .textFieldStyle(.roundedBorder)
+                .disabled(app.settings.transcriptionModel == .graniteTurbo)
                 .accessibilityIdentifier("models.transcriptionPrompt")
                 .settingTarget("settings.transcriptionPrompt", selected: app.focusedSettingID)
             Text("Optional context for Whisper and Qwen3-ASR, such as participant names, product terms, and preferred spelling. It stays on this Mac.")
@@ -563,7 +565,7 @@ struct ModelsView: View {
                 Text(app.settings.semanticSearchEnabled ? "On" : "Off — enable it in Ask")
                     .foregroundStyle(.secondary)
             }
-            Text("Finds meetings by meaning, not just keywords. Uses Qwen3-Embedding 0.6B, downloaded when semantic search is first enabled (from Ask).")
+            Text("Finds meetings by meaning. Uses Harrier 0.6B, downloaded when semantic search is first used. Your existing library is reindexed locally after the search model changes.")
                 .font(.caption).foregroundStyle(.secondary)
             Text("Meaning-based search currently indexes meeting text and text captured from your screen.")
                 .font(.caption).foregroundStyle(.secondary)
@@ -800,7 +802,10 @@ struct ModelsView: View {
             HStack(spacing: 8) {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
                     .foregroundStyle(selected ? Brand.teal : .secondary)
-                    .onTapGesture { app.settings.transcriptionModel = choice }
+                    .onTapGesture {
+                        app.settings.transcriptionModel = choice
+                        if choice == .graniteTurbo { app.settings.transcriptionLanguage = .en }
+                    }
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(displayName).font(.system(size: 12.5, weight: .medium))

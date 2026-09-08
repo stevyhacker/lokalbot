@@ -1,0 +1,70 @@
+{
+  "result": "Failed",
+  "totalTestCount": 1939,
+  "passedTests": 1920,
+  "failedTests": 14,
+  "skippedTests": 5,
+  "failures": [
+    {
+      "test": "MeetingSpeakerIdentityServiceTests/testAutomaticNamingDoesNotTrainProfilesAndCorrectionSurvivesReprocessing()",
+      "message": "failed: caught error: \"corrupt\""
+    },
+    {
+      "test": "MeetingSpeakerIdentityServiceTests/testConfirmedProfileCanNameLaterMeetingWithoutVisualEvidence()",
+      "message": "failed: caught error: \"corrupt\""
+    },
+    {
+      "test": "MeetingSpeakerEvidenceStoreTests/testDeletingLastEnrollmentSourceRemovesProfileButNotOtherMeetingsNames()",
+      "message": "failed: caught error: \"corrupt\""
+    },
+    {
+      "test": "MeetingSpeakerIdentityServiceTests/testDisablingRememberingStopsMatchingInNewMeetings()",
+      "message": "failed: caught error: \"corrupt\""
+    },
+    {
+      "test": "MeetingSpeakerEvidenceStoreTests/testEncryptedAuthenticatedChunksRecoverWithoutPersistingNamesInCleartext()",
+      "message": "Protected synthetic fixture could not be opened (NSCocoaErrorDomain 257, POSIX 1)"
+    },
+    {
+      "test": "MeetingSpeakerEvidenceStoreTests/testManualDecisionSurvivesRestartAndVisualEvidenceExpiry()",
+      "message": "failed: caught error: \"corrupt\""
+    },
+    {
+      "test": "MeetingSpeakerIdentityServiceTests/testPrivateEvidenceAndUnappliedCandidatesNeverEnterTranscriptEncoding()",
+      "message": "failed: caught error: \"corrupt\""
+    },
+    {
+      "test": "MeetingSpeakerEvidenceStoreTests/testProfilesRequireConfirmationAndForgetInvalidatesQueuedWork()",
+      "message": "failed: caught error: \"corrupt\""
+    },
+    {
+      "test": "MeetingSpeakerIdentityServiceTests/testResetSuppressesReapplicationUntilExplicitResume()",
+      "message": "failed: caught error: \"corrupt\""
+    },
+    {
+      "test": "MeetingSpeakerIdentityServiceTests/testRetriedConfirmationIsIdempotentAndCannotCreateTwoProfiles()",
+      "message": "failed: caught error: \"corrupt\""
+    },
+    {
+      "test": "MeetingSpeakerEvidenceStoreTests/testStaleAutomaticWriteCannotOverwriteCorrection()",
+      "message": "failed: caught error: \"corrupt\""
+    },
+    {
+      "test": "MeetingSpeakerIdentityServiceTests/testStaleTranscriptShapeCannotReceiveCachedOrdinalAliasesOrAUserCommand()",
+      "message": "failed: caught error: \"corrupt\""
+    },
+    {
+      "test": "MeetingSpeakerObserverLifecycleTests/testStopStartRaceDoesNotPublishLateSourceIntoEitherMeeting()",
+      "message": "XCTAssertEqual failed: (\"nil\") is not equal to (\"Optional(0)\")"
+    },
+    {
+      "test": "MeetingSpeakerIdentityServiceTests/testUserCanCorrectOneLabelAfterACleanSplitWithoutChangingTheOtherVoice()",
+      "message": "failed: caught error: \"corrupt\""
+    }
+  ],
+  "independent_probe": {
+    "atomic_write": "readable",
+    "completeFileProtectionUnlessOpen": "NSCocoaErrorDomain 257 / NSPOSIXErrorDomain 1",
+    "same_result_outside_workspace_sandbox": true
+  }
+}

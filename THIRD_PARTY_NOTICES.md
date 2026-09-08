@@ -17,6 +17,7 @@ the vendor fetch scripts, and `AgentRuntimeManifest`.
 | LaunchAtLogin-Modern | MIT | https://github.com/sindresorhus/LaunchAtLogin-Modern |
 | swift-argument-parser, swift-log, SwiftNIO and related Apple Swift packages | Apache-2.0 | https://github.com/apple |
 | MLX Swift | MIT | https://github.com/ml-explore/mlx-swift |
+| mlx-audio Granite 5 inference and audio frontend (adapted to Swift) | MIT | https://github.com/Blaizzy/mlx-audio/tree/0d3ad3c58220a0ceb4b09b07734b7ba07439d420/mlx_audio/stt/models/granite_speech5_ctc |
 | Hugging Face Swift libraries | Apache-2.0 | https://github.com/huggingface |
 | Hummingbird and related packages | Apache-2.0 | https://github.com/hummingbird-project |
 | EventSource | MIT | https://github.com/mattt/EventSource |
@@ -35,6 +36,8 @@ commercial-use revenue threshold and redistribution notice obligations; users
 outside those terms must obtain a separate license from Liquid AI.
 
 ## MIT License
+
+mlx-audio portions: Copyright (c) 2024 Prince Canuma.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in

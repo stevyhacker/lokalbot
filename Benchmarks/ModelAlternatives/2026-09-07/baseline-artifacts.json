@@ -1,0 +1,32 @@
+[
+  {
+    "file": "Qwen3.5-4B-Q4_K_M.gguf",
+    "path": "/Users/0xmithrandir/Library/Application Support/me.dotenv.LokalBot/models/Qwen3.5-4B-Q4_K_M.gguf",
+    "bytes": 2740937888,
+    "sha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4"
+  },
+  {
+    "file": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+    "path": "/Users/0xmithrandir/Library/Application Support/me.dotenv.LokalBot/models/Qwen3-Embedding-0.6B-Q8_0.gguf",
+    "bytes": 639150592,
+    "sha256": "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439"
+  },
+  {
+    "file": "granite-speech-4.1-2b-Q4_K_M.gguf",
+    "path": "/Users/0xmithrandir/Library/Application Support/me.dotenv.LokalBot/granite-speech/4.1-2b/granite-speech-4.1-2b-Q4_K_M.gguf",
+    "bytes": 1139247200,
+    "sha256": "d18e3e79826c4f0fa6734eb05d2db3f06baccbcd5791a83653f946b3178b35d8"
+  },
+  {
+    "file": "granite-speech-4.1-2b-Q8_0.gguf",
+    "path": "/Users/0xmithrandir/Library/Application Support/me.dotenv.LokalBot/granite-speech/4.1-2b/granite-speech-4.1-2b-Q8_0.gguf",
+    "bytes": 1956154944,
+    "sha256": "87320ee80cc6e638837bd2e9b7920252a87148613930bcdc11fcafad0b00beea"
+  },
+  {
+    "file": "mmproj-model-f16.gguf",
+    "path": "/Users/0xmithrandir/Library/Application Support/me.dotenv.LokalBot/granite-speech/4.1-2b/mmproj-model-f16.gguf",
+    "bytes": 1159354752,
+    "sha256": "0d3615076cbe1d35c3f60c43a60a4047b3e2eeee1b2c233580be60186faab5c5"
+  }
+]

@@ -136,7 +136,7 @@ enum ScreenSearchRanker {
 }
 
 /// M6 semantic layer (design §4.1): transcript/summary chunks embedded with
-/// Qwen3-Embedding 0.6B GGUF, served by the second llama-server instance.
+/// Harrier 0.6B GGUF, served by the second llama-server instance.
 /// Vectors live in SQLite; query = brute-force cosine (normalized dot) —
 /// instant at personal-library scale, no extra dependency.
 @MainActor
@@ -160,16 +160,16 @@ final class EmbeddingIndex {
         var id: Int64 { snapshotID }
     }
 
-    private static let modelID = "qwen3-embedding-0.6b-q8"
+    private static let modelID = "harrier-oss-v1-0.6b-q8"
     /// Persisted separately from the server-facing model name. Any change to
     /// pooling, prompting, or chunking must advance this value so vectors made
     /// under incompatible contracts are discarded before search resumes.
-    nonisolated static let indexVersion = "qwen3-embedding-0.6b-q8-last-chunks-v2"
-    nonisolated private static let modelFile = "Qwen3-Embedding-0.6B-Q8_0.gguf"
-    nonisolated private static let modelBytes: Int64 = 639_150_592
-    nonisolated private static let modelSHA256 = "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439"
+    nonisolated static let indexVersion = "harrier-oss-v1-0.6b-q8-last-chunks-v1"
+    nonisolated private static let modelFile = "harrier-oss-v1-0.6b.Q8_0.gguf"
+    nonisolated private static let modelBytes: Int64 = 639_448_320
+    nonisolated private static let modelSHA256 = "ba2c9408f82cfdb73aaf70aaea9f125f3fb24c5e76ce0efb469e1530e5ec53e4"
     nonisolated private static let modelURL =
-        "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/370f27d7550e0def9b39c1f16d3fbaa13aa67728/Qwen3-Embedding-0.6B-Q8_0.gguf"
+        "https://huggingface.co/mradermacher/harrier-oss-v1-0.6b-GGUF/resolve/d79decec1ab9442e969e79804515b9c31683d30e/harrier-oss-v1-0.6b.Q8_0.gguf"
     private static let documentPrefix = "Document for meeting search: "
     private static let queryPrefix = """
         Instruct: Retrieve relevant meeting transcript and summary chunks for the user's query.

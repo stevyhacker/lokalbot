@@ -78,6 +78,8 @@ struct TranscriptionModelStore {
                 && ModelFileValidator.looksLikeGGUF(GraniteSpeechEngine.projectorURL(
                     configuration: graniteConfiguration,
                     appSupport: environment.appSupport))
+        case .graniteTurbo:
+            return GraniteTurboEngine.isDownloaded(appSupport: environment.appSupport)
         case .whisperLarge:
             return whisperModelDirectories(environment: environment).contains { directory in
                 requiredFilesPresent(
@@ -129,6 +131,8 @@ struct TranscriptionModelStore {
             [GraniteSpeechEngine.modelRoot(
                 configuration: graniteConfiguration,
                 appSupport: environment.appSupport)]
+        case .graniteTurbo:
+            [GraniteTurboEngine.modelRoot(appSupport: environment.appSupport)]
         case .whisperLarge:
             whisperModelDirectories(environment: environment)
         case .cohere:

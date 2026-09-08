@@ -1,0 +1,279 @@
+{
+  "model": "qwen",
+  "cases": [
+    {
+      "seconds": 5.348969875019975,
+      "text": "",
+      "reasoning": "Thinking Process:\n\n1.  **Analyze the Request:**\n    *   **Recipient:** Ana.\n    *   **Topic:** Review meeting reschedule.\n    *   **New Time:** Thursday at 15:30.\n    *   **Old Time (implied):** Friday (since the prompt says \"not Friday\").\n    *   **Action Item:** Bring the cap table.\n    *   **Constraint 1:** Do not invent a reason for the move.\n    *   **Constraint 2:** Preserve meaning, names, numbers, and uncertainty (if any).\n    *   **Constraint 3:** Output only the requested text (the email).\n    *   **Language:** English (implied by the prompt).\n\n2.  **Drafting the Content:**\n    *   Subject Line: Needs to be clear. \"Review Reschedule\" or similar.\n    *   Salutation: Hi Ana,\n    *   Body:\n        *   State the change: The review has moved to Thursday at 15:30.\n        *   Clarify the cancellation: Not Friday.\n        *   Request: Please bring the cap table.\n        *   Tone: Professional but concise.\n    *   Closing: Best regards, [My Name].\n\n3.  **Refining for Constraints:**\n    *   *Constraint Check:* Did I invent a reason? No.\n    *   *Constraint Check:* Did I preserve names? Yes (Ana).\n    *   *Constraint Check:* Did I preserve numbers? Yes (Thursday, 15:30).\n    *   *Constraint Check:* Did I preserve meaning? Yes (move, cap table).\n    *   *Constraint Check:* Output only the text.\n\n4.  **Drafting the Email:**\n    Subject: Review Reschedule\n\n    Hi Ana,\n\n    Just a quick note to confirm the review has moved to Thursday at 15:30, not Friday.\n\n    Please bring the cap table.\n\n    Best,\n    [My Name]\n\n5.  **Final Review:**\n    *   Is it concise? Yes.\n    *   Is it an email? Yes.\n    *   Are all instructions met? Yes.\n\n    *Self-Correction on \"Output only the requested text\":* Usually, this means no meta-commentary like \"Here is the email:\". Just the email",
+      "finish_reason": "length",
+      "usage": {
+        "completion_tokens": 512,
+        "prompt_tokens": 86,
+        "total_tokens": 598,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 86,
+        "prompt_ms": 143.054,
+        "prompt_per_token_ms": 1.6634186046511628,
+        "prompt_per_second": 601.171585555105,
+        "predicted_n": 512,
+        "predicted_ms": 5189.687,
+        "predicted_per_token_ms": 10.136107421875,
+        "predicted_per_second": 98.6572022551649
+      },
+      "request_overrides": {
+        "reasoning_effort": "none"
+      },
+      "id": "email",
+      "kind": "compose-explicit-no-reasoning",
+      "required_strings": [
+        "Thursday",
+        "15:30",
+        "cap table"
+      ]
+    },
+    {
+      "seconds": 5.381721290992573,
+      "text": "",
+      "reasoning": "Thinking Process:\n\n1.  **Analyze the Request:**\n    *   Task: Clean up a dictation transcript.\n    *   Constraint 1: Do not change the meaning.\n    *   Constraint 2: Preserve names, numbers, and uncertainty.\n    *   Constraint 3: Draft concise messages.\n    *   Constraint 4: Follow the requested output language (English).\n    *   Constraint 5: Output *only* the requested text (no explanations, no markdown blocks unless part of the text, but usually \"Output only the requested text\" means raw text).\n\n2.  **Analyze the Input:**\n    *   Input: \"the cap is two point five million USDC not five million and the quote expires at fourteen thirty UTC.\"\n    *   Meaning: The maximum amount (cap) is $2.5 million USDC, not $5 million. The quote has an expiration time of 14:30 UTC.\n    *   Issues to fix:\n        *   \"two point five million\" -> \"2.5 million\" (standardizing numbers).\n        *   \"USDC\" -> Keep as is (currency).\n        *   \"not five million\" -> Keep as is (clarification).\n        *   \"fourteen thirty UTC\" -> \"14:30 UTC\" (standardizing time).\n        *   Grammar/Flow: \"The cap is...\" is fine. \"and the quote expires...\" is fine.\n\n3.  **Drafting the Cleanup:**\n    *   Original: \"the cap is two point five million USDC not five million and the quote expires at fourteen thirty UTC.\"\n    *   Cleaned: \"The cap is 2.5 million USDC, not 5 million, and the quote expires at 14:30 UTC.\"\n    *   Check constraints:\n        *   Meaning preserved? Yes.\n        *   Names preserved? Yes (USDC, UTC).\n        *   Numbers preserved? Yes (2.5 million, 5 million, 14:30).\n        *   Concise? Yes.\n        *   Language? English.\n        *   Output only text? Yes.\n\n4.  **Refining for \"Concise Messages\":**\n    *   The prompt asks to \"draft concise messages\". The input is a single sentence. I should make it a",
+      "finish_reason": "length",
+      "usage": {
+        "completion_tokens": 512,
+        "prompt_tokens": 75,
+        "total_tokens": 587,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 75,
+        "prompt_ms": 141.532,
+        "prompt_per_token_ms": 1.8870933333333335,
+        "prompt_per_second": 529.9154961422151,
+        "predicted_n": 512,
+        "predicted_ms": 5222.69,
+        "predicted_per_token_ms": 10.20056640625,
+        "predicted_per_second": 98.03377186851986
+      },
+      "request_overrides": {
+        "reasoning_effort": "none"
+      },
+      "id": "numbers",
+      "kind": "compose-explicit-no-reasoning",
+      "required_strings": [
+        "2.5",
+        "USDC",
+        "14:30"
+      ]
+    },
+    {
+      "seconds": 5.373154208005872,
+      "text": "",
+      "reasoning": "Thinking Process:\n\n1.  **Analyze the Request:**\n    *   Task: Clean up a dictation note.\n    *   Input: \"Jelena will test LokalBot and OpenRouter after the CCIP fee quote succeeds.\"\n    *   Constraints:\n        *   Preserve meaning.\n        *   Preserve names (Jelena).\n        *   Preserve acronyms (LokalBot, OpenRouter, CCIP).\n        *   Draft concise messages.\n        *   Output only the requested text (no explanations, no markdown blocks unless part of the text, but usually \"Output only the requested text\" means just the cleaned text).\n        *   Follow the requested output language (English).\n\n2.  **Analyze the Input Note:**\n    *   \"Jelena will test LokalBot and OpenRouter after the CCIP fee quote succeeds.\"\n    *   This is already quite concise and clear.\n    *   \"Clean up\" usually implies fixing grammar, flow, or removing filler words if present.\n    *   The input sentence is grammatically correct and clear.\n    *   However, sometimes \"dictation\" notes have slight awkwardness. \"after the CCIP fee quote succeeds\" is a bit wordy.\n    *   Possible improvements for conciseness: \"Jelena will test LokalBot and OpenRouter once the CCIP fee quote succeeds.\" or \"Jelena will test LokalBot and OpenRouter pending CCIP fee quote success.\"\n    *   But the instruction says \"Preserve meaning, names, numbers and uncertainty.\"\n    *   The original sentence is already clean. Over-editing might change the nuance.\n    *   Let's look for potential \"dictation\" artifacts. \"Jelena will test LokalBot and OpenRouter after the CCIP fee quote succeeds.\"\n    *   Is there anything to clean up?\n    *   Maybe \"after the CCIP fee quote succeeds\" -> \"once the CCIP fee quote succeeds\" (slightly more formal/professional).\n    *   Or keep it as is if it's already clean.\n    *   Actually, looking at the instruction \"Clean up this note\", it implies there might be something to fix. But the input is very clean.\n    *   Perhaps the user wants it formatted as a task or status update? No, it says \"draft concise messages\".\n    *   Let's try to",
+      "finish_reason": "length",
+      "usage": {
+        "completion_tokens": 512,
+        "prompt_tokens": 73,
+        "total_tokens": 585,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 73,
+        "prompt_ms": 141.723,
+        "prompt_per_token_ms": 1.9414109589041098,
+        "prompt_per_second": 515.0892939043063,
+        "predicted_n": 512,
+        "predicted_ms": 5213.995,
+        "predicted_per_token_ms": 10.183583984375,
+        "predicted_per_second": 98.19725565521256
+      },
+      "request_overrides": {
+        "reasoning_effort": "none"
+      },
+      "id": "names",
+      "kind": "compose-explicit-no-reasoning",
+      "required_strings": [
+        "Jelena",
+        "LokalBot",
+        "OpenRouter",
+        "CCIP"
+      ]
+    },
+    {
+      "seconds": 5.362410583009478,
+      "text": "",
+      "reasoning": "Thinking Process:\n\n1.  **Analyze the Request:**\n    *   Task: Edit dictation and draft concise messages.\n    *   Constraint 1: Preserve meaning, names, numbers, and uncertainty.\n    *   Constraint 2: Follow the requested output language (English).\n    *   Constraint 3: Output *only* the requested text (a corrected sentence).\n    *   Input Sentence: \"Please send the report to ana dot petrovic at example dot com before Tuesday.\"\n\n2.  **Identify Issues in Input:**\n    *   \"ana dot petrovic\": This is a placeholder representation of an email address (ana.petrovic@example.com). The \"dot\" should be replaced with a period.\n    *   \"example dot com\": This is another placeholder representation of a domain (example.com). The \"dot\" should be replaced with a period.\n    *   \"before Tuesday\": This is slightly ambiguous regarding the specific day, but the instruction says \"Preserve... uncertainty\". However, \"Tuesday\" is a specific day of the week. If the original dictation had \"before Tuesday\", it implies a deadline. I should keep \"Tuesday\" as is, but fix the email formatting.\n    *   Capitalization: \"ana\" should likely be capitalized as \"Ana\" (assuming it's a name). \"example\" should be capitalized as \"Example\" (standard domain naming convention, though often lowercase in URLs, in a sentence it's often capitalized or kept lowercase depending on style. Usually, email addresses are kept as typed, but \"Ana Petrovic\" is a name). Let's look at standard email formatting in sentences. Usually, it's \"Ana Petrovic at example.com\".\n    *   \"dot\": This is the main error to fix. It needs to be replaced with \".\".\n\n3.  **Determine the Correction:**\n    *   \"ana dot petrovic\" -> \"Ana Petrovic\" (assuming standard name capitalization for a message, though strict preservation might suggest keeping lowercase if it was a raw dictation. However, \"ana\" looks like a name. \"Ana Petrovic\" is the standard way to write it in a sentence).\n    *   \"at\" -> \"at\" (keep).\n    *   \"example dot com\" -> \"example.com\".\n    *   \"before Tuesday\" -> \"before Tuesday\" (keep uncertainty/specificity).\n\n    *",
+      "finish_reason": "length",
+      "usage": {
+        "completion_tokens": 512,
+        "prompt_tokens": 68,
+        "total_tokens": 580,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 68,
+        "prompt_ms": 127.828,
+        "prompt_per_token_ms": 1.8798235294117647,
+        "prompt_per_second": 531.964827737272,
+        "predicted_n": 512,
+        "predicted_ms": 5216.362,
+        "predicted_per_token_ms": 10.18820703125,
+        "predicted_per_second": 98.15269722461746
+      },
+      "request_overrides": {
+        "reasoning_effort": "none"
+      },
+      "id": "address",
+      "kind": "compose-explicit-no-reasoning",
+      "required_strings": [
+        "ana.petrovic@example.com",
+        "Tuesday"
+      ]
+    },
+    {
+      "seconds": 5.4121602500090376,
+      "text": "",
+      "reasoning": "Thinking Process:\n\n1.  **Analyze the Request:**\n    *   Input: A note (\"We might launch Monday if signing passes.\")\n    *   Task: Draft one sentence from this note.\n    *   Constraints:\n        *   Preserve meaning, names, numbers, and uncertainty.\n        *   Follow the requested output language (English).\n        *   Output only the requested text (no explanations, no meta-talk).\n        *   Specific instruction: \"Keep the uncertainty and condition. Do not announce a confirmed launch.\"\n\n2.  **Analyze the Input Note:**\n    *   Content: \"We might launch Monday if signing passes.\"\n    *   Key elements:\n        *   Action: Launch.\n        *   Time: Monday.\n        *   Condition: Signing passes.\n        *   Uncertainty: \"Might\" (conditional, not confirmed).\n    *   Goal: Rephrase or draft a sentence based on this note while adhering to the constraints (especially not confirming the launch).\n\n3.  **Drafting Options:**\n    *   Option 1: We could launch on Monday pending signing approval. (Good, keeps uncertainty)\n    *   Option 2: A launch on Monday is possible if signing passes. (Good)\n    *   Option 3: Launching Monday is contingent upon signing passing. (Good)\n    *   Option 4: We are considering launching Monday, subject to signing approval. (Good)\n\n4.  **Selecting the Best Option:**\n    *   The prompt asks to \"Draft one sentence from this note\". It implies summarizing or restating the core message.\n    *   Constraint: \"Do not announce a confirmed launch.\"\n    *   Constraint: \"Keep the uncertainty and condition.\"\n    *   Original: \"We might launch Monday if signing passes.\"\n    *   Draft: \"We might launch Monday if signing passes.\" (This is literally the note, but maybe I need to rephrase slightly to show \"drafting\" while keeping the exact meaning).\n    *   Let's try to make it sound like a message based on the note.\n    *   \"Launch on Monday is pending signing approval.\" (A bit formal)\n    *   \"We may launch Monday contingent on signing passing.\" (Stronger)\n    *   \"A Monday launch is possible if signing passes.\" (Clear)\n    *   Let",
+      "finish_reason": "length",
+      "usage": {
+        "completion_tokens": 512,
+        "prompt_tokens": 73,
+        "total_tokens": 585,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 73,
+        "prompt_ms": 142.026,
+        "prompt_per_token_ms": 1.9455616438356165,
+        "prompt_per_second": 513.9903961246532,
+        "predicted_n": 512,
+        "predicted_ms": 5249.875,
+        "predicted_per_token_ms": 10.253662109375,
+        "predicted_per_second": 97.5261315745613
+      },
+      "request_overrides": {
+        "reasoning_effort": "none"
+      },
+      "id": "uncertain",
+      "kind": "compose-explicit-no-reasoning",
+      "required_strings": [
+        "Monday",
+        "signing"
+      ]
+    },
+    {
+      "seconds": 5.409925042011309,
+      "text": "",
+      "reasoning": "Thinking Process:\n\n1.  **Analyze the Request:**\n    *   Input text: \"Jelena molim te pošalji izvještaj do četvrtka u petnaest i trideset hvala\" (Jelena, please send the report by Thursday at fifteen and thirty, thanks).\n    *   Task: Edit the dictation/draft into a concise message.\n    *   Language: Preserve the original language (Croatian/Serbian/Bosnian).\n    *   Constraint: Output *only* the requested text (the edited message).\n    *   Content requirements: Preserve meaning, names, numbers, and uncertainty.\n\n2.  **Analyze the Input Text:**\n    *   \"Jelena\" (Name)\n    *   \"molim te pošalji\" (please send) -> \"molim te\" is a bit informal/colloquial, but acceptable. \"pošalji\" is imperative.\n    *   \"izvještaj\" (report)\n    *   \"do četvrtka\" (by Thursday)\n    *   \"u petnaest i trideset\" (at fifteen and thirty) -> This is ambiguous. Does it mean 15:00 and 15:30? Or 15 and 30 (hours)? Given the context of sending a report, it likely means \"by Thursday at 15:00 and 15:30\" (two deadlines?) OR it's a typo for \"15. i 30.\" (15th and 30th? No, Thursday is a day).\n    *   Wait, \"u petnaest i trideset\" usually means \"at 15 and 30\" (15:00 and 15:30). But sending a report at two different times? Or is it \"by Thursday at 15:00 and 30\"?\n    *   Actually, looking at the phrasing \"do četvrtka u petnaest i trideset\", it sounds like a transcription error or a specific time reference. \"Petnaest\" = 15:00, \"trideset\" = 15:30.\n    *   However, the instruction says \"Preserve meaning, names, numbers and uncertainty.\"\n    *",
+      "finish_reason": "length",
+      "usage": {
+        "completion_tokens": 512,
+        "prompt_tokens": 91,
+        "total_tokens": 603,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 91,
+        "prompt_ms": 143.507,
+        "prompt_per_token_ms": 1.577,
+        "prompt_per_second": 634.1154090044388,
+        "predicted_n": 512,
+        "predicted_ms": 5248.196,
+        "predicted_per_token_ms": 10.2503828125,
+        "predicted_per_second": 97.55733208134757
+      },
+      "request_overrides": {
+        "reasoning_effort": "none"
+      },
+      "id": "bcs",
+      "kind": "compose-explicit-no-reasoning",
+      "required_strings": [
+        "Jelena",
+        "izvještaj",
+        "četvrtka",
+        "15:30"
+      ]
+    },
+    {
+      "id": "deep-anchors",
+      "kind": "long-context",
+      "input_tokens_without_template": 25506,
+      "input_characters": 106707,
+      "input_sha256": "bc9a79946c219f4a50c8baa20f90bdf754c4eb89c1ceca2c6c31cf9d26c7933b",
+      "seconds": 32.41044958302518,
+      "text": "</think>\n\n{\n  \"credential_label\": \"amber-lantern-42\",\n  \"staging_cap_usdc\": 275000,\n  \"deployment_owner\": \"Ivana Petrovic\",\n  \"migration_window\": \"Thursday at 18:45 UTC\",\n  \"rollback_release\": \"cedar-2026-09\",\n  \"maximum_fee_usdc\": 0.37\n}",
+      "reasoning": "Thinking Process:\n\n1.  **Analyze the Request:**\n    *   Input: A text archive containing many \"Update\" entries and a few specific factual statements embedded within.\n    *   Task: Extract six specific values from the archive.\n    *   Output Format: JSON.\n    *   Keys required: `credential_label`, `staging_cap_usdc`, `deployment_owner`, `migration_window`, `rollback_release`, `maximum_fee_usdc`.\n    *   Constraint: Extract *only* the explicitly specified values from the archive. Do not invent missing facts.\n\n2.  **Scan the Archive for Values:**\n    *   I need to look for strings matching the keys or contextually related information.\n\n    *   *Credential Label:*\n        *   Scanning...\n        *   Found: \"Archive credential label: amber-lantern-42.\" (Near the middle of the text, after Update 119).\n        *   Value: `amber-lantern-42`\n\n    *   *Staging Cap USDC:*\n        *   Scanning...\n        *   Found: \"The approved staging deposit cap is 275000 USDC.\" (After Update 379, before Update 381).\n        *   Value: `275000`\n\n    *   *Deployment Owner:*\n        *   Scanning...\n        *   Found: \"The deployment owner is Ivana Petrovic.\" (After Update 639, before Update 641).\n        *   Value: `Ivana Petrovic`\n\n    *   *Migration Window:*\n        *   Scanning...\n        *   Found: \"The migration window is Thursday at 18:45 UTC.\" (After Update 879, before Update 881).\n        *   Value: `Thursday at 18:45 UTC`\n\n    *   *Rollback Release:*\n        *   Scanning...\n        *   Found: \"The rollback release identifier is cedar-2026-09.\" (After Update 1099, before Update 1101).\n        *   Value: `cedar-2026-09`\n\n    *   *Maximum Fee USDC:*\n        *   Scanning...\n        *   Found: \"The maximum approved fee",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 611,
+        "prompt_tokens": 25536,
+        "total_tokens": 26147,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 25536,
+        "prompt_ms": 24629.72,
+        "prompt_per_token_ms": 0.9645097117794487,
+        "prompt_per_second": 1036.796195815462,
+        "predicted_n": 611,
+        "predicted_ms": 7749.848,
+        "predicted_per_token_ms": 12.683875613747954,
+        "predicted_per_second": 78.84025596372986
+      }
+    }
+  ],
+  "runtime": {
+    "model": "qwen",
+    "kind": "generation",
+    "runtime": "llama.cpp b10173",
+    "context": 32768,
+    "pid": 65182,
+    "model_bytes": 2740937888,
+    "arguments": [
+      "/Applications/LokalBot.app/Contents/Resources/llama-cpp/llama-server",
+      "-m",
+      "/Users/0xmithrandir/Library/Application Support/me.dotenv.LokalBot/models/Qwen3.5-4B-Q4_K_M.gguf",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "18782",
+      "-c",
+      "32768",
+      "-ngl",
+      "99",
+      "--parallel",
+      "1",
+      "--jinja",
+      "--no-webui",
+      "--api-key",
+      "<benchmark-local-token>",
+      "--reasoning",
+      "on",
+      "--cache-ram",
+      "2048"
+    ],
+    "startup_seconds": 1.6698156669735909,
+    "peak_sampled_rss_bytes": 5429362688,
+    "shutdown_returncode": 0
+  }
+}

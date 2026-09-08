@@ -444,12 +444,44 @@ final class IndexPersistenceTests: XCTestCase {
             "INSERT INTO embedded_meetings (meeting_id, source_mtime, model_id) VALUES (?1, ?2, ?3)",
             bind: [meetingID, 100.0, "qwen3-embedding-0.6b-q8"]))
 
+        // The current Qwen vectors also have 1,024 dimensions. A model change
+        // must invalidate them even though their shape matches Harrier's.
+        let lastPooledID = UUID().uuidString
+        XCTAssertTrue(database.run(
+            "INSERT INTO embeddings (meeting_id, start, text, vec) VALUES (?1, ?2, ?3, ?4)",
+            bind: [lastPooledID, 0.0, "last-pooled Qwen", Data(repeating: 1, count: 4_096)]))
+        XCTAssertTrue(database.run(
+            "INSERT INTO embedded_meetings (meeting_id, source_mtime, model_id) VALUES (?1, ?2, ?3)",
+            bind: [lastPooledID, 100.0, "qwen3-embedding-0.6b-q8-last-chunks-v2"]))
+
         let index = EmbeddingIndex(databaseURL: url, storage: StorageManager(rootURL: root))
 
         XCTAssertNotEqual(EmbeddingIndex.indexVersion, "qwen3-embedding-0.6b-q8")
         XCTAssertFalse(index.hasEmbeddings)
         XCTAssertEqual(database.firstDouble("SELECT COUNT(*) FROM embeddings"), 0)
         XCTAssertEqual(database.firstDouble("SELECT COUNT(*) FROM embedded_meetings"), 0)
+    }
+
+    func testEmbeddingModelMigrationPreservesCurrentScreenVectorsAndSourceRows() throws {
+        let url = root.appendingPathComponent("screen-model-migration.sqlite")
+        let database = try XCTUnwrap(SQLiteDatabase(url: url))
+        XCTAssertTrue(database.exec("""
+            CREATE TABLE screenshots (id INTEGER PRIMARY KEY);
+            INSERT INTO screenshots (id) VALUES (1), (2);
+            """))
+        _ = EmbeddingIndex(databaseURL: url, storage: StorageManager(rootURL: root))
+        for (id, version) in [(1, "qwen3-embedding-0.6b-q8-last-chunks-v2"), (2, EmbeddingIndex.indexVersion)] {
+            XCTAssertTrue(database.run("""
+                INSERT INTO screen_embeddings (snapshot_id, ts, app, text, vec, model_id)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                """, bind: [id, 100.0, "Tests", "retained source", Data(repeating: 1, count: 4_096), version]))
+        }
+
+        _ = EmbeddingIndex(databaseURL: url, storage: StorageManager(rootURL: root))
+
+        XCTAssertEqual(database.firstDouble("SELECT COUNT(*) FROM screenshots"), 2)
+        XCTAssertEqual(database.firstDouble("SELECT COUNT(*) FROM screen_embeddings"), 1)
+        XCTAssertTrue(database.hasRow("SELECT 1 FROM screen_embeddings WHERE snapshot_id = 2"))
     }
 
     private func writeTranscript(text: String, to url: URL,

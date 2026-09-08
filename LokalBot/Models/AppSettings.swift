@@ -172,7 +172,7 @@ struct AppSettings: Codable, Equatable {
     /// timeline; macOS Accessibility still gates window-title collection.
     var trackingEnabled: Bool = true
 
-    /// M6: embedding-based semantic search (Qwen3-Embedding, downloaded on first use).
+    /// M6: embedding-based semantic search (Harrier, downloaded on first use).
     var semanticSearchEnabled: Bool = true
 
     // M5: new installs start with activity only; text and pixels are opt-in, while

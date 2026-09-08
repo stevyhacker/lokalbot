@@ -1,0 +1,261 @@
+{
+  "model": "qwen",
+  "cases": [
+    {
+      "seconds": 0.6463139170082286,
+      "text": "Subject: Review Rescheduled to Thursday\n\nHi Ana,\n\nThe review has been moved to Thursday at 15:30, not Friday. Please bring the cap table.\n\nBest regards,\n\n[Your Name]",
+      "reasoning": "",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 46,
+        "prompt_tokens": 88,
+        "total_tokens": 134,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 88,
+        "prompt_ms": 173.339,
+        "prompt_per_token_ms": 1.9697613636363636,
+        "prompt_per_second": 507.6757106017688,
+        "predicted_n": 46,
+        "predicted_ms": 454.735,
+        "predicted_per_token_ms": 9.88554347826087,
+        "predicted_per_second": 101.15781719023167
+      },
+      "request_overrides": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      },
+      "id": "email",
+      "kind": "compose-template-disabled",
+      "required_strings": [
+        "Thursday",
+        "15:30",
+        "cap table"
+      ]
+    },
+    {
+      "seconds": 0.45776249998016283,
+      "text": "The cap is 2.5 million USDC, not 5 million, and the quote expires at 14:30 UTC.",
+      "reasoning": "",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 30,
+        "prompt_tokens": 77,
+        "total_tokens": 107,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 77,
+        "prompt_ms": 142.235,
+        "prompt_per_token_ms": 1.8472077922077923,
+        "prompt_per_second": 541.3576124020107,
+        "predicted_n": 30,
+        "predicted_ms": 295.755,
+        "predicted_per_token_ms": 9.8585,
+        "predicted_per_second": 101.43530963128265
+      },
+      "request_overrides": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      },
+      "id": "numbers",
+      "kind": "compose-template-disabled",
+      "required_strings": [
+        "2.5",
+        "USDC",
+        "14:30"
+      ]
+    },
+    {
+      "seconds": 0.344154083984904,
+      "text": "Jelena will test LokalBot and OpenRouter after the CCIP fee quote succeeds.",
+      "reasoning": "",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 19,
+        "prompt_tokens": 75,
+        "total_tokens": 94,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 75,
+        "prompt_ms": 141.541,
+        "prompt_per_token_ms": 1.8872133333333332,
+        "prompt_per_second": 529.8818010329163,
+        "predicted_n": 19,
+        "predicted_ms": 183.074,
+        "predicted_per_token_ms": 9.635473684210528,
+        "predicted_per_second": 103.78316964724647
+      },
+      "request_overrides": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      },
+      "id": "names",
+      "kind": "compose-template-disabled",
+      "required_strings": [
+        "Jelena",
+        "LokalBot",
+        "OpenRouter",
+        "CCIP"
+      ]
+    },
+    {
+      "seconds": 0.28696229099296033,
+      "text": "Please send the report to ana.petrovic@example.com before Tuesday.",
+      "reasoning": "",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 15,
+        "prompt_tokens": 70,
+        "total_tokens": 85,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 70,
+        "prompt_ms": 125.549,
+        "prompt_per_token_ms": 1.7935571428571428,
+        "prompt_per_second": 557.5512349759855,
+        "predicted_n": 15,
+        "predicted_ms": 142.859,
+        "predicted_per_token_ms": 9.523933333333334,
+        "predicted_per_second": 104.99863501774476
+      },
+      "request_overrides": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      },
+      "id": "address",
+      "kind": "compose-template-disabled",
+      "required_strings": [
+        "ana.petrovic@example.com",
+        "Tuesday"
+      ]
+    },
+    {
+      "seconds": 0.23996158398222178,
+      "text": "We might launch Monday if signing passes.",
+      "reasoning": "",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 9,
+        "prompt_tokens": 75,
+        "total_tokens": 84,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 75,
+        "prompt_ms": 141.443,
+        "prompt_per_token_ms": 1.8859066666666668,
+        "prompt_per_second": 530.2489341996422,
+        "predicted_n": 9,
+        "predicted_ms": 81.879,
+        "predicted_per_token_ms": 9.097666666666667,
+        "predicted_per_second": 109.91829406807605
+      },
+      "request_overrides": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      },
+      "id": "uncertain",
+      "kind": "compose-template-disabled",
+      "required_strings": [
+        "Monday",
+        "signing"
+      ]
+    },
+    {
+      "seconds": 0.49729720799950883,
+      "text": "Jelena, molim te pošalji izvještaj do četvrtka u 15 i 30 sati. Hvala.",
+      "reasoning": "",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 34,
+        "prompt_tokens": 93,
+        "total_tokens": 127,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 93,
+        "prompt_ms": 142.855,
+        "prompt_per_token_ms": 1.5360752688172041,
+        "prompt_per_second": 651.0097651464772,
+        "predicted_n": 34,
+        "predicted_ms": 335.236,
+        "predicted_per_token_ms": 9.859882352941176,
+        "predicted_per_second": 101.42108842725722
+      },
+      "request_overrides": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      },
+      "id": "bcs",
+      "kind": "compose-template-disabled",
+      "required_strings": [
+        "Jelena",
+        "izvještaj",
+        "četvrtka",
+        "15:30"
+      ]
+    }
+  ],
+  "runtime": {
+    "model": "qwen",
+    "kind": "generation",
+    "runtime": "llama.cpp b10173",
+    "context": 32768,
+    "pid": 65378,
+    "model_bytes": 2740937888,
+    "arguments": [
+      "/Applications/LokalBot.app/Contents/Resources/llama-cpp/llama-server",
+      "-m",
+      "/Users/0xmithrandir/Library/Application Support/me.dotenv.LokalBot/models/Qwen3.5-4B-Q4_K_M.gguf",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "18782",
+      "-c",
+      "32768",
+      "-ngl",
+      "99",
+      "--parallel",
+      "1",
+      "--jinja",
+      "--no-webui",
+      "--api-key",
+      "<benchmark-local-token>",
+      "--reasoning",
+      "on",
+      "--cache-ram",
+      "2048"
+    ],
+    "startup_seconds": 0.8296146250213496,
+    "peak_sampled_rss_bytes": 4934434816,
+    "shutdown_returncode": 0
+  }
+}

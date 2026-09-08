@@ -1,0 +1,5 @@
+{
+  "implementation": "transformers 5.16.1 / models.whisper.english_normalizer.EnglishTextNormalizer",
+  "spelling_source": "https://raw.githubusercontent.com/openai/whisper/main/whisper/normalizers/english.json",
+  "spelling_sha256": "6607f948be9824d2e1b2fa2223cd94c06c45afa4e05ea0e3d5e1f2bdffde2465"
+}

@@ -1,0 +1,32 @@
+{
+  "model": "granite4-q4",
+  "kind": "asr",
+  "runtime": "llama.cpp b10173",
+  "context": 4096,
+  "pid": 63710,
+  "model_bytes": 1139247200,
+  "arguments": [
+    "/Applications/LokalBot.app/Contents/Resources/llama-cpp/llama-server",
+    "-m",
+    "/Users/0xmithrandir/Library/Application Support/me.dotenv.LokalBot/granite-speech/4.1-2b/granite-speech-4.1-2b-Q4_K_M.gguf",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "18782",
+    "-c",
+    "4096",
+    "-ngl",
+    "99",
+    "--parallel",
+    "1",
+    "--jinja",
+    "--no-webui",
+    "--api-key",
+    "<benchmark-local-token>",
+    "--mmproj",
+    "/Users/0xmithrandir/Library/Application Support/me.dotenv.LokalBot/granite-speech/4.1-2b/mmproj-model-f16.gguf"
+  ],
+  "startup_seconds": 1.2698198750149459,
+  "peak_sampled_rss_bytes": 3156951040,
+  "shutdown_returncode": 0
+}

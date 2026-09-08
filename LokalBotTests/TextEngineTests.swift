@@ -60,6 +60,34 @@ final class TextEngineTests: XCTestCase {
 
         XCTAssertEqual(body["thinking_budget_tokens"] as? Int, 0)
         XCTAssertEqual(body["temperature"] as? Double, 0.2)
+        XCTAssertEqual(
+            (body["chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool,
+            false)
+    }
+
+    func testDisabledThinkingPreservesOtherTemplateArguments() {
+        var body: [String: Any] = [
+            "chat_template_kwargs": ["enable_thinking": true, "custom_argument": "keep"],
+        ]
+        OpenAICompatibleEngine.applyGenerationOptions(
+            to: &body, options: TextGenerationOptions(maxTokens: 512),
+            defaultThinkingBudgetTokens: 0, dialect: .llamaServer, model: "local")
+
+        let template = body["chat_template_kwargs"] as? [String: Any]
+        XCTAssertEqual(template?["enable_thinking"] as? Bool, false)
+        XCTAssertEqual(template?["custom_argument"] as? String, "keep")
+    }
+
+    func testPositiveThinkingBudgetPreservesTemplatePolicy() {
+        var body: [String: Any] = ["chat_template_kwargs": ["custom_argument": "keep"]]
+        OpenAICompatibleEngine.applyGenerationOptions(
+            to: &body, options: TextGenerationOptions(maxTokens: 512, reasoningBudgetTokens: 128),
+            defaultThinkingBudgetTokens: 0, dialect: .llamaServer, model: "local")
+
+        let template = body["chat_template_kwargs"] as? [String: Any]
+        XCTAssertNil(template?["enable_thinking"])
+        XCTAssertEqual(template?["custom_argument"] as? String, "keep")
+        XCTAssertEqual(body["thinking_budget_tokens"] as? Int, 128)
     }
 
     func testGenericExternalEngineLeavesReasoningAtServerDefault() {

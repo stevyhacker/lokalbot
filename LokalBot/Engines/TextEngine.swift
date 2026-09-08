@@ -671,6 +671,14 @@ struct OpenAICompatibleEngine: TextEngine {
             let nonnegative = max(0, requested)
             let effective = maxTokens.map { min(nonnegative, $0 / 2) } ?? nonnegative
             body["thinking_budget_tokens"] = effective
+            if effective == 0 {
+                // A zero budget alone still opens Qwen's thinking turn in the
+                // bundled runtime and can exhaust short replies before any
+                // visible text. Disable that turn in the chat template too.
+                var template = body["chat_template_kwargs"] as? [String: Any] ?? [:]
+                template["enable_thinking"] = false
+                body["chat_template_kwargs"] = template
+            }
 
         case .generic:
             if let maxTokens { body["max_tokens"] = maxTokens }

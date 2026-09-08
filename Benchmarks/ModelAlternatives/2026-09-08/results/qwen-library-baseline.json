@@ -1,0 +1,200 @@
+{
+  "model": "Qwen3-Embedding-0.6B-Q8_0",
+  "vectors": 2328,
+  "document_seconds": 49.858603660424706,
+  "query_median_seconds": 0.01177156248013489,
+  "rows": [
+    {
+      "id": "q01-en",
+      "language": "en",
+      "rank": 2,
+      "seconds": 0.011987917008809745
+    },
+    {
+      "id": "q01-bcs",
+      "language": "bcs",
+      "rank": 1,
+      "seconds": 0.011799415980931371
+    },
+    {
+      "id": "q02-en",
+      "language": "en",
+      "rank": 2,
+      "seconds": 0.011670833977404982
+    },
+    {
+      "id": "q02-bcs",
+      "language": "bcs",
+      "rank": 1,
+      "seconds": 0.011568083020392805
+    },
+    {
+      "id": "q03-en",
+      "language": "en",
+      "rank": 1,
+      "seconds": 0.011332875001244247
+    },
+    {
+      "id": "q03-bcs",
+      "language": "bcs",
+      "rank": 1,
+      "seconds": 0.01305687497369945
+    },
+    {
+      "id": "q04-en",
+      "language": "en",
+      "rank": 1,
+      "seconds": 0.01129091699840501
+    },
+    {
+      "id": "q04-bcs",
+      "language": "bcs",
+      "rank": 1,
+      "seconds": 0.012599083012901247
+    },
+    {
+      "id": "q05-en",
+      "language": "en",
+      "rank": 1,
+      "seconds": 0.011179207998793572
+    },
+    {
+      "id": "q05-bcs",
+      "language": "bcs",
+      "rank": 1,
+      "seconds": 0.012885042000561953
+    },
+    {
+      "id": "q06-en",
+      "language": "en",
+      "rank": 3,
+      "seconds": 0.012012582970783114
+    },
+    {
+      "id": "q06-bcs",
+      "language": "bcs",
+      "rank": 1,
+      "seconds": 0.011781791981775314
+    },
+    {
+      "id": "q07-en",
+      "language": "en",
+      "rank": 1,
+      "seconds": 0.011806875001639128
+    },
+    {
+      "id": "q07-bcs",
+      "language": "bcs",
+      "rank": 1,
+      "seconds": 0.01319108298048377
+    },
+    {
+      "id": "q08-en",
+      "language": "en",
+      "rank": 3,
+      "seconds": 0.011760000023059547
+    },
+    {
+      "id": "q08-bcs",
+      "language": "bcs",
+      "rank": 3,
+      "seconds": 0.011665624973829836
+    },
+    {
+      "id": "q09-en",
+      "language": "en",
+      "rank": 1,
+      "seconds": 0.01174679200630635
+    },
+    {
+      "id": "q09-bcs",
+      "language": "bcs",
+      "rank": 1,
+      "seconds": 0.011755915998946875
+    },
+    {
+      "id": "q10-en",
+      "language": "en",
+      "rank": 1,
+      "seconds": 0.011626458028331399
+    },
+    {
+      "id": "q10-bcs",
+      "language": "bcs",
+      "rank": 1,
+      "seconds": 0.012984625005628914
+    },
+    {
+      "id": "q11-en",
+      "language": "en",
+      "rank": 1,
+      "seconds": 0.011739209003280848
+    },
+    {
+      "id": "q11-bcs",
+      "language": "bcs",
+      "rank": 2,
+      "seconds": 0.013112500018905848
+    },
+    {
+      "id": "q12-en",
+      "language": "en",
+      "rank": 1,
+      "seconds": 0.011649624968413264
+    },
+    {
+      "id": "q12-bcs",
+      "language": "bcs",
+      "rank": 1,
+      "seconds": 0.013028209039475769
+    },
+    {
+      "id": "q13-en",
+      "language": "en",
+      "rank": 1,
+      "seconds": 0.011711375031154603
+    },
+    {
+      "id": "q13-bcs",
+      "language": "bcs",
+      "rank": 1,
+      "seconds": 0.012918707972858101
+    },
+    {
+      "id": "q14-en",
+      "language": "en",
+      "rank": 2,
+      "seconds": 0.011663374956697226
+    },
+    {
+      "id": "q14-bcs",
+      "language": "bcs",
+      "rank": 0,
+      "seconds": 0.013081584009341896
+    },
+    {
+      "id": "q15-en",
+      "language": "en",
+      "rank": 1,
+      "seconds": 0.011761332978494465
+    },
+    {
+      "id": "q15-bcs",
+      "language": "bcs",
+      "rank": 1,
+      "seconds": 0.011402416974306107
+    },
+    {
+      "id": "q16-en",
+      "language": "en",
+      "rank": 1,
+      "seconds": 0.011885208950843662
+    },
+    {
+      "id": "q16-bcs",
+      "language": "bcs",
+      "rank": 1,
+      "seconds": 0.013086833991110325
+    }
+  ]
+}

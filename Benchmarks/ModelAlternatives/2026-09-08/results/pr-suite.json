@@ -1,0 +1,21 @@
+{
+  "base_sha": "879314487d32f4e2ae3f8f126aabc432cc07b9a6",
+  "scope": "Standalone model changes on master; speaker-identification PR #66 is excluded.",
+  "command": "Scripts/unit-tests.sh",
+  "result": "Passed",
+  "totalTestCount": 1892,
+  "passedTests": 1886,
+  "failedTests": 0,
+  "skippedTests": 6,
+  "source_fingerprints": "../environment.json",
+  "swiftlint": {
+    "command": "swiftlint lint --strict --no-cache --quiet",
+    "result": "Passed"
+  },
+  "artifact_validation": {
+    "python_ast": "Passed",
+    "json_parse": "Passed",
+    "benchmarked_implementation_fingerprints": "7/7 identical"
+  },
+  "local_UI_tests_run": false
+}

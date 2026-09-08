@@ -1,0 +1,18 @@
+{
+  "source_base": "cefea2d7f9ef41a3222d9f39ffdebd78c3081286",
+  "source_sha256": {
+    "LokalBot/Engines/GraniteTurboEngine.swift": "710c85485c71c3ce1b0c820fb4d484a71f9e61a5ff37552b8802ddcf88876800",
+    "LokalBot/Engines/GraniteTurboModel.swift": "3b13371e9df3a01e53e91bcecaead3caf082f308653fc95b18513cca4a019995",
+    "LokalBot/Engines/GraniteTurboFeatures.swift": "f8b2e8f3f1a5698f3ffa2cae9fb950e7c7309df5da75084c1bf8fa49883c0b22",
+    "LokalBot/Engines/GraniteTurboTokenizer.swift": "242fee4e8f9c5f2a3d7dd31060b5f49a6de7a752491348d0b64d993090da925e",
+    "LokalBot/Engines/TextEngine.swift": "2309127febdba084ff63156fdfe341dab18fafd0dbf77c98b2fe519af5206a8a",
+    "LokalBot/Services/EmbeddingIndex.swift": "a085bd68da368790a674bd9633c067dcf5f9639c139f61aa147298026aaee53b",
+    "LokalBot/Engines/TranscriptionEngine.swift": "64dedb693aac91b274583ad0d0f9a19c583a5112225b56725d08a24f78fa135c"
+  },
+  "mlx_reference_commit": "0d3ad3c58220a0ceb4b09b07734b7ba07439d420",
+  "model_pins": "../2026-09-07/models-manifest.json",
+  "llama_runtime": "b10173",
+  "MLX_Swift": "0.31.4",
+  "local_UI_tests_run": false,
+  "live_meeting_library_modified": false
+}

@@ -1,0 +1,73 @@
+[
+  {
+    "model": "openbmb/MiniCPM5-2B-GGUF",
+    "revision": "8ffce18336801a527a4385b318e70822fc0f876c",
+    "alias": "minicpm5",
+    "files": [
+      {
+        "file": "MiniCPM5-2B-Q4_K_M.gguf",
+        "sha256": "ec2d5801640099e97d8d7e8003ad4d81f336e757811f03a26173dddf386602fd",
+        "bytes": 1561318368
+      }
+    ]
+  },
+  {
+    "model": "mradermacher/harrier-oss-v1-0.6b-GGUF",
+    "revision": "d79decec1ab9442e969e79804515b9c31683d30e",
+    "alias": "harrier",
+    "files": [
+      {
+        "file": "harrier-oss-v1-0.6b.Q8_0.gguf",
+        "sha256": "ba2c9408f82cfdb73aaf70aaea9f125f3fb24c5e76ce0efb469e1530e5ec53e4",
+        "bytes": 639448320
+      }
+    ]
+  },
+  {
+    "model": "ibm-granite/granite-speech-5.0-470m-turboctc",
+    "revision": "18ca3c1de6cd092b5a30c39fb0f04550b38ed1a0",
+    "alias": "granite5",
+    "files": [
+      {
+        "file": "README.md",
+        "sha256": "31558c45604b0e19c353599394368831f36f8f7cc55a353f53f680f6ab0ad65c",
+        "bytes": 7359
+      },
+      {
+        "file": "config.json",
+        "sha256": "41b72a7596bebe5106573f9e0f64c6b0acdac145373386946e7d1ef277fe0c9f",
+        "bytes": 926
+      },
+      {
+        "file": "generation_config.json",
+        "sha256": "e9eef52b79e24b329889157f75e02aea236c429552a4a986dd5fffb349809208",
+        "bytes": 158
+      },
+      {
+        "file": "model.safetensors",
+        "sha256": "8b98a8c34fd5fcb081caef719638eded31bb6d197d62053eefc5c1703aaf1ad4",
+        "bytes": 946180704
+      },
+      {
+        "file": "preprocessor_config.json",
+        "sha256": "4ff826570a74cd33092d467b16eb1c5c22c46c6f1b78a35aed1decdf90f4a3fe",
+        "bytes": 327
+      },
+      {
+        "file": "processor_config.json",
+        "sha256": "3d7c14d3ed7a5218b2fd6797eaa5b3aa615c681938bd1734a510d7a6f8c1b9fb",
+        "bytes": 430
+      },
+      {
+        "file": "tokenizer.json",
+        "sha256": "3ee80b02f0119a040a70eb909c20fac8271c173d7e71d195a3b35f77780061e6",
+        "bytes": 1137492
+      },
+      {
+        "file": "tokenizer_config.json",
+        "sha256": "5c7ddc8d2a6b0f6b009e0a7629af67f5d29a98d5e722fe435cf1be2da84c778f",
+        "bytes": 222
+      }
+    ]
+  }
+]

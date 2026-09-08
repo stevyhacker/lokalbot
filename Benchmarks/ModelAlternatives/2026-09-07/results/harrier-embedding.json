@@ -1,0 +1,1347 @@
+{
+  "documents": 110,
+  "queries": 48,
+  "cases": [
+    {
+      "contract": "app-prefix",
+      "summary": {
+        "all": {
+          "n": 48,
+          "top1": 40,
+          "top5": 47,
+          "mrr": 0.9031369731800766
+        },
+        "en": {
+          "n": 24,
+          "top1": 22,
+          "top5": 24,
+          "mrr": 0.9583333333333334
+        },
+        "bcs": {
+          "n": 24,
+          "top1": 18,
+          "top5": 23,
+          "mrr": 0.8479406130268199
+        }
+      },
+      "query_p50_seconds": 0.01185906250611879,
+      "document_total_seconds": 2.004329955088906,
+      "document_p50_seconds": 0.014330374979181215,
+      "rows": [
+        {
+          "id": "offline-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "offline",
+            "privacy",
+            "local-distractor-44",
+            "local-distractor-17",
+            "pooling"
+          ],
+          "query_seconds": 0.016661625006236136
+        },
+        {
+          "id": "offline-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "offline",
+            "local-distractor-44",
+            "local-distractor-42",
+            "privacy",
+            "review"
+          ],
+          "query_seconds": 0.01482425001449883
+        },
+        {
+          "id": "release-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "release",
+            "rollback",
+            "distractor-12",
+            "distractor-35",
+            "distractor-13"
+          ],
+          "query_seconds": 0.012865750002674758
+        },
+        {
+          "id": "release-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "release",
+            "rollback",
+            "distractor-35",
+            "distractor-12",
+            "distractor-13"
+          ],
+          "query_seconds": 0.012814750021789223
+        },
+        {
+          "id": "audio-en",
+          "language": "en",
+          "rank": 2,
+          "top5": [
+            "streaming",
+            "audio",
+            "speaker",
+            "distractor-35",
+            "distractor-13"
+          ],
+          "query_seconds": 0.012198875017929822
+        },
+        {
+          "id": "audio-bcs",
+          "language": "bcs",
+          "rank": 2,
+          "top5": [
+            "streaming",
+            "audio",
+            "speaker",
+            "ownership",
+            "local-distractor-12"
+          ],
+          "query_seconds": 0.012909208016935736
+        },
+        {
+          "id": "pooling-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "pooling",
+            "streaming",
+            "audio",
+            "ownership",
+            "cache"
+          ],
+          "query_seconds": 0.01215500000398606
+        },
+        {
+          "id": "pooling-bcs",
+          "language": "bcs",
+          "rank": 2,
+          "top5": [
+            "ownership",
+            "pooling",
+            "distractor-17",
+            "distractor-35",
+            "distractor-14"
+          ],
+          "query_seconds": 0.014771750022191554
+        },
+        {
+          "id": "privacy-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "privacy",
+            "streaming",
+            "distractor-15",
+            "distractor-16",
+            "distractor-35"
+          ],
+          "query_seconds": 0.011509499978274107
+        },
+        {
+          "id": "privacy-bcs",
+          "language": "bcs",
+          "rank": 3,
+          "top5": [
+            "ownership",
+            "offline",
+            "privacy",
+            "local-distractor-2",
+            "distractor-16"
+          ],
+          "query_seconds": 0.012654874997679144
+        },
+        {
+          "id": "fee-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "fee",
+            "local-distractor-33",
+            "local-distractor-24",
+            "access",
+            "local-distractor-48"
+          ],
+          "query_seconds": 0.011510000040289015
+        },
+        {
+          "id": "fee-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "fee",
+            "ownership",
+            "local-distractor-17",
+            "local-distractor-2",
+            "local-distractor-13"
+          ],
+          "query_seconds": 0.011764041031710804
+        },
+        {
+          "id": "cap-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "cap",
+            "local-distractor-16",
+            "access",
+            "local-distractor-29",
+            "local-distractor-30"
+          ],
+          "query_seconds": 0.011967041995376348
+        },
+        {
+          "id": "cap-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "cap",
+            "local-distractor-29",
+            "local-distractor-35",
+            "local-distractor-16",
+            "access"
+          ],
+          "query_seconds": 0.011845875007566065
+        },
+        {
+          "id": "ownership-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "ownership",
+            "review",
+            "local-distractor-40",
+            "local-distractor-37",
+            "distractor-35"
+          ],
+          "query_seconds": 0.011806791997514665
+        },
+        {
+          "id": "ownership-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "ownership",
+            "review",
+            "distractor-25",
+            "distractor-35",
+            "distractor-23"
+          ],
+          "query_seconds": 0.011929665983188897
+        },
+        {
+          "id": "signing-en",
+          "language": "en",
+          "rank": 2,
+          "top5": [
+            "release",
+            "signing",
+            "local-distractor-34",
+            "local-distractor-35",
+            "local-distractor-42"
+          ],
+          "query_seconds": 0.012787040963303298
+        },
+        {
+          "id": "signing-bcs",
+          "language": "bcs",
+          "rank": 2,
+          "top5": [
+            "release",
+            "signing",
+            "local-distractor-34",
+            "rollback",
+            "streaming"
+          ],
+          "query_seconds": 0.011646291997749358
+        },
+        {
+          "id": "billing-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "billing",
+            "distractor-35",
+            "distractor-22",
+            "distractor-30",
+            "distractor-12"
+          ],
+          "query_seconds": 0.011607958993408829
+        },
+        {
+          "id": "billing-bcs",
+          "language": "bcs",
+          "rank": 58,
+          "top5": [
+            "recruiting",
+            "local-distractor-29",
+            "local-distractor-2",
+            "distractor-25",
+            "distractor-12"
+          ],
+          "query_seconds": 0.011844458000268787
+        },
+        {
+          "id": "cache-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "cache",
+            "pooling",
+            "local-distractor-41",
+            "fee",
+            "local-distractor-17"
+          ],
+          "query_seconds": 0.012272290943656117
+        },
+        {
+          "id": "cache-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "cache",
+            "ownership",
+            "distractor-35",
+            "distractor-15",
+            "distractor-17"
+          ],
+          "query_seconds": 0.011792458011768758
+        },
+        {
+          "id": "speaker-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "speaker",
+            "privacy",
+            "streaming",
+            "local-distractor-47",
+            "audio"
+          ],
+          "query_seconds": 0.011507791990879923
+        },
+        {
+          "id": "speaker-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "speaker",
+            "privacy",
+            "streaming",
+            "ownership",
+            "local-distractor-47"
+          ],
+          "query_seconds": 0.012453624978661537
+        },
+        {
+          "id": "review-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "review",
+            "distractor-35",
+            "distractor-12",
+            "distractor-34",
+            "distractor-25"
+          ],
+          "query_seconds": 0.011564958025701344
+        },
+        {
+          "id": "review-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "review",
+            "distractor-35",
+            "distractor-34",
+            "distractor-25",
+            "distractor-15"
+          ],
+          "query_seconds": 0.011617749987635761
+        },
+        {
+          "id": "rollback-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "rollback",
+            "distractor-35",
+            "distractor-15",
+            "distractor-34",
+            "distractor-12"
+          ],
+          "query_seconds": 0.011583040992263705
+        },
+        {
+          "id": "rollback-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "rollback",
+            "ownership",
+            "streaming",
+            "distractor-17",
+            "distractor-25"
+          ],
+          "query_seconds": 0.011821500025689602
+        },
+        {
+          "id": "currency-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "currency",
+            "fee",
+            "pooling",
+            "local-distractor-31",
+            "local-distractor-29"
+          ],
+          "query_seconds": 0.01147425000090152
+        },
+        {
+          "id": "currency-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "currency",
+            "fee",
+            "local-distractor-31",
+            "ownership",
+            "local-distractor-38"
+          ],
+          "query_seconds": 0.011722875002305955
+        },
+        {
+          "id": "attachments-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "attachments",
+            "streaming",
+            "offline",
+            "distractor-31",
+            "distractor-34"
+          ],
+          "query_seconds": 0.011817249993328005
+        },
+        {
+          "id": "attachments-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "attachments",
+            "streaming",
+            "offline",
+            "distractor-12",
+            "distractor-10"
+          ],
+          "query_seconds": 0.014652749989181757
+        },
+        {
+          "id": "notifications-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "notifications",
+            "distractor-12",
+            "distractor-35",
+            "distractor-24",
+            "distractor-0"
+          ],
+          "query_seconds": 0.01154754200251773
+        },
+        {
+          "id": "notifications-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "notifications",
+            "ownership",
+            "distractor-35",
+            "distractor-18",
+            "distractor-20"
+          ],
+          "query_seconds": 0.011785833048634231
+        },
+        {
+          "id": "recruiting-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "recruiting",
+            "local-distractor-47",
+            "distractor-21",
+            "distractor-18",
+            "distractor-35"
+          ],
+          "query_seconds": 0.012758040975313634
+        },
+        {
+          "id": "recruiting-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "recruiting",
+            "ownership",
+            "local-distractor-47",
+            "local-distractor-5",
+            "reminder"
+          ],
+          "query_seconds": 0.012298207962885499
+        },
+        {
+          "id": "cleanup-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "cleanup",
+            "distractor-35",
+            "distractor-15",
+            "distractor-31",
+            "distractor-34"
+          ],
+          "query_seconds": 0.009472625039052218
+        },
+        {
+          "id": "cleanup-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "cleanup",
+            "ownership",
+            "local-distractor-35",
+            "local-distractor-12",
+            "local-distractor-17"
+          ],
+          "query_seconds": 0.012653041980229318
+        },
+        {
+          "id": "reminder-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "reminder",
+            "local-distractor-0",
+            "local-distractor-40",
+            "local-distractor-43",
+            "local-distractor-2"
+          ],
+          "query_seconds": 0.011872250004671514
+        },
+        {
+          "id": "reminder-bcs",
+          "language": "bcs",
+          "rank": 2,
+          "top5": [
+            "ownership",
+            "reminder",
+            "local-distractor-41",
+            "local-distractor-47",
+            "recruiting"
+          ],
+          "query_seconds": 0.01196470798458904
+        },
+        {
+          "id": "streaming-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "streaming",
+            "audio",
+            "pooling",
+            "speaker",
+            "privacy"
+          ],
+          "query_seconds": 0.01178829203126952
+        },
+        {
+          "id": "streaming-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "streaming",
+            "audio",
+            "speaker",
+            "ownership",
+            "pooling"
+          ],
+          "query_seconds": 0.014879750029649585
+        },
+        {
+          "id": "ocr-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "ocr",
+            "pooling",
+            "streaming",
+            "speaker",
+            "attachments"
+          ],
+          "query_seconds": 0.011763082991819829
+        },
+        {
+          "id": "ocr-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "ocr",
+            "streaming",
+            "attachments",
+            "ownership",
+            "pooling"
+          ],
+          "query_seconds": 0.012131792027503252
+        },
+        {
+          "id": "retraction-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "retraction",
+            "rollback",
+            "local-distractor-13",
+            "distractor-35",
+            "local-distractor-0"
+          ],
+          "query_seconds": 0.011447958007920533
+        },
+        {
+          "id": "retraction-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "retraction",
+            "local-distractor-0",
+            "local-distractor-2",
+            "rollback",
+            "local-distractor-17"
+          ],
+          "query_seconds": 0.011682707990985364
+        },
+        {
+          "id": "access-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "access",
+            "local-distractor-29",
+            "local-distractor-48",
+            "cap",
+            "local-distractor-26"
+          ],
+          "query_seconds": 0.012418416969012469
+        },
+        {
+          "id": "access-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "access",
+            "local-distractor-8",
+            "local-distractor-48",
+            "local-distractor-29",
+            "local-distractor-7"
+          ],
+          "query_seconds": 0.012336749990936369
+        }
+      ]
+    },
+    {
+      "contract": "raw-documents",
+      "summary": {
+        "all": {
+          "n": 48,
+          "top1": 40,
+          "top5": 45,
+          "mrr": 0.8798881117960066
+        },
+        "en": {
+          "n": 24,
+          "top1": 23,
+          "top5": 24,
+          "mrr": 0.9791666666666666
+        },
+        "bcs": {
+          "n": 24,
+          "top1": 17,
+          "top5": 21,
+          "mrr": 0.7806095569253464
+        }
+      },
+      "query_p50_seconds": 0.01185906250611879,
+      "document_total_seconds": 1.9853139963233843,
+      "document_p50_seconds": 0.014391333010280505,
+      "rows": [
+        {
+          "id": "offline-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "offline",
+            "privacy",
+            "local-distractor-17",
+            "pooling",
+            "local-distractor-19"
+          ],
+          "query_seconds": 0.016661625006236136
+        },
+        {
+          "id": "offline-bcs",
+          "language": "bcs",
+          "rank": 2,
+          "top5": [
+            "privacy",
+            "offline",
+            "local-distractor-42",
+            "local-distractor-17",
+            "local-distractor-44"
+          ],
+          "query_seconds": 0.01482425001449883
+        },
+        {
+          "id": "release-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "release",
+            "distractor-12",
+            "distractor-35",
+            "distractor-34",
+            "distractor-22"
+          ],
+          "query_seconds": 0.012865750002674758
+        },
+        {
+          "id": "release-bcs",
+          "language": "bcs",
+          "rank": 36,
+          "top5": [
+            "distractor-12",
+            "distractor-35",
+            "distractor-17",
+            "distractor-34",
+            "distractor-15"
+          ],
+          "query_seconds": 0.012814750021789223
+        },
+        {
+          "id": "audio-en",
+          "language": "en",
+          "rank": 2,
+          "top5": [
+            "streaming",
+            "audio",
+            "speaker",
+            "privacy",
+            "distractor-12"
+          ],
+          "query_seconds": 0.012198875017929822
+        },
+        {
+          "id": "audio-bcs",
+          "language": "bcs",
+          "rank": 3,
+          "top5": [
+            "streaming",
+            "speaker",
+            "audio",
+            "local-distractor-12",
+            "local-distractor-47"
+          ],
+          "query_seconds": 0.012909208016935736
+        },
+        {
+          "id": "pooling-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "pooling",
+            "audio",
+            "streaming",
+            "ownership",
+            "distractor-17"
+          ],
+          "query_seconds": 0.01215500000398606
+        },
+        {
+          "id": "pooling-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "pooling",
+            "ownership",
+            "distractor-17",
+            "distractor-14",
+            "distractor-19"
+          ],
+          "query_seconds": 0.014771750022191554
+        },
+        {
+          "id": "privacy-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "privacy",
+            "speaker",
+            "streaming",
+            "distractor-31",
+            "distractor-15"
+          ],
+          "query_seconds": 0.011509499978274107
+        },
+        {
+          "id": "privacy-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "privacy",
+            "local-distractor-36",
+            "local-distractor-2",
+            "distractor-19",
+            "distractor-16"
+          ],
+          "query_seconds": 0.012654874997679144
+        },
+        {
+          "id": "fee-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "fee",
+            "local-distractor-33",
+            "local-distractor-24",
+            "local-distractor-30",
+            "local-distractor-48"
+          ],
+          "query_seconds": 0.011510000040289015
+        },
+        {
+          "id": "fee-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "fee",
+            "local-distractor-17",
+            "local-distractor-2",
+            "ownership",
+            "local-distractor-30"
+          ],
+          "query_seconds": 0.011764041031710804
+        },
+        {
+          "id": "cap-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "cap",
+            "local-distractor-16",
+            "local-distractor-29",
+            "access",
+            "local-distractor-30"
+          ],
+          "query_seconds": 0.011967041995376348
+        },
+        {
+          "id": "cap-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "cap",
+            "local-distractor-29",
+            "local-distractor-16",
+            "local-distractor-35",
+            "local-distractor-17"
+          ],
+          "query_seconds": 0.011845875007566065
+        },
+        {
+          "id": "ownership-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "ownership",
+            "review",
+            "distractor-35",
+            "distractor-31",
+            "distractor-30"
+          ],
+          "query_seconds": 0.011806791997514665
+        },
+        {
+          "id": "ownership-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "ownership",
+            "review",
+            "distractor-25",
+            "distractor-35",
+            "distractor-17"
+          ],
+          "query_seconds": 0.011929665983188897
+        },
+        {
+          "id": "signing-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "signing",
+            "release",
+            "local-distractor-42",
+            "local-distractor-34",
+            "distractor-34"
+          ],
+          "query_seconds": 0.012787040963303298
+        },
+        {
+          "id": "signing-bcs",
+          "language": "bcs",
+          "rank": 3,
+          "top5": [
+            "release",
+            "local-distractor-34",
+            "signing",
+            "distractor-34",
+            "distractor-31"
+          ],
+          "query_seconds": 0.011646291997749358
+        },
+        {
+          "id": "billing-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "billing",
+            "distractor-1",
+            "distractor-22",
+            "distractor-21",
+            "distractor-30"
+          ],
+          "query_seconds": 0.011607958993408829
+        },
+        {
+          "id": "billing-bcs",
+          "language": "bcs",
+          "rank": 76,
+          "top5": [
+            "recruiting",
+            "distractor-12",
+            "distractor-30",
+            "distractor-25",
+            "distractor-33"
+          ],
+          "query_seconds": 0.011844458000268787
+        },
+        {
+          "id": "cache-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "cache",
+            "pooling",
+            "local-distractor-41",
+            "local-distractor-17",
+            "local-distractor-39"
+          ],
+          "query_seconds": 0.012272290943656117
+        },
+        {
+          "id": "cache-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "cache",
+            "ownership",
+            "distractor-15",
+            "distractor-17",
+            "distractor-35"
+          ],
+          "query_seconds": 0.011792458011768758
+        },
+        {
+          "id": "speaker-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "speaker",
+            "privacy",
+            "streaming",
+            "local-distractor-47",
+            "audio"
+          ],
+          "query_seconds": 0.011507791990879923
+        },
+        {
+          "id": "speaker-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "speaker",
+            "privacy",
+            "streaming",
+            "local-distractor-47",
+            "local-distractor-48"
+          ],
+          "query_seconds": 0.012453624978661537
+        },
+        {
+          "id": "review-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "review",
+            "distractor-12",
+            "distractor-34",
+            "distractor-35",
+            "distractor-19"
+          ],
+          "query_seconds": 0.011564958025701344
+        },
+        {
+          "id": "review-bcs",
+          "language": "bcs",
+          "rank": 37,
+          "top5": [
+            "distractor-35",
+            "distractor-34",
+            "distractor-25",
+            "distractor-15",
+            "distractor-14"
+          ],
+          "query_seconds": 0.011617749987635761
+        },
+        {
+          "id": "rollback-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "rollback",
+            "distractor-35",
+            "distractor-15",
+            "distractor-12",
+            "distractor-34"
+          ],
+          "query_seconds": 0.011583040992263705
+        },
+        {
+          "id": "rollback-bcs",
+          "language": "bcs",
+          "rank": 2,
+          "top5": [
+            "ownership",
+            "rollback",
+            "distractor-17",
+            "distractor-15",
+            "distractor-16"
+          ],
+          "query_seconds": 0.011821500025689602
+        },
+        {
+          "id": "currency-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "currency",
+            "fee",
+            "local-distractor-30",
+            "local-distractor-29",
+            "local-distractor-31"
+          ],
+          "query_seconds": 0.01147425000090152
+        },
+        {
+          "id": "currency-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "currency",
+            "fee",
+            "local-distractor-31",
+            "local-distractor-30",
+            "local-distractor-38"
+          ],
+          "query_seconds": 0.011722875002305955
+        },
+        {
+          "id": "attachments-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "attachments",
+            "streaming",
+            "offline",
+            "pooling",
+            "distractor-31"
+          ],
+          "query_seconds": 0.011817249993328005
+        },
+        {
+          "id": "attachments-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "attachments",
+            "distractor-16",
+            "distractor-12",
+            "distractor-15",
+            "distractor-17"
+          ],
+          "query_seconds": 0.014652749989181757
+        },
+        {
+          "id": "notifications-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "notifications",
+            "distractor-12",
+            "distractor-0",
+            "distractor-15",
+            "distractor-24"
+          ],
+          "query_seconds": 0.01154754200251773
+        },
+        {
+          "id": "notifications-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "notifications",
+            "distractor-20",
+            "distractor-18",
+            "distractor-15",
+            "distractor-10"
+          ],
+          "query_seconds": 0.011785833048634231
+        },
+        {
+          "id": "recruiting-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "recruiting",
+            "local-distractor-47",
+            "local-distractor-5",
+            "distractor-21",
+            "local-distractor-42"
+          ],
+          "query_seconds": 0.012758040975313634
+        },
+        {
+          "id": "recruiting-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "recruiting",
+            "local-distractor-47",
+            "local-distractor-5",
+            "local-distractor-0",
+            "reminder"
+          ],
+          "query_seconds": 0.012298207962885499
+        },
+        {
+          "id": "cleanup-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "cleanup",
+            "distractor-35",
+            "distractor-15",
+            "distractor-31",
+            "distractor-34"
+          ],
+          "query_seconds": 0.009472625039052218
+        },
+        {
+          "id": "cleanup-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "cleanup",
+            "local-distractor-17",
+            "local-distractor-12",
+            "local-distractor-35",
+            "ownership"
+          ],
+          "query_seconds": 0.012653041980229318
+        },
+        {
+          "id": "reminder-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "reminder",
+            "local-distractor-0",
+            "local-distractor-2",
+            "distractor-15",
+            "distractor-18"
+          ],
+          "query_seconds": 0.011872250004671514
+        },
+        {
+          "id": "reminder-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "reminder",
+            "local-distractor-47",
+            "ownership",
+            "local-distractor-41",
+            "local-distractor-0"
+          ],
+          "query_seconds": 0.01196470798458904
+        },
+        {
+          "id": "streaming-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "streaming",
+            "audio",
+            "speaker",
+            "pooling",
+            "privacy"
+          ],
+          "query_seconds": 0.01178829203126952
+        },
+        {
+          "id": "streaming-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "streaming",
+            "audio",
+            "speaker",
+            "privacy",
+            "local-distractor-25"
+          ],
+          "query_seconds": 0.014879750029649585
+        },
+        {
+          "id": "ocr-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "ocr",
+            "pooling",
+            "streaming",
+            "speaker",
+            "local-distractor-40"
+          ],
+          "query_seconds": 0.011763082991819829
+        },
+        {
+          "id": "ocr-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "ocr",
+            "streaming",
+            "attachments",
+            "local-distractor-3",
+            "speaker"
+          ],
+          "query_seconds": 0.012131792027503252
+        },
+        {
+          "id": "retraction-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "retraction",
+            "local-distractor-0",
+            "local-distractor-17",
+            "rollback",
+            "distractor-22"
+          ],
+          "query_seconds": 0.011447958007920533
+        },
+        {
+          "id": "retraction-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "retraction",
+            "local-distractor-0",
+            "local-distractor-2",
+            "local-distractor-17",
+            "reminder"
+          ],
+          "query_seconds": 0.011682707990985364
+        },
+        {
+          "id": "access-en",
+          "language": "en",
+          "rank": 1,
+          "top5": [
+            "access",
+            "local-distractor-29",
+            "local-distractor-48",
+            "local-distractor-5",
+            "local-distractor-30"
+          ],
+          "query_seconds": 0.012418416969012469
+        },
+        {
+          "id": "access-bcs",
+          "language": "bcs",
+          "rank": 1,
+          "top5": [
+            "access",
+            "local-distractor-8",
+            "local-distractor-48",
+            "local-distractor-29",
+            "local-distractor-7"
+          ],
+          "query_seconds": 0.012336749990936369
+        }
+      ]
+    }
+  ],
+  "repeated_query_p50_seconds": 0.011965750018134713,
+  "repeated_query_p95_seconds": 0.013659833202837035,
+  "runtime": {
+    "model": "harrier",
+    "kind": "embedding",
+    "runtime": "llama.cpp b10173",
+    "context": 2048,
+    "pid": 60151,
+    "model_bytes": 639448320,
+    "arguments": [
+      "/Applications/LokalBot.app/Contents/Resources/llama-cpp/llama-server",
+      "-m",
+      "/private/tmp/lokalbot-model-alternatives-20260907/models/harrier/harrier-oss-v1-0.6b.Q8_0.gguf",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "18782",
+      "-c",
+      "2048",
+      "-ngl",
+      "99",
+      "--parallel",
+      "1",
+      "--jinja",
+      "--no-webui",
+      "--api-key",
+      "<benchmark-local-token>",
+      "--embeddings",
+      "--pooling",
+      "last",
+      "--cache-ram",
+      "256"
+    ],
+    "startup_seconds": 0.6354308340232819,
+    "peak_sampled_rss_bytes": 1091829760,
+    "shutdown_returncode": 0
+  }
+}
