@@ -277,7 +277,7 @@ private struct MeetingWorkspaceDetail: View {
                         .accessibilityIdentifier("toolbar.transcribeAndSummarize")
                     Button("Transcribe only") { app.reprocess(meeting, transcribe: true, summarize: false) }
                         .accessibilityIdentifier("toolbar.transcribeOnly")
-                    Button("Repair summary and action owners") { app.reprocess(meeting, transcribe: false, summarize: true) }
+                    Button("Summarize again") { app.reprocess(meeting, transcribe: false, summarize: true) }
                         .accessibilityIdentifier("toolbar.resummarize")
                     Divider()
                     Button(isExportingAudio ? "Exporting audio..." : "Export audio") {
@@ -316,9 +316,6 @@ private struct MeetingWorkspaceDetail: View {
                 Button("Refresh summary") { app.reprocess(meeting, transcribe: false, summarize: true) }
                     .controlSize(.small)
             }
-        }
-        if let report = transcript?.echoReport, report.status != .disabled {
-            Text(report.explanation).font(.caption).foregroundStyle(.secondary)
         }
         if let unmatched = projection?.state.unmatchedActions, !unmatched.isEmpty {
             DisclosureGroup("Review \(unmatched.count) unmatched action edits") {
