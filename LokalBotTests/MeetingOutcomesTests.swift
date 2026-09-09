@@ -168,6 +168,7 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertTrue(prompt.contains("\"for_user\" to true"), prompt)
         XCTAssertTrue(prompt.contains("set \"owner\" to \"Me\""), prompt)
         XCTAssertTrue(prompt.contains("\"importance\" to an integer from 1"), prompt)
+        XCTAssertTrue(prompt.contains("including actions with unclear ownership"), prompt)
         XCTAssertTrue(prompt.contains("at most the five highest-importance actions"), prompt)
         XCTAssertTrue(prompt.contains("Never drop a user action"), prompt)
         XCTAssertTrue(prompt.contains("I will"), prompt)
@@ -249,6 +250,82 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertEqual(prioritized.actionItems.count, 11)
         XCTAssertEqual(prioritized.userActionItems.count, 11)
         XCTAssertTrue(prioritized.otherActionItems.isEmpty)
+    }
+
+    func testOtherAndUnclearOwnersShareOneRankedLimit() {
+        let unclear = OutcomeAttribution(resolution: .unresolved, basis: .unclear)
+        let candidates: [MeetingOutcomes.ActionItem] = [
+            .init(id: "other-low", text: "Other low", owner: "Ana", importance: 2),
+            .init(id: "unclear-high", text: "Unclear high", importance: 4, attribution: unclear),
+            .init(id: "other-medium", text: "Other medium", owner: "Ana", importance: 3),
+            .init(id: "unclear-critical", text: "Unclear critical", importance: 5, attribution: unclear),
+            .init(id: "unclear-low", text: "Unclear low", importance: 1, attribution: unclear),
+            .init(id: "other-high", text: "Other high", owner: "Ana", importance: 4),
+            .init(id: "unclear-medium", text: "Unclear medium", importance: 3, attribution: unclear),
+        ]
+        let rankedIDs = ["unclear-critical", "other-high", "unclear-high", "other-medium", "unclear-medium"]
+        for (userCount, remainingCount) in [(0, 5), (3, 5), (6, 4), (10, 0), (11, 0)] {
+            let mine = (0..<userCount).map {
+                MeetingOutcomes.ActionItem(text: "My action \($0)", owner: "Me", importance: 1)
+            }
+            let result = MeetingOutcomes(actionItems: candidates + mine).prioritizingActionItems()
+
+            XCTAssertEqual(result.userActionItems, mine)
+            XCTAssertEqual(result.actionItems.count, userCount + remainingCount)
+            XCTAssertEqual(Array(result.actionItems.prefix(userCount)), mine)
+            XCTAssertEqual(result.actionItems.dropFirst(userCount).map(\.id), Array(rankedIDs.prefix(remainingCount)))
+            for action in result.unresolvedActionItems {
+                XCTAssertEqual(action, candidates.first { $0.id == action.id })
+                XCTAssertEqual(action.attribution?.resolution, .unresolved)
+                XCTAssertNil(action.owner)
+                XCTAssertFalse(action.isForUser)
+            }
+        }
+    }
+
+    func testSharedRankingUsesCitationTimeThenTextForImportanceTies() {
+        func action(_ text: String, owner: String?, importance: Int, start: Double) -> MeetingOutcomes.ActionItem {
+            .init(text: text, owner: owner, importance: importance, citations: [
+                .init(segmentID: "source-\(text)", start: start, end: start + 1,
+                      speaker: "them 1", excerpt: text),
+            ])
+        }
+        let items = [
+            action("Late", owner: nil, importance: 4, start: 20),
+            action("Beta", owner: "Ana", importance: 4, start: 10),
+            action("Critical", owner: "Ana", importance: 5, start: 30),
+            action("Alpha", owner: nil, importance: 4, start: 10),
+        ]
+
+        let result = MeetingOutcomes(actionItems: items).prioritizingActionItems()
+
+        XCTAssertEqual(result.actionItems.map(\.text), ["Critical", "Alpha", "Beta", "Late"])
+        XCTAssertEqual(result.unresolvedActionItems.map(\.text), ["Alpha", "Late"])
+    }
+
+    func testLoadingExistingUnclearActionsAppliesSharedLimitWithoutRewritingEvidence() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lokalbot-unclear-outcome-limit-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let others = (0..<3).map {
+            MeetingOutcomes.ActionItem(text: "Other action \($0)", owner: "Ana", importance: 3)
+        }
+        let unclear = (0..<27).map {
+            MeetingOutcomes.ActionItem(text: "Unclear action \($0)", importance: $0 % 5 + 1,
+                                      attribution: .init(resolution: .unresolved, basis: .unclear))
+        }
+        try MeetingOutcomes(actionItems: others + unclear).write(to: folder)
+        let file = folder.appendingPathComponent(MeetingOutcomes.fileName)
+        let original = try Data(contentsOf: file)
+
+        let loaded = try XCTUnwrap(MeetingOutcomes.load(from: folder))
+
+        XCTAssertEqual(loaded.actionItems.count, 5)
+        XCTAssertEqual(loaded.actionItems.map(\.importance), [5, 5, 5, 5, 5])
+        XCTAssertEqual(loaded.unresolvedActionItems.count, 5)
+        XCTAssertTrue(loaded.actionItems.allSatisfy { $0.owner == nil && !$0.isForUser })
+        XCTAssertEqual(try Data(contentsOf: file), original)
     }
 
     func testLoadingExistingArtifactAppliesActionItemSelectionPolicy() throws {

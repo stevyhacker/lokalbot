@@ -63,8 +63,9 @@ enum OutcomesExtractor {
         assumed subject. Ownership is carried in metadata and verified after extraction.
         Write decisions in neutral third-person prose and preserve requests as requests.
         - Include every "for_user": true action and put those items first. For everyone \
-        else, include at most the five highest-importance actions in this evidence. Never \
-        drop a user action to satisfy an item limit. Do not classify generic advice, optional \
+        else, including actions with unclear ownership, include at most the five \
+        highest-importance actions in this evidence, ranked together. Never drop a user \
+        action to satisfy an item limit. Do not classify generic advice, optional \
         ideas, unresolved possibilities, or another participant's work as user action items.
         - decisions: only choices the participants explicitly settled on. Tentative terms, \
         intentions, suggestions, and possibilities are not decisions; keep unresolved terms in \

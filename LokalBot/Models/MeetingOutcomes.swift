@@ -49,8 +49,8 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
         var attribution: OutcomeAttribution?
         var ownershipIsUnclear: Bool { attribution?.resolution == .unresolved || owner == nil }
         /// Relative meeting importance assigned by the grounded extraction
-        /// pass. This is used only to select the most useful actions owned by
-        /// other participants; every user-owned action is retained.
+        /// pass. This ranks other participants' actions and actions with unclear
+        /// ownership together; every user-owned action is retained.
         var importance: Int
         var citations: [OutcomeSourceCitation]
 
@@ -204,18 +204,18 @@ struct MeetingOutcomes: Codable, Equatable, Sendable {
     var unresolvedActionItems: [ActionItem] { actionItems.filter(\.ownershipIsUnclear) }
 
     /// Keeps all of the user's work first, then fills the remaining room with
-    /// at most five of everyone else's highest-importance actions. If the user
-    /// alone owns more than ten actions, preserving their complete list wins
-    /// over the normal ten-item readability ceiling.
+    /// at most five other or unclear-owner actions, ranked together by importance.
+    /// If the user alone owns more than ten actions, preserving their complete
+    /// list wins over the normal ten-item readability ceiling.
     func prioritizingActionItems() -> Self {
         var prioritized = self
         let userItems = userActionItems
         let remainingSlots = max(0, Self.maximumActionItems - userItems.count)
         let otherLimit = min(Self.maximumOtherActionItems, remainingSlots)
-        let otherItems = otherActionItems
+        let otherItems = actionItems.filter { !$0.isForUser }
             .sorted(by: Self.higherPriorityAction)
             .prefix(otherLimit)
-        prioritized.actionItems = userItems + otherItems + unresolvedActionItems
+        prioritized.actionItems = userItems + otherItems
         return prioritized
     }
 
