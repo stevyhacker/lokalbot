@@ -114,7 +114,7 @@ final class SummaryLanguageTests: XCTestCase {
 }
 
 final class SummaryPromptActionabilityTests: XCTestCase {
-    func testFixedLanguageKeepsCanonicalMarkdownHeadings() {
+    func testFixedLanguageTranslatesClaimsButKeepsSourceQuotesAndSections() {
         let system = PromptTemplates.systemPrompt(
             for: .meeting,
             summaryLanguage: .de)
@@ -125,28 +125,28 @@ final class SummaryPromptActionabilityTests: XCTestCase {
 
         for prompt in [system, user] {
             XCTAssertTrue(prompt.contains("do not translate"), prompt)
-            XCTAssertTrue(prompt.contains("Markdown"), prompt)
+            XCTAssertTrue(prompt.contains("claim"), prompt)
+            XCTAssertTrue(prompt.contains("German"), prompt)
+            XCTAssertFalse(prompt.contains("as Markdown"), prompt)
         }
+        XCTAssertTrue(system.contains("do not translate quotes"))
+        XCTAssertFalse(system.contains("Translate quoted material"))
     }
 
-    func testEveryNotesTemplateRequiresAnExplicitUserActionabilityPass() {
+    func testEveryNotesTemplateUsesClaimsJSONAndKeepsActionExtractionSeparate() {
         for template in NoteTemplate.allCases {
             let prompt = PromptTemplates.systemPrompt(
                 for: template,
                 userSpeakerLabel: "Stevan")
 
-            XCTAssertTrue(prompt.contains("## Action items"), template.rawValue)
-            XCTAssertTrue(prompt.contains("### Me"), template.rawValue)
-            XCTAssertTrue(prompt.contains("### Others"), template.rawValue)
-            XCTAssertTrue(prompt.contains("commitments made by \"Stevan\""), template.rawValue)
-            XCTAssertTrue(prompt.contains("requests or assignments directed to"), template.rawValue)
-            XCTAssertTrue(prompt.contains("Write `None`"), template.rawValue)
-            XCTAssertTrue(prompt.contains("generic advice"), template.rawValue)
+            XCTAssertTrue(prompt.contains("claims JSON only"), template.rawValue)
+            XCTAssertTrue(prompt.contains("Action items are extracted separately"), template.rawValue)
+            XCTAssertFalse(prompt.contains("### Me"), template.rawValue)
+            XCTAssertFalse(prompt.contains("### Others"), template.rawValue)
+            XCTAssertFalse(prompt.contains("Markdown"), template.rawValue)
             XCTAssertTrue(prompt.contains("Display names and first-person words do not establish identity"), template.rawValue)
             XCTAssertTrue(prompt.contains("Only metadata identity=user establishes the user"), template.rawValue)
-            XCTAssertTrue(prompt.contains("at most the five most important"), template.rawValue)
-            XCTAssertTrue(prompt.contains("reducing Others first"), template.rawValue)
-            XCTAssertTrue(prompt.contains("never omit a supported action for Me"), template.rawValue)
+            XCTAssertTrue(prompt.contains("confirmed speaker IDs are \"Stevan\""), template.rawValue)
         }
     }
 
@@ -160,11 +160,10 @@ final class SummaryPromptActionabilityTests: XCTestCase {
         XCTAssertTrue(short.contains("Only identity=user denotes this Mac's confirmed user"), short)
         XCTAssertTrue(chunk.contains("Only identity=user denotes the confirmed user"), chunk)
         XCTAssertTrue(short.contains("Display names are aliases"), short)
-        XCTAssertTrue(chunk.contains("requests or assignments directed to \"Stevan\""), chunk)
-        XCTAssertTrue(chunk.contains("### Me"), chunk)
-        XCTAssertTrue(chunk.contains("### Others"), chunk)
-        XCTAssertTrue(chunk.contains("at most the five most important"), chunk)
-        XCTAssertTrue(chunk.contains("Keep every qualifying ### Me item"), chunk)
+        XCTAssertTrue(chunk.contains("confirmed speaker IDs are \"Stevan\""), chunk)
+        XCTAssertTrue(chunk.contains("claims JSON"), chunk)
+        XCTAssertTrue(chunk.contains("Action items are extracted separately"), chunk)
+        XCTAssertFalse(chunk.contains("Markdown"), chunk)
     }
 
     func testMeetingPromptsKeepTentativeTermsAndActionsOutOfDecisions() {
@@ -175,7 +174,7 @@ final class SummaryPromptActionabilityTests: XCTestCase {
             XCTAssertTrue(prompt.contains("explicitly settled"), prompt)
             XCTAssertTrue(prompt.contains("Tentative terms"), prompt)
             XCTAssertTrue(prompt.contains("never duplicate"), prompt)
-            XCTAssertTrue(prompt.contains("## Open questions"), prompt)
+            XCTAssertTrue(prompt.contains("Open questions"), prompt)
         }
     }
 }

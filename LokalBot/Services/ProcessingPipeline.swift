@@ -639,7 +639,22 @@ final class ProcessingPipeline: ObservableObject {
                         summary = try await summarize(transcript, meeting: meeting, config: config)
                     }
                 } catch {
-                    await Self.cancelAndWaitForOutcomes(outcomesTask)
+                    let outcomes = await Self.completeOutcomes(outcomesTask, summaryError: error) {
+                        await self.extractOutcomes(
+                            transcript: transcript,
+                            meetingID: meeting.id,
+                            folder: folder,
+                            config: config,
+                            context: outcomeContext)
+                    }
+                    if let outcomes {
+                        defer { onArtifactsWritten?(meeting) }
+                        try MeetingAttributionArtifacts.requireCurrent(transcript, in: folder)
+                        let authoritative = MeetingOutcomeProjection.load(for: meeting, storage: storage)?.correctedOutcomes
+                            ?? outcomes
+                        try MeetingSummaryOutcomeSynchronizer.synchronizeExisting(
+                            in: folder, outcomes: authoritative, template: config.noteTemplate)
+                    }
                     throw error
                 }
                 do { try MeetingAttributionArtifacts.requireCurrent(transcript, in: folder) } catch {
@@ -651,11 +666,8 @@ final class ProcessingPipeline: ObservableObject {
                 try summary.data(using: .utf8)?.write(
                     to: folder.appendingPathComponent("summary.md"), options: .atomic)
                 MeetingSummaryGenerator.removeCheckpoint(in: folder)
-                let extractedOutcomes: MeetingOutcomes?
-                if let outcomesTask {
-                    extractedOutcomes = await outcomesTask.value
-                } else {
-                    extractedOutcomes = await extractOutcomes(
+                let extractedOutcomes = await Self.completeOutcomes(outcomesTask) {
+                    await self.extractOutcomes(
                         transcript: transcript,
                         meetingID: meeting.id,
                         folder: folder,
@@ -1033,7 +1045,7 @@ final class ProcessingPipeline: ObservableObject {
     }
 
     /// Cancellation is cooperative; some inference backends may not return
-    /// immediately. A failed summary must not let its sibling outcomes task
+    /// immediately. An interrupted job must not let its sibling outcomes task
     /// outlive the job and race a retry's artifact writes.
     nonisolated static func cancelAndWaitForOutcomes<Success: Sendable>(
         _ task: Task<Success, Never>?
@@ -1041,6 +1053,22 @@ final class ProcessingPipeline: ObservableObject {
         guard let task else { return }
         task.cancel()
         _ = await task.value
+    }
+
+    /// A summary rejection does not invalidate the independent outcomes pass.
+    /// Join existing work or finish serial extraction before the job ends so
+    /// a retry cannot race its artifact writes. Cancellation still stops both.
+    static func completeOutcomes(
+        _ task: Task<MeetingOutcomes?, Never>?,
+        summaryError: Error? = nil,
+        extract: () async -> MeetingOutcomes?
+    ) async -> MeetingOutcomes? {
+        if summaryError is CancellationError || Task.isCancelled {
+            await cancelAndWaitForOutcomes(task)
+            return nil
+        }
+        if let task { return await task.value }
+        return await extract()
     }
 
     /// Day digest (M4/M6) — shared by the Timeline UI, scheduler, and

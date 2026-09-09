@@ -111,6 +111,35 @@ final class MeetingSummaryOutcomeSynchronizerTests: XCTestCase {
         XCTAssertFalse(synchronized.contains("## Open questions"), synchronized)
     }
 
+    func testFailedRegenerationCanRefreshExistingOutcomeSectionsWithoutReplacingTheRecap() throws {
+        let folder = makeFolder()
+        let url = folder.appendingPathComponent("summary.md")
+        let previous = "## TL;DR\n\nEarlier recap.\n\n## Decisions\n\nOld decision\n\n## Action items\n\n- [ ] Old task"
+        try Data(previous.utf8).write(to: url)
+        let outcomes = MeetingOutcomes(actionItems: [
+            .init(text: "Send the report", owner: "Me", isForUser: true, citations: [citation(id: "new", start: 20)]),
+        ])
+        try MeetingSummaryOutcomeSynchronizer.synchronizeExisting(in: folder, outcomes: outcomes, template: .meeting)
+        let updated = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(updated.contains("Earlier recap."))
+        XCTAssertTrue(updated.contains("Send the report"))
+        XCTAssertFalse(updated.contains("Old task"))
+        XCTAssertFalse(updated.contains("Old decision"))
+    }
+
+    func testOutcomesAloneDoNotCreateACompletedSummary() throws {
+        let folder = makeFolder()
+        try MeetingSummaryOutcomeSynchronizer.synchronizeExisting(in: folder, outcomes: MeetingOutcomes(), template: .meeting)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("summary.md").path))
+    }
+
+    private func makeFolder() -> URL {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+        return folder
+    }
+
     private func citation(id: String, start: TimeInterval) -> OutcomeSourceCitation {
         OutcomeSourceCitation(
             segmentID: id,

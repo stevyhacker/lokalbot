@@ -146,7 +146,7 @@ final class TranscriptTests: XCTestCase {
         XCTAssertEqual(merged.engine, "system")
     }
 
-    func testSummaryPromptMergesNearbySameSpeakerSegments() {
+    func testSummaryPromptPreservesNearbySameSpeakerSourceBoundaries() {
         let transcript = Transcript(
             segments: [
                 .init(start: 0, end: 1, speaker: "me", text: "First point.", confidence: nil),
@@ -157,11 +157,14 @@ final class TranscriptTests: XCTestCase {
             engine: "test",
             speakerAliases: ["them": "Ana"])
 
-        XCTAssertEqual(transcript.summaryPromptTurns().count, 3)
+        let turns = transcript.summaryPromptTurns()
+        XCTAssertEqual(turns.count, 4)
+        XCTAssertEqual(turns.map(\.sourceIDs), transcript.segments.indices.map { [transcript.segmentID(at: $0)] })
         XCTAssertEqual(
             transcript.summaryPromptMarkdown,
-            "[\(transcript.segmentID(at: 0)),\(transcript.segmentID(at: 1))] "
-                + "**[00:00:00] [speaker_id=me; identity=unresolved] Local speaker:** First point. Second point.\n\n"
+            "[\(transcript.segmentID(at: 0))] "
+                + "**[00:00:00] [speaker_id=me; identity=unresolved] Local speaker:** First point.\n\n"
+                + "[\(transcript.segmentID(at: 1))] **[00:00:02] [speaker_id=me; identity=unresolved] Local speaker:** Second point.\n\n"
                 + "[\(transcript.segmentID(at: 2))] **[00:00:04] [speaker_id=them; identity=other] Ana:** Reply.\n\n"
                 + "[\(transcript.segmentID(at: 3))] **[00:00:10] [speaker_id=them; identity=other] Ana:** Later.")
     }
@@ -181,6 +184,7 @@ final class TranscriptTests: XCTestCase {
         XCTAssertEqual(turns.count, 2)
         XCTAssertTrue(turns.allSatisfy { $0.text.count <= 200 })
         XCTAssertTrue(turns.allSatisfy { $0.start == 7 && $0.speaker == "me" })
+        XCTAssertTrue(turns.allSatisfy { $0.sourceIDs == [transcript.segmentID(at: 0)] })
     }
 
     func testDisplayIndexCachesNormalizedVisibleTextAndSpeakerPresentation() {

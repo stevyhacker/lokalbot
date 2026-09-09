@@ -197,6 +197,34 @@ final class AttributionSafetyTests: XCTestCase {
         XCTAssertTrue(source.summaryPromptTurns().allSatisfy { !$0.sourceIDs.isEmpty })
     }
 
+    func testSummaryValidationIdentifiesFailingClaimWithoutLeakingItsContent() throws {
+        let source = transcript()
+        let valid = SummaryClaimEvidence.Claim(section: "TL;DR", text: "Will send the report.",
+            speakerID: "them 1", segmentID: source.segmentID(at: 1), quote: "I will send the report.")
+        var wrong = valid
+        wrong.quote = "private invented supporting quote"
+        XCTAssertThrowsError(try SummaryClaimEvidence.decode(SummaryClaimEvidence.encode([valid, wrong]), transcript: source)) { error in
+            let failure = error as? SummaryClaimEvidence.ValidationError
+            XCTAssertEqual(failure?.reason, .quoteMismatch)
+            XCTAssertEqual(failure?.claimNumber, 2)
+            XCTAssertTrue(error.localizedDescription.contains("Summary claim 2"))
+            XCTAssertFalse(error.localizedDescription.contains("private invented"))
+            XCTAssertFalse(error.localizedDescription.contains("LLM server error"))
+        }
+    }
+
+    func testTranslatedSummaryTextStillRequiresAnOriginalLanguageQuote() throws {
+        let source = transcript()
+        let claim = SummaryClaimEvidence.Claim(section: "TL;DR", text: "Wird den Bericht senden.",
+            speakerID: "them 1", segmentID: source.segmentID(at: 1), quote: "I will send the report.")
+        XCTAssertEqual(try SummaryClaimEvidence.decode(SummaryClaimEvidence.encode([claim]), transcript: source), [claim])
+        var translatedQuote = claim
+        translatedQuote.quote = "Ich werde den Bericht senden."
+        XCTAssertThrowsError(try SummaryClaimEvidence.decode(SummaryClaimEvidence.encode([translatedQuote]), transcript: source)) { error in
+            XCTAssertEqual((error as? SummaryClaimEvidence.ValidationError)?.reason, .quoteMismatch)
+        }
+    }
+
     func testFreeformSummaryPreservesSupportedTopicHeadings() throws {
         let source = transcript()
         let claim = SummaryClaimEvidence.Claim(section: "Report delivery", text: "Will send the report.",

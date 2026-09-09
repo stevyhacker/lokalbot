@@ -1,11 +1,7 @@
 import Foundation
 
-/// System + user prompts for the LLM summariser, parameterised by
-/// `NoteTemplate` and `SummaryLanguage`. Ported & slimmed from Seminarly's
-/// `PromptTemplates`: LokalBot keeps Markdown output (not JSON), so the
-/// per-template prompts return the same section layout we already write to
-/// `summary.md`, plus a language directive when the user picked something
-/// other than "match transcript".
+/// Structured summary prompts, parameterised by template and language.
+/// The model returns cited claims; LokalBot validates and renders Markdown.
 enum PromptTemplates {
 
     // MARK: - System prompt
@@ -19,7 +15,7 @@ enum PromptTemplates {
         if template == .meeting {
             lines.append(meetingOutcomeSemanticsRule)
         }
-        lines.append(userActionabilityRule(userSpeakerLabel: userSpeakerLabel))
+        lines.append(speakerIdentityRule(userSpeakerLabel: userSpeakerLabel))
         if let directive = languageSystemDirective(summaryLanguage) {
             lines.append(directive)
         }
@@ -30,18 +26,17 @@ enum PromptTemplates {
     /// Returns nil for `.matchTranscript` so existing behaviour is preserved.
     static func languageSystemDirective(_ language: SummaryLanguage) -> String? {
         guard let name = language.promptLanguageName else { return nil }
-        return "Write prose and list content in \(name). Keep every required Markdown section "
-            + "and subsection heading exactly as specified in the prompt; do not translate "
-            + "headings. Translate quoted material when needed; keep proper nouns and code "
-            + "identifiers in their original form."
+        return "Write claim text in \(name). Keep section values exactly as specified; do not translate them. "
+            + "Copy supporting quotes verbatim in their original language; do not translate quotes. "
+            + "Keep speaker IDs, source segment IDs, proper nouns, and code identifiers unchanged."
     }
 
     /// Reinforcement rule used inside the per-template body when a language
     /// is fixed. Returns nil for `.matchTranscript`.
     static func languageRule(_ language: SummaryLanguage) -> String? {
         guard let name = language.promptLanguageName else { return nil }
-        return "Output language: \(name) for prose and list content. Keep required Markdown "
-            + "headings exactly as specified; do not translate them."
+        return "Output language: \(name) for claim text. Keep section values and supporting quotes "
+            + "exactly as supplied; do not translate them."
     }
 
     // MARK: - User prompt
@@ -61,7 +56,7 @@ enum PromptTemplates {
         lines.append("---")
         lines.append(transcript)
         lines.append("---")
-        lines.append("Produce \(template.displayName.lowercased()) notes as Markdown. No preamble, no closing remarks.")
+        lines.append("Produce \(template.displayName.lowercased()) notes as claims JSON. No preamble, no closing remarks.")
         return lines.joined(separator: "\n\n")
     }
 
@@ -70,14 +65,12 @@ enum PromptTemplates {
     /// regular `systemPrompt(for:summaryLanguage:)`.
     static func chunkExtractionSystem(summaryLanguage: SummaryLanguage = .matchTranscript,
                                       userSpeakerLabel: String = "Me") -> String {
-        let user = normalizedSpeakerLabel(userSpeakerLabel)
         var lines = [
-            "Extract the key points, decisions, action items (with [hh:mm:ss] timestamps) and open questions from this part of a meeting transcript as terse Markdown bullets.",
+            "Extract supported statements from this part of a meeting transcript as concise claims JSON.",
             "Only identity=user denotes the confirmed user. Preserve speaker_id, source IDs, and attribution uncertainty through every intermediate note.",
             "Keep prose owner-neutral. Source IDs and speaker identity, never first-person wording, determine who spoke.",
-            "Perform a separate actionability pass: under ## Action items, use ### Me for commitments made by \"\(user)\", requests or assignments directed to \"\(user)\", and agreed follow-ups \"\(user)\" owns; use ### Others for everyone else's tasks. Write \"None\" under either subgroup when this part contains no qualifying item.",
-            "Keep every qualifying ### Me item. Under ### Others, include at most the five most important tasks, prioritizing stated urgency, impact, deadlines, risk, participant emphasis, and work that blocks other work.",
-            "Do not turn generic advice, optional ideas, or another participant's work into an action for Me.",
+            speakerIdentityRule(userSpeakerLabel: userSpeakerLabel),
+            "Action items are extracted separately. Do not include them in summary claims.",
             meetingOutcomeSemanticsRule,
             "No preamble.",
         ]
@@ -214,94 +207,38 @@ enum PromptTemplates {
     private static func rules(for template: NoteTemplate) -> String {
         let shared = """
         Be specific; never invent content that is not in the transcript. \
-        Quote sparingly and accurately. Respond with Markdown only, no preamble.
+        Respond with claims JSON only, no preamble. Each claim has one speaker and \
+        a verbatim quote from one source segment. Action items are extracted separately.
         """
-
+        let detail: String
         switch template {
         case .meeting:
-            return """
-            Write a Markdown summary with exactly these sections: \
-            ## TL;DR (2-3 sentences), \
-            ## Key points (bullets), \
-            ## Decisions (bullets, or "None"), \
-            ## Action items (use the required `### Me` / `### Others` format below), \
-            ## Open questions (bullets, or "None"). \
-            \(shared)
-            """
+            detail = "Prioritize the main takeaways, key points, settled decisions, and open questions."
         case .lecture:
-            return """
-            Write a Markdown summary with exactly these sections: \
-            ## TL;DR (2-3 sentences), \
-            ## Concepts (bulleted; one concept per bullet, with sub-bullets for sub-points), \
-            ## Definitions (term — definition pairs), \
-            ## Examples (concise, faithful to the lecturer's wording), \
-            ## Questions to review (bullets the student should be able to answer after the lecture), \
-            ## Action items (use the required `### Me` / `### Others` format below). \
-            \(shared)
-            """
+            detail = "Capture concepts, definitions, faithful examples, and questions to review."
         case .studyGuide:
-            return """
-            Write a Markdown study guide with exactly these sections: \
-            ## TL;DR (2-3 sentences), \
-            ## Key concepts (bullets, each with a 1-sentence explanation), \
-            ## Flashcards (bullet pairs in the form "Q: … / A: …"), \
-            ## Practice questions (open-ended, no answers — designed to test understanding), \
-            ## Action items (use the required `### Me` / `### Others` format below). \
-            \(shared)
-            """
+            detail = "Capture key concepts, flashcards as Q/A pairs, and practice questions grounded in the material."
         case .podcast:
-            return """
-            Write a Markdown summary with exactly these sections: \
-            ## TL;DR (2-3 sentences), \
-            ## Topics (bulleted; each topic has a 1-sentence summary), \
-            ## Quotes (a few short, accurate quotes attributed to the speaker), \
-            ## Insights (bullets — what a listener should take away), \
-            ## Action items (use the required `### Me` / `### Others` format below). \
-            \(shared)
-            """
+            detail = "Capture topics, short attributed quotes, and insights supported by the discussion."
         case .freeform:
-            return """
-            Write Markdown notes grouped by topic. Pick whichever section \
-            headings best fit the material — each is a `##` heading with a \
-            1-sentence framing, then bullets underneath. Aim for 3-6 topical sections, \
-            then finish with ## Action items using the required `### Me` / `### Others` format below; \
-            do not invent a "Conclusion" section if the transcript doesn't \
-            have one. \(shared)
-            """
+            detail = "Group claims into 3-6 topic sections suited to the material; do not invent a conclusion."
         }
+        return [shared, detail, SummaryClaimEvidence.sectionInstruction(for: template)].joined(separator: "\n")
     }
 
-    /// Mandatory across every notes template. Separating the user's work from
-    /// everyone else's prevents a generic action-items list from hiding the
-    /// one part of a recap the user most often needs immediately after a call.
-    private static func userActionabilityRule(userSpeakerLabel: String) -> String {
+    private static func speakerIdentityRule(userSpeakerLabel: String) -> String {
         let user = normalizedSpeakerLabel(userSpeakerLabel)
         return """
-        Before finalizing, always perform a separate actionability pass for this Mac's user. \
         Only metadata identity=user establishes the user; the confirmed speaker IDs are "\(user)". \
         Keep source references and prose owner-neutral. Identity=unresolved cannot become the user. \
-        Display names and first-person words do not establish identity. \
-        In `## Action items`, always include both of these subheadings:
-        ### Me
-        Include explicit commitments made by "\(user)", requests or assignments directed to \
-        "\(user)", and agreed follow-ups "\(user)" owns. Use Markdown checkboxes in the form \
-        `- [ ] task — [hh:mm:ss]`; preserve any stated deadline. Write `None` when no supported \
-        action for Me exists.
-        ### Others
-        Include at most the five most important concrete tasks owned by other participants as \
-        `- [ ] owner: task — [hh:mm:ss]`, or `None`. Prioritize stated urgency, impact, deadlines, \
-        risk, participant emphasis, and work that blocks other work. Keep the complete action list \
-        at ten whenever Me has ten or fewer items by reducing Others first; never omit a supported \
-        action for Me. Never turn generic advice, optional ideas, unresolved possibilities, or work \
-        owned only by someone else into an action for Me. Check the transcript and user-written \
-        note context, but never invent an action.
+        Display names and first-person words do not establish identity.
         """
     }
 
     private static let meetingOutcomeSemanticsRule = """
-        Put only choices the participants explicitly settled on under `## Decisions`. Tentative \
+        Put only choices the participants explicitly settled on under Decisions. Tentative \
         terms, intentions, suggestions, and possibilities are not decisions; preserve unresolved \
-        terms under `## Open questions`. Give each outcome one role: never duplicate a concrete \
+        terms under Open questions. Give each outcome one role: never duplicate a concrete \
         commitment or assigned follow-up as a decision.
         """
 

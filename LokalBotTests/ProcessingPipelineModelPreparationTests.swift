@@ -106,6 +106,47 @@ final class ProcessingPipelineModelPreparationTests: XCTestCase {
         XCTAssertTrue(cleanupReturnedAfterRelease)
     }
 
+    func testSummaryValidationFailureStillCompletesSerialOutcomes() async {
+        var didExtract = false
+        let result = await ProcessingPipeline.completeOutcomes(nil,
+            summaryError: SummaryClaimEvidence.ValidationError(reason: .quoteMismatch, claimNumber: 2)) {
+            didExtract = true
+            return MeetingOutcomes()
+        }
+        XCTAssertTrue(didExtract)
+        XCTAssertNotNil(result)
+    }
+
+    func testSummaryValidationFailureJoinsConcurrentOutcomesWithoutCancellingThem() async {
+        let task = Task<MeetingOutcomes?, Never> { MeetingOutcomes() }
+        var duplicatedExtraction = false
+        let result = await ProcessingPipeline.completeOutcomes(task,
+            summaryError: SummaryClaimEvidence.ValidationError(reason: .invalidJSON)) {
+            duplicatedExtraction = true
+            return nil
+        }
+        XCTAssertNotNil(result)
+        XCTAssertFalse(task.isCancelled)
+        XCTAssertFalse(duplicatedExtraction)
+    }
+
+    func testCancelledSummaryCancelsOutcomesAndDoesNotStartSerialExtraction() async {
+        let task = Task<MeetingOutcomes?, Never> { MeetingOutcomes() }
+        var didExtract = false
+        let concurrent = await ProcessingPipeline.completeOutcomes(task, summaryError: CancellationError()) {
+            didExtract = true
+            return MeetingOutcomes()
+        }
+        let serial = await ProcessingPipeline.completeOutcomes(nil, summaryError: CancellationError()) {
+            didExtract = true
+            return MeetingOutcomes()
+        }
+        XCTAssertNil(concurrent)
+        XCTAssertNil(serial)
+        XCTAssertTrue(task.isCancelled)
+        XCTAssertFalse(didExtract)
+    }
+
     func testResumePendingSurfacesParkedJobsAsFailedStages() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

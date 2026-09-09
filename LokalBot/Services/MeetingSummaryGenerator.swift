@@ -1,8 +1,8 @@
 import CryptoKit
 import Foundation
 
-/// Token-aware meeting summarization with bounded recovery for models that use
-/// their output allowance on reasoning or otherwise hit `finish_reason=length`.
+/// Token-aware meeting summarization with bounded recovery for truncated output
+/// and invalid claims. Every generation is validated before it can be used.
 /// Successful map notes are checkpointed so a retry resumes after the last
 /// completed part instead of repeating expensive inference.
 enum MeetingSummaryGenerator {
@@ -17,7 +17,7 @@ enum MeetingSummaryGenerator {
     private static let chunkRecoveryOutputTokens = 3_072
     private static let maximumChunkInputTokens = 8_000
     private static let maximumSplitDepth = 4
-    private static let checkpointVersion = 2
+    private static let checkpointVersion = 3
 
     private enum RecoveryFailure: Error {
         case outputTruncated
@@ -128,6 +128,9 @@ enum MeetingSummaryGenerator {
             do {
                 return try await generateWithRecovery(
                     engine: engine,
+                    transcript: transcript,
+                    template: template,
+                    allowedIDs: Set(turns.flatMap(\.sourceIDs)),
                     system: systemPrompt,
                     prompt: directPrompt,
                     context: context,
@@ -221,7 +224,9 @@ enum MeetingSummaryGenerator {
         for index in chunks.indices {
             try Task.checkCancellation()
             let key = String(index)
-            if let cached = checkpoint.notes[key] {
+            if let cached = checkpoint.notes[key],
+               (try? SummaryClaimEvidence.decode(cached, transcript: transcript,
+                    allowedIDs: Set(chunks[index].flatMap(\.sourceIDs)), template: template)) != nil {
                 notes.append(cached)
                 lokalbotLog(
                     "meeting summary restored checkpoint part=\(index + 1)/\(chunks.count)")
@@ -253,10 +258,14 @@ enum MeetingSummaryGenerator {
             context: context,
             contextTokens: contextTokens)
         let fittedNotes = fittedNotes(notes, tokenBudget: noteTokenBudget)
+        let synthesisClaims = try SummaryClaimEvidence.decode(fittedNotes, transcript: transcript, template: template)
         let synthesisPrompt = synthesisPrefix + fittedNotes
         do {
             return try await generateWithRecovery(
                 engine: engine,
+                transcript: transcript,
+                template: template,
+                allowedIDs: Set(synthesisClaims.map(\.segmentID)),
                 system: systemPrompt,
                 prompt: synthesisPrompt,
                 context: context,
@@ -300,6 +309,9 @@ enum MeetingSummaryGenerator {
         do {
             return try await generateWithRecovery(
                 engine: engine,
+                transcript: transcript,
+                template: template,
+                allowedIDs: Set(turns.flatMap(\.sourceIDs)),
                 system: system,
                 prompt: prompt,
                 context: context,
@@ -348,6 +360,9 @@ enum MeetingSummaryGenerator {
 
     private static func generateWithRecovery(
         engine: TextEngine,
+        transcript: Transcript,
+        template: NoteTemplate,
+        allowedIDs: Set<String>,
         system: String,
         prompt: String,
         context: [String],
@@ -356,29 +371,44 @@ enum MeetingSummaryGenerator {
         recoveryInstruction: String,
         stage: String
     ) async throws -> String {
-        do {
-            return try await engine.generate(
-                system: system,
-                prompt: prompt,
-                context: context,
-                schema: SummaryClaimEvidence.schema,
-                options: initialOptions)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch TextEngineError.outputTruncated {
-            lokalbotLog("meeting summary compact retry stage=\(stage) reason=output-limit")
+        var retryPrompt = prompt
+        var attempt = 0
+        // Share one retry budget across truncation and validation. Mixing the
+        // two failure modes must never multiply provider requests.
+        while true {
+            try Task.checkCancellation()
             do {
-                return try await engine.generate(
+                let output = try await engine.generate(
                     system: system,
-                    prompt: recoveryInstruction + "\n\n" + prompt,
+                    prompt: retryPrompt,
                     context: context,
                     schema: SummaryClaimEvidence.schema,
-                    options: recoveryOptions)
+                    options: attempt == 0 ? initialOptions : recoveryOptions)
+                try Task.checkCancellation()
+                _ = try SummaryClaimEvidence.decode(output, transcript: transcript,
+                    allowedIDs: allowedIDs, template: template)
+                return output
             } catch is CancellationError {
                 throw CancellationError()
             } catch TextEngineError.outputTruncated {
-                throw RecoveryFailure.outputTruncated
+                guard attempt == 0 else { throw RecoveryFailure.outputTruncated }
+                lokalbotLog("meeting summary compact retry stage=\(stage) reason=output-limit")
+                retryPrompt = recoveryInstruction + "\n\n" + prompt
+            } catch let error as SummaryClaimEvidence.ValidationError {
+                lokalbotLog("meeting summary validation stage=\(stage) attempt=\(attempt + 1) "
+                    + "reason=\(error.reason.rawValue) claim=\(error.claimNumber ?? 0)")
+                guard attempt == 0 else { throw error }
+                retryPrompt = """
+                    Retry with corrected claims JSON. The previous response failed validation because \(error.reason.description).
+                    Re-extract the claims from the evidence below. Copy one source_segment_id and its speaker_id exactly.
+                    Copy each quote verbatim from that single segment, in the original language, without joining segments.
+                    Use only the allowed section names. Action items are extracted separately. Omit any claim you cannot support.
+                    Return a complete claims JSON object, with no Markdown or preamble.
+
+                    \(prompt)
+                    """
             }
+            attempt += 1
         }
     }
 
@@ -538,11 +568,11 @@ enum MeetingSummaryGenerator {
     }
 
     private static let directRecoveryInstruction = """
-        Retry compactly. Return complete claim JSON with source references and no preamble. Use terse bullets, omit repetition, and finish every required section. Do not include hidden reasoning.
+        Retry compactly. Return complete claims JSON with source references and no preamble. Use concise claim text and omit repetition. Do not include hidden reasoning.
         """
 
     private static let chunkRecoveryInstruction = """
-        Retry as a compact extraction. Use short supported claims, merge duplicates, preserve supported decisions and action items, and finish the response. Do not include hidden reasoning.
+        Retry as a compact extraction. Return complete claims JSON with short supported claims and citations. Merge duplicates; action items are extracted separately. Do not include hidden reasoning.
         """
 
     private static let synthesisRecoveryInstruction = """

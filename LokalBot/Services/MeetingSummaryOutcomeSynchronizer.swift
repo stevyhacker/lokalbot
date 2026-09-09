@@ -12,6 +12,17 @@ enum MeetingSummaryOutcomeSynchronizer {
         var lines: [String]
     }
 
+    /// A failed regeneration may still produce verified outcomes. Keep an
+    /// earlier recap aligned with the cards, but never manufacture a completed
+    /// summary when only the independent outcomes pass succeeded.
+    static func synchronizeExisting(in folder: URL, outcomes: MeetingOutcomes, template: NoteTemplate) throws {
+        let url = folder.appendingPathComponent("summary.md")
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        let previous = try String(contentsOf: url, encoding: .utf8)
+        let updated = synchronize(previous, outcomes: outcomes, template: template)
+        try Data(updated.utf8).write(to: url, options: .atomic)
+    }
+
     static func synchronize(
         _ summary: String,
         outcomes: MeetingOutcomes,

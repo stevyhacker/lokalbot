@@ -37,11 +37,9 @@ struct Transcript: Codable {
         }
     }
 
-    /// A compact, timestamp-anchored turn used only for model prompts. The
-    /// persisted transcript and playback rows keep their original segment
-    /// boundaries; summarization can merge nearby runs from the same speaker
-    /// without paying the token cost of a label and timestamp on every ASR
-    /// span.
+    /// A bounded piece of one source segment used only for model prompts.
+    /// Keeping its source boundary visible lets the model copy a quote and
+    /// the exact ID that resolves that quote back to the transcript.
     struct PromptTurn: Equatable, Sendable {
         var start: TimeInterval
         var end: TimeInterval
@@ -261,12 +259,11 @@ struct Transcript: Codable {
         }.joined(separator: " ")
     }
 
-    /// Consecutive nearby spans from the same speaker become one bounded turn.
-    /// A single pathological/legacy span is split at word boundaries as well,
-    /// so downstream token-aware chunking always has safe split points.
+    /// Preserve each source boundary even for consecutive same-speaker spans.
+    /// A pathological/legacy span is split at word boundaries, retaining its
+    /// source ID so downstream token-aware chunking has safe split points.
     func summaryPromptTurns(
-        maxCharacters: Int = 1_200,
-        maximumGap: TimeInterval = 3
+        maxCharacters: Int = 1_200
     ) -> [PromptTurn] {
         let characterLimit = max(200, maxCharacters)
         var turns: [PromptTurn] = []
@@ -275,35 +272,11 @@ struct Transcript: Codable {
             let text = segment.displayText
             guard !text.isEmpty else { continue }
             for part in Self.summaryTextParts(text, maxCharacters: characterLimit) {
-                let canMerge: Bool
-                if let previous = turns.last {
-                    let sameSpeaker = Self.canonicalSpeakerKey(previous.speaker)
-                        == Self.canonicalSpeakerKey(segment.speaker)
-                    let gap = segment.start - previous.end
-                    canMerge = sameSpeaker
-                        && gap <= maximumGap
-                        && gap >= -maximumGap
-                        && previous.text.count + part.count + 1 <= characterLimit
-                } else {
-                    canMerge = false
-                }
-
-                if canMerge {
-                    let sourceID = segmentID(at: segmentIndex)
-                    if !turns[turns.count - 1].sourceIDs.contains(sourceID) {
-                        turns[turns.count - 1].sourceIDs.append(sourceID)
-                    }
-                    turns[turns.count - 1].text += " " + part
-                    turns[turns.count - 1].end = max(
-                        turns[turns.count - 1].end,
-                        segment.end)
-                } else {
-                    turns.append(PromptTurn(
-                        start: segment.start,
-                        end: segment.end,
-                        speaker: segment.speaker,
-                        text: part, sourceIDs: [segmentID(at: segmentIndex)]))
-                }
+                turns.append(PromptTurn(
+                    start: segment.start,
+                    end: segment.end,
+                    speaker: segment.speaker,
+                    text: part, sourceIDs: [segmentID(at: segmentIndex)]))
             }
         }
         return turns

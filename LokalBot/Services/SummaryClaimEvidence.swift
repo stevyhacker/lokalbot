@@ -3,6 +3,38 @@ import Foundation
 /// The model selects and paraphrases claims; the app resolves their speaker.
 /// Source identity never comes from the model's prose or a display alias.
 enum SummaryClaimEvidence {
+    /// Safe to log or send as repair feedback: never contains model output,
+    /// transcript text, speaker aliases, or other meeting content.
+    struct ValidationError: LocalizedError, Equatable {
+        enum Reason: String {
+            case invalidJSON, tooManyClaims, unknownSource, sourceOutsidePart
+            case speakerMismatch, invalidText, invalidQuote, quoteMismatch, invalidSection, staleTranscript
+
+            var description: String {
+                switch self {
+                case .invalidJSON: "the model did not return the required claims JSON"
+                case .tooManyClaims: "the model returned too many claims"
+                case .unknownSource: "the cited transcript segment does not exist"
+                case .sourceOutsidePart: "the citation refers to a segment outside the supplied evidence"
+                case .speakerMismatch: "the speaker ID does not match the cited segment"
+                case .invalidText: "the claim text is empty or too long"
+                case .invalidQuote: "the supporting quote is empty or too long"
+                case .quoteMismatch: "the quote does not exactly match words in the cited segment"
+                case .invalidSection: "the section is not allowed by the selected notes template"
+                case .staleTranscript: "the transcript changed while the summary was being generated"
+                }
+            }
+        }
+
+        var reason: Reason
+        var claimNumber: Int?
+
+        var errorDescription: String? {
+            let subject = claimNumber.map { "Summary claim \($0)" } ?? "Summary"
+            return "\(subject) could not be verified: \(reason.description)."
+        }
+    }
+
     struct Claim: Codable, Equatable {
         var section: String
         var text: String
@@ -34,7 +66,9 @@ enum SummaryClaimEvidence {
         let temporary = folder.appendingPathComponent(partialFileName)
         let data = try Data(contentsOf: temporary)
         let artifact = try JSONDecoder().decode(Artifact.self, from: data)
-        guard artifact.transcriptRevision == transcript.evidenceRevision else { throw invalidEvidence }
+        guard artifact.transcriptRevision == transcript.evidenceRevision else {
+            throw ValidationError(reason: .staleTranscript)
+        }
         try data.write(to: folder.appendingPathComponent("summary-claims.json"), options: .atomic)
         try? FileManager.default.removeItem(at: temporary)
     }
@@ -43,7 +77,7 @@ enum SummaryClaimEvidence {
         Return ONLY JSON with this shape, including for extraction parts and final synthesis:
         {"claims":[{"section":"TL;DR","text":"Concise paraphrase of what this speaker said.",
         "speaker_id":"them 1","source_segment_id":"segment-...","quote":"Exact supporting words"}]}
-        This structured contract replaces Markdown output instructions. Use the requested
+        LokalBot renders the JSON as notes. Use the requested
         template's section names as section values, without # characters. Do not extract
         Action items here; they have a separate verified extraction. Each claim describes
         one speaker's statement. Keep text owner-neutral, in the requested output language.
@@ -73,18 +107,24 @@ enum SummaryClaimEvidence {
                        template: NoteTemplate? = nil) throws -> [Claim] {
         let cleaned = ChatPrompt.extractJSONObject(output) ?? ""
         guard let data = cleaned.data(using: .utf8),
-              let envelope = try? JSONDecoder().decode(Envelope.self, from: data),
-              envelope.claims.count <= 4_096 else { throw invalidEvidence }
+              let envelope = try? JSONDecoder().decode(Envelope.self, from: data) else {
+            throw ValidationError(reason: .invalidJSON)
+        }
+        guard envelope.claims.count <= 4_096 else { throw ValidationError(reason: .tooManyClaims) }
         let sources = transcript.segmentSourceMap
-        for claim in envelope.claims {
-            guard let source = sources[claim.segmentID], allowedIDs?.contains(claim.segmentID) != false,
-                  Transcript.canonicalSpeakerKey(source.speaker) == claim.speakerID,
-                  !normalized(claim.text).isEmpty, claim.text.count <= 1_400,
-                  !normalized(claim.quote).isEmpty, claim.quote.count <= 1_000,
-                  normalized(source.displayText).contains(normalized(claim.quote)),
-                  validSection(claim.section, template: template) else {
-                throw invalidEvidence
+        for (index, claim) in envelope.claims.enumerated() {
+            func failure(_ reason: ValidationError.Reason) -> ValidationError {
+                ValidationError(reason: reason, claimNumber: index + 1)
             }
+            guard let source = sources[claim.segmentID] else { throw failure(.unknownSource) }
+            guard allowedIDs?.contains(claim.segmentID) != false else { throw failure(.sourceOutsidePart) }
+            guard Transcript.canonicalSpeakerKey(source.speaker) == claim.speakerID else {
+                throw failure(.speakerMismatch)
+            }
+            guard !normalized(claim.text).isEmpty, claim.text.count <= 1_400 else { throw failure(.invalidText) }
+            guard !normalized(claim.quote).isEmpty, claim.quote.count <= 1_000 else { throw failure(.invalidQuote) }
+            guard normalized(source.displayText).contains(normalized(claim.quote)) else { throw failure(.quoteMismatch) }
+            guard validSection(claim.section, template: template) else { throw failure(.invalidSection) }
         }
         return envelope.claims
     }
@@ -142,7 +182,6 @@ enum SummaryClaimEvidence {
     private static var allSections: Set<String> {
         Set(NoteTemplate.allCases.flatMap(sections))
     }
-    private static var invalidEvidence: TextEngineError { .badResponse("Summary returned an unsupported speaker or claim citation") }
     private static func normalized(_ text: String) -> String {
         text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
