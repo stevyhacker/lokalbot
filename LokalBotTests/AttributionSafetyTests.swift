@@ -11,7 +11,7 @@ final class AttributionSafetyTests: XCTestCase {
             .init(start: 20, end: 25, speaker: "them 1", text: "Stevan, could you send the report?",
                   attribution: .init(source: .system, identity: .other, method: .diarization)),
             .init(start: 30, end: 35, speaker: "local 2", text: "I will send the invoice.",
-                  attribution: .init(source: .microphone, identity: .unresolved, method: .diarization)),
+                  attribution: .init(source: .microphone, identity: .unresolved, method: .confirmation)),
         ], engine: "fixture", speakerAliases: ["local 1": "Stevan", "them 1": "Alice"])
     }
 
@@ -54,7 +54,7 @@ final class AttributionSafetyTests: XCTestCase {
         XCTAssertEqual(item.attribution?.speakerID, "local 1")
     }
 
-    func testUnknownLocalVoiceAndWrongSpeakerCannotBecomeUser() throws {
+    func testExplicitlyUnresolvedLocalVoiceAndWrongSpeakerCannotBecomeUser() throws {
         for id in ["local 1", "local 2"] {
             let item = try action(transcript: transcript(), index: 3, ownerID: id, owner: "Me", forUser: true)
             XCTAssertTrue(item.ownershipIsUnclear)
@@ -98,7 +98,7 @@ final class AttributionSafetyTests: XCTestCase {
         XCTAssertEqual(reopened, item)
     }
 
-    func testConfirmationOnlyAppliesToSupportedAcousticCluster() {
+    func testMicrophoneDefaultIsCorrectableWithoutDiarizationButNotForOverlappingVoices() {
         var source = transcript()
         source.segments += [
             .init(start: 40, end: 42, speaker: "local", text: "Unclassified speech",
@@ -107,17 +107,17 @@ final class AttributionSafetyTests: XCTestCase {
                   attribution: .init(source: .microphone, identity: .unresolved, method: .overlappingSpeech)),
         ]
         source.confirmSpeaker("local 2", isUser: true)
-        source.confirmSpeaker("local", isUser: true)
+        source.confirmSpeaker("local", isUser: false)
         source.confirmSpeaker("local unclear", isUser: true)
         XCTAssertEqual(source.segments[3].resolvedAttribution.identity, .user)
-        XCTAssertEqual(source.segments[4].resolvedAttribution.identity, .unresolved)
+        XCTAssertEqual(source.segments[4].resolvedAttribution.identity, .other)
         XCTAssertEqual(source.segments[5].resolvedAttribution.identity, .unresolved)
         XCTAssertEqual(source.segments[1].resolvedAttribution.identity, .other)
     }
 
     func testLegacyMicrophoneIsAnAssumptionSeparateFromTextConfidence() {
         let segment = Transcript.Segment(start: 0, end: 3, speaker: "me", text: "I will do it", confidence: 1)
-        XCTAssertEqual(segment.resolvedAttribution.identity, .unresolved)
+        XCTAssertEqual(segment.resolvedAttribution.identity, .user)
         XCTAssertEqual(segment.resolvedAttribution.method, .legacy)
     }
 
@@ -129,7 +129,7 @@ final class AttributionSafetyTests: XCTestCase {
         XCTAssertEqual(regions.map(\.end), [1, 3, 4, 6, 8])
         XCTAssertEqual(regions.map(\.speaker), ["local", "local 1", "local unclear", "local 2", "local"])
         XCTAssertEqual(regions[2].attribution.method, .overlappingSpeech)
-        XCTAssertTrue(regions.allSatisfy { $0.attribution.identity == .unresolved })
+        XCTAssertEqual(regions.map(\.attribution.identity), [.user, .user, .unresolved, .user, .user])
     }
 
     func testRecordingClockAlignmentHandlesStartupOffsetAndRejectsGaps() throws {
@@ -292,7 +292,7 @@ final class AttributionSafetyTests: XCTestCase {
         XCTAssertNoThrow(try MeetingAttributionArtifacts.requireCurrent(source, in: folder))
     }
 
-    func testExactTextWithoutWaveformEvidencePreservesWordsAndMarksUncertainty() {
+    func testExactTextWithoutWaveformEvidencePreservesMicrophoneDefaultAndWords() {
         let text = "we will send the final report"
         let source = Transcript(segments: [
             .init(start: 0, end: 5, speaker: "me", text: text, timingPrecision: .span),
@@ -301,8 +301,70 @@ final class AttributionSafetyTests: XCTestCase {
         let result = SpeakerBleedFilter.filter(source)
         XCTAssertEqual(result.removedSegments, 0)
         XCTAssertEqual(result.transcript.segments.map(\.text), [text, text])
-        XCTAssertEqual(result.transcript.segments[0].resolvedAttribution.method, .suspectedEcho)
-        XCTAssertFalse(result.transcript.canConfirmSpeaker("me"))
+        XCTAssertEqual(result.transcript.segments[0].resolvedAttribution.identity, .user)
+        XCTAssertEqual(result.transcript.segments[0].resolvedAttribution.method, .legacy)
+        XCTAssertTrue(result.transcript.canConfirmSpeaker("me"))
+    }
+
+    func testMicrophoneDefaultStillAllowsProvenEchoRemovalButExplicitConfirmationWins() {
+        let text = "we will send the final report"
+        var source = Transcript(segments: [
+            .init(start: 0, end: 5, speaker: "local 1", text: text, timingPrecision: .span,
+                  attribution: .init(source: .microphone, identity: .user, method: .diarization)),
+            .init(start: 0, end: 5, speaker: "them 1", text: text, timingPrecision: .span,
+                  attribution: .init(source: .system, identity: .other, method: .diarization))
+        ], engine: "fixture")
+        let filtered = SpeakerBleedFilter.filter(source, acousticallyVerifiedIndices: [0])
+        XCTAssertEqual(filtered.removedSegments, 1)
+        XCTAssertEqual(filtered.transcript.segments.map(\.speaker), ["them 1"])
+        source.confirmSpeaker("local 1", isUser: true)
+        let confirmed = SpeakerBleedFilter.filter(source, acousticallyVerifiedIndices: [0])
+        XCTAssertEqual(confirmed.removedSegments, 0)
+        XCTAssertEqual(confirmed.transcript.segments, source.segments)
+    }
+
+    func testMicrophoneCommitmentDefaultsToUserAcrossEchoModesAndPersistence() throws {
+        for status: TranscriptEchoReport.Status in [.disabled, .uncertain, .failed, .noReference, .applied] {
+            for method: SpeakerAttribution.Method in [.track, .diarization] {
+                let original = Transcript(segments: [
+                    .init(start: 0, end: 5, speaker: "local 1", text: "Yeah, I can do that.",
+                          attribution: .init(source: .microphone, identity: .unresolved, method: method)),
+                    .init(start: 10, end: 15, speaker: "them 1", text: "I will send the report.",
+                          attribution: .init(source: .system, identity: .other, method: .diarization))
+                ], engine: "fixture", echoReport: .init(status: status))
+                let source = try JSONDecoder().decode(Transcript.self, from: JSONEncoder().encode(original))
+                XCTAssertEqual(source.displaySpeaker(for: "local 1"), "Me")
+                XCTAssertEqual(source.confirmedUserSpeakerIDs, ["local 1"])
+                XCTAssertTrue(source.summaryPromptMarkdown.contains("[speaker_id=local 1; identity=user] Me"))
+                let mine = try action(transcript: source, index: 0, ownerID: "local 1", owner: "Me", forUser: true)
+                XCTAssertTrue(mine.isForUser)
+                XCTAssertEqual(mine.attribution?.resolution, .user)
+                let remote = try action(transcript: source, index: 1, ownerID: "them 1", owner: "Them 1", forUser: false)
+                XCTAssertFalse(remote.isForUser)
+                let outcomes = MeetingOutcomes(actionItems: [remote, mine])
+                let summary = MeetingSummaryOutcomeSynchronizer.synchronize("## TL;DR\nPlan discussed.", outcomes: outcomes, template: .meeting)
+                XCTAssertTrue(summary.contains("### Me\n- "))
+            }
+        }
+    }
+
+    func testMicrophoneDefaultPreservesCorrectionsOverlapAndEchoEvidence() throws {
+        for method: SpeakerAttribution.Method in [.overlappingSpeech, .suspectedEcho, .confirmation] {
+            let original = Transcript(segments: [
+                .init(start: 0, end: 5, speaker: "local 1", text: "I will send the report.",
+                      attribution: .init(source: .microphone, identity: .unresolved, method: method))
+            ], engine: "fixture")
+            let source = try JSONDecoder().decode(Transcript.self, from: JSONEncoder().encode(original))
+            XCTAssertTrue(source.confirmedUserSpeakerIDs.isEmpty)
+            XCTAssertTrue(try action(transcript: source, index: 0, ownerID: "local 1", owner: "Me", forUser: true).ownershipIsUnclear)
+        }
+        var corrected = Transcript(segments: [
+            .init(start: 0, end: 5, speaker: "me", text: "I will send the report.")
+        ], engine: "fixture")
+        corrected.confirmSpeaker("me", isUser: false)
+        let reopened = try JSONDecoder().decode(Transcript.self, from: JSONEncoder().encode(corrected))
+        XCTAssertEqual(reopened.speakerRoster["me"]?.identity, .other)
+        XCTAssertEqual(reopened.displaySpeaker(for: "me"), "Local speaker")
     }
 
     func testWaveformConfirmationRejectsDifferentSpeechAndMissingReference() {

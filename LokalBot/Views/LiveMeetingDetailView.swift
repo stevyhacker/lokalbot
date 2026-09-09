@@ -222,7 +222,7 @@ struct LiveMeetingDetailView: View {
             Text(Self.timestamp(line.time))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.tertiary)
-            Text(line.speaker == "local" || line.speaker == "me" ? "Local speaker" : "Remote speaker")
+            Text(line.speaker == "local" || line.speaker == "me" ? "Me" : "Remote speaker")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
             Text(line.text)

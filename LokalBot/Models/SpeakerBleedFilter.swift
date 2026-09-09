@@ -80,7 +80,9 @@ enum SpeakerBleedFilter {
             }
             // A genuine repetition can have identical words and timing.
             // Preserve it unless the waveform independently supports removal.
-            if !acousticallyVerifiedIndices.contains(index) || segment.resolvedAttribution.identity == .user {
+            // A microphone default is not an explicit speaker confirmation
+            // and must not prevent independently proven echo removal.
+            if !acousticallyVerifiedIndices.contains(index) || segment.resolvedAttribution.isConfirmedUser {
                 var retained = segment
                 if segment.resolvedAttribution.identity != .user {
                     retained.attribution = .init(source: .microphone, identity: .unresolved, method: .suspectedEcho)

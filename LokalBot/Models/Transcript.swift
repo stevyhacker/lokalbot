@@ -33,7 +33,7 @@ struct Transcript: Codable {
         var attribution: SpeakerAttribution?
 
         var resolvedAttribution: SpeakerAttribution {
-            attribution ?? .legacy(speaker: speaker)
+            (attribution ?? .legacy(speaker: speaker)).applyingMicrophoneDefault
         }
     }
 
@@ -87,6 +87,7 @@ struct Transcript: Codable {
                 return
             }
 
+            let roster = transcript.speakerRoster
             segments = transcript.segments.enumerated().compactMap { index, segment in
                 let text = segment.displayText
                 guard !text.isEmpty else { return nil }
@@ -95,7 +96,7 @@ struct Transcript: Codable {
                     id: index,
                     segment: segment,
                     text: text,
-                    speakerLabel: transcript.displaySpeaker(for: segment.speaker),
+                    speakerLabel: roster[speakerKey]?.name ?? Transcript.defaultSpeakerName(for: segment.speaker),
                     speakerKey: speakerKey,
                     hasSpeakerAlias: transcript.speakerAliases[speakerKey] != nil)
             }
@@ -205,10 +206,12 @@ struct Transcript: Codable {
 
     /// Renders `transcript.md` — "[00:14:32] **Me:** …"
     var markdown: String {
-        segments.compactMap { seg in
+        let roster = speakerRoster
+        return segments.compactMap { seg in
             let text = seg.displayText
             guard !text.isEmpty else { return nil }
-            return "**[\(Self.stamp(seg.start))] \(displaySpeaker(for: seg.speaker)):** \(text)"
+            let name = roster[Self.canonicalSpeakerKey(seg.speaker)]?.name ?? Self.defaultSpeakerName(for: seg.speaker)
+            return "**[\(Self.stamp(seg.start))] \(name):** \(text)"
         }.joined(separator: "\n\n")
     }
 
@@ -329,10 +332,8 @@ struct Transcript: Codable {
         Dictionary(grouping: segments, by: { Self.canonicalSpeakerKey($0.speaker) }).mapValues { group in
             let key = Self.canonicalSpeakerKey(group[0].speaker)
             let identities = Set(group.map { $0.resolvedAttribution.identity })
-            let name = speakerAliases[key] ?? (key == "me" && identities != [.user]
-                ? "Local speaker" : Self.defaultSpeakerName(for: key))
-            return SpeakerDescriptor(id: key, name: name,
-                identity: identities.count == 1 ? identities.first! : .unresolved)
+            let identity: SpeakerAttribution.Identity = identities.count == 1 ? identities.first! : .unresolved
+            return SpeakerDescriptor(id: key, name: speakerName(for: key, identity: identity), identity: identity)
         }
     }
 
@@ -355,8 +356,9 @@ struct Transcript: Codable {
         let key = Self.canonicalSpeakerKey(speaker)
         for index in segments.indices where Self.canonicalSpeakerKey(segments[index].speaker) == key {
             var value = segments[index].resolvedAttribution
-            // A mixed turn cannot be assigned to one person by renaming its row.
-            guard [.diarization, .confirmation, .profile].contains(value.method) else { continue }
+            // The microphone default is correctable even without diarization.
+            // Mixed voices and suspected echo still cannot name one person.
+            guard value.canConfirmIdentity else { continue }
             value.identity = isUser.map { $0 ? .user : .other } ?? .unresolved
             value.method = isUser == nil ? .diarization : .confirmation
             segments[index].attribution = value
@@ -367,16 +369,22 @@ struct Transcript: Codable {
         let key = Self.canonicalSpeakerKey(speaker)
         let turns = segments.filter { Self.canonicalSpeakerKey($0.speaker) == key }
         return !turns.isEmpty && turns.allSatisfy {
-            [.diarization, .confirmation, .profile].contains($0.resolvedAttribution.method)
+            $0.resolvedAttribution.canConfirmIdentity
         }
     }
 
     func displaySpeaker(for speaker: String) -> String {
         let key = Self.canonicalSpeakerKey(speaker)
         if let alias = speakerAliases[key] { return alias }
-        if key == "me", segments.contains(where: { Self.canonicalSpeakerKey($0.speaker) == key
-            && $0.resolvedAttribution.identity != .user }) { return "Local speaker" }
-        return Self.defaultSpeakerName(for: speaker)
+        let identities = Set(segments.filter { Self.canonicalSpeakerKey($0.speaker) == key }
+            .map { $0.resolvedAttribution.identity })
+        return speakerName(for: key, identity: identities.count == 1 ? identities.first! : .unresolved)
+    }
+
+    private func speakerName(for key: String, identity: SpeakerAttribution.Identity) -> String {
+        if let alias = speakerAliases[key] { return alias }
+        if identity == .user { return "Me" }
+        return key == "me" ? "Local speaker" : Self.defaultSpeakerName(for: key)
     }
 
     mutating func setSpeakerAlias(

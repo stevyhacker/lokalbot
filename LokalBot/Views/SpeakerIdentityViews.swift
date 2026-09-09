@@ -136,12 +136,18 @@ struct SpeakerIdentityReview: View {
     let onAction: (SpeakerAliasDecision.Action, String?, Bool, UUID?) -> Void
     let onDeleteEvidence: () -> Void
     var canConfirmIdentity = false
+    var microphoneIsUser = false
     private var assignment: SpeakerIdentityAssignment? { state?.assignments.first { $0.label == speaker } }
+
+    private var identityDescription: String {
+        if let isUser = assignment?.isLocalUser { return isUser ? "Confirmed as you" : "Confirmed as someone else" }
+        return microphoneIsUser ? "Attributed to you from your microphone" : "Confirm who is speaking"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if canConfirmIdentity {
-                Text(assignment?.isLocalUser == true ? "Confirmed as you" : "Confirm who is speaking")
+                Text(identityDescription)
                     .font(.subheadline.weight(.semibold))
                 HStack {
                     if let time = assignment?.anchors.first?.start { Button("Play speech") { onPlay(time) } }

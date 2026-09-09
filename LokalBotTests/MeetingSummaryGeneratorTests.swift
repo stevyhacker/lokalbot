@@ -84,7 +84,7 @@ final class MeetingSummaryGeneratorTests: XCTestCase {
         let calls = await script.recordedCalls()
 
         XCTAssertTrue(result.contains("Recovered."))
-        XCTAssertTrue(result.contains("identity unconfirmed"))
+        XCTAssertTrue(result.contains("**You:**"))
         XCTAssertEqual(calls.count, 2)
         XCTAssertEqual(calls[0].options.maxTokens, 4_096)
         XCTAssertEqual(calls[0].options.reasoningBudgetTokens, 1_024)
@@ -106,7 +106,7 @@ final class MeetingSummaryGeneratorTests: XCTestCase {
         let calls = await script.recordedCalls()
 
         XCTAssertTrue(result.contains("Final synthesis."))
-        XCTAssertTrue(result.contains("identity unconfirmed"))
+        XCTAssertTrue(result.contains("**You:**"))
         XCTAssertEqual(calls.count, 5)
         XCTAssertTrue(calls[4].prompt.contains("First-half notes"))
         XCTAssertTrue(calls[4].prompt.contains("Second-half notes"))
@@ -137,7 +137,7 @@ final class MeetingSummaryGeneratorTests: XCTestCase {
         let resumedCalls = await resumedScript.recordedCalls()
 
         XCTAssertTrue(result.contains("Resumed final."))
-        XCTAssertTrue(result.contains("identity unconfirmed"))
+        XCTAssertTrue(result.contains("**You:**"))
         XCTAssertEqual(resumedCalls.count, 2, "the completed first part must come from disk")
         XCTAssertTrue(resumedCalls[1].prompt.contains("Finished first part"))
         XCTAssertTrue(resumedCalls[1].prompt.contains("Finished second part"))

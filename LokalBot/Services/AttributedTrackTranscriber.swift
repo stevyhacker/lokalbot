@@ -29,10 +29,10 @@ enum AttributedTrackTranscriber {
             let overlapping = speakers.count > 1
             let label = speakers.count == 1 ? labels[speakers.first!]! : overlapping ? "\(prefix) unclear" : prefix
             let method: SpeakerAttribution.Method = overlapping ? .overlappingSpeech : speakers.isEmpty ? .track : .diarization
-            // Preserve unclassified audio as well: a VAD/diarizer miss must not
-            // delete speech. Such regions cannot acquire a confirmed identity.
+            // Preserve unclassified audio as well. The personal microphone
+            // defaults to the user; overlapping voices remain unresolved.
             let attribution = SpeakerAttribution(source: source,
-                identity: source == .system && !overlapping ? .other : .unresolved, method: method)
+                identity: source == .system && !overlapping ? .other : .unresolved, method: method).applyingMicrophoneDefault
             if let last = regions.last, last.speaker == label, last.attribution == attribution {
                 regions[regions.count - 1].end = end
             } else {
@@ -51,14 +51,14 @@ enum AttributedTrackTranscriber {
                            source: SpeakerAttribution.Source, engine: TranscriptionEngine,
                            language: String?, prompt: String?) async throws -> Transcript {
         let regions = regions(duration: duration, turns: diarization, source: source)
-        // With no diarization the engine can use its optimized whole-file VAD
-        // path, but a microphone still has no verified person attached to it.
+        // The microphone default also applies without speaker separation or
+        // remembered voice profiles, using the optimized whole-file VAD path.
         if diarization.isEmpty {
             var transcript = try await engine.transcribe(audio: url, language: language, prompt: prompt)
             for index in transcript.segments.indices {
                 transcript.segments[index].speaker = source == .microphone ? "local" : "them"
                 transcript.segments[index].attribution = SpeakerAttribution(source: source,
-                    identity: source == .system ? .other : .unresolved, method: .track)
+                    identity: source == .system ? .other : .unresolved, method: .track).applyingMicrophoneDefault
             }
             return transcript
         }

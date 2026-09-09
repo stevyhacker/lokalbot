@@ -19,6 +19,25 @@ struct SpeakerAttribution: Codable, Equatable, Sendable {
     var identity: Identity
     var method: Method
 
+    /// The personal microphone belongs to the user by default. A confirmed
+    /// correction or evidence of mixed/echoed speech takes precedence.
+    var applyingMicrophoneDefault: Self {
+        guard source == .microphone, identity == .unresolved,
+              [.track, .diarization, .legacy].contains(method) else { return self }
+        var result = self
+        result.identity = .user
+        return result
+    }
+
+    var canConfirmIdentity: Bool {
+        [.diarization, .confirmation, .profile].contains(method)
+            || (source == .microphone && [.track, .legacy].contains(method))
+    }
+
+    var isConfirmedUser: Bool {
+        identity == .user && [.confirmation, .profile].contains(method)
+    }
+
     static func legacy(speaker: String) -> Self {
         let key = Transcript.canonicalSpeakerKey(speaker)
         return Self(source: key == "me" ? .microphone : .unknown,
@@ -37,7 +56,7 @@ struct TranscriptEchoReport: Codable, Equatable, Sendable {
 
     var explanation: String {
         switch status {
-        case .disabled: "Echo removal is off. Microphone speech needs speaker confirmation."
+        case .disabled: "Echo removal is off. Microphone speech defaults to you."
         case .noReference: "Remote audio is unavailable for echo removal."
         case .applied: "Echo removal applied. Speaker identity is checked separately."
         case .uncertain: "Echo removal was uncertain. Original speech was preserved."

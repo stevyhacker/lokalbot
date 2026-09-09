@@ -49,7 +49,7 @@ enum PromptTemplates {
                            summaryLanguage: SummaryLanguage = .matchTranscript,
                            userSpeakerLabel: String = "Me") -> String {
         var lines: [String] = []
-        lines.append("Transcript follows. Speaker IDs and identity metadata are authoritative. Only identity=user denotes this Mac's confirmed user. Display names are aliases; identity=unresolved stays unresolved.")
+        lines.append("Transcript follows. Speaker IDs and identity metadata are authoritative. Only identity=user denotes the user. Display names are aliases; identity=unresolved stays unresolved.")
         if let rule = languageRule(summaryLanguage) {
             lines.append(rule)
         }

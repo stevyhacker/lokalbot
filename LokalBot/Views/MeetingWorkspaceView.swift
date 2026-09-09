@@ -768,7 +768,10 @@ private struct MeetingWorkspaceDetail: View {
             defaultName: Transcript.defaultSpeakerName(for: speaker),
             currentName: transcript.displaySpeaker(for: speaker),
             currentCalendarIdentityID: transcript.calendarIdentityID(for: speaker),
-            canConfirmIdentity: transcript.canConfirmSpeaker(speaker))
+            canConfirmIdentity: transcript.canConfirmSpeaker(speaker),
+            microphoneIsUser: transcript.speakerRoster[speaker]?.identity == .user
+                && transcript.segments.contains { Transcript.canonicalSpeakerKey($0.speaker) == speaker
+                    && $0.resolvedAttribution.source == .microphone })
     }
 
     private var assignedCalendarIdentityIDs: Set<String> {
@@ -1544,6 +1547,7 @@ private struct WorkspaceSpeakerRenameDraft: Identifiable {
     let currentName: String
     let currentCalendarIdentityID: String?
     var canConfirmIdentity = false
+    var microphoneIsUser = false
 }
 
 private struct WorkspaceSpeakerRenameSheet: View {
@@ -1618,7 +1622,7 @@ private struct WorkspaceSpeakerRenameSheet: View {
                 profiles: profiles, rememberingEnabled: rememberingEnabled,
                 name: $name, remember: $remember, profileID: $profileID,
                 onPlay: onPlay, onAction: onAction, onDeleteEvidence: onDeleteEvidence,
-                canConfirmIdentity: draft.canConfirmIdentity)
+                canConfirmIdentity: draft.canConfirmIdentity, microphoneIsUser: draft.microphoneIsUser)
             if let notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
 
 

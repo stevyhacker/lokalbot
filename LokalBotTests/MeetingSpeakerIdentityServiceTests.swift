@@ -161,7 +161,7 @@ import XCTest
         XCTAssertEqual(retried.speakerAliases["them 2"], "Sam")
     }
 
-    func testMicrophoneOnlyConfirmationSurvivesRestartAndLabelReorderingWithoutEnrollment() async throws {
+    func testMicrophoneDefaultAndExplicitOtherSurviveRestartAndLabelReorderingWithoutEnrollment() async throws {
         settings.identifySpeakersFromVisuals = false
         settings.rememberSpeakersOnMac = false
         let meeting = try storage.createMeetingFolder(title: "Two local voices", appName: "Manual")
@@ -177,15 +177,19 @@ import XCTest
         ], engine: "synthetic rule fixture")
         let turns = transcript.segments.map { SpeakerAudioTurn(speaker: $0.speaker,
             range: .init(start: $0.start, end: $0.end), source: .microphone) }
-        let initial = await service.process(transcript: transcript, meeting: meeting, turns: turns, samples: [], audioURL: audio)
+        var initial = await service.process(transcript: transcript, meeting: meeting, turns: turns, samples: [], audioURL: audio)
+        XCTAssertEqual(initial.confirmedUserSpeakerIDs, ["local 1", "local 2"])
+        initial = try await service.choose(.init(label: "local 2", name: "Alex", action: .confirmOther),
+                                           meeting: meeting, transcript: initial)
         let chosen = try await service.choose(.init(label: "local 1", name: "Stevan", action: .confirmUser),
                                               meeting: meeting, transcript: initial)
         XCTAssertEqual(chosen.segments[0].resolvedAttribution.identity, .user)
-        XCTAssertEqual(chosen.segments[1].resolvedAttribution.identity, .unresolved)
+        XCTAssertEqual(chosen.segments[1].resolvedAttribution.identity, .other)
         let restarted = MeetingSpeakerIdentityService(storage: storage, settings: { [unowned self] in settings },
             keyProvider: { [unowned self] in key })
         let recovered = try await restarted.recover(meeting: meeting, transcript: transcript)
         XCTAssertEqual(recovered.segments[0].resolvedAttribution.identity, .user)
+        XCTAssertEqual(recovered.segments[1].resolvedAttribution.identity, .other)
         var reordered = transcript
         reordered.segments[0].speaker = "local 2"
         reordered.segments[1].speaker = "local 1"
@@ -193,7 +197,7 @@ import XCTest
             range: .init(start: $0.start, end: $0.end), source: .microphone) }
         let reprocessed = await restarted.process(transcript: reordered, meeting: meeting, turns: nextTurns, samples: [], audioURL: audio)
         XCTAssertEqual(reprocessed.segments[0].resolvedAttribution.identity, .user)
-        XCTAssertEqual(reprocessed.segments[1].resolvedAttribution.identity, .unresolved)
+        XCTAssertEqual(reprocessed.segments[1].resolvedAttribution.identity, .other)
         let profiles = try await restarted.profiles()
         XCTAssertTrue(profiles.isEmpty)
     }
@@ -226,6 +230,28 @@ import XCTest
         return (meeting, audio, transcript, turns, samples)
     }
 
+    func testMicrophoneDefaultWithoutIdentificationOrDiarizationSupportsCorrectionAndReset() async throws {
+        settings.identifySpeakersFromVisuals = false
+        settings.rememberSpeakersOnMac = false
+        let (meeting, audio, original, _, _) = try microphoneFixture()
+        var transcript = original
+        for index in transcript.segments.indices { transcript.segments[index].attribution?.method = .track }
+        let initial = await service.process(transcript: transcript, meeting: meeting, turns: [], samples: [], audioURL: audio)
+        XCTAssertEqual(initial.echoReport?.status, .disabled)
+        XCTAssertEqual(initial.confirmedUserSpeakerIDs, ["local 1"])
+        XCTAssertEqual(initial.displaySpeaker(for: "local 1"), "Me")
+        let corrected = try await service.choose(.init(label: "local 1", name: "Alex", action: .confirmOther),
+                                                meeting: meeting, transcript: initial)
+        XCTAssertTrue(corrected.confirmedUserSpeakerIDs.isEmpty)
+        let reprocessed = await service.process(transcript: transcript, meeting: meeting, turns: [], samples: [], audioURL: audio)
+        XCTAssertEqual(reprocessed.speakerRoster["local 1"]?.identity, .other)
+        let reset = try await service.choose(.init(label: "local 1", action: .reset), meeting: meeting, transcript: reprocessed)
+        XCTAssertEqual(reset.confirmedUserSpeakerIDs, ["local 1"])
+        XCTAssertEqual(reset.displaySpeaker(for: "local 1"), "Me")
+        let profiles = try await service.profiles(managing: true)
+        XCTAssertTrue(profiles.isEmpty)
+    }
+
     func testEchoOffCanRememberAndSuggestAConfirmedLocalUserInTheNextMeeting() async throws {
         let (first, audio, transcript, turns, samples) = try microphoneFixture()
         let initial = await service.process(transcript: transcript, meeting: first, turns: turns, samples: samples, audioURL: audio)
@@ -242,7 +268,8 @@ import XCTest
         let suggested = try await service.state(for: second)
         XCTAssertEqual(suggested.suggestions["local 1"]?.first?.name, "Stevan")
         XCTAssertEqual(suggested.suggestions["local 1"]?.first?.tier, .suggested)
-        XCTAssertTrue(proposed.confirmedUserSpeakerIDs.isEmpty, "An uncalibrated microphone match is reviewable")
+        XCTAssertEqual(proposed.confirmedUserSpeakerIDs, ["local 1"], "The microphone defaults to the user independently of a suggested profile name")
+        XCTAssertEqual(proposed.displaySpeaker(for: "local 1"), "Me")
         let chosen = try await service.choose(.init(label: "local 1", name: "Stevan", profileID: profile.id), meeting: second, transcript: proposed)
         XCTAssertEqual(chosen.confirmedUserSpeakerIDs, ["local 1"])
         let remaining = try await service.profiles()
