@@ -17,7 +17,7 @@ enum MeetingSummaryGenerator {
     private static let chunkRecoveryOutputTokens = 3_072
     private static let maximumChunkInputTokens = 8_000
     private static let maximumSplitDepth = 4
-    private static let checkpointVersion = 3
+    private static let checkpointVersion = 4
 
     private enum RecoveryFailure: Error {
         case outputTruncated
@@ -130,7 +130,7 @@ enum MeetingSummaryGenerator {
                     engine: engine,
                     transcript: transcript,
                     template: template,
-                    allowedIDs: Set(turns.flatMap(\.sourceIDs)),
+                    allowedIDs: Set(turns.map(\.sourceID)),
                     system: systemPrompt,
                     prompt: directPrompt,
                     context: context,
@@ -226,7 +226,7 @@ enum MeetingSummaryGenerator {
             let key = String(index)
             if let cached = checkpoint.notes[key],
                (try? SummaryClaimEvidence.decode(cached, transcript: transcript,
-                    allowedIDs: Set(chunks[index].flatMap(\.sourceIDs)), template: template)) != nil {
+                    allowedIDs: Set(chunks[index].map(\.sourceID)), template: template)) != nil {
                 notes.append(cached)
                 lokalbotLog(
                     "meeting summary restored checkpoint part=\(index + 1)/\(chunks.count)")
@@ -242,7 +242,7 @@ enum MeetingSummaryGenerator {
                 partCount: chunks.count,
                 depth: 0)
             let claims = try SummaryClaimEvidence.decode(note, transcript: transcript,
-                allowedIDs: Set(chunks[index].flatMap(\.sourceIDs)), template: template)
+                allowedIDs: Set(chunks[index].map(\.sourceID)), template: template)
             let validatedNote = try SummaryClaimEvidence.encode(claims)
             notes.append(validatedNote)
             checkpoint.notes[key] = validatedNote
@@ -257,7 +257,7 @@ enum MeetingSummaryGenerator {
             prefix: synthesisPrefix,
             context: context,
             contextTokens: contextTokens)
-        let fittedNotes = fittedNotes(notes, tokenBudget: noteTokenBudget)
+        let fittedNotes = fittedNotes(notes, transcript: transcript, tokenBudget: noteTokenBudget)
         let synthesisClaims = try SummaryClaimEvidence.decode(fittedNotes, transcript: transcript, template: template)
         let synthesisPrompt = synthesisPrefix + fittedNotes
         do {
@@ -311,7 +311,7 @@ enum MeetingSummaryGenerator {
                 engine: engine,
                 transcript: transcript,
                 template: template,
-                allowedIDs: Set(turns.flatMap(\.sourceIDs)),
+                allowedIDs: Set(turns.map(\.sourceID)),
                 system: system,
                 prompt: prompt,
                 context: context,
@@ -373,8 +373,11 @@ enum MeetingSummaryGenerator {
     ) async throws -> String {
         var retryPrompt = prompt
         var attempt = 0
-        // Share one retry budget across truncation and validation. Mixing the
-        // two failure modes must never multiply provider requests.
+        var retriedTruncation = false
+        var repairedValidation = false
+        var recoveryInstructions: [String] = []
+        // Each failure mode gets at most one retry (three calls total). A
+        // truncated response must not consume the citation repair allowance.
         while true {
             try Task.checkCancellation()
             do {
@@ -391,24 +394,26 @@ enum MeetingSummaryGenerator {
             } catch is CancellationError {
                 throw CancellationError()
             } catch TextEngineError.outputTruncated {
-                guard attempt == 0 else { throw RecoveryFailure.outputTruncated }
+                guard !retriedTruncation else { throw RecoveryFailure.outputTruncated }
+                retriedTruncation = true
                 lokalbotLog("meeting summary compact retry stage=\(stage) reason=output-limit")
-                retryPrompt = recoveryInstruction + "\n\n" + prompt
+                recoveryInstructions.append(recoveryInstruction)
             } catch let error as SummaryClaimEvidence.ValidationError {
                 lokalbotLog("meeting summary validation stage=\(stage) attempt=\(attempt + 1) "
                     + "reason=\(error.reason.rawValue) claim=\(error.claimNumber ?? 0)")
-                guard attempt == 0 else { throw error }
-                retryPrompt = """
+                guard !repairedValidation else { throw error }
+                repairedValidation = true
+                recoveryInstructions.append("""
                     Retry with corrected claims JSON. The previous response failed validation because \(error.reason.description).
                     Re-extract the claims from the evidence below. Copy one source_segment_id and its speaker_id exactly.
                     Copy each quote verbatim from that single segment, in the original language, without joining segments.
                     Use only the allowed section names. Action items are extracted separately. Omit any claim you cannot support.
                     Return a complete claims JSON object, with no Markdown or preamble.
 
-                    \(prompt)
-                    """
+                    """)
             }
             attempt += 1
+            retryPrompt = recoveryInstructions.joined(separator: "\n\n") + "\n\n" + prompt
         }
     }
 
@@ -489,7 +494,7 @@ enum MeetingSummaryGenerator {
         return (Array(turns[..<splitIndex]), Array(turns[splitIndex...]))
     }
 
-    private static func fittedNotes(_ notes: [String], tokenBudget: Int) -> String {
+    private static func fittedNotes(_ notes: [String], transcript: Transcript, tokenBudget: Int) -> String {
         let parts = notes.map { note in
             (try? JSONDecoder().decode(SummaryClaimEvidence.Envelope.self, from: Data(note.utf8)).claims) ?? []
         }
@@ -499,12 +504,12 @@ enum MeetingSummaryGenerator {
         for index in 0..<(parts.map(\.count).max() ?? 0) {
             for part in parts where part.indices.contains(index) {
                 let candidate = selected + [part[index]]
-                guard let encoded = try? SummaryClaimEvidence.encode(candidate),
+                guard let encoded = try? SummaryClaimEvidence.encodeForPrompt(candidate, transcript: transcript),
                       TokenCountEstimator.estimate(encoded) <= tokenBudget else { continue }
                 selected = candidate
             }
         }
-        return (try? SummaryClaimEvidence.encode(selected)) ?? "{\"claims\":[]}"
+        return (try? SummaryClaimEvidence.encodeForPrompt(selected, transcript: transcript)) ?? "{\"claims\":[]}"
     }
 
     private static func deterministicExtract(
@@ -512,7 +517,7 @@ enum MeetingSummaryGenerator {
         transcript: Transcript
     ) -> String {
         let sourceMap = transcript.segmentSourceMap
-        let claims = Set(turns.flatMap(\.sourceIDs)).sorted().compactMap { id -> SummaryClaimEvidence.Claim? in
+        let claims = Set(turns.map(\.sourceID)).sorted().compactMap { id -> SummaryClaimEvidence.Claim? in
             guard let segment = sourceMap[id], !segment.displayText.isEmpty else { return nil }
             let quote = String(segment.displayText.prefix(600))
             return .init(section: "TL;DR", text: quote,
@@ -535,6 +540,7 @@ enum MeetingSummaryGenerator {
         let value = [
             "meeting-summary-v\(checkpointVersion)",
             engineName,
+            transcript.evidenceRevision,
             template.rawValue,
             language.rawValue,
             chunkSystem,

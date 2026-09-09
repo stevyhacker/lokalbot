@@ -45,7 +45,8 @@ struct Transcript: Codable {
         var end: TimeInterval
         var speaker: String
         var text: String
-        var sourceIDs: [String] = []
+        var sourceID: String
+        var citationID: String
     }
 
     /// Immutable, UI-ready segment data. Building this value performs the
@@ -236,6 +237,15 @@ struct Transcript: Codable {
         Dictionary(uniqueKeysWithValues: segments.indices.map { (segmentID(at: $0), segments[$0]) })
     }
 
+    /// Short prompt references avoid asking a model to reproduce long timing
+    /// IDs. Resolution always uses this exact transcript snapshot; persisted
+    /// claims and audio links retain the original stable segment IDs.
+    func summaryCitationID(at index: Int) -> String { "s\(index + 1)" }
+
+    var summaryCitationSources: [String: String] {
+        Dictionary(uniqueKeysWithValues: segments.indices.map { (summaryCitationID(at: $0), segmentID(at: $0)) })
+    }
+
     /// Source-ready transcript for grounded extraction. IDs appear in the
     /// exact notation required by the schema so the model can only cite known
     /// segments that LokalBot can resolve back to audio.
@@ -276,7 +286,7 @@ struct Transcript: Codable {
                     start: segment.start,
                     end: segment.end,
                     speaker: segment.speaker,
-                    text: part, sourceIDs: [segmentID(at: segmentIndex)]))
+                    text: part, sourceID: segmentID(at: segmentIndex), citationID: summaryCitationID(at: segmentIndex)))
             }
         }
         return turns
@@ -294,7 +304,7 @@ struct Transcript: Codable {
     func summaryPromptLine(_ turn: PromptTurn) -> String { summaryPromptLine(turn, roster: speakerRoster) }
 
     func summaryPromptLine(_ turn: PromptTurn, roster: [String: SpeakerDescriptor]) -> String {
-        "[\(turn.sourceIDs.joined(separator: ","))] **[\(Self.stamp(turn.start))] \(promptSpeaker(for: turn.speaker, roster: roster)):** \(turn.text)"
+        "[\(turn.citationID)] **[\(Self.stamp(turn.start))] \(promptSpeaker(for: turn.speaker, roster: roster)):** \(turn.text)"
     }
 
     /// Merge per-track transcripts (mic = "me", system = "them") by timestamp.

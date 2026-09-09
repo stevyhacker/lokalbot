@@ -159,14 +159,15 @@ final class TranscriptTests: XCTestCase {
 
         let turns = transcript.summaryPromptTurns()
         XCTAssertEqual(turns.count, 4)
-        XCTAssertEqual(turns.map(\.sourceIDs), transcript.segments.indices.map { [transcript.segmentID(at: $0)] })
+        XCTAssertEqual(turns.map(\.sourceID), transcript.segments.indices.map { transcript.segmentID(at: $0) })
+        XCTAssertEqual(turns.map(\.citationID), ["s1", "s2", "s3", "s4"])
         XCTAssertEqual(
             transcript.summaryPromptMarkdown,
-            "[\(transcript.segmentID(at: 0))] "
+            "[s1] "
                 + "**[00:00:00] [speaker_id=me; identity=unresolved] Local speaker:** First point.\n\n"
-                + "[\(transcript.segmentID(at: 1))] **[00:00:02] [speaker_id=me; identity=unresolved] Local speaker:** Second point.\n\n"
-                + "[\(transcript.segmentID(at: 2))] **[00:00:04] [speaker_id=them; identity=other] Ana:** Reply.\n\n"
-                + "[\(transcript.segmentID(at: 3))] **[00:00:10] [speaker_id=them; identity=other] Ana:** Later.")
+                + "[s2] **[00:00:02] [speaker_id=me; identity=unresolved] Local speaker:** Second point.\n\n"
+                + "[s3] **[00:00:04] [speaker_id=them; identity=other] Ana:** Reply.\n\n"
+                + "[s4] **[00:00:10] [speaker_id=them; identity=other] Ana:** Later.")
     }
 
     func testSummaryPromptSplitsOversizedLegacySegmentAtWordBoundaries() {
@@ -184,7 +185,7 @@ final class TranscriptTests: XCTestCase {
         XCTAssertEqual(turns.count, 2)
         XCTAssertTrue(turns.allSatisfy { $0.text.count <= 200 })
         XCTAssertTrue(turns.allSatisfy { $0.start == 7 && $0.speaker == "me" })
-        XCTAssertTrue(turns.allSatisfy { $0.sourceIDs == [transcript.segmentID(at: 0)] })
+        XCTAssertTrue(turns.allSatisfy { $0.sourceID == transcript.segmentID(at: 0) && $0.citationID == "s1" })
     }
 
     func testDisplayIndexCachesNormalizedVisibleTextAndSpeakerPresentation() {

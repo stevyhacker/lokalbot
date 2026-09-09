@@ -209,16 +209,31 @@ final class MeetingSummaryGeneratorTests: XCTestCase {
             checkpoint.deletingLastPathComponent().appendingPathComponent("summary.claims.partial.json").path))
     }
 
-    func testTruncationAndValidationShareOneRepairBudget() async throws {
-        let script = Script([.failure(.outputTruncated), .value(try claims("Wrong section", section: "Action items"))])
+    func testTruncationDoesNotConsumeTheCitationRepairAllowance() async throws {
+        let script = Script([
+            .failure(.outputTruncated),
+            .value(try claims("")),
+            .value(try claims("Repaired after truncation")),
+        ])
+        let result = try await generate(script: script, checkpoint: makeCheckpointURL())
+        let calls = await script.recordedCalls()
+        XCTAssertTrue(result.contains("Repaired after truncation"))
+        XCTAssertEqual(calls.count, 3)
+        XCTAssertTrue(calls[2].prompt.contains("Retry compactly"))
+        XCTAssertTrue(calls[2].prompt.contains("claim text is empty or too long"))
+    }
+
+    func testMixedFailureRecoveryStillStopsAfterOneAttemptPerFailureMode() async throws {
+        let invalid = try claims("Wrong section", section: "Action items")
+        let script = Script([.failure(.outputTruncated), .value(invalid), .value(invalid)])
         do {
             _ = try await generate(script: script, checkpoint: makeCheckpointURL())
-            XCTFail("A second failure must surface instead of starting another retry")
+            XCTFail("Repeated invalid claims must not start an unbounded repair loop")
         } catch let error as SummaryClaimEvidence.ValidationError {
             XCTAssertEqual(error.reason, .invalidSection)
         }
         let calls = await script.recordedCalls()
-        XCTAssertEqual(calls.count, 2)
+        XCTAssertEqual(calls.count, 3)
     }
 
     func testChunkRejectsCitationFromAnotherPartAndCheckpointsOnlyTheRepair() async throws {
@@ -305,8 +320,22 @@ final class MeetingSummaryGeneratorTests: XCTestCase {
         XCTAssertTrue(result.contains("Included in part notes"))
         XCTAssertFalse(result.contains("Missing from part notes"))
         XCTAssertEqual(calls.count, 3)
-        XCTAssertFalse(calls[1].prompt.contains(source.segmentID(at: 1)))
+        XCTAssertFalse(calls[1].prompt.contains("\"s2\""))
         XCTAssertTrue(calls[2].prompt.contains("outside the supplied evidence"))
+    }
+
+    func testCompactModelCitationsAreResolvedBeforePersistingClaims() async throws {
+        let source = sampleTranscript()
+        let validated = try SummaryClaimEvidence.decode(claims("Compact citation"), transcript: source)
+        let script = Script([.value(try SummaryClaimEvidence.encodeForPrompt(validated, transcript: source))])
+        let checkpoint = makeCheckpointURL()
+        _ = try await generate(script: script, checkpoint: checkpoint)
+        let calls = await script.recordedCalls()
+        XCTAssertTrue(calls[0].prompt.contains("[s1]"))
+        XCTAssertFalse(calls[0].prompt.contains(source.segmentID(at: 0)))
+        let artifact = try JSONDecoder().decode(SummaryClaimEvidence.Artifact.self, from: Data(contentsOf:
+            checkpoint.deletingLastPathComponent().appendingPathComponent("summary.claims.partial.json")))
+        XCTAssertEqual(artifact.claims.map(\.segmentID), [source.segmentID(at: 0)])
     }
 
     private func claims(_ text: String, source: Transcript? = nil, segmentIndex: Int = 0,

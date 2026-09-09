@@ -194,7 +194,31 @@ final class AttributionSafetyTests: XCTestCase {
         let source = transcript()
         let claim = SummaryClaimEvidence.Claim(section: "Key points", text: "Will send the report.", speakerID: "them 1", segmentID: source.segmentID(at: 1), quote: "I will send the report.")
         XCTAssertThrowsError(try SummaryClaimEvidence.decode(SummaryClaimEvidence.encode([claim]), transcript: source, allowedIDs: [source.segmentID(at: 0)]))
-        XCTAssertTrue(source.summaryPromptTurns().allSatisfy { !$0.sourceIDs.isEmpty })
+        XCTAssertTrue(source.summaryPromptTurns().allSatisfy { !$0.sourceID.isEmpty })
+    }
+
+    func testCompactSummaryCitationsResolveToStableIDsWithTheSameSpeakerAndScopeChecks() throws {
+        let source = transcript()
+        let claim = SummaryClaimEvidence.Claim(section: "TL;DR", text: "Will send the report.",
+            speakerID: "them 1", segmentID: source.segmentID(at: 1), quote: "I will send the report.")
+        let prompt = try SummaryClaimEvidence.encodeForPrompt([claim], transcript: source)
+        XCTAssertTrue(prompt.contains("\"s2\""))
+        XCTAssertFalse(prompt.contains(claim.segmentID))
+        XCTAssertEqual(try SummaryClaimEvidence.decode(prompt, transcript: source, allowedIDs: [claim.segmentID]), [claim])
+        XCTAssertThrowsError(try SummaryClaimEvidence.decode(prompt, transcript: source, allowedIDs: [source.segmentID(at: 0)])) { error in
+            XCTAssertEqual((error as? SummaryClaimEvidence.ValidationError)?.reason, .sourceOutsidePart)
+        }
+        var wrongSpeaker = claim
+        wrongSpeaker.segmentID = "s2"
+        wrongSpeaker.speakerID = "local 1"
+        XCTAssertThrowsError(try SummaryClaimEvidence.decode(SummaryClaimEvidence.encode([wrongSpeaker]), transcript: source)) { error in
+            XCTAssertEqual((error as? SummaryClaimEvidence.ValidationError)?.reason, .speakerMismatch)
+        }
+        var unknown = claim
+        unknown.segmentID = "s9999"
+        XCTAssertThrowsError(try SummaryClaimEvidence.decode(SummaryClaimEvidence.encode([unknown]), transcript: source)) { error in
+            XCTAssertEqual((error as? SummaryClaimEvidence.ValidationError)?.reason, .unknownSource)
+        }
     }
 
     func testSummaryValidationIdentifiesFailingClaimWithoutLeakingItsContent() throws {
