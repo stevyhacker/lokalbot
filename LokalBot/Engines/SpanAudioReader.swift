@@ -86,8 +86,13 @@ final class SpanAudioReader {
             return source
         }
         let ratio = outputFormat.sampleRate / source.format.sampleRate
+        // Draining AVAudioConverter can emit filter-tail samples beyond the
+        // source window (e.g. 480,011 samples for a 30 s, 48 kHz window).
+        // Those samples must not lengthen a speaker region or become a tiny
+        // extra ASR span. Keep draining, but retain only the source duration.
+        let maximumFrames = Int(ceil(Double(source.frameLength) * ratio))
         var result: [Float] = []
-        result.reserveCapacity(Int(Double(source.frameLength) * ratio) + 16)
+        result.reserveCapacity(maximumFrames)
         while true {
             guard let chunk = AVAudioPCMBuffer(
                 pcmFormat: outputFormat, frameCapacity: 8_192) else {
@@ -96,7 +101,7 @@ final class SpanAudioReader {
             var conversionError: NSError?
             let status = converter.convert(to: chunk, error: &conversionError, withInputFrom: input)
             if let conversionError { throw conversionError }
-            result.append(contentsOf: Self.floats(of: chunk))
+            result.append(contentsOf: Self.floats(of: chunk).prefix(maximumFrames - result.count))
             if status == .endOfStream || status == .error || chunk.frameLength == 0 { break }
         }
         return result
