@@ -53,6 +53,11 @@ enum OutcomesExtractor {
         from a cited segment, including the explicit addressee for an assignment/request.
         Do not treat an unanswered request as an accepted commitment. An ambiguous you/we
         is unclear. A speaker with identity=unresolved cannot be promoted to the user.
+        An explicit acceptance such as "Yeah, I can do that" or "Sure, I'll handle it"
+        is a commitment by that cited speaker; include the task/request context in the
+        source citations. Keep the acceptance quote in its original language. Do not
+        translate quotes or owner names. Use the roster's full display name even when
+        the spoken request uses a unique first name.
         - Set "for_user" to true exactly when the action belongs to the user. For those \
         items, set "owner" to "Me" even when the transcript uses "\(user)". Otherwise, \
         use the owner's name exactly as it appears, or "" when no owner was stated.
@@ -79,8 +84,9 @@ enum OutcomesExtractor {
         - Use empty arrays when nothing qualifies. Never invent items.
         """
         if let language = outputLanguage.promptLanguageName {
-            prompt += "\n- Write every human-readable text field in \(language), even when "
-                + "a model retry would otherwise switch languages."
+            prompt += "\n- Write action descriptions, decisions, and open questions in \(language), even when "
+                + "a model retry would otherwise switch languages. Copy owner names, due dates, and evidence quotes "
+                + "from the source unchanged; never translate those evidence fields."
         }
         return prompt
     }
@@ -203,7 +209,8 @@ enum OutcomesExtractor {
                     let flagMatches = (item["for_user"] as? Bool) == (ownership.resolution == .user)
                     let expectedOwner = ownership.resolution == .user ? "Me" : expected.name
                     if !flagMatches || rawOwner?.caseInsensitiveCompare(expectedOwner) != .orderedSame {
-                        ownership = .init(resolution: .unresolved, basis: .unclear)
+                        ownership = .init(resolution: .unresolved, speakerID: ownership.speakerID,
+                                          basis: .unclear, rejectionReason: .conflictingOwner)
                     }
                 }
             }

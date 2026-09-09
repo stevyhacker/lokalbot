@@ -22,8 +22,17 @@ struct MeetingParticipantSnapshot: Sendable {
     var otherAudibleTabs = false
 }
 
-/// Separate bounded reader: generic screen OCR never becomes a tile identity.
+struct MeetingParticipantCaptureResult: Sendable {
+    var snapshot: MeetingParticipantSnapshot?
+    var issue: SpeakerObservationIssue?
+    static func unavailable(_ issue: SpeakerObservationIssue) -> Self { .init(issue: issue) }
+}
+
+/// One bounded worker; batch AX attributes to avoid an IPC for every field.
+/// Only the selected Meet document supplies participant identities. Embedded
+/// documents (including presentations) are never scanned for speaker names.
 final class MeetingParticipantAccessibilityReader: @unchecked Sendable {
+    static let observationBudget = 0.30
     private let queue = DispatchQueue(label: "lokalbot.meeting-speaker.ax", qos: .utility)
     private let lock = NSLock()
     private var busy = false
@@ -35,8 +44,9 @@ final class MeetingParticipantAccessibilityReader: @unchecked Sendable {
     }
     private func release() { lock.lock(); busy = false; lock.unlock() }
 
-    func capture(processID: pid_t) async -> MeetingParticipantSnapshot? {
-        guard AXIsProcessTrusted(), claim() else { return nil }
+    func capture(processID: pid_t) async -> MeetingParticipantCaptureResult {
+        guard AXIsProcessTrusted() else { return .unavailable(.accessibilityPermission) }
+        guard claim() else { return .unavailable(.accessibilityBusy) }
         return await withCheckedContinuation { continuation in
             let delivery = Delivery(continuation)
             queue.async { [self] in
@@ -44,15 +54,17 @@ final class MeetingParticipantAccessibilityReader: @unchecked Sendable {
                 release()
                 delivery.finish(result)
             }
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.25) { delivery.finish(nil) }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.35) {
+                delivery.finish(.unavailable(.accessibilityTimeout))
+            }
         }
     }
 
     private final class Delivery: @unchecked Sendable {
         private let lock = NSLock()
-        private var continuation: CheckedContinuation<MeetingParticipantSnapshot?, Never>?
-        init(_ continuation: CheckedContinuation<MeetingParticipantSnapshot?, Never>) { self.continuation = continuation }
-        func finish(_ value: MeetingParticipantSnapshot?) {
+        private var continuation: CheckedContinuation<MeetingParticipantCaptureResult, Never>?
+        init(_ continuation: CheckedContinuation<MeetingParticipantCaptureResult, Never>) { self.continuation = continuation }
+        func finish(_ value: MeetingParticipantCaptureResult) {
             lock.lock()
             let pending = continuation
             continuation = nil
@@ -65,84 +77,113 @@ final class MeetingParticipantAccessibilityReader: @unchecked Sendable {
         var result: CFTypeRef?
         return AXUIElementCopyAttributeValue(element, attribute as CFString, &result) == .success ? result : nil
     }
-    private static func string(_ element: AXUIElement, _ attribute: String) -> String {
-        (value(element, attribute) as? String) ?? ""
-    }
     private static func element(_ parent: AXUIElement, _ attribute: String) -> AXUIElement? {
         guard let result = value(parent, attribute), CFGetTypeID(result) == AXUIElementGetTypeID() else { return nil }
         return (result as! AXUIElement)
     }
-    private static func bounds(_ element: AXUIElement) -> CGRect? {
-        guard let position = value(element, kAXPositionAttribute), CFGetTypeID(position) == AXValueGetTypeID(),
-              let size = value(element, kAXSizeAttribute), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
-        var point = CGPoint.zero
-        var dimensions = CGSize.zero
-        guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
-              AXValueGetValue(size as! AXValue, .cgSize, &dimensions), dimensions.width > 0, dimensions.height > 0 else { return nil }
-        return CGRect(origin: point, size: dimensions)
+
+    private struct Fields {
+        var values: [String: AnyObject]
+        var depth: Int
+        func string(_ key: String) -> String { values[key] as? String ?? "" }
+        var labels: [String] {
+            [kAXDescriptionAttribute, kAXTitleAttribute, kAXValueAttribute, kAXHelpAttribute].map(string).filter { !$0.isEmpty }
+        }
+        var children: [AXUIElement] { values[kAXChildrenAttribute] as? [AXUIElement] ?? [] }
+        var frame: CGRect? {
+            guard let position = values[kAXPositionAttribute], CFGetTypeID(position) == AXValueGetTypeID(),
+                  let size = values[kAXSizeAttribute], CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
+            var point = CGPoint.zero
+            var dimensions = CGSize.zero
+            guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
+                  AXValueGetValue(size as! AXValue, .cgSize, &dimensions),
+                  dimensions.width.isFinite, dimensions.height.isFinite,
+                  dimensions.width > 0, dimensions.height > 0 else { return nil }
+            return CGRect(origin: point, size: dimensions)
+        }
     }
 
-    /// Only an explicitly participant-labelled container establishes a tile.
-    /// Unknown/localized provider structures return unavailable until verified.
+    private static func fields(_ node: AXUIElement, depth: Int) -> Fields? {
+        let attributes = [kAXRoleAttribute, kAXDescriptionAttribute, kAXTitleAttribute, kAXValueAttribute,
+                          kAXHelpAttribute, kAXChildrenAttribute, kAXPositionAttribute, kAXSizeAttribute,
+                          kAXURLAttribute, kAXDocumentAttribute, kAXSelectedAttribute, "AXHidden"]
+        var output: CFArray?
+        guard AXUIElementCopyMultipleAttributeValues(node, attributes as CFArray,
+            AXCopyMultipleAttributeOptions(rawValue: 0), &output) == .success,
+              let values = output as? [AnyObject], values.count == attributes.count else { return nil }
+        return Fields(values: Dictionary(uniqueKeysWithValues: zip(attributes, values)), depth: depth)
+    }
+
     static func tileName(description: String) -> String? {
         for suffix in ["'s tile", "’s tile", "'s video", "’s video"] where description.hasSuffix(suffix) {
             return ParticipantObservation.safeName(String(description.dropLast(suffix.count)))
         }
+        for prefix in ["Video of ", "Tile of ", "Participant: "] where description.hasPrefix(prefix) {
+            return ParticipantObservation.safeName(String(description.dropFirst(prefix.count)))
+        }
         return nil
     }
 
-    private static func resolve(_ processID: pid_t) -> MeetingParticipantSnapshot? {
+    private static func resolve(_ processID: pid_t) -> MeetingParticipantCaptureResult {
         let start = RecordingAudioClock.now
         let application = AXUIElementCreateApplication(processID)
         AXUIElementSetMessagingTimeout(application, 0.012)
+        // Chromium may expose only its browser chrome until an AX client asks
+        // for the web tree. This does not grant or prompt for TCC permission.
+        AXUIElementSetAttributeValue(application, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
         guard let window = element(application, kAXFocusedWindowAttribute),
               (value(window, kAXMinimizedAttribute) as? Bool) != true,
-              let frame = bounds(window) else { return nil }
-        let title = string(window, kAXTitleAttribute)
-        guard !ScreenContextPrivacy.isPrivateWindow(title: title) else { return nil }
+              let windowFields = fields(window, depth: 0), let frame = windowFields.frame else { return .unavailable(.sourceUnavailable) }
+        let title = windowFields.string(kAXTitleAttribute)
+        guard !ScreenContextPrivacy.isPrivateWindow(title: title) else { return .unavailable(.sourceRejected) }
         if let focused = element(application, kAXFocusedUIElementAttribute),
-           string(focused, kAXSubroleAttribute) == "AXSecureTextField" { return nil }
-        var stack: [(AXUIElement, Int)] = [(window, 0)]
+           (value(focused, kAXSubroleAttribute) as? String) == "AXSecureTextField" { return .unavailable(.sourceRejected) }
+        var stack: [(AXUIElement, Int, Bool)] = [(window, 0, false)]
         var count = 0
-        var urls: Set<String> = []
-        var tiles: [MeetingParticipantTile] = []
+        var selectedURL: String?
+        var records: [Fields] = []
         var otherAudibleTabs = false
-        while let (node, depth) = stack.popLast() {
+        while let (node, depth, insideMeet) = stack.popLast() {
             count += 1
-            guard count <= 600, RecordingAudioClock.now - start <= 0.20 else { return nil }
-            let role = string(node, kAXRoleAttribute)
+            guard count <= 1_500, RecordingAudioClock.now - start <= observationBudget else { return .unavailable(.accessibilityBudget) }
+            guard let item = fields(node, depth: depth) else { return .unavailable(.sourceUnavailable) }
+            if item.values["AXHidden"] as? Bool == true { continue }
+            let role = item.string(kAXRoleAttribute)
+            var inDocument = insideMeet
             if role == "AXWebArea" {
-                let raw = value(node, kAXURLAttribute)
-                let url = (raw as? URL)?.absoluteString ?? (raw as? String) ?? string(node, kAXDocumentAttribute)
-                if let valid = GoogleMeetSpeakerObservationProvider.meetURL(url) { urls.insert(valid) } else { return nil }
+                if insideMeet { continue } // Never read an embedded presentation/third-party frame.
+                let raw = item.values[kAXURLAttribute]
+                let url = (raw as? URL)?.absoluteString ?? (raw as? String) ?? item.string(kAXDocumentAttribute)
+                guard selectedURL == nil, let valid = GoogleMeetSpeakerObservationProvider.meetURL(url) else { return .unavailable(.sourceUnavailable) }
+                selectedURL = valid
+                inDocument = true
             }
-            let description = string(node, kAXDescriptionAttribute)
             if ["AXRadioButton", "AXTab"].contains(role),
-               description.localizedCaseInsensitiveContains("audio playing"),
-               (value(node, kAXSelectedAttribute) as? Bool) != true {
-                otherAudibleTabs = true
-            }
-            let children = (value(node, kAXChildrenAttribute) as? [AXUIElement]) ?? []
-            if let name = tileName(description: description), let tileFrame = bounds(node), frame.contains(tileFrame) {
-                var labels = [description]
-                for child in children.prefix(24) {
-                    labels.append(string(child, kAXDescriptionAttribute))
-                    labels.append(string(child, kAXTitleAttribute))
-                }
-                let speaking = labels.contains("\(name) is speaking") || labels.contains("Speaking: \(name)")
-                let silent = labels.contains("\(name) is not speaking")
-                tiles.append(MeetingParticipantTile(name: name, frame: tileFrame,
-                    speaking: speaking ? true : (silent ? false : nil),
-                    muted: labels.contains("\(name)'s microphone is off") || labels.contains("Microphone off"),
-                    isSelf: labels.contains("Your tile") || labels.contains("You"),
-                    sharedRoom: labels.contains("Conference room") || labels.contains("Meeting room")
-                        || name.lowercased().range(of: #"\b(room|boardroom)\b| & | and "#, options: .regularExpression) != nil))
-            }
-            if depth < 18 { stack += children.prefix(100).map { ($0, depth + 1) } }
+               item.labels.contains(where: { $0.localizedCaseInsensitiveContains("audio playing") }),
+               item.values[kAXSelectedAttribute] as? Bool != true { otherAudibleTabs = true }
+            if inDocument { records.append(item) }
+            let children = item.children
+            guard children.count <= 300, depth < 30 || children.isEmpty else { return .unavailable(.accessibilityBudget) }
+            stack += children.reversed().map { ($0, depth + 1, inDocument) }
         }
-        guard urls.count == 1, let url = urls.first,
-              let stillFocused = element(application, kAXFocusedWindowAttribute), CFEqual(window, stillFocused) else { return nil }
-        return MeetingParticipantSnapshot(processID: processID, title: title, url: url, windowFrame: frame,
-            tiles: tiles, hostStart: start, hostEnd: RecordingAudioClock.now, otherAudibleTabs: otherAudibleTabs)
+        guard let url = selectedURL,
+              let stillFocused = element(application, kAXFocusedWindowAttribute), CFEqual(window, stillFocused) else { return .unavailable(.sourceChanged) }
+        var tiles: [MeetingParticipantTile] = []
+        for (index, item) in records.enumerated() {
+            guard ["AXGroup", "AXImage", "AXUnknown"].contains(item.string(kAXRoleAttribute)),
+                  let tileFrame = item.frame, frame.contains(tileFrame),
+                  tileFrame.width >= 80, tileFrame.height >= 60 else { continue }
+            var labels: [String] = []
+            for child in records.dropFirst(index + 1).prefix(100) {
+                if child.depth <= item.depth { break }
+                if child.depth <= item.depth + 6 { labels += child.labels }
+            }
+            guard let name = MeetingParticipantTileResolver.name(ownLabels: item.labels, descendantLabels: labels) else { continue }
+            tiles.append(MeetingParticipantTileResolver.tile(name: name, frame: tileFrame, labels: item.labels + labels))
+        }
+        guard RecordingAudioClock.now - start <= observationBudget else { return .unavailable(.accessibilityBudget) }
+        return .init(snapshot: MeetingParticipantSnapshot(processID: processID, title: title, url: url, windowFrame: frame,
+            tiles: MeetingParticipantTileResolver.innermostTiles(tiles), hostStart: start,
+            hostEnd: RecordingAudioClock.now, otherAudibleTabs: otherAudibleTabs))
     }
 }

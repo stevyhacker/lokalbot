@@ -197,4 +197,55 @@ import XCTest
         let profiles = try await restarted.profiles()
         XCTAssertTrue(profiles.isEmpty)
     }
+
+    private func microphoneFixture() throws -> (Meeting, URL, Transcript, [SpeakerAudioTurn], [SpeakerVoiceSample]) {
+        let meeting = try storage.createMeetingFolder(title: "Quiet reference rule fixture", appName: "Google Chrome")
+        let folder = meeting.folderURL(in: storage)
+        let audio = folder.appendingPathComponent("mic.m4a")
+        for url in [audio, folder.appendingPathComponent("system.m4a")] {
+            let writer = try WavWriter(url: url, sampleRate: 16_000)
+            try writer.append([Float](repeating: 0, count: 40 * 16_000)); try writer.finish()
+        }
+        let clock = AudioClockSpan(hostStart: 100, hostEnd: 140, startFrame: 0, endFrame: 640_000, sampleRate: 16_000, generation: 1)
+        try JSONEncoder().encode(RecordingAudioTiming(microphone: [clock], system: [clock]))
+            .write(to: folder.appendingPathComponent(RecordingAudioTiming.fileName))
+        let local: [Transcript.Segment] = (0..<3).map { index in
+            let start = Double(index * 10 + 2)
+            let end = start + 6
+            let attribution = SpeakerAttribution(source: .microphone, identity: .unresolved, method: .diarization)
+            return Transcript.Segment(start: start, end: end, speaker: "local 1", text: "Synthetic local turn", attribution: attribution)
+        }
+        let transcript = Transcript(segments: local + [
+            .init(start: 35, end: 38, speaker: "them 1", text: "Synthetic remote turn",
+                  attribution: .init(source: .system, identity: .other, method: .diarization))
+        ], engine: "fixture", echoReport: .init(status: .disabled))
+        let turns = transcript.segments.map { SpeakerAudioTurn(speaker: $0.speaker,
+            range: .init(start: $0.start, end: $0.end), source: $0.resolvedAttribution.source) }
+        var vector = [Float](repeating: 0, count: 256); vector[0] = 1
+        let samples = local.map { SpeakerVoiceSample(speaker: $0.speaker, range: .init(start: $0.start, end: $0.end), vector: vector, source: .microphone) }
+        return (meeting, audio, transcript, turns, samples)
+    }
+
+    func testEchoOffCanRememberAndSuggestAConfirmedLocalUserInTheNextMeeting() async throws {
+        let (first, audio, transcript, turns, samples) = try microphoneFixture()
+        let initial = await service.process(transcript: transcript, meeting: first, turns: turns, samples: samples, audioURL: audio)
+        let state = try await service.state(for: first)
+        XCTAssertEqual(state.voiceSamples.count, 3)
+        XCTAssertEqual(state.microphoneSampleDiagnostics?["quietReference"], 3)
+        _ = try await service.choose(.init(label: "local 1", name: "Stevan", action: .confirmUser, remember: true), meeting: first, transcript: initial)
+        let profiles = try await service.profiles()
+        let profile = try XCTUnwrap(profiles.first)
+        XCTAssertEqual(profile.isLocalUser, true)
+
+        let (second, nextAudio, nextTranscript, nextTurns, nextSamples) = try microphoneFixture()
+        let proposed = await service.process(transcript: nextTranscript, meeting: second, turns: nextTurns, samples: nextSamples, audioURL: nextAudio)
+        let suggested = try await service.state(for: second)
+        XCTAssertEqual(suggested.suggestions["local 1"]?.first?.name, "Stevan")
+        XCTAssertEqual(suggested.suggestions["local 1"]?.first?.tier, .suggested)
+        XCTAssertTrue(proposed.confirmedUserSpeakerIDs.isEmpty, "An uncalibrated microphone match is reviewable")
+        let chosen = try await service.choose(.init(label: "local 1", name: "Stevan", profileID: profile.id), meeting: second, transcript: proposed)
+        XCTAssertEqual(chosen.confirmedUserSpeakerIDs, ["local 1"])
+        let remaining = try await service.profiles()
+        XCTAssertEqual(remaining.first?.contributions.count, 1, "Choosing a name without Remember must not enroll again")
+    }
 }

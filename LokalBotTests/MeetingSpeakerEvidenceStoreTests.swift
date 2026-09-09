@@ -36,6 +36,25 @@ import XCTest
         XCTAssertEqual(partial?.intervals.count, 1)
     }
 
+    func testFailureOnlyObservationSessionRetainsDiagnosticsAfterRestart() async throws {
+        let generation = UUID()
+        try await store.begin(.init(meetingID: meeting.id, generation: generation), meeting: meeting)
+        var diagnostics = SpeakerObservationDiagnostics()
+        diagnostics.record(.accessibilityPermission)
+        diagnostics.record(.layoutUnavailable)
+        try await store.recordDiagnostics(diagnostics, meeting: meeting, generation: generation)
+        try await store.seal(meeting: meeting, generation: generation, failed: false)
+        let reopened = MeetingSpeakerEvidenceStore(root: root, key: key)
+        let evidence = try await reopened.evidence(meeting: meeting, retentionDays: 14)
+        XCTAssertEqual(evidence?.intervals.count, 0)
+        XCTAssertEqual(evidence?.diagnostics, diagnostics)
+        try await store.eraseEvidence(meeting: meeting)
+        do {
+            try await store.recordDiagnostics(diagnostics, meeting: meeting, generation: generation)
+            XCTFail("Diagnostics resurrected deleted evidence")
+        } catch { XCTAssertTrue(error is MeetingSpeakerEvidenceStore.Failure) }
+    }
+
     func testManualDecisionSurvivesRestartAndVisualEvidenceExpiry() async throws {
         var saved = MeetingSpeakerIdentityState(meetingID: meeting.id)
         saved.audioRevision = "audio"

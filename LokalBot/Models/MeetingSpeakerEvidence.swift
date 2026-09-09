@@ -61,13 +61,14 @@ struct MeetingSpeakerEvidenceSession: Codable, Sendable {
     var schemaVersion = 1
     var meetingID: UUID
     var generation: UUID
-    var provider = "google-meet-chrome-v1"
+    var provider = "google-meet-chrome-v2"
     var openedAt = Date()
     var sealed = false
     var failed = false
     var providerVerified = false
     var intervals: [SpeakerActivityInterval] = []
     var clockSpans: [AudioClockSpan] = []
+    var diagnostics: SpeakerObservationDiagnostics?
 }
 
 struct MeetingSpeakerEvidenceChunk: Codable, Sendable {
@@ -158,4 +159,5 @@ struct MeetingSpeakerIdentityState: Codable, Sendable {
     var analyzedAt = Date()
     var voiceSamples: [SpeakerVoiceSample] = []
     var providerVerified = false
+    var microphoneSampleDiagnostics: [String: Int]?
 }

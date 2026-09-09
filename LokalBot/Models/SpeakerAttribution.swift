@@ -49,14 +49,21 @@ struct TranscriptEchoReport: Codable, Equatable, Sendable {
 struct OutcomeAttribution: Codable, Equatable, Sendable {
     enum Resolution: String, Codable, Sendable { case user, other, unresolved }
     enum Basis: String, Codable, Sendable { case commitment, assignment, request, unclear, legacy }
+    enum RejectionReason: String, Codable, Sendable {
+        case missingSpeaker, unknownSpeaker, unconfirmedIdentity, missingBasis, missingQuote, quoteNotFound
+        case unsupportedCommitment, speakerMismatch, ambiguousName, targetNotExplicit, conflictingOwner
+    }
     var resolution: Resolution
     var speakerID: String?
     var basis: Basis
     var quote: String?
+    /// Content-free explanation retained even when ownership cannot be applied.
+    var rejectionReason: RejectionReason?
 
     func consistent(with forUser: Bool?) -> Self {
         guard let forUser, forUser != (resolution == .user) else { return self }
-        return Self(resolution: .unresolved, speakerID: speakerID, basis: .unclear, quote: quote)
+        return Self(resolution: .unresolved, speakerID: speakerID, basis: .unclear, quote: quote,
+                    rejectionReason: .conflictingOwner)
     }
 
     static func legacy(owner: String?, forUser: Bool?, userLabel: String = "Me") -> Self {

@@ -2,6 +2,8 @@
 
 7 September 2026 · Implementation and local validation, based on `879314487d32`.
 
+The [9 September follow-up](speaker-attribution-fixes-2026-09-09.md) updates the original foreground-only provider, Accessibility contracts, microphone sample selection, and diagnostics. The historical validation below does not establish live compatibility for that update.
+
 **The implementation and deterministic checks are ready for review. Release validation is incomplete.** No live Meet compatibility, recognition-accuracy, timing-harness, or Release-performance result is claimed. Both new settings default to off.
 
 ## Implemented behavior

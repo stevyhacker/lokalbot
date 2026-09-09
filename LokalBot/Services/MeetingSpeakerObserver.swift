@@ -58,6 +58,9 @@ struct SpeakerObservationAccumulator {
             var buffer: [SpeakerActivityInterval] = []
             var verified = false
             var failed = false
+            var diagnostics = SpeakerObservationDiagnostics()
+            var lastDiagnosticsWrite: ContinuousClock.Instant?
+            var lastSavedIssue: SpeakerObservationIssue?
             do {
                 let store = try identity.store()
                 try await store.begin(.init(meetingID: meeting.id, generation: token), meeting: meeting)
@@ -68,6 +71,7 @@ struct SpeakerObservationAccumulator {
                     if isPaused || capturePaused() {
                         accumulator.gap()
                         state = .paused("Speaker observation paused")
+                        diagnostics.record(.paused)
                         await provider.stop()
                     } else {
                         let coverage = coverageRevision
@@ -79,14 +83,16 @@ struct SpeakerObservationAccumulator {
                               settings().rememberSpeakersOnMac == config.rememberSpeakersOnMac,
                               settings().excludedScreenDomains == config.excludedScreenDomains,
                               settings().excludedApps == config.excludedApps, coverage == coverageRevision, !isPaused, !capturePaused() else {
-                            accumulator.gap(); continue
+                            accumulator.gap(); diagnostics.record(.settingsChanged); continue
                         }
                         if !batch.sourceKey.isEmpty && !verified {
                             try await store.verifyProvider(meeting: meeting, generation: token)
                             verified = true
                         }
                         if let reason = batch.reason { state = .paused(reason) } else { state = .observing }
-                        if config.identifySpeakersFromVisuals, let interval = accumulator.consume(batch, clock: clock) {
+                        let interval = config.identifySpeakersFromVisuals ? accumulator.consume(batch, clock: clock) : nil
+                        diagnostics.record(batch, interval: interval)
+                        if let interval {
                             if let last = buffer.last, last.participantReference == interval.participantReference,
                                last.layoutEpoch == interval.layoutEpoch, interval.range.start - last.range.end < 0.25 {
                                 buffer[buffer.count - 1].range.end = interval.range.end
@@ -98,18 +104,32 @@ struct SpeakerObservationAccumulator {
                             buffer.removeAll(keepingCapacity: true)
                         }
                     }
+                    // Persist failure-only sessions too. Throttle changes to
+                    // avoid disk churn, and checkpoint unchanged counters every 30s.
+                    let sinceWrite = lastDiagnosticsWrite?.duration(to: .now)
+                    if sinceWrite == nil || sinceWrite! >= .seconds(30)
+                        || (diagnostics.lastIssue != lastSavedIssue && sinceWrite! >= .seconds(5)) {
+                        try await store.recordDiagnostics(diagnostics, meeting: meeting, generation: token)
+                        lastDiagnosticsWrite = .now
+                        lastSavedIssue = diagnostics.lastIssue
+                    }
                     let elapsed = cycleStart.duration(to: .now)
                     if elapsed < .milliseconds(500) { try? await Task.sleep(for: .milliseconds(500) - elapsed) }
                 }
                 // No positive evidence after cancellation. Only already mapped
                 // intervals from this generation are flushed.
                 try await store.append(buffer, meeting: meeting, generation: token, clockSpans: clock.snapshot())
+                try await store.recordDiagnostics(diagnostics, meeting: meeting, generation: token)
                 try await store.seal(meeting: meeting, generation: token, failed: rejectedGenerations.contains(token))
             } catch {
                 failed = true
+                diagnostics.record(.evidenceUnavailable)
                 try? await identity.store().seal(meeting: meeting, generation: token, failed: true)
             }
             await provider.stop()
+            let reasons = diagnostics.issues.keys.sorted().map { "\($0)=\(diagnostics.issues[$0, default: 0])" }.joined(separator: ",")
+            lokalbotLog("speaker observation finished batches=\(diagnostics.observations) intervals=\(diagnostics.intervals) "
+                + "coverage=\(Int(diagnostics.coveredSeconds))s failed=\(failed) reasons=\(reasons)")
             rejectedGenerations.remove(token)
             if generation == token {
                 state = failed ? .unavailable("Speaker evidence unavailable; audio recording continues") : .off

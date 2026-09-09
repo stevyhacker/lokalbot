@@ -173,7 +173,8 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertTrue(prompt.contains("Never drop a user action"), prompt)
         XCTAssertTrue(prompt.contains("I will"), prompt)
         XCTAssertTrue(prompt.contains("owner-neutral task descriptions"), prompt)
-        XCTAssertTrue(prompt.contains("text field in English"), prompt)
+        XCTAssertTrue(prompt.contains("action descriptions, decisions, and open questions in English"), prompt)
+        XCTAssertTrue(prompt.contains("Copy owner names, due dates, and evidence quotes from the source unchanged"), prompt)
     }
 
     func testPromptUsesOnlySourceLabelledEvidence() {

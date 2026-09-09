@@ -84,4 +84,60 @@ final class MeetingSpeakerObservationTests: XCTestCase {
         XCTAssertEqual(restored.meetingVisualContextEnabled, legacy.meetingVisualContextEnabled)
         XCTAssertEqual(restored.screenContextCaptureMode, legacy.screenContextCaptureMode)
     }
+
+    func testVerifiedMeetCanBeObservedWhileAnotherAppIsForeground() {
+        XCTAssertTrue(GoogleMeetSpeakerObservationProvider.windowAllowed(capturedBundleID: "com.google.Chrome",
+            foregroundBundleID: "com.openai.codex", expectedURL: "https://meet.google.com/abc-defg-hij"))
+        for url in [nil, "https://example.com/abc-defg-hij", "https://meet.google.com/landing"] as [String?] {
+            XCTAssertFalse(GoogleMeetSpeakerObservationProvider.windowAllowed(capturedBundleID: "com.google.Chrome",
+                foregroundBundleID: "com.openai.codex", expectedURL: url))
+        }
+        XCTAssertFalse(GoogleMeetSpeakerObservationProvider.windowAllowed(capturedBundleID: "us.zoom.xos",
+            foregroundBundleID: "com.google.Chrome", expectedURL: "https://meet.google.com/abc-defg-hij"))
+    }
+
+    func testSpeakingTransitionsAndTileOrderAreNotLayoutChanges() {
+        let alice = MeetingParticipantTile(name: "Alice", frame: .init(x: 0, y: 0, width: 200, height: 150), speaking: true, muted: false, isSelf: false)
+        var bob = alice; bob.name = "Bob"; bob.frame.origin.x = 220; bob.speaking = false
+        var silentAlice = alice; silentAlice.speaking = false
+        var activeBob = bob; activeBob.speaking = true
+        XCTAssertTrue(GoogleMeetSpeakerObservationProvider.sameLayout([alice, bob], [activeBob, silentAlice]))
+        activeBob.frame.origin.x += 20
+        XCTAssertFalse(GoogleMeetSpeakerObservationProvider.sameLayout([alice, bob], [activeBob, silentAlice]))
+        var changedName = alice; changedName.name = "Eve"
+        XCTAssertFalse(GoogleMeetSpeakerObservationProvider.sameLayout([alice], [changedName]))
+    }
+
+    func testParticipantControlsAndNamesEstablishTilesWithoutPossessiveLabels() {
+        XCTAssertEqual(MeetingParticipantTileResolver.name(ownLabels: ["Alice"], descendantLabels: ["More options for Alice"]), "Alice")
+        XCTAssertEqual(MeetingParticipantTileResolver.name(ownLabels: [], descendantLabels: ["Alice", "Pin Alice to your main screen"]), "Alice")
+        XCTAssertEqual(MeetingParticipantTileResolver.name(ownLabels: ["Video of Alice"], descendantLabels: []), "Alice")
+        XCTAssertNil(MeetingParticipantTileResolver.name(ownLabels: ["Quarterly report"], descendantLabels: ["Alice", "Speaking"]))
+        XCTAssertNil(MeetingParticipantTileResolver.name(ownLabels: [], descendantLabels: ["Alice", "Bob", "Mute Alice", "Mute Bob"]))
+        XCTAssertNil(MeetingParticipantTileResolver.name(ownLabels: [], descendantLabels: ["More options for Alice", "Bob"]))
+    }
+
+    func testNestedTileContainersAreDeduplicatedButDuplicatePeopleRemainAmbiguous() {
+        let inner = MeetingParticipantTile(name: "Alice", frame: .init(x: 10, y: 10, width: 200, height: 150), speaking: true, muted: false, isSelf: false)
+        var outer = inner; outer.frame = .init(x: 0, y: 0, width: 230, height: 180)
+        var other = inner; other.frame.origin.x = 300
+        XCTAssertEqual(MeetingParticipantTileResolver.innermostTiles([outer, inner, other]).count, 2)
+        let paired = MeetingParticipantTileResolver.tile(name: "Alice", frame: inner.frame, labels: ["Speaking", "Paired with Bob"])
+        XCTAssertTrue(paired.sharedRoom)
+    }
+
+    func testDiagnosticsDistinguishMissingTilesAmbiguityAndClockGaps() throws {
+        var diagnostics = SpeakerObservationDiagnostics()
+        diagnostics.record(.init(sourceKey: "meet", observations: [], reason: "layout", issue: .layoutUnavailable), interval: nil)
+        diagnostics.record(batch(time: 100), interval: nil)
+        var ambiguous = batch(time: 100.5)
+        ambiguous.observations += batch(time: 100.5, name: "Bob", reference: "bob").observations
+        diagnostics.record(ambiguous, interval: nil)
+        XCTAssertEqual(diagnostics.issues["layoutUnavailable"], 1)
+        XCTAssertEqual(diagnostics.issues["noClockCoverage"], 1)
+        XCTAssertEqual(diagnostics.issues["ambiguousSpeaker"], 1)
+        let serialized = String(decoding: try JSONEncoder().encode(diagnostics), as: UTF8.self)
+        XCTAssertFalse(serialized.contains("Alex"))
+        XCTAssertFalse(serialized.contains("Bob"))
+    }
 }

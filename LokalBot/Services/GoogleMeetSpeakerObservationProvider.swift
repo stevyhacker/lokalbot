@@ -6,6 +6,7 @@ struct MeetingSpeakerObservationBatch: Sendable {
     var sourceKey: String
     var observations: [ParticipantObservation]
     var reason: String?
+    var issue: SpeakerObservationIssue?
 }
 
 @MainActor protocol MeetingSpeakerObservationProvider: AnyObject {
@@ -21,6 +22,12 @@ struct MeetingSpeakerObservationBatch: Sendable {
     private var lastFrameTime: Double = 0
     private var verifiedNames: [String: Double] = [:]
 
+    private var screenAvailable: Bool {
+        guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+        return (session["CGSSessionScreenIsLocked"] as? Bool) != true
+            && (session[kCGSessionOnConsoleKey as String] as? Bool) == true
+    }
+
     nonisolated static func meetURL(_ raw: String) -> String? {
         guard let components = URLComponents(string: raw), components.scheme == "https",
               components.host?.lowercased() == "meet.google.com", components.user == nil, components.password == nil,
@@ -35,42 +42,61 @@ struct MeetingSpeakerObservationBatch: Sendable {
               !ScreenContextPrivacy.isExcluded(sourceURL: url, rules: config.excludedScreenDomainList),
               !ScreenshotCaptureLayout.isExcluded(appName: "Google Chrome", excludedApps: config.excludedAppList),
               !snapshot.otherAudibleTabs,
-              snapshot.hostEnd - snapshot.hostStart <= 0.25 else { return false }
+              snapshot.hostStart.isFinite, snapshot.hostEnd.isFinite,
+              snapshot.hostEnd >= snapshot.hostStart,
+              snapshot.hostEnd - snapshot.hostStart <= MeetingParticipantAccessibilityReader.observationBudget else { return false }
         return true
     }
 
-    private func unavailable(_ reason: String) -> MeetingSpeakerObservationBatch {
-        MeetingSpeakerObservationBatch(sourceKey: "", observations: [], reason: reason)
+    nonisolated static func windowAllowed(capturedBundleID: String, foregroundBundleID: String?, expectedURL: String?) -> Bool {
+        capturedBundleID == "com.google.Chrome"
+            && (foregroundBundleID == "com.google.Chrome" || expectedURL.flatMap(meetURL) != nil)
+    }
+
+    nonisolated static func sameLayout(_ before: [MeetingParticipantTile], _ after: [MeetingParticipantTile]) -> Bool {
+        func stable(_ tiles: [MeetingParticipantTile]) -> [MeetingParticipantTile] {
+            tiles.map { tile in var copy = tile; copy.speaking = nil; copy.muted = false; return copy }
+                .sorted { "\($0.name)|\($0.frame)" < "\($1.name)|\($1.frame)" }
+        }
+        return stable(before) == stable(after)
+    }
+
+    private func unavailable(_ issue: SpeakerObservationIssue, source: String = "") async -> MeetingSpeakerObservationBatch {
+        if issue != .waitingForFrame { await frames.stop(); verifiedNames = [:] }
+        return MeetingSpeakerObservationBatch(sourceKey: source, observations: [], reason: issue.explanation, issue: issue)
     }
 
     func observe(config: AppSettings, expectedMeetingURL: URL?, capturedBundleID: String, visual: Bool) async -> MeetingSpeakerObservationBatch {
-        guard capturedBundleID == "com.google.Chrome",
-              let app = NSWorkspace.shared.frontmostApplication, app.bundleIdentifier == "com.google.Chrome" else {
-            await frames.stop()
-            return unavailable("Bring the recorded Google Meet tab to the front")
+        let expectedURL = boundURL ?? expectedMeetingURL.flatMap { Self.meetURL($0.absoluteString) }
+        guard expectedMeetingURL == nil || expectedURL != nil else { return await unavailable(.sourceRejected) }
+        guard Self.windowAllowed(capturedBundleID: capturedBundleID,
+            foregroundBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier, expectedURL: expectedURL) else {
+            return await unavailable(capturedBundleID == "com.google.Chrome" ? .unboundBackgroundWindow : .chromeUnavailable)
         }
-        guard let session = CGSessionCopyCurrentDictionary() as? [String: Any],
-              (session["CGSSessionScreenIsLocked"] as? Bool) != true,
-              (session[kCGSessionOnConsoleKey as String] as? Bool) == true else {
-            await frames.stop()
-            return unavailable("Screen is locked or unavailable")
+        let applications = NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome")
+        guard applications.count == 1, let app = applications.first else { return await unavailable(.chromeUnavailable) }
+        guard screenAvailable else {
+            return await unavailable(.screenUnavailable)
         }
         monitor.start(processID: app.processIdentifier)
         let sourceRevision = monitor.revision
-        guard let before = await reader.capture(processID: app.processIdentifier),
-              monitor.revision == sourceRevision,
-              NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier,
-              Self.sourceAllowed(snapshot: before, config: config,
-                expectedURL: boundURL ?? expectedMeetingURL.flatMap { Self.meetURL($0.absoluteString) }) else {
-            await frames.stop()
-            return unavailable("Meet source or Accessibility permission unavailable")
+        let captured = await reader.capture(processID: app.processIdentifier)
+        guard let before = captured.snapshot else {
+            return await unavailable(captured.issue ?? .sourceUnavailable)
+        }
+        guard monitor.revision == sourceRevision,
+              Self.sourceAllowed(snapshot: before, config: config, expectedURL: expectedURL) else {
+            return await unavailable(.sourceRejected)
         }
         if boundURL == nil { boundURL = before.url }
         let source = Self.digest("\(app.processIdentifier)|\(before.url)|\(before.title)|\(before.windowFrame)|\(sourceRevision)")
-        guard visual else { return .init(sourceKey: source, observations: [], reason: nil) }
-        guard !before.tiles.isEmpty, before.tiles.count <= 60 else {
+        guard visual else {
             await frames.stop()
-            return .init(sourceKey: source, observations: [], reason: "Speaker name suggestions unavailable for this layout")
+            verifiedNames = [:]
+            return .init(sourceKey: source, observations: [], reason: nil)
+        }
+        guard !before.tiles.isEmpty, before.tiles.count <= 60 else {
+            return await unavailable(.layoutUnavailable, source: source)
         }
         let epoch = Self.digest(before.tiles.map { "\($0.name)|\($0.frame)" }.sorted().joined(separator: "|"))
         let duplicates = Dictionary(grouping: before.tiles, by: { ParticipantObservation.nameKey($0.name) })
@@ -78,7 +104,7 @@ struct MeetingSpeakerObservationBatch: Sendable {
         var frameTime: Double?
         if tiles.contains(where: { $0.speaking == nil }) {
             guard CGPreflightScreenCaptureAccess() else {
-                return .init(sourceKey: source, observations: [], reason: "Screen Recording permission needed for visual indicators")
+                return await unavailable(.screenPermission, source: source)
             }
             do {
                 let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
@@ -87,11 +113,11 @@ struct MeetingSpeakerObservationBatch: Sendable {
                         && abs($0.frame.minX - before.windowFrame.minX) < 3 && abs($0.frame.minY - before.windowFrame.minY) < 3
                         && abs($0.frame.width - before.windowFrame.width) < 3
                 }
-                guard matching.count == 1, let window = matching.first else { return unavailable("Meet window changed") }
+                guard matching.count == 1, let window = matching.first else { return await unavailable(.windowChanged) }
                 try await frames.start(window: window)
                 guard let frame = frames.frame(), frame.hostTime > lastFrameTime,
                       abs(RecordingAudioClock.now - frame.hostTime) < 0.75 else {
-                    return .init(sourceKey: source, observations: [], reason: "Waiting for a fresh participant frame")
+                    return await unavailable(.waitingForFrame, source: source)
                 }
                 lastFrameTime = frame.hostTime
                 frameTime = frame.hostTime
@@ -106,17 +132,21 @@ struct MeetingSpeakerObservationBatch: Sendable {
                     tiles[index].speaking = active
                 }
                 if verifiedNames.count > 120 { verifiedNames = verifiedNames.filter { $0.value > frame.hostTime - 5 } }
-            } catch { return unavailable("Participant frame capture unavailable") }
+            } catch { return await unavailable(.frameUnavailable) }
         }
-        // Revalidate after OCR and capture, never publish a result from a tab
-        // that became hidden/private while its pixels were being processed.
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier,
-              monitor.revision == sourceRevision,
-              let after = await reader.capture(processID: app.processIdentifier),
+        // The selected tab must remain the same recorded Meet document, even
+        // when another app is foreground. Activity changes are not layout changes.
+        let revalidated = await reader.capture(processID: app.processIdentifier)
+        guard let after = revalidated.snapshot else { return await unavailable(revalidated.issue ?? .sourceUnavailable) }
+        guard screenAvailable else { return await unavailable(.screenUnavailable) }
+        guard monitor.revision == sourceRevision,
               after.url == before.url, after.title == before.title, after.windowFrame == before.windowFrame,
               Self.sourceAllowed(snapshot: after, config: config, expectedURL: boundURL),
-              before.tiles == after.tiles, monitor.revision == sourceRevision,
-              NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else { return unavailable("Meet source changed during observation") }
+              Self.sameLayout(before.tiles, after.tiles), monitor.revision == sourceRevision else { return await unavailable(.sourceChanged) }
+        for index in tiles.indices {
+            guard let later = after.tiles.first(where: { $0.name == tiles[index].name && $0.frame == tiles[index].frame }) else { continue }
+            if later.speaking == false || later.muted { tiles[index].speaking = false }
+        }
         let now = frameTime ?? (before.hostStart + before.hostEnd) / 2
         let uncertainty = frameTime == nil ? (before.hostEnd - before.hostStart) / 2 : 0.025
         let observations = tiles.map { tile in

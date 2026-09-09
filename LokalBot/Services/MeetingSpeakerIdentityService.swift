@@ -130,14 +130,15 @@ final class MeetingSpeakerIdentityService: ObservableObject {
             // ASR spans are not independent acoustic observations. Only the
             // supplied diarization turns may support automatic visual naming.
             let remoteTurns = turns.filter { $0.resolvedSource == .system }
-            let hasRemoteAudio = usableTurns.contains { $0.resolvedSource == .system }
-                || MeetingAudioFiles.transcribableURL(for: .system, in: folder) != nil
             var (evidence, evidenceRevision) = try await store.matchingInput(meeting: meeting, retentionDays: config.retentionDays)
             var visual = config.identifySpeakersFromVisuals
                 ? VisualSpeakerMatcher.matches(turns: remoteTurns, intervals: evidence?.intervals ?? []) : [:]
             var remembered = config.rememberSpeakersOnMac && settings().rememberSpeakersOnMac
             var database = remembered ? try await store.profiles() : SpeakerVoiceProfileDatabase()
-            var compatibleSamples = remembered ? samples : []
+            let microphoneSelection = remembered
+                ? await SpeakerMicrophoneEvidence.select(samples: samples, transcript: transcript, turns: turns, folder: folder)
+                : SpeakerMicrophoneEvidence.Selection()
+            var compatibleSamples = microphoneSelection.samples
             for _ in 0..<3 {
                 try Task.checkCancellation()
                 guard !deleted.contains(meeting.id) else { return transcript }
@@ -149,12 +150,10 @@ final class MeetingSpeakerIdentityService: ObservableObject {
                 next.timeline = usableTurns
                 next.acousticTimeline = turns
                 next.providerVerified = evidence?.providerVerified == true || previous.providerVerified
+                next.microphoneSampleDiagnostics = settings().rememberSpeakersOnMac ? microphoneSelection.counts : nil
                 next.voiceSamples = settings().rememberSpeakersOnMac ? Set(usableTurns.map(\.speaker)).sorted().prefix(60).flatMap {
                     SpeakerVoiceMatcher.eligible(compatibleSamples.filter { sample in
-                        if sample.source == .microphone {
-                            return !hasRemoteAudio || transcript.echoReport?.alignmentVerified == true
-                        }
-                        return next.providerVerified
+                        sample.source == .microphone || next.providerVerified
                     }, turns: turns, speaker: $0)
                 } : []
                 next.suggestions = [:]
@@ -211,6 +210,11 @@ final class MeetingSpeakerIdentityService: ObservableObject {
                     // The pipeline reapplies this cache synchronously before writing.
                     rememberState(committed)
                     unverifiedProcessing.remove(meeting.id)
+                    let microphoneReasons = (committed.microphoneSampleDiagnostics ?? [:]).sorted { $0.key < $1.key }
+                        .map { "\($0.key)=\($0.value)" }.joined(separator: ",")
+                    lokalbotLog("speaker identity processed speakers=\(committed.assignments.count) "
+                        + "named=\(committed.assignments.filter { $0.name != nil }.count) "
+                        + "suggestions=\(committed.suggestions.values.reduce(0) { $0 + $1.count }) microphone=\(microphoneReasons)")
                     revision += 1
                     return applyingLatestDecision(to: transcript, meetingID: meeting.id)
                 } catch MeetingSpeakerEvidenceStore.Failure.evidenceExpired {
@@ -267,7 +271,8 @@ final class MeetingSpeakerIdentityService: ObservableObject {
         var assignment = original ?? SpeakerIdentityAssignment(label: label, origin: .legacy,
             audioRevision: current.audioRevision, anchors: current.timeline.filter { $0.speaker == label }.map(\.range))
         assignment.source = current.timeline.first { $0.speaker == label }?.resolvedSource
-        if choice.action.confirmsIdentity, !transcript.canConfirmSpeaker(label) {
+        if choice.action.confirmsIdentity || (choice.action == .assign && choice.profileID != nil),
+           !transcript.canConfirmSpeaker(label) {
             throw IdentityError.unseparatedAudio
         }
         let enrollmentSpeakerID = assignment.id
@@ -285,6 +290,15 @@ final class MeetingSpeakerIdentityService: ObservableObject {
             if choice.action.confirmsIdentity {
                 assignment.isLocalUser = choice.action == .confirmUser
                 if assignment.name == nil { assignment.name = choice.action == .confirmUser ? "Me" : transcript.displaySpeaker(for: label) }
+            } else if let profileID = choice.profileID {
+                // Choosing a suggested profile is an explicit confirmation of
+                // that person, including a previously confirmed local user.
+                let profiles = try await store.profiles().profiles
+                guard let profile = profiles.first(where: { $0.id == profileID }),
+                      profile.confirmedNames.contains(where: {
+                          ParticipantObservation.nameKey($0) == ParticipantObservation.nameKey(choice.name ?? "")
+                      }) else { throw MeetingSpeakerEvidenceStore.Failure.stale }
+                assignment.isLocalUser = profile.isLocalUser
             }
         case .reset, .undo:
             assignment.name = nil
@@ -320,12 +334,13 @@ final class MeetingSpeakerIdentityService: ObservableObject {
         }
         if choice.action == .resume {
             let evidence = try await store.evidence(meeting: meeting, retentionDays: settings().retentionDays)
-            let remoteTurns = (current.acousticTimeline ?? []).filter { $0.resolvedSource == .system }
+            let acousticTurns = current.acousticTimeline ?? []
+            let remoteTurns = acousticTurns.filter { $0.resolvedSource == .system }
             var candidates = settings().identifySpeakersFromVisuals
                 ? VisualSpeakerMatcher.matches(turns: remoteTurns, intervals: evidence?.intervals ?? [])[label, default: []] : []
             let profiles = settings().rememberSpeakersOnMac ? try await store.profiles().profiles : []
-            if settings().rememberSpeakersOnMac, current.providerVerified {
-                candidates += SpeakerVoiceMatcher.matches(samples: SpeakerVoiceMatcher.eligible(current.voiceSamples, turns: remoteTurns, speaker: label), profiles: profiles)
+            if settings().rememberSpeakersOnMac, current.providerVerified || assignment.source == .microphone {
+                candidates += SpeakerVoiceMatcher.matches(samples: SpeakerVoiceMatcher.eligible(current.voiceSamples, turns: acousticTurns, speaker: label), profiles: profiles)
             }
             current.suggestions[label] = SpeakerIdentityResolver.apply(candidates: candidates, to: &assignment, profiles: profiles)
         }

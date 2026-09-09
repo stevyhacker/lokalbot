@@ -38,8 +38,11 @@ actor MeetingSpeakerEvidenceStore {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         guard size <= 16 * 1_024 * 1_024 else { throw Failure.tooLarge }
+        // A locked/protected file is unavailable, not corrupt ciphertext.
+        // Preserve the I/O failure so diagnostics distinguish it from a bad key.
+        let data = try Data(contentsOf: url)
         do {
-            let box = try AES.GCM.SealedBox(combined: Data(contentsOf: url))
+            let box = try AES.GCM.SealedBox(combined: data)
             let clear = try AES.GCM.open(box, using: key, authenticating: aad(url))
             return try JSONDecoder().decode(type, from: clear)
         } catch { throw Failure.corrupt }
@@ -97,6 +100,15 @@ actor MeetingSpeakerEvidenceStore {
             session.providerVerified = true
             try write(session, at: url)
         }
+    }
+
+    func recordDiagnostics(_ diagnostics: SpeakerObservationDiagnostics, meeting: Meeting, generation: UUID) throws {
+        try checkMeeting(meeting)
+        guard !erasedEvidence.contains(meeting.id), sessions[meeting.id]?.generation == generation else { throw Failure.stale }
+        let url = evidenceFolder(meeting).appendingPathComponent("session.sealed")
+        guard var session = try read(MeetingSpeakerEvidenceSession.self, at: url), session.generation == generation else { throw Failure.stale }
+        session.diagnostics = diagnostics
+        try write(session, at: url)
     }
 
     func evidence(meeting: Meeting, retentionDays: Int) throws -> MeetingSpeakerEvidenceSession? {
@@ -167,6 +179,7 @@ actor MeetingSpeakerEvidenceStore {
         saved.evidenceRevision += 1
         saved.suggestions = [:]
         saved.voiceSamples = []
+        saved.microphoneSampleDiagnostics = nil
         saved.timeline = []
         // Durable applied names retain minimal turns, not the underlying matches.
         for index in saved.assignments.indices {
