@@ -317,7 +317,7 @@ private struct MeetingWorkspaceDetail: View {
                     .controlSize(.small)
             }
         }
-        if let report = transcript?.echoReport {
+        if let report = transcript?.echoReport, report.status != .disabled {
             Text(report.explanation).font(.caption).foregroundStyle(.secondary)
         }
         if let unmatched = projection?.state.unmatchedActions, !unmatched.isEmpty {
