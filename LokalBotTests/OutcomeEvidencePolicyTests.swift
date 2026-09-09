@@ -31,6 +31,13 @@ final class OutcomeEvidencePolicyTests: XCTestCase {
         XCTAssertEqual(result.resolution, .other)
     }
 
+    func testACompleteCommitmentDoesNotInheritTheFollowingQuestionOrCondition() {
+        XCTAssertEqual(resolve("Yeah, I can do that. Could someone send the document?",
+            quote: "Yeah, I can do that.").resolution, .other)
+        XCTAssertEqual(resolve("Alice will send it. If needed, Bob can review it.",
+            quote: "Alice will send it.", basis: "assignment").resolution, .other)
+    }
+
     func testQuestionsNegationHypotheticalsPastReportsAndCollectivePlansStayUnclear() {
         for text in ["I can do that?", "I will not send it.", "I will never do that.", "Maybe I will send it.",
                      "If I have time, I will send it.", "I will send it if approved.",

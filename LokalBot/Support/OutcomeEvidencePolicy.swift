@@ -69,7 +69,9 @@ enum OutcomeEvidencePolicy {
         let boundary = prefix.lastIndex(where: { ".!?;".contains($0) })
         let start = boundary.map { text.index(after: $0) } ?? text.startIndex
         let suffix = text[match.upperBound...]
-        let end = suffix.firstIndex(where: { ".!?;".contains($0) }).map { text.index(after: $0) } ?? text.endIndex
+        let quoteEndsClause = ".!?;".contains(text[text.index(before: match.upperBound)])
+        let end = quoteEndsClause ? match.upperBound
+            : suffix.firstIndex(where: { ".!?;".contains($0) }).map { text.index(after: $0) } ?? text.endIndex
         return String(text[start..<end])
     }
 
