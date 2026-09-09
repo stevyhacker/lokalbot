@@ -185,18 +185,6 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertTrue(prompt.contains("Only cite segment IDs that appear below"), prompt)
     }
 
-    func testOnlyShortBuiltInOutcomesCanOverlapSummary() {
-        XCTAssertTrue(ProcessingPipeline.shouldExtractOutcomesConcurrently(
-            canUseSinglePass: true,
-            backend: .builtIn))
-        XCTAssertFalse(ProcessingPipeline.shouldExtractOutcomesConcurrently(
-            canUseSinglePass: false,
-            backend: .builtIn))
-        XCTAssertFalse(ProcessingPipeline.shouldExtractOutcomesConcurrently(
-            canUseSinglePass: true,
-            backend: .openAICompatible))
-    }
-
     // MARK: - Disk round trip
 
     func testWriteAndLoadRoundTrip() throws {

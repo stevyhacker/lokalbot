@@ -1,6 +1,49 @@
 import Foundation
 
 enum OutcomeEvidencePolicy {
+    /// Select a canonical clause from the exact source visible to the model.
+    /// The existing policy still checks the complete original clause, so a
+    /// clipped part cannot hide a preceding condition or following negation.
+    static func resolveFromSource(
+        speakerID: String?, basis: String?, source: Transcript.Segment,
+        visibleText: String, roster: [String: Transcript.SpeakerDescriptor]
+    ) -> OutcomeAttribution {
+        var failure = resolve(speakerID: speakerID, basis: basis, quote: nil, sources: [source], roster: roster)
+        for quote in canonicalClauses(visibleText) {
+            let resolvedBasis = basis == "unclear" && isCommitment(quote) ? "commitment" : basis
+            let attribution = resolve(speakerID: speakerID, basis: resolvedBasis,
+                                      quote: quote, sources: [source], roster: roster)
+            if attribution.resolution != .unresolved { return attribution }
+            failure = attribution
+        }
+        return failure
+    }
+
+    static func hasCommitment(source: Transcript.Segment, visibleText: String) -> Bool {
+        canonicalClauses(visibleText).contains { isCommitment($0) && supportsCommitment($0, in: source.displayText) }
+    }
+
+    static func isBareAcceptance(_ raw: String) -> Bool {
+        normalized(raw).range(of:
+            #"^(?:(?:yes|yeah|yep|okay|ok|sure|right|well|so)[,!.: ]+)*i can (?:do (?:that|it)|take (?:that|it)(?: on)?|handle (?:that|it))[.! ]*$"#,
+            options: .regularExpression) != nil
+    }
+
+    static func isConversationManagement(_ raw: String) -> Bool {
+        normalized(raw).range(of:
+            #"^(?:(?:so|okay|ok|well|um|uh)[, ]+)*(?:i will|i['’]ll|i am going to|i['’]m going to) be (?:a little (?:bit )?)?(?:more specific|more clear|clearer|brief)[.! ]*$"#,
+            options: .regularExpression) != nil
+    }
+
+    private static func canonicalClauses(_ text: String) -> [String] {
+        let regex = try? NSRegularExpression(pattern: #"[^.!?;]+[.!?;]*"#)
+        return regex?.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match in
+            guard let range = Range(match.range, in: text) else { return nil }
+            let quote = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return quote.isEmpty || quote.count > 1_000 ? nil : quote
+        } ?? []
+    }
+
     static func resolve(
         speakerID: String?, basis: String?, quote: String?,
         sources: [Transcript.Segment], roster: [String: Transcript.SpeakerDescriptor]
@@ -47,8 +90,9 @@ enum OutcomeEvidencePolicy {
     /// questions, hypothetical promises, past reports, or collective "we".
     static func isCommitment(_ raw: String) -> Bool {
         let text = normalized(raw)
-        let start = #"^(?:(?:yes|yeah|yep|okay|ok|sure|right|well|so|and|then|absolutely)[,!.: ]+)*"#
-        let undertaking = #"(?:i (?:will|shall|am going to|commit to|agree to)|i['’]ll|my next step is)\s+(?!not\b|never\b|no longer\b)\S"#
+        guard !isConversationManagement(text) else { return false }
+        let start = #"^(?:(?:yes|yeah|yep|okay|ok|sure|right|well|so|and|then|absolutely|after this|next|also|um|uh)[,!.: ]+)*"#
+        let undertaking = #"(?:i (?:will|shall|am going to|commit to|agree to)|i['’]m going to|i['’]ll|my next step is)\s+(?!not\b|never\b|no longer\b)\S"#
         let acceptance = #"i can (?:do (?:that|it)|take (?:that|it)(?: on)?|handle (?:that|it))\b"#
         let translated = #"(?:ja ću |ja cu |je vais |ich werde |voy a |我会|我會)"#
         guard text.range(of: start + "(?:" + undertaking + "|" + acceptance + "|" + translated + ")",

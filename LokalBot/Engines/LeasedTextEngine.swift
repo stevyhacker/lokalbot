@@ -12,6 +12,11 @@ struct LeasedTextEngine: TextEngine {
     let purpose: String
 
     var displayName: String { base.displayName }
+    var accountsForGenerationRequests: Bool { base.accountsForGenerationRequests }
+
+    func tokenCount(_ text: String) async throws -> Int? {
+        try await withLease { try await base.tokenCount(text) }
+    }
 
     func generate(system: String, prompt: String, context: [String]) async throws -> String {
         try await withManagedRecovery {

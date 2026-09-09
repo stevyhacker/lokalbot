@@ -6,6 +6,9 @@ import Foundation
 /// user points us at.
 protocol TextEngine {
     var displayName: String { get }
+    var accountsForGenerationRequests: Bool { get }
+    /// Nil means this provider has no supported tokenizer endpoint.
+    func tokenCount(_ text: String) async throws -> Int?
     func generate(system: String, prompt: String, context: [String]) async throws -> String
     func generate(system: String, prompt: String, context: [String],
                   options: TextGenerationOptions) async throws -> String
@@ -329,6 +332,8 @@ func cotypingParseSSEDelta(_ line: String) -> String? {
 }
 
 extension TextEngine {
+    var accountsForGenerationRequests: Bool { false }
+    func tokenCount(_ text: String) async throws -> Int? { nil }
     /// Backends without an output-budget control keep their existing behavior.
     func generate(system: String, prompt: String, context: [String],
                   options: TextGenerationOptions) async throws -> String {
@@ -468,6 +473,23 @@ struct OpenAICompatibleEngine: TextEngine {
     var displayNameOverride: String?
 
     var displayName: String { displayNameOverride ?? "OpenAI-compatible — \(model)" }
+    var accountsForGenerationRequests: Bool { true }
+
+    func tokenCount(_ text: String) async throws -> Int? {
+        guard chatDialect == .llamaServer else { return nil }
+        var request = URLRequest(url: baseURL.deletingLastPathComponent().appendingPathComponent("tokenize"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let apiKey { request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization") }
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["content": text, "add_special": false])
+        let (data, response) = try await send(request, base: baseURL)
+        guard let status = (response as? HTTPURLResponse)?.statusCode, (200...299).contains(status),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tokens = object["tokens"] as? [Int] else {
+            throw TextEngineError.badResponse("the local tokenizer returned an invalid response")
+        }
+        return tokens.count
+    }
 
     func generate(system: String, prompt: String, context: [String]) async throws -> String {
         try await chat(system: system, prompt: prompt, context: context, schema: nil, options: nil)
@@ -512,7 +534,7 @@ struct OpenAICompatibleEngine: TextEngine {
                                           schema: schema, options: options,
                                           openRouterReasoning: openRouterReasoning)
         do {
-            return try await completeChat(request)
+            return try await completeChat(request, options: options)
         } catch {
             guard Self.shouldFallbackToHighReasoning(
                 dialect: chatDialect,
@@ -528,20 +550,41 @@ struct OpenAICompatibleEngine: TextEngine {
         }
     }
 
-    private func completeChat(_ request: URLRequest) async throws -> String {
-        let (data, response) = try await send(request, base: baseURL)
-        let httpResponse = response as? HTTPURLResponse
-        guard let status = httpResponse?.statusCode, (200...299).contains(status) else {
-            throw TextEngineError.fromHTTPResponse(httpResponse, data: data)
+    private func completeChat(_ request: URLRequest, options: TextGenerationOptions?) async throws -> String {
+        let budget = MeetingGenerationBudget.current
+        let reservation = try await budget?.reserve(input: MeetingGenerationBudget.promptTokens,
+                                                    output: options?.maxTokens ?? 4_096)
+        let started = ProcessInfo.processInfo.systemUptime
+        var metric = GenerationCallTelemetry(stage: MeetingGenerationBudget.stage, outcome: "failed", wallSeconds: 0)
+        do {
+            let (data, response) = try await send(request, base: baseURL)
+            let httpResponse = response as? HTTPURLResponse
+            guard let status = httpResponse?.statusCode, (200...299).contains(status) else {
+                throw TextEngineError.fromHTTPResponse(httpResponse, data: data)
+            }
+            let parsed = try Self.parseChatCompletion(data, allowTruncation: true)
+            metric.inputTokens = parsed.usage?.inputTokens
+            metric.outputTokens = parsed.usage?.outputTokens
+            metric.cachedTokens = parsed.usage?.cachedInputTokens
+            metric.reasoningTokens = parsed.usage?.reasoningOutputTokens
+            metric.prefillSeconds = parsed.prefillSeconds
+            metric.generationSeconds = parsed.generationSeconds
+            metric.outcome = parsed.truncated ? "truncated" : "complete"
+            if parsed.truncated {
+                if budget != nil { throw TruncatedStructuredResponse(content: strippingReasoning(parsed.content)) }
+                throw TextEngineError.outputTruncated
+            }
+            metric.wallSeconds = ProcessInfo.processInfo.systemUptime - started
+            metric.log()
+            if let reservation { await budget?.finish(reservation, metric: metric) }
+            return strippingReasoning(parsed.content)
+        } catch {
+            if error is CancellationError { metric.outcome = "cancelled" }
+            metric.wallSeconds = ProcessInfo.processInfo.systemUptime - started
+            metric.log()
+            if let reservation { await budget?.finish(reservation, metric: metric) }
+            throw error
         }
-        let parsed = try Self.parseChatCompletion(data)
-        if let usage = parsed.usage {
-            lokalbotLog(
-                "generation usage model=\(model) input=\(usage.inputTokens) "
-                    + "output=\(usage.outputTokens) cached=\(usage.cachedInputTokens) "
-                    + "reasoning=\(usage.reasoningOutputTokens)")
-        }
-        return strippingReasoning(parsed.content)
     }
 
     /// Pure request construction keeps provider-field compatibility covered by
@@ -600,18 +643,21 @@ struct OpenAICompatibleEngine: TextEngine {
     }
 
     struct ChatUsage: Equatable {
-        var inputTokens: Int
-        var outputTokens: Int
-        var cachedInputTokens: Int
-        var reasoningOutputTokens: Int
+        var inputTokens: Int?
+        var outputTokens: Int?
+        var cachedInputTokens: Int?
+        var reasoningOutputTokens: Int?
     }
 
     struct ParsedChatCompletion: Equatable {
         var content: String
         var usage: ChatUsage?
+        var truncated = false
+        var prefillSeconds: Double?
+        var generationSeconds: Double?
     }
 
-    static func parseChatCompletion(_ data: Data) throws -> ParsedChatCompletion {
+    static func parseChatCompletion(_ data: Data, allowTruncation: Bool = false) throws -> ParsedChatCompletion {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choice = (json["choices"] as? [[String: Any]])?.first,
               let message = choice["message"] as? [String: Any] else {
@@ -622,14 +668,15 @@ struct OpenAICompatibleEngine: TextEngine {
             throw TextEngineError.badResponse("model refusal: \(String(refusal.prefix(600)))")
         }
         switch choice["finish_reason"] as? String {
-        case "length":
+        case "length" where !allowTruncation:
             throw TextEngineError.outputTruncated
         case "content_filter":
             throw TextEngineError.badResponse("response was stopped by the content filter")
         default:
             break
         }
-        guard let content = message["content"] as? String else {
+        let truncated = choice["finish_reason"] as? String == "length"
+        guard let content = (message["content"] as? String) ?? (truncated ? "" : nil) else {
             throw TextEngineError.badResponse("chat completion contained no text")
         }
 
@@ -637,12 +684,16 @@ struct OpenAICompatibleEngine: TextEngine {
         let inputDetails = usageObject?["prompt_tokens_details"] as? [String: Any]
         let outputDetails = usageObject?["completion_tokens_details"] as? [String: Any]
         let usage = usageObject.map {
-            ChatUsage(inputTokens: $0["prompt_tokens"] as? Int ?? 0,
-                      outputTokens: $0["completion_tokens"] as? Int ?? 0,
-                      cachedInputTokens: inputDetails?["cached_tokens"] as? Int ?? 0,
-                      reasoningOutputTokens: outputDetails?["reasoning_tokens"] as? Int ?? 0)
+            ChatUsage(inputTokens: $0["prompt_tokens"] as? Int,
+                      outputTokens: $0["completion_tokens"] as? Int,
+                      cachedInputTokens: inputDetails?["cached_tokens"] as? Int,
+                      reasoningOutputTokens: outputDetails?["reasoning_tokens"] as? Int)
         }
-        return ParsedChatCompletion(content: content, usage: usage)
+        let timings = json["timings"] as? [String: Any]
+        return ParsedChatCompletion(content: content, usage: usage,
+            truncated: choice["finish_reason"] as? String == "length",
+            prefillSeconds: (timings?["prompt_ms"] as? Double).map { $0 / 1_000 },
+            generationSeconds: (timings?["predicted_ms"] as? Double).map { $0 / 1_000 })
     }
 
     /// llama-server counts hidden reasoning and visible content inside the same

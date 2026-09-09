@@ -62,7 +62,9 @@ actor InferenceBroker {
                purpose: String,
                expiresAfter ttl: TimeInterval? = nil) async throws -> InferenceLease {
         let modelPath = Self.canonicalModelPath(model)
+        let queued = ProcessInfo.processInfo.systemUptime
         try await waitUntilCompatible(role: role, modelPath: modelPath, priority: priority)
+        let queueSeconds = ProcessInfo.processInfo.systemUptime - queued
         do {
             try Task.checkCancellation()
         } catch {
@@ -76,11 +78,15 @@ actor InferenceBroker {
         let lease = book.acquire(role: role, modelPath: modelPath,
                                  priority: priority, purpose: purpose,
                                  expiresAt: expiresAt)
+        await MeetingGenerationBudget.current?.recordPhase("runtimeQueue", seconds: queueSeconds)
         await pushLeaseState()
+        let preparationStarted = ProcessInfo.processInfo.systemUptime
         do {
             try await runtimeHooks(for: role).ensure(model)
             try Task.checkCancellation()
+            await MeetingGenerationBudget.current?.recordPhase("runtimePreparation", seconds: ProcessInfo.processInfo.systemUptime - preparationStarted)
         } catch {
+            await MeetingGenerationBudget.current?.recordPhase("runtimePreparation", seconds: ProcessInfo.processInfo.systemUptime - preparationStarted)
             book.release(id: lease.id)
             await pushLeaseState()
             if book.activeCount(for: role) == 0 {

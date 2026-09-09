@@ -90,6 +90,7 @@ final class ProcessingPipeline: ObservableObject {
         /// per-track checkpoints instead of starting from scratch.
         var resumed: Bool = false
         var origin: JobOrigin = .userInitiated
+        var enqueuedAt = Date()
     }
 
     struct RetryWork: Equatable {
@@ -489,6 +490,7 @@ final class ProcessingPipeline: ObservableObject {
             stages[meeting.id] = .failed("Could not durably start this processing job.")
             return
         }
+        let queueSeconds = max(0, Date().timeIntervalSince(job.enqueuedAt))
         var transcriptWrittenThisJob = false
         do {
             if job.transcribe || !FileManager.default.fileExists(
@@ -567,10 +569,6 @@ final class ProcessingPipeline: ObservableObject {
                     if transcriptWrittenThisJob { onArtifactsWritten?(meeting) }
                     return
                 }
-                if config.summarizerBackend == .builtIn {
-                    stages[meeting.id] = .preparingSummaryModel
-                    _ = try await thinkExecution.prepareBuiltInModel(config)
-                }
                 stages[meeting.id] = .summarizing
                 var transcript = try loadTranscript(from: folder)
                 if let speakerIdentity,
@@ -589,108 +587,39 @@ final class ProcessingPipeline: ObservableObject {
                             + "\(sanitization.removedWords) removedCharacters="
                             + "\(sanitization.removedCharacters)")
                 }
-                // The default built-in server supports continuous batching.
-                // A single-pass outcomes extraction is independent of the
-                // summary, so overlap those two reads of the transcript. Long
-                // outcomes scans stay serial to bound local model pressure.
-                let outcomeContext = MeetingNotes.promptContext(in: folder)
-                let outcomeUserLabel = transcript.userSpeakerLabel
-                let outcomeContextTokens = MeetingSummaryGenerator.contextTokenLimit(
-                    for: config.summarizerBackend)
-                let outcomeLanguage = SummaryLanguage.resolvedForTranscript(
-                    config.summaryLanguage,
-                    transcript: transcript)
-                let concurrentOutcomes = Self.shouldExtractOutcomesConcurrently(
-                    canUseSinglePass: MeetingOutcomesGenerator.canUseSinglePass(
-                        transcript: transcript,
-                        userSpeakerLabel: outcomeUserLabel,
-                        context: outcomeContext,
-                        contextTokens: outcomeContextTokens,
-                        outputLanguage: outcomeLanguage),
-                    backend: config.summarizerBackend)
-                let outcomesTask: Task<MeetingOutcomes?, Never>? = concurrentOutcomes
-                    ? Task { [weak self] in
-                        guard let self else { return nil }
-                        return await self.extractOutcomes(
-                            transcript: transcript,
-                            meetingID: meeting.id,
-                            folder: folder,
-                            config: config,
-                            context: outcomeContext)
-                    }
-                    : nil
-                let summary: String
+                let budget = MeetingGenerationBudget()
+                await budget.recordPhase("queue", seconds: queueSeconds)
                 do {
-                    do {
-                        summary = try await summarize(transcript, meeting: meeting, config: config)
-                    } catch {
-                        guard let delay = thinkExecution.retryDelay(
-                            for: error,
-                            settings: config,
-                            attempt: 0) else { throw error }
-                        // One bounded retry for transient network, rate-limit,
-                        // or server failures. Deterministic 4xx/schema/payload
-                        // failures surface immediately instead of doubling work.
-                        lokalbotLog(
-                            "summary retry delay=\(String(format: "%.2f", delay))s "
-                                + "after error=\(error.localizedDescription)")
-                        try await Task.sleep(
-                            nanoseconds: UInt64(delay * 1_000_000_000))
-                        summary = try await summarize(transcript, meeting: meeting, config: config)
+                    let generated = try await budget.run {
+                        try await self.summarize(transcript, meeting: meeting, config: config, budget: budget)
                     }
-                } catch {
-                    let outcomes = await Self.completeOutcomes(outcomesTask, summaryError: error) {
-                        await self.extractOutcomes(
-                            transcript: transcript,
-                            meetingID: meeting.id,
-                            folder: folder,
-                            config: config,
-                            context: outcomeContext)
+                    try Task.checkCancellation()
+                    try MeetingAttributionArtifacts.requireCurrent(transcript, in: folder)
+                    let outcomes = generated.outcomes
+                    let previous = MeetingOutcomes.load(from: folder) ?? MeetingAttributionArtifacts.previous(in: folder)
+                    let previousState = MeetingOutcomeStore.loadState(from: folder)
+                    try outcomes.write(to: folder)
+                    if let previous {
+                        let reconciled = MeetingOutcomeStore.reconcileState(previousState, from: previous, to: outcomes)
+                        try MeetingOutcomeStore.writeState(reconciled, to: folder)
                     }
-                    if let outcomes {
-                        defer { onArtifactsWritten?(meeting) }
-                        try MeetingAttributionArtifacts.requireCurrent(transcript, in: folder)
-                        let authoritative = MeetingOutcomeProjection.load(for: meeting, storage: storage)?.correctedOutcomes
-                            ?? outcomes
-                        try MeetingSummaryOutcomeSynchronizer.synchronizeExisting(
-                            in: folder, outcomes: authoritative, template: config.noteTemplate)
-                    }
-                    throw error
-                }
-                do { try MeetingAttributionArtifacts.requireCurrent(transcript, in: folder) } catch {
-                    await Self.cancelAndWaitForOutcomes(outcomesTask); throw error
-                }
-                do { try SummaryClaimEvidence.commit(transcript: transcript, in: folder) } catch {
-                    await Self.cancelAndWaitForOutcomes(outcomesTask); throw error
-                }
-                try summary.data(using: .utf8)?.write(
-                    to: folder.appendingPathComponent("summary.md"), options: .atomic)
-                MeetingSummaryGenerator.removeCheckpoint(in: folder)
-                let extractedOutcomes = await Self.completeOutcomes(outcomesTask) {
-                    await self.extractOutcomes(
-                        transcript: transcript,
-                        meetingID: meeting.id,
-                        folder: folder,
-                        config: config,
-                        context: outcomeContext)
-                }
-                // The grounded artifact is the only authority for outcome
-                // sections. On a non-fatal extraction failure, mirror the
-                // last successful artifact (or an empty one) so the summary
-                // can never disagree with the cards beside it.
-                let authoritativeOutcomes = MeetingOutcomeProjection.load(for: meeting, storage: storage)?.correctedOutcomes
-                    ?? extractedOutcomes
-                    ?? MeetingOutcomes.load(from: folder)
-                    ?? MeetingOutcomes()
-                let synchronizedSummary = MeetingSummaryOutcomeSynchronizer.synchronize(
-                    summary,
-                    outcomes: authoritativeOutcomes,
-                    template: config.noteTemplate)
-                try MeetingAttributionArtifacts.requireCurrent(transcript, in: folder)
-                try synchronizedSummary.data(using: .utf8)?.write(
-                    to: folder.appendingPathComponent("summary.md"), options: .atomic)
-                if extractedOutcomes != nil {
+                    // Explicit user edits remain the authority for both cards
+                    // and the action/decision sections rendered beside them.
+                    let authoritative = MeetingOutcomeProjection.load(for: meeting, storage: storage)?.correctedOutcomes
+                        ?? outcomes
+                    let summary = MeetingSummaryOutcomeSynchronizer.synchronize(
+                        generated.body, outcomes: authoritative, template: config.noteTemplate)
+                    try MeetingAttributionArtifacts.requireCurrent(transcript, in: folder)
+                    try SummaryClaimEvidence.commit(transcript: transcript, in: folder)
+                    try Data(summary.utf8).write(to: folder.appendingPathComponent("summary.md"), options: .atomic)
+                    MeetingSummaryGenerator.removeCheckpoint(in: folder)
+                    MeetingOutcomesGenerator.removeCheckpoint(in: folder)
                     try? FileManager.default.removeItem(at: folder.appendingPathComponent(MeetingAttributionArtifacts.refreshMarker))
+                    await budget.saveMetrics(in: folder, outcome: "complete")
+                } catch {
+                    await budget.saveMetrics(in: folder, outcome: "incomplete")
+                    onArtifactsWritten?(meeting)
+                    throw error
                 }
             }
             if let jobStore, !jobStore.markCompleted(meetingID: meeting.id) {
@@ -942,18 +871,14 @@ final class ProcessingPipeline: ObservableObject {
 
     // MARK: - Summarization
 
-    nonisolated static func shouldExtractOutcomesConcurrently(
-        canUseSinglePass: Bool,
-        backend: AppSettings.SummarizerBackend
-    ) -> Bool {
-        backend == .builtIn
-            && canUseSinglePass
-    }
-
     private func summarize(_ transcript: Transcript, meeting: Meeting,
-                           config: AppSettings) async throws -> String {
+                           config: AppSettings, budget: MeetingGenerationBudget) async throws -> MeetingNotesGenerator.Result {
         let started = Date()
+        stages[meeting.id] = .preparingSummaryModel
+        let preparing = ProcessInfo.processInfo.systemUptime
         let engine = try await thinkExecution.makeTextEngine(config)
+        await budget.recordPhase("modelPreparation", seconds: ProcessInfo.processInfo.systemUptime - preparing)
+        stages[meeting.id] = .summarizing
         let wordCount = transcript.languageDetectionText
             .split(whereSeparator: { $0.isWhitespace }).count
         // Resolve `.matchTranscript` against raw spoken text now so both the
@@ -962,26 +887,12 @@ final class ProcessingPipeline: ObservableObject {
         // labels can skew NaturalLanguage on short transcripts.
         let language = SummaryLanguage.resolvedForTranscript(config.summaryLanguage,
                                                              transcript: transcript)
-        let userSpeakerLabel = transcript.userSpeakerLabel
-        let systemPrompt = PromptTemplates.systemPrompt(for: config.noteTemplate,
-                                                        summaryLanguage: language,
-                                                        userSpeakerLabel: userSpeakerLabel)
-        // Quick notes the user typed during the meeting ride along as context
-        // in the final pass (both paths) — they're the user's own words, so
-        // the summary should fold them in rather than rediscover them.
         let noteContext = MeetingNotes.promptContext(in: meeting.folderURL(in: storage))
-        let body = try await MeetingSummaryGenerator.generate(
-            transcript: transcript,
-            engine: engine,
-            systemPrompt: systemPrompt,
-            template: config.noteTemplate,
-            language: language,
-            userSpeakerLabel: userSpeakerLabel,
-            context: noteContext,
-            contextTokens: MeetingSummaryGenerator.contextTokenLimit(
-                for: config.summarizerBackend),
-            checkpointURL: MeetingSummaryGenerator.checkpointURL(
-                in: meeting.folderURL(in: storage)))
+        var generated = try await MeetingNotesGenerator.generate(
+            transcript: transcript, engine: engine, template: config.noteTemplate,
+            language: language, context: noteContext,
+            contextTokens: MeetingSummaryGenerator.contextTokenLimit(for: config.summarizerBackend),
+            meetingID: meeting.id, folder: meeting.folderURL(in: storage), budget: budget)
 
         let date = meeting.startedAt.formatted(date: .long, time: .shortened)
         var header = "# \(meeting.title) — \(date)\n"
@@ -995,80 +906,9 @@ final class ProcessingPipeline: ObservableObject {
         GenerationMetricsStore.shared.record(
             label: "Summary · \(engine.displayName)",
             durationSec: Date().timeIntervalSince(started),
-            approxTokens: TokenCountEstimator.estimate(body))
-        return header + body + "\n"
-    }
-
-    /// Outcomes scan the complete transcript through bounded, cited chunks.
-    /// Failure is non-fatal and never overwrites the last successful artifact.
-    private func extractOutcomes(
-        transcript: Transcript,
-        meetingID: Meeting.ID,
-        folder: URL,
-        config: AppSettings,
-        context: [String]
-    ) async -> MeetingOutcomes? {
-        do {
-            try Task.checkCancellation()
-            let engine = try await thinkExecution.makeTextEngine(config)
-            let userSpeakerLabel = transcript.userSpeakerLabel
-            let outputLanguage = SummaryLanguage.resolvedForTranscript(
-                config.summaryLanguage,
-                transcript: transcript)
-            var outcomes = try await MeetingOutcomesGenerator.generate(
-                transcript: transcript,
-                engine: engine,
-                userSpeakerLabel: userSpeakerLabel,
-                context: context,
-                contextTokens: MeetingSummaryGenerator.contextTokenLimit(
-                    for: config.summarizerBackend),
-                meetingID: meetingID,
-                checkpointURL: MeetingOutcomesGenerator.checkpointURL(in: folder),
-                outputLanguage: outputLanguage)
-            try Task.checkCancellation()
-            try MeetingAttributionArtifacts.requireCurrent(transcript, in: folder)
-            outcomes.transcriptRevision = transcript.evidenceRevision
-            let previous = MeetingOutcomes.load(from: folder) ?? MeetingAttributionArtifacts.previous(in: folder)
-            let previousState = MeetingOutcomeStore.loadState(from: folder)
-            try outcomes.write(to: folder)
-            if let previous {
-                let reconciled = MeetingOutcomeStore.reconcileState(
-                    previousState, from: previous, to: outcomes)
-                try MeetingOutcomeStore.writeState(reconciled, to: folder)
-            }
-            MeetingOutcomesGenerator.removeCheckpoint(in: folder)
-            return outcomes
-        } catch {
-            lokalbotLog("outcomes extraction failed error=\(error.localizedDescription)")
-            return nil
-        }
-    }
-
-    /// Cancellation is cooperative; some inference backends may not return
-    /// immediately. An interrupted job must not let its sibling outcomes task
-    /// outlive the job and race a retry's artifact writes.
-    nonisolated static func cancelAndWaitForOutcomes<Success: Sendable>(
-        _ task: Task<Success, Never>?
-    ) async {
-        guard let task else { return }
-        task.cancel()
-        _ = await task.value
-    }
-
-    /// A summary rejection does not invalidate the independent outcomes pass.
-    /// Join existing work or finish serial extraction before the job ends so
-    /// a retry cannot race its artifact writes. Cancellation still stops both.
-    static func completeOutcomes(
-        _ task: Task<MeetingOutcomes?, Never>?,
-        summaryError: Error? = nil,
-        extract: () async -> MeetingOutcomes?
-    ) async -> MeetingOutcomes? {
-        if summaryError is CancellationError || Task.isCancelled {
-            await cancelAndWaitForOutcomes(task)
-            return nil
-        }
-        if let task { return await task.value }
-        return await extract()
+            approxTokens: TokenCountEstimator.estimate(generated.body))
+        generated.body = header + generated.body + "\n"
+        return generated
     }
 
     /// Day digest (M4/M6) — shared by the Timeline UI, scheduler, and

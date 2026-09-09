@@ -744,7 +744,7 @@ final class MainWindowUITests: XCTestCase {
         }
         app.typeKey(.escape, modifierFlags: [])
         identified("toolbar.meetingActions").click()
-        for label in ["Transcribe & Summarize", "Transcribe only", "Repair summary and action owners", "Export audio"] {
+        for label in ["Transcribe & Summarize", "Transcribe only", "Summarize again", "Export audio"] {
             XCTAssertTrue(app.menuItems[label].waitForExistence(timeout: 3), "Missing meeting action: \(label)")
         }
         app.typeKey(.escape, modifierFlags: [])
