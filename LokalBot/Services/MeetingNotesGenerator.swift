@@ -45,10 +45,24 @@ enum MeetingNotesGenerator {
     /// tokenizer use UTF-8 bytes as a conservative upper bound, plus envelope
     /// and structured-output headroom; punctuation/numerals are never dropped.
     static func tokenCount(_ text: String, engine: TextEngine) async throws -> Int {
+        try await promptSize(text, engine: engine).upperBound
+    }
+
+    private struct PromptSize {
+        var upperBound: Int
+        var planningEstimate: Int
+    }
+
+    private static func promptSize(_ text: String, engine: TextEngine) async throws -> PromptSize {
         let started = ProcessInfo.processInfo.systemUptime
-        let result = try await engine.tokenCount(text) ?? text.utf8.count
+        let native = try await engine.tokenCount(text)
         await MeetingGenerationBudget.current?.recordPhase("tokenization", seconds: ProcessInfo.processInfo.systemUptime - started)
-        return max(1, result)
+        let bytes = text.utf8.count
+        // The estimate only chooses an efficient part size. UTF-8 bytes remain
+        // the hard context/input-budget bound when a tokenizer is unavailable,
+        // including for punctuation-heavy and non-Latin transcripts.
+        return PromptSize(upperBound: max(1, native ?? bytes),
+                          planningEstimate: max(1, native ?? ((bytes + 2) / 3)))
     }
 
     static func prompt(units: [MeetingNotesEvidence.Unit], roster: String) -> String {
@@ -62,7 +76,8 @@ enum MeetingNotesGenerator {
     static func makeChunks(evidence: MeetingNotesEvidence, engine: TextEngine, system: String,
                            context: [String], contextTokens: Int) async throws -> [[MeetingNotesEvidence.Unit]] {
         guard !evidence.units.isEmpty else { return [] }
-        let ceiling = min(6_000, contextTokens - 4_096 - 1_536)
+        let contextCeiling = contextTokens - 4_096 - 1_536
+        let planningCeiling = min(6_000, contextCeiling)
         let fixed = ([system] + context).joined(separator: "\n\n") + "\n\n"
         var chunks: [[MeetingNotesEvidence.Unit]] = []
         var start = 0
@@ -71,12 +86,16 @@ enum MeetingNotesGenerator {
             var end = evidence.units.count
             while true {
                 let units = Array(evidence.units[start..<end])
-                let count = try await tokenCount(fixed + prompt(units: units, roster: evidence.roster), engine: engine)
-                if count <= ceiling { chunks.append(units); break }
+                let size = try await promptSize(fixed + prompt(units: units, roster: evidence.roster), engine: engine)
+                if size.upperBound <= contextCeiling, size.planningEstimate <= planningCeiling {
+                    chunks.append(units); break
+                }
                 guard end > start + 1 else {
                     throw TextEngineError.badResponse("meeting context cannot fit the model's input allowance")
                 }
-                let fraction = max(0.1, min(0.9, Double(max(1, ceiling)) / Double(count) * 0.9))
+                let ratio = min(Double(max(1, contextCeiling)) / Double(size.upperBound),
+                                Double(max(1, planningCeiling)) / Double(size.planningEstimate))
+                let fraction = max(0.1, min(0.9, ratio * 0.9))
                 end = start + max(1, Int(Double(end - start) * fraction))
             }
             if end == evidence.units.count { break }
@@ -111,6 +130,7 @@ enum MeetingNotesGenerator {
         let system = systemPrompt(template: template, language: language)
         let chunks = try await makeChunks(evidence: evidence, engine: engine, system: system,
                                           context: context, contextTokens: contextTokens)
+        await budget.recordPlan(model: engine.displayName, transcriptRevision: transcript.evidenceRevision, parts: chunks.count)
         let fingerprintText = (["notes-v1", transcript.evidenceRevision, engine.displayName, system,
                                 PromptTemplates.meetingNotesRepairSystem(language: language)]
             + context + chunks.map { prompt(units: $0, roster: evidence.roster) }).joined(separator: "\n\n")
@@ -296,17 +316,39 @@ enum MeetingNotesGenerator {
     private static func merged(_ checkpoint: Checkpoint, transcript: Transcript, template: NoteTemplate) -> Result {
         let parts = checkpoint.parts.keys.sorted { (Int($0) ?? 0) < (Int($1) ?? 0) }.compactMap { checkpoint.parts[$0] }
         let claims = distinctClaims(parts.flatMap(\.claims))
+        var outcomes = MeetingOutcomesGenerator.merge(parts.map(\.outcomes)).prioritizingActionItems()
+        outcomes.transcriptRevision = transcript.evidenceRevision
         var renderedClaims = claims
         if !claims.contains(where: { $0.section == "TL;DR" }) {
             // Rendering already-verified facts needs no further model call.
-            let overview = claims.filter { !["Decisions", "Open questions"].contains($0.section) }.prefix(3)
+            let overview = overviewClaims(claims, outcomes: outcomes)
                 .map { claim in var value = claim; value.section = "TL;DR"; return value }
             renderedClaims = overview + claims
         }
-        var outcomes = MeetingOutcomesGenerator.merge(parts.map(\.outcomes)).prioritizingActionItems()
-        outcomes.transcriptRevision = transcript.evidenceRevision
         let body = MeetingSummaryOutcomeSynchronizer.synchronize(
             SummaryClaimEvidence.render(renderedClaims, transcript: transcript, template: template), outcomes: outcomes, template: template)
         return Result(claims: claims, outcomes: outcomes, body: body)
+    }
+
+    static func overviewClaims(_ claims: [SummaryClaimEvidence.Claim], outcomes: MeetingOutcomes) -> [SummaryClaimEvidence.Claim] {
+        let userSources = Set(outcomes.userActionItems.flatMap { $0.citations.map(\.segmentID) })
+        let actionSources = Set(outcomes.actionItems.flatMap { $0.citations.map(\.segmentID) })
+        let facts = claims.filter { !["TL;DR", "Open questions"].contains($0.section) }
+        var candidates = facts.filter { userSources.contains($0.segmentID) }
+        candidates += facts.filter { $0.section == "Decisions" }
+        candidates += facts.filter { actionSources.contains($0.segmentID) }
+        // When no explicit outcome distinguishes facts, sample the complete
+        // meeting instead of repeating only its first three introductory rows.
+        if !facts.isEmpty { candidates += [facts[0], facts[facts.count / 2], facts[facts.count - 1]] }
+        candidates += facts
+        var sources = Set<String>()
+        var texts = Set<String>()
+        return Array(candidates.filter { claim in
+            let text = OutcomeTextSimilarity.normalized(claim.text)
+            guard !sources.contains(claim.segmentID), !texts.contains(text) else { return false }
+            sources.insert(claim.segmentID)
+            texts.insert(text)
+            return true
+        }.prefix(3))
     }
 }

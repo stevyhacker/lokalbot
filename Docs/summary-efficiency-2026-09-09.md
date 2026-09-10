@@ -2,6 +2,8 @@
 
 Meeting notes now come from one compact, cited extraction pass per transcript chunk. Facts, actions, decisions, and questions share the same evidence and job budget. Valid records survive rejected neighbors, truncation, interruption, and an unsuccessful repair. A partial result remains explicitly incomplete and does not replace the last complete summary.
 
+The [10 September follow-up](transcription-efficiency-2026-09-10.md) fixes speech-runtime reuse, silence/repetition handling, GLM reasoning and chunk planning, overview selection, and per-attempt metrics. Measurements below describe the 9 September local-Qwen implementation.
+
 ## Implementation
 
 The changes follow the six priorities from the efficiency audit:

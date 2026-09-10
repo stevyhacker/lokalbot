@@ -36,8 +36,9 @@ final class MeetingNotesGeneratorTests: XCTestCase {
 
     private struct Engine: TextEngine {
         var script: Script
+        var hasTokenizer = true
         var displayName: String { "Notes fixture" }
-        func tokenCount(_ text: String) async throws -> Int? { await script.count(text) }
+        func tokenCount(_ text: String) async throws -> Int? { hasTokenizer ? await script.count(text) : nil }
         func generate(system: String, prompt: String, context: [String]) async throws -> String {
             try await script.next(prompt: prompt, options: .init())
         }
@@ -425,6 +426,104 @@ final class MeetingNotesGeneratorTests: XCTestCase {
         do { _ = try await generate(fresh, transcript: changed, folder: output, contextTokens: 8_192); XCTFail("expected new request") } catch {}
         let observed7 = await fresh.recorded().count
         XCTAssertEqual(observed7, 1)
+    }
+
+    func testCloudChunkingCoversLongMeetingWithoutTreatingBytesAsTargetTokens() async throws {
+        let transcript = Transcript(segments: (0..<800).map { index in
+            .init(start: Double(index * 3), end: Double(index * 3 + 3), speaker: "them",
+                  text: "The project update \(index) covers the proposed release, documentation, and integration work for this week.")
+        }, engine: "fixture")
+        let evidence = MeetingNotesEvidence(transcript: transcript)
+        let engine = Engine(script: Script([]), hasTokenizer: false)
+        let system = MeetingNotesGenerator.systemPrompt(template: .meeting, language: .matchTranscript)
+        let chunks = try await MeetingNotesGenerator.makeChunks(evidence: evidence, engine: engine,
+            system: system, context: [], contextTokens: 32_768)
+        XCTAssertLessThanOrEqual(chunks.count, 8, "leave useful room within the 12-request run allowance")
+        XCTAssertEqual(Set(chunks.flatMap { $0.map(\.source) }), Set(evidence.units.map(\.source)))
+        XCTAssertEqual(chunks.last?.last?.source, evidence.units.last?.source)
+        for chunk in chunks {
+            let bound = try await MeetingNotesGenerator.tokenCount(system + "\n\n"
+                + MeetingNotesGenerator.prompt(units: chunk, roster: evidence.roster), engine: engine)
+            XCTAssertLessThanOrEqual(bound + 4_096 + 1_536, 32_768)
+        }
+    }
+
+    func testCloudChunkingKeepsHardByteBoundForMultilingualAndPunctuationInput() async throws {
+        let transcript = Transcript(segments: (0..<120).map { index in
+            .init(start: Double(index), end: Double(index + 1), speaker: "them",
+                  text: String(repeating: "计划审查会议 Преглед документације !?123=", count: 8))
+        }, engine: "fixture")
+        let evidence = MeetingNotesEvidence(transcript: transcript)
+        let engine = Engine(script: Script([]), hasTokenizer: false)
+        let chunks = try await MeetingNotesGenerator.makeChunks(evidence: evidence, engine: engine,
+            system: "Summarize the evidence.", context: [], contextTokens: 8_192)
+        XCTAssertEqual(Set(chunks.flatMap { $0.map(\.source) }), Set(evidence.units.map(\.source)))
+        for chunk in chunks {
+            let text = "Summarize the evidence.\n\n" + MeetingNotesGenerator.prompt(units: chunk, roster: evidence.roster)
+            XCTAssertLessThanOrEqual(text.utf8.count + 4_096 + 1_536, 8_192)
+        }
+    }
+
+    func testVeryLongMeetingAllocatesOutputForWorkThatCanFitThisRun() async throws {
+        let budget = MeetingGenerationBudget()
+        let first = try await budget.allowance(remainingParts: 38)
+        XCTAssertGreaterThanOrEqual(first, 3_000, "unreachable parts must not starve the current extraction")
+        let reservation = try await budget.reserve(input: 1_000, output: first)
+        await budget.finish(reservation, metric: .init(outcome: "complete", wallSeconds: 1, outputTokens: 2_000))
+        let second = try await budget.allowance(remainingParts: 37)
+        XCTAssertGreaterThanOrEqual(second, 3_000)
+    }
+
+    func testKnownGLMContextPolicyDoesNotRaiseUnknownServerLimits() {
+        var config = AppSettings()
+        config.summarizerBackend = .openAICompatible
+        config.openAIBaseURL = "https://openrouter.ai/api/v1"
+        config.openAIModel = "z-ai/glm-5.3-flash"
+        XCTAssertEqual(MeetingSummaryGenerator.contextTokenLimit(for: config), 32_768)
+        config.openAIBaseURL = "http://localhost:1234/v1"
+        XCTAssertEqual(MeetingSummaryGenerator.contextTokenLimit(for: config), 16_384)
+        config.openAIBaseURL = "https://openrouter.ai/api/v1"
+        config.openAIModel = "unknown/model"
+        XCTAssertEqual(MeetingSummaryGenerator.contextTokenLimit(for: config), 16_384)
+    }
+
+    func testOverviewPrioritizesLaterCommitmentAndDecisionOverIntroductoryFacts() {
+        let claims: [SummaryClaimEvidence.Claim] = (0..<8).map { index in
+            .init(section: index == 6 ? "Decisions" : "Key points", text: "Fact \(index)",
+                  speakerID: "them", segmentID: "segment-\(index)", quote: "source \(index)")
+        }
+        var outcomes = MeetingOutcomes()
+        outcomes.actionItems = [.init(text: "Ship the update", owner: "Me", isForUser: true,
+            citations: [.init(segmentID: "segment-7", start: 7, end: 8, speaker: "me", excerpt: "I will ship.")])]
+        let overview = MeetingNotesGenerator.overviewClaims(claims, outcomes: outcomes)
+        XCTAssertEqual(overview.map(\.segmentID), ["segment-7", "segment-6", "segment-0"])
+        let withoutOutcomes = MeetingNotesGenerator.overviewClaims(Array(claims.prefix(6)), outcomes: MeetingOutcomes())
+        XCTAssertEqual(withoutOutcomes.map(\.segmentID), ["segment-0", "segment-3", "segment-5"])
+    }
+
+    func testMetricsKeepSeparateAttemptsAndOnlyRefundKnownUnusedOutput() async throws {
+        let folder = try folder()
+        let first = MeetingGenerationBudget(limits: .init(outputTokens: 4_096))
+        let reservation = try await first.reserve(input: 1_000, output: 4_096)
+        await first.finish(reservation, metric: .init(outcome: "rejected", wallSeconds: 0.1, outputTokens: 0))
+        let allowance = try await first.allowance(remainingParts: 1)
+        XCTAssertEqual(allowance, 4_096)
+        let unknown = try await first.reserve(input: 1_000, output: allowance)
+        await first.finish(unknown, metric: .init(outcome: "failed", wallSeconds: 0.1))
+        do { _ = try await first.allowance(remainingParts: 1); XCTFail("unknown usage must retain its reservation")
+        } catch is MeetingGenerationBudget.Exhausted {} catch { XCTFail("unexpected error \(error)") }
+        await first.saveMetrics(in: folder, outcome: "incomplete")
+        let second = MeetingGenerationBudget()
+        await second.recordPlan(model: "fixture", transcriptRevision: "revision", parts: 3)
+        await second.saveMetrics(in: folder, outcome: "complete")
+        let reports = try FileManager.default.contentsOfDirectory(
+            at: folder.appendingPathComponent("notes-generation-runs"), includingPropertiesForKeys: nil)
+        XCTAssertEqual(reports.count, 2)
+        let latest = try XCTUnwrap(JSONSerialization.jsonObject(with:
+            Data(contentsOf: folder.appendingPathComponent("notes-generation-metrics.json"))) as? [String: Any])
+        XCTAssertEqual(latest["model"] as? String, "fixture")
+        XCTAssertEqual(latest["plannedParts"] as? Int, 3)
+        XCTAssertNotNil(latest["attemptID"])
     }
 
     func testDeadlineCancelsInFlightGenerationAndRecordsIncompleteOutcome() async throws {

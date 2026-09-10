@@ -112,6 +112,22 @@ final class SpanAudioReaderTests: XCTestCase {
 
     // MARK: - SpeechActivity.split (pure span arithmetic)
 
+    func testSuccessfulVADSilenceIsDistinctFromUnavailableVAD() {
+        XCTAssertEqual(SpeechActivity.vadSpans(from: [], maxSegmentSeconds: 15), [])
+        XCTAssertNil(SpeechActivity.vadSpans(from: nil, maxSegmentSeconds: 15))
+    }
+
+    func testConfirmedSilenceDoesNotOpenAudioOrCallASR() async throws {
+        let spans = try XCTUnwrap(SpeechActivity.vadSpans(from: [], maxSegmentSeconds: 15))
+        let segments = try await SpanTranscription.segments(
+            in: tempDir.appendingPathComponent("does-not-need-decoding.wav"), spans: spans
+        ) { _, _ in
+            XCTFail("confirmed silence must not reach inference")
+            return "Thank you."
+        }
+        XCTAssertTrue(segments.isEmpty)
+    }
+
     func testSplitCapsSpansAtMaxSegmentSeconds() {
         let spans = SpeechActivity.split(start: 10, end: 40, maxSegmentSeconds: 14)
         XCTAssertEqual(spans, [

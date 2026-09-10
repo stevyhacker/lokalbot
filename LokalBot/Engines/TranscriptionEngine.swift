@@ -559,8 +559,11 @@ actor CohereEngine: TranscriptionEngine {
         // Cohere returns no timestamps, so transcribe each VAD speech region
         // (≤14 s) on its own and stamp it with the region's real start/end —
         // real per-utterance timing without forced alignment. Falls back to one
-        // whole-track segment if VAD is unavailable or finds no regions.
+        // whole-track segment if VAD is unavailable.
         if let spans = await SpeechActivity.shared.vadSpans(in: url, maxSegmentSeconds: nil) {
+            guard !spans.isEmpty else {
+                return Transcript(segments: [], engine: "cohere-transcribe-03-2026 (FluidAudio, vad-segmented)")
+            }
             let started = Date()
             let segments = try await SpanTranscription.segments(in: url, spans: spans) { samples, _ in
                 try await self.pipeline.transcribe(

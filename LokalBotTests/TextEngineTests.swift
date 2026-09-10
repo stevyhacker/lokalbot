@@ -259,10 +259,10 @@ final class TextEngineTests: XCTestCase {
         XCTAssertEqual(provider["data_collection"] as? String, "allow")
     }
 
-    func testOpenRouterHighReasoningFallbackUsesEffortHigh() throws {
+    func testOpenRouterGLMUsesLowEffortAndStrictSchemaOnFirstRequest() throws {
         let engine = OpenAICompatibleEngine(
             baseURL: URL(string: "https://openrouter.ai/api/v1")!,
-            model: "z-ai/glm-5.3",
+            model: "z-ai/glm-5.3-flash",
             apiKey: "test-token",
             chatDialect: .openRouter)
         let schema: [String: Any] = [
@@ -279,27 +279,27 @@ final class TextEngineTests: XCTestCase {
             schema: schema,
             options: TextGenerationOptions(
                 maxTokens: 768,
-                reasoningBudgetTokens: 256,
-                temperature: 0.2),
-            openRouterReasoning: .highEffort)
+                reasoningBudgetTokens: 0,
+                temperature: 0.2))
         let data = try XCTUnwrap(request.httpBody)
         let body = try XCTUnwrap(
             JSONSerialization.jsonObject(with: data) as? [String: Any])
         let reasoning = try XCTUnwrap(body["reasoning"] as? [String: Any])
 
-        XCTAssertEqual(reasoning["effort"] as? String, "high")
+        XCTAssertEqual(reasoning["effort"] as? String, "low")
         XCTAssertNil(reasoning["max_tokens"])
-        XCTAssertNil(reasoning["exclude"])
+        XCTAssertEqual(reasoning["exclude"] as? Bool, true)
         XCTAssertEqual(body["max_tokens"] as? Int, 768)
         XCTAssertNil(body["temperature"])
-        XCTAssertNil(body["response_format"],
-                     "strict json_schema is what 404s GLM-5.3 after the reasoning remap")
+        let format = try XCTUnwrap(body["response_format"] as? [String: Any])
+        XCTAssertEqual(format["type"] as? String, "json_schema")
+        XCTAssertEqual((format["json_schema"] as? [String: Any])?["strict"] as? Bool, true)
         let provider = try XCTUnwrap(body["provider"] as? [String: Any])
         XCTAssertEqual(provider["data_collection"] as? String, "deny")
-        XCTAssertNil(provider["require_parameters"])
+        XCTAssertEqual(provider["require_parameters"] as? Bool, true)
     }
 
-    func testOpenRouterHighReasoningFallbackReplacesDisabledReasoning() {
+    func testOpenRouterEffortFallbackUsesMinimumReasoning() {
         var body: [String: Any] = [:]
 
         OpenAICompatibleEngine.applyGenerationOptions(
@@ -311,15 +311,15 @@ final class TextEngineTests: XCTestCase {
             defaultThinkingBudgetTokens: nil,
             dialect: .openRouter,
             model: "z-ai/glm-5.3",
-            openRouterReasoning: .highEffort)
+            openRouterReasoning: .effort)
 
         let reasoning = body["reasoning"] as? [String: Any]
-        XCTAssertEqual(reasoning?["effort"] as? String, "high")
+        XCTAssertEqual(reasoning?["effort"] as? String, "low")
         XCTAssertNil(reasoning?["max_tokens"])
         XCTAssertNil(body["temperature"])
     }
 
-    func testOpenRouterSchemaOnlyFallbackDropsStructuredRequirements() throws {
+    func testOpenRouterEffortCompatibilityPreservesStructuredRequirements() throws {
         let engine = OpenAICompatibleEngine(
             baseURL: URL(string: "https://openrouter.ai/api/v1")!,
             model: "stealth/ox-alpha",
@@ -338,20 +338,20 @@ final class TextEngineTests: XCTestCase {
             context: [],
             schema: schema,
             options: nil,
-            openRouterReasoning: .highEffort)
+            openRouterReasoning: .effort)
         let data = try XCTUnwrap(request.httpBody)
         let body = try XCTUnwrap(
             JSONSerialization.jsonObject(with: data) as? [String: Any])
         let reasoning = try XCTUnwrap(body["reasoning"] as? [String: Any])
         let provider = try XCTUnwrap(body["provider"] as? [String: Any])
 
-        XCTAssertEqual(reasoning["effort"] as? String, "high")
-        XCTAssertNil(body["response_format"])
+        XCTAssertEqual(reasoning["effort"] as? String, "low")
+        XCTAssertNotNil(body["response_format"])
         XCTAssertEqual(provider["data_collection"] as? String, "deny")
-        XCTAssertNil(provider["require_parameters"])
+        XCTAssertEqual(provider["require_parameters"] as? Bool, true)
     }
 
-    func testOpenRouterParameterMismatchTriggersHighReasoningFallbackOnce() {
+    func testOpenRouterParameterMismatchTriggersEffortFallbackOnce() {
         let mismatch = TextEngineError.httpStatus(
             code: 404,
             detail: "No endpoints found that can handle the requested parameters. "
@@ -361,39 +361,32 @@ final class TextEngineTests: XCTestCase {
         let missingModel = TextEngineError.httpStatus(
             code: 404, detail: "No endpoints found for model z-ai/glm-5.3", retryAfter: nil)
 
-        XCTAssertTrue(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+        XCTAssertTrue(OpenAICompatibleEngine.shouldFallbackToReasoningEffort(
             dialect: .openRouter, error: mismatch, usedFallback: false,
-            requestedSchema: false,
             requestedReasoningBudget: 256))
-        XCTAssertTrue(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+        XCTAssertTrue(OpenAICompatibleEngine.shouldFallbackToReasoningEffort(
             dialect: .openRouter, error: mismatch, usedFallback: false,
-            requestedSchema: false,
             requestedReasoningBudget: 0),
-                       "effort:none retries also need the high-reasoning fallback")
-        XCTAssertTrue(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+                       "effort:none can retry with supported effort")
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToReasoningEffort(
             dialect: .openRouter, error: mismatch, usedFallback: false,
-            requestedSchema: true,
             requestedReasoningBudget: nil),
-                       "schema-only callers such as Dreaming need the compatibility fallback")
-        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+                       "schema-only errors cannot be fixed by changing reasoning or dropping the schema")
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToReasoningEffort(
             dialect: .openRouter, error: mismatch, usedFallback: true,
-            requestedSchema: true,
             requestedReasoningBudget: 256))
-        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToReasoningEffort(
             dialect: .openRouter, error: missingModel, usedFallback: false,
-            requestedSchema: true,
             requestedReasoningBudget: 256))
-        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToReasoningEffort(
             dialect: .generic, error: mismatch, usedFallback: false,
-            requestedSchema: true,
             requestedReasoningBudget: 256))
-        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToReasoningEffort(
             dialect: .openRouter, error: mismatch, usedFallback: false,
-            requestedSchema: false,
             requestedReasoningBudget: nil))
     }
 
-    func testOpenRouterMandatoryReasoningErrorTriggersHighReasoningFallbackOnce() {
+    func testOpenRouterMandatoryReasoningErrorTriggersEffortFallbackOnce() {
         let mandatory = TextEngineError.httpStatus(
             code: 400,
             detail: "Reasoning is mandatory for this endpoint and cannot be disabled.",
@@ -401,25 +394,20 @@ final class TextEngineTests: XCTestCase {
         let unrelated = TextEngineError.httpStatus(
             code: 400, detail: "Invalid JSON schema", retryAfter: nil)
 
-        XCTAssertTrue(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+        XCTAssertTrue(OpenAICompatibleEngine.shouldFallbackToReasoningEffort(
             dialect: .openRouter, error: mandatory, usedFallback: false,
-            requestedSchema: true,
             requestedReasoningBudget: 0))
-        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToReasoningEffort(
             dialect: .openRouter, error: mandatory, usedFallback: true,
-            requestedSchema: true,
             requestedReasoningBudget: 0))
-        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToReasoningEffort(
             dialect: .openRouter, error: mandatory, usedFallback: false,
-            requestedSchema: true,
             requestedReasoningBudget: 256))
-        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToReasoningEffort(
             dialect: .generic, error: mandatory, usedFallback: false,
-            requestedSchema: true,
             requestedReasoningBudget: 0))
-        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToHighReasoning(
+        XCTAssertFalse(OpenAICompatibleEngine.shouldFallbackToReasoningEffort(
             dialect: .openRouter, error: unrelated, usedFallback: false,
-            requestedSchema: true,
             requestedReasoningBudget: 0))
     }
 

@@ -891,7 +891,7 @@ final class ProcessingPipeline: ObservableObject {
         var generated = try await MeetingNotesGenerator.generate(
             transcript: transcript, engine: engine, template: config.noteTemplate,
             language: language, context: noteContext,
-            contextTokens: MeetingSummaryGenerator.contextTokenLimit(for: config.summarizerBackend),
+            contextTokens: MeetingSummaryGenerator.contextTokenLimit(for: config),
             meetingID: meeting.id, folder: meeting.folderURL(in: storage), budget: budget)
 
         let date = meeting.startedAt.formatted(date: .long, time: .shortened)

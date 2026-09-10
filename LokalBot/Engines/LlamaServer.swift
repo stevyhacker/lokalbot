@@ -466,7 +466,7 @@ actor LlamaServer {
         request.timeoutInterval = 2
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return false }
-        return Self.servedModelNames(from: data).contains(Self.modelMatchKey(for: url))
+        return Self.servesModel(at: url, names: Self.servedModelNames(from: data))
     }
 
     private func healthyServingExpectedConfiguration(modelAt url: URL) async -> Bool {
@@ -484,6 +484,14 @@ actor LlamaServer {
 
     nonisolated static func modelMatchKey(for url: URL) -> String {
         url.lastPathComponent
+    }
+
+    /// llama.cpp builds report either the model's full path or its filename.
+    /// Do not reduce a reported absolute path to a basename: a different file
+    /// with the same name must fail. The caller also verifies the PID marker's
+    /// exact model path, executable, context size and arguments before reuse.
+    nonisolated static func servesModel(at url: URL, names: Set<String>) -> Bool {
+        names.contains(url.path) || names.contains(modelMatchKey(for: url))
     }
 
     nonisolated static func servedModelNames(from data: Data) -> Set<String> {

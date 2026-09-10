@@ -42,6 +42,50 @@ final class MeetingNotesReplayTests: XCTestCase {
         var tokenFile: String
     }
 
+    func testLocalCloudPlanningAndTranscriptCleanup() async throws {
+        struct PlanManifest: Decodable { var transcripts: [String]; var output: String }
+        guard let path = ProcessInfo.processInfo.environment["LOKALBOT_NOTES_PLAN_MANIFEST"] else {
+            throw XCTSkip("Set LOKALBOT_NOTES_PLAN_MANIFEST for local-only planning and cleanup measurements.")
+        }
+        let manifest = try JSONDecoder().decode(PlanManifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let folder = URL(fileURLWithPath: manifest.output, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // This engine's tokenizer returns nil without a network request. No
+        // generation method is called by this planning-only replay.
+        let engine = OpenAICompatibleEngine(baseURL: URL(string: "https://openrouter.ai/api/v1")!,
+            model: "z-ai/glm-5.3-flash", apiKey: nil, chatDialect: .openRouter)
+        var reports: [[String: Any]] = []
+        for (index, path) in manifest.transcripts.enumerated() {
+            let source = URL(fileURLWithPath: path)
+            let transcript = try JSONDecoder().decode(Transcript.self, from: Data(contentsOf: source))
+            let cleanup = TranscriptSanitizer.sanitize(transcript)
+            let language = SummaryLanguage.resolvedForTranscript(.matchTranscript, transcript: transcript)
+            let system = MeetingNotesGenerator.systemPrompt(template: .meeting, language: language)
+            let context = MeetingNotes.promptContext(in: source.deletingLastPathComponent())
+            var counts: [Int] = []
+            for value in [transcript, cleanup.transcript] {
+                let evidence = MeetingNotesEvidence(transcript: value)
+                let chunks = try await MeetingNotesGenerator.makeChunks(evidence: evidence, engine: engine,
+                    system: system, context: context, contextTokens: 32_768)
+                counts.append(chunks.count)
+                XCTAssertEqual(Set(chunks.flatMap { $0.map(\.source) }), Set(evidence.units.map(\.source)))
+                for chunk in chunks {
+                    let text = ([system] + context + [MeetingNotesGenerator.prompt(units: chunk, roster: evidence.roster)])
+                        .joined(separator: "\n\n")
+                    XCTAssertLessThanOrEqual(text.utf8.count + 4_096 + 1_536, 32_768)
+                }
+            }
+            try JSONEncoder().encode(cleanup.transcript)
+                .write(to: folder.appendingPathComponent("\(index)-sanitized-transcript.json"), options: .atomic)
+            let words = transcript.segments.reduce(0) { $0 + $1.text.split(whereSeparator: \.isWhitespace).count }
+            reports.append(["source": source.deletingLastPathComponent().lastPathComponent, "words": words,
+                            "changedSegments": cleanup.changedSegments, "removedWords": cleanup.removedWords,
+                            "partsBeforeCleanup": counts[0], "partsAfterCleanup": counts[1]])
+        }
+        try JSONSerialization.data(withJSONObject: reports, options: [.prettyPrinted, .sortedKeys])
+            .write(to: folder.appendingPathComponent("planning.json"), options: .atomic)
+    }
+
     func testLocalQwenReplay() async throws {
         guard let path = ProcessInfo.processInfo.environment["LOKALBOT_NOTES_REPLAY_MANIFEST"] else {
             throw XCTSkip("Set LOKALBOT_NOTES_REPLAY_MANIFEST to run the isolated local benchmark.")
