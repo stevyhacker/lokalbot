@@ -45,6 +45,8 @@ private struct MeetingWorkspaceDetail: View {
 
     @StateObject private var player = MeetingPlayer()
     @State private var summary: String?
+    @State private var partialNotes: MeetingNotesPartial?
+    @State private var partialProjection: MeetingOutcomeProjection?
     @State private var notes: String?
     @State private var transcript: Transcript?
     @State private var transcriptExpanded = false
@@ -76,7 +78,7 @@ private struct MeetingWorkspaceDetail: View {
     @State private var searchContentRevision = 0
 
     private var folder: URL { meeting.folderURL(in: app.storage) }
-    private var projection: MeetingOutcomeProjection? { app.outcomeIndex.projection(for: meeting.id) }
+    private var projection: MeetingOutcomeProjection? { partialProjection ?? app.outcomeIndex.projection(for: meeting.id) }
     private var captureTranscriptOnly: Bool {
 #if LOKALBOT_UI_TEST_HOST
         ProcessInfo.processInfo.environment["LOKALBOT_DETAIL_TAB"] == "transcript"
@@ -165,7 +167,7 @@ private struct MeetingWorkspaceDetail: View {
 #endif
         }
         .onChange(of: app.pipeline.stages[meeting.id]) { _, stage in
-            if stage == nil || stage == .summarizing || stage == .waitingForModels {
+            if stage == nil || stage == .summarizing || stage == .waitingForModels || stage?.isFailure == true {
                 load()
                 Task { await refreshSpeakerIdentity() }
             }
@@ -309,9 +311,16 @@ private struct MeetingWorkspaceDetail: View {
         if let stage = app.pipeline.stages[meeting.id] {
             processingStageContent(stage)
         }
-        if speakerSummaryNeedsRefresh || MeetingAttributionArtifacts.needsRefresh(in: folder) {
+        if let partialNotes {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(partialNotes.progressLabel).font(.caption.weight(.medium))
+                    .accessibilityIdentifier("meeting.notes.partial")
+                Text("Verified notes and actions are saved below. Actions become editable when the notes finish.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } else if speakerSummaryNeedsRefresh || MeetingAttributionArtifacts.needsRefresh(in: folder) {
             HStack {
-                Text("Speaker attribution changed. Refresh these notes and action owners.")
+                Text("Transcript or speaker details changed. Refresh the notes and action owners.")
                     .font(.caption).foregroundStyle(.secondary)
                 Button("Refresh summary") { app.reprocess(meeting, transcribe: false, summarize: true) }
                     .controlSize(.small)
@@ -446,7 +455,7 @@ private struct MeetingWorkspaceDetail: View {
                             },
                             onEvidence: { citation in
                                 revealEvidence(at: citation.start)
-                            })
+                            }, isEditable: partialNotes == nil)
                         if reference.id != actions.last?.id { Divider() }
                     }
                 }
@@ -710,9 +719,16 @@ private struct MeetingWorkspaceDetail: View {
     }
 
     private func load() {
-        summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8)
         notes = MeetingNotes.load(from: folder)
         transcript = try? app.pipeline.loadTranscript(from: folder)
+        partialNotes = transcript.flatMap { MeetingNotesPartial.load(in: folder, transcript: $0, template: app.settings.noteTemplate) }
+        partialProjection = partialNotes?.projection(for: meeting, in: folder)
+        if let partialNotes, let partialProjection {
+            summary = MeetingSummaryOutcomeSynchronizer.synchronize(partialNotes.summary,
+                outcomes: partialProjection.correctedOutcomes, template: partialNotes.template)
+        } else {
+            summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8)
+        }
         speakerNameHints = app.speakerNameHints(for: meeting)
         calendarSpeakerCandidates = meeting.resolvedCalendarParticipantIdentities
         uiTestDiagnosticLog(
@@ -1226,6 +1242,7 @@ private struct OutcomeActionRow: View {
     let onStatus: (OutcomeStatus) -> Void
     let onCorrect: () -> Void
     let onEvidence: (OutcomeSourceCitation) -> Void
+    var isEditable = true
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -1235,6 +1252,7 @@ private struct OutcomeActionRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("meeting.action.toggle.\(reference.action.id)")
+            .disabled(!isEditable)
             VStack(alignment: .leading, spacing: 5) {
                 SearchHighlightedText(
                     reference.text,
@@ -1260,6 +1278,7 @@ private struct OutcomeActionRow: View {
                         .buttonStyle(.plain)
                         .font(WorkspaceTypography.metadataEmphasis)
                         .foregroundStyle(.secondary)
+                        .disabled(!isEditable)
                     if let due = reference.due {
                         MeetingSearchChip(
                             icon: "calendar",
@@ -1304,6 +1323,7 @@ private struct OutcomeActionRow: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             .accessibilityIdentifier("meeting.action.status.\(reference.action.id)")
+            .disabled(!isEditable)
         }
         .padding(.vertical, WorkspaceMetric.rowVerticalPadding)
     }

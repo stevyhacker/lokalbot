@@ -37,6 +37,7 @@ final class MeetingNotesGeneratorTests: XCTestCase {
     private struct Engine: TextEngine {
         var script: Script
         var hasTokenizer = true
+        var minimumStructuredOutputTokens = 512
         var displayName: String { "Notes fixture" }
         func tokenCount(_ text: String) async throws -> Int? { hasTokenizer ? await script.count(text) : nil }
         func generate(system: String, prompt: String, context: [String]) async throws -> String {
@@ -75,8 +76,10 @@ final class MeetingNotesGeneratorTests: XCTestCase {
     }
     private func generate(_ script: Script, transcript: Transcript? = nil, folder: URL? = nil,
                           contextTokens: Int = 32_768,
+                          minimumOutputTokens: Int = 512,
                           budget: MeetingGenerationBudget = MeetingGenerationBudget()) async throws -> MeetingNotesGenerator.Result {
-        try await MeetingNotesGenerator.generate(transcript: transcript ?? self.transcript, engine: Engine(script: script),
+        try await MeetingNotesGenerator.generate(transcript: transcript ?? self.transcript,
+            engine: Engine(script: script, minimumStructuredOutputTokens: minimumOutputTokens),
             template: .meeting, language: .matchTranscript, context: [], contextTokens: contextTokens,
             meetingID: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!, folder: try folder ?? self.folder(), budget: budget)
     }
@@ -143,14 +146,14 @@ final class MeetingNotesGeneratorTests: XCTestCase {
 
     func testTruncationSalvagesOnlyCompleteRecordsAndCannotReportSuccess() async throws {
         let complete = String(decoding: try JSONSerialization.data(withJSONObject: note()), as: UTF8.self)
-        let script = Script([.truncated("{\"notes\":[" + complete + ",{\"text\":\"unfinished")])
+        let script = Script([.truncated("{\"notes\":[" + complete + ",{\"text\":\"unfinished"), .truncated("")])
         let output = try folder()
         do { _ = try await generate(script, folder: output); XCTFail("truncated scan must remain partial") } catch is MeetingNotesGenerator.Incomplete {} catch { XCTFail("unexpected error \(error)") }
         let artifact = try JSONDecoder().decode(SummaryClaimEvidence.Artifact.self,
             from: Data(contentsOf: output.appendingPathComponent("summary.claims.partial.json")))
         XCTAssertEqual(artifact.claims.count, 1)
         let observed3 = await script.recorded().count
-        XCTAssertEqual(observed3, 1, "never restart the full part after truncation")
+        XCTAssertEqual(observed3, 2, "continue accepted records once, then stop on a page with no progress")
     }
 
     func testRepeatedInvalidRecordIsOmittedAfterOneRepairAndValidRecordsSurvive() async throws {
@@ -198,8 +201,117 @@ final class MeetingNotesGeneratorTests: XCTestCase {
     }
 
     func testExplicitOverflowIsPartialEvenWithWellFormedJSON() async throws {
-        let script = Script([.text(try response(notes: [note()], actions: [action()], more: true))])
+        let page = try response(notes: [note()], actions: [action()], more: true)
+        let script = Script([.text(page), .text(page)])
         do { _ = try await generate(script); XCTFail("overflow cannot silently drop coverage") } catch is MeetingNotesGenerator.Incomplete {} catch { XCTFail("unexpected error \(error)") }
+    }
+
+    func testOverflowContinuesWithAcceptedRecordsAndKeepsDistinctFactsFromTheSameSource() async throws {
+        let script = Script([
+            .text(try response(notes: [note("s1", "A first release takeaway.")], actions: [action()], more: true)),
+            .text(try response(notes: [note("s1", "Another distinct release takeaway.")])),
+        ])
+        let result = try await generate(script)
+        let calls = await script.recorded()
+        XCTAssertEqual(calls.count, 2)
+        XCTAssertTrue(calls[1].prompt.contains("Previously accepted records:"))
+        XCTAssertTrue(calls[1].prompt.contains("A first release takeaway."))
+        XCTAssertTrue(calls[1].prompt.contains("s1|"), "a source can contain another distinct fact")
+        XCTAssertEqual(result.claims.count, 2)
+        XCTAssertEqual(result.outcomes.userActionItems.count, 1)
+    }
+
+    func testContinuationPersistsAcrossRequestLimitWithoutRepeatingTheFirstPage() async throws {
+        let output = try folder()
+        let first = Script([.text(try response(notes: [note("s1", "Accepted first page.")], actions: [action()], more: true))])
+        do {
+            _ = try await generate(first, folder: output, budget: MeetingGenerationBudget(limits: .init(requests: 1)))
+            XCTFail("continuation must share the request limit")
+        } catch is MeetingGenerationBudget.Exhausted {} catch { XCTFail("unexpected error \(error)") }
+        let resumed = Script([.text(try response(notes: [note("s2", "Accepted second page.")]))])
+        let result = try await generate(resumed, folder: output)
+        let calls = await resumed.recorded()
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertTrue(calls[0].prompt.contains("Previously accepted records:"))
+        XCTAssertTrue(calls[0].prompt.contains("Accepted first page."))
+        XCTAssertEqual(result.claims.count, 2)
+    }
+
+    func testContinuationStopsAfterThreePagesAndResumesItsLedger() async throws {
+        let output = try folder()
+        let first = Script(try (1...3).map { index in
+            .text(try response(notes: [note("s1", "Accepted fact \(index).")], actions: [action()], more: true))
+        })
+        do { _ = try await generate(first, folder: output); XCTFail("must remain partial")
+        } catch is MeetingNotesGenerator.Incomplete {} catch { XCTFail("unexpected error \(error)") }
+        let initialCalls = await first.recorded()
+        XCTAssertEqual(initialCalls.count, 3)
+        let resumed = Script([.text(try response())])
+        let result = try await generate(resumed, folder: output)
+        let calls = await resumed.recorded()
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertTrue(calls[0].prompt.contains("Accepted fact 3."))
+        XCTAssertEqual(result.claims.count, 3)
+        XCTAssertEqual(result.outcomes.userActionItems.count, 1)
+    }
+
+    func testReasoningRepairHasHeadroomAndOneLargerRetry() async throws {
+        let script = Script([
+            .text(try response(notes: [note(), note("s2", "Needs repair", section: "Wrong")], actions: [action()])),
+            .truncated(""),
+            .text(try response(notes: [note("s2", "Documentation needs review.")])),
+        ])
+        let result = try await generate(script, minimumOutputTokens: 2_048)
+        let calls = await script.recorded()
+        XCTAssertEqual(calls.map { $0.options.maxTokens }, [4_096, 2_048, 4_096])
+        XCTAssertEqual(result.claims.count, 2)
+        XCTAssertEqual(result.outcomes.userActionItems.count, 1)
+    }
+
+    func testFailedRepairResumesOnlyTheRepairWithItsLargerAllowance() async throws {
+        let output = try folder()
+        let first = Script([
+            .text(try response(notes: [note(), note("s2", "Needs repair", section: "Wrong")], actions: [action()])),
+            .truncated(""), .truncated(""),
+        ])
+        do { _ = try await generate(first, folder: output, minimumOutputTokens: 2_048); XCTFail("repair must remain partial")
+        } catch is MeetingNotesGenerator.Incomplete {} catch { XCTFail("unexpected error \(error)") }
+        let resumed = Script([.text(try response(notes: [note("s2", "Documentation needs review.")]))])
+        let result = try await generate(resumed, folder: output, minimumOutputTokens: 2_048)
+        let calls = await resumed.recorded()
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertTrue(calls[0].prompt.contains("This is a targeted repair."))
+        XCTAssertEqual(calls[0].options.maxTokens, 4_096)
+        XCTAssertEqual(result.claims.count, 2)
+    }
+
+    func testRepairCannotSpendBeyondSharedRequestOrOutputLimits() async throws {
+        let output = try folder()
+        let script = Script([
+            .text(try response(notes: [note(), note("s2", "Needs repair", section: "Wrong")], actions: [action()])),
+            .truncated(""),
+        ])
+        do {
+            _ = try await generate(script, folder: output, minimumOutputTokens: 2_048,
+                budget: MeetingGenerationBudget(limits: .init(requests: 2, outputTokens: 6_144)))
+            XCTFail("the larger retry must remain inside the shared allowance")
+        } catch is MeetingGenerationBudget.Exhausted {} catch { XCTFail("unexpected error \(error)") }
+        let calls = await script.recorded()
+        XCTAssertEqual(calls.count, 2)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: output.appendingPathComponent(MeetingNotesPartial.fileName).path))
+    }
+
+    func testOnlyKnownAlwaysReasoningProviderRaisesTheStructuredOutputFloor() {
+        let url = URL(string: "https://openrouter.ai/api/v1")!
+        var engine = OpenAICompatibleEngine(baseURL: url, model: "z-ai/glm-5.3-flash", chatDialect: .openRouter)
+        XCTAssertEqual(engine.minimumStructuredOutputTokens, 2_048)
+        engine.model += ":nitro"
+        XCTAssertEqual(engine.minimumStructuredOutputTokens, 2_048)
+        engine.chatDialect = .generic
+        XCTAssertEqual(engine.minimumStructuredOutputTokens, 512)
+        engine.chatDialect = .openRouter
+        engine.model = "unknown/model"
+        XCTAssertEqual(engine.minimumStructuredOutputTokens, 512)
     }
 
     func testWrongOwnerAndNegatedCommitmentRemainUnassigned() throws {

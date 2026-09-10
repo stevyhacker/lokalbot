@@ -18,10 +18,11 @@ enum MeetingNotesGenerator {
         }
     }
 
-    private struct Part: Codable {
+    struct Part: Codable {
         var claims: [SummaryClaimEvidence.Claim] = []
         var outcomes = MeetingOutcomes()
         var complete = false
+        var recovery: Recovery?
     }
     private struct Checkpoint: Codable {
         var version = 1
@@ -32,7 +33,7 @@ enum MeetingNotesGenerator {
     static func checkpointURL(in folder: URL) -> URL { folder.appendingPathComponent("notes.parts.partial.json") }
 
     static func removeCheckpoint(in folder: URL) {
-        for file in ["notes.parts.partial.json", "summary.partial.md", "outcomes.partial.json"] {
+        for file in ["notes.parts.partial.json", "summary.partial.md", "outcomes.partial.json", MeetingNotesPartial.fileName] {
             try? FileManager.default.removeItem(at: folder.appendingPathComponent(file))
         }
     }
@@ -149,108 +150,22 @@ enum MeetingNotesGenerator {
             let partial = "# Partial notes — \(complete)/\(chunks.count) parts verified\n\n" + result.body
             try Data(partial.utf8).write(to: folder.appendingPathComponent("summary.partial.md"), options: .atomic)
             try encoder.encode(result.outcomes).write(to: folder.appendingPathComponent("outcomes.partial.json"), options: .atomic)
+            try MeetingNotesPartial(transcriptRevision: transcript.evidenceRevision,
+                summary: result.body, outcomes: result.outcomes, completedParts: complete,
+                totalParts: chunks.count, template: template).write(in: folder)
         }
 
         for index in chunks.indices {
             try Task.checkCancellation()
             let key = String(index)
             if checkpoint.parts[key]?.complete == true { continue }
-            let allowance = try await budget.allowance(remainingParts: chunks.count - index)
-            let maximumNotes = min(12, max(3, allowance / 200))
-            let maximumActions = min(10, max(2, allowance / 250))
-            let units = chunks[index]
-            let raw = try await request(engine: engine, system: system,
-                prompt: prompt(units: units, roster: evidence.roster), context: context,
-                schema: MeetingNotesEvidence.schema(units: units, speakers: Array(evidence.speakers.keys),
-                    template: template, maximumNotes: maximumNotes, maximumActions: maximumActions),
-                tokens: allowance, stage: "extract-\(index + 1)", budget: budget)
-            let validationStarted = ProcessInfo.processInfo.systemUptime
-            var validated = evidence.validate(raw.content, units: units, template: template, meetingID: meetingID,
-                                              maximumNotes: maximumNotes, maximumActions: maximumActions)
-            if validated.complete && !raw.truncated {
-                let cited = Set(validated.outcomes.userActionItems.flatMap { $0.citations.map(\.segmentID) })
-                let rejected = Set(validated.rejected.flatMap(\.sources))
-                for unit in units where unit.isUserCommitment && !rejected.contains(unit.source) {
-                    if let stable = transcript.summaryCitationSources[unit.source], !cited.contains(stable) {
-                        validated.rejected.append(.init(sources: [unit.source], kind: "actions", reason: "missing_user_commitment"))
-                    }
-                }
-                // An empty extraction cannot certify a substantial part as
-                // covered. Keep it incomplete instead of silently losing it.
-                if validated.claims.isEmpty && validated.outcomes.actionItems.isEmpty,
-                   units.reduce(0, { $0 + $1.text.split(whereSeparator: \.isWhitespace).count }) > 500 {
-                    validated.complete = false
-                }
+            let job = PartJob(evidence: evidence, units: chunks[index], engine: engine, template: template,
+                language: language, context: context, contextTokens: contextTokens, meetingID: meetingID,
+                number: index + 1, remainingParts: chunks.count - index, budget: budget)
+            try await generatePart(checkpoint.parts[key] ?? Part(), job: job) { part in
+                checkpoint.parts[key] = part
+                try save()
             }
-            await recordValidation(validated, stage: "extract-\(index + 1)", truncated: raw.truncated, budget: budget)
-            var part = checkpoint.parts[key] ?? Part()
-            part.claims = distinctClaims(part.claims + validated.claims)
-            part.outcomes = MeetingOutcomesGenerator.merge([part.outcomes, validated.outcomes])
-            part.complete = validated.complete && !raw.truncated && validated.rejected.isEmpty
-            checkpoint.parts[key] = part
-            try save() // Every accepted record survives a failure in the repair.
-            await budget.recordPhase("validation", seconds: ProcessInfo.processInfo.systemUptime - validationStarted)
-
-            // These are unsupported claims, not formatting/citation defects.
-            // Do not ask the model to manufacture evidence to rescue them.
-            let terminalReasons: Set<String> = ["unsupported_commitment", "conversation_management", "status_not_task", "empty_outcome"]
-            let repairable = validated.rejected.filter { !terminalReasons.contains($0.reason) }
-            let rejectedIDs = Set(repairable.flatMap(\.sources))
-            let knownRejectedIDs = rejectedIDs.intersection(Set(units.map(\.source)))
-            let rejectedIndices = units.indices.filter { rejectedIDs.contains(units[$0].source) }
-            let actionSources = Set(repairable.filter { $0.kind == "actions" }.flatMap(\.sources))
-            let repairIndices = Set(rejectedIndices.flatMap { index in
-                let radius = actionSources.contains(units[index].source) ? 8 : 2
-                return max(0, index - radius)...min(units.count - 1, index + radius)
-            })
-            let repairUnits = units.indices.filter { repairIndices.contains($0) }.map { units[$0] }
-            if !repairUnits.isEmpty {
-                let noteLimit = min(maximumNotes, repairable.filter { $0.kind == "notes" }.count)
-                let actionLimit = min(maximumActions, repairable.filter { $0.kind == "actions" }.count)
-                let repairTokens = try await budget.allowance(remainingParts: chunks.count - index,
-                    desired: min(2_048, 512 + (noteLimit + actionLimit) * 128))
-                let feedback = repairable.map { rejection in
-                    ["kind": rejection.kind, "reason": rejection.reason,
-                     "sources": rejection.sources.filter { knownRejectedIDs.contains($0) }.joined(separator: ", ")]
-                }
-                let feedbackJSON = String(decoding: try JSONSerialization.data(withJSONObject: feedback), as: UTF8.self)
-                let repairPrompt = "This is a targeted repair, not a new meeting summary. "
-                    + "Repair at most \(noteLimit) notes and \(actionLimit) actions from the rejected sources \(knownRejectedIDs.sorted().joined(separator: ", ")). "
-                    + "Return empty arrays for unrequested kinds. Do not add a TL;DR or unrelated facts from neighboring context. "
-                    + "Previously verified records are retained. Omit unsupported records. "
-                    + "An unsupported_commitment means no explicit undertaking exists in that source. "
-                    + "For missing_user_commitment, extract the user's undertaking and use its nearest relevant task context. "
-                    + "Do not return completed work as a task. Preserve requests or suggestions as such, never as commitments. "
-                    + "Remove conversation management and status-only reports. For distant_action_context, cite only sources within eight segments of the primary source. "
-                    + "has_more refers only to these requested repairs, not to unrelated evidence.\n"
-                    + "Validation feedback: \(feedbackJSON)\n"
-                    + prompt(units: repairUnits, roster: evidence.roster)
-                let repaired = try await request(engine: engine,
-                    system: PromptTemplates.meetingNotesRepairSystem(language: language), prompt: repairPrompt, context: [],
-                    schema: MeetingNotesEvidence.schema(units: repairUnits, speakers: Array(evidence.speakers.keys),
-                        template: template, maximumNotes: noteLimit, maximumActions: actionLimit),
-                    tokens: repairTokens, stage: "repair-\(index + 1)", budget: budget)
-                let started = ProcessInfo.processInfo.systemUptime
-                let fixed = evidence.validate(repaired.content, units: repairUnits, template: template, meetingID: meetingID,
-                                              maximumNotes: noteLimit, maximumActions: actionLimit)
-                await recordValidation(fixed, stage: "repair-\(index + 1)", truncated: repaired.truncated, budget: budget)
-                part.claims = distinctClaims(part.claims + fixed.claims)
-                part.outcomes = MeetingOutcomesGenerator.merge([part.outcomes, fixed.outcomes])
-                // Rejected records are omitted after one repair. They do not
-                // undo a complete scan or erase its independently valid facts.
-                part.complete = validated.complete && !raw.truncated && fixed.complete && !repaired.truncated
-                await budget.recordPhase("validation", seconds: ProcessInfo.processInfo.systemUptime - started)
-            } else if repairable.isEmpty {
-                part.complete = validated.complete && !raw.truncated
-            }
-            // Critical user follow-ups may not silently disappear with the
-            // rejected records. Keep this part resumable if repair missed one.
-            let cited = Set(part.outcomes.userActionItems.flatMap { $0.citations.map(\.segmentID) })
-            if units.contains(where: { unit in
-                unit.isUserCommitment && transcript.summaryCitationSources[unit.source].map { !cited.contains($0) } == true
-            }) { part.complete = false }
-            checkpoint.parts[key] = part
-            try save()
         }
         let completed = checkpoint.parts.values.filter(\.complete).count
         guard completed == chunks.count else { throw Incomplete(completed: completed, total: chunks.count) }
@@ -259,9 +174,9 @@ enum MeetingNotesGenerator {
         return result
     }
 
-    private static func request(engine: TextEngine, system: String, prompt: String, context: [String],
-                                schema: [String: Any], tokens: Int, stage: String,
-                                budget: MeetingGenerationBudget, attempt: Int = 0) async throws -> (content: String, truncated: Bool) {
+    static func request(engine: TextEngine, system: String, prompt: String, context: [String],
+                        schema: [String: Any], tokens: Int, stage: String,
+                        budget: MeetingGenerationBudget, attempt: Int = 0) async throws -> (content: String, truncated: Bool) {
         let input = try await tokenCount(([system] + context + [prompt]).joined(separator: "\n\n"), engine: engine) + 1_536
         return try await MeetingGenerationBudget.$stage.withValue(stage) {
             try await MeetingGenerationBudget.$promptTokens.withValue(input) {
@@ -300,13 +215,13 @@ enum MeetingNotesGenerator {
         }
     }
 
-    private static func distinctClaims(_ claims: [SummaryClaimEvidence.Claim]) -> [SummaryClaimEvidence.Claim] {
+    static func distinctClaims(_ claims: [SummaryClaimEvidence.Claim]) -> [SummaryClaimEvidence.Claim] {
         var seen = Set<String>()
         return claims.filter { seen.insert("\($0.section)|\($0.speakerID)|\(OutcomeTextSimilarity.normalized($0.text))").inserted }
     }
 
-    private static func recordValidation(_ value: MeetingNotesEvidence.Validated, stage: String,
-                                         truncated: Bool, budget: MeetingGenerationBudget) async {
+    static func recordValidation(_ value: MeetingNotesEvidence.Validated, stage: String,
+                                 truncated: Bool, budget: MeetingGenerationBudget) async {
         let reasons = Dictionary(grouping: value.rejected, by: \.reason).mapValues(\.count)
         await budget.recordValidation(.init(stage: stage, completeEnvelope: value.complete,
             hasMore: value.hasMore, truncated: truncated, notes: value.claims.count,

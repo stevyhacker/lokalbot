@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import SQLite3
+import CryptoKit
 
 /// Plants a self-contained LokalBot storage root on disk for one UI test run.
 /// Mirrors `StorageManager`'s on-disk layout
@@ -14,6 +15,26 @@ enum SyntheticFixture {
 
     static let todayDigestMarker = "Current-day digest marker"
     static let previousDayDigestMarker = "Previous-day digest marker"
+
+    static func makeNotesPartial(for meeting: Meeting, in library: Library) throws {
+        let folder = library.folder(for: meeting)
+        // These synthetic transcripts contain only engine and plain segments,
+        // so their canonical encoding is the sorted persisted JSON object.
+        let transcript = try JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("transcript.json")))
+        let canonical = try JSONSerialization.data(withJSONObject: transcript, options: [.sortedKeys])
+        let revision = SHA256.hash(data: canonical).map { String(format: "%02x", $0) }.joined()
+        guard var outcomes = try JSONSerialization.jsonObject(with:
+            Data(contentsOf: folder.appendingPathComponent("outcomes.json"))) as? [String: Any] else { return }
+        outcomes["transcriptRevision"] = revision
+        let snapshot: [String: Any] = [
+            "version": 1, "transcriptRevision": revision, "outcomes": outcomes,
+            "summary": "## TL;DR\n\n- **You:** Redis was selected for the caching layer.",
+            "completedParts": 1, "totalParts": 2, "template": "meeting",
+        ]
+        try JSONSerialization.data(withJSONObject: snapshot).write(to: folder.appendingPathComponent("notes.partial.json"), options: .atomic)
+        try Data("{\"needs_refresh\":true}".utf8).write(to: folder.appendingPathComponent("attribution-refresh-needed.json"))
+        for name in ["summary.md", "outcomes.json"] { try FileManager.default.removeItem(at: folder.appendingPathComponent(name)) }
+    }
 
     /// Static handle on one planted fixture: the tmp `root` to point
     /// `LOKALBOT_STORAGE_ROOT` at, plus the three meetings the tests assert on.

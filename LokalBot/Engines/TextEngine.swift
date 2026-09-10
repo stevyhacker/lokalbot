@@ -7,6 +7,9 @@ import Foundation
 protocol TextEngine {
     var displayName: String { get }
     var accountsForGenerationRequests: Bool { get }
+    /// Output space required by a provider whose reasoning cannot be disabled.
+    /// Callers reserve it inside their existing job/context limits.
+    var minimumStructuredOutputTokens: Int { get }
     /// Nil means this provider has no supported tokenizer endpoint.
     func tokenCount(_ text: String) async throws -> Int?
     func generate(system: String, prompt: String, context: [String]) async throws -> String
@@ -333,6 +336,7 @@ func cotypingParseSSEDelta(_ line: String) -> String? {
 
 extension TextEngine {
     var accountsForGenerationRequests: Bool { false }
+    var minimumStructuredOutputTokens: Int { 512 }
     func tokenCount(_ text: String) async throws -> Int? { nil }
     /// Backends without an output-budget control keep their existing behavior.
     func generate(system: String, prompt: String, context: [String],
@@ -474,6 +478,9 @@ struct OpenAICompatibleEngine: TextEngine {
 
     var displayName: String { displayNameOverride ?? "OpenAI-compatible — \(model)" }
     var accountsForGenerationRequests: Bool { true }
+    var minimumStructuredOutputTokens: Int {
+        reasoningCompatibility(options: .init(reasoningBudgetTokens: 0)) == .effort ? 2_048 : 512
+    }
 
     func tokenCount(_ text: String) async throws -> Int? {
         guard chatDialect == .llamaServer else { return nil }

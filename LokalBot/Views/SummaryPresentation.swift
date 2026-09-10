@@ -39,11 +39,19 @@ enum SummaryPresentation {
     /// Extract a reading preview without changing the stored/exported Markdown.
     /// Headings may share a paragraph with their content in older summaries.
     static func recap(_ markdown: String) -> String? {
-        split(markdown).body.components(separatedBy: "\n\n").lazy.compactMap { paragraph -> String? in
+        let body = split(markdown).body
+        let lines = body.components(separatedBy: "\n")
+        if let heading = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces).lowercased() == "## tl;dr" }) {
+            let section = lines.dropFirst(heading + 1).prefix { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
+                .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !section.isEmpty && section.lowercased() != "none" { return section }
+        }
+        return body.components(separatedBy: "\n\n").lazy.compactMap { paragraph -> String? in
             let content = paragraph.components(separatedBy: "\n")
                 .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
                 .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !content.isEmpty, !content.hasPrefix("- "), !content.hasPrefix("* "), !content.hasPrefix("|") else { return nil }
+            guard !content.isEmpty, content.lowercased() != "none",
+                  !content.hasPrefix("- "), !content.hasPrefix("* "), !content.hasPrefix("|") else { return nil }
             return content
         }.first
     }

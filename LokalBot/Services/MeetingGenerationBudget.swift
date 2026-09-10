@@ -45,7 +45,7 @@ actor MeetingGenerationBudget {
     var remainingSeconds: Double { max(0, limits.seconds - elapsed) }
     private var elapsed: Double { ProcessInfo.processInfo.systemUptime - started }
 
-    func allowance(remainingParts: Int, desired: Int = 4_096) throws -> Int {
+    func allowance(remainingParts: Int, desired: Int = 4_096, minimum: Int = 512) throws -> Int {
         try Task.checkCancellation()
         // Allocate useful output to the parts this run can actually process,
         // reserving one possible repair per part. Very long meetings continue
@@ -55,7 +55,7 @@ actor MeetingGenerationBudget {
         let parts = min(max(1, remainingParts), processableParts)
         let available = min(desired, (limits.outputTokens - outputTokens) / parts,
                             Int(remainingSeconds * 35 / Double(parts)))
-        guard requests < limits.requests, available >= 512 else { throw Exhausted() }
+        guard requests < limits.requests, available >= max(512, minimum) else { throw Exhausted() }
         return available
     }
 

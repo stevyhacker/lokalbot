@@ -11,10 +11,20 @@ struct MeetingNotesEvidence {
         var line: String { "\(source)|\(speaker)|\(text)" }
     }
 
-    struct Rejection {
+    struct Rejection: Codable, Equatable {
         var sources: [String]
         var kind: String
         var reason: String
+    }
+
+    /// Compact, source-bound ledger for paging. Text is data, never a new
+    /// instruction or a substitute for the original evidence on the next page.
+    struct Record: Codable, Equatable {
+        var kind: String
+        var source: String
+        var text: String
+
+        var key: String { "\(kind)|\(source)|\(OutcomeTextSimilarity.normalized(text))" }
     }
 
     struct Validated {
@@ -23,6 +33,7 @@ struct MeetingNotesEvidence {
         var rejected: [Rejection] = []
         var complete = false
         var hasMore: Bool?
+        var records: [Record] = []
     }
 
     let transcript: Transcript
@@ -137,6 +148,7 @@ struct MeetingNotesEvidence {
             guard let person = transcript.speakerRoster[speaker] else { reject(item, "unknown_speaker"); continue }
             let quote = String(visible.prefix(600))
             let claim = SummaryClaimEvidence.Claim(section: section, text: text, speakerID: speaker, segmentID: id, quote: quote)
+            result.records.append(.init(kind: "notes", source: item["source"] as? String ?? "", text: text))
             if template == .freeform || SummaryClaimEvidence.sections(for: template).contains(section) { result.claims.append(claim) }
             let label = person.identity == .user ? "You" : person.name
             let suffix = person.identity == .unresolved ? " (identity unconfirmed)"
@@ -211,6 +223,7 @@ struct MeetingNotesEvidence {
             result.outcomes.actionItems.append(.init(text: text, owner: resolvedOwner,
                 due: due.isEmpty ? nil : due, isForUser: attribution.resolution == .user,
                 importance: importance, citations: citations, attribution: attribution))
+            result.records.append(.init(kind: "actions", source: primary, text: text))
         }
         return result
     }
