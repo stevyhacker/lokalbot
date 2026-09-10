@@ -81,7 +81,52 @@ final class SpanAudioReaderTests: XCTestCase {
         XCTAssertEqual(reader.duration, 2.0, accuracy: 0.001)
     }
 
+    func testResamplerTailCannotExtendASRWindow() throws {
+        for sourceRate in [32_000.0, 44_100.0, 48_000.0] {
+            let format = try XCTUnwrap(AVAudioFormat(
+                commonFormat: .pcmFormatFloat32, sampleRate: sourceRate,
+                channels: 1, interleaved: false))
+            // PCM16 matches the speaker-region WAVs and avoids a partial
+            // float-CAF read hiding the converter's extra tail samples.
+            let url = tempDir.appendingPathComponent("resampler-tail-\(Int(sourceRate)).wav")
+            let frameCount = AVAudioFrameCount(sourceRate * 31)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount))
+            buffer.frameLength = frameCount
+            for index in 0..<Int(frameCount) { buffer.floatChannelData![0][index] = 0.25 }
+            let diskFormat = try XCTUnwrap(AVAudioFormat(
+                commonFormat: .pcmFormatInt16, sampleRate: sourceRate, channels: 1, interleaved: true))
+            do {
+                let file = try AVAudioFile(forWriting: url, settings: diskFormat.settings)
+                try file.write(from: buffer)
+            }
+
+            let reader = try SpanAudioReader(url: url)
+            let samples = try reader.samples(from: 0.5, to: 30.5)
+            XCTAssertEqual(samples.count, 480_000,
+                           "retain exactly the 30 s speaker region at \(sourceRate) Hz")
+            let spans = SpeechActivity.split(start: 0, end: Double(samples.count) / 16_000,
+                                             maxSegmentSeconds: 15)
+            XCTAssertEqual(spans.count, 2, "resampling must not manufacture a third, sub-frame ASR span")
+        }
+    }
+
     // MARK: - SpeechActivity.split (pure span arithmetic)
+
+    func testSuccessfulVADSilenceIsDistinctFromUnavailableVAD() {
+        XCTAssertEqual(SpeechActivity.vadSpans(from: [], maxSegmentSeconds: 15), [])
+        XCTAssertNil(SpeechActivity.vadSpans(from: nil, maxSegmentSeconds: 15))
+    }
+
+    func testConfirmedSilenceDoesNotOpenAudioOrCallASR() async throws {
+        let spans = try XCTUnwrap(SpeechActivity.vadSpans(from: [], maxSegmentSeconds: 15))
+        let segments = try await SpanTranscription.segments(
+            in: tempDir.appendingPathComponent("does-not-need-decoding.wav"), spans: spans
+        ) { _, _ in
+            XCTFail("confirmed silence must not reach inference")
+            return "Thank you."
+        }
+        XCTAssertTrue(segments.isEmpty)
+    }
 
     func testSplitCapsSpansAtMaxSegmentSeconds() {
         let spans = SpeechActivity.split(start: 10, end: 40, maxSegmentSeconds: 14)

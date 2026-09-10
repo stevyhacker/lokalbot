@@ -235,6 +235,9 @@ final class RecordingController: ObservableObject {
 
     private let micRecorder = MicRecorder()
     private let systemRecorder = SystemAudioRecorder()
+    private let speakerObserver: MeetingSpeakerObserver?
+    private var speakerAudioClock: RecordingAudioClock?
+    private var microphoneAudioClock: RecordingAudioClock?
 
     private struct SystemAudioTarget {
         var bundleID: String
@@ -286,6 +289,7 @@ final class RecordingController: ObservableObject {
          settingsStore: SettingsStore,
          audioMonitor: AudioSourceMonitor,
          pipeline: ProcessingPipeline,
+         speakerObserver: MeetingSpeakerObserver? = nil,
          isInteractive: @escaping () -> Bool,
          onError: @escaping (String?) -> Void,
          onMicPermissionDenied: @escaping () -> Void = {},
@@ -294,6 +298,7 @@ final class RecordingController: ObservableObject {
         self.settingsStore = settingsStore
         self.audioMonitor = audioMonitor
         self.pipeline = pipeline
+        self.speakerObserver = speakerObserver
         self.isInteractive = isInteractive
         self.onError = onError
         self.onMicPermissionDenied = onMicPermissionDenied
@@ -429,6 +434,10 @@ final class RecordingController: ObservableObject {
                     try? storage.saveMeta(meeting)
                 }
                 created = meeting
+                speakerAudioClock = RecordingAudioClock()
+                microphoneAudioClock = RecordingAudioClock()
+                systemRecorder.speakerAudioClock = speakerAudioClock
+                micRecorder.speakerAudioClock = microphoneAudioClock
                 try Task.checkCancellation()
                 try micRecorder.start(
                     writingTo: meeting.folderURL(in: storage).appendingPathComponent("mic.m4a"),
@@ -480,6 +489,9 @@ final class RecordingController: ObservableObject {
                 try Task.checkCancellation()
                 currentMeeting = meeting
                 status = .recording(meetingID: meeting.id)
+                if let speakerAudioClock, let target = systemAudioTarget {
+                    speakerObserver?.start(meeting: meeting, clock: speakerAudioClock, capturedBundleID: target.bundleID)
+                }
                 startRecordingTick()
                 if isInteractive() {
                     RecordingNotifier.shared.recordingStarted(title: meeting.title)
@@ -499,6 +511,7 @@ final class RecordingController: ObservableObject {
                 // Don't leave a 0-minute husk in the library.
                 micRecorder.stop()
                 systemRecorder.stop()
+                resetAudioClocks()
                 if let husk = created { try? storage.deleteMeeting(husk) }
             }
         }
@@ -513,6 +526,7 @@ final class RecordingController: ObservableObject {
             return
         }
         guard isRecording, var meeting = currentMeeting else { return }
+        speakerObserver?.stop()
         systemAudioHandoffTask?.cancel()
         systemAudioHandoffTask = nil
         // Before the watchdog goes away: it is the only thing that notices
@@ -523,6 +537,13 @@ final class RecordingController: ObservableObject {
         stopRecordingHealthWatchdog()
         micRecorder.stop()
         systemRecorder.stop()
+        let timing = RecordingAudioTiming(microphone: microphoneAudioClock?.archive() ?? [],
+                                          system: speakerAudioClock?.archive() ?? [])
+        do {
+            try JSONEncoder().encode(timing).write(to: meeting.folderURL(in: storage)
+                .appendingPathComponent(RecordingAudioTiming.fileName), options: .atomic)
+        } catch { lokalbotLog("Recording timing could not be saved: \(error.localizedDescription)") }
+        resetAudioClocks()
         systemAudioTarget = nil
         audioMonitor.isRecordingActive = false
         audioMonitor.reseed()
@@ -594,10 +615,21 @@ final class RecordingController: ObservableObject {
             systemAudioPolicy: .meetingAppWhenAvailable)
     }
 
+    private func resetAudioClocks() {
+        speakerAudioClock?.invalidate()
+        microphoneAudioClock?.invalidate()
+        speakerAudioClock = nil
+        microphoneAudioClock = nil
+        systemRecorder.speakerAudioClock = nil
+        micRecorder.speakerAudioClock = nil
+    }
+
     private func cleanupCancelledStart(created: Meeting?) {
+        speakerObserver?.stop()
         stopRecordingHealthWatchdog()
         micRecorder.stop()
         systemRecorder.stop()
+        resetAudioClocks()
         systemAudioTarget = nil
         audioMonitor.isRecordingActive = false
         audioMonitor.reseed()
@@ -962,6 +994,7 @@ final class RecordingController: ObservableObject {
         guard let candidate = MeetingDetector.currentCaptureTargetProcess(for: app) else { return }
         if systemAudioTarget?.bundleID == app.bundleID,
            systemAudioTarget?.pid == candidate.id { return }
+        if systemAudioTarget?.bundleID != app.bundleID { speakerObserver?.rejectChangedAudioSource() }
         do {
             try systemRecorder.reattach(capturingPID: candidate.id)
             systemAudioTarget = SystemAudioTarget(bundleID: app.bundleID, pid: candidate.id)

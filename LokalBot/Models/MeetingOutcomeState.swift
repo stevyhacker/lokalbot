@@ -72,6 +72,8 @@ struct MeetingOutcomeState: Codable, Equatable, Sendable {
 
     var schemaVersion = currentSchemaVersion
     var actions: [String: ActionState] = [:]
+    var unmatchedActions: [String: ActionState]?
+    var unmatchedActionText: [String: String]?
 
     func state(for action: MeetingOutcomes.ActionItem) -> ActionState {
         actions[action.id] ?? ActionState()

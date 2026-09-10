@@ -17,19 +17,53 @@ LokalBot can store the following under its Application Support directory:
 - downloaded transcription, embedding, speech, and language models;
 - permission-gated app/window activity history;
 - permission-gated visible screen text and encrypted screenshots;
+- separately opted-in, encrypted meeting-speaker evidence and confirmed local
+  voice profiles;
 - saved screen moments, optional unencrypted daily-memory exports, and optional
   routine drafts at folders you choose;
 - opt-in Agent Mode sessions and the agent runtime; and
 - preferences, diagnostic logs, and encryption keys.
 
-Fresh installs select day tracking with visible text and encrypted screenshots
-by default, but collection remains blocked until you grant macOS Accessibility
-and Screen Recording access. You can switch to activity only, accessible text
-without pixels, or fully off. Pixels are deleted after 14 days by default, and
+Fresh installs select activity-only day tracking. Visible text and encrypted
+screenshots are opt-in and require the applicable macOS Accessibility and
+Screen Recording permissions. You can switch to accessible text without pixels,
+visual context, or fully off. Pixels are deleted after 14 days by default, and
 captured text follows the same retention unless you explicitly choose to keep
 it. Saved moments remain until you unsave or delete them. Dictation scratch
 audio is deleted after transcription by default. You can delete an individual
 meeting in the app or remove the entire LokalBot Application Support directory.
+
+**Meeting speaker identification** is a separate, off-by-default setting. It
+observes the foreground Google Meet tab in Chrome during recording, at most
+twice per second. Accessibility associates participant names with tiles; when
+needed, ScreenCaptureKit and on-device Vision process transient window frames.
+Those frames are not saved in the screenshot archive. Private windows, excluded
+apps/domains, locked sessions, explicit pause, unsupported layouts, and missing
+permissions cause gaps rather than guessed observations. It does not use face
+recognition or send images to an external model.
+
+Compact speaker evidence is AES-GCM encrypted with a per-install Keychain key.
+Visual evidence and unaccepted suggestions expire under the screen retention
+period, even when capture is disabled. Applied names, user corrections,
+suppression choices, and the audio-turn anchors needed to remember those
+choices remain with the meeting. Deleting visual evidence keeps those choices.
+
+**Remember speakers on this Mac** is another separate, off-by-default setting.
+When you explicitly confirm a name, enough clear speech can enroll a local
+voice profile. The profile stores bounded speaker vectors with their source
+recording and confirmation, not extra audio clips. Automatic guesses never
+train profiles. You can choose **This meeting only**, select an existing person
+explicitly, or create a distinct person with the same name. Profiles remain
+until forgotten or their source contributions are removed. Deleting a meeting
+revokes its contributions. Disabling remembering stops profile use for new work
+without erasing existing transcript names; Settings offers Rename, Forget, and
+Clear all controls. Cleanup failures are reported instead of claiming deletion.
+
+Speaker evidence, suggestions, vectors, and profile identity links do not enter
+search indexes, normal exports, CLI/MCP results, or inference prompts. An applied
+display name is part of the transcript and follows its existing export and
+approved remote-inference settings. Correcting a name does not automatically
+send a new request to a remote model; existing summaries have a refresh action.
 
 ## Network access
 
@@ -67,7 +101,8 @@ grant optional permissions until you approve them:
 - Accessibility for browser-meeting detection, Autocomplete (the Cotyping
   engine), dictation insertion, visible-text context, and approved agent
   interaction.
-- Screen Recording when visual screen context is selected.
+- Screen Recording when visual screen context or visual speaker-indicator
+  capture is selected; Accessibility also supports meeting-speaker observation.
 
 Recording defaults to automatic detection on a fresh install. You are
 responsible for informing participants and obtaining any consent required

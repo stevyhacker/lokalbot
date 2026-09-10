@@ -45,6 +45,8 @@ private struct MeetingWorkspaceDetail: View {
 
     @StateObject private var player = MeetingPlayer()
     @State private var summary: String?
+    @State private var partialNotes: MeetingNotesPartial?
+    @State private var partialProjection: MeetingOutcomeProjection?
     @State private var notes: String?
     @State private var transcript: Transcript?
     @State private var transcriptExpanded = false
@@ -52,6 +54,11 @@ private struct MeetingWorkspaceDetail: View {
     @State private var evidenceRevision = 0
     @State private var correction: ActionCorrectionDraft?
     @State private var speakerRenameDraft: WorkspaceSpeakerRenameDraft?
+    @State private var speakerIdentityState: MeetingSpeakerIdentityState?
+    @State private var speakerProfiles: [SpeakerVoiceProfile] = []
+    @State private var speakerIdentityNotice: String?
+    @State private var savingSpeakerIdentity = false
+    @State private var speakerSummaryNeedsRefresh = false
     @State private var speakerNameHints: [String] = []
     @State private var calendarSpeakerCandidates: [CalendarParticipantIdentity] = []
     @State private var exportError: String?
@@ -71,7 +78,7 @@ private struct MeetingWorkspaceDetail: View {
     @State private var searchContentRevision = 0
 
     private var folder: URL { meeting.folderURL(in: app.storage) }
-    private var projection: MeetingOutcomeProjection? { app.outcomeIndex.projection(for: meeting.id) }
+    private var projection: MeetingOutcomeProjection? { partialProjection ?? app.outcomeIndex.projection(for: meeting.id) }
     private var captureTranscriptOnly: Bool {
 #if LOKALBOT_UI_TEST_HOST
         ProcessInfo.processInfo.environment["LOKALBOT_DETAIL_TAB"] == "transcript"
@@ -151,12 +158,19 @@ private struct MeetingWorkspaceDetail: View {
         .navigationTitle(meeting.displayTitle)
         .task(id: meeting.id) {
             load()
+            await refreshSpeakerIdentity(recover: true)
 #if LOKALBOT_UI_TEST_HOST
             if ProcessInfo.processInfo.environment["LOKALBOT_DETAIL_TAB"] == "transcript" {
                 transcriptExpanded = true
                 tab = .transcript
             }
 #endif
+        }
+        .onChange(of: app.pipeline.stages[meeting.id]) { _, stage in
+            if stage == nil || stage == .summarizing || stage == .waitingForModels || stage?.isFailure == true {
+                load()
+                Task { await refreshSpeakerIdentity() }
+            }
         }
         .onChange(of: app.navigationHandoff.revision) { consumeMeetingSeek() }
         .onChange(of: app.meetingPageSearchRequestRevision) {
@@ -182,11 +196,30 @@ private struct MeetingWorkspaceDetail: View {
                 hints: speakerNameHints,
                 calendarCandidates: calendarCandidates(for: draft.speaker),
                 assignedCalendarIdentityIDs: assignedCalendarIdentityIDs,
-                onSave: { name, identityID in
+                identityState: speakerIdentityState,
+                profiles: speakerProfiles,
+                rememberingEnabled: app.settings.rememberSpeakersOnMac,
+                notice: speakerIdentityNotice,
+                busy: savingSpeakerIdentity,
+                onPlay: { player.play(at: $0) },
+                onAction: { action, name, remember, profileID in
+                    performSpeakerChoice(.init(label: draft.speaker, name: name,
+                        action: action, remember: remember, profileID: profileID,
+                        expectedRevision: speakerIdentityState?.revision))
+                },
+                onDeleteEvidence: {
+                    Task {
+                        do {
+                            try await app.speakerIdentity.deleteEvidence(meeting: meeting)
+                            await refreshSpeakerIdentity()
+                        } catch { speakerIdentityNotice = error.localizedDescription }
+                    }
+                },
+                onSave: { name, identityID, remember, profileID in
                     saveSpeakerAlias(
                         name,
                         calendarIdentityID: identityID,
-                        for: draft.speaker)
+                        for: draft.speaker, remember: remember, profileID: profileID)
                 },
                 onReset: {
                     saveSpeakerAlias(
@@ -246,7 +279,7 @@ private struct MeetingWorkspaceDetail: View {
                         .accessibilityIdentifier("toolbar.transcribeAndSummarize")
                     Button("Transcribe only") { app.reprocess(meeting, transcribe: true, summarize: false) }
                         .accessibilityIdentifier("toolbar.transcribeOnly")
-                    Button("Re-summarize") { app.reprocess(meeting, transcribe: false, summarize: true) }
+                    Button("Summarize again") { app.reprocess(meeting, transcribe: false, summarize: true) }
                         .accessibilityIdentifier("toolbar.resummarize")
                     Divider()
                     Button(isExportingAudio ? "Exporting audio..." : "Export audio") {
@@ -277,6 +310,38 @@ private struct MeetingWorkspaceDetail: View {
         }
         if let stage = app.pipeline.stages[meeting.id] {
             processingStageContent(stage)
+        }
+        if let partialNotes {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(partialNotes.progressLabel).font(.caption.weight(.medium))
+                    .accessibilityIdentifier("meeting.notes.partial")
+                Text("Verified notes and actions are saved below. Actions become editable when the notes finish.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } else if speakerSummaryNeedsRefresh || MeetingAttributionArtifacts.needsRefresh(in: folder) {
+            HStack {
+                Text("Transcript or speaker details changed. Refresh the notes and action owners.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Refresh summary") { app.reprocess(meeting, transcribe: false, summarize: true) }
+                    .controlSize(.small)
+            }
+        }
+        if let unmatched = projection?.state.unmatchedActions, !unmatched.isEmpty {
+            DisclosureGroup("Review \(unmatched.count) unmatched action edits") {
+                Text("These saved edits did not match a single regenerated action. Apply them to the correct action after reviewing its source.")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(unmatched.keys.sorted(), id: \.self) { id in
+                    if let saved = unmatched[id] {
+                        Text(saved.textCorrection ?? projection?.state.unmatchedActionText?[id] ?? "Previous action")
+                            .textSelection(.enabled)
+                        Text([saved.status.label, saved.ownerOverride, saved.dueOverride].compactMap { $0 }.joined(separator: " · "))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        if let speakerIdentityNotice {
+            Text(speakerIdentityNotice).font(.caption).foregroundStyle(.secondary)
         }
         if let exportError {
             workspaceErrorLabel(
@@ -390,7 +455,7 @@ private struct MeetingWorkspaceDetail: View {
                             },
                             onEvidence: { citation in
                                 revealEvidence(at: citation.start)
-                            })
+                            }, isEditable: partialNotes == nil)
                         if reference.id != actions.last?.id { Divider() }
                     }
                 }
@@ -654,9 +719,16 @@ private struct MeetingWorkspaceDetail: View {
     }
 
     private func load() {
-        summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8)
         notes = MeetingNotes.load(from: folder)
         transcript = try? app.pipeline.loadTranscript(from: folder)
+        partialNotes = transcript.flatMap { MeetingNotesPartial.load(in: folder, transcript: $0, template: app.settings.noteTemplate) }
+        partialProjection = partialNotes?.projection(for: meeting, in: folder)
+        if let partialNotes, let partialProjection {
+            summary = MeetingSummaryOutcomeSynchronizer.synchronize(partialNotes.summary,
+                outcomes: partialProjection.correctedOutcomes, template: partialNotes.template)
+        } else {
+            summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8)
+        }
         speakerNameHints = app.speakerNameHints(for: meeting)
         calendarSpeakerCandidates = meeting.resolvedCalendarParticipantIdentities
         uiTestDiagnosticLog(
@@ -708,7 +780,11 @@ private struct MeetingWorkspaceDetail: View {
             speaker: speaker,
             defaultName: Transcript.defaultSpeakerName(for: speaker),
             currentName: transcript.displaySpeaker(for: speaker),
-            currentCalendarIdentityID: transcript.calendarIdentityID(for: speaker))
+            currentCalendarIdentityID: transcript.calendarIdentityID(for: speaker),
+            canConfirmIdentity: transcript.canConfirmSpeaker(speaker),
+            microphoneIsUser: transcript.speakerRoster[speaker]?.identity == .user
+                && transcript.segments.contains { Transcript.canonicalSpeakerKey($0.speaker) == speaker
+                    && $0.resolvedAttribution.source == .microphone })
     }
 
     private var assignedCalendarIdentityIDs: Set<String> {
@@ -723,24 +799,53 @@ private struct MeetingWorkspaceDetail: View {
             : calendarSpeakerCandidates
     }
 
-    private func saveSpeakerAlias(
-        _ alias: String?,
-        calendarIdentityID: String?,
-        for speaker: String
-    ) {
-        guard var updated = transcript else { return }
-        updated.setSpeakerAlias(
-            alias,
-            for: speaker,
-            calendarIdentityID: calendarIdentityID)
+    private func refreshSpeakerIdentity(recover: Bool = false) async {
+        let sidecar = folder.appendingPathComponent("speaker-evidence/identity.sealed")
+        guard FileManager.default.fileExists(atPath: sidecar.path)
+                || app.settings.identifySpeakersFromVisuals || app.settings.rememberSpeakersOnMac else { return }
         do {
-            try app.saveTranscript(updated, for: meeting)
-            transcript = updated
-            searchContentRevision += 1
-            speakerRenameDraft = nil
-            exportError = nil
-        } catch {
-            exportError = "Could not save speaker name: \(error.localizedDescription)"
+            speakerIdentityState = try await app.speakerIdentity.state(for: meeting)
+            speakerProfiles = try await app.speakerIdentity.profiles()
+            let latestChoice = speakerIdentityState?.decisions.filter {
+                $0.action.changesAttribution
+            }.map(\.confirmedAt).max()
+            let summaryDate = (try? FileManager.default.attributesOfItem(atPath: folder.appendingPathComponent("summary.md").path))?[.modificationDate] as? Date
+            speakerSummaryNeedsRefresh = latestChoice.map { choice in summaryDate.map { $0 < choice } ?? false } ?? false
+            if recover, let current = transcript {
+                let recoveredValue = try await app.speakerIdentity.recover(meeting: meeting, transcript: current)
+                let recovered = app.speakerIdentity.applyingLatestDecision(to: recoveredValue, meetingID: meeting.id)
+                if recovered.segments != current.segments || recovered.speakerAliases != current.speakerAliases
+                    || recovered.speakerCalendarIdentityIDs != current.speakerCalendarIdentityIDs {
+                    try app.saveTranscript(recovered, for: meeting); transcript = recovered
+                }
+            }
+        } catch { speakerIdentityNotice = error.localizedDescription }
+    }
+
+    private func saveSpeakerAlias(_ alias: String?, calendarIdentityID: String?, for speaker: String,
+                                  remember: Bool = false, profileID: UUID? = nil) {
+        performSpeakerChoice(.init(label: speaker, name: alias, calendarIdentityID: calendarIdentityID,
+            action: alias == nil ? .reset : .assign, remember: remember, profileID: profileID,
+            expectedRevision: speakerIdentityState?.revision))
+    }
+
+    private func performSpeakerChoice(_ choice: MeetingSpeakerIdentityService.Choice) {
+        guard !savingSpeakerIdentity, let current = transcript else { return }
+        savingSpeakerIdentity = true
+        Task {
+            defer { savingSpeakerIdentity = false }
+            do {
+                let updated = try await app.speakerIdentity.choose(choice, meeting: meeting, transcript: current)
+                try app.saveTranscript(updated, for: meeting)
+                transcript = updated
+                searchContentRevision += 1
+                exportError = nil
+                speakerIdentityNotice = app.speakerIdentity.notice
+                await refreshSpeakerIdentity()
+                if choice.action.changesAttribution {
+                    speakerRenameDraft = nil
+                }
+            } catch { speakerIdentityNotice = "Could not save speaker name: \(error.localizedDescription)" }
         }
     }
 
@@ -1137,6 +1242,7 @@ private struct OutcomeActionRow: View {
     let onStatus: (OutcomeStatus) -> Void
     let onCorrect: () -> Void
     let onEvidence: (OutcomeSourceCitation) -> Void
+    var isEditable = true
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -1146,6 +1252,7 @@ private struct OutcomeActionRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("meeting.action.toggle.\(reference.action.id)")
+            .disabled(!isEditable)
             VStack(alignment: .leading, spacing: 5) {
                 SearchHighlightedText(
                     reference.text,
@@ -1161,7 +1268,7 @@ private struct OutcomeActionRow: View {
                 HStack(spacing: 7) {
                     Button(action: onCorrect) {
                         SearchHighlightedText(
-                            reference.owner ?? "Unassigned",
+                            reference.owner ?? "Owner unclear",
                             query: searchQuery,
                             activeMatchIndex: activeOccurrence(for: .owner))
                             .id(MeetingPageSearchMatch.Location.action(
@@ -1171,6 +1278,7 @@ private struct OutcomeActionRow: View {
                         .buttonStyle(.plain)
                         .font(WorkspaceTypography.metadataEmphasis)
                         .foregroundStyle(.secondary)
+                        .disabled(!isEditable)
                     if let due = reference.due {
                         MeetingSearchChip(
                             icon: "calendar",
@@ -1215,6 +1323,7 @@ private struct OutcomeActionRow: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             .accessibilityIdentifier("meeting.action.status.\(reference.action.id)")
+            .disabled(!isEditable)
         }
         .padding(.vertical, WorkspaceMetric.rowVerticalPadding)
     }
@@ -1454,6 +1563,8 @@ private struct WorkspaceSpeakerRenameDraft: Identifiable {
     let defaultName: String
     let currentName: String
     let currentCalendarIdentityID: String?
+    var canConfirmIdentity = false
+    var microphoneIsUser = false
 }
 
 private struct WorkspaceSpeakerRenameSheet: View {
@@ -1461,10 +1572,20 @@ private struct WorkspaceSpeakerRenameSheet: View {
     let hints: [String]
     let calendarCandidates: [CalendarParticipantIdentity]
     let assignedCalendarIdentityIDs: Set<String>
-    let onSave: (String, String?) -> Void
+    let identityState: MeetingSpeakerIdentityState?
+    let profiles: [SpeakerVoiceProfile]
+    let rememberingEnabled: Bool
+    let notice: String?
+    let busy: Bool
+    let onPlay: (Double) -> Void
+    let onAction: (SpeakerAliasDecision.Action, String?, Bool, UUID?) -> Void
+    let onDeleteEvidence: () -> Void
+    let onSave: (String, String?, Bool, UUID?) -> Void
     let onReset: () -> Void
     let onCancel: () -> Void
 
+    @State private var remember: Bool
+    @State private var profileID: UUID?
     @State private var name: String
     @State private var selectedCalendarIdentityID: String?
 
@@ -1473,7 +1594,15 @@ private struct WorkspaceSpeakerRenameSheet: View {
         hints: [String],
         calendarCandidates: [CalendarParticipantIdentity],
         assignedCalendarIdentityIDs: Set<String>,
-        onSave: @escaping (String, String?) -> Void,
+        identityState: MeetingSpeakerIdentityState?,
+        profiles: [SpeakerVoiceProfile],
+        rememberingEnabled: Bool,
+        notice: String?,
+        busy: Bool,
+        onPlay: @escaping (Double) -> Void,
+        onAction: @escaping (SpeakerAliasDecision.Action, String?, Bool, UUID?) -> Void,
+        onDeleteEvidence: @escaping () -> Void,
+        onSave: @escaping (String, String?, Bool, UUID?) -> Void,
         onReset: @escaping () -> Void,
         onCancel: @escaping () -> Void
     ) {
@@ -1481,6 +1610,15 @@ private struct WorkspaceSpeakerRenameSheet: View {
         self.hints = hints
         self.calendarCandidates = calendarCandidates
         self.assignedCalendarIdentityIDs = assignedCalendarIdentityIDs
+        self.identityState = identityState
+        self.profiles = profiles
+        self.rememberingEnabled = rememberingEnabled
+        self.notice = notice
+        self.busy = busy
+        self.onPlay = onPlay
+        self.onAction = onAction
+        self.onDeleteEvidence = onDeleteEvidence
+        _remember = State(initialValue: rememberingEnabled)
         self.onSave = onSave
         self.onReset = onReset
         self.onCancel = onCancel
@@ -1495,6 +1633,15 @@ private struct WorkspaceSpeakerRenameSheet: View {
             TextField("Speaker name", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("speaker.rename.name")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+            SpeakerIdentityReview(speaker: draft.speaker, state: identityState,
+                profiles: profiles, rememberingEnabled: rememberingEnabled,
+                name: $name, remember: $remember, profileID: $profileID,
+                onPlay: onPlay, onAction: onAction, onDeleteEvidence: onDeleteEvidence,
+                canConfirmIdentity: draft.canConfirmIdentity, microphoneIsUser: draft.microphoneIsUser)
+            if let notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
+
 
             if !calendarCandidates.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
@@ -1535,17 +1682,22 @@ private struct WorkspaceSpeakerRenameSheet: View {
                 }
             }
 
+                }
+            }
+            .frame(maxHeight: 440)
+
             HStack {
                 Button("Reset to \(draft.defaultName)", action: onReset)
                 Spacer()
                 Button("Cancel", action: onCancel)
-                Button("Save") { onSave(name, selectedCalendarIdentityID) }
+                Button("Save") { onSave(name, selectedCalendarIdentityID, remember, profileID) }
                     .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("speaker.rename.save")
             }
         }
         .padding(18)
-        .frame(width: 440)
+        .frame(width: 500)
+        .disabled(busy)
         .onAppear {
             uiTestDiagnosticLog(
                 "speaker.rename sheet appear candidates=\(calendarCandidates.count)")
@@ -1581,7 +1733,7 @@ private struct WorkspaceSpeakerRenameSheet: View {
         // flattened by SwiftUI when presented inside a sheet.
         .buttonStyle(.bordered)
         .tint(selectedCalendarIdentityID == candidate.id ? .accentColor : nil)
-        .disabled(assignedElsewhere)
+        .help(assignedElsewhere ? "Also assign this attendee to this speaker" : "Assign this attendee")
         .accessibilityIdentifier("speaker.rename.calendarCandidate.\(index)")
     }
 

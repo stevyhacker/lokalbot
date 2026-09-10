@@ -226,6 +226,11 @@ struct EchoCanceller {
 /// colouring intact, and 10 ms frames make the search cheap enough to run on
 /// probes from across the whole track.
 enum EchoDelayEstimator {
+    struct Estimate: Equatable {
+        var samples: Int
+        var correlation: Double
+        var isReliable: Bool { correlation.isFinite && correlation >= 0.55 }
+    }
 
     static let frameSeconds = 0.01
     /// Alignment must not land *later* than the true delay — a causal filter
@@ -237,10 +242,16 @@ enum EchoDelayEstimator {
                       sampleRate: Double,
                       maximumLead: TimeInterval = 0.5,
                       maximumLag: TimeInterval = 0.1) -> Int {
+        max(0, estimate(microphone: microphone, reference: reference, sampleRate: sampleRate,
+                        maximumLead: maximumLead, maximumLag: maximumLag).samples)
+    }
+
+    static func estimate(microphone: [Float], reference: [Float], sampleRate: Double,
+                         maximumLead: TimeInterval = 0.5, maximumLag: TimeInterval = 0.1) -> Estimate {
         let frame = max(1, Int(frameSeconds * sampleRate))
         let micEnvelope = envelope(microphone, frame: frame)
         let referenceEnvelope = envelope(reference, frame: frame)
-        guard micEnvelope.count > 8, referenceEnvelope.count > 8 else { return 0 }
+        guard micEnvelope.count > 8, referenceEnvelope.count > 8 else { return Estimate(samples: 0, correlation: 0) }
 
         let maxLead = Int(maximumLead / frameSeconds)
         let maxLag = Int(maximumLag / frameSeconds)
@@ -253,8 +264,8 @@ enum EchoDelayEstimator {
                 bestShift = shift
             }
         }
-        guard bestScore > 0 else { return 0 }
-        return max(0, (bestShift - safetyFrames) * frame)
+        guard bestScore > 0 else { return Estimate(samples: 0, correlation: 0) }
+        return Estimate(samples: (bestShift - safetyFrames) * frame, correlation: bestScore)
     }
 
     /// Mean-removed loudness contour, one value per frame.

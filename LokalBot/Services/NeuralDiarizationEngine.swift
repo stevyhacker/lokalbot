@@ -4,9 +4,9 @@ import os.log
 
 private let logger = Logger(subsystem: AppIdentifiers.appBundleID, category: "NeuralDiarization")
 
-/// Acoustic speaker labelling on top of the system-audio track. Mic vs system
-/// already tells us "Me" vs "Them"; this engine refines the "Them" side into
-/// "Them 1" / "Them 2" / … when several remote participants are on the call.
+/// Acoustic speaker clustering for microphone and system-audio tracks.
+/// Clusters identify distinct voices within a track; confirmation and identity
+/// evidence determine whether a voice belongs to the user or someone else.
 ///
 /// Wraps FluidAudio's pyannote-community-1 offline pipeline with the tuned
 /// config Seminarly arrived at (threshold 0.70, finer step ratio, low minimum
@@ -18,7 +18,9 @@ final class NeuralDiarizationEngine: ObservableObject {
     @Published private(set) var isReady = false
     @Published private(set) var statusMessage = ""
 
-    nonisolated(unsafe) private let diarizer: OfflineDiarizerManager = {
+    private var models: OfflineDiarizerModels?
+
+    nonisolated private static func configuration(includeVoiceSamples: Bool) -> OfflineDiarizerConfig {
         // Start from `community-1` defaults, override the knobs that matter
         // for meeting recordings (short interjections, conservative cluster
         // merging, never collapse to one speaker).
@@ -35,13 +37,14 @@ final class NeuralDiarizationEngine: ObservableObject {
         var segmentation = OfflineDiarizerConfig.Segmentation.community
         segmentation.stepRatio = 0.15   // finer windows (slower but better recall)
 
-        let config = OfflineDiarizerConfig(
+        var config = OfflineDiarizerConfig(
             segmentation: segmentation,
             embedding: embedding,
             clustering: clustering,
             postProcessing: postProcessing)
-        return OfflineDiarizerManager(config: config)
-    }()
+        config.exposeChunkEmbeddings = includeVoiceSamples
+        return config
+    }
 
     /// Download (and cache) the CoreML models. Idempotent — safe to call before
     /// every recording; only the first call hits the network.
@@ -51,7 +54,7 @@ final class NeuralDiarizationEngine: ObservableObject {
         statusMessage = "Downloading speaker models…"
         defer { isPreparing = false }
         do {
-            try await diarizer.prepareModels()
+            models = try await OfflineDiarizerModels.load()
             isReady = true
             statusMessage = "Speaker models ready"
             ModelRuntimeRegistry.shared.register(
@@ -69,24 +72,40 @@ final class NeuralDiarizationEngine: ObservableObject {
     /// Run diarization on an audio file. Returns the timeline of speaker
     /// segments FluidAudio identified; an empty list if anything goes wrong
     /// (we never crash the pipeline because of diarization).
-    nonisolated func diarize(url: URL) async -> [DiarizedSegment] {
-        do {
-            let result = try await diarizer.process(url)
-            return result.segments.map {
-                DiarizedSegment(start: TimeInterval($0.startTimeSeconds),
-                                end: TimeInterval($0.endTimeSeconds),
-                                speakerId: $0.speakerId)
-            }
-        } catch {
-            logger.error("diarize failed: \(error.localizedDescription)")
-            return []
-        }
+    func diarize(url: URL) async -> [DiarizedSegment] {
+        await diarizeDetailed(url: url, includeVoiceSamples: false).segments
     }
+
+    func diarizeDetailed(url: URL, includeVoiceSamples: Bool) async -> SpeakerDiarizationResult {
+        guard let models else { return .init(segments: [], samples: []) }
+        let config = Self.configuration(includeVoiceSamples: includeVoiceSamples)
+        return await Task.detached(priority: .utility) {
+            do {
+                // A light manager per job shares the retained model objects. The
+                // opt-in flag affects export only, never segmentation/clustering.
+                let manager = OfflineDiarizerManager(config: config)
+                manager.initialize(models: models)
+                let result = try await manager.process(url)
+                let segments = result.segments.map {
+                    DiarizedSegment(start: TimeInterval($0.startTimeSeconds),
+                                    end: TimeInterval($0.endTimeSeconds), speakerId: $0.speakerId)
+                }
+                let samples = includeVoiceSamples ? (result.chunkEmbeddings ?? []).map {
+                    SpeakerVoiceSample(speaker: $0.speakerId,
+                        range: .init(start: $0.startTimeSeconds, end: $0.endTimeSeconds), vector: $0.embedding256)
+                } : []
+                return SpeakerDiarizationResult(segments: segments, samples: samples)
+            } catch {
+                logger.error("diarize failed: \(error.localizedDescription)")
+                return SpeakerDiarizationResult(segments: [], samples: [])
+            }
+        }.value
+    }
+
 }
 
 /// FluidAudio's segment, distilled to what the pipeline actually uses (start,
-/// end, raw speaker id like `"S1"`). Embeddings are not surfaced — relabeling
-/// only needs timeline overlap.
+/// end, raw speaker id like `"S1"`). Optional voice samples remain private.
 struct DiarizedSegment: Sendable {
     let start: TimeInterval
     let end: TimeInterval
@@ -107,4 +126,9 @@ extension Array where Element == DiarizedSegment {
         }
         return best.overlap > 0 ? best.speaker : nil
     }
+}
+
+struct SpeakerDiarizationResult: Sendable {
+    var segments: [DiarizedSegment]
+    var samples: [SpeakerVoiceSample]
 }

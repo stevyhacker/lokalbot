@@ -1,0 +1,692 @@
+{
+  "date": "2026-09-09",
+  "machine": {
+    "cpu": "Apple M4 Max",
+    "ramGiB": 48
+  },
+  "model": "Qwen3.5-4B-Q4_K_M.gguf",
+  "runtime": "llama.cpp b10173",
+  "scope": "Summary and actions after transcription; cold includes runtime startup; warm reuses loaded runtime. Excludes ASR, compilation, XCTest launch, and unrelated app queue time.",
+  "cases": [
+    {
+      "name": "normal",
+      "durationSeconds": 1563.4133333333334,
+      "words": 4477,
+      "segments": 644,
+      "targetSeconds": 300,
+      "runtimeBuildInfo": "b10173-b10173",
+      "slots": 4,
+      "modelStartupSeconds": 1.6441560829989612,
+      "runs": [
+        {
+          "name": "cold",
+          "testExitCode": 0,
+          "totalSeconds": 59.82515741628595,
+          "metrics": {
+            "accountedOutputTokens": 3741,
+            "calls": [
+              {
+                "cachedTokens": 0,
+                "generationSeconds": 11.429725000000001,
+                "inputTokens": 5273,
+                "outcome": "complete",
+                "outputTokens": 1003,
+                "prefillSeconds": 4.036161,
+                "stage": "extract-1",
+                "wallSeconds": 15.484630749910139
+              },
+              {
+                "cachedTokens": 0,
+                "generationSeconds": 1.494387,
+                "inputTokens": 1230,
+                "outcome": "complete",
+                "outputTokens": 123,
+                "prefillSeconds": 0.930624,
+                "stage": "repair-1",
+                "wallSeconds": 2.4725796249695122
+              },
+              {
+                "cachedTokens": 0,
+                "generationSeconds": 15.949002,
+                "inputTokens": 5364,
+                "outcome": "complete",
+                "outputTokens": 1396,
+                "prefillSeconds": 4.343482,
+                "stage": "extract-2",
+                "wallSeconds": 20.327123708324507
+              },
+              {
+                "cachedTokens": 718,
+                "generationSeconds": 13.716474,
+                "inputTokens": 4914,
+                "outcome": "complete",
+                "outputTokens": 1190,
+                "prefillSeconds": 3.839482,
+                "stage": "extract-3",
+                "wallSeconds": 17.61336045828648
+              },
+              {
+                "cachedTokens": 0,
+                "generationSeconds": 0.31748200000000004,
+                "inputTokens": 1689,
+                "outcome": "complete",
+                "outputTokens": 29,
+                "prefillSeconds": 1.538207,
+                "stage": "repair-3",
+                "wallSeconds": 1.9135572500526905
+              }
+            ],
+            "elapsedSeconds": 58.181001333286986,
+            "outcome": "complete",
+            "phases": {
+              "tokenization": 0.06656308320816606,
+              "validation": 0.21255275001749396
+            },
+            "requests": 5,
+            "reservedInputTokens": 26070,
+            "validations": [
+              {
+                "actions": 2,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 10,
+                "rejections": {
+                  "invalid_note": 2,
+                  "missing_user_commitment": 1,
+                  "unsupported_commitment": 2
+                },
+                "stage": "extract-1",
+                "truncated": false
+              },
+              {
+                "actions": 1,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 0,
+                "rejections": {},
+                "stage": "repair-1",
+                "truncated": false
+              },
+              {
+                "actions": 2,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 12,
+                "rejections": {
+                  "unsupported_commitment": 6
+                },
+                "stage": "extract-2",
+                "truncated": false
+              },
+              {
+                "actions": 2,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 9,
+                "rejections": {
+                  "distant_action_context": 2,
+                  "invalid_note": 3,
+                  "unsupported_commitment": 1
+                },
+                "stage": "extract-3",
+                "truncated": false
+              },
+              {
+                "actions": 0,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 0,
+                "rejections": {},
+                "stage": "repair-3",
+                "truncated": false
+              }
+            ],
+            "version": 1
+          },
+          "targetMet": true,
+          "coverage": {
+            "parts": 3,
+            "completedParts": 3,
+            "validatedClaims": 31,
+            "selectedActions": 6,
+            "selectedUserActions": 1,
+            "decisions": 0,
+            "openQuestions": 0
+          }
+        },
+        {
+          "name": "warm",
+          "testExitCode": 0,
+          "totalSeconds": 33.432350250077434,
+          "metrics": {
+            "accountedOutputTokens": 2722,
+            "calls": [
+              {
+                "cachedTokens": 5269,
+                "generationSeconds": 8.222983000000001,
+                "inputTokens": 5273,
+                "outcome": "complete",
+                "outputTokens": 709,
+                "prefillSeconds": 0.041722,
+                "stage": "extract-1",
+                "wallSeconds": 8.310870291665196
+              },
+              {
+                "cachedTokens": 0,
+                "generationSeconds": 0.328783,
+                "inputTokens": 905,
+                "outcome": "complete",
+                "outputTokens": 29,
+                "prefillSeconds": 0.759246,
+                "stage": "repair-1",
+                "wallSeconds": 1.1071038333466277
+              },
+              {
+                "cachedTokens": 5360,
+                "generationSeconds": 12.015208000000001,
+                "inputTokens": 5364,
+                "outcome": "complete",
+                "outputTokens": 1040,
+                "prefillSeconds": 0.034072000000000005,
+                "stage": "extract-2",
+                "wallSeconds": 12.09378670831211
+              },
+              {
+                "cachedTokens": 243,
+                "generationSeconds": 0.318517,
+                "inputTokens": 1020,
+                "outcome": "complete",
+                "outputTokens": 29,
+                "prefillSeconds": 0.6620309999999999,
+                "stage": "repair-2",
+                "wallSeconds": 1.0103385833790526
+              },
+              {
+                "cachedTokens": 4910,
+                "generationSeconds": 10.531821,
+                "inputTokens": 4914,
+                "outcome": "complete",
+                "outputTokens": 915,
+                "prefillSeconds": 0.032536999999999996,
+                "stage": "extract-3",
+                "wallSeconds": 10.596612000023015
+              }
+            ],
+            "elapsedSeconds": 33.432350250077434,
+            "outcome": "complete",
+            "phases": {
+              "tokenization": 0.06016454193741083,
+              "validation": 0.16411966655869037
+            },
+            "requests": 5,
+            "reservedInputTokens": 25076,
+            "validations": [
+              {
+                "actions": 1,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 8,
+                "rejections": {
+                  "invalid_note": 2
+                },
+                "stage": "extract-1",
+                "truncated": false
+              },
+              {
+                "actions": 0,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 0,
+                "rejections": {},
+                "stage": "repair-1",
+                "truncated": false
+              },
+              {
+                "actions": 2,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 9,
+                "rejections": {
+                  "invalid_note": 3,
+                  "unsupported_commitment": 2
+                },
+                "stage": "extract-2",
+                "truncated": false
+              },
+              {
+                "actions": 0,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 0,
+                "rejections": {},
+                "stage": "repair-2",
+                "truncated": false
+              },
+              {
+                "actions": 2,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 9,
+                "rejections": {
+                  "unsupported_commitment": 2
+                },
+                "stage": "extract-3",
+                "truncated": false
+              }
+            ],
+            "version": 1
+          },
+          "targetMet": true,
+          "coverage": {
+            "parts": 3,
+            "completedParts": 3,
+            "validatedClaims": 26,
+            "selectedActions": 5,
+            "selectedUserActions": 1,
+            "decisions": 0,
+            "openQuestions": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "long",
+      "durationSeconds": 5467.236,
+      "words": 11229,
+      "segments": 704,
+      "targetSeconds": 600,
+      "runtimeBuildInfo": "b10173-b10173",
+      "slots": 4,
+      "modelStartupSeconds": 0.8406554170651361,
+      "runs": [
+        {
+          "name": "cold",
+          "testExitCode": 0,
+          "totalSeconds": 71.53878204210196,
+          "metrics": {
+            "accountedOutputTokens": 4055,
+            "calls": [
+              {
+                "cachedTokens": 0,
+                "generationSeconds": 5.6832780000000005,
+                "inputTokens": 5595,
+                "outcome": "complete",
+                "outputTokens": 498,
+                "prefillSeconds": 4.393073,
+                "stage": "extract-1",
+                "wallSeconds": 10.09104341675993
+              },
+              {
+                "cachedTokens": 0,
+                "generationSeconds": 0.312259,
+                "inputTokens": 775,
+                "outcome": "complete",
+                "outputTokens": 29,
+                "prefillSeconds": 0.632206,
+                "stage": "repair-1",
+                "wallSeconds": 0.9825581250479445
+              },
+              {
+                "cachedTokens": 0,
+                "generationSeconds": 11.76548,
+                "inputTokens": 5581,
+                "outcome": "complete",
+                "outputTokens": 1022,
+                "prefillSeconds": 4.40978,
+                "stage": "extract-2",
+                "wallSeconds": 16.20838608336635
+              },
+              {
+                "cachedTokens": 718,
+                "generationSeconds": 7.291144,
+                "inputTokens": 5611,
+                "outcome": "complete",
+                "outputTokens": 622,
+                "prefillSeconds": 3.830916,
+                "stage": "extract-3",
+                "wallSeconds": 11.176130750100128
+              },
+              {
+                "cachedTokens": 259,
+                "generationSeconds": 1.458645,
+                "inputTokens": 1070,
+                "outcome": "complete",
+                "outputTokens": 119,
+                "prefillSeconds": 0.6658390000000001,
+                "stage": "repair-3",
+                "wallSeconds": 2.179042916628532
+              },
+              {
+                "cachedTokens": 0,
+                "generationSeconds": 15.15452,
+                "inputTokens": 5627,
+                "outcome": "complete",
+                "outputTokens": 1251,
+                "prefillSeconds": 4.862367,
+                "stage": "extract-4",
+                "wallSeconds": 20.044522333308123
+              },
+              {
+                "cachedTokens": 0,
+                "generationSeconds": 0.35036900000000004,
+                "inputTokens": 1148,
+                "outcome": "complete",
+                "outputTokens": 29,
+                "prefillSeconds": 1.070484,
+                "stage": "repair-4",
+                "wallSeconds": 1.4912227499298751
+              },
+              {
+                "cachedTokens": 0,
+                "generationSeconds": 5.648715,
+                "inputTokens": 2664,
+                "outcome": "complete",
+                "outputTokens": 485,
+                "prefillSeconds": 2.365539,
+                "stage": "extract-5",
+                "wallSeconds": 8.037168291630223
+              }
+            ],
+            "elapsedSeconds": 70.69812662503682,
+            "outcome": "complete",
+            "phases": {
+              "tokenization": 0.12085529183968902,
+              "validation": 0.26340037502814084
+            },
+            "requests": 8,
+            "reservedInputTokens": 40231,
+            "validations": [
+              {
+                "actions": 0,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 7,
+                "rejections": {
+                  "invalid_note": 1
+                },
+                "stage": "extract-1",
+                "truncated": false
+              },
+              {
+                "actions": 0,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 0,
+                "rejections": {},
+                "stage": "repair-1",
+                "truncated": false
+              },
+              {
+                "actions": 4,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 12,
+                "rejections": {},
+                "stage": "extract-2",
+                "truncated": false
+              },
+              {
+                "actions": 1,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 7,
+                "rejections": {
+                  "distant_action_context": 1
+                },
+                "stage": "extract-3",
+                "truncated": false
+              },
+              {
+                "actions": 0,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 0,
+                "rejections": {
+                  "unsupported_commitment": 1
+                },
+                "stage": "repair-3",
+                "truncated": false
+              },
+              {
+                "actions": 1,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 12,
+                "rejections": {
+                  "distant_action_context": 1,
+                  "unsupported_commitment": 2
+                },
+                "stage": "extract-4",
+                "truncated": false
+              },
+              {
+                "actions": 0,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 0,
+                "rejections": {},
+                "stage": "repair-4",
+                "truncated": false
+              },
+              {
+                "actions": 0,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 8,
+                "rejections": {},
+                "stage": "extract-5",
+                "truncated": false
+              }
+            ],
+            "version": 1
+          },
+          "targetMet": true,
+          "coverage": {
+            "parts": 5,
+            "completedParts": 5,
+            "validatedClaims": 46,
+            "selectedActions": 5,
+            "selectedUserActions": 0,
+            "decisions": 0,
+            "openQuestions": 0
+          }
+        },
+        {
+          "name": "warm",
+          "testExitCode": 0,
+          "totalSeconds": 74.17956608335953,
+          "metrics": {
+            "accountedOutputTokens": 4222,
+            "calls": [
+              {
+                "cachedTokens": 718,
+                "generationSeconds": 9.414517,
+                "inputTokens": 5595,
+                "outcome": "complete",
+                "outputTokens": 745,
+                "prefillSeconds": 3.817796,
+                "stage": "extract-1",
+                "wallSeconds": 13.259701583301648
+              },
+              {
+                "cachedTokens": 718,
+                "generationSeconds": 11.574095999999999,
+                "inputTokens": 5581,
+                "outcome": "complete",
+                "outputTokens": 953,
+                "prefillSeconds": 4.533417999999999,
+                "stage": "extract-2",
+                "wallSeconds": 16.14927708322648
+              },
+              {
+                "cachedTokens": 0,
+                "generationSeconds": 1.563423,
+                "inputTokens": 1124,
+                "outcome": "complete",
+                "outputTokens": 124,
+                "prefillSeconds": 1.041258,
+                "stage": "repair-2",
+                "wallSeconds": 2.646712666726671
+              },
+              {
+                "cachedTokens": 718,
+                "generationSeconds": 11.766027,
+                "inputTokens": 5611,
+                "outcome": "complete",
+                "outputTokens": 977,
+                "prefillSeconds": 4.470555999999999,
+                "stage": "extract-3",
+                "wallSeconds": 16.265252124983817
+              },
+              {
+                "cachedTokens": 0,
+                "generationSeconds": 0.33480200000000004,
+                "inputTokens": 1266,
+                "outcome": "complete",
+                "outputTokens": 29,
+                "prefillSeconds": 1.15839,
+                "stage": "repair-3",
+                "wallSeconds": 1.5288504166528583
+              },
+              {
+                "cachedTokens": 0,
+                "generationSeconds": 7.380770999999999,
+                "inputTokens": 5627,
+                "outcome": "complete",
+                "outputTokens": 621,
+                "prefillSeconds": 5.00081,
+                "stage": "extract-4",
+                "wallSeconds": 12.407716250047088
+              },
+              {
+                "cachedTokens": 718,
+                "generationSeconds": 8.51502,
+                "inputTokens": 2664,
+                "outcome": "complete",
+                "outputTokens": 744,
+                "prefillSeconds": 1.780039,
+                "stage": "extract-5",
+                "wallSeconds": 10.320215708343312
+              },
+              {
+                "cachedTokens": 0,
+                "generationSeconds": 0.326283,
+                "inputTokens": 750,
+                "outcome": "complete",
+                "outputTokens": 29,
+                "prefillSeconds": 0.731573,
+                "stage": "repair-5",
+                "wallSeconds": 1.0766930415993556
+              }
+            ],
+            "elapsedSeconds": 74.17956608335953,
+            "outcome": "complete",
+            "phases": {
+              "tokenization": 0.13703037484083325,
+              "validation": 0.27445350016932935
+            },
+            "requests": 8,
+            "reservedInputTokens": 40378,
+            "validations": [
+              {
+                "actions": 1,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 11,
+                "rejections": {
+                  "empty_outcome": 1
+                },
+                "stage": "extract-1",
+                "truncated": false
+              },
+              {
+                "actions": 3,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 12,
+                "rejections": {
+                  "speaker_reference": 1
+                },
+                "stage": "extract-2",
+                "truncated": false
+              },
+              {
+                "actions": 0,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 0,
+                "rejections": {
+                  "unsupported_commitment": 1
+                },
+                "stage": "repair-2",
+                "truncated": false
+              },
+              {
+                "actions": 0,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 11,
+                "rejections": {
+                  "distant_action_context": 1,
+                  "invalid_note": 1,
+                  "unsupported_commitment": 1
+                },
+                "stage": "extract-3",
+                "truncated": false
+              },
+              {
+                "actions": 0,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 0,
+                "rejections": {},
+                "stage": "repair-3",
+                "truncated": false
+              },
+              {
+                "actions": 1,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 8,
+                "rejections": {},
+                "stage": "extract-4",
+                "truncated": false
+              },
+              {
+                "actions": 0,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 11,
+                "rejections": {
+                  "invalid_note": 1
+                },
+                "stage": "extract-5",
+                "truncated": false
+              },
+              {
+                "actions": 0,
+                "completeEnvelope": true,
+                "hasMore": false,
+                "notes": 0,
+                "rejections": {},
+                "stage": "repair-5",
+                "truncated": false
+              }
+            ],
+            "version": 1
+          },
+          "targetMet": true,
+          "coverage": {
+            "parts": 5,
+            "completedParts": 5,
+            "validatedClaims": 53,
+            "selectedActions": 5,
+            "selectedUserActions": 0,
+            "decisions": 2,
+            "openQuestions": 5
+          }
+        }
+      ]
+    }
+  ]
+}

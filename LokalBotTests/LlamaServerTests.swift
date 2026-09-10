@@ -43,6 +43,19 @@ final class LlamaServerTests: XCTestCase {
         XCTAssertEqual(LlamaServer.modelMatchKey(for: url), "qwen3.5-4b-q4.gguf")
     }
 
+    func testServingModelAcceptsFullPathAndFilenameButRejectsAnotherFile() throws {
+        let model = URL(fileURLWithPath: "/models/granite.gguf")
+        let payload = Data("""
+        {"models":[{"name":"/models/granite.gguf","model":"/models/granite.gguf"}],
+         "data":[{"id":"/models/granite.gguf"}]}
+        """.utf8)
+        XCTAssertTrue(LlamaServer.servesModel(at: model, names: LlamaServer.servedModelNames(from: payload)))
+        XCTAssertTrue(LlamaServer.servesModel(at: model, names: ["granite.gguf"]))
+        XCTAssertFalse(LlamaServer.servesModel(at: model, names: ["/other/granite.gguf"]))
+        XCTAssertFalse(LlamaServer.servesModel(at: model, names: ["qwen.gguf"]))
+        XCTAssertFalse(LlamaServer.servesModel(at: model, names: []))
+    }
+
     func testAuthenticationTokenIsStableAndHighEntropy() async {
         // A private instance on an unused port: the token path is derived from
         // the port, so this never touches the three production token files.
@@ -60,5 +73,79 @@ final class LlamaServerTests: XCTestCase {
         XCTAssertEqual(first, second, "token must be stable across reads")
         XCTAssertGreaterThanOrEqual(first.count, 32)
         XCTAssertFalse(first.contains("-"))
+    }
+
+    /// Opt-in native replay; never downloads models or touches production
+    /// ports. Audio, responses and timing artifacts stay in the private folder.
+    func testLocalGraniteRegionReplayKeepsOneProcess() async throws {
+        struct Manifest: Decodable {
+            struct Window: Decodable { var start: Double; var end: Double }
+            var model: String
+            var projector: String
+            var audio: String
+            var output: String
+            var port: Int
+            var windows: [Window]
+        }
+        guard let path = ProcessInfo.processInfo.environment["LOKALBOT_GRANITE_REPLAY_MANIFEST"] else {
+            throw XCTSkip("Set LOKALBOT_GRANITE_REPLAY_MANIFEST for a private local runtime replay.")
+        }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        guard (49_152...65_535).contains(manifest.port), LlamaServer.listeningPIDs(onPort: manifest.port).isEmpty,
+              LocalLlamaServerAuthentication.readMarker(port: manifest.port) == nil else {
+            throw XCTSkip("Replay needs an unused private port without a PID marker.")
+        }
+        let model = URL(fileURLWithPath: manifest.model)
+        let folder = URL(fileURLWithPath: manifest.output, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let server = LlamaServer(port: manifest.port, contextTokens: 4_096,
+            extraArgs: ["--mmproj", manifest.projector, "--parallel", "1", "--cache-ram", "256"])
+        addTeardownBlock {
+            await server.stop()
+            try? FileManager.default.removeItem(at: AppDirectories.applicationSupport
+                .appendingPathComponent("llama-server-\(manifest.port).auth-token"))
+        }
+        let started = ProcessInfo.processInfo.systemUptime
+        try await server.ensureRunning(modelAt: model)
+        let startupSeconds = ProcessInfo.processInfo.systemUptime - started
+        let initialPID = try XCTUnwrap(LocalLlamaServerAuthentication.readMarker(port: manifest.port)?.pid)
+        let token = await server.authenticationToken()
+        let reader = try SpanAudioReader(url: URL(fileURLWithPath: manifest.audio))
+        var rows: [[String: Any]] = []
+        for (index, window) in manifest.windows.prefix(20).enumerated() {
+            let wav = folder.appendingPathComponent("region-\(index).wav")
+            try OnnxTranscriptionEngine.writeWav(reader.samples(from: window.start, to: window.end), to: wav)
+            let checking = ProcessInfo.processInfo.systemUptime
+            try await server.ensureRunning(modelAt: model)
+            let reuseSeconds = ProcessInfo.processInfo.systemUptime - checking
+            XCTAssertEqual(LocalLlamaServerAuthentication.readMarker(port: manifest.port)?.pid, initialPID)
+            let spans = try await SpeechActivity.shared.spans(in: wav, maxSegmentSeconds: 30)
+            let decoding = ProcessInfo.processInfo.systemUptime
+            let segments = try await SpanTranscription.segments(in: wav, spans: spans) { samples, part in
+                let input = folder.appendingPathComponent("input-\(index)-\(part).wav")
+                try OnnxTranscriptionEngine.writeWav(samples, to: input)
+                let request = try GraniteSpeechEngine.makeTranscriptionRequest(serverBaseURL: server.baseURL,
+                    authenticationToken: token, boundary: UUID().uuidString, wav: input, language: "en",
+                    modelFileName: model.lastPathComponent)
+                let (data, response) = try await URLSession.shared.data(for: request)
+                XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+                let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                return try XCTUnwrap(payload["text"] as? String)
+            }
+            rows.append(["index": index, "start": window.start, "end": window.end, "pid": initialPID,
+                         "reuseSeconds": reuseSeconds, "decodeSeconds": ProcessInfo.processInfo.systemUptime - decoding,
+                         "speechSpans": spans.count, "text": segments.map(\.text).joined(separator: " ")])
+        }
+        XCTAssertFalse(rows.isEmpty)
+        let changedContext = LlamaServer(port: manifest.port, contextTokens: 8_192,
+            extraArgs: ["--mmproj", manifest.projector, "--parallel", "1", "--cache-ram", "256"])
+        addTeardownBlock { await changedContext.stop() }
+        try await changedContext.ensureRunning(modelAt: model)
+        let changedPID = try XCTUnwrap(LocalLlamaServerAuthentication.readMarker(port: manifest.port)?.pid)
+        XCTAssertNotEqual(changedPID, initialPID, "configuration changes must still replace the runtime")
+        let report: [String: Any] = ["startupSeconds": startupSeconds, "regions": rows,
+                                     "changedContextPID": changedPID]
+        try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+            .write(to: folder.appendingPathComponent("replay.json"), options: .atomic)
     }
 }

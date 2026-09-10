@@ -101,7 +101,7 @@ actor QwenASREngine: TranscriptionEngine {
             in: url, maxSegmentSeconds: Self.maxSegmentSeconds)
         let segments = try await SpanTranscription.segments(in: url, spans: spans) { samples, _ in
             model.transcribe(
-                audio: samples,
+                audio: Self.samplesForInference(samples),
                 sampleRate: Self.sampleRate,
                 language: Self.qwenLanguage(language),
                 maxTokens: Self.maxTokens(for: samples.count),
@@ -160,6 +160,18 @@ actor QwenASREngine: TranscriptionEngine {
             dir = dir.appendingPathComponent(String(component), isDirectory: true)
         }
         return dir
+    }
+
+    /// speech-swift 0.0.26 drops the final STFT frame, so fewer than one
+    /// 160-sample hop (10 ms at 16 kHz) produces zero encoder frames and
+    /// traps in MLX's stacked([]). Speaker boundaries and VAD/split tails
+    /// can be this short. Pad only the model input with silence; retain all
+    /// recorded samples and the original span timestamps. Empty windows
+    /// stay empty and are skipped by SpanTranscription before inference.
+    nonisolated static func samplesForInference(_ samples: [Float]) -> [Float] {
+        let minimumSamples = 160
+        guard !samples.isEmpty, samples.count < minimumSamples else { return samples }
+        return samples + [Float](repeating: 0, count: minimumSamples - samples.count)
     }
 
     private static func maxTokens(for sampleCount: Int) -> Int {

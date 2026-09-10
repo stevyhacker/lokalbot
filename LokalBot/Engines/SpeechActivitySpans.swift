@@ -30,7 +30,8 @@ extension SpeechActivity {
 
     /// Speech spans for `url`, each capped at `maxSegmentSeconds` when given
     /// (nil keeps whole VAD regions). Falls back to the whole track (split the
-    /// same way) when VAD is unavailable or finds no speech. Throws only when
+    /// same way) when VAD is unavailable. Successful silence stays empty, so
+    /// engines never decode it as speech. Throws only when
     /// the audio itself cannot be opened.
     func spans(in url: URL, maxSegmentSeconds: Double?) async throws -> [SpeechSpan] {
         if let spans = await vadSpans(in: url, maxSegmentSeconds: maxSegmentSeconds) {
@@ -40,14 +41,18 @@ extension SpeechActivity {
         return Self.split(start: 0, end: duration, maxSegmentSeconds: maxSegmentSeconds)
     }
 
-    /// VAD-only spans, or nil when VAD is unavailable or found no speech —
+    /// VAD-only spans, or nil when VAD is unavailable —
     /// for engines that need a distinct whole-track fallback (Cohere).
     func vadSpans(in url: URL, maxSegmentSeconds: Double?) async -> [SpeechSpan]? {
-        guard let segments = await speechSegments(in: url), !segments.isEmpty else {
-            return nil
-        }
+        Self.vadSpans(from: await speechSegments(in: url), maxSegmentSeconds: maxSegmentSeconds)
+    }
+
+    static func vadSpans(from segments: [VadSegment]?, maxSegmentSeconds: Double?) -> [SpeechSpan]? {
+        guard let segments else { return nil }
+        guard !segments.isEmpty else { return [] }
         var spans: [SpeechSpan] = []
         for segment in segments {
+            guard segment.startTime.isFinite, segment.endTime.isFinite else { continue }
             let start = max(0, segment.startTime)
             guard segment.endTime > start else { continue }
             spans.append(contentsOf: Self.split(
@@ -97,6 +102,7 @@ enum SpanTranscription {
         speaker: String = "speaker",
         transcribe: (_ samples: [Float], _ index: Int) async throws -> String
     ) async throws -> [Transcript.Segment] {
+        guard !spans.isEmpty else { return [] }
         let reader = try SpanAudioReader(url: url)
         var segments: [Transcript.Segment] = []
         for (index, span) in spans.enumerated() {

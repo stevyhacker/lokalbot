@@ -75,6 +75,30 @@ final class SettingsUITests: XCTestCase {
                        "browser strict-mode toggle should be gated while calendar detection is off")
     }
 
+    /// Hosted/remote Mac only, like the rest of this suite. No live capture or
+    /// enrollment is performed; the app uses an isolated synthetic library.
+    func testSpeakerVisualsAndRememberingAreSeparateOptIns() {
+        UITestHarness.clickSidebar("sidebar.settings", in: app)
+        UITestHarness.selectSettingsCategory("Meetings", in: app)
+        let visuals = app.switches["settings.speakerVisuals"]
+        let remembering = app.switches["settings.rememberSpeakers"]
+        UITestHarness.scrollTo(visuals, in: app)
+        XCTAssertTrue(visuals.waitForExistence(timeout: 6))
+        XCTAssertTrue(remembering.exists)
+        XCTAssertEqual(visuals.label, "Identify speakers from meeting visuals")
+        XCTAssertEqual(remembering.label, "Remember speakers on this Mac")
+        XCTAssertEqual(String(describing: visuals.value ?? ""), "0")
+        XCTAssertEqual(String(describing: remembering.value ?? ""), "0")
+        visuals.click()
+        XCTAssertTrue(UITestHarness.waitUntil { String(describing: visuals.value ?? "") == "1" })
+        XCTAssertEqual(String(describing: remembering.value ?? ""), "0")
+        let manage = app.buttons["Manage remembered people…"]
+        UITestHarness.scrollTo(manage, in: app)
+        manage.click()
+        XCTAssertTrue(UITestHarness.staticText(containing: "No remembered voices yet", in: app).waitForExistence(timeout: 4))
+        app.buttons["Done"].click()
+    }
+
     func testCalendarDependentOptionsRenderWhenSeededOn() throws {
         try relaunch(settingsJSON: """
         {

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Speaker-attributed transcript of a meeting. Persisted as `transcript.json`
@@ -29,18 +30,23 @@ struct Transcript: Codable {
         /// Optional keeps older persisted transcripts source-compatible. A
         /// missing value is unknown and therefore never used for deletion.
         var timingPrecision: TimingPrecision?
+        var attribution: SpeakerAttribution?
+
+        var resolvedAttribution: SpeakerAttribution {
+            (attribution ?? .legacy(speaker: speaker)).applyingMicrophoneDefault
+        }
     }
 
-    /// A compact, timestamp-anchored turn used only for model prompts. The
-    /// persisted transcript and playback rows keep their original segment
-    /// boundaries; summarization can merge nearby runs from the same speaker
-    /// without paying the token cost of a label and timestamp on every ASR
-    /// span.
+    /// A bounded piece of one source segment used only for model prompts.
+    /// Keeping its source boundary visible lets the model copy a quote and
+    /// the exact ID that resolves that quote back to the transcript.
     struct PromptTurn: Equatable, Sendable {
         var start: TimeInterval
         var end: TimeInterval
         var speaker: String
         var text: String
+        var sourceID: String
+        var citationID: String
     }
 
     /// Immutable, UI-ready segment data. Building this value performs the
@@ -81,6 +87,7 @@ struct Transcript: Codable {
                 return
             }
 
+            let roster = transcript.speakerRoster
             segments = transcript.segments.enumerated().compactMap { index, segment in
                 let text = segment.displayText
                 guard !text.isEmpty else { return nil }
@@ -89,7 +96,7 @@ struct Transcript: Codable {
                     id: index,
                     segment: segment,
                     text: text,
-                    speakerLabel: transcript.displaySpeaker(for: segment.speaker),
+                    speakerLabel: roster[speakerKey]?.name ?? Transcript.defaultSpeakerName(for: segment.speaker),
                     speakerKey: speakerKey,
                     hasSpeakerAlias: transcript.speakerAliases[speakerKey] != nil)
             }
@@ -148,13 +155,16 @@ struct Transcript: Codable {
     /// Opaque calendar-participant IDs selected for speaker aliases. Email
     /// addresses remain in meeting metadata and never enter the transcript.
     var speakerCalendarIdentityIDs: [String: String]
+    var echoReport: TranscriptEchoReport?
 
     init(
         segments: [Segment],
         engine: String,
         speakerAliases: [String: String] = [:],
-        speakerCalendarIdentityIDs: [String: String] = [:]
+        speakerCalendarIdentityIDs: [String: String] = [:],
+        echoReport: TranscriptEchoReport? = nil
     ) {
+        self.echoReport = echoReport
         self.segments = segments
         self.engine = engine
         self.speakerAliases = Self.normalizedAliases(speakerAliases)
@@ -163,11 +173,12 @@ struct Transcript: Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case segments, engine, speakerAliases, speakerCalendarIdentityIDs
+        case segments, engine, speakerAliases, speakerCalendarIdentityIDs, echoReport
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        echoReport = try container.decodeIfPresent(TranscriptEchoReport.self, forKey: .echoReport)
         segments = try container.decode([Segment].self, forKey: .segments)
         engine = try container.decode(String.self, forKey: .engine)
         let decodedAliases = try container.decodeIfPresent([String: String].self, forKey: .speakerAliases) ?? [:]
@@ -181,6 +192,7 @@ struct Transcript: Codable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(segments, forKey: .segments)
+        try container.encodeIfPresent(echoReport, forKey: .echoReport)
         try container.encode(engine, forKey: .engine)
         if !speakerAliases.isEmpty {
             try container.encode(speakerAliases, forKey: .speakerAliases)
@@ -194,10 +206,12 @@ struct Transcript: Codable {
 
     /// Renders `transcript.md` — "[00:14:32] **Me:** …"
     var markdown: String {
-        segments.compactMap { seg in
+        let roster = speakerRoster
+        return segments.compactMap { seg in
             let text = seg.displayText
             guard !text.isEmpty else { return nil }
-            return "**[\(Self.stamp(seg.start))] \(displaySpeaker(for: seg.speaker)):** \(text)"
+            let name = roster[Self.canonicalSpeakerKey(seg.speaker)]?.name ?? Self.defaultSpeakerName(for: seg.speaker)
+            return "**[\(Self.stamp(seg.start))] \(name):** \(text)"
         }.joined(separator: "\n\n")
     }
 
@@ -215,19 +229,36 @@ struct Transcript: Codable {
             Int64((segment.end * 1_000).rounded()))
     }
 
+    var evidenceRevision: String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = (try? encoder.encode(self)) ?? Data()
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
     var segmentSourceMap: [String: Segment] {
         Dictionary(uniqueKeysWithValues: segments.indices.map { (segmentID(at: $0), segments[$0]) })
+    }
+
+    /// Short prompt references avoid asking a model to reproduce long timing
+    /// IDs. Resolution always uses this exact transcript snapshot; persisted
+    /// claims and audio links retain the original stable segment IDs.
+    func summaryCitationID(at index: Int) -> String { "s\(index + 1)" }
+
+    var summaryCitationSources: [String: String] {
+        Dictionary(uniqueKeysWithValues: segments.indices.map { (summaryCitationID(at: $0), segmentID(at: $0)) })
     }
 
     /// Source-ready transcript for grounded extraction. IDs appear in the
     /// exact notation required by the schema so the model can only cite known
     /// segments that LokalBot can resolve back to audio.
     var evidenceMarkdown: String {
-        segments.enumerated().compactMap { index, segment in
+        let roster = speakerRoster
+        return segments.enumerated().compactMap { index, segment in
             let text = segment.displayText
             guard !text.isEmpty else { return nil }
             return "[\(segmentID(at: index))] [\(Self.stamp(segment.start))] "
-                + "\(displaySpeaker(for: segment.speaker)): \(text)"
+                + "\(promptSpeaker(for: segment.speaker, roster: roster)): \(text)"
         }.joined(separator: "\n\n")
     }
 
@@ -241,56 +272,42 @@ struct Transcript: Codable {
         }.joined(separator: " ")
     }
 
-    /// Consecutive nearby spans from the same speaker become one bounded turn.
-    /// A single pathological/legacy span is split at word boundaries as well,
-    /// so downstream token-aware chunking always has safe split points.
+    /// Preserve each source boundary even for consecutive same-speaker spans.
+    /// A pathological/legacy span is split at word boundaries, retaining its
+    /// source ID so downstream token-aware chunking has safe split points.
     func summaryPromptTurns(
-        maxCharacters: Int = 1_200,
-        maximumGap: TimeInterval = 3
+        maxCharacters: Int = 1_200
     ) -> [PromptTurn] {
         let characterLimit = max(200, maxCharacters)
         var turns: [PromptTurn] = []
 
-        for segment in segments {
+        for (segmentIndex, segment) in segments.enumerated() {
             let text = segment.displayText
             guard !text.isEmpty else { continue }
             for part in Self.summaryTextParts(text, maxCharacters: characterLimit) {
-                let canMerge: Bool
-                if let previous = turns.last {
-                    let sameSpeaker = Self.canonicalSpeakerKey(previous.speaker)
-                        == Self.canonicalSpeakerKey(segment.speaker)
-                    let gap = segment.start - previous.end
-                    canMerge = sameSpeaker
-                        && gap <= maximumGap
-                        && gap >= -maximumGap
-                        && previous.text.count + part.count + 1 <= characterLimit
-                } else {
-                    canMerge = false
-                }
-
-                if canMerge {
-                    turns[turns.count - 1].text += " " + part
-                    turns[turns.count - 1].end = max(
-                        turns[turns.count - 1].end,
-                        segment.end)
-                } else {
-                    turns.append(PromptTurn(
-                        start: segment.start,
-                        end: segment.end,
-                        speaker: segment.speaker,
-                        text: part))
-                }
+                turns.append(PromptTurn(
+                    start: segment.start,
+                    end: segment.end,
+                    speaker: segment.speaker,
+                    text: part, sourceID: segmentID(at: segmentIndex), citationID: summaryCitationID(at: segmentIndex)))
             }
         }
         return turns
     }
 
     var summaryPromptMarkdown: String {
-        summaryPromptTurns().map(summaryPromptLine).joined(separator: "\n\n")
+        summaryPromptLines(summaryPromptTurns()).joined(separator: "\n\n")
     }
 
-    func summaryPromptLine(_ turn: PromptTurn) -> String {
-        "**[\(Self.stamp(turn.start))] \(displaySpeaker(for: turn.speaker)):** \(turn.text)"
+    func summaryPromptLines(_ turns: [PromptTurn]) -> [String] {
+        let roster = speakerRoster
+        return turns.map { summaryPromptLine($0, roster: roster) }
+    }
+
+    func summaryPromptLine(_ turn: PromptTurn) -> String { summaryPromptLine(turn, roster: speakerRoster) }
+
+    func summaryPromptLine(_ turn: PromptTurn, roster: [String: SpeakerDescriptor]) -> String {
+        "[\(turn.citationID)] **[\(Self.stamp(turn.start))] \(promptSpeaker(for: turn.speaker, roster: roster)):** \(turn.text)"
     }
 
     /// Merge per-track transcripts (mic = "me", system = "them") by timestamp.
@@ -301,11 +318,73 @@ struct Transcript: Codable {
                 normalized.text = segment.displayText
                 return normalized.text.isEmpty ? nil : normalized
             }.sorted { $0.start < $1.start },
-            engine: tracks.first?.engine ?? "unknown")
+            engine: tracks.first?.engine ?? "unknown",
+            echoReport: tracks.compactMap(\.echoReport).first)
+    }
+
+    struct SpeakerDescriptor: Equatable, Sendable {
+        var id: String
+        var name: String
+        var identity: SpeakerAttribution.Identity
+    }
+
+    var speakerRoster: [String: SpeakerDescriptor] {
+        Dictionary(grouping: segments, by: { Self.canonicalSpeakerKey($0.speaker) }).mapValues { group in
+            let key = Self.canonicalSpeakerKey(group[0].speaker)
+            let identities = Set(group.map { $0.resolvedAttribution.identity })
+            let identity: SpeakerAttribution.Identity = identities.count == 1 ? identities.first! : .unresolved
+            return SpeakerDescriptor(id: key, name: speakerName(for: key, identity: identity), identity: identity)
+        }
+    }
+
+    var confirmedUserSpeakerIDs: Set<String> {
+        Set(speakerRoster.values.filter { $0.identity == .user }.map(\.id))
+    }
+
+    var userSpeakerLabel: String {
+        let labels = confirmedUserSpeakerIDs.sorted()
+        return labels.isEmpty ? "User identity not confirmed" : labels.joined(separator: ", ")
+    }
+
+    func promptSpeaker(for speaker: String, roster: [String: SpeakerDescriptor]? = nil) -> String {
+        let key = Self.canonicalSpeakerKey(speaker)
+        let person = (roster ?? speakerRoster)[key]
+        return "[speaker_id=\(key); identity=\((person?.identity ?? .unresolved).rawValue)] \(person?.name ?? Self.defaultSpeakerName(for: speaker))"
+    }
+
+    mutating func confirmSpeaker(_ speaker: String, isUser: Bool?) {
+        let key = Self.canonicalSpeakerKey(speaker)
+        for index in segments.indices where Self.canonicalSpeakerKey(segments[index].speaker) == key {
+            var value = segments[index].resolvedAttribution
+            // The microphone default is correctable even without diarization.
+            // Mixed voices and suspected echo still cannot name one person.
+            guard value.canConfirmIdentity else { continue }
+            value.identity = isUser.map { $0 ? .user : .other } ?? .unresolved
+            value.method = isUser == nil ? .diarization : .confirmation
+            segments[index].attribution = value
+        }
+    }
+
+    func canConfirmSpeaker(_ speaker: String) -> Bool {
+        let key = Self.canonicalSpeakerKey(speaker)
+        let turns = segments.filter { Self.canonicalSpeakerKey($0.speaker) == key }
+        return !turns.isEmpty && turns.allSatisfy {
+            $0.resolvedAttribution.canConfirmIdentity
+        }
     }
 
     func displaySpeaker(for speaker: String) -> String {
-        speakerAliases[Self.canonicalSpeakerKey(speaker)] ?? Self.defaultSpeakerName(for: speaker)
+        let key = Self.canonicalSpeakerKey(speaker)
+        if let alias = speakerAliases[key] { return alias }
+        let identities = Set(segments.filter { Self.canonicalSpeakerKey($0.speaker) == key }
+            .map { $0.resolvedAttribution.identity })
+        return speakerName(for: key, identity: identities.count == 1 ? identities.first! : .unresolved)
+    }
+
+    private func speakerName(for key: String, identity: SpeakerAttribution.Identity) -> String {
+        if let alias = speakerAliases[key] { return alias }
+        if identity == .user { return "Me" }
+        return key == "me" ? "Local speaker" : Self.defaultSpeakerName(for: key)
     }
 
     mutating func setSpeakerAlias(
@@ -342,8 +421,10 @@ struct Transcript: Codable {
         let trimmed = speaker.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "Speaker" }
         switch canonicalSpeakerKey(trimmed) {
-        case "me": return "Me"
         case "them": return "Them"
+        case "me": return "Me"
+        case "local": return "Local speaker"
+        case "local unclear", "them unclear": return "Speaker unclear"
         default: return trimmed.capitalized
         }
     }

@@ -309,7 +309,7 @@ final class LiveMeetingTranscriber: ObservableObject {
     }
 
     private static func newTracks() -> [TrackState] {
-        [TrackState(fileName: AudioPreviewTee.micFileName, speaker: "me"),
+        [TrackState(fileName: AudioPreviewTee.micFileName, speaker: "local"),
          TrackState(fileName: AudioPreviewTee.systemFileName, speaker: "them")]
     }
 

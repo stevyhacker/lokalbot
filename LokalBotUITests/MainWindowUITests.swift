@@ -697,6 +697,26 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(identified("meeting.notes.editor").waitForExistence(timeout: 4))
     }
 
+    func testPartialMeetingShowsSavedRecapAndActions() throws {
+        app.terminate()
+        try SyntheticFixture.makeNotesPartial(for: fixture.designReview, in: fixture)
+        app = try UITestHarness.relaunch(storageRoot: fixture.root,
+                                        defaultsSuiteName: XCTUnwrap(defaultsSuiteName))
+        openLibrary()
+        selectMeeting(fixture.designReview)
+        XCTAssertTrue(identified("meeting.notes.partial").waitForExistence(timeout: 5))
+        XCTAssertTrue(textWithContent("Redis was selected for the caching layer").firstMatch.exists)
+        XCTAssertTrue(textWithContent("Draft the eviction policy document").firstMatch.exists)
+        XCTAssertFalse(textWithContent("No action items were extracted").firstMatch.exists)
+        XCTAssertFalse(textWithContent("Transcript or speaker details changed").firstMatch.exists)
+        let toggle = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "meeting.action.toggle.")).firstMatch
+        XCTAssertTrue(toggle.exists)
+        XCTAssertFalse(toggle.isEnabled)
+        UITestHarness.selectSegment("Full Summary", pickerIdentifier: "meeting.contentTabs", in: app)
+        XCTAssertTrue(identified("meeting.summary").waitForExistence(timeout: 4))
+        XCTAssertTrue(textWithContent("Redis was selected for the caching layer").firstMatch.exists)
+    }
+
     /// Calendar attendees are explicit choices for remote diarization labels;
     /// email disambiguates the local choice but never becomes the alias.
     func testSpeakerRenameOffersCalendarAttendeeIdentities() {
@@ -744,8 +764,8 @@ final class MainWindowUITests: XCTestCase {
         }
         app.typeKey(.escape, modifierFlags: [])
         identified("toolbar.meetingActions").click()
-        for label in ["Transcribe & Summarize", "Transcribe only", "Re-summarize", "Export audio"] {
-            XCTAssertTrue(app.menuItems[label].waitForExistence(timeout: 3))
+        for label in ["Transcribe & Summarize", "Transcribe only", "Summarize again", "Export audio"] {
+            XCTAssertTrue(app.menuItems[label].waitForExistence(timeout: 3), "Missing meeting action: \(label)")
         }
         app.typeKey(.escape, modifierFlags: [])
     }

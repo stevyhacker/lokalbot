@@ -1,8 +1,8 @@
 import Foundation
 
 /// Removes only objectively pathological ASR repetition. Normal conversational
-/// emphasis is left intact: word/phrase collapse is gated by both an impossible
-/// speaking rate and a long repeated cycle.
+/// emphasis is left intact: word/phrase collapse requires a long repeated
+/// cycle plus an impossible rate or a fast, overwhelmingly repetitive burst.
 enum TranscriptSanitizer {
     struct Result {
         var transcript: Transcript
@@ -41,9 +41,14 @@ enum TranscriptSanitizer {
 
             let duration = max(0.25, segment.end - segment.start)
             let wordsPerSecond = Double(originalWords.count) / duration
-            if originalWords.count >= 80, wordsPerSecond >= 12 {
+            if originalWords.count >= 32, wordsPerSecond >= 6 {
                 let collapsed = collapseRepeatedCycles(originalWords)
-                if collapsed.count < originalWords.count {
+                let removed = originalWords.count - collapsed.count
+                let impossibleRate = originalWords.count >= 80 && wordsPerSecond >= 12
+                // Timestamp-less ASR can place 135 identical filler words in
+                // a 15-second VAD window: below the old 12 words/sec gate.
+                let dominatedByLoop = Double(removed) / Double(originalWords.count) >= 0.8
+                if removed > 0, impossibleRate || dominatedByLoop {
                     finalText = collapsed.map(\.original).joined(separator: " ")
                     if let punctuation = terminalPunctuation(in: characterCleaned),
                        finalText.last != punctuation {

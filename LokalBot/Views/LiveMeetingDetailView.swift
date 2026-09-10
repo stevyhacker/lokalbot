@@ -68,6 +68,9 @@ struct LiveMeetingDetailView: View {
                 .accessibilityIdentifier("live.stop")
             }
             RecordingHealthStrip(recording: app.recording)
+            if app.settings.identifySpeakersFromVisuals {
+                MeetingSpeakerObserverStatus(observer: app.speakerObserver)
+            }
             previewControls
             HStack(spacing: 6) {
                 HStack(spacing: 6) {
@@ -219,9 +222,9 @@ struct LiveMeetingDetailView: View {
             Text(Self.timestamp(line.time))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.tertiary)
-            Text(line.speaker == "me" ? "Me" : "Them")
+            Text(line.speaker == "local" || line.speaker == "me" ? "Me" : "Remote speaker")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(line.speaker == "me" ? Brand.me : Brand.them)
+                .foregroundStyle(.secondary)
             Text(line.text)
                 .font(.callout)
                 .textSelection(.enabled)

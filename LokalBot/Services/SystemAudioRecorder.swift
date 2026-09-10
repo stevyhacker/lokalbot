@@ -39,6 +39,8 @@ final class SystemAudioRecorder {
     private var previewTeeURL: URL?
     private var tapFormat: AVAudioFormat?
     private var outputURL: URL?
+    /// Set before starting a tap, cleared only after the writer drains.
+    var speakerAudioClock: RecordingAudioClock?
     private var framesWritten: AVAudioFramePosition = 0
     /// Frames delivered by the current tap only. Recovery padding deliberately
     /// does not advance this counter, so zero identifies a dead attachment.
@@ -135,7 +137,10 @@ final class SystemAudioRecorder {
             throw RecorderError.processNotFound
         }
         teardownTap()
-        ioQueue.sync { framesSinceAttach = 0 }
+        ioQueue.sync {
+            speakerAudioClock?.discontinuity()
+            framesSinceAttach = 0
+        }
         do {
             try appendRecoverySilence(
                 until: ContinuousClock.now,
@@ -235,7 +240,7 @@ final class SystemAudioRecorder {
         //    The Core Audio buffer list is only valid for the duration of
         //    this callback, and the AAC encoder must not run on the real-time
         //    audio thread — copy the samples, then hop to a serial queue.
-        err = AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggregateID, nil) { [weak self] _, inInputData, _, _, _ in
+        err = AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggregateID, nil) { [weak self] _, inInputData, inputTime, _, _ in
             guard let self, let fmt = self.tapFormat,
                   fmt.commonFormat == .pcmFormatFloat32 else { return }
             let streamDescription = fmt.streamDescription
@@ -255,6 +260,8 @@ final class SystemAudioRecorder {
                 self.noteDroppedBuffer()
                 return
             }
+            let sourceHostTime = inputTime.pointee.mHostTime
+            let sourceHostValid = inputTime.pointee.mFlags.contains(.hostTimeValid)
             self.ioQueue.async {
                 defer { self.returnBuffer(copy) }
                 guard let fileRef = self.file else { return }
@@ -264,6 +271,8 @@ final class SystemAudioRecorder {
                     // all stay on this serial writer queue.
                     let rmsLevel = Self.measureRMS(of: copy)
                     try fileRef.write(from: copy)
+                    self.speakerAudioClock?.record(hostTime: sourceHostTime, valid: sourceHostValid,
+                        startFrame: self.framesWritten, frames: Int64(copy.frameLength), sampleRate: fmt.sampleRate)
                     self.previewTee?.write(copy)
                     let now = Date()
                     let nowInstant = ContinuousClock.now

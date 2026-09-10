@@ -39,6 +39,27 @@ final class TranscriptSanitizerTests: XCTestCase {
         XCTAssertEqual(result.transcript.speakerAliases, transcript.speakerAliases)
     }
 
+    func testCollapsesObservedFillerBurstsBelowOldWordCountAndRateGates() {
+        for (count, duration) in [(135, 15.0), (64, 1.3)] {
+            let loop = Array(repeating: "oh", count: count).joined(separator: " ")
+            let result = TranscriptSanitizer.sanitize(makeTranscript(text: "\(loop).", duration: duration))
+            XCTAssertEqual(result.transcript.segments[0].text, "oh oh.")
+            XCTAssertEqual(result.removedWords, count - 2)
+            XCTAssertFalse(TranscriptSanitizer.sanitize(result.transcript).changed)
+        }
+    }
+
+    func testPreservesShortAcceptancesSlowRepetitionAndCounting() {
+        for (text, duration) in [
+            ("Yes, yes. I can do that.", 0.5),
+            (Array(repeating: "go", count: 32).joined(separator: " "), 32.0),
+            ((1...64).map(String.init).joined(separator: " "), 5.0),
+        ] {
+            let transcript = makeTranscript(text: text, duration: duration)
+            XCTAssertEqual(TranscriptSanitizer.sanitize(transcript).transcript.segments, transcript.segments)
+        }
+    }
+
     func testImpossibleRateWithoutRepeatedCycleIsPreserved() {
         let unique = (0..<100).map { "word\($0)" }.joined(separator: " ")
         let transcript = makeTranscript(text: unique, duration: 1)

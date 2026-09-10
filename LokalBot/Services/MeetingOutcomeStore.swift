@@ -18,9 +18,9 @@ enum MeetingOutcomeStore {
         try write(draft, to: folder.appendingPathComponent(FollowUpDraft.fileName))
     }
 
-    /// Carry user-owned workflow state across a safe re-extraction. Exact IDs
-    /// win; otherwise a record must retain either the same source segment or a
-    /// near-identical normalized commitment before its overlay is transferred.
+    /// Carry user-owned workflow state across a safe re-extraction. A transfer requires
+    /// an unambiguous match in both directions and compatible source evidence.
+    /// Unmatched edits remain available for review.
     static func reconcileState(
         _ state: MeetingOutcomeState,
         from previous: MeetingOutcomes,
@@ -28,24 +28,26 @@ enum MeetingOutcomeStore {
     ) -> MeetingOutcomeState {
         var reconciled = MeetingOutcomeState()
         var consumed: Set<String> = []
-
+        let oldActions = previous.actionItems.filter { state.actions[$0.id] != nil }
+        let matches = Dictionary(uniqueKeysWithValues: next.actionItems.map { action in
+            (action.id, oldActions.filter { matchScore($0, action) >= 0.8 })
+        })
         for action in next.actionItems {
-            if let exact = state.actions[action.id] {
-                reconciled.actions[action.id] = exact
-                consumed.insert(action.id)
-                continue
-            }
-
-            let candidate = previous.actionItems
-                .filter { state.actions[$0.id] != nil && !consumed.contains($0.id) }
-                .map { old in (old: old, score: matchScore(old, action)) }
-                .filter { $0.score >= 0.8 }
-                .max { $0.score < $1.score }
-            if let candidate, let priorState = state.actions[candidate.old.id] {
-                reconciled.actions[action.id] = priorState
-                consumed.insert(candidate.old.id)
-            }
+            let candidates = matches[action.id] ?? []
+            guard candidates.count == 1, let old = candidates.first,
+                  matches.values.filter({ $0.contains { $0.id == old.id } }).count == 1,
+                  let saved = state.actions[old.id] else { continue }
+            reconciled.actions[action.id] = saved
+            consumed.insert(old.id)
         }
+        var unmatched = state.unmatchedActions ?? [:]
+        var texts = state.unmatchedActionText ?? [:]
+        for (id, saved) in state.actions where !consumed.contains(id) {
+            unmatched[id] = saved
+            texts[id] = previous.actionItems.first { $0.id == id }?.text
+        }
+        reconciled.unmatchedActions = unmatched.isEmpty ? nil : unmatched
+        reconciled.unmatchedActionText = texts.isEmpty ? nil : texts
         return reconciled
     }
 
@@ -99,8 +101,9 @@ enum MeetingOutcomeStore {
         let union = leftTokens.union(rightTokens)
         let textScore = union.isEmpty ? 0
             : Double(leftTokens.intersection(rightTokens).count) / Double(union.count)
-        if normalized(lhs.text) == normalized(rhs.text) { return 1 }
-        return sharesEvidence ? max(0.85, textScore) : textScore
+        if lhs.id == rhs.id { return 1 }
+        if sharesEvidence && normalized(lhs.text) == normalized(rhs.text) { return 1 }
+        return sharesEvidence && textScore >= 0.6 ? max(0.85, textScore) : 0
     }
 
     private static func normalized(_ text: String) -> String {

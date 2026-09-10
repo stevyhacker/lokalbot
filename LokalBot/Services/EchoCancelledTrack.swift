@@ -19,6 +19,8 @@ enum EchoCancelledTrack {
         /// the expected outcome on headphones.
         var echoReturnLossDB: Double
         var processedSeconds: TimeInterval
+        var acceptedSeconds: TimeInterval?
+        var alignmentVerified = false
     }
 
     /// Streamed in windows so a long meeting never has both tracks resident:
@@ -41,11 +43,12 @@ enum EchoCancelledTrack {
     /// Runs decode and DSP on a utility executor rather than the caller's
     /// actor. Cancelling the awaiting task also cancels the worker, whose
     /// cooperative checks remove any partial destination before returning.
-    static func write(microphone: URL, reference: URL, to destination: URL) async throws -> Report {
+    static func write(microphone: URL, reference: URL, to destination: URL,
+                      timing: RecordingAudioTiming? = nil) async throws -> Report {
         let worker = Task.detached(priority: .utility) {
             try writeSynchronously(microphone: microphone,
                                    reference: reference,
-                                   to: destination)
+                                   to: destination, timing: timing)
         }
         return try await withTaskCancellationHandler {
             try await worker.value
@@ -59,17 +62,18 @@ enum EchoCancelledTrack {
     static func shouldUse(_ report: Report) -> Bool {
         report.echoReturnLossDB.isFinite
             && report.echoReturnLossDB >= minimumAcceptedEchoReturnLossDB
+            && (report.acceptedSeconds ?? report.processedSeconds) > 0
     }
 
     private static func writeSynchronously(
         microphone: URL,
         reference: URL,
-        to destination: URL
+        to destination: URL, timing: RecordingAudioTiming?
     ) throws -> Report {
         do {
             return try writeFile(microphone: microphone,
                                  reference: reference,
-                                 to: destination)
+                                 to: destination, timing: timing)
         } catch {
             try? FileManager.default.removeItem(at: destination)
             throw error
@@ -79,7 +83,7 @@ enum EchoCancelledTrack {
     private static func writeFile(
         microphone: URL,
         reference: URL,
-        to destination: URL
+        to destination: URL, timing: RecordingAudioTiming?
     ) throws -> Report {
         try Task.checkCancellation()
         let rate = SpanAudioReader.sampleRate
@@ -88,86 +92,71 @@ enum EchoCancelledTrack {
         let overlapDuration = min(microphoneDuration, referenceDuration)
         guard overlapDuration > 1 else { throw StageError.noOverlap }
 
-        let delaySamples = try estimateDelay(microphone: microphone,
-                                             reference: reference,
-                                             duration: overlapDuration)
-        let delaySeconds = Double(delaySamples) / rate
-
-        // Fresh readers: the probes above seek forward through the track and
-        // `SpanAudioReader` does not seek back.
         let micReader = try SpanAudioReader(url: microphone)
-        let referenceReader = try SpanAudioReader(url: reference)
-        var canceller = EchoCanceller()
         let writer = try WavWriter(url: destination, sampleRate: Int(rate))
-
         var position: TimeInterval = 0
         var processedSamples = 0
+        var acceptedSeconds = 0.0
+        var weightedReduction = 0.0
+        var delays: [Double] = []
+        var verified = timing != nil
         while position < microphoneDuration {
             try Task.checkCancellation()
-            let end = min(position + chunkSeconds, microphoneDuration)
+            let end = min(position + chunkSeconds, microphoneDuration,
+                          timing?.nextBoundary(after: position) ?? microphoneDuration)
             let mic = try micReader.samples(from: position, to: end)
             guard !mic.isEmpty else { break }
-            let aligned = try alignedReference(referenceReader,
-                                               from: position - delaySeconds,
-                                               to: end - delaySeconds,
-                                               count: mic.count)
-            let cancelled = try canceller.process(microphone: mic, reference: aligned)
-            try Task.checkCancellation()
-            try writer.append(cancelled)
-            processedSamples += cancelled.count
+            let mapped = timing?.referenceRange(start: position, end: end)
+            let range = mapped ?? SpeakerTurnAnchor(start: position, end: end)
+            // A known capture gap is stronger evidence than an acoustic guess.
+            // Older recordings can use local acoustic alignment, with uncertainty.
+            var canAlign = timing == nil || mapped != nil
+            let remote = canAlign ? try SpanAudioReader(url: reference).samples(from: range.start, to: range.end) : []
+            // Do not stretch a missing tail or truncated reference over speech.
+            if abs(Double(remote.count) - range.duration * rate) > 256 { canAlign = false }
+            let referenceSamples = resampled(remote, count: mic.count)
+            let estimate = EchoDelayEstimator.estimate(microphone: mic, reference: referenceSamples, sampleRate: rate)
+            var output = mic
+            if canAlign, !remote.isEmpty, estimate.isReliable {
+                let shifted = mic.indices.map { index -> Float in
+                    let source = index - estimate.samples
+                    return referenceSamples.indices.contains(source) ? referenceSamples[source] : 0
+                }
+                var canceller = EchoCanceller()
+                let candidate = try canceller.process(microphone: mic, reference: shifted)
+                if canceller.echoReturnLossDB.isFinite,
+                   canceller.echoReturnLossDB >= minimumAcceptedEchoReturnLossDB {
+                    output = candidate
+                    acceptedSeconds += end - position
+                    weightedReduction += canceller.echoReturnLossDB * (end - position)
+                    delays.append(position - range.start + Double(estimate.samples) / rate)
+                } else { verified = false }
+            } else { verified = false }
+            try writer.append(output)
+            processedSamples += output.count
             position = end
         }
         try Task.checkCancellation()
         try writer.finish()
-
-        return Report(delaySeconds: delaySeconds,
-                      echoReturnLossDB: canceller.echoReturnLossDB,
-                      processedSeconds: Double(processedSamples) / rate)
+        return Report(delaySeconds: delays.sorted().dropFirst(delays.count / 2).first ?? 0,
+            echoReturnLossDB: acceptedSeconds > 0 ? weightedReduction / acceptedSeconds : 0,
+            processedSeconds: Double(processedSamples) / rate,
+            acceptedSeconds: acceptedSeconds, alignmentVerified: verified)
     }
 
-    /// The reference window for one chunk, zero-padded where it runs off the
-    /// front of the track and trimmed to the microphone's length — the two
-    /// must line up sample for sample or the filter has nothing to learn.
-    private static func alignedReference(_ reader: SpanAudioReader,
-                                         from start: TimeInterval,
-                                         to end: TimeInterval,
-                                         count: Int) throws -> [Float] {
-        var samples: [Float] = []
-        if start < 0 {
-            let missing = Int((-start) * SpanAudioReader.sampleRate)
-            samples.append(contentsOf: [Float](repeating: 0, count: missing))
+    /// Correct the small measured clock-rate difference without holding either
+    /// full recording in memory. Empty or missing reference remains silence.
+    static func resampled(_ samples: [Float], count: Int) -> [Float] {
+        guard count > 0 else { return [] }
+        guard samples.count > 1, count > 1 else { return Array(repeating: samples.first ?? 0, count: count) }
+        return (0..<count).map { index in
+            let position = Double(index) * Double(samples.count - 1) / Double(count - 1)
+            let left = Int(position), right = min(left + 1, samples.count - 1)
+            let fraction = Float(position - Double(left))
+            return samples[left] * (1 - fraction) + samples[right] * fraction
         }
-        samples.append(contentsOf: try reader.samples(from: max(0, start), to: max(0, end)))
-        if samples.count > count {
-            samples.removeLast(samples.count - count)
-        } else if samples.count < count {
-            samples.append(contentsOf: [Float](repeating: 0, count: count - samples.count))
-        }
-        return samples
     }
 
-    /// Median of several probes across the track. One probe can land on a
-    /// stretch where nobody speaks, and the delay itself moves as the two
-    /// capture clocks drift, so the middle of several beats any single one.
-    private static func estimateDelay(microphone: URL, reference: URL,
-                                      duration: TimeInterval) throws -> Int {
-        let micReader = try SpanAudioReader(url: microphone)
-        let referenceReader = try SpanAudioReader(url: reference)
-        var estimates: [Int] = []
-        for point in probePoints {
-            try Task.checkCancellation()
-            let start = max(0, min(duration - probeSeconds, duration * point))
-            guard start >= 0 else { continue }
-            let mic = try micReader.samples(from: start, to: start + probeSeconds)
-            let remote = try referenceReader.samples(from: start, to: start + probeSeconds)
-            try Task.checkCancellation()
-            guard !mic.isEmpty, !remote.isEmpty else { continue }
-            estimates.append(EchoDelayEstimator.delay(microphone: mic, reference: remote,
-                                                      sampleRate: SpanAudioReader.sampleRate))
-        }
-        guard !estimates.isEmpty else { return 0 }
-        return estimates.sorted()[estimates.count / 2]
-    }
 }
 
 /// Minimal streaming 16-bit PCM WAV writer. The header's two size fields are

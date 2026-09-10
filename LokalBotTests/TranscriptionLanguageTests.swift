@@ -114,67 +114,29 @@ final class SummaryLanguageTests: XCTestCase {
 }
 
 final class SummaryPromptActionabilityTests: XCTestCase {
-    func testFixedLanguageKeepsCanonicalMarkdownHeadings() {
-        let system = PromptTemplates.systemPrompt(
-            for: .meeting,
-            summaryLanguage: .de)
-        let user = PromptTemplates.userPrompt(
-            transcript: "**[00:00:01] Me:** Ich sende den Entwurf.",
-            template: .meeting,
-            summaryLanguage: .de)
-
-        for prompt in [system, user] {
-            XCTAssertTrue(prompt.contains("do not translate"), prompt)
-            XCTAssertTrue(prompt.contains("Markdown"), prompt)
-        }
+    func testFixedLanguageTranslatesTextButKeepsSourceQuotesAndSections() {
+        let prompt = PromptTemplates.meetingNotesSystem(template: .meeting, language: .de)
+        XCTAssertTrue(prompt.contains("German"))
+        XCTAssertTrue(prompt.contains("preserves source quotes in their original language"))
+        XCTAssertTrue(prompt.contains("Keep section values and source IDs unchanged"))
     }
 
-    func testEveryNotesTemplateRequiresAnExplicitUserActionabilityPass() {
+    func testEveryTemplateExtractsNotesAndActionsTogether() {
         for template in NoteTemplate.allCases {
-            let prompt = PromptTemplates.systemPrompt(
-                for: template,
-                userSpeakerLabel: "Stevan")
-
-            XCTAssertTrue(prompt.contains("## Action items"), template.rawValue)
-            XCTAssertTrue(prompt.contains("### Me"), template.rawValue)
-            XCTAssertTrue(prompt.contains("### Others"), template.rawValue)
-            XCTAssertTrue(prompt.contains("commitments made by \"Stevan\""), template.rawValue)
-            XCTAssertTrue(prompt.contains("requests or assignments directed to"), template.rawValue)
-            XCTAssertTrue(prompt.contains("Write `None`"), template.rawValue)
-            XCTAssertTrue(prompt.contains("generic advice"), template.rawValue)
-            XCTAssertTrue(prompt.contains("first person"), template.rawValue)
-            XCTAssertTrue(prompt.contains("Me will"), template.rawValue)
-            XCTAssertTrue(prompt.contains("at most the five most important"), template.rawValue)
-            XCTAssertTrue(prompt.contains("reducing Others first"), template.rawValue)
-            XCTAssertTrue(prompt.contains("never omit a supported action for Me"), template.rawValue)
+            let prompt = PromptTemplates.meetingNotesSystem(template: template, language: .matchTranscript)
+            XCTAssertTrue(prompt.contains("JSON containing notes, actions"), template.rawValue)
+            XCTAssertTrue(prompt.contains("Only identity=user denotes the user"), template.rawValue)
+            XCTAssertTrue(prompt.contains("Display names are aliases, not identity evidence"), template.rawValue)
+            XCTAssertFalse(prompt.contains("Action items are extracted separately"), template.rawValue)
+            XCTAssertTrue(prompt.contains("Text must NEVER contain speaker IDs"), template.rawValue)
         }
     }
 
-    func testShortAndLongMeetingPromptsIdentifyARenamedUserSpeaker() {
-        let short = PromptTemplates.userPrompt(
-            transcript: "**[00:00:01] Stevan:** I'll send the draft.",
-            template: .meeting,
-            userSpeakerLabel: "Stevan")
-        let chunk = PromptTemplates.chunkExtractionSystem(userSpeakerLabel: "Stevan")
-
-        XCTAssertTrue(short.contains("speaker labeled \"Stevan\" is this Mac's user"), short)
-        XCTAssertTrue(chunk.contains("speaker labeled \"Stevan\" is this Mac's user"), chunk)
-        XCTAssertTrue(chunk.contains("requests or assignments directed to \"Stevan\""), chunk)
-        XCTAssertTrue(chunk.contains("### Me"), chunk)
-        XCTAssertTrue(chunk.contains("### Others"), chunk)
-        XCTAssertTrue(chunk.contains("at most the five most important"), chunk)
-        XCTAssertTrue(chunk.contains("Keep every qualifying ### Me item"), chunk)
-    }
-
-    func testMeetingPromptsKeepTentativeTermsAndActionsOutOfDecisions() {
-        let direct = PromptTemplates.systemPrompt(for: .meeting)
-        let chunk = PromptTemplates.chunkExtractionSystem()
-
-        for prompt in [direct, chunk] {
-            XCTAssertTrue(prompt.contains("explicitly settled"), prompt)
-            XCTAssertTrue(prompt.contains("Tentative terms"), prompt)
-            XCTAssertTrue(prompt.contains("never duplicate"), prompt)
-            XCTAssertTrue(prompt.contains("## Open questions"), prompt)
+    func testMeetingPromptPreservesTentativeTermsAndOneRolePerOutcome() {
+        let prompt = PromptTemplates.meetingNotesSystem(template: .meeting, language: .matchTranscript)
+        for rule in ["explicitly settled", "Tentative", "never duplicate", "Open questions",
+                     "A request is not", "exact ownership quote"] {
+            XCTAssertTrue(prompt.contains(rule), rule)
         }
     }
 }

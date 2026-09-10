@@ -184,6 +184,14 @@ final class ActionThreadsTests: XCTestCase {
         XCTAssertEqual(updated[0].text, second.text)
     }
 
+    func testRemoteAliasMeCannotEnterUserActionThreads() throws {
+        let remote = reference(meetingID: UUID(), meetingTitle: "Remote owner named Me", startedAt: Date(),
+            text: "I will send the final proposal", owner: "Me",
+            attribution: .init(resolution: .other, speakerID: "them 1", basis: .commitment))
+        XCTAssertFalse(remote.isForUser)
+        XCTAssertFalse(try XCTUnwrap(ActionThreadClusterer.cluster([remote]).first).isForUser)
+    }
+
     private func reference(
         meetingID: UUID,
         meetingTitle: String,
@@ -194,7 +202,8 @@ final class ActionThreadsTests: XCTestCase {
         correctedText: String? = nil,
         correctedDue: String? = nil,
         status: OutcomeStatus = .open,
-        stateUpdatedAt: Date? = nil
+        stateUpdatedAt: Date? = nil,
+        attribution: OutcomeAttribution? = nil
     ) -> OutcomeActionReference {
         let action = MeetingOutcomes.ActionItem(
             text: text,
@@ -206,7 +215,7 @@ final class ActionThreadsTests: XCTestCase {
                 start: 1,
                 end: 2,
                 speaker: owner,
-                excerpt: text)])
+                excerpt: text)], attribution: attribution)
         return OutcomeActionReference(
             meetingID: meetingID,
             meetingTitle: meetingTitle,

@@ -449,11 +449,17 @@ final class AppState: ObservableObject {
     /// Backend selection, preparation, privacy policy, leases, and recovery
     /// for every feature that uses LokalBot's Think role.
     private(set) lazy var thinkExecution = ThinkExecution(storage: storage)
+    private(set) lazy var speakerIdentity = MeetingSpeakerIdentityService(
+        storage: storage, settings: { [store = settingsStore] in store.current })
+    private(set) lazy var speakerObserver = MeetingSpeakerObserver(
+        identity: speakerIdentity, settings: { [store = settingsStore] in store.current },
+        capturePaused: { [weak self] in self?.sampler.isPaused ?? true })
     private(set) lazy var pipeline = ProcessingPipeline(
         storage: storage,
         jobStore: pipelineJobStore,
         settings: { [store = settingsStore] in store.current },
-        thinkExecution: thinkExecution)
+        thinkExecution: thinkExecution,
+        speakerIdentity: speakerIdentity)
     /// Canonical state machine for Transcribe, Think, and Autocomplete.
     private(set) lazy var modelRoles = ModelRoles(
         settings: { [store = settingsStore] in store.current },
@@ -479,6 +485,7 @@ final class AppState: ObservableObject {
         settingsStore: settingsStore,
         audioMonitor: audioMonitor,
         pipeline: pipeline,
+        speakerObserver: speakerObserver,
         isInteractive: { [weak self] in self?.interactive ?? false },
         onError: { [weak self] message in
             guard let message else {
@@ -899,6 +906,7 @@ final class AppState: ObservableObject {
             let merged = byID.values.sorted { $0.startedAt > $1.startedAt }
             self.meetings = merged
             self.libraryReady = true
+            self.speakerIdentity.maintainRetention(meetings: { [weak self] in self?.meetings ?? [] })
             self.outcomeIndex.refresh(meetings: merged)
             self.pipeline.resumePending(meetings: merged)
             // Dreaming was deliberately gated while launch recovery rebuilt
@@ -1207,7 +1215,10 @@ final class AppState: ObservableObject {
     }
 
     func saveTranscript(_ transcript: Transcript, for meeting: Meeting) throws {
+        let transcript = speakerIdentity.applyingLatestDecision(to: transcript, meetingID: meeting.id)
         try pipeline.saveTranscript(transcript, for: meeting)
+        outcomeIndex.refresh(meeting: meeting)
+        primaryEvidenceDidChange(for: meeting)
         reindexSearchInBackground(meeting)
         if settings.semanticSearchEnabled {
             reindexEmbeddingInBackground(meeting)
@@ -1539,25 +1550,30 @@ final class AppState: ObservableObject {
 
     /// Permanently removes meetings: audio folder, list entry, both indexes.
     func deleteMeetings(_ ids: Set<Meeting.ID>) {
-        let deletedCandidates = meetings.filter { ids.contains($0.id) }
-        var deletedIDs: Set<Meeting.ID> = []
-        for meeting in meetings where ids.contains(meeting.id) {
-            do {
-                try storage.deleteMeeting(meeting)
-                embeddingIndexTasks.removeValue(forKey: meeting.id)?.task.cancel()
-                deletedMeetingIDs.insert(meeting.id)
-                cachedSearchIndex?.noteDeletion(meeting.id)
-                cachedEmbeddingIndex?.noteDeletion(meeting.id)
-                scheduleIndexCleanup(meeting.id)
-                deletedIDs.insert(meeting.id)
-            } catch {
-                lastError = "Could not delete \(meeting.title): \(error.localizedDescription)"
+        let candidates = meetings.filter { ids.contains($0.id) }
+        pipeline.forget(meetingIDs: ids)
+        Task {
+            var deletedIDs: Set<Meeting.ID> = []
+            for meeting in candidates {
+                do {
+                    // Persist revocation before removing its source. Interrupted
+                    // deletions can retry; no late enrollment can resurrect it.
+                    try await speakerIdentity.prepareDeletion(meeting: meeting)
+                    try storage.deleteMeeting(meeting)
+                    embeddingIndexTasks.removeValue(forKey: meeting.id)?.task.cancel()
+                    deletedMeetingIDs.insert(meeting.id)
+                    cachedSearchIndex?.noteDeletion(meeting.id)
+                    cachedEmbeddingIndex?.noteDeletion(meeting.id)
+                    scheduleIndexCleanup(meeting.id)
+                    deletedIDs.insert(meeting.id)
+                } catch {
+                    lastError = "Could not delete \(meeting.title); cleanup pending: \(error.localizedDescription)"
+                }
             }
+            meetings.removeAll { deletedIDs.contains($0.id) }
+            selectedMeetingIDs.subtract(deletedIDs)
+            outcomeIndex.refresh(meetings: meetings)
+            primaryEvidenceDidChange(for: candidates.filter { deletedIDs.contains($0.id) })
         }
-        meetings.removeAll { deletedIDs.contains($0.id) }
-        selectedMeetingIDs.subtract(deletedIDs)
-        pipeline.forget(meetingIDs: deletedIDs)
-        outcomeIndex.refresh(meetings: meetings)
-        primaryEvidenceDidChange(for: deletedCandidates.filter { deletedIDs.contains($0.id) })
     }
 }

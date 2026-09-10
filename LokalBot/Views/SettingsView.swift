@@ -447,6 +447,7 @@ struct SettingsView: View {
                            isOn: $app.settings.multiSpeakerDiarization)
                     Text("Adds 30–60 s of post-processing per meeting. First run downloads ~100 MB of speaker models from Hugging Face.")
                         .font(.caption).foregroundStyle(.secondary)
+                    SpeakerIdentitySettingsControls()
                 }
             }
 

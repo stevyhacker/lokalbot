@@ -73,20 +73,22 @@ final class MeetingOutcomesTests: XCTestCase {
             """, userSpeakerLabel: "Stevan"))
 
         XCTAssertEqual(outcomes.actionItems.map(\.text),
-                       ["Send the draft", "Book the room", "Review the rollout"])
-        XCTAssertEqual(outcomes.userActionItems.map(\.owner), ["Me", "Me"])
+                       ["Send the draft", "Review the rollout", "Book the room"])
+        XCTAssertEqual(outcomes.userActionItems.map(\.owner), ["Me"])
+        XCTAssertEqual(outcomes.unresolvedActionItems.map(\.text), ["Book the room"])
         XCTAssertEqual(outcomes.otherActionItems.map(\.owner), ["Ana"])
     }
 
-    func testFirstPersonActionRepairsInconsistentOwnerMetadata() throws {
+    func testFirstPersonActionPreservesExplicitRemoteOwner() throws {
         let outcomes = try XCTUnwrap(OutcomesExtractor.parse("""
             {"action_items": [
                 {"text": "I will review the hardening tasks", "owner": "Them 3", "due": "", "for_user": false, "importance": 5}
              ], "decisions": [], "open_questions": []}
             """))
 
-        XCTAssertEqual(outcomes.userActionItems.map(\.owner), ["Me"])
-        XCTAssertEqual(outcomes.userActionItems.map(\.importance), [5])
+        XCTAssertTrue(outcomes.userActionItems.isEmpty)
+        XCTAssertEqual(outcomes.otherActionItems.map(\.owner), ["Them 3"])
+        XCTAssertEqual(outcomes.otherActionItems.map(\.importance), [5])
         XCTAssertTrue(OutcomeProse.hasFirstPersonSubject("My next step is to send the plan"))
         XCTAssertFalse(OutcomeProse.hasFirstPersonSubject("I/O migration needs an owner"))
     }
@@ -106,7 +108,7 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertEqual(outcomes.actionItems.first?.id, persistedID)
         XCTAssertEqual(outcomes.actionItems.first?.owner, "Me")
         XCTAssertEqual(outcomes.actionItems.first?.text, "I will touch base on WhatsApp.")
-        XCTAssertEqual(outcomes.decisionRecords.first?.text, "I accepted the same terms.")
+        XCTAssertEqual(outcomes.decisionRecords.first?.text, "Me accepted the same terms.")
         XCTAssertEqual(
             OutcomeProse.firstPersonSubject("Me's next step is to send the plan."),
             "My next step is to send the plan.")
@@ -115,7 +117,7 @@ final class MeetingOutcomesTests: XCTestCase {
             "Them 1 will share the repo.")
     }
 
-    func testDecodingRepairsPersistedFirstPersonActionOwnership() throws {
+    func testDecodingPreservesPersistedRemoteFirstPersonOwnership() throws {
         let data = Data("""
             {"actionItems":[
                 {"text":"I will check the hardening tasks.",
@@ -125,8 +127,9 @@ final class MeetingOutcomesTests: XCTestCase {
 
         let outcomes = try JSONDecoder().decode(MeetingOutcomes.self, from: data)
 
-        XCTAssertEqual(outcomes.userActionItems.map(\.owner), ["Me"])
-        XCTAssertEqual(outcomes.userActionItems.map(\.text), [
+        XCTAssertTrue(outcomes.userActionItems.isEmpty)
+        XCTAssertEqual(outcomes.otherActionItems.map(\.owner), ["Them 3"])
+        XCTAssertEqual(outcomes.otherActionItems.map(\.text), [
             "I will check the hardening tasks.",
         ])
     }
@@ -145,7 +148,7 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertEqual(Set(item["required"] as? [String] ?? []),
                        [
                         "text", "owner", "due", "for_user", "importance",
-                        "source_segment_ids",
+                        "source_segment_ids", "owner_speaker_id", "ownership_basis", "ownership_quote",
                        ])
         XCTAssertEqual(item["additionalProperties"] as? Bool, false)
         let itemProperties = try XCTUnwrap(item["properties"] as? [String: Any])
@@ -165,11 +168,13 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertTrue(prompt.contains("\"for_user\" to true"), prompt)
         XCTAssertTrue(prompt.contains("set \"owner\" to \"Me\""), prompt)
         XCTAssertTrue(prompt.contains("\"importance\" to an integer from 1"), prompt)
+        XCTAssertTrue(prompt.contains("including actions with unclear ownership"), prompt)
         XCTAssertTrue(prompt.contains("at most the five highest-importance actions"), prompt)
         XCTAssertTrue(prompt.contains("Never drop a user action"), prompt)
         XCTAssertTrue(prompt.contains("I will"), prompt)
-        XCTAssertTrue(prompt.contains("Never use \"Me\" as a sentence subject"), prompt)
-        XCTAssertTrue(prompt.contains("text field in English"), prompt)
+        XCTAssertTrue(prompt.contains("owner-neutral task descriptions"), prompt)
+        XCTAssertTrue(prompt.contains("action descriptions, decisions, and open questions in English"), prompt)
+        XCTAssertTrue(prompt.contains("Copy owner names, due dates, and evidence quotes from the source unchanged"), prompt)
     }
 
     func testPromptUsesOnlySourceLabelledEvidence() {
@@ -178,18 +183,6 @@ final class MeetingOutcomesTests: XCTestCase {
 
         XCTAssertTrue(prompt.contains("segment-0001"), prompt)
         XCTAssertTrue(prompt.contains("Only cite segment IDs that appear below"), prompt)
-    }
-
-    func testOnlyShortBuiltInOutcomesCanOverlapSummary() {
-        XCTAssertTrue(ProcessingPipeline.shouldExtractOutcomesConcurrently(
-            canUseSinglePass: true,
-            backend: .builtIn))
-        XCTAssertFalse(ProcessingPipeline.shouldExtractOutcomesConcurrently(
-            canUseSinglePass: false,
-            backend: .builtIn))
-        XCTAssertFalse(ProcessingPipeline.shouldExtractOutcomesConcurrently(
-            canUseSinglePass: true,
-            backend: .openAICompatible))
     }
 
     // MARK: - Disk round trip
@@ -248,6 +241,82 @@ final class MeetingOutcomesTests: XCTestCase {
         XCTAssertTrue(prioritized.otherActionItems.isEmpty)
     }
 
+    func testOtherAndUnclearOwnersShareOneRankedLimit() {
+        let unclear = OutcomeAttribution(resolution: .unresolved, basis: .unclear)
+        let candidates: [MeetingOutcomes.ActionItem] = [
+            .init(id: "other-low", text: "Other low", owner: "Ana", importance: 2),
+            .init(id: "unclear-high", text: "Unclear high", importance: 4, attribution: unclear),
+            .init(id: "other-medium", text: "Other medium", owner: "Ana", importance: 3),
+            .init(id: "unclear-critical", text: "Unclear critical", importance: 5, attribution: unclear),
+            .init(id: "unclear-low", text: "Unclear low", importance: 1, attribution: unclear),
+            .init(id: "other-high", text: "Other high", owner: "Ana", importance: 4),
+            .init(id: "unclear-medium", text: "Unclear medium", importance: 3, attribution: unclear),
+        ]
+        let rankedIDs = ["unclear-critical", "other-high", "unclear-high", "other-medium", "unclear-medium"]
+        for (userCount, remainingCount) in [(0, 5), (3, 5), (6, 4), (10, 0), (11, 0)] {
+            let mine = (0..<userCount).map {
+                MeetingOutcomes.ActionItem(text: "My action \($0)", owner: "Me", importance: 1)
+            }
+            let result = MeetingOutcomes(actionItems: candidates + mine).prioritizingActionItems()
+
+            XCTAssertEqual(result.userActionItems, mine)
+            XCTAssertEqual(result.actionItems.count, userCount + remainingCount)
+            XCTAssertEqual(Array(result.actionItems.prefix(userCount)), mine)
+            XCTAssertEqual(result.actionItems.dropFirst(userCount).map(\.id), Array(rankedIDs.prefix(remainingCount)))
+            for action in result.unresolvedActionItems {
+                XCTAssertEqual(action, candidates.first { $0.id == action.id })
+                XCTAssertEqual(action.attribution?.resolution, .unresolved)
+                XCTAssertNil(action.owner)
+                XCTAssertFalse(action.isForUser)
+            }
+        }
+    }
+
+    func testSharedRankingUsesCitationTimeThenTextForImportanceTies() {
+        func action(_ text: String, owner: String?, importance: Int, start: Double) -> MeetingOutcomes.ActionItem {
+            .init(text: text, owner: owner, importance: importance, citations: [
+                .init(segmentID: "source-\(text)", start: start, end: start + 1,
+                      speaker: "them 1", excerpt: text),
+            ])
+        }
+        let items = [
+            action("Late", owner: nil, importance: 4, start: 20),
+            action("Beta", owner: "Ana", importance: 4, start: 10),
+            action("Critical", owner: "Ana", importance: 5, start: 30),
+            action("Alpha", owner: nil, importance: 4, start: 10),
+        ]
+
+        let result = MeetingOutcomes(actionItems: items).prioritizingActionItems()
+
+        XCTAssertEqual(result.actionItems.map(\.text), ["Critical", "Alpha", "Beta", "Late"])
+        XCTAssertEqual(result.unresolvedActionItems.map(\.text), ["Alpha", "Late"])
+    }
+
+    func testLoadingExistingUnclearActionsAppliesSharedLimitWithoutRewritingEvidence() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lokalbot-unclear-outcome-limit-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let others = (0..<3).map {
+            MeetingOutcomes.ActionItem(text: "Other action \($0)", owner: "Ana", importance: 3)
+        }
+        let unclear = (0..<27).map {
+            MeetingOutcomes.ActionItem(text: "Unclear action \($0)", importance: $0 % 5 + 1,
+                                      attribution: .init(resolution: .unresolved, basis: .unclear))
+        }
+        try MeetingOutcomes(actionItems: others + unclear).write(to: folder)
+        let file = folder.appendingPathComponent(MeetingOutcomes.fileName)
+        let original = try Data(contentsOf: file)
+
+        let loaded = try XCTUnwrap(MeetingOutcomes.load(from: folder))
+
+        XCTAssertEqual(loaded.actionItems.count, 5)
+        XCTAssertEqual(loaded.actionItems.map(\.importance), [5, 5, 5, 5, 5])
+        XCTAssertEqual(loaded.unresolvedActionItems.count, 5)
+        XCTAssertTrue(loaded.actionItems.allSatisfy { $0.owner == nil && !$0.isForUser })
+        XCTAssertEqual(try Data(contentsOf: file), original)
+    }
+
     func testLoadingExistingArtifactAppliesActionItemSelectionPolicy() throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("lokalbot-outcome-limit-\(UUID().uuidString)")
@@ -277,7 +346,7 @@ final class MeetingOutcomesTests: XCTestCase {
         let meetingID = UUID(uuidString: "11111111-2222-4333-8444-555555555555")!
         let transcript = Transcript(
             segments: [
-                .init(start: 12, end: 18, speaker: "me", text: "I will send the plan."),
+                .init(start: 12, end: 18, speaker: "me", text: "I will send the plan. We chose the local store.", attribution: .init(source: .microphone, identity: .user, method: .confirmation)),
             ],
             engine: "fixture")
         let validID = transcript.segmentID(at: 0)
@@ -285,10 +354,10 @@ final class MeetingOutcomesTests: XCTestCase {
             """
             {"action_items": [
               {"text":"Send the plan","owner":"Me","due":"","for_user":true,
-               "source_segment_ids":["\(validID)"]},
+               "source_segment_ids":["\(validID)"], "owner_speaker_id":"me", "ownership_basis":"commitment", "ownership_quote":"I will send the plan."},
               {"text":"Invented task","owner":"Me","due":"","for_user":true,
                "source_segment_ids":["segment-does-not-exist"]}],
-             "decisions": [{"text":"Use the local store","source_segment_ids":["\(validID)"]}],
+             "decisions": [{"text":"Use the local store","source_segment_ids":["\(validID)"], "speaker_id":"me", "quote":"We chose the local store."}],
              "open_questions":[]}
             """,
             sourceSegments: transcript.segmentSourceMap,
@@ -309,7 +378,7 @@ final class MeetingOutcomesTests: XCTestCase {
     func testGroundedParseReportsRejectedEvidenceCandidates() throws {
         let transcript = Transcript(
             segments: [
-                .init(start: 12, end: 18, speaker: "me", text: "I will send the plan."),
+                .init(start: 12, end: 18, speaker: "me", text: "I will send the plan. We chose the local store.", attribution: .init(source: .microphone, identity: .user, method: .confirmation)),
             ],
             engine: "fixture")
         let parsed = try XCTUnwrap(OutcomesExtractor.parseResult(

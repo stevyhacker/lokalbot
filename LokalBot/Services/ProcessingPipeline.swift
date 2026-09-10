@@ -90,6 +90,7 @@ final class ProcessingPipeline: ObservableObject {
         /// per-track checkpoints instead of starting from scratch.
         var resumed: Bool = false
         var origin: JobOrigin = .userInitiated
+        var enqueuedAt = Date()
     }
 
     struct RetryWork: Equatable {
@@ -174,6 +175,7 @@ final class ProcessingPipeline: ObservableObject {
     var hasActiveWork: Bool { isDraining || activeMeetingID != nil }
     var hasJobsWaitingForModels: Bool { !waitingForModelsJobs.isEmpty }
     private let diarizer = NeuralDiarizationEngine()
+    private let speakerIdentity: MeetingSpeakerIdentityService?
     private let jobStore: PipelineJobStore?
     /// Fired after transcript/summary files land on disk (search re-index).
     var onArtifactsWritten: ((Meeting) -> Void)?
@@ -181,6 +183,7 @@ final class ProcessingPipeline: ObservableObject {
     init(storage: StorageManager, jobStore: PipelineJobStore? = nil,
          settings: @escaping () -> AppSettings,
          thinkExecution: ThinkExecution? = nil,
+         speakerIdentity: MeetingSpeakerIdentityService? = nil,
          builtInModelPreparer: @escaping BuiltInModelPreparer = { entry, storage in
              try await ModelDownloadManager.shared.ensureAvailable(entry, storage: storage)
          },
@@ -188,6 +191,7 @@ final class ProcessingPipeline: ObservableObject {
          transcriptionStarted: ((Meeting.ID) async -> Void)? = nil) {
         self.storage = storage
         self.jobStore = jobStore
+        self.speakerIdentity = speakerIdentity
         self.settings = settings
         self.thinkExecution = thinkExecution ?? ThinkExecution(
             storage: storage,
@@ -486,6 +490,7 @@ final class ProcessingPipeline: ObservableObject {
             stages[meeting.id] = .failed("Could not durably start this processing job.")
             return
         }
+        let queueSeconds = max(0, Date().timeIntervalSince(job.enqueuedAt))
         var transcriptWrittenThisJob = false
         do {
             if job.transcribe || !FileManager.default.fileExists(
@@ -503,33 +508,30 @@ final class ProcessingPipeline: ObservableObject {
                 let engine = config.transcriptionEngine()   // engines prepare lazily inside transcribe
 
                 stages[meeting.id] = .transcribing
-                var transcript = try await transcribeTracks(meeting: meeting, folder: folder,
-                                                            engine: engine, config: config)
-                // Before diarization, while speakers are still the raw track
-                // labels: drop mic segments that are only the remote voice
-                // leaking back in through the speakers.
-                let bleed = SpeakerBleedFilter.filter(transcript)
+                let batch = try await transcribeTracks(meeting: meeting, folder: folder, engine: engine, config: config)
+                var transcript = batch.transcript
+                // Lexical similarity only marks uncertainty. Removing a full
+                // duplicate additionally requires matching waveform evidence.
+                let echoEvidence = try await EchoWaveformEvidence.verified(in: transcript, folder: folder)
+                let bleed = SpeakerBleedFilter.filter(transcript, acousticallyVerifiedIndices: echoEvidence)
                 transcript = bleed.transcript
                 if bleed.changed {
                     lokalbotLog(
                         "transcript speaker bleed removedSegments=\(bleed.removedSegments) "
                             + "removedWords=\(bleed.removedWords)")
                 }
-                if config.multiSpeakerDiarization,
-                   MeetingAudioFiles.transcribableURL(for: .system, in: folder) != nil {
-                    stages[meeting.id] = .preparingDiarizationModel
-                    await prepareDiarizationModels()
-                    stages[meeting.id] = .diarizing
-                    transcript = await refineSpeakers(
-                        transcript: transcript,
-                        meeting: meeting,
-                        folder: folder,
-                        config: config,
-                        modelsPrepared: true)
+                if let speakerIdentity,
+                   let audioURL = MeetingAudioFiles.transcribableURL(for: .system, in: folder)
+                    ?? MeetingAudioFiles.transcribableURL(for: .mic, in: folder) {
+                    let safeSamples = [SpeakerAttribution.Source.microphone, .system].flatMap {
+                        AttributedTrackTranscriber.samples(batch.samples, transcript: transcript, source: $0)
+                    }
+                    transcript = await speakerIdentity.process(transcript: transcript, meeting: meeting,
+                        turns: batch.turns, samples: safeSamples, audioURL: audioURL)
+                } else {
+                    transcript = SpeakerAutoNamer.applyingAliases(to: transcript,
+                        participants: meeting.resolvedCalendarParticipantIdentities)
                 }
-                transcript = SpeakerAutoNamer.applyingAliases(
-                    to: transcript,
-                    participants: meeting.resolvedCalendarParticipantIdentities)
                 let mergedSanitization = TranscriptSanitizer.sanitize(transcript)
                 transcript = mergedSanitization.transcript
                 if mergedSanitization.changed {
@@ -539,6 +541,7 @@ final class ProcessingPipeline: ObservableObject {
                             + "\(mergedSanitization.removedWords) removedCharacters="
                             + "\(mergedSanitization.removedCharacters)")
                 }
+                transcript = speakerIdentity?.applyingLatestDecision(to: transcript, meetingID: meeting.id) ?? transcript
                 try write(transcript, to: folder)
                 // A finalized AAC track makes its CAF duplicate redundant. A
                 // crash-recovery CAF remains when the AAC container is broken,
@@ -566,12 +569,14 @@ final class ProcessingPipeline: ObservableObject {
                     if transcriptWrittenThisJob { onArtifactsWritten?(meeting) }
                     return
                 }
-                if config.summarizerBackend == .builtIn {
-                    stages[meeting.id] = .preparingSummaryModel
-                    _ = try await thinkExecution.prepareBuiltInModel(config)
-                }
                 stages[meeting.id] = .summarizing
                 var transcript = try loadTranscript(from: folder)
+                if let speakerIdentity,
+                   FileManager.default.fileExists(atPath: folder.appendingPathComponent("speaker-evidence/identity.sealed").path) {
+                    transcript = try await speakerIdentity.recover(meeting: meeting, transcript: transcript)
+                    transcript = speakerIdentity.applyingLatestDecision(to: transcript, meetingID: meeting.id)
+                    try write(transcript, to: folder)
+                }
                 let sanitization = TranscriptSanitizer.sanitize(transcript)
                 if sanitization.changed {
                     transcript = sanitization.transcript
@@ -582,86 +587,40 @@ final class ProcessingPipeline: ObservableObject {
                             + "\(sanitization.removedWords) removedCharacters="
                             + "\(sanitization.removedCharacters)")
                 }
-                // The default built-in server supports continuous batching.
-                // A single-pass outcomes extraction is independent of the
-                // summary, so overlap those two reads of the transcript. Long
-                // outcomes scans stay serial to bound local model pressure.
-                let outcomeContext = MeetingNotes.promptContext(in: folder)
-                let outcomeUserLabel = transcript.displaySpeaker(for: "me")
-                let outcomeContextTokens = MeetingSummaryGenerator.contextTokenLimit(
-                    for: config.summarizerBackend)
-                let outcomeLanguage = SummaryLanguage.resolvedForTranscript(
-                    config.summaryLanguage,
-                    transcript: transcript)
-                let concurrentOutcomes = Self.shouldExtractOutcomesConcurrently(
-                    canUseSinglePass: MeetingOutcomesGenerator.canUseSinglePass(
-                        transcript: transcript,
-                        userSpeakerLabel: outcomeUserLabel,
-                        context: outcomeContext,
-                        contextTokens: outcomeContextTokens,
-                        outputLanguage: outcomeLanguage),
-                    backend: config.summarizerBackend)
-                let outcomesTask: Task<MeetingOutcomes?, Never>? = concurrentOutcomes
-                    ? Task { [weak self] in
-                        guard let self else { return nil }
-                        return await self.extractOutcomes(
-                            transcript: transcript,
-                            meetingID: meeting.id,
-                            folder: folder,
-                            config: config,
-                            context: outcomeContext)
-                    }
-                    : nil
-                let summary: String
+                let budget = MeetingGenerationBudget()
+                await budget.recordPhase("queue", seconds: queueSeconds)
                 do {
-                    do {
-                        summary = try await summarize(transcript, meeting: meeting, config: config)
-                    } catch {
-                        guard let delay = thinkExecution.retryDelay(
-                            for: error,
-                            settings: config,
-                            attempt: 0) else { throw error }
-                        // One bounded retry for transient network, rate-limit,
-                        // or server failures. Deterministic 4xx/schema/payload
-                        // failures surface immediately instead of doubling work.
-                        lokalbotLog(
-                            "summary retry delay=\(String(format: "%.2f", delay))s "
-                                + "after error=\(error.localizedDescription)")
-                        try await Task.sleep(
-                            nanoseconds: UInt64(delay * 1_000_000_000))
-                        summary = try await summarize(transcript, meeting: meeting, config: config)
+                    let generated = try await budget.run {
+                        try await self.summarize(transcript, meeting: meeting, config: config, budget: budget)
                     }
+                    try Task.checkCancellation()
+                    try MeetingAttributionArtifacts.requireCurrent(transcript, in: folder)
+                    let outcomes = generated.outcomes
+                    let previous = MeetingOutcomes.load(from: folder) ?? MeetingAttributionArtifacts.previous(in: folder)
+                    let previousState = MeetingOutcomeStore.loadState(from: folder)
+                    try outcomes.write(to: folder)
+                    if let previous {
+                        let reconciled = MeetingOutcomeStore.reconcileState(previousState, from: previous, to: outcomes)
+                        try MeetingOutcomeStore.writeState(reconciled, to: folder)
+                    }
+                    // Explicit user edits remain the authority for both cards
+                    // and the action/decision sections rendered beside them.
+                    let authoritative = MeetingOutcomeProjection.load(for: meeting, storage: storage)?.correctedOutcomes
+                        ?? outcomes
+                    let summary = MeetingSummaryOutcomeSynchronizer.synchronize(
+                        generated.body, outcomes: authoritative, template: config.noteTemplate)
+                    try MeetingAttributionArtifacts.requireCurrent(transcript, in: folder)
+                    try SummaryClaimEvidence.commit(transcript: transcript, in: folder)
+                    try Data(summary.utf8).write(to: folder.appendingPathComponent("summary.md"), options: .atomic)
+                    MeetingSummaryGenerator.removeCheckpoint(in: folder)
+                    MeetingOutcomesGenerator.removeCheckpoint(in: folder)
+                    try? FileManager.default.removeItem(at: folder.appendingPathComponent(MeetingAttributionArtifacts.refreshMarker))
+                    await budget.saveMetrics(in: folder, outcome: "complete")
                 } catch {
-                    await Self.cancelAndWaitForOutcomes(outcomesTask)
+                    await budget.saveMetrics(in: folder, outcome: "incomplete")
+                    onArtifactsWritten?(meeting)
                     throw error
                 }
-                try summary.data(using: .utf8)?.write(
-                    to: folder.appendingPathComponent("summary.md"), options: .atomic)
-                MeetingSummaryGenerator.removeCheckpoint(in: folder)
-                let extractedOutcomes: MeetingOutcomes?
-                if let outcomesTask {
-                    extractedOutcomes = await outcomesTask.value
-                } else {
-                    extractedOutcomes = await extractOutcomes(
-                        transcript: transcript,
-                        meetingID: meeting.id,
-                        folder: folder,
-                        config: config,
-                        context: outcomeContext)
-                }
-                // The grounded artifact is the only authority for outcome
-                // sections. On a non-fatal extraction failure, mirror the
-                // last successful artifact (or an empty one) so the summary
-                // can never disagree with the cards beside it.
-                let authoritativeOutcomes = extractedOutcomes
-                    ?? MeetingOutcomes.load(from: folder)
-                    ?? MeetingOutcomes()
-                let synchronizedSummary = MeetingSummaryOutcomeSynchronizer.synchronize(
-                    summary,
-                    outcomes: authoritativeOutcomes,
-                    template: config.noteTemplate)
-                try synchronizedSummary.data(using: .utf8)?.write(
-                    to: folder.appendingPathComponent("summary.md"), options: .atomic)
             }
             if let jobStore, !jobStore.markCompleted(meetingID: meeting.id) {
                 stages[meeting.id] = .failed(
@@ -690,17 +649,20 @@ final class ProcessingPipeline: ObservableObject {
     /// cancel. The worker runs outside this type's main-actor isolation, while
     /// cancellation is propagated so a cancelled job never starts ASR anyway.
     private static func echoCancelledMicrophone(in folder: URL, microphone: URL,
-                                                config: AppSettings) async throws -> URL? {
-        guard config.echoCancellation,
-              let reference = MeetingAudioFiles.transcribableURL(for: .system, in: folder)
-        else { return nil }
+                                                config: AppSettings) async throws -> (URL?, TranscriptEchoReport) {
+        guard config.echoCancellation else { return (nil, .init(status: .disabled)) }
+        guard let reference = MeetingAudioFiles.transcribableURL(for: .system, in: folder) else {
+            return (nil, .init(status: .noReference))
+        }
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("lokalbot-aec-\(UUID().uuidString).wav")
         do {
             let started = Date()
+            let timing = (try? Data(contentsOf: folder.appendingPathComponent(RecordingAudioTiming.fileName)))
+                .flatMap { try? JSONDecoder().decode(RecordingAudioTiming.self, from: $0) }
             let report = try await EchoCancelledTrack.write(microphone: microphone,
                                                             reference: reference,
-                                                            to: destination)
+                                                            to: destination, timing: timing)
             let elapsed = Date().timeIntervalSince(started)
             lokalbotLog(
                 "echo cancellation delay=\(String(format: "%.0fms", report.delaySeconds * 1000)) "
@@ -709,58 +671,88 @@ final class ProcessingPipeline: ObservableObject {
             guard EchoCancelledTrack.shouldUse(report) else {
                 lokalbotLog("echo cancellation discarded reason=insufficient-confidence")
                 try? FileManager.default.removeItem(at: destination)
-                return nil
+                return (nil, .init(status: .uncertain, reductionDB: report.echoReturnLossDB,
+                    delaySeconds: report.delaySeconds))
             }
-            return destination
+            return (destination, .init(status: .applied, reductionDB: report.echoReturnLossDB,
+                delaySeconds: report.delaySeconds, alignmentVerified: report.alignmentVerified))
         } catch is CancellationError {
             try? FileManager.default.removeItem(at: destination)
             throw CancellationError()
         } catch {
             lokalbotLog("echo cancellation failed error=\(error.localizedDescription)")
             try? FileManager.default.removeItem(at: destination)
-            return nil
+            return (nil, .init(status: .failed))
         }
     }
 
+    private struct TranscribedTracks {
+        var transcript: Transcript
+        var turns: [SpeakerAudioTurn]
+        var samples: [SpeakerVoiceSample]
+    }
+
+    private struct TrackCheckpoint: Codable {
+        var version = 1
+        var input: Data
+        var transcript: Transcript
+    }
+
     private func transcribeTracks(meeting: Meeting, folder: URL,
-                                  engine: TranscriptionEngine, config: AppSettings) async throws -> Transcript {
+                                  engine: TranscriptionEngine, config: AppSettings) async throws -> TranscribedTracks {
+        let sources = [MeetingAudioFiles.Track.mic, .system].compactMap { track -> (MeetingAudioFiles.Track, URL)? in
+            guard let url = MeetingAudioFiles.transcribableURL(for: track, in: folder) else { return nil }
+            return (track, url)
+        }
+        // Reject missing or unreadable recordings before any model download.
+        guard !sources.isEmpty else { throw PipelineError.noAudio }
+        if config.multiSpeakerDiarization { await prepareDiarizationModels() }
         let language = config.transcriptionLanguage.code
         var tracks: [Transcript] = []
+        var voiceSamples: [SpeakerVoiceSample] = []
+        var acousticTurns: [SpeakerAudioTurn] = []
         var trackError: Error?
+        let audioRevision = try await Task.detached(priority: .utility) {
+            try MeetingSpeakerIdentityService.recordingRevision(folder: folder)
+        }.value
 
-        for (track, speaker) in [(MeetingAudioFiles.Track.mic, "me"),
-                                 (MeetingAudioFiles.Track.system, "them")] {
+        for (track, url) in sources {
             let name = track.rawValue
+            let speaker = track == .mic ? "me" : "them"
             // Per-track checkpoint: a finished track's transcript survives a
             // crash — and the *other* track failing — so a retry never redoes
             // an hour of completed transcription.
             let checkpoint = Self.checkpointURL(track: name, in: folder)
-            if let data = try? Data(contentsOf: checkpoint),
-               let cached = try? JSONDecoder().decode(Transcript.self, from: data) {
-                lokalbotLog("transcription track restored from checkpoint track=\(name)")
-                tracks.append(cached)
-                continue
-            }
             do {
-                guard let url = MeetingAudioFiles.transcribableURL(for: track, in: folder) else {
-                    lokalbotLog("transcription track skipped track=\(name) reason=no-readable-audio")
-                    continue
+                let checkpointInput = try JSONEncoder().encode([audioRevision, name, engine.displayName,
+                    language ?? "", config.transcriptionPrompt,
+                    String(config.multiSpeakerDiarization), String(config.echoCancellation)])
+                let prepared = track == .mic
+                    ? try await Self.echoCancelledMicrophone(in: folder, microphone: url, config: config)
+                    : (nil, TranscriptEchoReport(status: .noReference))
+                let source: SpeakerAttribution.Source = track == .mic ? .microphone : .system
+                defer { if let cleaned = prepared.0 { try? FileManager.default.removeItem(at: cleaned) } }
+                let audio = prepared.0 ?? url
+                let diarization = config.multiSpeakerDiarization
+                    ? await diarizer.diarizeDetailed(url: audio, includeVoiceSamples: config.rememberSpeakersOnMac)
+                    : SpeakerDiarizationResult(segments: [], samples: [])
+                var result: Transcript?
+                if let data = try? Data(contentsOf: checkpoint),
+                   let cached = try? JSONDecoder().decode(TrackCheckpoint.self, from: data),
+                   cached.version == 1, cached.input == checkpointInput,
+                   cached.transcript.echoReport == (track == .mic ? prepared.1 : nil) {
+                    result = cached.transcript
+                } else {
+                    result = try await transcribeTrack(name: name, url: audio, speaker: speaker, engine: engine,
+                        language: language, prompt: config.transcriptionPrompt,
+                        diarization: diarization.segments, source: source)
                 }
-                let cancelled = track == .mic
-                    ? try await Self.echoCancelledMicrophone(
-                        in: folder, microphone: url, config: config)
-                    : nil
-                defer {
-                    if let cancelled { try? FileManager.default.removeItem(at: cancelled) }
-                }
-                if let transcript = try await transcribeTrack(name: name,
-                                                              url: cancelled ?? url,
-                                                              speaker: speaker, engine: engine,
-                                                              language: language,
-                                                              prompt: config.transcriptionPrompt) {
-                    if let data = try? JSONEncoder().encode(transcript) {
-                        try? data.write(to: checkpoint, options: .atomic)
-                    }
+                if var transcript = result {
+                    if track == .mic { transcript.echoReport = prepared.1 }
+                    let saved = TrackCheckpoint(input: checkpointInput, transcript: transcript)
+                    if let data = try? JSONEncoder().encode(saved) { try? data.write(to: checkpoint, options: .atomic) }
+                    acousticTurns += AttributedTrackTranscriber.turns(diarization.segments, transcript: transcript, source: source)
+                    voiceSamples += AttributedTrackTranscriber.samples(diarization.samples, transcript: transcript, source: source)
                     tracks.append(transcript)
                 }
             } catch is CancellationError {
@@ -776,7 +768,8 @@ final class ProcessingPipeline: ObservableObject {
         guard !tracks.isEmpty else {
             throw PipelineError.noAudio
         }
-        return Transcript.merged(tracks)
+        let merged = Transcript.merged(tracks)
+        return TranscribedTracks(transcript: merged, turns: acousticTurns, samples: voiceSamples)
     }
 
     /// Where a track's finished-but-not-yet-merged transcript is checkpointed.
@@ -795,7 +788,8 @@ final class ProcessingPipeline: ObservableObject {
     private func transcribeTrack(name: String, url: URL, speaker: String,
                                  engine: TranscriptionEngine,
                                  language: String?,
-                                 prompt: String?) async throws -> Transcript? {
+                                 prompt: String?, diarization: [DiarizedSegment],
+                                 source: SpeakerAttribution.Source) async throws -> Transcript? {
         guard let duration = AudioFileInspector.duration(at: url),
               duration >= AudioFileInspector.minimumTranscribableDuration else {
             lokalbotLog("transcription track skipped track=\(name) reason=no-audio")
@@ -813,11 +807,8 @@ final class ProcessingPipeline: ObservableObject {
         let started = Date()
         lokalbotLog(
             "transcription track start track=\(name) engine=\(engine.displayName) duration=\(Self.formatSeconds(duration)) language=\(language ?? "auto")")
-        var transcript = try await engine.transcribe(
-            audio: url,
-            language: language,
-            prompt: prompt)
-        for i in transcript.segments.indices { transcript.segments[i].speaker = speaker }
+        var transcript = try await AttributedTrackTranscriber.transcribe(url: url, duration: duration,
+            diarization: diarization, source: source, engine: engine, language: language, prompt: prompt)
         let sanitization = TranscriptSanitizer.sanitize(transcript)
         transcript = sanitization.transcript
         if sanitization.changed {
@@ -843,47 +834,6 @@ final class ProcessingPipeline: ObservableObject {
         String(format: "%.2fx", value)
     }
 
-    /// Optionally split the catch-all "them" speaker into "Them 1" / "Them 2"
-    /// using FluidAudio's offline diarizer. No-op (returns the input
-    /// unchanged) unless the user opted in AND a system track exists. Never
-    /// crashes the pipeline — a diarization failure just leaves the
-    /// pre-existing labels alone.
-    private func refineSpeakers(transcript: Transcript,
-                                meeting: Meeting,
-                                folder: URL,
-                                config: AppSettings,
-                                modelsPrepared: Bool = false) async -> Transcript {
-        guard config.multiSpeakerDiarization else { return transcript }
-        guard let systemURL = MeetingAudioFiles.transcribableURL(for: .system, in: folder) else {
-            return transcript
-        }
-        if !modelsPrepared { await prepareDiarizationModels() }
-        let segments = await diarizer.diarize(url: systemURL)
-        guard !segments.isEmpty else { return transcript }
-
-        // Stable speaker-id → "Them N" mapping in first-appearance order.
-        var order: [String] = []
-        for segment in segments where !order.contains(segment.speakerId) {
-            order.append(segment.speakerId)
-        }
-        // Don't add the "1" suffix when only one remote speaker was detected
-        // — that's the existing single-Them case, no point churning the label.
-        let useNumbers = order.count > 1
-        let mapping = Dictionary(uniqueKeysWithValues: order.enumerated().map { idx, id in
-            (id, useNumbers ? "them \(idx + 1)" : "them")
-        })
-
-        var labelled = transcript
-        for index in labelled.segments.indices where labelled.segments[index].speaker == "them" {
-            let segment = labelled.segments[index]
-            if let speakerId = segments.dominantSpeaker(coveringStart: segment.start, end: segment.end),
-               let label = mapping[speakerId] {
-                labelled.segments[index].speaker = label
-            }
-        }
-        return labelled
-    }
-
     /// Shared by recording-time prewarm and the post-meeting stage. The
     /// `NeuralDiarizationEngine` instance is retained by this pipeline, so the
     /// downloaded/prepared models are reused instead of rebuilt per job.
@@ -898,6 +848,9 @@ final class ProcessingPipeline: ObservableObject {
     }
 
     private func write(_ transcript: Transcript, to folder: URL) throws {
+        if let old = try? loadTranscript(from: folder), old.evidenceRevision != transcript.evidenceRevision {
+            try MeetingAttributionArtifacts.invalidate(in: folder)
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(transcript).write(
@@ -918,18 +871,14 @@ final class ProcessingPipeline: ObservableObject {
 
     // MARK: - Summarization
 
-    nonisolated static func shouldExtractOutcomesConcurrently(
-        canUseSinglePass: Bool,
-        backend: AppSettings.SummarizerBackend
-    ) -> Bool {
-        backend == .builtIn
-            && canUseSinglePass
-    }
-
     private func summarize(_ transcript: Transcript, meeting: Meeting,
-                           config: AppSettings) async throws -> String {
+                           config: AppSettings, budget: MeetingGenerationBudget) async throws -> MeetingNotesGenerator.Result {
         let started = Date()
+        stages[meeting.id] = .preparingSummaryModel
+        let preparing = ProcessInfo.processInfo.systemUptime
         let engine = try await thinkExecution.makeTextEngine(config)
+        await budget.recordPhase("modelPreparation", seconds: ProcessInfo.processInfo.systemUptime - preparing)
+        stages[meeting.id] = .summarizing
         let wordCount = transcript.languageDetectionText
             .split(whereSeparator: { $0.isWhitespace }).count
         // Resolve `.matchTranscript` against raw spoken text now so both the
@@ -938,26 +887,12 @@ final class ProcessingPipeline: ObservableObject {
         // labels can skew NaturalLanguage on short transcripts.
         let language = SummaryLanguage.resolvedForTranscript(config.summaryLanguage,
                                                              transcript: transcript)
-        let userSpeakerLabel = transcript.displaySpeaker(for: "me")
-        let systemPrompt = PromptTemplates.systemPrompt(for: config.noteTemplate,
-                                                        summaryLanguage: language,
-                                                        userSpeakerLabel: userSpeakerLabel)
-        // Quick notes the user typed during the meeting ride along as context
-        // in the final pass (both paths) — they're the user's own words, so
-        // the summary should fold them in rather than rediscover them.
         let noteContext = MeetingNotes.promptContext(in: meeting.folderURL(in: storage))
-        let body = try await MeetingSummaryGenerator.generate(
-            transcript: transcript,
-            engine: engine,
-            systemPrompt: systemPrompt,
-            template: config.noteTemplate,
-            language: language,
-            userSpeakerLabel: userSpeakerLabel,
-            context: noteContext,
-            contextTokens: MeetingSummaryGenerator.contextTokenLimit(
-                for: config.summarizerBackend),
-            checkpointURL: MeetingSummaryGenerator.checkpointURL(
-                in: meeting.folderURL(in: storage)))
+        var generated = try await MeetingNotesGenerator.generate(
+            transcript: transcript, engine: engine, template: config.noteTemplate,
+            language: language, context: noteContext,
+            contextTokens: MeetingSummaryGenerator.contextTokenLimit(for: config),
+            meetingID: meeting.id, folder: meeting.folderURL(in: storage), budget: budget)
 
         let date = meeting.startedAt.formatted(date: .long, time: .shortened)
         var header = "# \(meeting.title) — \(date)\n"
@@ -971,62 +906,9 @@ final class ProcessingPipeline: ObservableObject {
         GenerationMetricsStore.shared.record(
             label: "Summary · \(engine.displayName)",
             durationSec: Date().timeIntervalSince(started),
-            approxTokens: TokenCountEstimator.estimate(body))
-        return header + body + "\n"
-    }
-
-    /// Outcomes scan the complete transcript through bounded, cited chunks.
-    /// Failure is non-fatal and never overwrites the last successful artifact.
-    private func extractOutcomes(
-        transcript: Transcript,
-        meetingID: Meeting.ID,
-        folder: URL,
-        config: AppSettings,
-        context: [String]
-    ) async -> MeetingOutcomes? {
-        do {
-            try Task.checkCancellation()
-            let engine = try await thinkExecution.makeTextEngine(config)
-            let userSpeakerLabel = transcript.displaySpeaker(for: "me")
-            let outputLanguage = SummaryLanguage.resolvedForTranscript(
-                config.summaryLanguage,
-                transcript: transcript)
-            let outcomes = try await MeetingOutcomesGenerator.generate(
-                transcript: transcript,
-                engine: engine,
-                userSpeakerLabel: userSpeakerLabel,
-                context: context,
-                contextTokens: MeetingSummaryGenerator.contextTokenLimit(
-                    for: config.summarizerBackend),
-                meetingID: meetingID,
-                checkpointURL: MeetingOutcomesGenerator.checkpointURL(in: folder),
-                outputLanguage: outputLanguage)
-            try Task.checkCancellation()
-            let previous = MeetingOutcomes.load(from: folder)
-            let previousState = MeetingOutcomeStore.loadState(from: folder)
-            try outcomes.write(to: folder)
-            if let previous {
-                let reconciled = MeetingOutcomeStore.reconcileState(
-                    previousState, from: previous, to: outcomes)
-                try MeetingOutcomeStore.writeState(reconciled, to: folder)
-            }
-            MeetingOutcomesGenerator.removeCheckpoint(in: folder)
-            return outcomes
-        } catch {
-            lokalbotLog("outcomes extraction failed error=\(error.localizedDescription)")
-            return nil
-        }
-    }
-
-    /// Cancellation is cooperative; some inference backends may not return
-    /// immediately. A failed summary must not let its sibling outcomes task
-    /// outlive the job and race a retry's artifact writes.
-    nonisolated static func cancelAndWaitForOutcomes<Success: Sendable>(
-        _ task: Task<Success, Never>?
-    ) async {
-        guard let task else { return }
-        task.cancel()
-        _ = await task.value
+            approxTokens: TokenCountEstimator.estimate(generated.body))
+        generated.body = header + generated.body + "\n"
+        return generated
     }
 
     /// Day digest (M4/M6) — shared by the Timeline UI, scheduler, and
