@@ -80,11 +80,13 @@ final class SettingsUITests: XCTestCase {
     func testSpeakerVisualsAndRememberingAreSeparateOptIns() {
         UITestHarness.clickSidebar("sidebar.settings", in: app)
         UITestHarness.selectSettingsCategory("Meetings", in: app)
-        let visuals = UITestHarness.toggle("Identify speakers from meeting visuals", in: app)
-        let remembering = UITestHarness.toggle("Remember speakers on this Mac", in: app)
+        let visuals = app.switches["settings.speakerVisuals"]
+        let remembering = app.switches["settings.rememberSpeakers"]
         UITestHarness.scrollTo(visuals, in: app)
         XCTAssertTrue(visuals.waitForExistence(timeout: 6))
         XCTAssertTrue(remembering.exists)
+        XCTAssertEqual(visuals.label, "Identify speakers from meeting visuals")
+        XCTAssertEqual(remembering.label, "Remember speakers on this Mac")
         XCTAssertEqual(String(describing: visuals.value ?? ""), "0")
         XCTAssertEqual(String(describing: remembering.value ?? ""), "0")
         visuals.click()

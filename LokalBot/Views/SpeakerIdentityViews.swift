@@ -6,10 +6,12 @@ struct SpeakerIdentitySettingsControls: View {
 
     var body: some View {
         Toggle("Identify speakers from meeting visuals", isOn: $app.settings.identifySpeakersFromVisuals)
+            .accessibilityLabel("Identify speakers from meeting visuals")
             .accessibilityIdentifier("settings.speakerVisuals")
         Text("Applies to new recordings. Observes the foreground Google Meet tab in Chrome. Reliable matches name speakers automatically; uncertain matches stay as suggestions. Images are processed locally and are not saved. Applied names become part of your transcript and its configured summaries.")
             .font(.caption).foregroundStyle(.secondary)
         Toggle("Remember speakers on this Mac", isOn: $app.settings.rememberSpeakersOnMac)
+            .accessibilityLabel("Remember speakers on this Mac")
             .accessibilityIdentifier("settings.rememberSpeakers")
         Text("When you confirm a name, eligible voice samples can create an encrypted local profile for future Meet recordings. Automatic guesses never train profiles. You can choose This meeting only when naming a speaker.")
             .font(.caption).foregroundStyle(.secondary)
