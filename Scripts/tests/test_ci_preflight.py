@@ -171,11 +171,12 @@ sys.exit(int(os.environ.get('FAKE_TEST_EXIT', '0')))
         display = fake.with_name('swift')
         display.write_text('''#!/usr/bin/env python3
 import json, os, pathlib, sys
-assert sys.argv[1:] == ['Scripts/ci/prepare-display.swift']
+assert sys.argv[1:] in (['Scripts/ci/prepare-display.swift'], ['Scripts/ci/prepare-display.swift', '--verify-only'])
 assert pathlib.Path(sys.argv[1]).is_file()
 with open('.build/invocations.jsonl', 'a') as log:
     log.write(json.dumps(['swift'] + sys.argv[1:]) + '\\n')
-sys.exit(int(os.environ.get('FAKE_DISPLAY_EXIT', '0')))
+key = 'FAKE_DISPLAY_VERIFY_EXIT' if '--verify-only' in sys.argv else 'FAKE_DISPLAY_EXIT'
+sys.exit(int(os.environ.get(key, '0')))
 ''')
         display.chmod(0o755)
         self.env = dict(os.environ, PATH=f"{fake.parent}:{os.environ['PATH']}", CI="true",
@@ -217,6 +218,12 @@ sys.exit(int(os.environ.get('FAKE_DISPLAY_EXIT', '0')))
         result = self.run_script('--build-only', FAKE_DISPLAY_EXIT='63')
         self.assertEqual(result.returncode, 63, result.stdout)
         self.assertEqual(self.calls(), [['swift', 'Scripts/ci/prepare-display.swift']])
+
+    def test_reverted_display_stops_before_compilation(self):
+        result = self.run_script('--build-only', FAKE_DISPLAY_VERIFY_EXIT='64')
+        self.assertEqual(result.returncode, 64, result.stdout)
+        self.assertEqual(self.calls(), [['swift', 'Scripts/ci/prepare-display.swift'],
+                                        ['swift', 'Scripts/ci/prepare-display.swift', '--verify-only']])
 
     def test_stale_job_toolchain_and_dirty_inputs_are_rejected(self):
         self.build()

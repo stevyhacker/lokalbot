@@ -22,11 +22,23 @@ func prepareDisplay() throws {
     }
     print("Hosted display before preparation: \(CGDisplayBounds(display))")
     if hasRoom() { return }
+    if CommandLine.arguments.contains("--verify-only") {
+        throw NSError(domain: "HostedDisplay", code: 3, userInfo: [
+            NSLocalizedDescriptionKey: "The desktop reverted after display preparation exited."])
+    }
     let modes = CGDisplayCopyAllDisplayModes(display, nil) as? [CGDisplayMode] ?? []
     let suitable = modes.filter { $0.width >= 1600 && $0.height >= 1000 }
         .sorted { $0.width * $0.height < $1.width * $1.height }
     for mode in suitable {
-        let result = CGDisplaySetDisplayMode(display, mode, nil)
+        var configuration: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&configuration) == .success,
+              let configuration else { continue }
+        guard CGConfigureDisplayWithDisplayMode(configuration, display, mode, nil) == .success else {
+            CGCancelDisplayConfiguration(configuration)
+            continue
+        }
+        // App-only changes revert when this short-lived Swift process exits.
+        let result = CGCompleteDisplayConfiguration(configuration, .forSession)
         print("Requested \(mode.width)×\(mode.height): \(result.rawValue)")
         if result == .success, waitForRoom() { return }
     }

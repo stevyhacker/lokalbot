@@ -66,7 +66,7 @@ final class DictationSettingsUITests: XCTestCase {
         var picker = compositionModelPicker
         XCTAssertTrue(picker.waitForExistence(timeout: 6),
                       "Dictation composition model picker missing")
-        UITestHarness.scrollTo(picker, in: app)
+        UITestHarness.scrollTo(picker, in: app, within: app.scrollViews["models.content"])
         picker.click()
 
         let model = UITestHarness.staticText(containing: "Synthetic dictation model", in: app)
@@ -91,7 +91,7 @@ final class DictationSettingsUITests: XCTestCase {
         picker = compositionModelPicker
         XCTAssertTrue(picker.waitForExistence(timeout: 6),
                       "composition picker missing after relaunch")
-        UITestHarness.scrollTo(picker, in: app)
+        UITestHarness.scrollTo(picker, in: app, within: app.scrollViews["models.content"])
         XCTAssertTrue(UITestHarness.waitUntil {
             picker.label.contains("Synthetic dictation model")
         },
@@ -114,7 +114,7 @@ final class DictationSettingsUITests: XCTestCase {
         UITestHarness.clickSidebar("sidebar.settings", in: app)
         UITestHarness.selectSettingsCategory("Models", in: app)
         let composition = compositionModelPicker
-        UITestHarness.scrollTo(composition, in: app)
+        UITestHarness.scrollTo(composition, in: app, within: app.scrollViews["models.content"])
         XCTAssertTrue(composition.waitForExistence(timeout: 8),
                       "Models pane did not render Dictation composition")
     }

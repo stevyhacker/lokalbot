@@ -293,7 +293,7 @@ final class MainWindowUITests: XCTestCase {
         for change in ["models.stack.change.transcribe", "models.stack.change.think", "models.stack.change.type"] {
             let button = app.buttons[change]
             XCTAssertTrue(button.waitForExistence(timeout: 4), "\(change) button missing")
-            UITestHarness.scrollTo(button, in: app)
+            UITestHarness.scrollTo(button, in: app, within: app.scrollViews["models.content"])
             button.click()
             let cancel = app.buttons["models.picker.cancel"]
             XCTAssertTrue(cancel.waitForExistence(timeout: 4), "The focused model editor must open as a sheet")

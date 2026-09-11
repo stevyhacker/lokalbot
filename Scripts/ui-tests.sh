@@ -151,6 +151,7 @@ cd "$ROOT"
 
 if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
   swift Scripts/ci/prepare-display.swift
+  swift Scripts/ci/prepare-display.swift --verify-only
 fi
 
 ARGS=(

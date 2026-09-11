@@ -53,6 +53,7 @@ struct ModelsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 28).padding(.vertical, 18)
             }
+            .accessibilityIdentifier("models.content")
             ModelStorageFooter(app: app) { page.wrappedValue = .downloaded }
                 .padding(.horizontal, 28).padding(.vertical, 16)
                 .background(SettingsPalette.panel(colorScheme))

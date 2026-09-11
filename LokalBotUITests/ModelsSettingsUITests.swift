@@ -41,7 +41,7 @@ final class ModelsSettingsUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Main LLM engine"].exists)
 
         let consent = app.checkBoxes["models.remoteConsent"]
-        UITestHarness.scrollTo(consent, in: app)
+        UITestHarness.scrollTo(consent, in: app, within: app.scrollViews["models.content"])
         XCTAssertEqual(consent.value as? Int, 0, "Opening configuration must not grant consent")
         consent.click()
         XCTAssertTrue(UITestHarness.waitUntil { (consent.value as? Int) == 1 })
@@ -49,18 +49,18 @@ final class ModelsSettingsUITests: XCTestCase {
         XCTAssertTrue(UITestHarness.waitUntil { !server.exists })
         UITestHarness.selectSegment("Connections", pickerIdentifier: "models.pages", in: app)
         XCTAssertEqual(model.value as? String, "example/test-model", "Changing pages must preserve the saved model")
-        UITestHarness.scrollTo(consent, in: app)
+        UITestHarness.scrollTo(consent, in: app, within: app.scrollViews["models.content"])
         XCTAssertEqual(consent.value as? Int, 1, "Changing pages must preserve explicit consent")
 
-        UITestHarness.scrollTo(server, in: app)
+        UITestHarness.scrollTo(server, in: app, within: app.scrollViews["models.content"])
         server.click()
         server.typeKey("a", modifierFlags: .command)
         server.typeText("https://another.example/v1")
-        UITestHarness.scrollTo(consent, in: app)
+        UITestHarness.scrollTo(consent, in: app, within: app.scrollViews["models.content"])
         XCTAssertEqual(consent.value as? Int, 0, "Consent must remain scoped to the approved origin")
         XCTAssertEqual(model.value as? String, "example/test-model")
         let save = app.buttons["models.connection.save"]
-        UITestHarness.scrollTo(save, in: app)
+        UITestHarness.scrollTo(save, in: app, within: app.scrollViews["models.content"])
         XCTAssertTrue(save.isEnabled)
         save.click()
         UITestHarness.selectSegment("Active models", pickerIdentifier: "models.pages", in: app)
