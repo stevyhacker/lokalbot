@@ -313,7 +313,7 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(change.waitForExistence(timeout: 6), "Transcribe Change button missing")
         change.click()
 
-        app.disclosureTriangles["models.picker.advanced"].click()
+        app.buttons["models.picker.advanced"].click()
 
         let customize = app.buttons["models.granite.customize"]
         UITestHarness.scrollTo(customize, in: app, attempts: 4)

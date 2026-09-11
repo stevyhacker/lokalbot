@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct ModelPickerSheet: View {
     @ObservedObject var app: AppState
@@ -106,6 +107,12 @@ struct ModelPickerSheet: View {
         }
     }
 
+    private var preferredHeight: CGFloat {
+        let available = NSApp.keyWindow?.screen?.visibleFrame.height
+            ?? NSScreen.main?.visibleFrame.height ?? 750
+        return min(650, max(420, available - 100))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ModelSheetHeading(title: "\(role.title) model", subtitle: role.detail)
@@ -151,7 +158,7 @@ struct ModelPickerSheet: View {
             }
             .padding(20)
         }
-        .frame(width: 720, height: 650)
+        .frame(width: 720, height: preferredHeight)
         .controlSize(.regular)
         .sheet(isPresented: $showingImport) {
             ModelImportSheet { entry in
@@ -265,37 +272,51 @@ struct ModelPickerSheet: View {
                     Label(advisory, systemImage: "memorychip").font(.system(size: 12)).foregroundStyle(.orange)
                 }
             }
-            DisclosureGroup("Advanced", isExpanded: $showingAdvanced) {
-                VStack(alignment: .leading, spacing: 8) {
-                    if role == .transcription {
-                        HStack {
-                            Button("Language & vocabulary…") { showingTranscriptionOptions = true }
-                            Button("Custom Granite Speech…") { showingGranite = true }
-                                .accessibilityIdentifier("models.granite.customize")
-                        }
-                    } else {
-                        if let entry = selectedEntry {
-                            Text("Model ID: \(entry.id)").textSelection(.enabled)
-                            Text(entry.fileName).textSelection(.enabled)
-                            if entry.sizeGB.isFinite, entry.sizeGB > 0 {
-                                Text(String(format: "Estimated memory: %.1f GB. Actual use varies with context and runtime.",
-                                            entry.sizeGB * 1.3))
-                            } else {
-                                Text("Memory use varies with model size, context, and runtime.")
-                            }
-                        }
-                        if role != .autocomplete {
-                            Button("Browse Hugging Face…") { showingImport = true }
-                        }
-                    }
+            Button { showingAdvanced.toggle() } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: showingAdvanced ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold)).frame(width: 10)
+                        .accessibilityHidden(true)
+                    Text("Advanced")
                 }
-                .font(.system(size: 12)).foregroundStyle(.secondary).padding(.top, 8)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             .font(.system(size: 12))
+            .accessibilityLabel("Advanced")
+            .accessibilityValue(showingAdvanced ? "Expanded" : "Collapsed")
             .accessibilityIdentifier("models.picker.advanced")
+            if showingAdvanced { advancedOptions }
         }
         .padding(.horizontal, 24).padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var advancedOptions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if role == .transcription {
+                HStack {
+                    Button("Language & vocabulary…") { showingTranscriptionOptions = true }
+                    Button("Custom Granite Speech…") { showingGranite = true }
+                        .accessibilityIdentifier("models.granite.customize")
+                }
+            } else {
+                if let entry = selectedEntry {
+                    Text("Model ID: \(entry.id)").textSelection(.enabled)
+                    Text(entry.fileName).textSelection(.enabled)
+                    if entry.sizeGB.isFinite, entry.sizeGB > 0 {
+                        Text(String(format: "Estimated memory: %.1f GB. Actual use varies with context and runtime.",
+                                    entry.sizeGB * 1.3))
+                    } else {
+                        Text("Memory use varies with model size, context, and runtime.")
+                    }
+                }
+                if role != .autocomplete {
+                    Button("Browse Hugging Face…") { showingImport = true }
+                }
+            }
+        }
+        .font(.system(size: 12)).foregroundStyle(.secondary).padding(.top, 8)
     }
 
     private var providerSelection: some View {

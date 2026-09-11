@@ -11,9 +11,15 @@ final class DictationSettingsUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         fixture = try SyntheticFixture.plant()
+        let models = fixture.root.appendingPathComponent("models", isDirectory: true)
+        try FileManager.default.createDirectory(at: models, withIntermediateDirectories: true)
+        // Exercise the real preparation and digest checks without loading a
+        // model or downloading weights. This fixture is only used for selection.
+        try Data("GGUF".utf8).write(to: models.appendingPathComponent("ui-dictation.gguf"))
         let launch = try UITestHarness.launch(
             storageRoot: fixture.root,
-            suitePrefix: "DictationSettings")
+            suitePrefix: "DictationSettings",
+            settingsJSON: Self.fixtureSettings)
         app = launch.app
         defaultsSuiteName = launch.defaultsSuiteName
 
@@ -63,11 +69,14 @@ final class DictationSettingsUITests: XCTestCase {
         UITestHarness.scrollTo(picker, in: app)
         picker.click()
 
-        let qwen = app.menuItems["Qwen3.5 2B"]
-        XCTAssertTrue(qwen.waitForExistence(timeout: 4),
-                      "recommended low-latency Dictation model missing")
-        qwen.click()
-        XCTAssertTrue(UITestHarness.staticText(containing: "Qwen3.5 2B", in: app)
+        let model = UITestHarness.staticText(containing: "Synthetic dictation model", in: app)
+        XCTAssertTrue(model.waitForExistence(timeout: 4), "prepared Dictation model missing")
+        model.click()
+        let apply = app.buttons["models.picker.apply"]
+        XCTAssertTrue(apply.isEnabled, "A prepared model should be selectable")
+        apply.click()
+        XCTAssertTrue(UITestHarness.waitUntil { !apply.exists }, "Applying should close the model picker")
+        XCTAssertTrue(UITestHarness.staticText(containing: "Synthetic dictation model", in: app)
             .waitForExistence(timeout: 5),
             "Dictation composition card did not render the selected model")
 
@@ -82,7 +91,7 @@ final class DictationSettingsUITests: XCTestCase {
         XCTAssertTrue(picker.waitForExistence(timeout: 6),
                       "composition picker missing after relaunch")
         UITestHarness.scrollTo(picker, in: app)
-        XCTAssertTrue(UITestHarness.staticText(containing: "Qwen3.5 2B", in: app)
+        XCTAssertTrue(UITestHarness.staticText(containing: "Synthetic dictation model", in: app)
             .waitForExistence(timeout: 5),
             "dedicated Dictation composition model did not render after relaunch")
     }
@@ -91,12 +100,8 @@ final class DictationSettingsUITests: XCTestCase {
         app.descendants(matching: .any)["dictation.form"]
     }
 
-    private var masterToggle: XCUIElement {
-        app.descendants(matching: .any)["dictation.enabled"]
-    }
-
     private var compositionModelPicker: XCUIElement {
-        app.popUpButtons["models.dictationComposition"]
+        app.buttons["models.supporting.dictation"]
     }
 
     private func formText(containing fragment: String) -> XCUIElement {
@@ -105,11 +110,23 @@ final class DictationSettingsUITests: XCTestCase {
 
     private func openModels() {
         UITestHarness.clickSidebar("sidebar.settings", in: app)
-        UITestHarness.selectSegment(
-            "Models", pickerIdentifier: "settings.tab", in: app)
-        let composition = app.descendants(matching: .any)["models.dictationComposition"]
+        UITestHarness.selectSettingsCategory("Models", in: app)
+        let composition = compositionModelPicker
         UITestHarness.scrollTo(composition, in: app)
         XCTAssertTrue(composition.waitForExistence(timeout: 8),
                       "Models pane did not render Dictation composition")
     }
+
+    private static let fixtureSettings = """
+    {
+      "menuBarOnly": false, "trackingEnabled": true, "screenshotsEnabled": false,
+      "calendarDetectionEnabled": false, "semanticSearchEnabled": false, "cotypingEnabled": false,
+      "customBuiltInModels": [{
+        "id": "ui-dictation", "displayName": "Synthetic dictation model", "fileName": "ui-dictation.gguf",
+        "url": "https://example.invalid/ui-dictation.gguf", "sizeBytes": 4, "sizeGB": 0.000000004,
+        "sha256": "b83633aa785344791618f2fddf131b010ea04912a60430760b070bad293f65bd",
+        "blurb": "Selection-only test fixture", "disablesThinking": true
+      }]
+    }
+    """
 }

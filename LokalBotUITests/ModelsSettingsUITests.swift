@@ -9,6 +9,7 @@ final class ModelsSettingsUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
+        try HostedDisplay.prepareForModelLayouts()
         fixture = try SyntheticFixture.plant()
     }
 

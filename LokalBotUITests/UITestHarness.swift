@@ -215,12 +215,27 @@ enum UITestHarness {
         // Prefer the widest scroll view so a split-view sidebar is not moved
         // while the content Form remains stationary.
         let candidates = app.scrollViews.allElementsBoundByIndex
-        let scrollArea = candidates.max {
+        let identifier = element.exists ? element.identifier : ""
+        let owner = identifier.isEmpty ? nil : candidates.filter {
+            $0.descendants(matching: .any).matching(identifier: identifier).firstMatch.exists
+        }.min {
+            $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+        }
+        let scrollArea = owner ?? candidates.max {
             $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
         } ?? app.groups.firstMatch
         for _ in 0..<attempts {
-            if element.exists && element.isHittable { return }
-            scrollArea.scroll(byDeltaX: 0, deltaY: upward ? 300 : -300)
+            var scrollUp = upward
+            if element.exists {
+                let frame = element.frame
+                let visible = scrollArea.frame.insetBy(dx: 0, dy: 4)
+                let center = CGPoint(x: frame.midX, y: frame.midY)
+                // macOS can report a clipped SwiftUI row as hittable even
+                // when its click lands on the fixed footer below its viewport.
+                if element.isHittable && (owner == nil || visible.contains(center)) { return }
+                if owner != nil { scrollUp = frame.minY < visible.minY }
+            }
+            scrollArea.scroll(byDeltaX: 0, deltaY: scrollUp ? 300 : -300)
             usleep(120_000)
         }
     }
