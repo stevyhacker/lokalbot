@@ -5,6 +5,7 @@ import AppKit
 struct SettingsView: View {
     @EnvironmentObject var app: AppState
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.colorScheme) private var colorScheme
 
     @StateObject private var updates = AppUpdateManager.shared
     @State private var cliMessage: String?
@@ -19,26 +20,45 @@ struct SettingsView: View {
     var body: some View {
         HSplitView {
             VStack(alignment: .leading, spacing: 12) {
-                settingsSearchField.padding(12)
+                Text("Settings")
+                    .font(.system(size: 22, weight: .bold))
+                    .padding(.horizontal, 20)
+                    .padding(.top, 20)
+                settingsSearchField.padding(.horizontal, 14)
                 List(selection: Binding(get: { queryIsEmpty ? Optional(app.settingsTab) : nil }, set: {
                     if let category = $0 { app.settingsTab = category; settingsQuery = ""; app.focusedSettingID = nil }
                 })) {
                     ForEach(AppState.SettingsTab.allCases, id: \.self) { category in
-                        Text(category.displayName).tag(category)
+                        Label(category.displayName, systemImage: category.icon)
+                            .font(.system(size: 14))
+                            .padding(.vertical, 5)
+                            .tag(category)
                     }
                 }
                 .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+                .tint(SettingsPalette.accent(colorScheme))
                 .accessibilityLabel("Settings categories")
                 .accessibilityIdentifier("settings.categories")
+                HStack(spacing: 10) {
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable().frame(width: 30, height: 30)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("LokalBot").font(.system(size: 14, weight: .semibold))
+                        Text("Private work memory").font(.system(size: 12)).settingsSecondary()
+                    }
+                }
+                .padding(20)
             }
-            .frame(minWidth: 175, idealWidth: 190, maxWidth: 230)
+            .frame(minWidth: 205, idealWidth: 220, maxWidth: 250)
+            .background(SettingsPalette.navigation(colorScheme))
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Settings navigation")
             .splitPaneAccessibilityLabel("Settings navigation")
             VStack(alignment: .leading, spacing: 0) {
                 if !queryIsEmpty || app.settingsTab != .models {
                     settingsHeaderTitle.padding(20)
-                    Divider()
+                    SettingsSeparator()
                 }
                 if !queryIsEmpty {
                     searchResults
@@ -58,12 +78,14 @@ struct SettingsView: View {
                     }
                 }
             }.frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+                .background(SettingsPalette.canvas(colorScheme))
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel(queryIsEmpty ? app.settingsTab.displayName : "Search settings")
                 .splitPaneAccessibilityLabel(queryIsEmpty ? app.settingsTab.displayName : "Search settings")
         }
-        .frame(minWidth: 460)
-        .navigationTitle("Settings")
+        .frame(minWidth: 700, minHeight: 600)
+        .tint(SettingsPalette.accent(colorScheme))
+        .navigationTitle(queryIsEmpty ? app.settingsTab.displayName : "Search settings")
         .onAppear {
             power.start()
             permissions.startPolling()
@@ -115,7 +137,7 @@ struct SettingsView: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 36)
-        .workspaceControl()
+        .settingsPanel()
     }
 
     private var settingsTabSubtitle: String {

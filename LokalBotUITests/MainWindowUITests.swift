@@ -232,8 +232,8 @@ final class MainWindowUITests: XCTestCase {
     }
 
     /// Sidebar selection swaps the content column. Settings is the most
-    /// distinctive surface (rich form) — switching to it and back proves
-    /// `AppState.navSection` round-trips through the bound selection.
+    /// distinctive surface (rich form). It stays in the same main window and
+    /// the workspace sidebar can return directly to another destination.
     func testSidebarNavigationSwitchesSections() {
         clickSidebar("sidebar.settings")
         XCTAssertTrue(app.descendants(matching: .any)["settings.form"]
@@ -241,7 +241,8 @@ final class MainWindowUITests: XCTestCase {
                       "settings pane did not render")
         XCTAssertTrue(identified("settings.categories").exists,
                       "Settings category navigation missing")
-
+        XCTAssertEqual(app.windows.count, 1, "Settings must stay in the main window")
+        XCTAssertTrue(identified("sidebar.timeline").exists)
         clickSidebar("sidebar.timeline")
         XCTAssertTrue(app.descendants(matching: .any)["timeline.dayPicker"]
             .waitForExistence(timeout: 4),
@@ -270,44 +271,37 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(textWithContent("AI: on this Mac").firstMatch.exists)
     }
 
-    /// The Models tab of Settings (spec §2.5) renders its role cards —
-    /// Models is reached via Settings' tab strip, not its own sidebar entry.
+    /// The Models category presents compact role rows and focused editors.
     func testModelsSectionRendersRoleCards() {
         clickSidebar("sidebar.settings")
         UITestHarness.selectSettingsCategory("Models", in: app)
-        XCTAssertTrue(app.descendants(matching: .any)["models.readiness"]
+        XCTAssertTrue(app.descendants(matching: .any)["models.overview"]
             .waitForExistence(timeout: 6), "core readiness overview missing")
         XCTAssertTrue(app.descendants(matching: .any)["models.storage"].exists,
                       "model storage summary missing")
-        XCTAssertTrue(textWithContent("Core roles").firstMatch.exists)
+        XCTAssertTrue(textWithContent("Core models").firstMatch.exists)
         XCTAssertFalse(app.buttons["models.advanced"].exists,
                        "Models should not hide configuration behind Advanced details")
         XCTAssertTrue(app.buttons["models.stack.change.transcribe"]
             .waitForExistence(timeout: 6),
                       "Core Transcribe row did not render its Change button")
-        XCTAssertTrue(app.descendants(matching: .any)["models.dictationComposition"].exists,
+        XCTAssertTrue(app.descendants(matching: .any)["models.supporting.dictation"].exists,
                       "dictation composition model card identifier missing")
-        XCTAssertTrue(app.descendants(matching: .any)["models.embeddings"].exists,
+        XCTAssertTrue(app.descendants(matching: .any)["models.supporting.search"].exists,
                       "embeddings model card identifier missing")
 
-        for (change, card, role) in [("models.stack.change.transcribe", "models.transcription", "transcribe"),
-                                     ("models.stack.change.think", "models.summarization", "think"),
-                                     ("models.stack.change.type", "models.cotyping", "autocomplete")] {
+        for change in ["models.stack.change.transcribe", "models.stack.change.think", "models.stack.change.type"] {
             let button = app.buttons[change]
             XCTAssertTrue(button.waitForExistence(timeout: 4), "\(change) button missing")
-            XCTAssertEqual(button.label, "Configure…")
             UITestHarness.scrollTo(button, in: app)
             button.click()
-            XCTAssertTrue(app.descendants(matching: .any)[card]
-                .waitForExistence(timeout: 4),
-                          "\(card) did not expand from its Configure button")
-            let done = app.buttons["models.stack.done.\(role)"]
-            UITestHarness.scrollTo(done, in: app)
-            XCTAssertTrue(done.isHittable, "Inline editor must have a reachable Done button")
-            done.click()
+            let cancel = app.buttons["models.picker.cancel"]
+            XCTAssertTrue(cancel.waitForExistence(timeout: 4), "The focused model editor must open as a sheet")
+            XCTAssertTrue(cancel.isHittable, "The editor must have a reachable Cancel button")
+            cancel.click()
             XCTAssertTrue(UITestHarness.waitUntil {
-                !self.app.descendants(matching: .any)[card].exists
-            }, "Done should collapse only this role's editor")
+                !cancel.exists
+            }, "Cancel should close the model editor")
         }
     }
 
@@ -318,6 +312,8 @@ final class MainWindowUITests: XCTestCase {
         let change = app.buttons["models.stack.change.transcribe"]
         XCTAssertTrue(change.waitForExistence(timeout: 6), "Transcribe Change button missing")
         change.click()
+
+        app.disclosureTriangles["models.picker.advanced"].click()
 
         let customize = app.buttons["models.granite.customize"]
         UITestHarness.scrollTo(customize, in: app, attempts: 4)
@@ -337,13 +333,14 @@ final class MainWindowUITests: XCTestCase {
         clickSidebar("sidebar.settings")
         UITestHarness.selectSettingsCategory("Models", in: app)
 
-        let preset = app.buttons["models.preset.lightweight"]
+        let preset = app.buttons["models.choosePreset"]
         UITestHarness.scrollTo(preset, in: app)
-        XCTAssertTrue(preset.waitForExistence(timeout: 5), "Lightweight preset missing")
+        XCTAssertTrue(preset.waitForExistence(timeout: 5), "Choose preset button missing")
         preset.click()
-        XCTAssertTrue(app.buttons["Apply and stage downloads"]
+        XCTAssertTrue(app.buttons["models.preset.apply"]
             .waitForExistence(timeout: 4), "preset applied without a review step")
-        XCTAssertTrue(textWithContent("Estimated new GGUF download").firstMatch.exists)
+        XCTAssertTrue(textWithContent("Estimated new download").firstMatch.exists)
+        XCTAssertTrue(textWithContent("After applying").firstMatch.exists)
         let reviewSheet = app.sheets.firstMatch
         XCTAssertTrue(reviewSheet.waitForExistence(timeout: 4), "preset review sheet missing")
         reviewSheet.buttons["Cancel"].firstMatch.click()

@@ -101,7 +101,7 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertEqual(TranscriptionModelChoice.recommended, .qwenASR17B)
         XCTAssertEqual(AppSettings().transcriptionModel, .qwenASR17B)
         XCTAssertEqual(ModelStackPreset.recommended.transcription, .qwenASR17B)
-        XCTAssertTrue(ModelStackPreset.recommended.modelLine.hasPrefix("Qwen3-ASR 1.7B ·"))
+        XCTAssertEqual(ModelStackPreset.recommended.patch.transcription, .qwenASR17B)
     }
 
     func testGraniteSpeechModelIsRunnableChoice() {

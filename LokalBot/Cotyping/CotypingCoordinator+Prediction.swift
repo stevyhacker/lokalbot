@@ -529,7 +529,7 @@ extension CotypingCoordinator {
 
     /// Runs the real pipeline (prompt + model + normalizer) on synthetic text for
     /// the in-app preview playground. No Accessibility / Input Monitoring needed.
-    func previewSuggestion(precedingText: String, trailingText: String = "") async throws -> String {
+    func previewSuggestion(precedingText: String, trailingText: String = "", sampleOnly: Bool = false) async throws -> String {
         let settings = settingsProvider()
         var cfg = config
         cfg.maxResponseTokens = settings.cotypingMaxResponseTokens
@@ -538,14 +538,14 @@ extension CotypingCoordinator {
             appName: "LokalBot", bundleID: selfBundleID, processID: 0, role: "AXTextArea",
             precedingText: precedingText, trailingText: trailingText, selectionLength: 0,
             caretRect: .zero, isSecure: false, caretIsExact: false)
-        let learnedExamples = settings.cotypingUseLocalLearning
+        let learnedExamples = !sampleOnly && settings.cotypingUseLocalLearning
             ? learningStore.examples(
                 for: field,
                 limit: settings.cotypingLearningExamplesInPrompt)
             : []
         guard let request = CotypingRequestBuilder.build(
             field: field, config: cfg,
-            personalization: settings.cotypingPersonalization, generation: 0,
+            personalization: sampleOnly ? .none : settings.cotypingPersonalization, generation: 0,
             learnedExamples: learnedExamples,
             wordPrefixIsValidWord: wordPrefixIsValidWord(for: precedingText)) else {
             return ""

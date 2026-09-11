@@ -94,7 +94,7 @@ final class RedesignUITests: XCTestCase {
             "today": "today.dayDigest.text", "actions": "actions.search",
             "meeting": "meeting.audioPlayer", "transcript": "transcript.segment.0.text",
             "timeline": "timeline.workSessions", "search": "search.hit.\(fixture.designReview.id.uuidString).segment",
-            "ask": "ask.submit", "settings": "settings.retention", "models": "models.readiness",
+            "ask": "ask.submit", "settings": "settings.retention", "models": "models.overview",
             "dictation": "dictation.form", "agent": "agent.composer",
         ]
         if let identifier = anchors[route] {

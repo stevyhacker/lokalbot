@@ -216,6 +216,66 @@ final class ModelRolesTests: XCTestCase {
         XCTAssertEqual(readinessChanges, 1)
     }
 
+    func testPreparingDraftGraniteUsesItsConfigurationWithoutChangingActiveModel() async throws {
+        let storage = temporaryStorage()
+        defer { try? FileManager.default.removeItem(at: storage.rootURL) }
+        let settings = isolatedSettings(transcription: .parakeetV3)
+        var draft = settings
+        draft.transcriptionModel = .graniteSpeech
+        draft.graniteSpeechModel = try alternateGraniteConfiguration()
+        let gate = PreparationGate()
+        var preparedConfiguration: GraniteSpeechModelConfiguration?
+        let roles = ModelRoles(
+            settings: { settings }, storage: storage, downloads: ModelDownloadManager(),
+            prepareTranscription: { configuration, _, _ in
+                await gate.run()
+                preparedConfiguration = configuration.graniteSpeechModel
+            },
+            downloadedTranscriptionModels: { configuration in
+                preparedConfiguration == configuration.graniteSpeechModel ? [TranscriptionModelChoice.graniteSpeech.id] : []
+            }, onReadinessChanged: {})
+
+        let preparation = Task { try await roles.ensureTranscriptionAvailable(.graniteSpeech, configuration: draft) }
+        await gate.waitUntilStarted()
+        XCTAssertEqual(settings.transcriptionModel, .parakeetV3)
+        XCTAssertEqual(roles.snapshot[.transcribe], .unavailable)
+        await gate.release()
+        try await preparation.value
+
+        XCTAssertEqual(preparedConfiguration, draft.graniteSpeechModel)
+        XCTAssertFalse(roles.isPreparingTranscription)
+        XCTAssertEqual(settings.transcriptionModel, .parakeetV3)
+    }
+
+    func testCancelledPreparationRejectsFilesThatArriveAfterCancellation() async {
+        let storage = temporaryStorage()
+        defer { try? FileManager.default.removeItem(at: storage.rootURL) }
+        let settings = isolatedSettings(transcription: .parakeetV3)
+        let gate = PreparationGate()
+        var downloaded = false
+        let roles = ModelRoles(
+            settings: { settings }, storage: storage, downloads: ModelDownloadManager(),
+            prepareTranscription: { _, _, _ in
+                await gate.run()
+                downloaded = true // Simulate a backend that finishes despite cancellation.
+            },
+            downloadedTranscriptionModels: { _ in downloaded ? [TranscriptionModelChoice.qwenASR06B.id] : [] },
+            onReadinessChanged: {})
+        let preparation = Task { try await roles.ensureTranscriptionAvailable(.qwenASR06B, configuration: settings) }
+        await gate.waitUntilStarted()
+        roles.cancelTranscriptionPreparation(.qwenASR06B)
+        await gate.release()
+        do {
+            try await preparation.value
+            XCTFail("A cancelled download must not authorize activation")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertTrue(downloaded)
+        XCTAssertFalse(roles.isPreparingTranscription)
+        XCTAssertTrue(roles.transcriptionPreparations.isEmpty)
+    }
+
     private func makeSnapshot(
         statuses: [ModelRole: ModelRoleStatus]
     ) -> ModelRolesSnapshot {

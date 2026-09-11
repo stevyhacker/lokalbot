@@ -429,8 +429,7 @@ struct MenuBarView: View {
 
             Menu {
                 Button {
-                    app.navSection = .settings
-                    WindowAccess.shared.open("main")
+                    app.openSettings()
                 } label: {
                     Label("Settings", systemImage: "gearshape")
                 }

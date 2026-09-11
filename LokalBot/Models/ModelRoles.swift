@@ -119,7 +119,9 @@ final class ModelRoles: ObservableObject {
     private let downloadedTranscriptionModels: DownloadedTranscriptionModels
     private let onReadinessChanged: () -> Void
     private var downloadObserver: AnyCancellable?
-    private var preparationTask: (id: String, token: UUID, task: Task<Void, Never>)?
+    private var preparationTask: (
+        id: String, token: UUID, granite: GraniteSpeechModelConfiguration, task: Task<Void, Never>
+    )?
     private var storageInfo: (date: Date, storedBytes: Int64, availableBytes: Int64?)?
 
     init(
@@ -230,6 +232,7 @@ final class ModelRoles: ObservableObject {
     }
 
     func readinessDidChange() {
+        storageInfo = nil
         revision &+= 1
         onReadinessChanged()
     }
@@ -262,9 +265,9 @@ final class ModelRoles: ObservableObject {
         readinessDidChange()
     }
 
-    func prepareTranscriptionModel(_ choice: TranscriptionModelChoice) {
+    func prepareTranscriptionModel(_ choice: TranscriptionModelChoice, configuration: AppSettings? = nil) {
         guard preparationTask == nil else { return }
-        let configuration = settings()
+        let configuration = configuration ?? settings()
         let token = UUID()
         transcriptionErrors[choice.id] = nil
         transcriptionPreparations[choice.id] = .init(
@@ -283,7 +286,7 @@ final class ModelRoles: ObservableObject {
                 }
                 failure = nil
             } catch is CancellationError {
-                return
+                failure = "Preparation was cancelled. Retry when you are ready."
             } catch {
                 let displayName = choice == .graniteSpeech
                     ? configuration.graniteSpeechModel.displayName
@@ -296,7 +299,42 @@ final class ModelRoles: ObservableObject {
             self.transcriptionErrors[choice.id] = failure
             self.readinessDidChange()
         }
-        preparationTask = (choice.id, token, task)
+        preparationTask = (choice.id, token, configuration.graniteSpeechModel, task)
+    }
+
+    /// Selection sheets prepare against their draft, keeping the current
+    /// model and its settings intact until the replacement is available.
+    func ensureTranscriptionAvailable(_ choice: TranscriptionModelChoice, configuration: AppSettings) async throws {
+        if downloadedTranscriptionModels(configuration).contains(choice.id), transcriptionErrors[choice.id] == nil {
+            return
+        }
+        if let preparationTask,
+           preparationTask.id != choice.id
+            || (choice == .graniteSpeech && preparationTask.granite != configuration.graniteSpeechModel) {
+            throw ModelDownloadManager.PreparationError.failed(
+                "Another transcription model is preparing. Wait for it to finish or cancel it in Downloaded.")
+        }
+        prepareTranscriptionModel(choice, configuration: configuration)
+        if let preparationTask {
+            await preparationTask.task.value
+            // Some backends finish their file writes after cancellation. That
+            // completion must not turn a cancelled download into an activation.
+            guard !preparationTask.task.isCancelled else { throw CancellationError() }
+        }
+        try Task.checkCancellation()
+        if let error = transcriptionErrors[choice.id] {
+            throw ModelDownloadManager.PreparationError.failed(error)
+        }
+        guard downloadedTranscriptionModels(configuration).contains(choice.id) else {
+            throw ModelDownloadManager.PreparationError.failed(
+                "The transcription model is not available yet. Retry its download.")
+        }
+    }
+
+    func cancelTranscriptionPreparation(_ choice: TranscriptionModelChoice) {
+        guard preparationTask?.id == choice.id else { return }
+        cancelPreparation()
+        readinessDidChange()
     }
 
     func deleteTranscriptionModel(_ choice: TranscriptionModelChoice) {

@@ -98,6 +98,25 @@ final class CotypingCoordinatorTests: XCTestCase {
                       "a blank-before-caret field must never hit the model")
     }
 
+    func testSetupCheckUsesSampleTextWithoutPersonalization() async throws {
+        settings.cotypingUserName = "PRIVATE TEST NAME"
+        settings.cotypingStyleNote = "PRIVATE STYLE NOTE"
+        settings.cotypingExtendedContext = "PRIVATE VOCABULARY"
+        let coordinator = makeCoordinator()
+
+        _ = try await coordinator.previewSuggestion(precedingText: "The local model setup is", sampleOnly: true)
+        let sample = try XCTUnwrap(engine.requests.last)
+        XCTAssertTrue(sample.prompt.contains("The local model setup is"))
+        XCTAssertFalse(sample.prompt.contains("PRIVATE TEST NAME"))
+        XCTAssertFalse(sample.prompt.contains("PRIVATE STYLE NOTE"))
+        XCTAssertFalse(sample.prompt.contains("PRIVATE VOCABULARY"))
+
+        _ = try await coordinator.previewSuggestion(precedingText: "The local model setup is")
+        let personalized = try XCTUnwrap(engine.requests.last)
+        XCTAssertTrue(personalized.prompt.contains("PRIVATE TEST NAME"))
+        XCTAssertTrue(personalized.prompt.contains("PRIVATE VOCABULARY"))
+    }
+
     func testPreviewSuggestionPropagatesEngineFailure() async {
         engine.result = .failure(EngineBoom())
 

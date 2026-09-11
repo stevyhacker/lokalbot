@@ -63,6 +63,18 @@ final class AppState: ObservableObject {
             }
         }
 
+        var icon: String {
+            switch self {
+            case .general: "gearshape"
+            case .recording: "person.2"
+            case .dayMemory: "calendar.day.timeline.left"
+            case .writing: "pencil"
+            case .models: "shippingbox"
+            case .privacy: "lock"
+            case .advanced: "slider.horizontal.3"
+            }
+        }
+
         /// Legacy capture names select their tab; the pre-merge "models"
         /// section name lands on the Models tab.
         init?(captureName: String) {
@@ -243,7 +255,10 @@ final class AppState: ObservableObject {
     @Published var typeTab: TypeTab = .dictation {
         didSet { Self.navigationDefaults.set(typeTab.rawValue, forKey: Self.typeTabDefaultsKey) }
     }
-    @Published var settingsTab: SettingsTab = .general
+    private static let settingsTabDefaultsKey = "lokalbotv3.settings.selectedTab"
+    @Published var settingsTab: SettingsTab = .general {
+        didSet { Self.navigationDefaults.set(settingsTab.rawValue, forKey: Self.settingsTabDefaultsKey) }
+    }
     @Published var focusedSettingID: String?
     /// Ask's retrieval choice survives NavigationSplitView remounts while the
     /// app is running. Explicit handoffs and conversation selections still
@@ -269,10 +284,13 @@ final class AppState: ObservableObject {
         navSection = .type
     }
 
-    /// Navigate to Settings with a specific tab preselected.
-    func openSettings(tab: SettingsTab) {
-        settingsTab = tab
+    /// Open Settings as a destination inside the existing main window.
+    func openSettings(tab: SettingsTab? = nil) {
+        if let tab { settingsTab = tab }
+        focusedSettingID = nil
+        evidenceReturnSection = nil
         navSection = .settings
+        WindowAccess.shared.open("main")
     }
 
     /// Navigate to the Ask section, optionally pre-filling the query and/or
@@ -467,6 +485,40 @@ final class AppState: ObservableObject {
         onReadinessChanged: { [weak self] in
             self?.processMeetingsWaitingForModels()
         })
+
+    private(set) lazy var modelSetup = ModelSetupController(
+        settings: { [weak self] in self?.settings ?? AppSettings() },
+        update: { [weak self] in self?.settings = $0 },
+        prepare: { [weak self] patch, current in
+            guard let self else { throw CancellationError() }
+            let target = patch.applying(to: current)
+            for id in patch.localModelIDs(in: current) {
+                guard let entry = ModelCatalog.entry(id: id, custom: target.customBuiltInModels) else {
+                    throw ModelDownloadManager.PreparationError.failed("This model is no longer in the catalog. Choose another model.")
+                }
+                _ = try await ModelDownloadManager.shared.ensureAvailable(entry, storage: self.storage)
+            }
+            if let transcription = patch.transcription {
+                try await self.modelRoles.ensureTranscriptionAvailable(transcription, configuration: target)
+            }
+            if patch.backend == .appleIntelligence {
+                let availability = FoundationModelAvailability.current()
+                guard availability.isAvailable else {
+                    throw ModelDownloadManager.PreparationError.failed(availability.reason ?? "Apple Intelligence is unavailable.")
+                }
+            }
+            for id in patch.localModelIDs(in: current) {
+                guard let entry = ModelCatalog.entry(id: id, custom: target.customBuiltInModels),
+                      ModelCatalog.localURL(for: entry, storage: self.storage) != nil else {
+                    throw ModelDownloadManager.PreparationError.failed(
+                        "A prepared model is no longer on disk. Download it again before switching.")
+                }
+            }
+            self.modelRoles.readinessDidChange()
+        })
+
+    let modelChecks = ModelCheckController()
+    private(set) lazy var speechModelDownload = ModelSpeechDownloadController()
     /// One Day Digest lifecycle for manual, scheduled, and headless callers.
     /// It owns evidence collection, journal state, freshness, and repair policy.
     private(set) lazy var dayDigest = DayDigestLifecycle(
@@ -702,6 +754,10 @@ final class AppState: ObservableObject {
     init() {
         AppLog.bootstrap()
         settings = settingsStore.current
+        if let raw = Self.navigationDefaults.string(forKey: Self.settingsTabDefaultsKey),
+           let stored = SettingsTab(rawValue: raw) {
+            settingsTab = stored
+        }
         if let raw = Self.navigationDefaults.string(forKey: Self.typeTabDefaultsKey),
            let stored = TypeTab(rawValue: raw) {
             typeTab = stored

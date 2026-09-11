@@ -1,1000 +1,186 @@
 import SwiftUI
-import AppKit
 
-/// The Models tab of Settings (spec §2.5). The core model overview owns the
-/// per-role Configure buttons and expands each role's configuration in place;
-/// supporting model controls remain directly available below. Downloads come
-/// from the local catalog or Hugging Face.
 struct ModelsView: View {
     @EnvironmentObject var app: AppState
+    @Environment(\.colorScheme) private var colorScheme
+    @SceneStorage("settings.models.page") private var pageValue = ModelsSettingsPage.active.rawValue
+    @State private var sheet: ModelsSettingsSheet?
 
-    @State private var ollamaModels: [String] = []
-    @State private var ollamaReachable = false
-    @State private var testResult: String?
-    @State private var testFailure: GenerationTestFailurePresentation?
-    @State private var showingTestFailure = false
-    @State private var testing = false
-    @State private var speechModelDownloaded = false
-    @State private var preparingSpeechModel = false
-    @State private var speechModelError: String?
-    @State private var speechModelStatus: String?
-    @State private var speechModelProgress: Double?
-    @StateObject private var hfSearch = HuggingFaceSearchService()
-    @State private var showingHFBrowse = false
-    @State private var showingGraniteModelPicker = false
-    @State private var hfSelectedModel: String?
-    @State private var hfFiles: [HFFile] = []
-    @State private var openAIAPIKeyDraft = ""
-    @State private var openAIAPIKeySavedValue = ""
-    @State private var didLoadOpenAIAPIKey = false
-    @State private var openAIAPIKeySaved = false
-    @State private var editingOpenAIAPIKey = false
-    @State private var apiKeySaveError: String?
-    @State private var expandedRoles: Set<ModelRole> = []
-    @State private var modelTestResults: [ModelRole: ModelTestResult] = [:]
-    @State private var smokeTesting = false
-    @State private var confirmingOpenRouterAccountPolicy = false
+    private var page: Binding<ModelsSettingsPage> {
+        Binding(get: { ModelsSettingsPage(rawValue: pageValue) ?? .active }, set: { pageValue = $0.rawValue })
+    }
 
     var body: some View {
-        ScrollViewReader { proxy in
-        ScrollView {
-            VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
-                ModelStackOverviewView(expandedRoles: $expandedRoles, testResults: $modelTestResults,
-                                       smokeTesting: $smokeTesting, generationTesting: testing) { role in
-                    switch role {
-                    case .transcribe:
-                        transcriptionCard.settingTarget("settings.transcriptionModel", selected: app.focusedSettingID)
-                    case .think:
-                        summarizationCard
-                    case .autocomplete:
-                        cotypingCard.settingTarget("settings.cotypingBuiltInModelID", selected: app.focusedSettingID)
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Models").font(.system(size: 26, weight: .bold)).tracking(-0.5)
+                        Text("Choose what powers LokalBot.").font(.system(size: 14)).settingsSecondary()
                     }
-                }
-                ModelMemoryBanner()
-                dictationCompositionCard
-                speechCard
-                embeddingsCard
-            }
-            .padding(WorkspaceMetric.pagePadding)
-            .frame(maxWidth: 1000, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-        }
-        .onChange(of: app.focusedSettingID, initial: true) {
-            guard let id = app.focusedSettingID else { return }
-            if ["settings.transcriptionModel", "settings.transcriptionLanguage", "settings.transcriptionPrompt"].contains(id) {
-                expandedRoles.insert(.transcribe)
-            } else if id == "settings.cotypingBuiltInModelID" {
-                expandedRoles.insert(.autocomplete)
-            } else if id != "settings.models" {
-                expandedRoles.insert(.think)
-            }
-            DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
-        }
-        }
-        .task {
-            refreshSpeechModel()
-            await refreshOllama()
-        }
-        .onAppear {
-            refreshSpeechModel()
-            if !didLoadOpenAIAPIKey {
-                let savedKey = app.settings.openAIAPIKey
-                openAIAPIKeyDraft = savedKey
-                openAIAPIKeySavedValue = savedKey
-                didLoadOpenAIAPIKey = true
-            }
-        }
-        .onChange(of: app.settings) {
-            modelTestResults = [:]
-            testResult = nil
-            testFailure = nil
-            showingTestFailure = false
-        }
-        .sheet(isPresented: $showingHFBrowse) { huggingFaceBrowser }
-        .sheet(isPresented: $showingGraniteModelPicker) {
-            GraniteSpeechModelPicker(selection: graniteSpeechModelBinding)
-        }
-    }
-
-    // MARK: - Cards
-
-    /// Live model-memory line fed by `ModelResidency`: which weights are
-    /// resident right now, their approximate RAM, and the eviction budget.
-    private struct ModelMemoryBanner: View {
-        @ObservedObject private var residency = ModelResidency.shared
-
-        var body: some View {
-            HStack(spacing: 8) {
-                Image(systemName: "memorychip")
-                    .foregroundStyle(.tint)
-                if residency.residents.isEmpty {
-                    Text("No local models are using memory. Models load when needed; "
-                        + "above \(gigabytes(residency.budgetBytes)), LokalBot unloads "
-                        + "the model that has been idle longest.")
-                } else {
-                    Text("Local models in memory: **\(gigabytes(residency.totalBytes))** of "
-                        + "\(gigabytes(residency.budgetBytes)) budget — "
-                        + residency.residents.map(\.label).joined(separator: ", "))
-                }
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary.opacity(0.4),
-                        in: RoundedRectangle(cornerRadius: Brand.Radius.row))
-            .accessibilityIdentifier("models.residency")
-        }
-
-        private func gigabytes(_ bytes: Int64) -> String {
-            String(format: "%.1f GB", Double(bytes) / 1_073_741_824)
-        }
-    }
-
-    private var transcriptionCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(visibleTranscriptionChoices) { choice in
-                let status = app.modelRoles.transcriptionStatus(for: choice)
-                TranscriptionModelRow(
-                    choice: choice,
-                    displayName: transcriptionDisplayName(for: choice),
-                    blurb: transcriptionBlurb(for: choice),
-                    preparing: status.isWorking,
-                    prepareDisabled: app.modelRoles.isPreparingTranscription,
-                    downloaded: app.modelRoles.downloadedTranscriptionModelIDs.contains(choice.id),
-                    ready: status.isReady,
-                    error: status.errorMessage,
-                    progress: status.progress,
-                    status: status.isWorking ? status.label : nil
-                ) {
-                    app.modelRoles.prepareTranscriptionModel(choice)
-                } delete: {
-                    app.modelRoles.deleteTranscriptionModel(choice)
-                } configure: {
-                    showingGraniteModelPicker = true
-                }
-            }
-            Divider()
-            Picker("Language", selection: $app.settings.transcriptionLanguage) {
-                ForEach(TranscriptionLanguage.allCases) { language in
-                    Text(language.displayName).tag(language)
-                }
-            }
-            .frame(maxWidth: 320)
-            .disabled(app.settings.transcriptionModel == .graniteTurbo)
-            .settingTarget("settings.transcriptionLanguage", selected: app.focusedSettingID)
-            TextField(
-                "Names, acronyms, and domain vocabulary",
-                text: $app.settings.transcriptionPrompt,
-                axis: .vertical)
-                .lineLimit(2...4)
-                .textFieldStyle(.roundedBorder)
-                .disabled(app.settings.transcriptionModel == .graniteTurbo)
-                .accessibilityIdentifier("models.transcriptionPrompt")
-                .settingTarget("settings.transcriptionPrompt", selected: app.focusedSettingID)
-            Text("Optional context for Whisper and Qwen3-ASR, such as participant names, product terms, and preferred spelling. It stays on this Mac.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text("Runs fully on-device with Core ML, MLX, ONNX, or llama.cpp. Models fetch from Hugging Face on first use — or use Download to cache and warm one up.")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("models.transcription")
-    }
-
-    /// Legacy choices are hidden unless this install already uses them
-    /// (selected or downloaded) — existing users keep their model and the
-    /// Delete button; new users never see the superseded option.
-    private var visibleTranscriptionChoices: [TranscriptionModelChoice] {
-        let visible = TranscriptionModelChoice.allCases.filter { choice in
-            !choice.isLegacy
-                || choice == app.settings.transcriptionModel
-                || app.modelRoles.downloadedTranscriptionModelIDs.contains(choice.id)
-        }
-        // The recommended engine is the most common thing to change and owns
-        // the custom Hugging Face action, so keep it above the alternatives.
-        return [TranscriptionModelChoice.recommended]
-            + visible.filter { $0 != TranscriptionModelChoice.recommended }
-    }
-
-    private var graniteSpeechModelBinding: Binding<GraniteSpeechModelConfiguration> {
-        Binding(
-            get: { app.settings.graniteSpeechModel },
-            set: { configuration in
-                app.settings.graniteSpeechModel = configuration
-                app.settings.transcriptionModel = .graniteSpeech
-            })
-    }
-
-    private func transcriptionDisplayName(for choice: TranscriptionModelChoice) -> String {
-        choice == .graniteSpeech
-            ? app.settings.graniteSpeechModel.displayName
-            : choice.displayName
-    }
-
-    private func transcriptionBlurb(for choice: TranscriptionModelChoice) -> String {
-        choice == .graniteSpeech
-            ? app.settings.graniteSpeechModel.downloadDescription
-                + " · local speech recognition"
-            : choice.blurb
-    }
-
-    private var summarizationCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Picker("Provider", selection: $app.settings.summarizerBackend) {
-                ForEach(AppSettings.SummarizerBackend.allCases) { backend in
-                    Text(backend.displayName).tag(backend)
-                }
-            }
-            .settingTarget("settings.summarizerBackend", selected: app.focusedSettingID)
-            switch app.settings.summarizerBackend {
-            case .builtIn:
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(ModelCatalog.selectableEntries(custom: app.settings.customBuiltInModels)) { entry in
-                        ModelCatalogRow(
-                            entry: entry,
-                            selectedModelID: $app.settings.builtInModelID,
-                            recommendedLabel: entry.id == ModelCatalog.recommendedSummarizationID
-                                ? "RECOMMENDED SUMMARY" : nil)
-                    }
-                    Button("Browse Hugging Face…") { showingHFBrowse = true }
-                        .controlSize(.small)
-                    Text("Runs entirely on this Mac with Metal acceleration. The selected model downloads on first use; Download lets you prepare it earlier.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            case .appleIntelligence:
-                let availability = FoundationModelAvailability.current()
-                LabeledContent("Status") {
-                    HStack(spacing: 6) {
-                        Circle().fill(availability.isAvailable ? .green : .orange)
-                            .frame(width: 8, height: 8)
-                        Text(availability.isAvailable
-                             ? "Available — Apple's on-device model."
-                             : (availability.reason ?? "Unavailable"))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Text("Uses Apple Intelligence (macOS 26+). No model download; nothing leaves your Mac.")
-                    .font(.caption).foregroundStyle(.secondary)
-            case .ollama:
-                modelField("Server URL") {
-                    TextField("Server URL", text: $app.settings.ollamaBaseURL)
-                        .settingTarget("settings.ollamaBaseURL", selected: app.focusedSettingID)
-                }
-                remoteEndpointDisclosure(rawURL: app.settings.ollamaBaseURL)
-                LabeledContent("Status") {
-                    HStack(spacing: 6) {
-                        StatusDot(color: ollamaReachable ? .green : .red)
-                        Text(ollamaReachable
-                             ? "Running · \(ollamaModels.count) model\(ollamaModels.count == 1 ? "" : "s")"
-                             : "Not reachable — start with `ollama serve`")
-                            .foregroundStyle(.secondary)
-                        Button("Refresh") { Task { await refreshOllama() } }
-                            .controlSize(.small)
-                    }
-                }
-                if !ollamaModels.isEmpty {
-                    Picker("Model", selection: $app.settings.ollamaModel) {
-                        Text("— pick a model —").tag("")
-                        ForEach(ollamaModels, id: \.self) { Text($0).tag($0) }
-                    }
-                }
-            case .openAICompatible:
-                modelField("Server URL") {
-                    TextField("https://example.com/v1", text: $app.settings.openAIBaseURL)
-                        .accessibilityLabel("Server URL")
-                        .accessibilityIdentifier("models.serverURL")
-                        .settingTarget("settings.openAIBaseURL", selected: app.focusedSettingID)
-                }
-                modelField("Model ID") {
-                    TextField("Provider model identifier", text: $app.settings.openAIModel)
-                        .accessibilityLabel("Model ID")
-                        .accessibilityIdentifier("models.modelID")
-                        .settingTarget("settings.openAIModel", selected: app.focusedSettingID)
-                }
-                apiKeyControl
-                remoteEndpointDisclosure(rawURL: app.settings.openAIBaseURL)
-            }
-
-            HStack(spacing: 8) {
-                Button(testing ? "Testing…" : "Test generation") {
-                    Task { await testGeneration() }
-                }
-                .disabled(testing || smokeTesting)
-                .accessibilityIdentifier("models.generationTest")
-                .popover(isPresented: $showingTestFailure, arrowEdge: .bottom) {
-                    if let testFailure {
-                        GenerationTestFailurePopover(failure: testFailure)
-                    }
-                }
-                if let testResult {
-                    Text(testResult).font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                if let testFailure {
-                    Button {
-                        showingTestFailure = true
-                    } label: {
-                        Label(testFailure.inlineTitle,
-                              systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Brand.error)
-                    .help("View the error and recovery steps")
-                    .accessibilityIdentifier("models.generationTest.issue")
-                }
-            }
-        }
-        .controlSize(.regular)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("models.summarization")
-    }
-
-    private func modelField<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(WorkspaceTypography.control)
-            content().textFieldStyle(.roundedBorder)
-        }
-    }
-
-    private var apiKeyControl: some View {
-        modelField("API key") {
-            if !openAIAPIKeySavedValue.isEmpty && !editingOpenAIAPIKey {
-                HStack {
-                    Label("Saved in Keychain", systemImage: "key")
-                        .foregroundStyle(.secondary)
                     Spacer()
-                    Button("Replace…") {
-                        openAIAPIKeyDraft = ""
-                        apiKeySaveError = nil
-                        editingOpenAIAPIKey = true
-                    }
-                    .accessibilityIdentifier("models.apiKey.replace")
+                    Button("Check setup…") { sheet = .checks }
+                        .buttonStyle(SettingsActionButtonStyle(prominent: true))
+                        .accessibilityIdentifier("models.testAll")
                 }
-            } else {
-                HStack(spacing: 8) {
-                    SecureField("API key (optional)", text: $openAIAPIKeyDraft)
-                        .accessibilityIdentifier("models.apiKey")
-                        .onChange(of: openAIAPIKeyDraft) { openAIAPIKeySaved = false }
-                    Button("Save key") {
-                        app.settings.openAIAPIKey = openAIAPIKeyDraft
-                        // Only acknowledge persistence after reading back from Keychain.
-                        openAIAPIKeySavedValue = app.settings.openAIAPIKey
-                        openAIAPIKeySaved = openAIAPIKeySavedValue == openAIAPIKeyDraft
-                        if openAIAPIKeySaved { editingOpenAIAPIKey = false }
-                        apiKeySaveError = openAIAPIKeySaved ? nil : "Couldn’t save the key to Keychain. Try again."
-                        modelTestResults = [:]
-                        testResult = nil
-                        testFailure = nil
-                    }
-                    .disabled(openAIAPIKeyDraft == openAIAPIKeySavedValue)
-                    .accessibilityIdentifier("models.apiKey.save")
-                    if editingOpenAIAPIKey {
-                        Button("Cancel") {
-                            openAIAPIKeyDraft = openAIAPIKeySavedValue
-                            editingOpenAIAPIKey = false
-                            apiKeySaveError = nil
-                        }
+                Picker("Models view", selection: page) {
+                    ForEach(ModelsSettingsPage.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 480)
+                .accessibilityIdentifier("models.pages")
+            }
+            .padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 20)
+            .background(SettingsPalette.panel(colorScheme))
+
+            SettingsSeparator()
+            ModelSetupFeedback(controller: app.modelSetup)
+                .padding(.horizontal, 28)
+
+            ScrollView {
+                Group {
+                    switch page.wrappedValue {
+                    case .active:
+                        ModelStackOverviewView(app: app, present: { sheet = $0 }, connections: showConnections)
+                    case .downloaded:
+                        ModelDownloadsView(app: app)
+                    case .connections:
+                        ModelConnectionsView(app: app)
                     }
                 }
-                Text("Stored in Keychain only when you choose Save key. Leave empty for a server that needs no key.")
-                    .workspaceTextRole(.supporting)
-            }
-            if let apiKeySaveError {
-                Text(apiKeySaveError).workspaceTextRole(.warning)
-            }
-        }
-    }
-
-    private var dictationCompositionCard: some View {
-        ModelCard(
-            icon: "text.bubble",
-            title: "Dictation composition",
-            subtitle: "Compose and rewrite spoken requests before insertion"
-        ) {
-            Picker(
-                "Composition model",
-                selection: $app.settings.dictationCompositionBuiltInModelID
-            ) {
-                Text("Use Main LLM setting").tag("")
-                ForEach(ModelCatalog.selectableEntries(
-                    custom: app.settings.customBuiltInModels
-                )) { entry in
-                    Text(entry.displayName).tag(entry.id)
-                }
-            }
-            .frame(maxWidth: 380)
-
-            if let entry = selectedDictationCompositionEntry {
-                ModelCatalogRow(
-                    entry: entry,
-                    selectedModelID: $app.settings.dictationCompositionBuiltInModelID,
-                    recommendedLabel: entry.id == "qwen3.5-2b" ? "FAST" : nil)
-            }
-
-            Text("Use Main LLM preserves the current behavior. Choose a smaller built-in model to keep dictation composition responsive without changing the model used for summaries, Ask, or Agent Mode. Qwen3.5 2B or 4B are good low-latency options; the transcription model is unchanged.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .accessibilityIdentifier("models.dictationComposition")
-    }
-
-    private var selectedDictationCompositionEntry: ModelCatalog.Entry? {
-        let id = app.settings.dictationCompositionBuiltInModelID
-        guard !id.isEmpty else { return nil }
-        return ModelCatalog.entry(id: id, custom: app.settings.customBuiltInModels)
-    }
-
-    @ViewBuilder
-    private func remoteEndpointDisclosure(rawURL: String) -> some View {
-        if let url = URL(string: rawURL), InferenceEndpointPolicy.requiresApproval(url),
-           let origin = InferenceEndpointPolicy.origin(for: url) {
-            if url.scheme?.lowercased() != "https" {
-                Label("Blocked: remote inference must use HTTPS so transcripts and screen text are encrypted in transit.",
-                      systemImage: "lock.slash.fill")
-                    .workspaceTextRole(.warning)
-                    .padding(14)
-                    .background(.red.opacity(0.08),
-                                in: RoundedRectangle(cornerRadius: Brand.Radius.row))
-            } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("Data sent to \(url.host ?? origin)", systemImage: "network")
-                        .font(WorkspaceTypography.rowTitle)
-                    Text("Think may send meeting transcripts, screen text, and Agent context to this server when you use those features.")
-                        .workspaceTextRole(.trust)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Toggle("Allow sending context to \(origin)",
-                           isOn: remoteApprovalBinding(rawURL: rawURL))
-                        .font(WorkspaceTypography.editorialBody)
-                        .accessibilityIdentifier("models.remoteConsent")
-                    if app.settings.summarizerBackend == .openAICompatible && isOpenRouterEndpoint {
-                        Divider()
-                        openRouterDataPolicyControl
-                    }
-                }
-                .padding(14)
+                .frame(maxWidth: 1000, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.3),
-                            in: RoundedRectangle(cornerRadius: Brand.Radius.row))
+                .padding(.horizontal, 28).padding(.vertical, 18)
             }
-        } else if let url = URL(string: rawURL), InferenceEndpointPolicy.isLoopback(url) {
-            Label("Loopback server: inference context stays on this Mac.",
-                  systemImage: "checkmark.shield.fill")
-                .font(WorkspaceTypography.editorialBody)
-                .foregroundStyle(.secondary)
+            ModelStorageFooter(app: app) { page.wrappedValue = .downloaded }
+                .padding(.horizontal, 28).padding(.vertical, 16)
+                .background(SettingsPalette.panel(colorScheme))
+                .overlay(alignment: .top) { SettingsSeparator() }
         }
-    }
-
-    private func remoteApprovalBinding(rawURL: String) -> Binding<Bool> {
-        Binding {
-            guard let url = URL(string: rawURL),
-                  let origin = InferenceEndpointPolicy.origin(for: url) else { return false }
-            return app.settings.approvedRemoteInferenceOrigins.contains(origin)
-        } set: { approved in
-            guard let url = URL(string: rawURL),
-                  let origin = InferenceEndpointPolicy.origin(for: url) else { return }
-            app.settings.approvedRemoteInferenceOrigins.removeAll { $0 == origin }
-            if approved {
-                app.settings.approvedRemoteInferenceOrigins.append(origin)
-            }
-        }
-    }
-
-    private var isOpenRouterEndpoint: Bool {
-        guard let url = URL(string: app.settings.openAIBaseURL) else { return false }
-        return ChatCompletionDialect.inferred(from: url) == .openRouter
-    }
-
-    private var openRouterDataPolicyControl: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Provider data use")
-                .font(WorkspaceTypography.control)
-            Picker("Provider data use", selection: openRouterDataPolicyBinding) {
-                Text("Private endpoints only (Recommended)")
-                    .tag(OpenRouterDataPolicy.privateOnly)
-                Text("Follow my OpenRouter privacy settings")
-                    .tag(OpenRouterDataPolicy.accountPolicy)
-            }
-            .labelsHidden()
-            .pickerStyle(.radioGroup)
-            .accessibilityIdentifier("models.openRouterDataPolicy")
-
-            Text(openRouterDataPolicyDetail)
-                .workspaceTextRole(.supporting)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .alert(
-            "Follow your OpenRouter privacy policy?",
-            isPresented: $confirmingOpenRouterAccountPolicy
-        ) {
-            Button("Follow OpenRouter Policy") {
-                app.settings.openRouterDataPolicy = .accountPolicy
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Approved meeting transcripts, screen text, and Agent context may be sent "
-                + "to providers that retain requests or use them for training. LokalBot "
-                + "cannot verify the OpenRouter policy attached to this account, API key, "
-                + "workspace, or guardrail.")
-        }
-    }
-
-    private var openRouterDataPolicyBinding: Binding<OpenRouterDataPolicy> {
-        Binding {
-            app.settings.openRouterDataPolicy
-        } set: { policy in
-            if policy == .accountPolicy,
-               app.settings.openRouterDataPolicy != .accountPolicy {
-                confirmingOpenRouterAccountPolicy = true
+        .background(SettingsPalette.canvas(colorScheme))
+        .controlSize(.regular)
+        .onChange(of: app.settings, initial: true) { app.modelChecks.invalidate(for: app.settings) }
+        .onChange(of: app.focusedSettingID, initial: true) { revealFocusedSetting() }
+        .sheet(item: $sheet) { destination in
+            if let role = destination.pickerRole {
+                ModelPickerSheet(app: app, role: role, openConnections: showConnections)
             } else {
-                app.settings.openRouterDataPolicy = policy
-            }
-        }
-    }
-
-    private var openRouterDataPolicyDetail: String {
-        switch app.settings.openRouterDataPolicy {
-        case .privateOnly:
-            "Every request is restricted to providers that do not collect inference data."
-        case .accountPolicy:
-            "Provider eligibility follows your OpenRouter account, API-key, workspace, "
-                + "and guardrail settings."
-        }
-    }
-
-    private var speechCard: some View {
-        ModelCard(icon: "speaker.wave.2", title: "Speech",
-                  subtitle: "Read summaries and answers aloud") {
-            Picker("Voice", selection: $app.settings.speechVoice) {
-                ForEach(KokoroVoice.allCases) { voice in
-                    Text(voice.displayName).tag(voice)
+                switch destination {
+                case .presets: ModelPresetSheet(app: app)
+                case .checks: ModelChecksSheet(app: app)
+                case .speech: ModelSpeechSettingsSheet(app: app)
+                case .search: ModelSearchSettingsSheet(app: app)
+                case .transcriptionOptions: ModelTranscriptionOptionsSheet(app: app)
+                default: EmptyView()
                 }
             }
-            .frame(maxWidth: 260)
-
-            HStack(spacing: 10) {
-                Text("Speed")
-                Slider(
-                    value: Binding(
-                        get: { app.settings.speechSpeed },
-                        set: { app.settings.speechSpeed = AppSettings.clampedSpeechSpeed($0) }),
-                    in: AppSettings.minimumSpeechSpeed...AppSettings.maximumSpeechSpeed,
-                    step: 0.05)
-                Text("\(String(format: "%.2g", app.settings.speechSpeed))x")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .frame(width: 38, alignment: .trailing)
-            }
-            .frame(maxWidth: 320)
-
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text("Kokoro 82M").font(.system(size: 12.5, weight: .medium))
-                        if speechModelDownloaded {
-                            Text("READY").font(.system(size: 8.5, weight: .bold))
-                                .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(.green.opacity(0.2), in: Capsule())
-                        }
-                    }
-                    Text("Local neural speech. Downloads the Kokoro voice model once, then runs offline.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                    if let speechModelError {
-                        Text(speechModelError).font(.caption2).foregroundStyle(Brand.error)
-                    }
-                }
-                Spacer()
-                if preparingSpeechModel {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        if let speechModelProgress {
-                            ProgressView(value: speechModelProgress).frame(width: 84)
-                        } else {
-                            ProgressView().progressViewStyle(.linear).frame(width: 84)
-                        }
-                        Text(speechModelStatus ?? "Preparing...")
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
-                } else if speechModelDownloaded {
-                    Button("Delete") { deleteSpeechModel() }.controlSize(.mini)
-                } else {
-                    Button("Download") { Task { await prepareSpeechModel() } }
-                        .controlSize(.small)
-                }
-            }
-        }
-        .accessibilityIdentifier("models.speech")
-    }
-
-    private var cotypingCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            CotypingModelPreparationView(compact: true)
-            Picker("Autocomplete model", selection: $app.settings.cotypingBuiltInModelID) {
-                ForEach(ModelCatalog.keystrokeScaleEntries(
-                    custom: app.settings.customBuiltInModels,
-                    keeping: app.settings.cotypingBuiltInModelID)) { entry in
-                    Text(entry.displayName).tag(entry.id)
-                }
-            }
-            .frame(maxWidth: 360)
-            Text("Autocomplete runs on this Mac using its own model, independently of Think.")
-                .font(.caption).foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("models.cotyping")
+        .accessibilityIdentifier("models.settings")
     }
 
-    private var embeddingsCard: some View {
-        ModelCard(icon: "point.3.connected.trianglepath.dotted", title: "Embeddings",
-                  subtitle: "Semantic search over transcripts & screenshots") {
-            LabeledContent("Semantic search") {
-                Text(app.settings.semanticSearchEnabled ? "On" : "Off — enable it in Ask")
-                    .foregroundStyle(.secondary)
-            }
-            Text("Finds meetings by meaning. Uses Harrier 0.6B, downloaded when semantic search is first used. Your existing library is reindexed locally after the search model changes.")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("Meaning-based search currently indexes meeting text and text captured from your screen.")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        .accessibilityIdentifier("models.embeddings")
+    private func showConnections() {
+        sheet = nil
+        page.wrappedValue = .connections
     }
 
-    // MARK: - Card container
-
-    private struct ModelCard<Content: View>: View {
-        let icon: String
-        let title: String
-        let subtitle: String
-        let cardIdentifier: String?
-        @ViewBuilder var content: () -> Content
-        @Environment(\.colorScheme) private var scheme
-        @Environment(\.colorSchemeContrast) private var contrast
-
-        init(icon: String, title: String, subtitle: String,
-             cardIdentifier: String? = nil,
-             @ViewBuilder content: @escaping () -> Content) {
-            self.icon = icon
-            self.title = title
-            self.subtitle = subtitle
-            self.cardIdentifier = cardIdentifier
-            self.content = content
+    private func revealFocusedSetting() {
+        guard let id = app.focusedSettingID, id != "settings.models" else { return }
+        switch id {
+        case "settings.transcriptionModel": sheet = .transcription
+        case "settings.transcriptionLanguage", "settings.transcriptionPrompt": sheet = .transcriptionOptions
+        case "settings.cotypingBuiltInModelID": sheet = .autocomplete
+        case "settings.dictationCompositionBuiltInModelID": sheet = .dictation
+        case "settings.openAIBaseURL", "settings.openAIModel", "settings.ollamaBaseURL", "settings.openAIAPIKey":
+            page.wrappedValue = .connections
+        default: sheet = .assistant
         }
+    }
+}
 
-        var body: some View {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Image(systemName: icon)
-                        .font(.title2)
-                        .foregroundStyle(.tint)
-                        .frame(width: 26)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(title)
-                            .font(.headline)
-                            .accessibilityIdentifier(cardIdentifier ?? "")
-                        Text(subtitle).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
+struct ModelSetupFeedback: View {
+    @ObservedObject var controller: ModelSetupController
+
+    var body: some View {
+        if let pending = controller.pending {
+            HStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Preparing \(pending.title)…").font(.system(size: 13, weight: .medium))
+                    Text("Your current models stay active until preparation finishes.")
+                        .font(.system(size: 12)).settingsSecondary()
                 }
-                Divider()
-                content()
+                Spacer()
+                Button("Cancel switch") { controller.cancelSwitch() }
+                    .help("Keep the current selection. Shared downloads continue in Downloaded.")
             }
-            .padding(16)
-            .background(WorkspacePalette.surface(for: scheme),
-                        in: RoundedRectangle(cornerRadius: Brand.Radius.panel))
-            .overlay(RoundedRectangle(cornerRadius: Brand.Radius.panel)
-                .strokeBorder(WorkspacePalette.border(for: scheme, contrast: contrast),
-                              lineWidth: 1))
-        }
-    }
-
-    // MARK: - Hugging Face browse sheet
-
-    private var huggingFaceBrowser: some View {
-        VStack(spacing: 0) {
+            .padding(.vertical, 14)
+        } else if let failure = controller.failure {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                Text(failure).font(.system(size: 13)).textSelection(.enabled)
+                Spacer()
+                Button("Retry") { controller.retry() }
+                Button("Dismiss") { controller.dismissFeedback() }
+            }
+            .padding(.vertical, 14)
+        } else if let completed = controller.completed {
             HStack {
-                Text("Browse Hugging Face").font(.headline)
+                Label("Using \(completed.title)", systemImage: "checkmark.circle")
+                    .font(.system(size: 13))
                 Spacer()
-                Button("Done") { showingHFBrowse = false }
-            }
-            .padding()
-            Divider()
-            HStack {
-                TextField("Search downloadable models (e.g. Qwen, Llama)…", text: $hfSearch.query)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { Task { await hfSearch.search() } }
-                Button("Search") { Task { await hfSearch.search() } }
-                    .disabled(hfSearch.query.trimmingCharacters(in: .whitespaces).isEmpty)
-                if hfSearch.isSearching { ProgressView().controlSize(.small) }
-            }
-            .padding(12)
-            if let error = hfSearch.errorMessage {
-                Text(error).font(.caption).foregroundStyle(Brand.error)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-            }
-            List {
-                ForEach(hfSearch.results) { model in
-                    Button {
-                        Task {
-                            hfSelectedModel = model.id
-                            hfFiles = await hfSearch.ggufFiles(for: model.id)
-                        }
-                    } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(model.id).font(.system(size: 12.5, weight: .medium))
-                                Text("↓ \(model.downloads)   ♥ \(model.likes)")
-                                    .font(.caption2).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: hfSelectedModel == model.id ? "chevron.down" : "chevron.right")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    if hfSelectedModel == model.id {
-                        if hfFiles.isEmpty {
-                            Text("No compatible model files in this repository.")
-                                .font(.caption2).foregroundStyle(.secondary).padding(.leading, 16)
-                        } else {
-                            ForEach(hfFiles) { file in
-                                HStack(spacing: 8) {
-                                    Text(file.fileName).font(.caption)
-                                    if let size = file.sizeLabel {
-                                        Text(size).font(.caption2).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Button("Download") {
-                                        let entry = ModelCatalog.Entry(
-                                            id: "hf:\(file.modelID)/\(file.id)",
-                                            displayName: file.fileName,
-                                            fileName: file.fileName,
-                                            url: file.downloadURL.absoluteString,
-                                            sha256: file.sha256,
-                                            sizeBytes: file.sizeBytes.map(Int64.init),
-                                            sizeGB: file.sizeBytes.map { Double($0) / 1_000_000_000 } ?? 0,
-                                            blurb: "Downloaded from \(file.modelID).",
-                                            disablesThinking: false)
-                                        app.settings.customBuiltInModels.removeAll { $0.id == entry.id }
-                                        app.settings.customBuiltInModels.append(entry)
-                                        app.settings.builtInModelID = entry.id
-                                        app.settings.summarizerBackend = .builtIn
-                                        ModelDownloadManager.shared.download(
-                                            url: entry.url,
-                                            fileName: entry.fileName,
-                                            id: entry.id,
-                                            expectedSizeGB: entry.sizeGB > 0 ? entry.sizeGB : nil,
-                                            storage: app.storage)
-                                        showingHFBrowse = false
-                                    }
-                                    .controlSize(.small)
-                                }
-                                .padding(.leading, 16)
-                            }
-                        }
-                    }
+                if completed.patch != completed.previous {
+                    Button("Undo") { controller.undo() }.accessibilityIdentifier("models.undo")
                 }
+                Button { controller.dismissFeedback() } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.plain).accessibilityLabel("Dismiss model change")
+            }
+            .padding(.vertical, 14)
+        }
+    }
+}
+
+private struct ModelStorageFooter: View {
+    @ObservedObject var app: AppState
+    @ObservedObject private var roles: ModelRoles
+    @ObservedObject private var residency = ModelResidency.shared
+    @ObservedObject private var speech: ModelSpeechDownloadController
+    let manage: () -> Void
+
+    init(app: AppState, manage: @escaping () -> Void) {
+        self.app = app
+        roles = app.modelRoles
+        speech = app.speechModelDownload
+        self.manage = manage
+    }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 12) {
+                Image(systemName: "internaldrive").font(.system(size: 20)).settingsSecondary()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Text models: \(roles.snapshot.storageSummary)").font(.system(size: 13))
+                    Text(memorySummary).font(.system(size: 12)).settingsSecondary()
+                }
+                Spacer(minLength: 8)
+                Button(activeDownloads > 0
+                       ? "Downloads (\(activeDownloads))" : "Manage downloads", action: manage)
+                    .buttonStyle(.link)
+                    .accessibilityIdentifier("models.manageDownloads")
             }
         }
-        .frame(width: 580, height: 460)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("models.storage")
     }
 
-    private func refreshOllama() async {
-        guard let url = URL(string: app.settings.ollamaBaseURL) else { return }
-        guard InferenceEndpointPolicy.isAllowed(
-            url, approvedOrigins: app.settings.approvedRemoteInferenceOrigins) else {
-            ollamaModels = []
-            ollamaReachable = false
-            return
-        }
-        let models = await OllamaEngine.listModels(baseURL: url)
-        ollamaModels = models
-        ollamaReachable = !models.isEmpty
-        // Sensible default: first available model if none picked yet.
-        if app.settings.ollamaModel.isEmpty, let first = models.first {
-            app.settings.ollamaModel = first
-        }
+    private var activeDownloads: Int {
+        roles.downloadProgress.count + roles.transcriptionPreparations.count + (speech.isPreparing ? 1 : 0)
     }
 
-    private struct ModelCatalogRow: View {
-        @EnvironmentObject var app: AppState
-        @ObservedObject var downloads = ModelDownloadManager.shared
-        let entry: ModelCatalog.Entry
-        @Binding var selectedModelID: String
-        var recommendedLabel: String?
-
-        var body: some View {
-            let available = ModelCatalog.localURL(for: entry, storage: app.storage) != nil
-            let selected = selectedModelID == entry.id
-            let fit = ModelFit.evaluate(modelSizeGB: entry.sizeGB,
-                                        capability: HardwareCapabilityProbe.current())
-            HStack(spacing: 8) {
-                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected ? Brand.teal : .secondary)
-                    .onTapGesture { if available { selectedModelID = entry.id } }
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Text(entry.displayName).font(.system(size: 12.5, weight: .medium))
-                        if let recommendedLabel {
-                            Text(recommendedLabel).font(.system(size: 8.5, weight: .bold))
-                                .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(Brand.teal.opacity(0.18), in: Capsule())
-                        }
-                    }
-                    Text("\(String(format: "%.1f", entry.sizeGB)) GB · \(entry.blurb)")
-                        .font(.caption2).foregroundStyle(.secondary)
-                    if let advisory = fit.advisory {
-                        Text(advisory).font(.caption2)
-                            .foregroundStyle(fit == .tooLarge ? .orange : .secondary)
-                    }
-                    if let error = downloads.errors[entry.id] {
-                        Text(error).font(.caption2).foregroundStyle(Brand.error)
-                    }
-                }
-                Spacer()
-                if let fraction = downloads.progress[entry.id] {
-                    ProgressView(value: fraction).frame(width: 70)
-                    Button("Cancel") { downloads.cancel(entry) }.controlSize(.mini)
-                } else if available {
-                    Button("Delete") { app.modelRoles.deleteGGUFModel(entry) }
-                        .controlSize(.mini)
-                } else {
-                    Button("Download") { downloads.download(entry, storage: app.storage) }
-                        .controlSize(.small)
-                }
-            }
-            .opacity(available || downloads.progress[entry.id] != nil ? 1 : 0.75)
-        }
-    }
-
-    private struct TranscriptionModelRow: View {
-        @EnvironmentObject var app: AppState
-        let choice: TranscriptionModelChoice
-        let displayName: String
-        let blurb: String
-        let preparing: Bool
-        let prepareDisabled: Bool
-        let downloaded: Bool
-        let ready: Bool
-        let error: String?
-        let progress: Double?
-        let status: String?
-        let prepare: () -> Void
-        let delete: () -> Void
-        let configure: () -> Void
-
-        var body: some View {
-            let selected = app.settings.transcriptionModel == choice
-            HStack(spacing: 8) {
-                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected ? Brand.teal : .secondary)
-                    .onTapGesture {
-                        app.settings.transcriptionModel = choice
-                        if choice == .graniteTurbo { app.settings.transcriptionLanguage = .en }
-                    }
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Text(displayName).font(.system(size: 12.5, weight: .medium))
-                        if choice == TranscriptionModelChoice.recommended {
-                            Text("RECOMMENDED").font(.system(size: 8.5, weight: .bold))
-                                .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(Brand.teal.opacity(0.18), in: Capsule())
-                        }
-                        if choice.isLegacy {
-                            Text("LEGACY").font(.system(size: 8.5, weight: .bold))
-                                .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(.orange.opacity(0.18), in: Capsule())
-                        }
-                        if ready {
-                            Text("READY").font(.system(size: 8.5, weight: .bold))
-                                .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(.green.opacity(0.2), in: Capsule())
-                        }
-                    }
-                    Text(blurb).font(.caption2).foregroundStyle(.secondary)
-                    if let error {
-                        Text(error).font(.caption2).foregroundStyle(Brand.error)
-                    }
-                }
-                Spacer()
-                if choice == .graniteSpeech {
-                    Button("Model…", action: configure)
-                        .controlSize(.small)
-                        .help("Choose a Granite Speech GGUF from Hugging Face")
-                        .accessibilityIdentifier("models.granite.customize")
-                }
-                if preparing {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        if let progress {
-                            ProgressView(value: progress).frame(width: 84)
-                        } else {
-                            ProgressView()
-                                .progressViewStyle(.linear)
-                                .frame(width: 84)
-                        }
-                        Text(status ?? "Preparing...")
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
-                } else if downloaded {
-                    Button("Delete") { delete() }
-                        .controlSize(.mini)
-                } else {
-                    Button("Download") { prepare() }
-                        .controlSize(.small)
-                        .disabled(prepareDisabled)
-                }
-            }
-            .opacity(selected || downloaded || ready || preparing ? 1 : 0.75)
-        }
-    }
-
-    private func refreshSpeechModel() {
-        speechModelDownloaded = KokoroSpeechEngine.isModelDownloaded
-    }
-
-    private func prepareSpeechModel() async {
-        guard !preparingSpeechModel else { return }
-        preparingSpeechModel = true
-        speechModelError = nil
-        speechModelStatus = "Preparing..."
-        speechModelProgress = nil
-        defer {
-            preparingSpeechModel = false
-            speechModelProgress = nil
-            speechModelStatus = nil
-        }
-        let progressHandler: ModelPreparationProgressHandler = { update in
-            speechModelProgress = update.fractionCompleted
-            speechModelStatus = update.status
-        }
-        do {
-            try await KokoroSpeechEngine.shared.prepare(progress: progressHandler)
-            speechModelDownloaded = true
-        } catch {
-            speechModelError = error.localizedDescription
-        }
-    }
-
-    private func deleteSpeechModel() {
-        do {
-            try KokoroSpeechEngine.deleteModel()
-            speechModelDownloaded = false
-            speechModelError = nil
-        } catch {
-            speechModelError = error.localizedDescription
-        }
-    }
-
-    func testGeneration() async {
-        let config = app.settings
-        let savedKey = config.openAIAPIKey
-        testing = true
-        testResult = nil
-        testFailure = nil
-        showingTestFailure = false
-        defer { testing = false }
-        do {
-            let engine = try await app.thinkExecution.makeTextEngine(
-                config,
-                priority: .interactive,
-                purpose: "model test")
-            let reply = try await engine.generate(
-                system: PromptTemplates.connectivityTestSystem,
-                prompt: PromptTemplates.connectivityTestPrompt,
-                context: [])
-            guard config == app.settings, savedKey == app.settings.openAIAPIKey else { return }
-            modelTestResults[.think] = .passed(Date())
-            testResult = "Test passed · " + reply.prefix(120)
-        } catch {
-            guard config == app.settings, savedKey == app.settings.openAIAPIKey else { return }
-            modelTestResults[.think] = .failed(error.localizedDescription)
-            let isOpenAICompatible = app.settings.summarizerBackend == .openAICompatible
-            testFailure = GenerationTestFailurePresentation(
-                error: error,
-                baseURL: isOpenAICompatible ? app.settings.openAIBaseURL : nil,
-                model: isOpenAICompatible ? app.settings.openAIModel : nil,
-                openRouterDataPolicy: app.settings.openRouterDataPolicy)
-            showingTestFailure = true
-        }
+    private var memorySummary: String {
+        guard !residency.residents.isEmpty else { return "No models loaded in memory." }
+        let used = ByteCountFormatter.string(fromByteCount: residency.totalBytes, countStyle: .memory)
+        return "\(used) in memory · Models unload automatically when idle."
     }
 }
