@@ -33,7 +33,7 @@ final class GraniteTurboTests: XCTestCase {
         for language in ["fr", "sr", "zh", "de"] {
             XCTAssertFalse(GraniteTurboEngine.accepts(language: language))
         }
-        XCTAssertEqual(TranscriptionModelChoice.recommended, .graniteSpeech)
+        XCTAssertEqual(TranscriptionModelChoice.recommended, .qwenASR17B)
         let data = try JSONEncoder().encode(TranscriptionModelChoice.graniteTurbo)
         XCTAssertEqual(try JSONDecoder().decode(TranscriptionModelChoice.self, from: data), .graniteTurbo)
     }

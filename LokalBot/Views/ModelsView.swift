@@ -201,7 +201,7 @@ struct ModelsView: View {
     private func transcriptionBlurb(for choice: TranscriptionModelChoice) -> String {
         choice == .graniteSpeech
             ? app.settings.graniteSpeechModel.downloadDescription
-                + " · recommended local speech recognition"
+                + " · local speech recognition"
             : choice.blurb
     }
 

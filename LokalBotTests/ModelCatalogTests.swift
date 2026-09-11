@@ -98,11 +98,14 @@ final class ModelCatalogTests: XCTestCase {
     func testQwenASRModelsAreRunnableChoices() {
         XCTAssertTrue(TranscriptionModelChoice.allCases.contains(.qwenASR17B))
         XCTAssertTrue(TranscriptionModelChoice.allCases.contains(.qwenASR06B))
+        XCTAssertEqual(TranscriptionModelChoice.recommended, .qwenASR17B)
+        XCTAssertEqual(AppSettings().transcriptionModel, .qwenASR17B)
+        XCTAssertEqual(ModelStackPreset.recommended.transcription, .qwenASR17B)
+        XCTAssertTrue(ModelStackPreset.recommended.modelLine.hasPrefix("Qwen3-ASR 1.7B ·"))
     }
 
     func testGraniteSpeechModelIsRunnableChoice() {
         XCTAssertTrue(TranscriptionModelChoice.allCases.contains(.graniteSpeech))
-        XCTAssertEqual(AppSettings().transcriptionModel, .graniteSpeech)
         XCTAssertEqual(TranscriptionModelChoice.graniteSpeech.engine.displayName, "Granite Speech 4.1 2B")
     }
 

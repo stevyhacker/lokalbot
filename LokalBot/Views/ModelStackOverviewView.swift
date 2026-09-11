@@ -344,7 +344,7 @@ enum ModelStackPreset: String, CaseIterable, Identifiable {
             ? "Best balanced local stack" : "Smallest practical local stack"
     }
     var transcription: TranscriptionModelChoice {
-        self == .recommended ? .graniteSpeech : .qwenASR06B
+        self == .recommended ? TranscriptionModelChoice.recommended : .qwenASR06B
     }
     var mainModelID: String {
         self == .recommended ? ModelCatalog.defaultSummarizationID : ModelCatalog.compactFallbackID
@@ -352,7 +352,7 @@ enum ModelStackPreset: String, CaseIterable, Identifiable {
     var autocompleteModelID: String { ModelCatalog.recommendedCotypingID }
     var modelLine: String {
         self == .recommended
-            ? "Granite Speech 4.1 2B · Qwen3.5 4B · LFM2.5 1.2B"
+            ? "\(transcription.displayName) · Qwen3.5 4B · LFM2.5 1.2B"
             : "Qwen3-ASR 0.6B · Qwen3.5 0.8B · LFM2.5 1.2B"
     }
 
